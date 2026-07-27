@@ -1,0 +1,45 @@
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Warning: Permanently added '[10.100.120.2]:2233' (ED25519) to the list of known hosts.
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+Authorization required, but no authorization protocol specified
+
+# nccl-tests version 2.19.6 nccl-headers=22803 nccl-library=22803
+# Collective test starting: sendrecv_perf
+# nThread 1 nGpus 1 minBytes 8 maxBytes 536870912 step: 4(factor) warmup iters: 5 iters: 40 agg iters: 1 validation: 1 graph: 0 unalign: 0
+#
+# Using devices
+#  Rank  0 Group  0 Pid    186 on dgx-spark-1 device  0 [000f:01:00] NVIDIA GB10
+#  Rank  1 Group  0 Pid    148 on dgx-spark-2 device  0 [000f:01:00] NVIDIA GB10
+NCCL version 2.28.3+cuda13.0
+#
+#                                                              out-of-place                       in-place          
+#       size         count      type   redop    root     time   algbw   busbw  #wrong     time   algbw   busbw  #wrong 
+#        (B)    (elements)                               (us)  (GB/s)  (GB/s)             (us)  (GB/s)  (GB/s)         
+           8             2     float     sum      -1    29.01    0.00    0.00       0    25.62    0.00    0.00    N/A
+          32             8     float     sum      -1    29.22    0.00    0.00       0    29.98    0.00    0.00    N/A
+         128            32     float     sum      -1    30.31    0.00    0.00       0    30.04    0.00    0.00    N/A
+         512           128     float     sum      -1    30.15    0.02    0.02       0    30.62    0.02    0.02    N/A
+        2048           512     float     sum      -1    31.03    0.07    0.07       0    30.63    0.07    0.07    N/A
+        8192          2048     float     sum      -1    30.62    0.27    0.27       0    31.58    0.26    0.26    N/A
+       32768          8192     float     sum      -1    43.17    0.76    0.76       0    36.70    0.89    0.89    N/A
+      131072         32768     float     sum      -1    43.88    2.99    2.99       0    36.13    3.63    3.63    N/A
+      524288        131072     float     sum      -1    62.22    8.43    8.43       0    60.46    8.67    8.67    N/A
+     2097152        524288     float     sum      -1   140.52   14.92   14.92       0   137.90   15.21   15.21    N/A
+     8388608       2097152     float     sum      -1   434.66   19.30   19.30       0   432.34   19.40   19.40    N/A
+    33554432       8388608     float     sum      -1  1603.67   20.92   20.92       0  1602.00   20.95   20.95    N/A
+   134217728      33554432     float     sum      -1  6420.62   20.90   20.90       0  6425.48   20.89   20.89    N/A
+   536870912     134217728     float     sum      -1  25023.4   21.45   21.45       0  25009.3   21.47   21.47    N/A
+# Out of bounds values : 0 OK
+# Avg bus bandwidth    : 7.9102 
+#
+# Collective test concluded: sendrecv_perf
+#
+
