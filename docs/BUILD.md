@@ -66,3 +66,33 @@ give deployments an immutable local name + provenance labels.
 If that day comes: `TORCH_CUDA_ARCH_LIST=12.0f` (CUDA >= 13) or `12.1a`
 (cu129 track), and beware vllm#49904 (arch auto-detect can produce a
 kernel-less sm_121 build).
+
+## Upstream-lineage DeepSeek-V4 build (branch upstream-dsv4-sm121)
+
+Stock v0.26.0 cannot serve DeepSeek-V4 on GB10 (attention-kernel livelock
+under load — VALIDATION.md probe series, upstream vllm#49026). The
+upstream-track fix is PR #41834 (DeepSeek-V4-Flash on SM12x; open against
+main; the tree all working community recipes build from). It includes .cu
+changes (topk smem fix, fused DSV4 KV-insert kernel, GB10-tuned MoE/GEMM
+configs), so it requires a source build — no overlay shortcut.
+
+Pin: PR head `d64074e6f` ("fix(dsv4): bound the block-table gather...",
+188 commits over recent main). Cherry-picking onto the v0.26.0 tag was
+rejected: 188 commits of conflicts vs building the community-validated tree
+as-is.
+
+```
+cd ~/build/vllm-upstream/vllm && git checkout d64074e6f
+DOCKER_BUILDKIT=1 docker build --target vllm-openai \
+  --build-arg max_jobs=10 --build-arg nvcc_threads=2 \
+  --build-arg torch_cuda_arch_list='12.0' \
+  -t vllm-gb10:pr41834-d64074e6f -f docker/Dockerfile .
+# stage to worker:
+docker save vllm-gb10:pr41834-d64074e6f | ssh 10.100.120.2 docker load
+```
+
+`torch_cuda_arch_list='12.0'` compiles the 12.0f family target (covers
+sm_121 natively under CUDA 13.0.3) plus the 12.0a/12.1a quant-kernel gates.
+Build time on the 20-core Grace: recorded below after first build.
+Validation gates for this image: models/deepseek-v4-flash-upstream.conf and
+the DSpark A/B — this image earns nothing until those pass.
