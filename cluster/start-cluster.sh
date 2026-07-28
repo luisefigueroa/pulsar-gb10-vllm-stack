@@ -89,6 +89,8 @@ server_args() {
     --nnodes 2 --master-addr "$HEAD_IP" --master-port "$MASTER_PORT"
   )
   [ "$SPEC_DECODE" = "1" ] && args+=("${SPEC_DECODE_ARGS[@]}")
+  # escape hatch for experiments, mirroring serve.sh; never required by a config
+  [ -n "${VLLM_EXTRA_ARGS:-}" ] && args+=($VLLM_EXTRA_ARGS)
   printf '%q ' "${args[@]}"
 }
 
