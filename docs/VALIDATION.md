@@ -24,7 +24,7 @@ Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
 | Laguna-S-2.1-NVFP4 | gsm8k 5-shot, 200 samples | **RECORDED** | **0.820 strict** / 0.45 flexible (must use `tokenized_requests=False` — see TROUBLESHOOTING for the 0.055 false reading) |
 | Nemotron-3-Nano NVFP4 | gsm8k 5-shot, 200 samples | **RECORDED** | **0.830 strict** / 0.465 flexible |
 | Nemotron-3-Super NVFP4 | gsm8k 5-shot, 200 samples | **RECORDED** | **0.940 strict** / 0.95 flexible |
-| DeepSeek-V4-Flash | gsm8k + greedy spot-check (2-node) | PENDING | |
+| DeepSeek-V4-Flash (2-node TP=2) | gsm8k 5-shot, 200 samples | **RECORDED** | **0.970 strict / 0.970 flexible** — best in fleet |
 
 ## Determinism
 
