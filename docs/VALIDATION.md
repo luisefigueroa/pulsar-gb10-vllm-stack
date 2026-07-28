@@ -109,3 +109,25 @@ only where a config carries validated args (currently: none).
   (TROUBLESHOOTING.md#localentrynotfounderror). Fixed cluster-wide.
 - 2026-07-27: node 2 has no internet route; weights/images must be staged
   from node 1 (TROUBLESHOOTING.md).
+
+## Stock-image DeepSeek-V4 probe series (2026-07-28, upstream-first evaluation)
+
+Question: can `vllm/vllm-openai:v0.26.0` (pinned mainline) serve
+DeepSeek-V4-Flash TP=2, removing the sparkrun-image dependency? Probes with
+real weights, `--kv-cache-dtype fp8` (required by the DSV4 path), 16K ctx:
+
+| Config | Result |
+|---|---|
+| defaults (graphs on) | loads, serves 1 smoke request coherently, then **engine dead within a few sequential requests** (5x `sample_tokens` RPC timeout) |
+| `--enforce-eager` | survives 30 sequential captures + 8 concurrent, output coherent and FP-equivalent vs the sparkrun baseline (1 boundary near-tie flip, no garbling) — then **worker wedges under bench load** (fresh 512-token prefills), same RPC-timeout signature |
+
+Interpretation: eager fixes the graph-path hang (as with Laguna) but NOT
+this model — the failure under prefill pressure persists in eager, pointing
+at the `FLASHINFER_MLA_SPARSE_SM120` attention kernel itself (upstream
+vllm#49026 documents exactly this livelock on GB10 with cuda-gdb evidence).
+**Verdict: stock v0.26.0 is not viable for DeepSeek-V4 on GB10.** The
+upstream-lineage fix is replacing the sparse-attention kernel: PR #47629
+(TRITON_MLA_SPARSE, generic DSA) and PR #41834 (the V4-Flash-on-SM12x path
+all working community recipes build from). Both open against main, neither
+merged, no maintainer review as of 2026-07-28. See git history for the
+probe commands. `nvfp4_ds_mla` KV (1M ctx) remains fork-only upstream.
