@@ -97,9 +97,11 @@ only where a config carries validated args (currently: none).
 
 | Config | Duration | Errors | Mem growth | Thermal | Status |
 |---|---|---|---|---|---|
-| Flagship 2-node (deepseek-v4-flash) | multi-hour target | | | | PENDING |
-| Primary 1-node | multi-hour target | | | | PENDING |
-| Rest of matrix | 15-30 min smoke each | | | | PENDING |
+| Flagship 2-node (deepseek-v4-flash) | multi-hour target | | | | RUNNING |
+| Primary 1-node (laguna) | multi-hour target | | | | QUEUED after flagship |
+| qwen3.6-27b-fp8 smoke | 20 min @ c=8 | **0** | -0.09 GiB (noise) | 80 C max, SM >=2353 (no throttle) | **PASS** |
+| nemotron-3-nano smoke | 15 min @ c=16 (1120 requests) | **0** | +0.03 GiB | 70 C max, SM >=2392 | **PASS** (+ needle 3/3 @124K after soak) |
+| nemotron-3-super smoke | 20 min @ c=16 | | | | RUNNING |
 
 ## Failures & findings log
 
