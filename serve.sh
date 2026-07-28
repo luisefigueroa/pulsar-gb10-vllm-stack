@@ -86,6 +86,8 @@ CMD=(docker run --name "$CONTAINER" $DETACH
   --restart "${RESTART_POLICY:-no}"
 )
 for e in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do CMD+=(-e "$e"); done
+# EXTRA_ENV="A=1 B=2" escape hatch, mirroring VLLM_EXTRA_ARGS for env vars
+for e in ${EXTRA_ENV:-}; do CMD+=(-e "$e"); done
 
 CMD+=("$IMAGE"
   --model "$MODEL"

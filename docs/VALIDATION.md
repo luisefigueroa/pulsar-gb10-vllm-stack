@@ -31,7 +31,15 @@ Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
 | Same node, same config, run-to-run (27B FP8, greedy, 30 prompts) | **PASS** | 30/30 exact text, mean prefix 1.0000, max logprob delta 0.0000 |
 | Same config run-to-run on node B (Qwen3-1.7B) | **PASS** | 30/30 exact, delta 0.0000 |
 | Same node across time + heavy traffic (27B FP8, runA vs runC) | **PASS** | 30/30 IDENTICAL — prefix cache/warmup does not perturb greedy output |
-| Node A vs node B, same image+config (27B FP8) | **INVESTIGATING** | 12/30 exact (all near-tie flips, max matched-prefix logprob delta 0.43). Weight shard md5 + config identical across nodes; same image digest; same driver. Not fixed by `--no-enable-flashinfer-autotune` (13/30). Eager-mode isolation running. PROMPT treats this as a bug until root-caused. |
+| Node A vs node B, same image+config (27B FP8, default flags) | **ROOT-CAUSED** | 12/30 exact, all near-tie flips. NOT node drift: weights/config/image/driver verified identical, and the same node vs ITSELF across a server restart shows the same divergence (16/30). Cause: per-boot nondeterministic kernel selection in the compile pipeline — eager mode recovers 28/30; autotune-off alone does nothing (13/30). |
+| Node A vs node B with `VLLM_BATCH_INVARIANT=1` (Qwen3-1.7B) | **PASS — IDENTICAL** | 30/30 exact, max logprob delta 0.0000, across different boots AND nodes. This is the reproducibility switch — but it is unsupported for GDN/Mamba hybrid architectures (engine refuses to start: `not supported for GDN_ATTN`), so Qwen3.6-27B cannot use it. |
+
+**Determinism guarantee this cluster actually gets:** within one engine boot,
+greedy output is exactly reproducible (verified through heavy traffic).
+Across boots or nodes, default configs are FP-equivalent (near-tie argmax
+flips only; logprobs agree to <0.5). Bit-exact cross-node reproducibility is
+available opt-in via `VLLM_BATCH_INVARIANT=1` for standard-attention models.
+There is no hardware or software drift between the nodes.
 | 1-node vs 2-node same model (TP reduction order may differ; gate on match rate) | PENDING | |
 
 ## Multi-node

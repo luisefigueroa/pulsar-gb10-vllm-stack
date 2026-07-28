@@ -86,3 +86,14 @@ change: `rm -rf ~/.cache/vllm` and the Triton cache dir on BOTH nodes.
 Symptom to watch for in benchmarks: `jit_monitor` warnings about Triton
 compilation *during inference* — those numbers are cold-cache artifacts,
 rerun after warmup (validate/bench_serve.py warms up per level).
+
+## `VLLM batch_invariant mode is not supported for GDN_ATTN`
+
+**Hit:** enabling `VLLM_BATCH_INVARIANT=1` on Qwen3.6-27B (engine dies at
+startup). The model is a hybrid — 48 of its 64 layers are GDN linear
+attention — and vLLM v0.26.0's batch-invariant deterministic kernels don't
+cover GDN. Consequence: cross-node bit-identical greedy output is only
+achievable for architectures batch-invariant mode supports (standard
+attention); for GDN/Mamba hybrids the achievable guarantee is
+FP-equivalence (near-tie argmax flips only). See the determinism section
+of docs/VALIDATION.md for the full investigation.

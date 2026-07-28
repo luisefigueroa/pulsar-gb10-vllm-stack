@@ -11,7 +11,7 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 |---|---|---|---|---|---|---|---|
 | `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 3.4 GB | 1 | 32K | — | **tested** (canary) |
 | `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 3.4 GB | 2 / TP=2 | 32K | — | **tested** (plumbing canary) |
-| `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 | FP8 block | 29 GB | 1 | 131,072 (see VALIDATION) | ngram (opt-in) | **tested** |
+| `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 (hybrid: 16 full-attn + 48 GDN layers) | FP8 block | 29 GB | 1 | 131,072 (needle 3/3 @121K) | ngram (opt-in) | **tested** |
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 claimed | MTP (opt-in) | untested |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 validated prior | MTP (opt-in) | prior-art tested; revalidate |
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | 262,144 (config max) | DFlash k=15 (opt-in) | untested |

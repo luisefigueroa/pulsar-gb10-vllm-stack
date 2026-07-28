@@ -10,7 +10,7 @@ single-stream ceiling as `240 / active-GB-per-token`:
 
 | Model | Active GB/tok | Ceiling | Measured (c=1) |
 |---|---|---|---|
-| Qwen3.6-27B-FP8 (dense) | ~28 | ~8.5 tok/s | see results/bench-qwen27b-fp8.json |
+| Qwen3.6-27B-FP8 (hybrid GDN, no MoE) | ~28 | ~8.5 tok/s | **8.0** (results/bench-qwen27b-fp8.json) |
 | Laguna-S-2.1-NVFP4 (A8B MoE) | ~9.8 | ~24 tok/s | pending |
 | Nemotron-3-Super NVFP4 (A12B) | ~12.8 | ~19 tok/s | 16.5 prior art |
 | DeepSeek-V4-Flash 2-node TP=2 | ~5.7/node | ~40 tok/s | pending |
