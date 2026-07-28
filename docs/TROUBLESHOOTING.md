@@ -111,3 +111,13 @@ unaffected — which made it look model-specific.
 **Fix:** add `tokenized_requests=False` to `--model_args` so raw text goes
 to the server and the server tokenizes. Rule of thumb: when an eval number
 contradicts a manual probe, distrust the eval plumbing first.
+
+## `PermissionError` on HF datasets cache after container evals
+
+**Hit:** host `lm_eval` failed to acquire
+`~/.cache/huggingface/datasets/.../builder.lock` after lm-eval had been run
+inside a container (as root) with the same cache mounted. Root-owned lock
+and metadata files block the host user afterwards.
+**Fix:** re-chown (`docker run --rm -v ~/.cache/huggingface/datasets:/d
+IMAGE chown -R 1000:1000 /d/<dataset>`), or run containerized tools with
+`--user $(id -u):$(id -g)` from the start.
