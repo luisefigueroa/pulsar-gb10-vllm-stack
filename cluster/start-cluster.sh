@@ -67,6 +67,7 @@ common_docker_flags() {
     --ulimit memlock=-1 --ulimit stack=67108864 \
     --device /dev/infiniband \
     ${hf_mount} \
+    -v ${MODELS_NFS:-/mnt/Models}:/mnt/Models:ro \
     -e HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1} \
     -e VLLM_HOST_IP=${role_ip} \
     -e NCCL_IB_HCA=${NCCL_IB_HCA} \
