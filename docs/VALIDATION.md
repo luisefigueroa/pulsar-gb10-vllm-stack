@@ -61,8 +61,8 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 
 | Model | Claimed | Needle result | Status |
 |---|---|---|---|
-| Qwen3.6-27B-FP8 | 131,072 (conf) | | PENDING |
-| Laguna-S-2.1-NVFP4 | 262,144 (config max) | | PENDING |
+| Qwen3.6-27B-FP8 | 131,072 (conf) | 3/3 PASS at 121,138 prompt tokens (depths .05/.5/.95) | **PASS** |
+| Laguna-S-2.1-NVFP4 | 262,144 (config max) | 3/3 PASS at 260,907 prompt tokens (99.5% of max) | **PASS** |
 | DeepSeek-V4-Flash | 500,000 (prior prod value) | | PENDING |
 
 ## Speculative decoding (all off by default)
