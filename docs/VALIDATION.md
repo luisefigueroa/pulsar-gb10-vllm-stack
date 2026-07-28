@@ -47,7 +47,7 @@ or nodes, all default configs are FP-equivalent (near-tie flips only).
 Bit-exact cross-node reproducibility is available opt-in via
 `VLLM_BATCH_INVARIANT=1` for standard-attention models (unsupported on
 GDN/Mamba hybrids). There is no hardware or software drift between nodes.
-| 1-node vs 2-node same model (TP reduction order may differ; gate on match rate) | PENDING | |
+| 1-node vs 2-node same model (TP reduction order may differ; gate on match rate + eval parity) | **PASS** | Laguna 1-node (graphs) vs 2-node TP=2 (eager): greedy divergences are near-tie-only (0 hard disagreements at flip points), and **gsm8k parity 0.820 vs 0.825 strict** — statistically identical. Note PP=2 was not shipped for any model (TP=2 chosen from measured link numbers, docs/MULTINODE.md), so the "PP may be bit-exact" question is moot on this cluster. |
 
 ## Multi-node
 
