@@ -97,3 +97,17 @@ achievable for architectures batch-invariant mode supports (standard
 attention); for GDN/Mamba hybrids the achievable guarantee is
 FP-equivalence (near-tie argmax flips only). See the determinism section
 of docs/VALIDATION.md for the full investigation.
+
+## lm-eval scores absurdly low while the model answers perfectly by hand
+
+**Hit:** Laguna gsm8k scored 0.055 via lm-eval while a manual 5-shot curl
+produced exactly-formatted correct answers.
+**Cause:** `local-completions` tokenizes prompts CLIENT-side and sends token
+IDs by default. Laguna's shipped tokenizer has the known Mistral-family
+regex bug (transformers warns "will lead to incorrect tokenization" at
+load), so the eval sent subtly corrupted token IDs; the server never saw the
+real prompts. Models whose tokenizers are clean (Qwen, Nemotron) were
+unaffected — which made it look model-specific.
+**Fix:** add `tokenized_requests=False` to `--model_args` so raw text goes
+to the server and the server tokenizes. Rule of thumb: when an eval number
+contradicts a manual probe, distrust the eval plumbing first.
