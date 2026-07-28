@@ -53,8 +53,9 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 
 | Check | Status | Numbers |
 |---|---|---|
-| Native --nnodes TP=2 cross-node serves | PASS | Qwen3-1.7B canary, correct greedy output |
+| Native --nnodes TP=2 cross-node serves (standard attention) | PASS | Qwen3-1.7B canary, correct greedy output |
 | Concurrency >= 2 on 2-node (prior-stack killer) | PASS | 8/8 concurrent correct on canary |
+| TP=2 cross-node with a GDN hybrid (Qwen3.6-27B) | **FAIL** | Wrong output on first request ("2+2=" -> "5"), then `RPC call to sample_tokens timed out` -> engine dead on the first capture request. Same signature as the prior repo's unsolved hang — whose "dense control" was actually ALSO a GDN hybrid, so its architecture-eliminated conclusion is corrected here: **recurrent-state hybrids (GDN/Mamba) must not be deployed TP=2 cross-node on this stack**; standard-attention models are fine. |
 | RDMA (not TCP) transport in vLLM containers | PENDING | verified for bench containers; capture NCCL_DEBUG=INFO on flagship bring-up |
 | DeepSeek-V4-Flash TP=2 serves + concurrency | PENDING | |
 | Node-loss behavior documented | PENDING | expected: no recovery; verify once |
