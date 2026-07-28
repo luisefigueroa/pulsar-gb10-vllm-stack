@@ -56,10 +56,17 @@ CONTAINER="vllm-cluster-${MODEL_NAME}"
 # to TCP without it.
 common_docker_flags() {
   local role_ip="$1"
+  # the sparkrun/dsv4 image reads HF_HOME=/cache/huggingface (its baked
+  # convention, from the validated production launcher); official images
+  # default to /root/.cache/huggingface
+  local hf_mount="-v ${HF_CACHE}:/root/.cache/huggingface"
+  if [ "$IMAGE_KIND" = "dsv4" ]; then
+    hf_mount="-v ${HF_CACHE}:/cache/huggingface -e HF_HOME=/cache/huggingface -e VLLM_CACHE_ROOT=/cache/huggingface/vllm-cache -e TRANSFORMERS_OFFLINE=1"
+  fi
   echo "--network host --ipc host --gpus all \
     --ulimit memlock=-1 --ulimit stack=67108864 \
     --device /dev/infiniband \
-    -v ${HF_CACHE}:/root/.cache/huggingface \
+    ${hf_mount} \
     -e HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1} \
     -e VLLM_HOST_IP=${role_ip} \
     -e NCCL_IB_HCA=${NCCL_IB_HCA} \
