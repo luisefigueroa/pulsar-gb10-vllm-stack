@@ -57,8 +57,10 @@ headroom is not a deployment.
   sm_121 (vllm#45317) — V4 runs on the community `sparkrun` image (pinned in
   `models/deepseek-v4-flash.conf`), which is what production on these boxes
   has used since June.
-- **Qwen**: newest local are Qwen3.6-27B (dense; BF16/FP8/NVFP4 variants
-  cached) and Qwen3.6-35B-A3B (MoE). No Qwen weights in the NFS catalog.
+- **Qwen**: newest local are Qwen3.6-27B (hybrid GDN; FP8 and NVFP4 variants
+  cached with full weights — the "BF16" cache entry was an empty stub,
+  downloaded fresh 2026-07-28 for the quant-control eval) and
+  Qwen3.6-35B-A3B (MoE). No Qwen weights in the NFS catalog.
 - **Llama**: nothing newer than Llama 4 exists (mid-2026); no Llama weights
   present anywhere on this cluster — not in the matrix. Llama-4-Scout would
   fit 1 node quantized if ever needed.
