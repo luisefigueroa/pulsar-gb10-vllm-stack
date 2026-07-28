@@ -1,0 +1,73 @@
+# Model support matrix — 2x DGX Spark GB10 (2026-07-27)
+
+Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
+0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
+weights + KV, **~200-210 GiB across both**. "Active GB/tok" drives the decode
+roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
+
+## Serveable on this cluster
+
+| Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
+|---|---|---|---|---|---|---|---|
+| `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 3.4 GB | 1 | 32K | — | **tested** (canary) |
+| `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 3.4 GB | 2 / TP=2 | 32K | — | **tested** (plumbing canary) |
+| `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 | FP8 block | 29 GB | 1 | 131,072 (see VALIDATION) | ngram (opt-in) | **tested** |
+| `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 claimed | MTP (opt-in) | untested |
+| `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 validated prior | MTP (opt-in) | prior-art tested; revalidate |
+| `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | 262,144 (config max) | DFlash k=15 (opt-in) | untested |
+| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash | FP8+FP4 experts | 160 GB | **2 / TP=2** | 500,000 validated prior; 1M config | MTP k=2 (opt-in) | untested here |
+| (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
+| (candidate) | Qwen3.6-35B-A3B MXFP4/FP8 | MXFP4 | 21 GB | 1 | — | MTP head exists | not configured |
+| (candidate) | cyankiwi/GLM-4.7-Flash-AWQ-4bit (node1) | AWQ int4 | ~18 GB | 1 | 202,752 (prior sparkrun profile) | — | not configured |
+
+"Status" is updated by validation runs only (docs/VALIDATION.md holds the
+numbers). Nothing gets `tested` from arithmetic.
+
+## Explicitly does NOT fit (the answer to "can we serve the big ones?")
+
+Weights alone vs ~210 GiB total budget — these are not close, and no
+quantized variants exist in the catalog:
+
+| Model (NFS catalog) | Params | Quant on disk | Disk GB | Verdict |
+|---|---|---|---|---|
+| deepseek-ai/DeepSeek-V4-Pro | 1.6T / A49B | FP8+FP4 | **865** | needs ~5x this cluster |
+| Moonshotai/Kimi-k3 | 2.8T / A104B | MXFP4 | **1561** | needs ~8x |
+| Thinkingmachines/Inkling | 975B / A41B | BF16 | **1905** | needs ~10x (no quant shipped) |
+| zai-org/GLM-5.2 | ~753B | BF16 | **1507** | needs ~8x (FP8 variant exists upstream, not local) |
+| Moonshotai/Kimi-k2.6 / k2.7-Code | 1T / A32B | int4 experts | **595** each | needs ~3x |
+| upstage/Solar-Open2-250B | 250B / A15B | BF16 | **501** | needs ~2.5x |
+| NVIDIA/Nemotron-3-Ultra-550B-A55B | 550B / A55B | NVFP4 | **352** | ~1.7x over; 3 nodes would fit |
+| XiaomiMimo/MiMo-V2.5 | 310B / A15B | FP8 | **315** | ~1.5x over |
+| MiniMaxAI/MiniMax-M3 | 428B / A23B | BF16 / NVFP4 | 869 / **250** | NVFP4 is 40+ GiB over the 2-node budget once KV+overhead counted |
+| NVIDIA/Nemotron-3-Super-120B **BF16** | 120B / A12B | BF16 | **247** | over budget as BF16 — use the NVFP4 build (fits ONE node) |
+| poolside/Laguna-S-2.1 **BF16** | 118B / A8B | BF16 | **235** | weights would consume both nodes entirely, zero KV — use NVFP4 (fits ONE node) |
+
+Near-misses stay unserveable honestly: a config that loads with 2 GiB of KV
+headroom is not a deployment.
+
+## Notes per family (what the user asked about)
+
+- **DeepSeek**: "DeepSeek V4 Flash" is real — `deepseek-ai/DeepSeek-V4-Flash`
+  (284B total / 13B active, 1M-token config, FP8 + FP4 experts, MTP head,
+  released 2026-04-22 alongside V4-Pro). Weights are in the HF cache on both
+  nodes (160 GB), NOT in the NFS catalog (catalog has V4-Pro only). It is the
+  cluster's 2-node flagship. The `-DSpark` variant (167 GB, also cached) adds
+  the DSpark draft for speculative decoding.
+  CAVEAT: upstream vLLM has no working sparse-attention (DSA) backend on
+  sm_121 (vllm#45317) — V4 runs on the community `sparkrun` image (pinned in
+  `models/deepseek-v4-flash.conf`), which is what production on these boxes
+  has used since June.
+- **Qwen**: newest local are Qwen3.6-27B (dense; BF16/FP8/NVFP4 variants
+  cached) and Qwen3.6-35B-A3B (MoE). No Qwen weights in the NFS catalog.
+- **Llama**: nothing newer than Llama 4 exists (mid-2026); no Llama weights
+  present anywhere on this cluster — not in the matrix. Llama-4-Scout would
+  fit 1 node quantized if ever needed.
+- **GPT-OSS**: no raw weights on disk; only NIM containers (gpt-oss-120b).
+  gpt-oss-120b MXFP4 (~63 GB) would fit one node under vLLM if downloaded;
+  known sm_121 caveats (vllm#37030 first-token Marlin bug). Left out of the
+  matrix until weights exist locally.
+- **KV cache reference** (BF16 bytes/token, from config.json): Laguna 24 KiB
+  (FP8, growth portion) · DeepSeek-V4 MLA ~69 KiB pre-compression · Qwen3.6-27B
+  dense GQA ~previous-gen typical · Nemotron-3 hybrids 6-8 KiB (+fixed Mamba
+  state). Long-context feasibility is therefore model-specific; the needle
+  test in VALIDATION.md is the gate for any claimed context length.
