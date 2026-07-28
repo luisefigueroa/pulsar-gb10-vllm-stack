@@ -35,11 +35,16 @@ Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
 | Node A vs node B with `VLLM_BATCH_INVARIANT=1` (Qwen3-1.7B) | **PASS — IDENTICAL** | 30/30 exact, max logprob delta 0.0000, across different boots AND nodes. This is the reproducibility switch — but it is unsupported for GDN/Mamba hybrid architectures (engine refuses to start: `not supported for GDN_ATTN`), so Qwen3.6-27B cannot use it. |
 
 **Determinism guarantee this cluster actually gets:** within one engine boot,
-greedy output is exactly reproducible (verified through heavy traffic).
-Across boots or nodes, default configs are FP-equivalent (near-tie argmax
-flips only; logprobs agree to <0.5). Bit-exact cross-node reproducibility is
-available opt-in via `VLLM_BATCH_INVARIANT=1` for standard-attention models.
-There is no hardware or software drift between the nodes.
+greedy output is exactly reproducible for the FLASH_ATTN-path models
+(Qwen3-1.7B, Qwen3.6-27B, Nemotron-Nano — verified through heavy traffic).
+Laguna (FLASHINFER path) shows near-tie-only FP noise even run-to-run within
+a boot — isolated to the execution path itself: NOT prefix caching (persists
+with `--no-enable-prefix-caching`), NOT Marlin atomic-add (persists without;
+perf-neutral 19.46 vs 19.48 tok/s, so the knob ships removed). Across boots
+or nodes, all default configs are FP-equivalent (near-tie flips only).
+Bit-exact cross-node reproducibility is available opt-in via
+`VLLM_BATCH_INVARIANT=1` for standard-attention models (unsupported on
+GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 | 1-node vs 2-node same model (TP reduction order may differ; gate on match rate) | PENDING | |
 
 ## Multi-node
