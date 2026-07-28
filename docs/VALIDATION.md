@@ -58,7 +58,7 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 | TP=2 cross-node with a GDN hybrid (Qwen3.6-27B) | **FAIL** | Wrong output on first request ("2+2=" -> "5"), then `RPC call to sample_tokens timed out` -> engine dead on the first capture request. Same signature as the prior repo's unsolved hang — whose "dense control" was actually ALSO a GDN hybrid, so its architecture-eliminated conclusion is corrected here: **recurrent-state hybrids (GDN/Mamba) must not be deployed TP=2 cross-node on this stack**; standard-attention models are fine. |
 | RDMA (not TCP) transport in vLLM containers | **PASS** | flagship bring-up with NCCL_DEBUG=INFO: `NET/IB : Using [0]rocep1s0f0:1/RoCE`, channels `via NET/IB/0` |
 | DeepSeek-V4-Flash TP=2 serves + concurrency | IN PROGRESS | healthy, correct smoke output; battery running |
-| Node-loss behavior documented | PENDING | expected: no recovery; verify once |
+| Node-loss behavior documented | **DONE** | Worker killed mid-request on the flagship: (1) in-flight requests hang with no error — clients need their own timeouts; (2) **`/health` keeps returning OK for ~5 minutes** after the worker is gone (until the 300 s execute-model RPC timeout fires) — do not monitor 2-node deployments on `/health` alone, probe with a real 1-token completion; (3) at ~5 min the engine dies (`RPC call to sample_tokens timed out`) and `/health` starts failing, but the container stays "Up" (API process alive, engine dead); (4) **no recovery, ever** — remedy is `cluster/stop-cluster.sh` + relaunch, as predicted. |
 
 ## Long context
 
