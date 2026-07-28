@@ -131,3 +131,22 @@ upstream-lineage fix is replacing the sparse-attention kernel: PR #47629
 all working community recipes build from). Both open against main, neither
 merged, no maintainer review as of 2026-07-28. See git history for the
 probe commands. `nvfp4_ds_mla` KV (1M ctx) remains fork-only upstream.
+
+## Upstream-lineage DeepSeek-V4 (branch upstream-dsv4-sm121, image vllm-gb10:pr41834-d64074e6f)
+
+Source build of vLLM PR #41834 head (1h40m build, recipe in BUILD.md). All
+runs TP=2 cross-node, CUDA graphs ON:
+
+| Gate | Result |
+|---|---|
+| Stock-killer stress (30 captures, 8 concurrent, fresh-prefill bench) | **PASS — all three** (stock v0.26.0 died at each) |
+| Throughput | **27.15 tok/s c=1, 105.5 agg c=8 — parity with sparkrun** (27.02 / 109) |
+| gsm8k | 0.945 strict (sparkrun 0.970; within noise at n=200, note upstream #49927 reports V4 distribution shifts) |
+| Needle @124K | 3/3 PASS |
+| Output vs sparkrun | benign boundary flips only (both coherent, facts identical) |
+| **DSpark k=5 spec decode** | **81% acceptance (4.05/5 per round — better than the fork's ~55%) but -47% tok/s (14.3 vs 27.15), identical with draft CUDA graphs on or off** (`VLLM_DSPARK_FORWARD_CUDAGRAPH[_ALLOW_TP]=1` verified engaged in logs). Bottleneck is the verify/rejection round-trip + fixed cross-node latency, not the draft forward. The fork's win comes from cross-node draft optimizations (local argmax, markov weight replication) upstream has not absorbed. **Ships OFF.** |
+
+Bottom line: the upstream-track image matches the sparkrun binary for the
+base flagship and can replace it after a 150-min soak; DSpark stays off on
+both stacks pending upstream work. Missing-for-DSpark is now precisely
+scoped: port the fork's draft-path cross-node optimizations onto PR #41834.
