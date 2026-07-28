@@ -74,7 +74,8 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 | Qwen3.6-27B-FP8 | ngram k=4 (FLASH_ATTN) | ~26% (233/904) | n/a | **NO — corrupted**: 3/30 exact, 8 hard disagreements, one output devolves into unrelated garbled text (replacement char + off-topic content). Likely GDN-state rollback breakage under spec verify on sm_121 | **FAIL — do not enable** |
 | Qwen3.6-27B-FP8 | ngram k=4 (TRITON_ATTN workaround) | — | n/a | **NO** — still corrupted (2/30 exact, 5 hard disagreements, delta 1.26). Not attention-backend-specific; the GDN hybrid + spec-verify path itself is broken on this stack | **FAIL — ngram unusable on GDN hybrids; SPEC_DECODE_ARGS removed from conf** |
 | Laguna-S-2.1-NVFP4 | dflash k=15 (ships in gen_config) | | | | PENDING |
-| Nemotron-3-Nano/Super | mtp k=1 | | | | PENDING |
+| Nemotron-3-Super | mtp k=1 (draft moe_backend=triton — global marlin pin breaks the unquantized MTP head) | **97.5%** (2536/2602) | **12.75 vs 16.20 c=1 (-21%); 9.29 vs 11.98 c=4 (-22%)** | Yes — FP-EQUIVALENT, 0 hard disagreements | **LOSSLESS BUT SLOWER — stays off.** The BF16 MTP layer (~5.5 GB) costs more bandwidth per draft than a 97% acceptance saves at k=1 on a 240 GB/s machine |
+| Nemotron-3-Nano | mtp k=1 | | | | not run — same head design as Super at 6x smaller base model; expected worse ratio, low priority |
 | DeepSeek-V4-Flash | mtp k=2 (prior prod) | | | | PENDING |
 
 ## Soaks
