@@ -65,7 +65,7 @@ There is no hardware or software drift between the nodes.
 | Model | Method | Acceptance | tok/s spec vs base | Output unchanged? | Verdict |
 |---|---|---|---|---|---|
 | Qwen3.6-27B-FP8 | ngram k=4 (FLASH_ATTN) | ~26% (233/904) | n/a | **NO — corrupted**: 3/30 exact, 8 hard disagreements, one output devolves into unrelated garbled text (replacement char + off-topic content). Likely GDN-state rollback breakage under spec verify on sm_121 | **FAIL — do not enable** |
-| Qwen3.6-27B-FP8 | ngram k=4 (TRITON_ATTN workaround) | | | | testing |
+| Qwen3.6-27B-FP8 | ngram k=4 (TRITON_ATTN workaround) | — | n/a | **NO** — still corrupted (2/30 exact, 5 hard disagreements, delta 1.26). Not attention-backend-specific; the GDN hybrid + spec-verify path itself is broken on this stack | **FAIL — ngram unusable on GDN hybrids; SPEC_DECODE_ARGS removed from conf** |
 | Laguna-S-2.1-NVFP4 | dflash k=15 (ships in gen_config) | | | | PENDING |
 | Nemotron-3-Nano/Super | mtp k=1 | | | | PENDING |
 | DeepSeek-V4-Flash | mtp k=2 (prior prod) | | | | PENDING |
