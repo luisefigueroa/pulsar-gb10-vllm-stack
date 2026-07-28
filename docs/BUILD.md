@@ -93,6 +93,6 @@ docker save vllm-gb10:pr41834-d64074e6f | ssh 10.100.120.2 docker load
 
 `torch_cuda_arch_list='12.0'` compiles the 12.0f family target (covers
 sm_121 natively under CUDA 13.0.3) plus the 12.0a/12.1a quant-kernel gates.
-Build time on the 20-core Grace: recorded below after first build.
+Build time on the 20-core Grace: **1 h 40 min** (max_jobs=10, single-arch).
 Validation gates for this image: models/deepseek-v4-flash-upstream.conf and
 the DSpark A/B — this image earns nothing until those pass.
