@@ -98,7 +98,7 @@ only where a config carries validated args (currently: none).
 | Config | Duration | Errors | Mem growth | Thermal | Status |
 |---|---|---|---|---|---|
 | Flagship 2-node (deepseek-v4-flash) | **150 min @ c=8, 3403 requests** | **0** (and 0 NCCL timeouts) | none (decile-averaged availability flat on both nodes; raw values fluctuate ~2 GiB with page cache) | node1 max 79 C, node2 steady 66 C, SM >=2392 both (no throttle) | **PASS** — cluster still healthy at end |
-| Primary 1-node (laguna) | 150 min @ c=4 | | | | RUNNING |
+| Primary 1-node (laguna) | **150 min @ c=4, 1873 requests** | **0** | none (-0.5 decile drift = availability slightly up) | 82 C max, SM >=2379 (no throttle) | **PASS** — server still healthy at end |
 | qwen3.6-27b-fp8 smoke | 20 min @ c=8 | **0** | -0.09 GiB (noise) | 80 C max, SM >=2353 (no throttle) | **PASS** |
 | nemotron-3-nano smoke | 15 min @ c=16 (1120 requests) | **0** | +0.03 GiB | 70 C max, SM >=2392 | **PASS** (+ needle 3/3 @124K after soak) |
 | nemotron-3-super smoke | 20 min @ c=16 | | | | RUNNING |

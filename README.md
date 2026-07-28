@@ -48,7 +48,23 @@ Priority order everywhere: **stability > accuracy > throughput > latency.**
 Speculative decode is off by default per model until proven faster AND
 lossless on this hardware (`--spec-decode` to opt in where validated).
 
-## Status
+## Status (2026-07-28)
 
-See docs/VALIDATION.md for the ledger of what is actually tested vs merely
-configured. Model support: docs/MODELS.md.
+Everything in PROMPT.md's validation section has run; docs/VALIDATION.md is
+the ledger with numbers and raw-evidence pointers. Highlights:
+
+- 5 models fully validated (canary, Qwen3.6-27B-FP8, Nemotron Nano + Super
+  NVFP4, Laguna NVFP4) + the 2-node flagship DeepSeek-V4-Flash
+  (27 tok/s c=1, gsm8k 0.97, needle 3/3 @447K).
+- Soaks: flagship 2-node 150 min / 3403 req / 0 errors; Laguna 150 min /
+  1873 req / 0 errors; smoke-soaks clean on the rest. No leaks, no NCCL
+  timeouts, no thermal throttling.
+- Correctness: FP-equivalent vs HF transformers; FP8 quantization justified
+  vs a BF16 control (gsm8k parity); bit-exact cross-node reproducibility
+  available via VLLM_BATCH_INVARIANT=1 (standard-attention models).
+- Spec decode: measured off — every method was slower or broken on GB10
+  (numbers in the ledger).
+- Failures found and documented, not papered over: GDN-hybrid ngram
+  corruption, cross-node CUDA-graph hang on the official image (root cause
+  of prior repo's unsolved bug; --enforce-eager is the workaround), /health
+  lying after node loss, and the eval-tokenizer false-low trap.
