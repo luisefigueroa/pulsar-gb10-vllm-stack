@@ -77,7 +77,18 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 | Laguna-S-2.1-NVFP4 | dflash k=15 (the checkpoint's own gen_config wiring, NVFP4-matched draft) | 21.3% (4799/22530; 3.2 tok/round) | **9.47 vs 19.48 c=1 (-51%)**; worse at c=2/4 too | 1 hard disagreement (delta 0.67) on top of this model's baseline near-tie noise | **FAIL — off.** Upstream v0.26.0's DFlash path loses half the throughput; the GB10-tuned DFlash lives in community forks (aeon/DSpark), not the pinned mainline image |
 | Nemotron-3-Super | mtp k=1 (draft moe_backend=triton — global marlin pin breaks the unquantized MTP head) | **97.5%** (2536/2602) | **12.75 vs 16.20 c=1 (-21%); 9.29 vs 11.98 c=4 (-22%)** | Yes — FP-EQUIVALENT, 0 hard disagreements | **LOSSLESS BUT SLOWER — stays off.** The BF16 MTP layer (~5.5 GB) costs more bandwidth per draft than a 97% acceptance saves at k=1 on a 240 GB/s machine |
 | Nemotron-3-Nano | mtp k=1 | | | | not run — same head design as Super at 6x smaller base model; expected worse ratio, low priority |
-| DeepSeek-V4-Flash | mtp k=2 (prior prod) | | | | PENDING |
+| any model | EAGLE-3 | | | | **N/A — no trained EAGLE-3 heads exist locally for any target model** (checked catalog + HF caches); PROMPT scoping says only run where heads exist |
+
+**Spec-decode bottom line for GB10 on the pinned stacks:** every method that
+ran was lossless (FP-equivalent) except ngram-on-GDN (corrupted), and every
+one was SLOWER: Super MTP -21%, DeepSeek MTP -36%, Laguna DFlash -51%.
+The intuition "decode is bandwidth-bound so speculation should win" fails
+here because the draft work is also bandwidth-bound on the same LPDDR5X, and
+2-node verify adds cross-node syncs. The only known-win on this hardware is
+the specialized DSpark fork for DeepSeek (prior art, different image, own
+maintenance burden). Everything ships spec-decode OFF; `--spec-decode` exists
+only where a config carries validated args (currently: none).
+| DeepSeek-V4-Flash 2-node | mtp k=2 (the prior production flag set) | 69.3% (3619/5222) | **17.34 vs 27.02 c=1 (-36%)**; worse at c=2/4 | Yes — FP-EQUIVALENT | **LOSSLESS BUT SLOWER — stays off.** Draft layer + extra cross-node syncs per verify step cost more than 69% acceptance at k=2 returns. (The ~50 tok/s prior-art number came from the specialized DSpark fork/stack, not this image's generic MTP path.) |
 
 ## Soaks
 
