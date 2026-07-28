@@ -8,13 +8,18 @@ number there or a benchmark in results/.
 GB10 decode is **memory-bandwidth-bound at ~240 GB/s**. Estimate any model's
 single-stream ceiling as `240 / active-GB-per-token`:
 
-| Model | Active GB/tok | Ceiling | Measured (c=1) |
-|---|---|---|---|
-| Qwen3.6-27B-FP8 (hybrid GDN, no MoE) | ~28 | ~8.5 tok/s | **8.0** (results/bench-qwen27b-fp8.json) |
-| Laguna-S-2.1-NVFP4 (A8B MoE) | ~9.8 | ~24 tok/s | **19.5** (79% of roofline) |
-| Nemotron-3-Nano NVFP4 (A3B) | ~3.3 | ~72 tok/s | **61.9** (86%) |
-| Nemotron-3-Super NVFP4 (A12B) | ~12.8 | ~19 tok/s | 16.5 prior art |
-| DeepSeek-V4-Flash 2-node TP=2 | ~5.7/node | ~40 tok/s | pending |
+| Model | Active GB/tok | Ceiling | Measured c=1 | Aggregate peak |
+|---|---|---|---|---|
+| Qwen3.6-27B-FP8 (hybrid GDN, no MoE) | ~28 | ~8.5 tok/s | **8.0 (94%)** | 93 @ c=16 |
+| Laguna-S-2.1-NVFP4 (A8B MoE) | ~9.8 | ~24 tok/s | **19.5 (79%)** | 66 @ c=4 |
+| Nemotron-3-Nano NVFP4 (A3B) | ~3.3 | ~72 tok/s | **61.9 (86%)** | 399 @ c=16 |
+| Nemotron-3-Super NVFP4 (A12B) | ~12.8 | ~19 tok/s | **16.2 (85%)** | 113 @ c=32 |
+| DeepSeek-V4-Flash 2-node TP=2 | ~5.7/node | ~40 | **27.0 (68%)** | 109 @ c=8 |
+
+(raw sweeps in results/bench-*.json; the roofline model predicts within
+6-21% everywhere — active-bytes arithmetic is a reliable planning tool on
+this hardware. The flagship's larger gap is cross-node all-reduce time,
+consistent with the measured ~2.3 ms/token comms budget.)
 
 Compute is comparatively plentiful: prefill runs fine, and batching scales
 aggregate throughput well past the single-stream ceiling (concurrency sweeps
@@ -72,11 +77,25 @@ validated with; see the comment in `models/deepseek-v4-flash.conf`.
   (Triton JITs per batch shape; cold numbers are ~100x artifacts).
   validate/bench_serve.py does this automatically.
 
-## Speculative decoding
+## Speculative decoding: measured, and the answer is no
 
-Off by default everywhere; `--spec-decode` opt-in per model where
-SPEC_DECODE_ARGS exist. Decision record per model in docs/VALIDATION.md
-(acceptance rate, tok/s delta, output-quality check). n-gram costs no
-memory and helps repetitive/agentic workloads; MTP needs the checkpoint's
-head; DFlash needs the shipped draft (Laguna). 2-node spec decode adds a
-cross-node sync per verify step — a 1-node win does NOT imply a 2-node win.
+Every method was benchmarked (docs/VALIDATION.md has the full table):
+ngram corrupted output on the GDN hybrid; Super MTP was lossless at 97.5%
+acceptance yet **-21%** tok/s; DeepSeek MTP lossless at 69% yet **-36%**;
+Laguna DFlash **-51%** at 21% acceptance. The intuition "decode is
+bandwidth-bound so speculation must win" fails on GB10 because the draft
+computation competes for the same LPDDR5X bandwidth, and 2-node verify adds
+cross-node syncs. Nothing ships with spec decode enabled; no config carries
+SPEC_DECODE_ARGS. If you want it back: the only known win on this hardware
+is the DSpark fork for DeepSeek (prior art on these boxes, separate image
+and maintenance burden — see the Keys-Concurrency repo in ~/Github).
+
+## Determinism knobs
+
+- Bit-exact cross-node/cross-boot greedy: `VLLM_BATCH_INVARIANT=1`
+  (verified 30/30 across nodes) — standard-attention models only; GDN/Mamba
+  hybrids refuse to start with it. Costs unmeasured here; enable for
+  reproducibility work, not production.
+- Default configs are FP-equivalent across boots/nodes (near-tie argmax
+  flips only) — per-boot compile-time kernel selection is nondeterministic.
+  Within one boot, FLASH_ATTN-path models are exactly reproducible.

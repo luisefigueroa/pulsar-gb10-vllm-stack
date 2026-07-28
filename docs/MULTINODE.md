@@ -65,6 +65,26 @@ extrapolated.
 Cross-node TP=2 vs PP=2 is re-decided per model in models/*.conf, not
 globally; nothing 2-node ships untested.
 
+## Which images can actually do 2-node (measured 2026-07-28)
+
+| Stack | Cross-node TP=2 result |
+|---|---|
+| sparkrun image (DeepSeek-V4) | **STABLE with CUDA graphs on** — full battery + 150-min soak passed |
+| official v0.26.0, tiny BF16 canary | works, incl. concurrency |
+| official v0.26.0, real models, graphs on | **hangs within first requests** (27B GDN: wrong output then `sample_tokens` RPC timeout; Laguna: `shm_broadcast acquire_read` timeout) |
+| official v0.26.0, `--enforce-eager` | works (Laguna: captures + concurrency + gsm8k parity) at ~2x decode cost |
+
+Root cause of the stock-image hangs is the CUDA-graph path cross-node
+(consistent with upstream vllm#46253) — this also resolves the prior repo's
+multi-day unsolved concurrency hang, whose not-yet-tested list included
+exactly this experiment. Practical rules:
+- DeepSeek-V4-Flash: use the sparkrun image (pinned in its conf). Fast AND stable.
+- Anything else 2-node on the official image: add `--enforce-eager` and
+  accept ~2x slower decode — or don't run it 2-node (everything else in the
+  matrix fits one node anyway, where graphs are stable).
+- Never ship a 2-node config without a soak; `/health` cannot be trusted
+  during partial failures (see node-loss finding in VALIDATION.md).
+
 ## Operational notes
 
 - Start order matters only in that the worker must be reachable when the

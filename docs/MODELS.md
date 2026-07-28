@@ -16,7 +16,8 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 claimed (needle pending) | MTP (opt-in, unvalidated) | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP validated lossless but **-21% -> off** | **tested** — 16.2 tok/s c=1, 113 agg c=32, IDENTICAL determinism, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K) | DFlash **failed (-51%) -> disabled** | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
-| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash | FP8+FP4 experts | 160 GB | **2 / TP=2** | 500,000 validated prior; 1M config | MTP k=2 (opt-in) | untested here |
+| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash | FP8+FP4 experts | 160 GB | **2 / TP=2** | **447K tested** (needle 3/3; 500K configured) | MTP measured -36% -> off | **tested** — 27 tok/s c=1, 109 agg c=8, gsm8k 0.97, soak see VALIDATION |
+| `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | parity/measurement config; **requires --enforce-eager** (VALIDATION.md), prefer 1-node |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
 | (candidate) | Qwen3.6-35B-A3B MXFP4/FP8 | MXFP4 | 21 GB | 1 | — | MTP head exists | not configured |
 | (candidate) | cyankiwi/GLM-4.7-Flash-AWQ-4bit (node1) | AWQ int4 | ~18 GB | 1 | 202,752 (prior sparkrun profile) | — | not configured |
