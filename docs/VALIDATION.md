@@ -30,7 +30,8 @@ Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
 |---|---|---|
 | Same node, same config, run-to-run (27B FP8, greedy, 30 prompts) | **PASS** | 30/30 exact text, mean prefix 1.0000, max logprob delta 0.0000 |
 | Same config run-to-run on node B (Qwen3-1.7B) | **PASS** | 30/30 exact, delta 0.0000 |
-| Node A vs node B, same image+config (27B FP8) | PENDING | node B loading |
+| Same node across time + heavy traffic (27B FP8, runA vs runC) | **PASS** | 30/30 IDENTICAL — prefix cache/warmup does not perturb greedy output |
+| Node A vs node B, same image+config (27B FP8) | **INVESTIGATING** | 12/30 exact (all near-tie flips, max matched-prefix logprob delta 0.43). Weight shard md5 + config identical across nodes; same image digest; same driver. Not fixed by `--no-enable-flashinfer-autotune` (13/30). Eager-mode isolation running. PROMPT treats this as a bug until root-caused. |
 | 1-node vs 2-node same model (TP reduction order may differ; gate on match rate) | PENDING | |
 
 ## Multi-node
