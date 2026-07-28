@@ -49,14 +49,39 @@ def main():
         flag = "" if rate == 1.0 else f"  <-- diverges at token {matched}"
         print(f"[{i:02d}] prefix={rate:5.3f} maxdlp={d:6.3f} {x['prompt'][:38]!r}{flag}")
 
+    # classify each divergence: near-tie (both sides' chosen-token logprobs
+    # close => argmax flip on FP noise) vs real disagreement
+    hard = []
+    for i, (x, y) in enumerate(zip(A, B)):
+        ta, tb = x["tokens"], y["tokens"]
+        n_ = min(len(ta), len(tb)); j = 0
+        while j < n_ and ta[j] == tb[j]:
+            j += 1
+        if j < n_:
+            la = x["logprobs"][j] if j < len(x["logprobs"]) else None
+            lb = y["logprobs"][j] if j < len(y["logprobs"]) else None
+            margin = abs(la - lb) if la is not None and lb is not None else 99.0
+            print(f"  div [{i:02d}] @tok{j}: {args.label_a}={ta[j]!r}({la:.3f}) "
+                  f"{args.label_b}={tb[j]!r}({lb:.3f}) delta={margin:.3f}")
+            if margin > 0.5:
+                hard.append(i)
+
     n = len(A)
     print(f"\n{args.label_a} vs {args.label_b}: {n} prompts")
     print(f"  exact-text matches : {exact}/{n}")
     print(f"  mean prefix match  : {sum(rates)/n:.4f}")
     print(f"  min  prefix match  : {min(rates):.4f}")
     print(f"  max logprob delta  : {max(lp_deltas):.4f} (over matched prefixes)")
-    # exit nonzero if wildly off, for scripting
-    sys.exit(0 if sum(rates)/n >= 0.90 else 1)
+    if exact == n:
+        print("  verdict: IDENTICAL")
+        sys.exit(0)
+    elif not hard and max(lp_deltas) < 0.5:
+        print("  verdict: FP-EQUIVALENT (all divergences are near-ties; "
+              "expected across kernels/parallelism)")
+        sys.exit(0)
+    else:
+        print(f"  verdict: DIVERGENT ({len(hard)} hard disagreements) — investigate")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -52,8 +52,9 @@ def main():
                 if nxt == tok.eos_token_id:
                     break
         text = tok.decode(toks)
-        # tokens as strings, matching vLLM's logprobs.tokens representation
-        tok_strs = [tok.convert_ids_to_tokens(t) for t in toks]
+        # tokens as per-token decoded strings, matching vLLM's
+        # completions.logprobs.tokens representation (' Paris', not 'ĠParis')
+        tok_strs = [tok.decode([t]) for t in toks]
         results.append({"prompt": p, "text": text, "tokens": tok_strs, "logprobs": lps,
                         "finish_reason": "stop" if toks and toks[-1] == tok.eos_token_id else "length"})
         print(f"  [{i+1}/{len(prompts)}] {p[:40]!r} -> {text[:40]!r}", file=sys.stderr)

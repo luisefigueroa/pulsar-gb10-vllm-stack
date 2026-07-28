@@ -1,0 +1,76 @@
+# Validation ledger
+
+Rules (PROMPT.md): nothing is "done" until it passes here. Gates are
+token-match rate + logprob closeness (not bit-exactness) across kernels /
+parallelism; bit-exactness IS required run-to-run on identical config.
+Raw artifacts: `results/`.
+
+Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
+
+## Build & startup
+
+| Check | Status | Evidence |
+|---|---|---|
+| Overlay image builds | PASS | `vllm-gb10:v0.26.0`, build ~2 s on cached base (docs/BUILD.md) |
+| Container starts clean, node 1 | PASS | qwen3-1.7b healthy 140 s; qwen3.6-27b-fp8 healthy 510 s cold |
+| Container starts clean, node 2 | PASS | 2-node worker (headless) startup during canary run |
+
+## Correctness vs reference
+
+| Model | Comparison | Status | Numbers |
+|---|---|---|---|
+| Qwen3-1.7B BF16 | vLLM vs HF transformers greedy, 30 prompts x 64 tok | **PASS** | 18/30 exact text; all 12 divergences are near-ties (chosen-token logprob delta 0.03-0.30 at flip point); max logprob delta 0.141 on matched prefixes; verdict FP-EQUIVALENT (`results/qwen1.7b-*`) |
+| Qwen3.6-27B-FP8 | gsm8k 5-shot, 200 samples via lm-eval | **RECORDED** | 0.630 flexible / 0.615 strict (±0.034). Absolute value reflects raw-completion prompting of a reasoning-tuned model; used as the FP8 baseline for quant-level comparison (BF16 control pending) |
+| Laguna-S-2.1-NVFP4 | gsm8k + greedy spot-check | PENDING | |
+| DeepSeek-V4-Flash | gsm8k + greedy spot-check (2-node) | PENDING | |
+
+## Determinism
+
+| Check | Status | Numbers |
+|---|---|---|
+| Same node, same config, run-to-run (27B FP8, greedy, 30 prompts) | **PASS** | 30/30 exact text, mean prefix 1.0000, max logprob delta 0.0000 |
+| Same config run-to-run on node B (Qwen3-1.7B) | **PASS** | 30/30 exact, delta 0.0000 |
+| Node A vs node B, same image+config (27B FP8) | PENDING | node B loading |
+| 1-node vs 2-node same model (TP reduction order may differ; gate on match rate) | PENDING | |
+
+## Multi-node
+
+| Check | Status | Numbers |
+|---|---|---|
+| Native --nnodes TP=2 cross-node serves | PASS | Qwen3-1.7B canary, correct greedy output |
+| Concurrency >= 2 on 2-node (prior-stack killer) | PASS | 8/8 concurrent correct on canary |
+| RDMA (not TCP) transport in vLLM containers | PENDING | verified for bench containers; capture NCCL_DEBUG=INFO on flagship bring-up |
+| DeepSeek-V4-Flash TP=2 serves + concurrency | PENDING | |
+| Node-loss behavior documented | PENDING | expected: no recovery; verify once |
+
+## Long context
+
+| Model | Claimed | Needle result | Status |
+|---|---|---|---|
+| Qwen3.6-27B-FP8 | 131,072 (conf) | | PENDING |
+| Laguna-S-2.1-NVFP4 | 262,144 (config max) | | PENDING |
+| DeepSeek-V4-Flash | 500,000 (prior prod value) | | PENDING |
+
+## Speculative decoding (all off by default)
+
+| Model | Method | Acceptance | tok/s spec vs base | Output unchanged? | Verdict |
+|---|---|---|---|---|---|
+| Qwen3.6-27B-FP8 | ngram | | | | PENDING |
+| Laguna-S-2.1-NVFP4 | dflash k=15 (ships in gen_config) | | | | PENDING |
+| Nemotron-3-Nano/Super | mtp k=1 | | | | PENDING |
+| DeepSeek-V4-Flash | mtp k=2 (prior prod) | | | | PENDING |
+
+## Soaks
+
+| Config | Duration | Errors | Mem growth | Thermal | Status |
+|---|---|---|---|---|---|
+| Flagship 2-node (deepseek-v4-flash) | multi-hour target | | | | PENDING |
+| Primary 1-node | multi-hour target | | | | PENDING |
+| Rest of matrix | 15-30 min smoke each | | | | PENDING |
+
+## Failures & findings log
+
+- 2026-07-27: HF caches missing `refs/main` broke offline loading twice
+  (TROUBLESHOOTING.md#localentrynotfounderror). Fixed cluster-wide.
+- 2026-07-27: node 2 has no internet route; weights/images must be staged
+  from node 1 (TROUBLESHOOTING.md).
