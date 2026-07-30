@@ -1,4 +1,7 @@
-# vLLM on 2x NVIDIA DGX Spark (GB10) — serving stack
+# SparkForge — vLLM on 2x NVIDIA DGX Spark (GB10)
+
+*Leading-edge hardware, tempered by measurement: nothing ships here until
+it has earned its status on this cluster.*
 
 Production serving stack for this two-node Grace-Blackwell GB10 cluster
 (dgx-spark-1 head + dgx-spark-2 worker; 121 GiB unified LPDDR5X each,
