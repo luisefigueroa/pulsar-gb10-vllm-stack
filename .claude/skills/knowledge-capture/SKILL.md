@@ -36,6 +36,7 @@ Capture when any of these just happened. Each maps to a `type`:
 | Eliminated a hypothesis | update the relevant `finding` |
 | Found version-specific behaviour | `compatibility-fact` |
 | Pinned a new image/version | `stack` |
+| **Built ANY image, even a failed experiment** | `stack` — record what it was for and what happened; unlabeled images on disk are archaeology for the next agent |
 | **Retracted or corrected a claim** | edit the concept — see *Retraction* below |
 
 The two most-skipped are the bolded ones. Negative results feel like non-events
@@ -54,7 +55,10 @@ KB_AGENT=<your-model-or-name> kb.py new <type> <kebab-slug> \
 
 **2. Fill the TODOs.** Requirements that `validate` enforces:
 
-- `description` — one sentence; it is what appears in every index
+- `description` — one sentence; it is what appears in every index.
+  **It must carry the verdict + the number + the binding** ("DSpark k=5 on
+  PR-41834: 81% acceptance, -47% tok/s — off"), because the index line is
+  all most readers ever see, and verdict-free descriptions age silently
 - `tags` — the facets someone will search by: software (`vllm`, `ray`, `cuda`),
   subsystem (`kernels`, `networking`, `memory`), hardware (`gb10`, `sm_121`),
   concern (`correctness`, `stability`)
@@ -128,6 +132,20 @@ Re-test, then append to `verified` and add the new stack to `applies_to.stacks`.
 **Carrying a claim forward without re-testing means downgrading it to `assumed`.**
 Silent carry-forward is how a knowledge base becomes a liability.
 
+When you ADD a stack that supersedes another, run `todo` against the old one
+immediately and paste the triage into the new stack file as a carry-forward
+table (re-verified / downgraded / refuted). Three cu129-era facts silently
+failed to hold on cu130 — this ritual exists because of that.
+
+## Evidence lives in the bundle
+
+`sources` pointing at `~/...` or repo working trees rot (repos get re-run,
+moved, deleted). Copy raw output into `/evidence/<yyyy-mm-slug>/` with a short
+provenance README (repo + commit), and cite the bundle-relative path.
+`kb.py validate` errors on dangling bundle paths and warns on host paths.
+Capability-level questions ("what do we know about spec decode here?") are
+answered by `_views/by-capability.md`.
+
 ## Quality bar
 
 Before finishing, check your entry against these:
@@ -135,6 +153,10 @@ Before finishing, check your entry against these:
 - Would this have saved *you* time this session if it already existed?
 - Does a reader learn *why*, not just *what*?
 - Is the error text **literal and complete** (signatures are matched by search)?
+- If the same error text has **multiple causes**, the signature body must be a
+  decision tree with a discriminating test per branch (`sample_tokens RPC
+  timeout` has at least three causes on this cluster) — a single-diagnosis
+  signature for a multi-cause error actively misleads
 - Are the numbers accompanied by the conditions that produced them — warmup
   policy, concurrency, versions?
 - If `measured`, can someone follow `sources` to the raw output?
