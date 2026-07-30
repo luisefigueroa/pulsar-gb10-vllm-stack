@@ -130,7 +130,7 @@ no leaks, no thermal throttling anywhere).
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench (per-level warmup), soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
-| `docs/` | HARDWARE, MODELS, MULTINODE, BUILD, TUNING, VALIDATION, TROUBLESHOOTING |
+| `docs/` | HARDWARE, MODELS, **RECIPES** (flag-exact), MULTINODE, BUILD, TUNING, VALIDATION, **REVALIDATE** (pin-bump runbook), **OPERATIONS** (on-call runbook), TROUBLESHOOTING |
 | `.claude/skills/knowledge-capture` | capture discipline for the shared KB |
 
 Durable cross-repo knowledge lives in the shared OKF bundle at
