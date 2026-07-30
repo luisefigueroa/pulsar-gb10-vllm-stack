@@ -32,7 +32,8 @@ It does not, as of 2026-07-27:
 | Image | Pin | Role |
 |---|---|---|
 | `vllm/vllm-openai:v0.26.0` | `sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52` | mainline: every model except DeepSeek-V4 |
-| `aidendle94/sparkrun-vllm-ds4-gb10:production-ready` | image id `b2eb4e6ee5cc` (vLLM `0.21.1rc1.dev339+g1967a5627bc3`, torch 2.11.0+cu130) | DeepSeek-V4-Flash only: carries the DSA/sparse-attention support for sm_121 that upstream lacks (vllm#45317) |
+| `vllm-gb10:pr41834-d64074e6f` | local source build, vLLM PR #41834 head `d64074e6f` (see build section below) | **DeepSeek-V4-Flash flagship (promoted 2026-07-30)** |
+| `aidendle94/sparkrun-vllm-ds4-gb10:production-ready` | image id `b2eb4e6ee5cc` (vLLM `0.21.1rc1.dev339+g1967a5627bc3`, torch 2.11.0+cu130) | fallback for DeepSeek-V4-Flash (superseded by the PR-41834 build) |
 
 Digest-pin discipline: tags are mutable; `Dockerfile` FROMs the digest. When
 bumping, re-run the validation suite (docs/VALIDATION.md) before changing the

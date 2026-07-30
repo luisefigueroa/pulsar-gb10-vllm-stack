@@ -16,7 +16,8 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 claimed (needle pending) | MTP (opt-in, unvalidated) | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP validated lossless but **-21% -> off** | **tested** — 16.2 tok/s c=1, 113 agg c=32, IDENTICAL determinism, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K) | DFlash **failed (-51%) -> disabled** | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
-| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash | FP8+FP4 experts | 160 GB | **2 / TP=2** | **447K tested** (needle 3/3; 500K configured) | MTP measured -36% -> off | **tested** — 27 tok/s c=1, 109 agg c=8, gsm8k 0.97, soak see VALIDATION |
+| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash on **upstream-lineage image** (vllm-gb10:pr41834, source-built PR #41834) | FP8+FP4 experts | 160 GB | **2 / TP=2** | **447K tested** (needle 3/3; 500K configured) | dspark/MTP measured slower -> off | **tested+soaked** — 27.15 tok/s c=1, 105 agg c=8, gsm8k 0.945, 150-min soak 0 errors |
+| `deepseek-v4-flash-sparkrun` | same model, community sparkrun binary | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested | MTP -36% -> off | fallback (fully validated; superseded) |
 | `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | parity/measurement config; **requires --enforce-eager** (VALIDATION.md), prefer 1-node |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
 | (candidate) | Qwen3.6-35B-A3B MXFP4/FP8 | MXFP4 | 21 GB | 1 | — | MTP head exists | not configured |
@@ -55,10 +56,10 @@ headroom is not a deployment.
   nodes (160 GB), NOT in the NFS catalog (catalog has V4-Pro only). It is the
   cluster's 2-node flagship. The `-DSpark` variant (167 GB, also cached) adds
   the DSpark draft for speculative decoding.
-  CAVEAT: upstream vLLM has no working sparse-attention (DSA) backend on
-  sm_121 (vllm#45317) — V4 runs on the community `sparkrun` image (pinned in
-  `models/deepseek-v4-flash.conf`), which is what production on these boxes
-  has used since June.
+  Since 2026-07-30 the flagship runs on the upstream-lineage source build
+  of vLLM PR #41834 (stock release images remain non-viable: kernel-level
+  livelock, VALIDATION.md); the community sparkrun binary is the documented
+  fallback (`deepseek-v4-flash-sparkrun.conf`).
 - **Qwen**: newest local are Qwen3.6-27B (hybrid GDN; FP8 and NVFP4 variants
   cached with full weights — the "BF16" cache entry was an empty stub,
   downloaded fresh 2026-07-28 for the quant-control eval) and

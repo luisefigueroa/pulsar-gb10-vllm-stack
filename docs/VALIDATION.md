@@ -60,7 +60,7 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 | TP=2 cross-node, Laguna NVFP4 (standard attention), CUDA graphs on | **FAIL** | Healthy, correct smoke output, then fatal `shm_broadcast acquire_read TimeoutError` during the second request. So the stock-image hang is NOT hybrid-specific after all. |
 | TP=2 cross-node, Laguna NVFP4, `--enforce-eager` | **PASS (workaround)** | Full 30-prompt capture + 8 concurrent requests, stays healthy. **Root cause of the stock-image cross-node hangs: the CUDA-graph path** (consistent with upstream vllm#46253 cross-node graph-capture IMA). The prior repo's multi-day unsolved hang is therefore two findings: eager was on their not-yet-tested list. Practical rule: on `vllm/vllm-openai:v0.26.0`, cross-node TP=2 requires `--enforce-eager` (~2x slower decode) — which is why the flagship uses the sparkrun image (graphs on, stable, full battery passed) instead. |
 | RDMA (not TCP) transport in vLLM containers | **PASS** | flagship bring-up with NCCL_DEBUG=INFO: `NET/IB : Using [0]rocep1s0f0:1/RoCE`, channels `via NET/IB/0` |
-| DeepSeek-V4-Flash TP=2 serves + concurrency | IN PROGRESS | healthy, correct smoke output; battery running |
+| DeepSeek-V4-Flash TP=2 serves + concurrency | **PASS** | full battery on sparkrun image; re-validated + soaked on the promoted PR-41834 image (see upstream section) |
 | Node-loss behavior documented | **DONE** | Worker killed mid-request on the flagship: (1) in-flight requests hang with no error — clients need their own timeouts; (2) **`/health` keeps returning OK for ~5 minutes** after the worker is gone (until the 300 s execute-model RPC timeout fires) — do not monitor 2-node deployments on `/health` alone, probe with a real 1-token completion; (3) at ~5 min the engine dies (`RPC call to sample_tokens timed out`) and `/health` starts failing, but the container stays "Up" (API process alive, engine dead); (4) **no recovery, ever** — remedy is `cluster/stop-cluster.sh` + relaunch, as predicted. |
 
 ## Long context
@@ -69,7 +69,7 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 |---|---|---|---|
 | Qwen3.6-27B-FP8 | 131,072 (conf) | 3/3 PASS at 121,138 prompt tokens (depths .05/.5/.95) | **PASS** |
 | Laguna-S-2.1-NVFP4 | 262,144 (config max) | 3/3 PASS at 260,907 prompt tokens (99.5% of max) | **PASS** |
-| DeepSeek-V4-Flash | 500,000 (prior prod value) | | PENDING |
+| DeepSeek-V4-Flash | 500,000 configured | 3/3 PASS at 447,237 tokens — on BOTH the sparkrun image (07-28) and the promoted PR-41834 image (07-30) | **PASS** |
 
 ## Speculative decoding (all off by default)
 
@@ -146,7 +146,16 @@ runs TP=2 cross-node, CUDA graphs ON:
 | Output vs sparkrun | benign boundary flips only (both coherent, facts identical) |
 | **DSpark k=5 spec decode** | **81% acceptance (4.05/5 per round — better than the fork's ~55%) but -47% tok/s (14.3 vs 27.15), identical with draft CUDA graphs on or off** (`VLLM_DSPARK_FORWARD_CUDAGRAPH[_ALLOW_TP]=1` verified engaged in logs). Bottleneck is the verify/rejection round-trip + fixed cross-node latency, not the draft forward. The fork's win comes from cross-node draft optimizations (local argmax, markov weight replication) upstream has not absorbed. **Ships OFF.** |
 
-Bottom line: the upstream-track image matches the sparkrun binary for the
-base flagship and can replace it after a 150-min soak; DSpark stays off on
-both stacks pending upstream work. Missing-for-DSpark is now precisely
-scoped: port the fork's draft-path cross-node optimizations onto PR #41834.
+**Promotion soak (2026-07-28/29): PASS.** 150 min @ c=8, **3318 requests, 0
+errors**, no leak signal (decile drift +0.78 GiB, page-cache territory), 81 C
+max, SM >=2385 (no throttle). Bonus endurance data: the cluster then stayed
+up and healthy for **27+ hours total** across idle and load
+(results/soak-dsv4-upstream-150min.json).
+
+**Needle @447,237 tokens at max-model-len 500000: 3/3 PASS (2026-07-30).**
+
+**PROMOTED 2026-07-30**: `models/deepseek-v4-flash.conf` now runs the
+upstream-lineage image; the sparkrun binary is demoted to
+`deepseek-v4-flash-sparkrun.conf` as documented fallback. DSpark stays off on both stacks pending
+upstream work — precisely scoped: port the fork's draft-path cross-node
+optimizations (local argmax, markov weight replication) onto PR #41834.
