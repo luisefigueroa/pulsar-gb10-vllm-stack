@@ -21,13 +21,20 @@ to a measured number there.
 - Node 2 has NO internet. Stage weights with rsync over 10.100.120.2, images
   with `docker save | ssh ... docker load`. Fix missing HF `refs/main` after
   manual cache surgery (TROUBLESHOOTING.md).
-- The two image pins live in `Dockerfile` (digest) and `.env.example`.
+- THREE image pins: `Dockerfile` (official v0.26.0 digest, mainline),
+  `vllm-gb10:pr41834-d64074e6f` (local source build of vLLM PR #41834 —
+  the DeepSeek-V4 flagship since 2026-07-30; recipe in docs/BUILD.md), and
+  the sparkrun fallback in `models/deepseek-v4-flash-sparkrun.conf`.
   After ANY pin bump: clear vLLM/Triton caches on both nodes and re-run
   the validation suite (validate/ + docs/VALIDATION.md gates).
 - Known landmines: GDN/Mamba hybrids must not run cross-node TP=2 on the
   official image; cross-node TP=2 on the official image needs
-  `--enforce-eager`; `/health` lies for ~5 min after a node loss; lm-eval
-  needs `tokenized_requests=False` for models with broken tokenizer regex.
+  `--enforce-eager`; DeepSeek-V4 on STOCK release images livelocks under
+  prefill load (that's why the flagship uses the PR-41834 build); `/health`
+  lies for ~5 min after a node loss; lm-eval needs
+  `tokenized_requests=False` for models with broken tokenizer regex; never
+  put a `pkill -f` in a compound command whose own cmdline matches the
+  pattern (it kills its own shell — bracket-trick the pattern instead).
 
 ## Layout
 
