@@ -254,3 +254,26 @@ drafter is now BUILT INTO the checkpoint (dspark_* config keys), so one
 167 GB artifact replaces the base+DSpark pair — simpler staging, single
 conf, and the separate -DSpark weights become retirable. No regressions
 anywhere. Flagship swap remains gated on the standard 150-min soak.
+
+## Inkling-Small-NVFP4 probe series (2026-07-31) — BLOCKED upstream
+
+Three boot walls, each root-caused via dummy-load probes on the PR-41834
+image (the only image with the Inkling NVFP4 loader, #49258):
+
+1. Global `--moe-backend marlin` rejected — the unquantized (excluded)
+   multimodal MoE modules hit the known marlin/unquantized signature.
+   RESOLVED: no global pin, auto selection (conf comment).
+2. `RuntimeError: cross-node TP is supported only on MNNVL fabric` — the
+   fused Lamport RS+sconv op refuses RoCE. RESOLVED: `LAMPORT_RS_SCONV=0`
+   selects the standard fallback (lamport.py:750).
+3. `AssertionError: Paged KV not supported on SM 12.0 in this PR`
+   (vllm_flash_attn/cute/interface.py) — Inkling's rel-position-bias
+   attention is implemented ONLY via the FA4/CuTe score-mod kernel, called
+   directly (nvidia/attention.py:312); `--attention-backend
+   FLASHINFER/TRITON_ATTN` never reach this path (both probed, identical
+   assertion), no reference implementation exists in the tree, and the
+   assertion is TP-INDEPENDENT — it blocks any GB10 config, so PP or
+   bigger future nodes don't help either. **UNRESOLVABLE here**; requires
+   upstream FA4-cute sm12x paged-KV support (vendored flash-attention).
+
+Verdict: `blocked-upstream`. Retest at the next flagship image bump.
