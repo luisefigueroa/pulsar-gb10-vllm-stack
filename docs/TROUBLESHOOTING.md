@@ -121,3 +121,21 @@ and metadata files block the host user afterwards.
 **Fix:** re-chown (`docker run --rm -v ~/.cache/huggingface/datasets:/d
 IMAGE chown -R 1000:1000 /d/<dataset>`), or run containerized tools with
 `--user $(id -u):$(id -g)` from the start.
+
+## Spec-decode throughput undercounted by the acceptance factor (harness bug)
+
+**Hit:** every spec-decode A/B before 2026-07-31 reported "slower" (-21% to
+-51%); a torch-profiler trace then showed a DSpark request actually running
+~45 tok/s while the bench reported 14.
+**Cause:** `validate/bench_serve.py` counted SSE stream chunks as tokens.
+Without spec decode, one chunk = one token and the number is right. Under
+speculative decoding, vLLM emits one chunk per VERIFIED BLOCK (up to k+1
+tokens), so throughput was silently divided by the mean accepted-block size
+(measured 3.46x on DSpark k=5). Second-order variant of the same trap: the
+synthetic "repeat this sequence" bench prompts also depress draft
+acceptance vs natural text.
+**Fix:** request `stream_options: {"include_usage": true}` and take token
+counts from `usage.completion_tokens` (bench_serve does this now); use
+`--prompt-style natural` for any spec-decode measurement.
+**Moral:** for any metric derived from a stream, verify the stream's unit.
+The corrected numbers flipped every spec-decode verdict — see VALIDATION.
