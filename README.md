@@ -1,6 +1,6 @@
-# SparkForge — vLLM on 2x NVIDIA DGX Spark (GB10)
+# SparkFused vLLM — serving on 1 or 2 NVIDIA DGX Sparks (GB10)
 
-*Leading-edge hardware, tempered by measurement: nothing ships here until
+*Fused on real hardware, tempered by measurement: nothing ships here until
 it has earned its status on this cluster.*
 
 Production serving stack for this two-node Grace-Blackwell GB10 cluster
