@@ -182,3 +182,30 @@ spec decode remains OFF for serving.
 Corrected hypothesis trail: "draft comms dominate" (from the 10 MB/round
 arithmetic) is now REFUTED by direct experiment — the arithmetic was right
 about the bytes but wrong about what the round actually waits on.
+
+## SPEC-DECODE VERDICTS CORRECTED (2026-07-31) — harness metering bug
+
+**Every pre-07-31 spec-decode throughput number above is INSTRUMENT ERROR
+and is retained only as the retraction trail.** Two compounding harness
+bugs (TROUBLESHOOTING.md "Spec-decode throughput undercounted"):
+(1) bench_serve counted SSE chunks as tokens — under spec decode one chunk
+is a verified block, dividing reported throughput by the accepted-block
+size (measured 3.46x on DSpark); (2) the synthetic repeat-prompts also
+depress draft acceptance vs natural text. Discovered via a torch-profiler
+trace whose wall-clock (45 tok/s) contradicted the bench (14 tok/s) —
+found while chasing a wrong hypothesis (draft-path comms) that the same
+bad numbers had motivated.
+
+Corrected A/Bs (fixed metering, natural prompts, temperature 0):
+
+| Config | base c=1 | spec c=1 | delta | c=4 | acceptance | verdict |
+|---|---|---|---|---|---|---|
+| **DeepSeek-V4-Flash + DSpark k=5 (2-node TP=2, PR-41834)** | 27.08 | **48.43** | **+79%** | 33.6 vs 17.7 (+90%) | 35-50% on natural text | **WIN — the flagship fast path** (agg par at c=8; soak with spec ON still pending before default-on) |
+| **Nemotron-Super + MTP k=1 (triton draft)** | 16.10 | **23.72** | **+47%** | 12.6 vs 10.4 (+21%) | 86.6% | **WIN** (soak pending) |
+| Laguna + DFlash k=15 | 19.20 | 21.63 | +13% | par | 11% (block drafting wastes on k=15) | marginal — opt-in only; smaller k untested |
+| ngram on GDN hybrid | — | — | — | — | — | **FAIL stands** (output corruption is real, not a metering issue) |
+| DSV4 MTP k=2 | not re-run | (est ~41 by factor) | — | — | — | superseded by DSpark on the same model |
+
+The ported draft optimizations (patches/pr41834-dspark-opt) remain
+perf-neutral under the corrected meter too (39.9 vs 39.1 tok/s manual
+probes) — kept as documentation, not needed for the win.
