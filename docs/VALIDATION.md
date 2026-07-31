@@ -277,3 +277,41 @@ image (the only image with the Inkling NVFP4 loader, #49258):
    upstream FA4-cute sm12x paged-KV support (vendored flash-attention).
 
 Verdict: `blocked-upstream`. Retest at the next flagship image bump.
+
+## Flagship swap soak — DeepSeek-V4-Flash-0731, spec-on (2026-07-31) — PASS, PROMOTED
+
+The 0731 candidate's promotion gate: 150 min, c=8, mixed-length prompts,
+temp 0.7, **spec decode ON** (DSpark k=5 via the integrated drafter) — the
+same protocol every prior flagship soak used, so the numbers compare
+directly. Result: **3,951 requests, 0 errors** — the highest completion
+count of any 150-min soak on this cluster (+15% over the incumbent's
+spec-on 3,440, consistent with the higher acceptance below).
+
+| Gate | Node 1 (head) | Node 2 (worker) | Verdict |
+|---|---|---|---|
+| Errors | 0 / 3,951 | — | PASS |
+| Mem drift (first→last decile) | +0.97 GiB used | +0.65 GiB used | PASS (within the 1.05 precedent; 13+ GiB avail at end on both) |
+| GPU temp max | **86 °C** | 80 °C | PASS with note below |
+| SM clock min | 2379 MHz | 2379 MHz | PASS (no throttle; same floor as the Laguna passing soak) |
+
+Temp note: node 1 peaked 1 °C above the 85 °C guideline for the first
+time in any soak (prior max 84 °C), but the clock floor never moved —
+2379 MHz is exactly the passing Laguna soak's floor, i.e. no thermal
+throttling engaged. Watch this number in summer ambients.
+
+Acceptance: **29.5% window acceptance, ruler-flat** — 2,203,695 drafted /
+650,278 accepted over the full run, and the 1-hour, 2-hour, and final
+checkpoints all read 29.5% to the decimal. That is ~3 points above the
+incumbent drafter's 26.7% on the same adversarial random-word traffic.
+Liveness confirmed with a real greedy completion (coherent) after 2.5 h
+of continuous load, not `/health`. Raw: results/soak-dsv4-0731-150min.json
+(300 samples) + results/soak-dsv4-0731-node2-samples.log (152 samples).
+
+**Consequence: 0731 is the flagship.** `models/deepseek-v4-flash.conf` now
+serves DeepSeek-V4-Flash-0731 with the integrated drafter (DSpark k=5
+recommended via `--spec-decode`); the 04-22 checkpoint is demoted to
+`deepseek-v4-flash-0422.conf` (fallback, fully validated); the separate
+`deepseek-v4-flash-dspark.conf` is retired — the integrated drafter
+supersedes the standalone -DSpark checkpoint (conf recoverable from git
+history). Next: extend the canonical geometry to a 500K-token KV cache
+(memory-gated; see the task ledger).

@@ -63,7 +63,7 @@ All servers speak the OpenAI API on :8000. Per-model validated flags live in
 | Image | What it is | Serves |
 |---|---|---|
 | `vllm/vllm-openai:v0.26.0` (digest-pinned in `Dockerfile`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Everything except DeepSeek-V4 |
-| `vllm-gb10:pr41834-d64074e6f` | **Local source build of vLLM PR #41834 HEAD** (see below) | DeepSeek-V4-Flash flagship (promoted 2026-07-30) |
+| `vllm-gb10:pr41834-d64074e6f` | **Local source build of vLLM PR #41834 HEAD** (see below) | DeepSeek-V4-Flash flagship (promoted 2026-07-30; 0731 checkpoint since 2026-07-31) |
 | `aidendle94/sparkrun-vllm-ds4-gb10:production-ready` | Community binary, fully validated here | Flagship fallback only (`deepseek-v4-flash-sparkrun.conf`) |
 
 ### The PR #41834 build (the only "patch" in the stack)
@@ -106,9 +106,10 @@ pin bump + revalidation.
   the VALIDATION retraction trail). With honest metering and natural
   prompts: DSpark on the flagship **+79%** (48.4 vs 27.1 tok/s c=1),
   Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). All opt-in
-  via `--spec-decode`; default-on awaits a spec-enabled soak. The one
-  standing failure: ngram on GDN hybrids **corrupts output** — never
-  enable it there.
+  via `--spec-decode`; the spec-enabled 150-min soak has now PASSED twice
+  (separate -DSpark checkpoint, then the 0731 integrated drafter), making
+  **DSpark k=5 the recommended flagship mode**. The one standing failure:
+  ngram on GDN hybrids **corrupts output** — never enable it there.
 - **Deliberately OFF, by measurement** (not vibes):
   `VLLM_MARLIN_USE_ATOMIC_ADD` (perf-neutral), MTU 9000, Ray (native
   `--nnodes` mp backend is the validated multi-node path).
@@ -117,8 +118,8 @@ pin bump + revalidation.
 
 | Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
-| **deepseek-v4-flash-dspark** (RECOMMENDED flagship mode) | **48.4** | 105 @ c=4 | — | — | **150 min, 3440 req, 0 err** |
-| **deepseek-v4-flash** (2-node TP=2, PR-41834) | **27.15** (68%) | 105 @ c=8 | 0.945 | 3/3 @ **447K** | **150 min, 3318 req, 0 err** (+27 h uptime) |
+| **deepseek-v4-flash** (2-node TP=2, PR-41834; **0731 checkpoint, integrated DSpark drafter**) | **27.15** base (68%) / **43–48** DSpark | 104 @ c=8 | 0.935 | 3/3 @ **447K** | **150 min spec-on, 3951 req, 0 err** |
+| deepseek-v4-flash-0422 (fallback; flagship until 07-31) | 27.15 (68%) / 48.4 w/ -DSpark ckpt | 105 @ c=8 | 0.945 | 3/3 @ 447K | 2× 150 min (base 3318, spec-on 3440), 0 err |
 | laguna-s-2.1-nvfp4 (1-node, NFS catalog) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |
 | nemotron-3-nano-30b-nvfp4 | 61.9 (86%) | 399 @ c=16 | 0.830 | 3/3 @ 124K | 15 min clean |
