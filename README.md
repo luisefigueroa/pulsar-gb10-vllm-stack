@@ -47,6 +47,9 @@ Priority order everywhere: **stability > accuracy > throughput > latency.**
 
 ## Quick start
 
+**Before first use:** [docs/PREREQUISITES.md](docs/PREREQUISITES.md) —
+host software, Docker, weights, and two-node RDMA/SSH gates in one place.
+
 ```bash
 ./serve.sh --list                        # what can I serve?
 ./serve.sh laguna-s-2.1-nvfp4 -d         # primary single-node model on :8000
@@ -176,7 +179,7 @@ no leaks, no thermal throttling anywhere).
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
 | `patches/pr41834-dspark-opt/` | documented DSpark draft-path port (perf-neutral; obsolete after vllm #49731 lands in a pin) |
-| `docs/` | HARDWARE, MODELS, **RECIPES** (flag-exact), MULTINODE, BUILD, TUNING, VALIDATION, **REVALIDATE** (pin-bump runbook), **OPERATIONS** (on-call runbook), TROUBLESHOOTING |
+| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **RECIPES** (flag-exact), MULTINODE, BUILD, TUNING, VALIDATION, **REVALIDATE** (pin-bump runbook), **OPERATIONS** (on-call runbook), TROUBLESHOOTING |
 | `.claude/skills/knowledge-capture` | capture discipline for the shared KB |
 
 Durable cross-repo knowledge lives in the shared OKF bundle at
