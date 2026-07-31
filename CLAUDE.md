@@ -10,9 +10,12 @@ to a measured number there.
 - Never enable a flag/kernel not validated on THIS hardware. Statuses in
   models/*.conf and docs/VALIDATION.md are earned by runs, not vibes.
 - Anything touching model math needs a before/after eval number.
-- Spec decode is OFF everywhere by measurement (all methods slower or broken
-  here — docs/VALIDATION.md "Speculative decoding"). Don't re-enable without
-  a new A/B.
+- Spec decode: verdicts CORRECTED 2026-07-31 after a harness metering bug
+  (docs/VALIDATION.md retraction trail). DSpark on the flagship is +79%,
+  Super MTP +47% — both validated opt-in via --spec-decode; default-on is
+  gated on a spec-enabled soak. The standing hard failure: ngram on GDN
+  hybrids corrupts output — never enable it there. Pre-07-31 "all spec
+  decode loses" claims anywhere are stale; the ledger wins.
 
 ## Operational cheat sheet
 
