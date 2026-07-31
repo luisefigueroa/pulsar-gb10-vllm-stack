@@ -16,7 +16,7 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 claimed (needle pending) | MTP (opt-in, unvalidated) | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP validated lossless but **-21% -> off** | **tested** — 16.2 tok/s c=1, 113 agg c=32, IDENTICAL determinism, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K) | DFlash **failed (-51%) -> disabled** | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
-| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **upstream-lineage image** (vllm-gb10:pr41834, source-built PR #41834) | FP8+FP4 experts | 167 GB | **2 / TP=2** | **447K tested** (needle 3/3 on 500K boot) | **DSpark k=5 recommended** (`--spec-decode`; 43–48 tok/s c=1) | **tested+soaked** — flagship since 07-31: parity battery + 150-min spec-on soak 3951 req/0 err, 29.5% acc flat |
+| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **upstream-lineage image** (vllm-gb10:pr41834, source-built PR #41834) | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (577,640-token KV; needle 3/3 @447K at this geometry) | **DSpark k=5 recommended** (`--spec-decode`; 43–48 tok/s c=1) | **tested+soaked** — flagship since 07-31: parity battery + 150-min spec-on soak 3951 req/0 err + 500K-KV gates (VALIDATION.md) |
 | `deepseek-v4-flash-0422` | original 04-22 checkpoint (flagship 07-30→07-31) | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested (500K configured) | via retired -DSpark ckpt only | fallback (fully validated; superseded by 0731) |
 | `deepseek-v4-flash-sparkrun` | same model, community sparkrun binary | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested | MTP -36% -> off | fallback (fully validated; superseded) |
 | `inkling-small-nvfp4` | Thinkingmachines/Inkling-Small-NVFP4 (NFS catalog, added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 1M configured | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
@@ -79,3 +79,7 @@ headroom is not a deployment.
   dense GQA ~previous-gen typical · Nemotron-3 hybrids 6-8 KiB (+fixed Mamba
   state). Long-context feasibility is therefore model-specific; the needle
   test in VALIDATION.md is the gate for any claimed context length.
+  **DSV4-0731 caveat: measured bytes/token is GEOMETRY-DEPENDENT** (~55 KB
+  effective at 131K max-model-len vs ~18 KB at 500K — length-scaled tail
+  compress_ratios). Never carry a per-token KV number across max-model-len
+  values; re-measure at the target geometry (VALIDATION.md 500K-KV section).

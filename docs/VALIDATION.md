@@ -315,3 +315,44 @@ recommended via `--spec-decode`); the 04-22 checkpoint is demoted to
 supersedes the standalone -DSpark checkpoint (conf recoverable from git
 history). Next: extend the canonical geometry to a 500K-token KV cache
 (memory-gated; see the task ledger).
+
+## Flagship 500K-token KV geometry (2026-07-31) — PASS, canonical
+
+User directive: serve a 500K-token KV cache. Delivered: **577,640-token
+capacity** (`--max-model-len 500000 --kv-cache-memory-bytes 10000000000`,
+1.16x concurrency at 500K/request), spec-on, using ~3 GiB LESS memory per
+rank than the 131K-geometry boot it replaces (~17 GiB OS-available on both
+nodes vs ~14 during the passing soak).
+
+**The sizing lesson (why the first attempt OOM'd).** DSV4-0731 KV
+bytes/token is GEOMETRY-DEPENDENT: the 131K boot profiled 245,618 tokens
+from ~13.5 GB (~55 KB/tok effective), but at 500K max-model-len vLLM's own
+requirement line reads 8.84 GiB for one 500K sequence (~18 KB/tok) — the
+per-layer tail compress_ratios scale with configured length, so long
+contexts are ~3x cheaper per token than the short-geometry number
+predicts. Sizing 500K tokens at the stale 55 KB/tok rate (27.5 GB/rank)
+OOM-killed node 2 during attention warmup: **`kv-cache-memory-bytes`
+skips memory profiling entirely** and trusts an "Initial free memory:
+111 GiB" reading that counts reclaimable page cache on unified memory
+(driver NV_ERR_NO_MEMORY in dmesg, worker death, no OS OOM-kill). A
+second attempt at 8.38 GiB under-shot vLLM's stated 8.84 GiB floor and
+fail-fasted cleanly at init. 10 GB/rank is the earned number.
+
+Gates at the final geometry (all spec-on, DSpark k=5):
+
+| Gate | Result |
+|---|---|
+| Greedy captures vs battery refs | FP-equivalent — 0 hard forks vs soaked-geometry ref; per-pair 0-1 marginal forks (0.50-0.75) at different prompts each comparison = cross-boot FP noise, same envelope as the accepted battery (which scores max delta 1.01 under the same verdict fn) |
+| Needle @447K (3 depths) | **3/3 PASS** (444,237 prompt tokens); mem floors 16.8 / 17.4 GiB during fill, swap flat |
+| gsm8k strict (200, 5-shot) | **0.925 +-0.019** vs recorded 0.935 +-0.017 — within the +-0.035 band. NOTE: must run INSIDE the container (transformers 5.14.1); host 5.5.4 cannot parse 0731's rope_parameters config format |
+| 20-min c=8 smoke | 518 req / **0 errors**, mem drift -0.2 GiB (negative), temps 82/77 max, clocks >=2385, acceptance 29.0% (matches soak's 29.5%) |
+| Liveness | coherent greedy completion post-smoke |
+
+One 447K needle attempt mid-series was invalidated by an operator-side
+cluster teardown (concurrent session — not a server fault; memory was
+healthy at kill time) and rerun clean on a fresh boot.
+
+Raw: results/smoke-dsv4-0731-500kv-20min.json,
+results/smoke-dsv4-0731-500kv-node2-samples.log,
+results/lm-eval-dsv4-0731-500kv/. Conf updated in place — this geometry
+is now canonical for `deepseek-v4-flash`.
