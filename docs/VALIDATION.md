@@ -159,3 +159,26 @@ upstream-lineage image; the sparkrun binary is demoted to
 `deepseek-v4-flash-sparkrun.conf` as documented fallback. DSpark stays off on both stacks pending
 upstream work — precisely scoped: port the fork's draft-path cross-node
 optimizations (local argmax, markov weight replication) onto PR #41834.
+
+## DSpark draft-optimization port A/B (branch dspark-draft-optimizations, 2026-07-31)
+
+Ported the fork's two cross-node draft optimizations onto PR-41834 as a
+pure-Python overlay (`patches/pr41834-dspark-opt/`, image
+`vllm-gb10:pr41834-dspark-opt-v1`): LOCAL_ARGMAX (draft selection on
+vocab-sharded logits — kills the batch x k x vocab cross-TP gather) and
+REPLICATE_MARKOV_W1 (per-rank Markov embedding — kills the per-position
+all-reduce). Both verified engaged (log lines + output deltas + acceptance
+parity at 80.8%).
+
+**Result: 14.26 tok/s c=1 — identical to stock DSpark (14.29/14.31across
+three variants). The draft-path collectives were NOT the bottleneck.**
+A DSpark round costs ~350 ms (~9.5 base decode steps) where draft+verify
+should cost ~1.5; the structural cost sits in the upstream verify/round
+machinery (rejection trim, MHC bookkeeping, or host-sync stalls), not in
+draft comms. Pinpointing it needs a torch/nsys profile of a single round —
+scoped as future work. The port is kept (correct, harmless, upstreamable);
+spec decode remains OFF for serving.
+
+Corrected hypothesis trail: "draft comms dominate" (from the 10 MB/round
+arithmetic) is now REFUTED by direct experiment — the arithmetic was right
+about the bytes but wrong about what the round actually waits on.
