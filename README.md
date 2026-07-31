@@ -5,11 +5,45 @@ it has earned its status on this cluster.*
 
 Production serving stack for this two-node Grace-Blackwell GB10 cluster
 (dgx-spark-1 head + dgx-spark-2 worker; 121 GiB unified LPDDR5X each,
-dual-rail 200GbE RoCE between them). Built and validated 2026-07-27..30
+dual-rail 200GbE RoCE between them). Built and validated 2026-07-27..31
 against PROMPT.md; every claim below traces to a measured run in
 `docs/VALIDATION.md` with raw evidence in `results/`.
 
 Priority order everywhere: **stability > accuracy > throughput > latency.**
+
+## What sets this stack apart
+
+1. **Multi-node is real, measured, and root-caused — not "wired but
+   untested".** A 284B flagship serves TP=2 across the RoCE link at
+   48 tok/s single-stream (spec-decode fast path; 27 base) with CUDA
+   graphs on, soaked 150 min / 0 errors. The interconnect is characterized
+   to physics (PCIe-x4-capped ~21 GB/s, 25 µs all-reduce floor), the
+   official-image cross-node CUDA-graph hang that went unsolved for days in
+   prior art is root-caused with its workaround, and node-loss semantics
+   are documented (`/health` lies for ~5 minutes; recovery never happens —
+   teardown and relaunch).
+2. **Claim hygiene: statuses are earned, and wrong turns stay visible.**
+   Every number traces to a run with raw artifacts in `results/`; verdicts
+   are IDENTICAL / FP-EQUIVALENT / DIVERGENT, not adjectives. When our own
+   benchmark harness turned out to under-meter speculative decoding by the
+   acceptance factor (3.46x), the verdicts were re-earned and the full
+   retraction trail kept in `docs/VALIDATION.md` — the ledger records how
+   we were wrong, so the next reader can't repeat it.
+3. **Correctness validated in depth, not just capability.** Equivalence vs
+   HF transformers, a five-experiment determinism hierarchy (bit-exact
+   same-boot; per-boot compile nondeterminism isolated; cross-node
+   bit-identity via `VLLM_BATCH_INVARIANT=1`), quantization justified
+   against a BF16 control, needle tests at every claimed context length,
+   and 1-vs-2-node eval-score parity.
+4. **Provenance that gets cheaper over time.** Digest-pinned official
+   images everywhere possible; the one exception is a clean build of a
+   public PR head proposed for main — no private fork lineage. Upstream is
+   already absorbing our delta (vllm #49731 merged the same draft-head
+   optimization we carried as a patch, one day after we wrote it).
+5. **Cluster operations as first-class deliverables.** Preflight that
+   checks both nodes for the failure modes actually hit here, teardown
+   that verifies, pin-bump and on-call runbooks, and a launcher that
+   refuses unvalidated speculative configs by design.
 
 ## Quick start
 
@@ -66,19 +100,24 @@ pin bump + revalidation.
   produces wrong output on sm_121.
 - **FP8 checkpoints justified by control**: Qwen3.6-27B FP8 vs BF16 gsm8k
   0.615 vs 0.610 — quantization is free here.
+- **Speculative decoding — verdicts CORRECTED 2026-07-31** after we caught
+  our own harness under-metering it (SSE chunk counting divided spec
+  throughput by the accepted-block size; full story in TROUBLESHOOTING +
+  the VALIDATION retraction trail). With honest metering and natural
+  prompts: DSpark on the flagship **+79%** (48.4 vs 27.1 tok/s c=1),
+  Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). All opt-in
+  via `--spec-decode`; default-on awaits a spec-enabled soak. The one
+  standing failure: ngram on GDN hybrids **corrupts output** — never
+  enable it there.
 - **Deliberately OFF, by measurement** (not vibes):
-  - *Speculative decoding — every method, every model*: ngram corrupts GDN
-    hybrids; Nemotron-Super MTP **-21%** at 97.5% acceptance; DeepSeek MTP
-    **-36%**; Laguna DFlash **-51%**; upstream DSpark **-47%** at 81%
-    acceptance (draft CUDA graphs verified engaged, no change). Drafts
-    compete for the same 240 GB/s the target needs.
-  - `VLLM_MARLIN_USE_ATOMIC_ADD` (perf-neutral), MTU 9000, Ray (native
-    `--nnodes` mp backend is the validated multi-node path).
+  `VLLM_MARLIN_USE_ATOMIC_ADD` (perf-neutral), MTU 9000, Ray (native
+  `--nnodes` mp backend is the validated multi-node path).
 
 ## Models tested
 
 | Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
+| **deepseek-v4-flash-dspark** (fast path: +DSpark k=5) | **48.4** | 105 @ c=4 | — | — | pending (gate for default-on) |
 | **deepseek-v4-flash** (2-node TP=2, PR-41834) | **27.15** (68%) | 105 @ c=8 | 0.945 | 3/3 @ **447K** | **150 min, 3318 req, 0 err** (+27 h uptime) |
 | laguna-s-2.1-nvfp4 (1-node, NFS catalog) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |
@@ -115,14 +154,16 @@ no leaks, no thermal throttling anywhere).
 
 ## Upstream tracking
 
-- **vllm PR #41834** — flagship image lineage. On merge: retire the local
-  build for a stock pin, rerun the validation gates.
+- **vllm PR #41834** — flagship image lineage; our pin IS the current PR
+  head. On merge: retire the local build for a stock pin, rerun the gates.
 - **vllm #49026 / #46253** — the two stock-image blockers we reproduced.
-- Remaining DSpark opportunity: port the fork's cross-node draft
-  optimizations (draft-local argmax, markov W1 replication) onto PR #41834 —
-  the fork's +85% single-stream win at *worse* acceptance says the headroom
-  is real. The patched fork source trees are preserved in the
-  `vllm-spark-dspark-sm121-source:*` images.
+- **Bump trigger: v0.26.1-final with arm64 images** (rc0 tagged upstream).
+  It bumps NCCL 2.28→2.30.7 — full REVALIDATE including fresh Step-0 NCCL
+  numbers. Note vllm #49731 (merged to main) makes
+  `patches/pr41834-dspark-opt/` redundant on the next flagship rebuild.
+- Closed chapter: the fork's draft-path optimizations were ported and
+  measured **perf-neutral** — the fork's apparent spec-decode advantage was
+  our own metering bug, not missing code (VALIDATION retraction trail).
 
 ## Layout
 
@@ -133,10 +174,11 @@ no leaks, no thermal throttling anywhere).
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench (per-level warmup), soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
+| `patches/pr41834-dspark-opt/` | documented DSpark draft-path port (perf-neutral; obsolete after vllm #49731 lands in a pin) |
 | `docs/` | HARDWARE, MODELS, **RECIPES** (flag-exact), MULTINODE, BUILD, TUNING, VALIDATION, **REVALIDATE** (pin-bump runbook), **OPERATIONS** (on-call runbook), TROUBLESHOOTING |
 | `.claude/skills/knowledge-capture` | capture discipline for the shared KB |
 
 Durable cross-repo knowledge lives in the shared OKF bundle at
-`/mnt/Models/knowledge` (39 concepts; query with
+`/mnt/Models/knowledge` (43 concepts; query with
 `python3 /mnt/Models/knowledge/kb.py query --tag <facet>`). Check it
 **before** investigating anything on this cluster.
