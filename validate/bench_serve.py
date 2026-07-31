@@ -17,7 +17,12 @@ async def one_request(url, model, prompt, out_toks, results):
     ttft = None
     ntok = 0
     body = {"model": model, "prompt": prompt, "max_tokens": out_toks,
-            "temperature": 0, "stream": True, "ignore_eos": True}
+            "temperature": 0, "stream": True, "ignore_eos": True,
+            # CRITICAL: count tokens from usage, NOT from SSE chunk count.
+            # Under speculative decoding one chunk carries a whole accepted
+            # block (measured 3.46x undercount on DSpark) — chunk-counting
+            # silently divides throughput by the acceptance factor.
+            "stream_options": {"include_usage": True}}
 
     def blocking():
         nonlocal ttft, ntok
@@ -32,10 +37,11 @@ async def one_request(url, model, prompt, out_toks, results):
                 if payload == b"[DONE]":
                     break
                 d = json.loads(payload)
-                if d["choices"][0].get("text"):
+                if d.get("usage"):
+                    ntok = d["usage"]["completion_tokens"]
+                if d.get("choices") and d["choices"][0].get("text"):
                     if ttft is None:
                         ttft = time.perf_counter() - t0
-                    ntok += 1
 
     await asyncio.get_event_loop().run_in_executor(None, blocking)
     t1 = time.perf_counter()
@@ -43,7 +49,34 @@ async def one_request(url, model, prompt, out_toks, results):
         results.append({"ttft": ttft, "decode_tps": (ntok - 1) / (t1 - t0 - ttft),
                         "total_s": t1 - t0, "ntok": ntok})
 
+PROMPT_STYLE = "synthetic"
+
+_TOPICS = [
+    "the history of ocean navigation", "how photosynthesis works",
+    "the architecture of medieval castles", "sorting algorithms in Python",
+    "the economics of renewable energy", "a mystery story set in Venice",
+    "how vaccines train the immune system", "the geology of volcanic islands",
+    "the design of suspension bridges", "training a neural network from scratch",
+    "the culture of Edo-period Japan", "how weather forecasting models work",
+]
+
+
 def make_prompt(n_tokens, seed):
+    if PROMPT_STYLE == "natural":
+        # Coherent open-ended prompts: spec-decode acceptance on these is
+        # representative; the synthetic repeat-prompts below collapse draft
+        # acceptance and are ADVERSARIAL to speculative decoding (measured:
+        # 14 vs 40 tok/s on the same server — see docs/VALIDATION.md).
+        # Pad with a numbered preamble to reach the target input length
+        # without creating repetitive continuations.
+        topic = _TOPICS[seed % len(_TOPICS)]
+        pad_sent = (f"Background note {seed}: consider aspect %d of the topic "
+                    "before writing, including causes, context, and examples. ")
+        pad, i = "", 0
+        while len(pad.split()) < max(0, n_tokens - 40):
+            pad += pad_sent % i
+            i += 1
+        return f"[req {seed}] {pad}\nWrite a detailed essay about {topic}:"
     # ~1 token per word for common words; vary by seed to dodge prefix cache
     words = ("alpha beta gamma delta epsilon zeta eta theta iota kappa "
              "lambda mu nu xi omicron pi rho sigma tau upsilon ").split()
@@ -72,8 +105,15 @@ async def main():
     ap.add_argument("--concurrency", nargs="+", type=int, default=[1, 2, 4, 8, 16])
     ap.add_argument("--input-tokens", type=int, default=512)
     ap.add_argument("--output-tokens", type=int, default=256)
+    ap.add_argument("--prompt-style", choices=["synthetic", "natural"],
+                    default="synthetic",
+                    help="natural = coherent prompts (REQUIRED for spec-decode "
+                         "A/Bs; synthetic collapses draft acceptance). Default "
+                         "stays synthetic for comparability with recorded runs.")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
+    global PROMPT_STYLE
+    PROMPT_STYLE = a.prompt_style
 
     all_rows = []
     print(f"{'conc':>4} {'n':>3} {'TTFT p50 ms':>12} {'decode tok/s':>13} {'agg tok/s':>10} {'wall s':>7}")
