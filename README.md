@@ -117,7 +117,7 @@ pin bump + revalidation.
 
 | Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
-| **deepseek-v4-flash-dspark** (fast path: +DSpark k=5) | **48.4** | 105 @ c=4 | — | — | pending (gate for default-on) |
+| **deepseek-v4-flash-dspark** (RECOMMENDED flagship mode) | **48.4** | 105 @ c=4 | — | — | **150 min, 3440 req, 0 err** |
 | **deepseek-v4-flash** (2-node TP=2, PR-41834) | **27.15** (68%) | 105 @ c=8 | 0.945 | 3/3 @ **447K** | **150 min, 3318 req, 0 err** (+27 h uptime) |
 | laguna-s-2.1-nvfp4 (1-node, NFS catalog) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |

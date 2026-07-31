@@ -209,3 +209,20 @@ Corrected A/Bs (fixed metering, natural prompts, temperature 0):
 The ported draft optimizations (patches/pr41834-dspark-opt) remain
 perf-neutral under the corrected meter too (39.9 vs 39.1 tok/s manual
 probes) — kept as documentation, not needed for the win.
+
+## Spec-enabled flagship soak (2026-07-31) — the default-on gate: PASS
+
+`deepseek-v4-flash-dspark` (PR-41834 image + dspark k=5), 150 min @ c=8:
+**3,440 requests, 0 errors**; memory flat (0.07 GiB decile drift, node-2
+sampler stable at ~14 GiB avail); no thermal throttle (node1 84 C max /
+SM >=2385, node2 77 C max); spec decode engaged throughout (run window:
+2,033,880 drafted / 542,869 accepted = 26.7% — depressed as expected by the
+soak's random-word prompts; the perf case is the natural-prompt A/B at
++79%); server answered a coherent real completion at the end after 9+ h of
+continuous cluster uptime. A first attempt was killed at 60 min by a
+harness task limit (preserved as bonus evidence: 1,385 req, 0 errors) and
+rerun detached — total sustained load ~210+ min.
+Raw: results/soak-dsv4-dspark-150min.json + soak-dsv4-dspark-node2-samples.log.
+
+**Consequence: spec decode (DSpark k=5) is now the RECOMMENDED flagship
+serving mode** — every gate (correctness, perf, soak) is earned.
