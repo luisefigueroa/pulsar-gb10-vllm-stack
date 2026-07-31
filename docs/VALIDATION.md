@@ -219,7 +219,13 @@ SM >=2385, node2 77 C max); spec decode engaged throughout (run window:
 2,033,880 drafted / 542,869 accepted = 26.7% — depressed as expected by the
 soak's random-word prompts; the perf case is the natural-prompt A/B at
 +79%); server answered a coherent real completion at the end after 9+ h of
-continuous cluster uptime. A first attempt was killed at 60 min by a
+continuous cluster uptime. Per-10-min acceptance was FLAT at 26-27% across
+all 21 snapshots (zero drift; draft rate steady ~133K/10min — raw trail in
+results/soak-dsv4-dspark-counter-snapshots.log), and engine logs confirmed
+the draft path fully engaged (DSpark draft CUDA graph captured, fused
+o_proj/shared-expert quant kernels active). Tuning lead: spec settings cap
+max_num_scheduled_tokens at 8160 — raising --max-num-batched-tokens may
+recover headroom. A first attempt was killed at 60 min by a
 harness task limit (preserved as bonus evidence: 1,385 req, 0 errors) and
 rerun detached — total sustained load ~210+ min.
 Raw: results/soak-dsv4-dspark-150min.json + soak-dsv4-dspark-node2-samples.log.
