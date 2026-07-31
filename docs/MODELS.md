@@ -18,6 +18,7 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K) | DFlash **failed (-51%) -> disabled** | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
 | `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash on **upstream-lineage image** (vllm-gb10:pr41834, source-built PR #41834) | FP8+FP4 experts | 160 GB | **2 / TP=2** | **447K tested** (needle 3/3; 500K configured) | dspark/MTP measured slower -> off | **tested+soaked** — 27.15 tok/s c=1, 105 agg c=8, gsm8k 0.945, 150-min soak 0 errors |
 | `deepseek-v4-flash-sparkrun` | same model, community sparkrun binary | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested | MTP -36% -> off | fallback (fully validated; superseded) |
+| `deepseek-v4-flash-0731` | DeepSeek-V4-Flash-0731 (drafter built in) | FP8+FP4 | 167 GB | **2 / TP=2** | 447K tested | DSpark 46.6% acc, parity perf | **tested** — full parity with incumbent; swap pending soak |
 | `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | parity/measurement config; **requires --enforce-eager** (VALIDATION.md), prefer 1-node |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
 | (candidate) | Qwen3.6-35B-A3B MXFP4/FP8 | MXFP4 | 21 GB | 1 | — | MTP head exists | not configured |

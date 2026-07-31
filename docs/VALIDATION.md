@@ -232,3 +232,25 @@ Raw: results/soak-dsv4-dspark-150min.json + soak-dsv4-dspark-node2-samples.log.
 
 **Consequence: spec decode (DSpark k=5) is now the RECOMMENDED flagship
 serving mode** — every gate (correctness, perf, soak) is earned.
+
+## DeepSeek-V4-Flash-0731 candidate battery (2026-07-31) — PARITY, tested
+
+Full battery on the PR-41834 image, TP=2, graphs on (raw: results/*0731*):
+
+| Gate | 0731 | Incumbent | Verdict |
+|---|---|---|---|
+| Stress (captures + 8-concurrent + natural bench) | all pass | all pass | = |
+| Base decode c=1 | 27.15 tok/s | 27.15 | identical (bandwidth-bound, as physics predicts) |
+| DSpark natural c=1 / agg c=8 | 43.4 / 103.9 | 48.4 / 91.1 | parity (trade blows within boot noise) |
+| DSpark acceptance | 46.6% cumulative | 35-50% | top of incumbent range |
+| Spec output equivalence | FP-equivalent, 0 hard | same | = |
+| gsm8k strict | 0.935 (+-0.018) | 0.945 (+-0.016) | statistical parity |
+| Needle | 3/3 @ 124K and 3/3 @ 447K (500K boot; note 0731 revises tail compress_ratios) | 3/3 @ 447K | = |
+
+**Honest read: our gates measure PARITY, not the release's claimed "huge
+improvements"** — whatever improved lives outside this gate set (likely
+capability domains we don't eval). What IS concretely better: the DSpark
+drafter is now BUILT INTO the checkpoint (dspark_* config keys), so one
+167 GB artifact replaces the base+DSpark pair — simpler staging, single
+conf, and the separate -DSpark weights become retirable. No regressions
+anywhere. Flagship swap remains gated on the standard 150-min soak.
