@@ -281,6 +281,25 @@ container_name_for() {
   fi
 }
 
+# Append VLLM_EXTRA_ARGS onto a named bash array using shlex (handles
+# spaces/quotes). Bare word-split of VLLM_EXTRA_ARGS is intentionally avoided.
+# Usage: append_vllm_extra_args DEST_ARRAY_NAME
+#   VLLM_EXTRA_ARGS='--foo "bar baz"' append_vllm_extra_args CMD
+append_vllm_extra_args() {
+  local dest="${1:?append_vllm_extra_args: array name required}"
+  [ -n "${VLLM_EXTRA_ARGS:-}" ] || return 0
+  local line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    eval "$dest+=(\"\$line\")"
+  done < <(VLLM_EXTRA_ARGS="$VLLM_EXTRA_ARGS" python3 - <<'PY'
+import os, shlex
+for a in shlex.split(os.environ.get("VLLM_EXTRA_ARGS", "")):
+    print(a)
+PY
+)
+}
+
 # Exact container name match (Docker --filter name= is substring — unsafe for
 # conf prefixes like deepseek-v4-flash vs deepseek-v4-flash-0422).
 # Usage: echo "$names_one_per_line" | filter_exact_container_name "$want"

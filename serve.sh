@@ -95,8 +95,7 @@ CMD+=(
 )
 CMD+=(${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"})
 [ "$SPEC_DECODE" = "1" ] && CMD+=("${SPEC_DECODE_ARGS[@]}")
-# shellcheck disable=SC2206
-[ -n "${VLLM_EXTRA_ARGS:-}" ] && CMD+=($VLLM_EXTRA_ARGS)
+append_vllm_extra_args CMD
 _api_key="${VLLM_API_KEY:-${API_KEY:-}}"
 if [ -n "$_api_key" ]; then
   CMD+=(--api-key "$_api_key")

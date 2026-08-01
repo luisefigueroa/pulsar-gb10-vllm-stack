@@ -112,10 +112,11 @@ build_docker_cmd() {
     --master-port "$MASTER_PORT"
   )
   [ "$SPEC_DECODE" = "1" ] && cmd+=("${SPEC_DECODE_ARGS[@]}")
-  # shellcheck disable=SC2206
-  [ -n "${VLLM_EXTRA_ARGS:-}" ] && cmd+=($VLLM_EXTRA_ARGS)
+  # Capture into a temp then copy — append_vllm_extra_args needs a named global
+  _EXTRA_CMD=()
+  append_vllm_extra_args _EXTRA_CMD
+  cmd+=("${_EXTRA_CMD[@]+"${_EXTRA_CMD[@]}"}")
   cmd+=("${role_suffix[@]}")
-  # print null-separated then reconstruct is hard; use nameref via global
   _DOCKER_CMD=("${cmd[@]}")
 }
 
