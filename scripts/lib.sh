@@ -273,3 +273,28 @@ container_name_for() {
     echo "vllm-${name}"
   fi
 }
+
+# Exact container name match (Docker --filter name= is substring — unsafe for
+# conf prefixes like deepseek-v4-flash vs deepseek-v4-flash-0422).
+# Usage: echo "$names_one_per_line" | filter_exact_container_name "$want"
+filter_exact_container_name() {
+  local want="$1"
+  local n
+  while IFS= read -r n; do
+    [ -z "$n" ] && continue
+    if [ "$n" = "$want" ]; then
+      printf '%s\n' "$n"
+    fi
+  done
+}
+
+# True if a running container has this exact name (local docker).
+container_running_exact() {
+  local want="$1"
+  docker ps --format '{{.Names}}' 2>/dev/null | filter_exact_container_name "$want" | grep -q .
+}
+
+container_exists_exact() {
+  local want="$1"
+  docker ps -a --format '{{.Names}}' 2>/dev/null | filter_exact_container_name "$want" | grep -q .
+}

@@ -145,15 +145,16 @@ for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
     fi
     exit 0
   fi
-  # fail fast if either container died
-  if ! docker ps -q --filter "name=$CONTAINER" | grep -q . ; then
+  # fail fast if either container died (exact name — not Docker substring filter)
+  if ! container_running_exact "$CONTAINER"; then
     echo "[cluster] head container died; last logs:" >&2
     docker logs --tail 80 "$CONTAINER" >&2 || true
     exit 1
   fi
-  if ! ssh "$WORKER_IP" "docker ps -q --filter name=$CONTAINER" | grep -q . ; then
+  if ! ssh "$WORKER_IP" "docker ps --format '{{.Names}}'" 2>/dev/null \
+      | filter_exact_container_name "$CONTAINER" | grep -q .; then
     echo "[cluster] worker container died; last logs:" >&2
-    ssh "$WORKER_IP" "docker logs --tail 80 $CONTAINER" >&2 || true
+    ssh "$WORKER_IP" "docker logs --tail 80 $(printf '%q' "$CONTAINER")" >&2 || true
     exit 1
   fi
   sleep "${WAIT_SECONDS:-10}"
