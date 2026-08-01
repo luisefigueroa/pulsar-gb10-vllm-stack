@@ -163,6 +163,13 @@ disk_free_gib() {
   df -BG "$path" 2>/dev/null | awk 'NR==2 {gsub(/G/,""); print $4}' || echo 0
 }
 
+# Free space on worker under the same path (HF_CACHE layout).
+disk_free_gib_remote() {
+  local path="${1:-$HF_CACHE}"
+  [ -n "${WORKER_IP:-}" ] || { echo 0; return; }
+  ssh_worker "df -BG $(printf '%q' "$path") 2>/dev/null | awk 'NR==2 {gsub(/G/,\"\"); print \$4}'" 2>/dev/null || echo 0
+}
+
 parse_kv_cache_bytes() {
   local i=0
   while [ $i -lt ${#ENGINE_ARGS[@]} ]; do

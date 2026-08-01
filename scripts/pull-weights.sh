@@ -48,31 +48,42 @@ hub=$(hf_hub_path)
 mkdir -p "$HF_CACHE/hub"
 
 free=$(disk_free_gib "$HF_CACHE")
-# Space gate: WEIGHTS_GIB (conf) or estimate × 1.1 + headroom; never trust a flat 20 GiB for 167 GiB flagships.
+# Space gate is per full HF hub copy on the node that receives bytes:
+#   NODES=1 → head only
+#   NODES=2 → head for download + worker for rsync (same size each; not 2× on head)
+# WEIGHTS_GIB is total checkpoint size, not per-rank VRAM.
 w_gib=$(estimate_weights_gib)
 headroom=10
 if awk -v w="$w_gib" 'BEGIN{exit !(w+0 > 0 && w+0 < 15)}'; then
   headroom=5
 fi
-# required = max(ceil(w*1.1)+headroom, small floor)
-need=$(awk -v w="$w_gib" -v h="$headroom" 'BEGIN{
+need_full=$(awk -v w="$w_gib" -v h="$headroom" 'BEGIN{
   if (w+0 <= 0) { print 20; exit }
   n = (w * 1.1) + h
   if (n < 5) n = 5
   printf "%.0f", n + 0.999
 }')
-# if already partially present, reduce need by existing hub size (best-effort)
+# Head remaining need after partial download
+need_head=$need_full
 if [ -d "$hub" ]; then
   have=$(du -sb "$hub" 2>/dev/null | awk '{printf "%.2f", $1/1024/1024/1024}' || echo 0)
-  need=$(awk -v n="$need" -v h="$have" 'BEGIN{
+  need_head=$(awk -v n="$need_full" -v h="$have" 'BEGIN{
     left = n - h
     if (left < 5) left = 5
     printf "%.0f", left
   }')
 fi
-log "disk: free=${free} GiB under $HF_CACHE; need≥${need} GiB (weights≈${w_gib} GiB ×1.1 + ${headroom} GiB headroom)"
-if awk -v f="$free" -v m="$need" 'BEGIN{exit !(f+0 < m)}'; then
-  die "only ${free} GiB free under $HF_CACHE (need ≥ ${need} GiB for ~${w_gib} GiB weights). Free disk and retry."
+log "disk head: free=${free} GiB under $HF_CACHE; need≥${need_head} GiB (full copy ≈${w_gib} GiB ×1.1 + ${headroom} GiB; NODES=$NODES)"
+if awk -v f="$free" -v m="$need_head" 'BEGIN{exit !(f+0 < m)}'; then
+  die "head: only ${free} GiB free under $HF_CACHE (need ≥ ${need_head} GiB for ~${w_gib} GiB weights). Free disk and retry."
+fi
+if [ "$NODES" = "2" ]; then
+  [ -n "${WORKER_IP:-}" ] || die "NODES=2 requires WORKER_IP before pull (worker must hold a full copy too)"
+  wfree=$(disk_free_gib_remote "$HF_CACHE")
+  log "disk worker: free=${wfree} GiB under $HF_CACHE; need≥${need_full} GiB for rsync of full hub copy"
+  if awk -v f="$wfree" -v m="$need_full" 'BEGIN{exit !(f+0 < m)}'; then
+    die "worker $WORKER_IP: only ${wfree} GiB free under $HF_CACHE (need ≥ ${need_full} GiB). Free disk on worker and retry."
+  fi
 fi
 
 if [ "$YES" != 1 ]; then
