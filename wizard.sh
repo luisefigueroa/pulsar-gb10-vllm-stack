@@ -65,24 +65,20 @@ if [ -z "${WORKER_IP:-}" ] || [ -z "${HEAD_IP:-}" ]; then
   fi
 fi
 
-mapfile -t LINES < <("$REPO_DIR/scripts/list-models.sh" --validated | tail -n +3 | sed '/^$/d' || true)
-if [ "${#LINES[@]}" -eq 0 ]; then
+mapfile -t choices < <(
+  "$REPO_DIR/scripts/list-models.sh" --validated --json | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for m in d.get('models', []):
+    fr = ' first-run' if m.get('first_run_candidate') else ''
+    print('%s  [%s] nodes=%s src=%s spec=%s%s' % (
+        m['id'], m['status'], m['nodes'], m['source'], m['spec'], fr))
+"
+)
+if [ "${#choices[@]}" -eq 0 ]; then
   die "no validated models found"
 fi
 
-# Prefer first-run candidates in presentation: rebuild choices as "id — status nodes=N"
-choices=()
-ids=()
-while IFS= read -r line; do
-  id=$(echo "$line" | awk '{print $1}')
-  [ -n "$id" ] || continue
-  # skip header dashes
-  [[ "$id" == ID || "$id" == --* ]] && continue
-  ids+=("$id")
-  choices+=("$line")
-done < <("$REPO_DIR/scripts/list-models.sh" --validated | awk 'NR>2 && $1!="" {print}')
-
-# Sort: FIRST_RUN_CANDIDATE confs first via list order already; pin canary/nano if present
 pick=$(choose "Validated models (Path A: 1-node first; Path B: 2-node flagship)" "${choices[@]}")
 NAME=$(echo "$pick" | awk '{print $1}')
 [ -n "$NAME" ] || die "no selection"

@@ -17,7 +17,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-tmp="${TMPDIR:-/tmp}/pulsar-list-models.$$"
+tmp=$(mktemp "${TMPDIR:-/tmp}/pulsar-list-models.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
 : >"$tmp"
 

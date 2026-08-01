@@ -170,12 +170,15 @@ if [ "$NODES" = "2" ]; then
       if [ "$VERBOSE" = 1 ]; then
         "$REPO_DIR/cluster/preflight.sh" "$NAME" || die "cluster preflight failed"
       else
-        if "$REPO_DIR/cluster/preflight.sh" "$NAME" >/tmp/pulsar-preflight.$$.log 2>&1; then
+        _pf_log=$(mktemp "${TMPDIR:-/tmp}/pulsar-preflight.XXXXXX")
+        # shellcheck disable=SC2064
+        trap 'rm -f "${_pf_log:-}"' RETURN
+        if "$REPO_DIR/cluster/preflight.sh" "$NAME" >"$_pf_log" 2>&1; then
           echo "PASS  preflight cluster OK"
-          rm -f /tmp/pulsar-preflight.$$.log
+          rm -f "$_pf_log"
         else
-          echo "FAIL  preflight — see /tmp/pulsar-preflight.$$.log"
-          tail -20 /tmp/pulsar-preflight.$$.log >&2 || true
+          echo "FAIL  preflight — see $_pf_log"
+          tail -20 "$_pf_log" >&2 || true
           die "cluster preflight failed"
         fi
       fi

@@ -43,7 +43,7 @@ async def one_request(url, model, prompt, out_toks, results):
                     if ttft is None:
                         ttft = time.perf_counter() - t0
 
-    await asyncio.get_event_loop().run_in_executor(None, blocking)
+    await asyncio.get_running_loop().run_in_executor(None, blocking)
     t1 = time.perf_counter()
     if ttft is not None and ntok > 1:
         results.append({"ttft": ttft, "decode_tps": (ntok - 1) / (t1 - t0 - ttft),

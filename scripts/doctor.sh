@@ -116,12 +116,16 @@ else
 fi
 
 [ "$JSON" = 1 ] || echo "[doctor] fabric (informational)"
-if "$REPO_DIR/scripts/detect-fabric.sh" >/tmp/pulsar-doctor-fabric.$$ 2>&1; then
+_fab_log=$(mktemp "${TMPDIR:-/tmp}/pulsar-doctor-fabric.XXXXXX")
+# shellcheck disable=SC2064
+trap 'rm -f "${_fab_log:-}"' RETURN
+if "$REPO_DIR/scripts/detect-fabric.sh" >"$_fab_log" 2>&1; then
   record ok fabric "fabric detect confidence not low"
 else
   record warn fabric "fabric detect low confidence (fine for single-node)"
 fi
-rm -f /tmp/pulsar-doctor-fabric.$$
+rm -f "$_fab_log"
+trap - RETURN
 
 if [ -n "${WORKER_IP:-}" ]; then
   [ "$JSON" = 1 ] || echo "[doctor] worker $WORKER_IP"
