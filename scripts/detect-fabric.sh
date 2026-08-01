@@ -8,24 +8,33 @@ SCRIPT_NAME=detect-fabric
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
-JSON=0 WRITE=0 YES=0
+JSON=0 WRITE=0 YES=0 ACCEPT_NEW=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1 ;;
     --write-env) WRITE=1 ;;
     --yes|-y) YES=1 ;;
+    --accept-new-host-keys) ACCEPT_NEW=1 ;;
     -h|--help)
       cat <<'EOF'
-usage: scripts/detect-fabric.sh [--json] [--write-env] [--yes]
+usage: scripts/detect-fabric.sh [--json] [--write-env] [--yes] [--accept-new-host-keys]
 
 Discovers local RoCE + NCCL_* and, when possible, the peer Spark's
 same-rail IP via hostname convention:
   head   = ${HEAD_HOST:-dgx-spark-1.local}
   worker = ${WORKER_HOST:-dgx-spark-2.local}
 
---write-env   propose writing HEAD_IP / WORKER_IP / NCCL_* to repo .env
-              (shows both IPs and asks for confirmation unless --yes)
---yes         skip confirmation (for automation only)
+Peer SSH uses BatchMode like the rest of the stack and requires the peer
+host key already in ~/.ssh/known_hosts (no silent TOFU by default).
+First-time enroll only:
+  ssh-keyscan -H dgx-spark-2.local >> ~/.ssh/known_hosts
+  # or: scripts/detect-fabric.sh --accept-new-host-keys
+
+--write-env              propose writing HEAD_IP / WORKER_IP / NCCL_* to .env
+                         (shows both IPs; confirms unless --yes)
+--yes                    skip write confirmation (automation)
+--accept-new-host-keys   TOFU once: StrictHostKeyChecking=accept-new for peer
+                         probe only (prefer ssh-keyscan + known_hosts after)
 EOF
       exit 0
       ;;
@@ -102,11 +111,18 @@ case "$local_hn_lc" in
     ;;
 esac
 
-# Resolve peer IPv4 on the same data-plane interface name
+# Resolve peer IPv4 on the same data-plane interface name.
+# Default SSH: BatchMode + known_hosts only (same as preflight/up).
+# Optional TOFU: --accept-new-host-keys or DETECT_FABRIC_ACCEPT_NEW=1
 peer_ip_on_if() {
   local host="$1" ifname="$2"
   [ -n "$host" ] && [ -n "$ifname" ] || return 1
-  ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$host" \
+  local -a ssh_opts=(-o BatchMode=yes -o ConnectTimeout=5)
+  if [ "${ACCEPT_NEW:-0}" = 1 ] || [ "${DETECT_FABRIC_ACCEPT_NEW:-0}" = 1 ]; then
+    ssh_opts+=(-o StrictHostKeyChecking=accept-new)
+  fi
+  # Prefer already-enrolled keys; accept-new only when explicitly requested.
+  ssh "${ssh_opts[@]}" "$host" \
     "ip -4 -o addr show dev $(printf '%q' "$ifname") 2>/dev/null | awk '{print \$4}' | cut -d/ -f1 | head -1" \
     2>/dev/null || return 1
 }

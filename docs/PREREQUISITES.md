@@ -123,6 +123,7 @@ Example hostnames used in narrative: **dgx-spark-1** (head), **dgx-spark-2**
 | Requirement | Notes |
 |-------------|--------|
 | **Key-based SSH** head → worker | `ssh -o BatchMode=yes "$WORKER_IP" true` — preflight fails without it |
+| **Host keys enrolled** | All stack scripts (including `detect-fabric`) use BatchMode against `known_hosts`. Do **not** rely on silent TOFU. First enroll: `ssh-keyscan -H dgx-spark-2.local >> ~/.ssh/known_hosts` (or one-shot `scripts/detect-fabric.sh --accept-new-host-keys` then prefer known_hosts thereafter). |
 | Docker + nvidia runtime on **worker** | Worker container is started over SSH |
 | Same image on **both** nodes | Preflight: `docker image inspect` head and worker |
 | Weights on **both** nodes | Each TP rank loads locally; missing worker cache fails at load |
