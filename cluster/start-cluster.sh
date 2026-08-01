@@ -61,56 +61,83 @@ if [ "$SKIP_PREFLIGHT" = "0" ]; then
 fi
 
 CONTAINER="vllm-cluster-${MODEL_NAME}"
+MODELS_NFS="${MODELS_NFS:-/mnt/Models}"
 
-# Docker flags shared by both roles. RDMA needs the devices passed explicitly:
-# --network=host does NOT expose /dev/infiniband, and NCCL silently falls back
-# to TCP without it.
-common_docker_flags() {
+# Build docker argv (arrays). Quote only when serializing for SSH.
+# shellcheck disable=SC2206
+build_docker_cmd() {
   local role_ip="$1"
-  echo "--network host --ipc host --gpus all \
-    --ulimit memlock=-1 --ulimit stack=67108864 \
-    --device /dev/infiniband \
-    -v ${HF_CACHE}:/root/.cache/huggingface \
-    -v ${MODELS_NFS:-/mnt/Models}:/mnt/Models:ro \
-    -e HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1} \
-    -e VLLM_HOST_IP=${role_ip} \
-    -e NCCL_IB_HCA=${NCCL_IB_HCA} \
-    -e NCCL_IB_QPS_PER_CONNECTION=${NCCL_IB_QPS_PER_CONNECTION} \
-    -e NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME} \
-    -e GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME} \
-    -e TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME} \
-    -e NCCL_IB_DISABLE=0 \
-    -e NCCL_DEBUG=${NCCL_DEBUG}"
-}
-
-# Engine args shared by both roles (node-rank/headless appended per role).
-server_args() {
-  local args=(
-    --served-model-name "$SERVED_NAME"
-    --host 0.0.0.0 --port "$PORT"
-    --gpu-memory-utilization "$GPU_MEM_UTIL"
-    "${ENGINE_ARGS[@]}"
-    --nnodes 2 --master-addr "$HEAD_IP" --master-port "$MASTER_PORT"
+  shift
+  local -a role_suffix=("$@")
+  local -a cmd=(
+    docker run -d
+    --name "$CONTAINER"
+    --network host
+    --ipc host
+    --gpus all
+    --ulimit memlock=-1
+    --ulimit stack=67108864
+    --device /dev/infiniband
+    -v "${HF_CACHE}:/root/.cache/huggingface"
+    -v "${MODELS_NFS}:/mnt/Models:ro"
+    -e "HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}"
+    -e "VLLM_HOST_IP=${role_ip}"
+    -e "NCCL_IB_HCA=${NCCL_IB_HCA}"
+    -e "NCCL_IB_QPS_PER_CONNECTION=${NCCL_IB_QPS_PER_CONNECTION}"
+    -e "NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME}"
+    -e "GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME}"
+    -e "TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME}"
+    -e "NCCL_IB_DISABLE=0"
+    -e "NCCL_DEBUG=${NCCL_DEBUG}"
   )
-  [ "$SPEC_DECODE" = "1" ] && args+=("${SPEC_DECODE_ARGS[@]}")
-  # escape hatch for experiments, mirroring serve.sh; never required by a config
-  [ -n "${VLLM_EXTRA_ARGS:-}" ] && args+=($VLLM_EXTRA_ARGS)
-  printf '%q ' "${args[@]}"
+  local e
+  for e in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do
+    cmd+=(-e "$e")
+  done
+  for e in ${EXTRA_ENV:-}; do
+    cmd+=(-e "$e")
+  done
+  cmd+=(
+    "$IMAGE"
+    --model "$MODEL"
+    --served-model-name "$SERVED_NAME"
+    --host 0.0.0.0
+    --port "$PORT"
+    --gpu-memory-utilization "$GPU_MEM_UTIL"
+  )
+  cmd+=(${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"})
+  cmd+=(
+    --nnodes 2
+    --master-addr "$HEAD_IP"
+    --master-port "$MASTER_PORT"
+  )
+  [ "$SPEC_DECODE" = "1" ] && cmd+=("${SPEC_DECODE_ARGS[@]}")
+  # shellcheck disable=SC2206
+  [ -n "${VLLM_EXTRA_ARGS:-}" ] && cmd+=($VLLM_EXTRA_ARGS)
+  cmd+=("${role_suffix[@]}")
+  # print null-separated then reconstruct is hard; use nameref via global
+  _DOCKER_CMD=("${cmd[@]}")
 }
 
-container_cmd() {
-  # role-specific suffix: worker gets --node-rank 1 --headless
-  local role_args="$1"
-  echo "$(printf '%q ' --model "$MODEL") $(server_args) $role_args"
+shell_join_q() {
+  local a out="" x
+  for x in "$@"; do
+    out+="$(printf '%q' "$x") "
+  done
+  printf '%s' "${out% }"
 }
 
-env_flags() { local out=""; for e in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do out+=" -e $(printf '%q' "$e")"; done; echo "$out"; }
-
-WORKER_RUN="docker run -d --name $CONTAINER $(common_docker_flags "$WORKER_IP") $(env_flags) $IMAGE $(container_cmd '--node-rank 1 --headless')"
-HEAD_RUN="docker run -d --name $CONTAINER $(common_docker_flags "$HEAD_IP") $(env_flags) $IMAGE $(container_cmd '--node-rank 0')"
+build_docker_cmd "$WORKER_IP" --node-rank 1 --headless
+WORKER_CMD=("${_DOCKER_CMD[@]}")
+build_docker_cmd "$HEAD_IP" --node-rank 0
+HEAD_CMD=("${_DOCKER_CMD[@]}")
 
 if [ "$DRY_RUN" = "1" ]; then
-  echo "WORKER (ssh $WORKER_IP):"; echo "  $WORKER_RUN"; echo "HEAD (local):"; echo "  $HEAD_RUN"; exit 0
+  echo "WORKER (ssh $WORKER_IP):"
+  echo "  $(shell_join_q "${WORKER_CMD[@]}")"
+  echo "HEAD (local):"
+  echo "  $(shell_join_q "${HEAD_CMD[@]}")"
+  exit 0
 fi
 
 # Best-effort teardown both ranks (worker first is fine for leftover RDMA/master).
@@ -119,7 +146,6 @@ cluster_abort() {
   echo "[cluster] ABORT: $why — tearing down head+worker ($CONTAINER)" >&2
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   ssh "$WORKER_IP" "docker rm -f $(printf '%q' "$CONTAINER") >/dev/null 2>&1 || true" 2>/dev/null || true
-  # Prefer full stop helper when available (exact names).
   if [ -x "$REPO_DIR/cluster/stop-cluster.sh" ]; then
     "$REPO_DIR/cluster/stop-cluster.sh" "$MODEL_NAME" >/dev/null 2>&1 || true
   fi
@@ -130,12 +156,12 @@ ssh "$WORKER_IP" "docker rm -f $(printf '%q' "$CONTAINER") >/dev/null 2>&1 || tr
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 
 echo "[cluster] starting worker on $WORKER_IP"
-if ! ssh "$WORKER_IP" "$WORKER_RUN"; then
+if ! ssh "$WORKER_IP" "$(shell_join_q "${WORKER_CMD[@]}")"; then
   cluster_abort "worker docker run failed"
   exit 1
 fi
 echo "[cluster] starting head on this node"
-if ! eval "$HEAD_RUN"; then
+if ! "${HEAD_CMD[@]}"; then
   cluster_abort "head docker run failed (worker was started — removed)"
   exit 1
 fi
