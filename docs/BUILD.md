@@ -123,7 +123,11 @@ sm_121 natively under CUDA 13.0.3) plus the 12.0a/12.1a quant-kernel gates.
 soak). Prefer `cluster/start-cluster.sh deepseek-v4-flash --spec-decode`
 for the recommended DSpark path after the image is loaded on both nodes.
 
-### Optional: DSpark draft-path overlay (perf-neutral documentation)
+### DEPRECATED: DSpark draft-path overlay (do not build by default)
 
-`patches/pr41834-dspark-opt/` is a pure-Python overlay used for an A/B; it
-did not beat stock DSpark under corrected metering. Not required for serving.
+`patches/pr41834-dspark-opt/` is a **deprecated** pure-Python A/B overlay.
+It did not beat stock DSpark under corrected metering and is **obsolete
+after vllm #49731** (same draft-head work on main). The flagship pin
+`vllm-gb10:pr41834-d64074e6f` does **not** use it. See
+`patches/pr41834-dspark-opt/README.md`. Not required for serving; do not
+point conf `IMAGE=` at `*-dspark-opt-*` tags.
