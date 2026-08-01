@@ -113,14 +113,32 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "WORKER (ssh $WORKER_IP):"; echo "  $WORKER_RUN"; echo "HEAD (local):"; echo "  $HEAD_RUN"; exit 0
 fi
 
+# Best-effort teardown both ranks (worker first is fine for leftover RDMA/master).
+cluster_abort() {
+  local why="${1:-cluster start failed}"
+  echo "[cluster] ABORT: $why — tearing down head+worker ($CONTAINER)" >&2
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  ssh "$WORKER_IP" "docker rm -f $(printf '%q' "$CONTAINER") >/dev/null 2>&1 || true" 2>/dev/null || true
+  # Prefer full stop helper when available (exact names).
+  if [ -x "$REPO_DIR/cluster/stop-cluster.sh" ]; then
+    "$REPO_DIR/cluster/stop-cluster.sh" "$MODEL_NAME" >/dev/null 2>&1 || true
+  fi
+}
+
 echo "[cluster] removing stale containers"
-ssh "$WORKER_IP" "docker rm -f $CONTAINER >/dev/null 2>&1 || true"
+ssh "$WORKER_IP" "docker rm -f $(printf '%q' "$CONTAINER") >/dev/null 2>&1 || true"
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 
 echo "[cluster] starting worker on $WORKER_IP"
-ssh "$WORKER_IP" "$WORKER_RUN"
+if ! ssh "$WORKER_IP" "$WORKER_RUN"; then
+  cluster_abort "worker docker run failed"
+  exit 1
+fi
 echo "[cluster] starting head on this node"
-eval "$HEAD_RUN"
+if ! eval "$HEAD_RUN"; then
+  cluster_abort "head docker run failed (worker was started — removed)"
+  exit 1
+fi
 
 echo "[cluster] waiting for http://127.0.0.1:${PORT}/health (cold load can take ~10 min)"
 for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
@@ -139,7 +157,7 @@ for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
       python3 "$REPO_DIR/validate/warmup.py" \
         --url "http://127.0.0.1:${PORT}" \
         --model "$SERVED_NAME" || {
-          echo "[cluster] warmup FAILED — server is up but first-token JIT not paid" >&2
+          echo "[cluster] warmup FAILED — server is up but first-token JIT not paid (containers left running)" >&2
           exit 1
         }
     fi
@@ -149,12 +167,14 @@ for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
   if ! container_running_exact "$CONTAINER"; then
     echo "[cluster] head container died; last logs:" >&2
     docker logs --tail 80 "$CONTAINER" >&2 || true
+    cluster_abort "head container exited during wait"
     exit 1
   fi
   if ! ssh "$WORKER_IP" "docker ps --format '{{.Names}}'" 2>/dev/null \
       | filter_exact_container_name "$CONTAINER" | grep -q .; then
     echo "[cluster] worker container died; last logs:" >&2
     ssh "$WORKER_IP" "docker logs --tail 80 $(printf '%q' "$CONTAINER")" >&2 || true
+    cluster_abort "worker container exited during wait"
     exit 1
   fi
   sleep "${WAIT_SECONDS:-10}"
@@ -162,5 +182,6 @@ done
 echo "[cluster] timed out. Head logs:" >&2
 docker logs --tail 120 "$CONTAINER" >&2 || true
 echo "[cluster] Worker logs:" >&2
-ssh "$WORKER_IP" "docker logs --tail 120 $CONTAINER" >&2 || true
+ssh "$WORKER_IP" "docker logs --tail 120 $(printf '%q' "$CONTAINER")" >&2 || true
+cluster_abort "health wait timed out"
 exit 1
