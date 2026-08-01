@@ -94,7 +94,10 @@ python3 validate/soak.py --model deepseek-v4-flash --minutes 150 --concurrency 5
 python3 validate/soak.py --model laguna-s-2.1 --minutes 150 --concurrency 4 \
     --out results/soak-laguna-<tag>.json
 ```
-Gate: 0 errors, no monotonic memory decline, SM clock within ~2% of 2405.
+Gate: process must print `PASS soak` and exit **0** (default: any request
+error fails; `completed>0`). MemAvailable shrink &gt;5% is a **WARN** finding
+by default — review it; use `--fail-on-mem-shrink` only for strict CI.
+Also check SM clock within ~2% of 2405 in the JSON summary.
 
 ## 6. Close out
 
