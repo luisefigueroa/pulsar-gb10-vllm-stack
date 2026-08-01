@@ -12,45 +12,65 @@ JSON=0
 
 FAIL=0
 WARN=0
-ok()   { printf '  ok   %s\n' "$1"; }
-bad()  { printf '  FAIL %s\n' "$1"; FAIL=1; }
-wrn()  { printf '  warn %s\n' "$1"; WARN=1; }
+# Parallel arrays for JSON: level|id|message
+CHECKS=()
 
-echo "[doctor] host"
+record() {
+  local level="$1" id="$2" msg="$3"
+  CHECKS+=("${level}|${id}|${msg}")
+  case "$level" in
+    ok)
+      [ "$JSON" = 1 ] || printf '  ok   %s\n' "$msg"
+      ;;
+    warn)
+      WARN=1
+      [ "$JSON" = 1 ] || printf '  warn %s\n' "$msg"
+      ;;
+    fail)
+      FAIL=1
+      [ "$JSON" = 1 ] || printf '  FAIL %s\n' "$msg"
+      ;;
+  esac
+}
+
+[ "$JSON" = 1 ] || echo "[doctor] host"
+
 arch=$(uname -m)
 case "$arch" in
-  aarch64|arm64) ok "arch=$arch" ;;
-  *) wrn "arch=$arch (validated stack expects aarch64 GB10)" ;;
+  aarch64|arm64) record ok arch "arch=$arch" ;;
+  *) record warn arch "arch=$arch (validated stack expects aarch64 GB10)" ;;
 esac
 
 if [ ! -r /proc/meminfo ]; then
-  wrn "not a Linux serve host (/proc/meminfo missing) — doctor is informational here"
+  record warn host "not a Linux serve host (/proc/meminfo missing) — doctor is informational here"
 fi
 
 if command -v nvidia-smi >/dev/null 2>&1; then
   gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | sed 's/^ *//')
-  [ "$gpu" = "NVIDIA GB10" ] && ok "GPU $gpu" || bad "GPU '$gpu' (want NVIDIA GB10)"
+  if [ "$gpu" = "NVIDIA GB10" ]; then
+    record ok gpu "GPU $gpu"
+  else
+    record fail gpu "GPU '$gpu' (want NVIDIA GB10)"
+  fi
 else
-  bad "nvidia-smi missing"
+  record fail gpu "nvidia-smi missing"
 fi
 
 if command -v docker >/dev/null 2>&1; then
-  ok "docker present"
-  # Prefer structured runtime list. Do not use "docker info | grep nvidia":
-  # on some installs info is huge / partial and the naive grep is brittle.
+  record ok docker "docker present"
   runtimes=$(docker info -f '{{range $k,$v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null || true)
   if echo " $runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
-    ok "docker nvidia runtime registered (runtimes: $runtimes)"
+    record ok docker_nvidia "docker nvidia runtime registered (runtimes: $runtimes)"
   elif docker info 2>/dev/null | grep -q 'nvidia.com/gpu'; then
-    ok "docker nvidia CDI devices present"
+    record ok docker_nvidia "docker nvidia CDI devices present"
   elif command -v nvidia-container-runtime >/dev/null 2>&1 \
     || command -v nvidia-container-cli >/dev/null 2>&1; then
-    wrn "nvidia container tools installed but runtime not listed in docker info yet — try: sudo systemctl restart docker"
+    record warn docker_nvidia "nvidia container tools installed but runtime not listed in docker info yet — try: sudo systemctl restart docker"
   else
-    bad "docker nvidia runtime missing (expected Runtimes includes nvidia)"
+    record fail docker_nvidia "docker nvidia runtime missing (expected Runtimes includes nvidia)"
   fi
 else
-  bad "docker missing"
+  record fail docker "docker missing"
 fi
 
 port="${PORT:-8000}"
@@ -58,70 +78,104 @@ if command -v ss >/dev/null 2>&1; then
   if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":${port}\$"; then
     owner=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}->|0.0.0.0:${port}" | head -1 || true)
     if [ -n "$owner" ]; then
-      wrn "port $port in use by container: $owner (expected if flagship already up — do not up another model on same port)"
+      record warn port "port $port in use by container: $owner (expected if flagship already up — do not up another model on same port)"
     else
-      wrn "port $port already listening — identify the owner before up"
+      record warn port "port $port already listening — identify the owner before up"
     fi
   else
-    ok "port $port free"
+    record ok port "port $port free"
   fi
 elif command -v lsof >/dev/null 2>&1; then
   if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    wrn "port $port already listening"
+    record warn port "port $port already listening"
   else
-    ok "port $port free"
+    record ok port "port $port free"
   fi
 else
-  wrn "cannot probe port $port (no ss/lsof)"
+  record warn port "cannot probe port $port (no ss/lsof)"
 fi
 
 mkdir -p "$HF_CACHE" 2>/dev/null || true
 if [ -w "$HF_CACHE" ] || mkdir -p "$HF_CACHE" 2>/dev/null; then
-  ok "HF_CACHE writable ($HF_CACHE)"
+  record ok hf_cache "HF_CACHE writable ($HF_CACHE)"
 else
-  bad "HF_CACHE not writable: $HF_CACHE"
+  record fail hf_cache "HF_CACHE not writable: $HF_CACHE"
 fi
 
 if [ -d "$MODELS_NFS" ]; then
-  ok "$MODELS_NFS present"
+  record ok nfs "$MODELS_NFS present"
 else
-  wrn "$MODELS_NFS not mounted (only needed for NFS catalog confs)"
+  record warn nfs "$MODELS_NFS not mounted (only needed for NFS catalog confs)"
 fi
 
 avail=$(mem_available_gib_local)
 if awk -v a="$avail" -v f="$HARD_FLOOR_AVAILABLE_GIB" 'BEGIN{exit !(a+0 < f)}'; then
-  bad "MemAvailable ${avail} GiB < hard floor ${HARD_FLOOR_AVAILABLE_GIB} GiB"
+  record fail memory "MemAvailable ${avail} GiB < hard floor ${HARD_FLOOR_AVAILABLE_GIB} GiB"
 else
-  ok "MemAvailable ${avail} GiB"
+  record ok memory "MemAvailable ${avail} GiB"
 fi
 
-echo "[doctor] fabric (informational)"
+[ "$JSON" = 1 ] || echo "[doctor] fabric (informational)"
 if "$REPO_DIR/scripts/detect-fabric.sh" >/tmp/pulsar-doctor-fabric.$$ 2>&1; then
-  ok "fabric detect confidence not low"
+  record ok fabric "fabric detect confidence not low"
 else
-  wrn "fabric detect low confidence (fine for single-node)"
+  record warn fabric "fabric detect low confidence (fine for single-node)"
 fi
 rm -f /tmp/pulsar-doctor-fabric.$$
 
 if [ -n "${WORKER_IP:-}" ]; then
-  echo "[doctor] worker $WORKER_IP"
+  [ "$JSON" = 1 ] || echo "[doctor] worker $WORKER_IP"
   if ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_IP" true 2>/dev/null; then
-    ok "ssh $WORKER_IP"
+    record ok worker_ssh "ssh $WORKER_IP"
     wgpu=$(ssh -o BatchMode=yes "$WORKER_IP" "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" || true)
-    [ "$wgpu" = "NVIDIA GB10" ] && ok "worker GPU $wgpu" || bad "worker GPU '$wgpu'"
-    ssh -o BatchMode=yes "$WORKER_IP" "docker info 2>/dev/null | grep -qi nvidia" \
-      && ok "worker docker nvidia" || bad "worker docker nvidia missing"
+    if [ "$wgpu" = "NVIDIA GB10" ]; then
+      record ok worker_gpu "worker GPU $wgpu"
+    else
+      record fail worker_gpu "worker GPU '$wgpu'"
+    fi
+    if ssh -o BatchMode=yes "$WORKER_IP" "docker info -f '{{range \$k,\$v := .Runtimes}}{{\$k}} {{end}}' 2>/dev/null" \
+      | grep -Eq '(^|[[:space:]])nvidia([[:space:]]|$)'; then
+      record ok worker_docker_nvidia "worker docker nvidia"
+    else
+      record fail worker_docker_nvidia "worker docker nvidia missing"
+    fi
   else
-    bad "ssh $WORKER_IP failed (key-based BatchMode)"
+    record fail worker_ssh "ssh $WORKER_IP failed (key-based BatchMode)"
   fi
 else
-  wrn "WORKER_IP unset — skip multi-node checks (Path B needs .env)"
+  record warn worker "WORKER_IP unset — skip multi-node checks (Path B needs .env)"
 fi
 
-echo
-if [ "$FAIL" = 0 ]; then
-  echo "[doctor] PASS (Path A essentials)$([ "$WARN" = 1 ] && echo ' with warnings')"
-  exit 0
+result=pass
+[ "$WARN" = 1 ] && result=pass_with_warnings
+[ "$FAIL" = 1 ] && result=fail
+
+if [ "$JSON" = 1 ]; then
+  python3 - "$result" "$FAIL" "$WARN" "$arch" "$avail" "$port" "${WORKER_IP:-}" "${CHECKS[@]}" <<'PY'
+import json, sys
+result, fail, warn, arch, avail, port, worker = sys.argv[1:8]
+checks = []
+for item in sys.argv[8:]:
+    level, cid, msg = item.split("|", 2)
+    checks.append({"level": level, "id": cid, "message": msg})
+print(json.dumps({
+    "result": result,
+    "fail": int(fail),
+    "warn": int(warn),
+    "arch": arch,
+    "mem_available_gib": float(avail) if avail not in ("", "n/a") else None,
+    "port": int(port) if str(port).isdigit() else port,
+    "worker_ip_set": bool(worker),
+    "checks": checks,
+}, indent=2))
+PY
+else
+  echo
+  if [ "$FAIL" = 0 ]; then
+    echo "[doctor] PASS (Path A essentials)$([ "$WARN" = 1 ] && echo ' with warnings')"
+  else
+    echo "[doctor] FAIL — fix items above before serving"
+  fi
 fi
-echo "[doctor] FAIL — fix items above before serving"
-exit 1
+
+[ "$FAIL" = 0 ]
