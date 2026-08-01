@@ -1,0 +1,30 @@
+The capital of France is
+In 1969, the first humans landed on the Moon aboard
+def fibonacci(n):
+The chemical symbol for gold is
+Once upon a time, in a village at the edge of a great forest,
+The derivative of x^2 with respect to x is
+Translate to German: "The weather is beautiful today."
+List the first five prime numbers:
+E = mc^2 was proposed by
+SELECT name FROM users WHERE
+The boiling point of water at sea level is
+Roses are red, violets are
+import numpy as np
+The three branches of the US government are
+Photosynthesis converts sunlight, water, and carbon dioxide into
+2, 4, 8, 16, 32,
+The author of "Pride and Prejudice" is
+A haiku about autumn:
+The speed of light in vacuum is approximately
+if __name__ == "__main__":
+The largest planet in our solar system is
+To be, or not to be,
+The freezing point of water in Fahrenheit is
+La capital de España es
+One plus one equals
+The mitochondria is the
+HTTP status code 404 means
+The square root of 144 is
+Newton's second law states that
+In Python, a dictionary is

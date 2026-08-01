@@ -1,0 +1,10 @@
+[
+ {
+  "concurrency": 1,
+  "n": 4,
+  "ttft_p50_ms": 322.1,
+  "decode_tps_p50": 19.46,
+  "aggregate_tps": 19.14,
+  "wall_s": 53.5
+ }
+]

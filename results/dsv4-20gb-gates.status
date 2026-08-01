@@ -1,0 +1,9 @@
+2026-08-01T00:20:47-04:00 START 20gb canonical gates pid=288261
+2026-08-01T00:20:47-04:00 preflight: /v1/models
+2026-08-01T00:20:47-04:00 PHASE1 needle @447K depths 0.05 0.5 0.95
+2026-08-01T00:44:07-04:00 needle_exit=0
+2026-08-01T00:44:07-04:00 needle phase complete
+2026-08-01T00:44:07-04:00 PHASE2 soak 150 min concurrency=5 (matches max-num-seqs)
+2026-08-01T03:14:26-04:00 soak_exit=0
+2026-08-01T03:14:27-04:00 liveness OK
+2026-08-01T03:14:27-04:00 DONE PASS

@@ -1,0 +1,42 @@
+[
+ {
+  "concurrency": 1,
+  "n": 4,
+  "ttft_p50_ms": 451.9,
+  "decode_tps_p50": 8.0,
+  "aggregate_tps": 7.92,
+  "wall_s": 129.3
+ },
+ {
+  "concurrency": 2,
+  "n": 4,
+  "ttft_p50_ms": 827.6,
+  "decode_tps_p50": 8.02,
+  "aggregate_tps": 15.69,
+  "wall_s": 65.2
+ },
+ {
+  "concurrency": 4,
+  "n": 8,
+  "ttft_p50_ms": 3177.1,
+  "decode_tps_p50": 7.84,
+  "aggregate_tps": 28.68,
+  "wall_s": 71.4
+ },
+ {
+  "concurrency": 8,
+  "n": 16,
+  "ttft_p50_ms": 2013.1,
+  "decode_tps_p50": 7.42,
+  "aggregate_tps": 55.93,
+  "wall_s": 73.2
+ },
+ {
+  "concurrency": 16,
+  "n": 32,
+  "ttft_p50_ms": 4226.5,
+  "decode_tps_p50": 6.35,
+  "aggregate_tps": 92.68,
+  "wall_s": 88.4
+ }
+]

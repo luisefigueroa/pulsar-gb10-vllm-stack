@@ -1,0 +1,26 @@
+[
+ {
+  "concurrency": 1,
+  "n": 4,
+  "ttft_p50_ms": 450.8,
+  "decode_tps_p50": 9.47,
+  "aggregate_tps": 8.89,
+  "wall_s": 19.9
+ },
+ {
+  "concurrency": 2,
+  "n": 4,
+  "ttft_p50_ms": 385.5,
+  "decode_tps_p50": 7.89,
+  "aggregate_tps": 14.98,
+  "wall_s": 11.9
+ },
+ {
+  "concurrency": 4,
+  "n": 8,
+  "ttft_p50_ms": 557.8,
+  "decode_tps_p50": 6.35,
+  "aggregate_tps": 21.65,
+  "wall_s": 15.1
+ }
+]

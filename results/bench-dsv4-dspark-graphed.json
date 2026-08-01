@@ -1,0 +1,34 @@
+[
+ {
+  "concurrency": 1,
+  "n": 4,
+  "ttft_p50_ms": 1194.6,
+  "decode_tps_p50": 14.29,
+  "aggregate_tps": 8.5,
+  "wall_s": 20.8
+ },
+ {
+  "concurrency": 2,
+  "n": 4,
+  "ttft_p50_ms": 494.7,
+  "decode_tps_p50": 10.64,
+  "aggregate_tps": 19.09,
+  "wall_s": 9.7
+ },
+ {
+  "concurrency": 4,
+  "n": 8,
+  "ttft_p50_ms": 5713.0,
+  "decode_tps_p50": 9.08,
+  "aggregate_tps": 16.21,
+  "wall_s": 22.0
+ },
+ {
+  "concurrency": 8,
+  "n": 16,
+  "ttft_p50_ms": 844.0,
+  "decode_tps_p50": 7.03,
+  "aggregate_tps": 42.81,
+  "wall_s": 17.1
+ }
+]
