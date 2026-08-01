@@ -48,13 +48,31 @@ hub=$(hf_hub_path)
 mkdir -p "$HF_CACHE/hub"
 
 free=$(disk_free_gib "$HF_CACHE")
-# rough gate: need at least 20GiB free unless tiny canary
-min_free=20
-if [ "$NAME" = "qwen3-1.7b" ] || [ "$NAME" = "qwen3-1.7b-2node" ]; then
-  min_free=5
+# Space gate: WEIGHTS_GIB (conf) or estimate × 1.1 + headroom; never trust a flat 20 GiB for 167 GiB flagships.
+w_gib=$(estimate_weights_gib)
+headroom=10
+if awk -v w="$w_gib" 'BEGIN{exit !(w+0 > 0 && w+0 < 15)}'; then
+  headroom=5
 fi
-if awk -v f="$free" -v m="$min_free" 'BEGIN{exit !(f+0 < m)}'; then
-  die "only ${free} GiB free under $HF_CACHE (want ≥ ${min_free} GiB). Free disk and retry."
+# required = max(ceil(w*1.1)+headroom, small floor)
+need=$(awk -v w="$w_gib" -v h="$headroom" 'BEGIN{
+  if (w+0 <= 0) { print 20; exit }
+  n = (w * 1.1) + h
+  if (n < 5) n = 5
+  printf "%.0f", n + 0.999
+}')
+# if already partially present, reduce need by existing hub size (best-effort)
+if [ -d "$hub" ]; then
+  have=$(du -sb "$hub" 2>/dev/null | awk '{printf "%.2f", $1/1024/1024/1024}' || echo 0)
+  need=$(awk -v n="$need" -v h="$have" 'BEGIN{
+    left = n - h
+    if (left < 5) left = 5
+    printf "%.0f", left
+  }')
+fi
+log "disk: free=${free} GiB under $HF_CACHE; need≥${need} GiB (weights≈${w_gib} GiB ×1.1 + ${headroom} GiB headroom)"
+if awk -v f="$free" -v m="$need" 'BEGIN{exit !(f+0 < m)}'; then
+  die "only ${free} GiB free under $HF_CACHE (need ≥ ${need} GiB for ~${w_gib} GiB weights). Free disk and retry."
 fi
 
 if [ "$YES" != 1 ]; then
