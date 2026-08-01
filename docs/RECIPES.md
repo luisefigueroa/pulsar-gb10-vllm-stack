@@ -141,5 +141,6 @@ unsupported.
   `-e VLLM_BATCH_INVARIANT=1` → greedy outputs identical across nodes AND
   boots (30/30 verified). Not for production throughput paths.
 - **Cross-node TP=2 of a 1-node model on the official image** (measurement
-  only): add `--enforce-eager` or it hangs by request ~2
-  (`laguna-s-2.1-2node.conf`).
+  only): `laguna-s-2.1-2node` is **STATUS=do-not-use** (requires `--force`).
+  Conf bakes `--enforce-eager` (stock graphs hang by request ~2 without it).
+  Prefer 1-node `laguna-s-2.1-nvfp4` for real serving.
