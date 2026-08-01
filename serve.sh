@@ -36,12 +36,13 @@ shift
 CONF="models/${MODEL_NAME}.conf"
 [ -f "$CONF" ] || { echo "No such config: $CONF (try ./serve.sh --list)" >&2; exit 1; }
 
-DETACH="" SPEC_DECODE=0 DRY_RUN=0 PORT_OVERRIDE=""
+DETACH="" SPEC_DECODE=0 DRY_RUN=0 PORT_OVERRIDE="" FORCE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -d) DETACH="-d" ;;
     --spec-decode) SPEC_DECODE=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --force) FORCE=1 ;;
     --port) PORT_OVERRIDE="$2"; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -51,10 +52,19 @@ done
 # Conf contract: MODEL SERVED_NAME [IMAGE] [NODES] [PORT] [GPU_MEM_UTIL]
 # ENGINE_ARGS[] [CONTAINER_ENV[]] [SPEC_DECODE_ARGS[]] [STATUS] [NOTES]
 NODES=1 PORT=8000 GPU_MEM_UTIL=0.80 IMAGE="" CONTAINER_ENV=() SPEC_DECODE_ARGS=()
+STATUS="?"
 # shellcheck disable=SC1090
 . "$CONF"
 IMAGE="${IMAGE:-$VLLM_IMAGE_MAINLINE}"
 PORT="${PORT_OVERRIDE:-$PORT}"
+STATUS="${STATUS:-?}"
+
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/lib.sh"
+if status_requires_force && [ "$FORCE" != 1 ]; then
+  echo "$MODEL_NAME status=$STATUS — refuse serve without --force (allowlist: tested*)" >&2
+  exit 1
+fi
 
 if [ "$NODES" != "1" ]; then
   echo "$MODEL_NAME is a ${NODES}-node config. Use: cluster/start-cluster.sh $MODEL_NAME" >&2

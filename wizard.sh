@@ -90,8 +90,8 @@ NAME=$(echo "$pick" | awk '{print $1}')
 load_conf "$NAME"
 log "selected $NAME status=$STATUS nodes=$NODES served=$SERVED_NAME image=$IMAGE"
 
-if status_is_blocked; then
-  die "$NAME is blocked ($STATUS). Not offered for guided start."
+if status_requires_force; then
+  die "$NAME status=$STATUS is not ship-default (need tested*). Not offered for guided start; use scripts/up.sh --force only if you mean it."
 fi
 
 log "checking weights…"

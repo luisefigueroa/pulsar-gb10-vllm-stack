@@ -33,7 +33,7 @@ usage: scripts/up.sh <model-name> [options]
   --verbose              full check logs (default is one-line gates)
   --accept-memory-warn   allow start on memory WARN
   --pull-image / --yes   attempt image pull/sync when missing
-  --force                allow blocked-upstream confs
+  --force                allow non-tested conf statuses (untested/do-not-use/blocked*)
   --skip-preflight       skip cluster/preflight.sh
   --skip-weights-check   skip weight presence check
 EOF
@@ -60,9 +60,9 @@ fi
 [ "$DRY" = 1 ] && echo "│  mode=DRY-RUN (checks only)"
 echo "├─ checks"
 
-if status_is_blocked && [ "$FORCE" != 1 ]; then
-  echo "FAIL  conf      status=$STATUS (use --force to override)"
-  die "$NAME status=$STATUS — refuse start without --force"
+if status_requires_force && [ "$FORCE" != 1 ]; then
+  echo "FAIL  conf      status=$STATUS (ship default: only tested*; use --force)"
+  die "$NAME status=$STATUS — refuse start without --force (allowlist: tested*)"
 fi
 echo "PASS  conf      status=$STATUS"
 

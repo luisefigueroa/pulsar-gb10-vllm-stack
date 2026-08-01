@@ -98,11 +98,24 @@ status_is_tested() {
   esac
 }
 
+# Historical name: true for blocked* only. Prefer status_requires_force for gates.
 status_is_blocked() {
   case "${STATUS}" in
-    blocked*|BLOCKED*) return 0 ;;
+    blocked*|BLOCKED*|do-not-use|DO-NOT-USE*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# Ship default: only STATUS=tested* may launch without --force.
+status_is_launchable() {
+  status_is_tested
+}
+
+status_requires_force() {
+  if status_is_launchable; then
+    return 1
+  fi
+  return 0
 }
 
 mem_available_gib_local() {

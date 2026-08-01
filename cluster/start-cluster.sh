@@ -19,15 +19,16 @@ require_cluster_ips || exit 1
 VLLM_IMAGE_MAINLINE="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai:v0.26.0}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 
-MODEL_NAME="${1:?usage: cluster/start-cluster.sh <model-name> [--spec-decode] [--skip-preflight] [--skip-warmup] [--dry-run]}"
+MODEL_NAME="${1:?usage: cluster/start-cluster.sh <model-name> [--spec-decode] [--skip-preflight] [--skip-warmup] [--dry-run] [--force]}"
 shift
-SPEC_DECODE=0 SKIP_PREFLIGHT=0 SKIP_WARMUP=0 DRY_RUN=0
+SPEC_DECODE=0 SKIP_PREFLIGHT=0 SKIP_WARMUP=0 DRY_RUN=0 FORCE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --spec-decode) SPEC_DECODE=1 ;;
     --skip-preflight) SKIP_PREFLIGHT=1 ;;
     --skip-warmup) SKIP_WARMUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --force) FORCE=1 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
@@ -37,9 +38,18 @@ CONF="models/${MODEL_NAME}.conf"
 [ -f "$CONF" ] || { echo "No such config: $CONF" >&2; exit 1; }
 NODES=1 PORT=8000 GPU_MEM_UTIL=0.80 IMAGE=""
 CONTAINER_ENV=() SPEC_DECODE_ARGS=() ENGINE_ARGS=()
+STATUS="?"
 # shellcheck disable=SC1090
 . "$CONF"
 IMAGE="${IMAGE:-$VLLM_IMAGE_MAINLINE}"
+STATUS="${STATUS:-?}"
+
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/lib.sh"
+if status_requires_force && [ "$FORCE" != 1 ]; then
+  echo "$MODEL_NAME status=$STATUS — refuse start without --force (allowlist: tested*)" >&2
+  exit 1
+fi
 
 [ "$NODES" = "2" ] || { echo "$MODEL_NAME is a single-node config; use ./serve.sh" >&2; exit 1; }
 if [ "$SPEC_DECODE" = "1" ] && [ "${#SPEC_DECODE_ARGS[@]}" -eq 0 ]; then
