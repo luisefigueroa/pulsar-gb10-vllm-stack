@@ -175,7 +175,7 @@ no leaks, no thermal throttling anywhere).
 |---|---|
 | `models/*.conf` | one validated flag set per model; statuses earned by runs |
 | `cluster/` | 2-node launch/preflight/teardown + measured NCCL env |
-| `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench (per-level warmup), soak |
+| `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
 | `patches/pr41834-dspark-opt/` | documented DSpark draft-path port (perf-neutral; obsolete after vllm #49731 lands in a pin) |

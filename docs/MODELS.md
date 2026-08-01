@@ -16,7 +16,7 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 claimed (needle pending) | MTP (opt-in, unvalidated) | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP validated lossless but **-21% -> off** | **tested** — 16.2 tok/s c=1, 113 agg c=32, IDENTICAL determinism, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K) | DFlash **failed (-51%) -> disabled** | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
-| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **upstream-lineage image** (vllm-gb10:pr41834, source-built PR #41834) | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (577,640-token KV; needle 3/3 @447K at this geometry) | **DSpark k=5 recommended** (`--spec-decode`; 43–48 tok/s c=1) | **tested+soaked** — flagship since 07-31: parity battery + 150-min spec-on soak 3951 req/0 err + 500K-KV gates (VALIDATION.md) |
+| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **upstream-lineage image** (vllm-gb10:pr41834, source-built PR #41834) | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (client cap; **20 GB/rank KV → 652,465 tok, 1.30x @500K**; `max-num-seqs 5`; prior soaked 10 GB→577k, needle 3/3 @447K) | **DSpark k=5 recommended** (`--spec-decode`; 43–48 tok/s c=1) | **tested+soaked** (model/image) — flagship; **2026-08-01 defaults retuned for few long agent sessions** (see conf header + DeepSeek notes) |
 | `deepseek-v4-flash-0422` | original 04-22 checkpoint (flagship 07-30→07-31) | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested (500K configured) | via retired -DSpark ckpt only | fallback (fully validated; superseded by 0731) |
 | `deepseek-v4-flash-sparkrun` | same model, community sparkrun binary | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested | MTP -36% -> off | fallback (fully validated; superseded) |
 | `inkling-small-nvfp4` | Thinkingmachines/Inkling-Small-NVFP4 (NFS catalog, added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 1M configured | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
@@ -63,6 +63,19 @@ headroom is not a deployment.
   of vLLM PR #41834 (stock release images remain non-viable: kernel-level
   livelock, VALIDATION.md); the community sparkrun binary is the documented
   fallback (`deepseek-v4-flash-sparkrun.conf`).
+  **Default geometry (2026-08-01) is optimized for few long agent sessions**,
+  not high-QPS short chat: ≤5 concurrent (Hermes + occasional sub-agents),
+  long tool/code/repo traces, client context capped at **500K** (official
+  useful max; recall drops beyond). Engine defaults in
+  `models/deepseek-v4-flash.conf`: `--max-model-len 500000`,
+  `--max-num-seqs 5`, `--max-num-batched-tokens 16384`,
+  `--kv-cache-memory-bytes 20000000000` (~20 GB/rank; boot-measured
+  **652,465-token** pool, 1.30x concurrency at 500K — not linear from the
+  old 10 GB figure), plus DeepSeek tool/reasoning parsers for agent clients.
+  Do **not** size toward 27.5 GB/rank (known node-2 OOM) or assume old
+  “~2M token” profiles from other geometries transfer. With explicit
+  `kv_cache_memory_bytes`, twiddling `gpu_memory_utilization` does not
+  grow KV. Prior soaked reference remains 10 GB → 577,640 tokens (VALIDATION.md).
 - **Qwen**: newest local are Qwen3.6-27B (hybrid GDN; FP8 and NVFP4 variants
   cached with full weights — the "BF16" cache entry was an empty stub,
   downloaded fresh 2026-07-28 for the quant-control eval) and

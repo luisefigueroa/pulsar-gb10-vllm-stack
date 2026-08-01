@@ -26,6 +26,17 @@ Wire that (not /health) into anything that pages or restarts. Also useful:
   **ALWAYS `cluster/stop-cluster.sh` before any relaunch** — a leftover
   worker holds the master port and the new head hangs in rendezvous with no
   error output.
+- After 2-node health, `start-cluster.sh` runs `validate/warmup.py` once
+  (short+medium prompts, c=1 and c=4, stream and non-stream). That pays
+  DSpark/Triton/block-FP8 JIT so the first real client is not the cold path.
+  Skip with `--skip-warmup` (falls back to a single smoke completion).
+  Manual: `python3 validate/warmup.py --url http://127.0.0.1:8000 --model <served>`.
+- **Flagship DeepSeek defaults** (`models/deepseek-v4-flash.conf`) target
+  **few long agent sessions** (≤5 concurrent, 500K client cap, tools/code),
+  not high-QPS chat: 20 GB/rank KV, `max-num-seqs 5`, batch 16384, tool+
+  reasoning parsers. Before resizing KV further: `drop_caches` both nodes,
+  step only (never ≥27.5 GB/rank — known OOM), read boot "GPU KV cache size",
+  soak. Details in the conf header and docs/RECIPES.md / docs/MODELS.md.
 - One big model per node, ever. gpu-mem-util 0.85 leaves ~18 GiB for the OS
   on a 121 GiB shared pool; a second workload swaps the box.
   Before starting after other work: `sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`.

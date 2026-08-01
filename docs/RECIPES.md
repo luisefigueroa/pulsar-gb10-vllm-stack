@@ -13,45 +13,58 @@ Shared doctrine baked into every recipe:
 - spec decode OFF everywhere (every method measured slower or broken —
   VALIDATION.md); CUDA graphs ON except where noted
 
-## Flagship: DeepSeek-V4-Flash, 2-node TP=2 — 27.15 tok/s c=1, 447K ctx
+## Flagship: DeepSeek-V4-Flash-0731, 2-node TP=2 — long-session agents @ 500K
 
 Image `vllm-gb10:pr41834-d64074e6f` (source build, docs/BUILD.md).
-Worker first (on dgx-spark-2), then head:
+**Preferred launch:** `cluster/start-cluster.sh deepseek-v4-flash --spec-decode`
+(runs preflight, dual-node start, then `validate/warmup.py`).
+
+### Workload these flags target
+
+| Pattern | Default choice |
+|---|---|
+| Few concurrent sessions (≈4, max 5) | `--max-num-seqs 5` |
+| Long tool/code/repo agent traces | 20 GB/rank KV pool, prefix caching on |
+| Cap at official useful max context | `--max-model-len 500000` (do not chase 1M) |
+| Large prefills (code chunks) | `--max-num-batched-tokens 16384` |
+| Hermes / OpenAI tool_choice=auto | `--enable-auto-tool-choice --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4 --tokenizer-mode deepseek_v4` |
+| Decode throughput | DSpark k=5 via `--spec-decode` |
+
+Not the target: high-QPS short chat, 8–16-way concurrency, or packing
+KV to free-memory readings on unified memory (27.5 GB/rank OOM’d node 2).
+
+### Engine flags (from `models/deepseek-v4-flash.conf`)
 
 ```bash
-# WORKER (ssh 10.100.120.2)
-docker run -d --name vllm-cluster-deepseek-v4-flash \
-  --network host --ipc host --gpus all \
-  --ulimit memlock=-1 --ulimit stack=67108864 \
-  --device /dev/infiniband \
-  -v ~/.cache/huggingface:/root/.cache/huggingface \
-  -v /mnt/Models:/mnt/Models:ro \
-  -e HF_HUB_OFFLINE=1 -e VLLM_HOST_IP=10.100.120.2 \
-  -e NCCL_IB_HCA=rocep1s0f0,roceP2p1s0f0 \
-  -e NCCL_IB_QPS_PER_CONNECTION=4 \
-  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 -e GLOO_SOCKET_IFNAME=enp1s0f0np0 \
-  -e TP_SOCKET_IFNAME=enp1s0f0np0 -e NCCL_IB_DISABLE=0 -e NCCL_DEBUG=WARN \
-  vllm-gb10:pr41834-d64074e6f \
-  --model deepseek-ai/DeepSeek-V4-Flash --served-model-name deepseek-v4-flash \
-  --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.80 \
-  --trust-remote-code --tensor-parallel-size 2 \
-  --kv-cache-dtype fp8 --block-size 256 \
-  --max-model-len 500000 --max-num-seqs 8 --max-num-batched-tokens 8192 \
-  --enable-prefix-caching --distributed-executor-backend mp \
-  --nnodes 2 --master-addr 10.100.120.1 --master-port 29500 \
-  --node-rank 1 --headless
-
-# HEAD (dgx-spark-1): identical except
-#   -e VLLM_HOST_IP=10.100.120.1  and  --node-rank 0  (no --headless)
+# Prefer: cluster/start-cluster.sh deepseek-v4-flash --spec-decode
+# Effective vLLM args on each rank (plus --nnodes/--node-rank/--headless):
+--model deepseek-ai/DeepSeek-V4-Flash-0731
+--served-model-name deepseek-v4-flash
+--host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.80
+--trust-remote-code --tensor-parallel-size 2
+--kv-cache-dtype fp8 --block-size 256
+--max-model-len 500000
+--kv-cache-memory-bytes 20000000000   # 20 GB/rank; gpu_mem_util does NOT size KV
+--max-num-seqs 5
+--max-num-batched-tokens 16384
+--enable-prefix-caching
+--tokenizer-mode deepseek_v4
+--enable-auto-tool-choice --tool-call-parser deepseek_v4
+--reasoning-parser deepseek_v4
+--distributed-executor-backend mp
+# with --spec-decode:
+--speculative-config '{"method":"dspark","num_speculative_tokens":5}'
 ```
 
 Load-bearing details: `--kv-cache-dtype fp8` is REQUIRED (auto asserts:
 "fp8_ds_mla layout only supports fp8 kv-cache"); `--block-size 256` from the
-validated production lineage; graphs stay ON (this stack passed all stress
-with them — do NOT add `--enforce-eager` here). Fallback recipe = same
-shape on the sparkrun image via `deepseek-v4-flash-sparkrun.conf` (different
-entrypoint and HF mount at `/cache/huggingface`; MTP available there but
-measured -36% — off).
+validated production lineage; graphs stay ON (do NOT add `--enforce-eager`
+here). 10 GB KV + batch 16384 failed init (~15.66 GiB floor for one 500K
+seq). Boot with 20 GB (2026-08-01): reserved 18.63 GiB → **652,465-token**
+KV, **1.30x** max concurrency at 500K; post-boot warmup ok; MemAvailable
+~7 GiB both nodes (tighter than 10 GB geometry — watch headroom). Stay
+below 27.5 GB/rank (known OOM). Prior soaked ref: 10 GB → 577,640 tokens,
+needle 3/3 @447K (VALIDATION.md). Fallback: `deepseek-v4-flash-sparkrun.conf`.
 
 ## Primary single-node: Laguna-S-2.1-NVFP4 — 19.5 tok/s c=1, full 256K ctx
 
