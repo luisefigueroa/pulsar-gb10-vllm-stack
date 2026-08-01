@@ -131,12 +131,22 @@ build_docker_cmd "$WORKER_IP" --node-rank 1 --headless
 WORKER_CMD=("${_DOCKER_CMD[@]}")
 build_docker_cmd "$HEAD_IP" --node-rank 0
 HEAD_CMD=("${_DOCKER_CMD[@]}")
+# API auth on head only (worker is headless; open lab default when unset)
+_api_key="${VLLM_API_KEY:-${API_KEY:-}}"
+if [ -n "$_api_key" ]; then
+  HEAD_CMD+=(--api-key "$_api_key")
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "WORKER (ssh $WORKER_IP):"
   echo "  $(shell_join_q "${WORKER_CMD[@]}")"
   echo "HEAD (local):"
   echo "  $(shell_join_q "${HEAD_CMD[@]}")"
+  if [ -n "$_api_key" ]; then
+    echo "[cluster] API key auth enabled on head (VLLM_API_KEY/API_KEY)"
+  else
+    echo "[cluster] API open on head (no VLLM_API_KEY) — lab network only"
+  fi
   exit 0
 fi
 

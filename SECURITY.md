@@ -14,7 +14,11 @@ multi-tenant SaaS:
 - Launchers bind the OpenAI-compatible API to `0.0.0.0` by default for
   cluster convenience. **Do not expose port 8000 (or the worker RDMA/SSH
   plane) to the public internet** without an authenticating reverse proxy,
-  network policy, and vLLM `--api-key` (or equivalent).
+  network policy, and/or vLLM `--api-key`.
+- **Optional first-class key:** set `VLLM_API_KEY` (or `API_KEY`) in `.env`.
+  `serve.sh` and the multi-node **head** then pass `--api-key` automatically.
+  Unset = open lab default (no auth). Clients use
+  `Authorization: Bearer <key>`.
 - Cluster scripts expect **key-based SSH** from head → worker. Keep those
   keys offline from the git tree; use a local `.env` for `HEAD_IP` /
   `WORKER_IP` and related fabric settings (see `.env.example`).

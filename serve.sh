@@ -107,10 +107,21 @@ CMD+=("$IMAGE"
 )
 [ "$SPEC_DECODE" = "1" ] && CMD+=("${SPEC_DECODE_ARGS[@]}")
 # Escape hatch for experiments; never required by a shipped config
+# shellcheck disable=SC2206
 [ -n "${VLLM_EXTRA_ARGS:-}" ] && CMD+=($VLLM_EXTRA_ARGS)
+# Optional API auth (open lab default when unset)
+_api_key="${VLLM_API_KEY:-${API_KEY:-}}"
+if [ -n "$_api_key" ]; then
+  CMD+=(--api-key "$_api_key")
+fi
 
 if [ "$DRY_RUN" = "1" ]; then printf '%q ' "${CMD[@]}"; echo; exit 0; fi
 
 echo "[serve] $MODEL_NAME ($MODEL) on port $PORT, image $IMAGE"
 [ -n "${NOTES:-}" ] && echo "[serve] notes: $NOTES"
+if [ -n "$_api_key" ]; then
+  echo "[serve] API key auth enabled (VLLM_API_KEY/API_KEY)"
+else
+  echo "[serve] API open (no VLLM_API_KEY) — lab network only"
+fi
 exec "${CMD[@]}"
