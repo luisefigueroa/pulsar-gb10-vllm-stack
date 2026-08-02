@@ -75,10 +75,18 @@ check_node_cold() {
     reason="${reason}${label}: available ${avail} GiB < hard floor ${floor} GiB; "
     return
   fi
-  if awk -v a="$avail" -v n="$need_start" 'BEGIN{exit !(a+0 < n)}'; then
+  # Hard fail only when free is clearly below the footprint estimate (8% slack
+  # for WEIGHTS_GIB/overhead pad). require free >= footprint+spike was too
+  # strict on 121 GiB Sparks (flagship estimate ~118 need vs ~113 free while
+  # the geometry is known to run with ~4 GiB residual).
+  if awk -v a="$avail" -v f="$need_footprint" 'BEGIN{exit !(a+0 < f*0.92)}'; then
     result=fail
-    reason="${reason}${label}: available ${avail} GiB < start need ${need_start} GiB (footprint ${need_footprint}+spike); "
+    reason="${reason}${label}: available ${avail} GiB << footprint ${need_footprint} GiB (cannot fit); "
     return
+  fi
+  if awk -v a="$avail" -v n="$need_start" 'BEGIN{exit !(a+0 < n)}'; then
+    if [ "$result" = pass ]; then result=warn; fi
+    reason="${reason}${label}: available ${avail} GiB < ideal start ${need_start} GiB (footprint+spike); tight but may run; "
   fi
   residual=$(awk -v a="$avail" -v f="$need_footprint" 'BEGIN{printf "%.2f", a-f}')
   if awk -v r="$residual" -v b="$buffer" 'BEGIN{exit !(r+0 < b)}'; then
