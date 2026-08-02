@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
 done
 
 load_conf "$NAME"
-weights=$(estimate_weights_gib)
+weights=$(estimate_weights_ram_gib)
 kv=$(estimate_kv_gib)
 overhead="${OVERHEAD_GIB:-$OVERHEAD_GIB_DEFAULT}"
 buffer="${MEM_MIN_FREE_GIB:-$MIN_OS_BUFFER_GIB}"

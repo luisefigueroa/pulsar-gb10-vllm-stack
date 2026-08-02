@@ -224,6 +224,7 @@ dir_size_gib() {
 }
 
 estimate_weights_gib() {
+  # Disk footprint for pull-weights (full HF/NFS tree).
   if [ -n "${WEIGHTS_GIB}" ]; then
     echo "$WEIGHTS_GIB"
     return
@@ -238,9 +239,18 @@ estimate_weights_gib() {
   if awk -v s="$sz" 'BEGIN{exit !(s>0.1)}'; then
     echo "$sz"
   else
-    # Unknown — conservative placeholder for canaries
     echo "5"
   fi
+}
+
+# Unified-memory weight footprint for check-memory (full model GiB).
+# Prefer WEIGHTS_RAM_GIB when disk ≠ resident RAM (quantized / MoE).
+estimate_weights_ram_gib() {
+  if [ -n "${WEIGHTS_RAM_GIB}" ]; then
+    echo "$WEIGHTS_RAM_GIB"
+    return
+  fi
+  estimate_weights_gib
 }
 
 estimate_kv_gib() {
