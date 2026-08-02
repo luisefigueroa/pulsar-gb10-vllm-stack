@@ -1,5 +1,10 @@
 # Pulsar GB10 vLLM Stack
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Hardware](https://img.shields.io/badge/hardware-DGX%20Spark%20GB10-76B900)](docs/HARDWARE.md)
+[![vLLM](https://img.shields.io/badge/vLLM-0.26%20%2B%20PR%2041834-orange)](docs/BUILD.md)
+[![Validation](https://img.shields.io/badge/validation-measured%20on%20box-success)](docs/VALIDATION.md)
+
 *Validated vLLM serving on one or two NVIDIA DGX Spark systems: nothing
 ships here until it has earned its status on GB10 hardware.*
 
