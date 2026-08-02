@@ -16,7 +16,7 @@ HISTORICAL / SUPERSEDED markers.
 
 | Role | What to run | Image | Notes |
 |---|---|---|---|
-| **Flagship (2-node)** | `cluster/start-cluster.sh deepseek-v4-flash --spec-decode` | `vllm-gb10:pr41834-d64074e6f` | DeepSeek-V4-Flash-**0731**; DSpark k=5 **recommended**; canonical **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01; the 10 GB/577k result remains historical evidence. |
+| **Flagship (2-node)** | `cluster/start-cluster.sh deepseek-v4-flash --spec-decode` | published PR-41834 digest in model conf | DeepSeek-V4-Flash-**0731**; DSpark k=5 **recommended**; canonical **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01; the 10 GB/577k result remains historical evidence. |
 | Fallback checkpoint | `deepseek-v4-flash-0422` | same PR-41834 image | Fully validated; superseded by 0731 as default conf |
 | **Primary single-node** | `./serve.sh laguna-s-2.1-nvfp4 -d` | `vllm/vllm-openai:v0.26.0` | NVFP4; graphs on; DFlash off by default |
 | Fast single-node | `./serve.sh nemotron-3-nano-30b-nvfp4 -d` | mainline | Fastest tok/s on box |

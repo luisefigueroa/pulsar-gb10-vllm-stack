@@ -1,0 +1,10 @@
+# Trivy compares the PEP 440 development version to the v0.24.0 release and
+# cannot infer commit ancestry. The qualified d64074e6f image contains all
+# three upstream security-fix commits:
+#
+# CVE-2026-54234 -> 8a5cf1ccd65e8ac7635c402c1ec0b08988bc26ca
+# CVE-2026-55514 -> 470229c37efaf69c86e8bc97482b0b1ff7551c65
+# CVE-2026-55574 -> 2b3006076c5e9bc4cda9e03e3641388de3c5c286
+CVE-2026-54234
+CVE-2026-55514
+CVE-2026-55574

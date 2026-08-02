@@ -24,12 +24,12 @@ require_cmd docker
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   case "$IMAGE" in
-    vllm/vllm-openai:*|vllm/*)
+    vllm/vllm-openai:*|vllm/*|ghcr.io/*)
       if [ "$PULL" = 1 ] || [ "$YES" = 1 ]; then
         log "docker pull $IMAGE"
         docker pull "$IMAGE"
       else
-        die "image missing on head: $IMAGE — re-run with --pull for official tags"
+        die "image missing on head: $IMAGE — re-run with --pull for published images"
       fi
       ;;
     *)

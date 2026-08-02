@@ -54,8 +54,8 @@ Minimum to serve one model on the box where you run the script:
 2. **Container image present locally**
    - Default mainline: `vllm/vllm-openai:v0.26.0` (override with
      `VLLM_IMAGE_MAINLINE` in `.env`)
-   - DeepSeek-V4 flagship: local PR #41834 build (`vllm-gb10:pr41834-*`) —
-     see [BUILD.md](./BUILD.md) and `models/deepseek-v4-flash.conf` `IMAGE=`
+   - DeepSeek-V4/Inkling: published, digest-pinned PR #41834 image — see
+     [BUILD.md](./BUILD.md) and the selected model conf's `IMAGE=`
 3. **Weights on disk** (default `HF_HUB_OFFLINE=1` — no surprise downloads)
    - Hugging Face cache under `$HF_CACHE/hub/models--ORG--NAME`
      (default `HF_CACHE=$HOME/.cache/huggingface`), **or**
@@ -208,7 +208,7 @@ Single-node only needs §1–§2; multi-node needs §3 as well.
 ```text
 [ ] nvidia-smi → NVIDIA GB10
 [ ] docker + nvidia runtime; docker run --gpus all works
-[ ] image present for the conf you want (mainline or PR-41834 for DSV4)
+[ ] image present for the conf you want (mainline or published PR-41834 image)
 [ ] weights in HF cache or MODELS_NFS path (refs/main if rsynced)
 [ ] ~100 GiB free; no second heavy GPU workload
 [ ] ./serve.sh --list works

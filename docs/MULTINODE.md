@@ -69,7 +69,7 @@ globally; nothing 2-node ships untested.
 
 | Stack | Cross-node TP=2 result |
 |---|---|
-| `vllm-gb10:pr41834-*` (DeepSeek-V4 flagship) | **STABLE with CUDA graphs on** — full battery + multi-hour soaks (docs/VALIDATION.md) |
+| published PR-41834 image (DeepSeek-V4 flagship) | **STABLE with CUDA graphs on** — full battery + multi-hour soaks (docs/VALIDATION.md) |
 | official v0.26.0, tiny BF16 canary | works, incl. concurrency |
 | official v0.26.0, real models, graphs on | **hangs within first requests** (27B GDN: wrong output then `sample_tokens` RPC timeout; Laguna: `shm_broadcast acquire_read` timeout) |
 | official v0.26.0, `--enforce-eager` | works (Laguna: captures + concurrency + gsm8k parity) at ~2x decode cost |

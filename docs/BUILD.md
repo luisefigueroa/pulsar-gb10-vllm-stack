@@ -1,6 +1,6 @@
 # Build & image provenance
 
-## Decision: pinned official image + metadata overlay, source build only for DSV4
+## Decision: pinned published images; source build only as a fallback
 
 Build brief: *"vLLM built from source only if that offers significant advantages
 over official published vllm images for this arch/compute capability."*
@@ -34,14 +34,14 @@ build below). Stock `v0.26.0` livelocks under multi-node load for this model
 | Goal | Path |
 |---|---|
 | Qwen / Nemotron / Laguna / small canaries | Pull `vllm/vllm-openai:v0.26.0` — no source build |
-| DeepSeek-V4-Flash flagship | Build `vllm-gb10:pr41834-*` (§ below), load on both nodes |
+| DeepSeek-V4-Flash / Inkling | Pull the digest-pinned published PR-41834 image, then stage it to the worker |
 
 ### The pins
 
 | Image | Pin | Role |
 |---|---|---|
-| `vllm/vllm-openai:v0.26.0` | `sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52` | mainline: every model except DeepSeek-V4 |
-| `vllm-gb10:pr41834-d64074e6f` | local source build, vLLM PR #41834 head `d64074e6f` (see build section below) | **DeepSeek-V4-Flash flagship (promoted 2026-07-30)** |
+| `vllm/vllm-openai:v0.26.0` | `sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52` | mainline: Qwen, Nemotron, Laguna, and small canaries |
+| `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | `sha256:260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2` | **DeepSeek-V4-Flash flagship and Inkling-Small-NVFP4** |
 
 Digest-pin discipline: tags are mutable; `Dockerfile` FROMs the digest. When
 bumping, re-run the validation suite (docs/VALIDATION.md) before changing the
@@ -68,7 +68,7 @@ give deployments an immutable local name + provenance labels.
 ## When to revisit a source build
 
 - Sparse-MLA/DSA on sm_121 lands in a mainline release → could retire the
-  local PR-41834 build for a digest-pinned stock tag + revalidation.
+  published PR-41834 image for a digest-pinned stock tag + revalidation.
 - FlashAttention adds sm_121 FA3/FA4 paths.
 - A model in the matrix requires an unreleased architecture.
 
@@ -76,7 +76,33 @@ If that day comes: `TORCH_CUDA_ARCH_LIST=12.0f` (CUDA >= 13) or `12.1a`
 (cu129 track), and beware vllm#49904 (arch auto-detect can produce a
 kernel-less sm_121 build).
 
-## Upstream-lineage DeepSeek-V4 build (PR #41834) — stranger-reproducible
+## Upstream-lineage DeepSeek-V4 image (PR #41834)
+
+The qualified arm64 image is published at:
+
+```text
+ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f
+sha256:260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2
+```
+
+Release audit (2026-08-02): Trivy 0.72.0 reported zero secrets, zero
+critical findings, and zero unsuppressed fixable high findings after the
+OpenSSL refresh. A CycloneDX 1.7 SBOM (1,759 components) is attached to the
+image manifest as OCI artifact
+`sha256:6917947b95b7a9644278b6f4298dfa6a84acd7c45802b1fc03c64170c7008ef0`.
+Its payload SHA-256 is
+`e92f3a637ad8cebbbd36de5d541dcaeb81af6671ef60a16cf875d651383d7b6a`.
+
+Model confs pin its immutable registry digest. Pulling is the normal bootstrap
+path; the source-build recipe below remains the reproducibility and fallback
+path. See [IMAGE-LICENSES.md](./IMAGE-LICENSES.md) for component licensing.
+The release wrapper also upgrades Jammy `openssl`/`libssl3` to
+`3.0.2-0ubuntu1.26` for CVE-2026-45447; it does not replace qualified vLLM or
+CUDA binaries. Scanner suppressions in `images/pr41834.trivyignore` are limited
+to vLLM advisories whose upstream fix commits are ancestors of the qualified
+PR pin.
+
+### Stranger-reproducible source build
 
 Stock v0.26.0 cannot serve DeepSeek-V4 on GB10 (attention-kernel livelock
 under load — VALIDATION.md probe series, upstream vllm#49026). The
@@ -108,12 +134,16 @@ DOCKER_BUILDKIT=1 docker build --target vllm-openai \
   --build-arg torch_cuda_arch_list='12.0' \
   -t vllm-gb10:pr41834-d64074e6f -f docker/Dockerfile .
 
-# 3) Stage to worker (two-node)
+# 3) Stage the local fallback to the worker (two-node)
 docker save vllm-gb10:pr41834-d64074e6f | ssh "$WORKER_IP" docker load
 
-# 4) Point confs (already default in this repo)
-# models/deepseek-v4-flash.conf → IMAGE="vllm-gb10:pr41834-d64074e6f"
+# 4) For an offline/local fallback, change the selected model conf's IMAGE
+#    from the published digest to vllm-gb10:pr41834-d64074e6f.
 ```
+
+`images/pr41834-release.Dockerfile` is the publisher-side metadata and security
+wrapper for the qualified local base. Run it from this stack repository, not
+from the upstream vLLM checkout.
 
 `torch_cuda_arch_list='12.0'` compiles the 12.0f family target (covers
 sm_121 natively under CUDA 13.0.3) plus the 12.0a/12.1a quant-kernel gates.

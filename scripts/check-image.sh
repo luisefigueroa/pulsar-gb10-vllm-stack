@@ -79,7 +79,7 @@ else
     log "$NAME image=$IMAGE state=$state head=$head_ok worker=$worker_ok"
     if [ "$state" != ok ]; then
       case "$IMAGE" in
-        vllm/vllm-openai:*|vllm/*)
+        vllm/vllm-openai:*|vllm/*|ghcr.io/*)
           warn "pull: docker pull $IMAGE"
           [ "$NODES" = 2 ] && warn "then: scripts/sync-image.sh $NAME"
           ;;

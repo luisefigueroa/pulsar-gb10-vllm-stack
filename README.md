@@ -99,7 +99,7 @@ NFS catalog models (e.g. `laguna-s-2.1-nvfp4`) need `/mnt/Models/...` mounted;
 
 ### Path B — two Sparks, DeepSeek-V4 flagship
 
-Harder path: custom image + weights on **both** nodes + RoCE `.env`.
+Harder path: published custom image + weights on **both** nodes + RoCE `.env`.
 
 ```bash
 cp .env.example .env
@@ -107,8 +107,8 @@ cp .env.example .env
 # Optional assist: scripts/detect-fabric.sh   # then set WORKER_IP by hand
 # scripts/detect-fabric.sh --write-env       # writes HEAD_IP + NCCL_* guesses
 
-# Image: build PR #41834 on head (docs/BUILD.md), then stage to worker
-scripts/sync-image.sh deepseek-v4-flash --yes
+# Image: pull the qualified digest on head, then stage it to worker
+scripts/sync-image.sh deepseek-v4-flash --pull --yes
 
 # Weights on head + worker (~167 GB)
 scripts/pull-weights.sh deepseek-v4-flash --yes
@@ -145,8 +145,8 @@ All servers speak the OpenAI API on :8000. Per-model flags live in
 
 | Image | What it is | Serves |
 |---|---|---|
-| `vllm/vllm-openai:v0.26.0` (digest-pinned in `Dockerfile`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Everything except DeepSeek-V4 |
-| `vllm-gb10:pr41834-d64074e6f` | **Local source build of vLLM PR #41834 HEAD** (see below) | DeepSeek-V4-Flash flagship (promoted 2026-07-30; 0731 checkpoint since 2026-07-31) |
+| `vllm/vllm-openai:v0.26.0` (digest-pinned in `Dockerfile`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Qwen, Nemotron, Laguna, and small canaries |
+| `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | **Published arm64 source build of vLLM PR #41834 HEAD** (see below); immutable digest is pinned in model confs | DeepSeek-V4-Flash flagship and Inkling-Small-NVFP4 |
 
 ### The PR #41834 build (the only "patch" in the stack)
 
@@ -168,6 +168,10 @@ Build: `torch_cuda_arch_list='12.0'` (12.0f family = native sm_121 under
 CUDA 13.0.3), 1 h 40 min on the 20-core Grace. Full recipe in
 `docs/BUILD.md`. When PR #41834 merges upstream this collapses to a stock
 pin bump + revalidation.
+
+The published container includes CUDA and other components under their own
+terms; it is not licensed solely under this repository's Apache-2.0 license.
+See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
 
 ## Optimizations applied (all measured on THIS cluster)
 

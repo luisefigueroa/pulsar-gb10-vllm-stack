@@ -18,7 +18,7 @@ Shared doctrine baked into every recipe:
 
 ## Flagship: DeepSeek-V4-Flash-0731, 2-node TP=2 — long-session agents @ 500K
 
-Image `vllm-gb10:pr41834-d64074e6f` (source build, docs/BUILD.md).
+Image: published PR-41834 digest pinned in the model conf (docs/BUILD.md).
 **Preferred launch:** `cluster/start-cluster.sh deepseek-v4-flash --spec-decode`
 (runs preflight, dual-node start, then `validate/warmup.py`).
 
