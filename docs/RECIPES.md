@@ -2,8 +2,10 @@
 
 These are the COMPLETE effective launch commands (rendered from
 `./serve.sh <name> --dry-run` / `cluster/start-cluster.sh <name> --dry-run`,
-not hand-transcribed). `models/*.conf` remain the source of truth; this page
-exists so a recipe survives outside the tooling. Numbers: docs/VALIDATION.md.
+not hand-transcribed). Day-to-day operators can use `./pulsar start <name>`
+(or `./pulsar wizard` for guided Path A/B and safe model switch).
+`models/*.conf` remain the source of truth; this page exists so a recipe
+survives outside the tooling. Numbers: docs/VALIDATION.md.
 
 Shared doctrine baked into every recipe:
 - `--ipc=host --ulimit memlock=-1 --ulimit stack=67108864` (SHM + RDMA verbs)
@@ -19,9 +21,12 @@ Shared doctrine baked into every recipe:
 ## Flagship: DeepSeek-V4-Flash-0731, 2-node TP=2 — long-session agents @ 500K
 
 Image: published PR-41834 digest pinned in the model conf (docs/BUILD.md).
-**Preferred launch:** `cluster/start-cluster.sh deepseek-v4-flash` (runs
-preflight, dual-node start, then `validate/warmup.py`). Roll back to base
-decode with `--no-spec-decode`.
+**Preferred launch:** `./pulsar start deepseek-v4-flash` or
+`cluster/start-cluster.sh deepseek-v4-flash` (runs preflight, dual-node start,
+then `validate/warmup.py`). Guided: `./pulsar wizard`. Roll back to base
+decode with `--no-spec-decode`. Before replacing another model, use
+`./pulsar inventory` and the wizard’s ownership-safe stop flow (never
+`docker rm` unlabeled containers by guess).
 
 ### Workload these flags target
 

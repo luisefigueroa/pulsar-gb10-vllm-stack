@@ -74,23 +74,67 @@ else
 fi
 
 port="${PORT:-8000}"
+# Identify port owner: published ports, then stack-managed host-network services
+# (labels + /v1/models). Unknown ownership stays a blocking-style warn (read-only).
+port_owner_msg=""
 if command -v ss >/dev/null 2>&1; then
+  port_listening=0
   if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":${port}\$"; then
-    owner=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}->|0.0.0.0:${port}" | head -1 || true)
-    if [ -n "$owner" ]; then
-      record warn port "port $port in use by container: $owner (expected if flagship already up — do not up another model on same port)"
-    else
-      record warn port "port $port already listening — identify the owner before up"
-    fi
-  else
-    record ok port "port $port free"
+    port_listening=1
   fi
 elif command -v lsof >/dev/null 2>&1; then
+  port_listening=0
   if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    record warn port "port $port already listening"
-  else
-    record ok port "port $port free"
+    port_listening=1
   fi
+else
+  port_listening=-1
+fi
+
+if [ "$port_listening" = 1 ]; then
+  owner=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
+    | grep -E ":${port}->|0.0.0.0:${port}" | head -1 || true)
+  if [ -n "$owner" ]; then
+    port_owner_msg="port $port in use by container: $owner (expected if a model is already up — do not up another on same port)"
+  else
+    # Host-network managed containers do not show published ports. Prefer labels.
+    managed_hit=""
+    while IFS= read -r cname; do
+      [ -n "$cname" ] || continue
+      meta=$(docker inspect --format \
+        '{{index .Config.Labels "io.pulsar.gb10.managed"}} {{index .Config.Labels "io.pulsar.gb10.conf"}} {{.HostConfig.NetworkMode}}' \
+        "$cname" 2>/dev/null || true)
+      # shellcheck disable=SC2086
+      set -- $meta
+      mflag="${1:-}" conf_l="${2:-}" net="${3:-}"
+      if [ "$mflag" = "true" ] && [ -n "$conf_l" ]; then
+        if [ "$net" = "host" ] || [ "$net" = "default" ]; then
+          managed_hit="$cname conf=$conf_l net=$net"
+          break
+        fi
+      fi
+    done < <(docker ps --format '{{.Names}}' 2>/dev/null || true)
+
+    api_ids=""
+    if api_json=$(curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" 2>/dev/null); then
+      api_ids=$(printf '%s' "$api_json" | python3 -c \
+        'import sys,json; d=json.load(sys.stdin); print(",".join(x.get("id","") for x in d.get("data",[])))' \
+        2>/dev/null || true)
+    fi
+
+    if [ -n "$managed_hit" ] && [ -n "$api_ids" ]; then
+      port_owner_msg="port $port in use by stack-managed host-network service ($managed_hit; API models=$api_ids)"
+    elif [ -n "$managed_hit" ]; then
+      port_owner_msg="port $port in use by stack-managed service ($managed_hit; API not confirmed)"
+    elif [ -n "$api_ids" ]; then
+      port_owner_msg="port $port listening with OpenAI API models=$api_ids (ownership not proven via stack labels — inventory before replace)"
+    else
+      port_owner_msg="port $port already listening — owner unknown (not a proven stack-managed service); identify before up; wizard will not stop unknown owners"
+    fi
+  fi
+  record warn port "$port_owner_msg"
+elif [ "$port_listening" = 0 ]; then
+  record ok port "port $port free"
 else
   record warn port "cannot probe port $port (no ss/lsof)"
 fi

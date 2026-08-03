@@ -4,6 +4,38 @@ Every entry below happened during this build. Inherited-wisdom entries from
 the prior repo are marked [prior art] and were only included if we re-hit or
 re-verified them.
 
+## `./ wizard.sh` → `-bash: ./: Is a directory`
+
+**Hit:** typing `./ wizard.sh` (space after `./`) fails with
+`-bash: ./: Is a directory`.
+**Cause:** Bash executes the directory `./` and treats `wizard.sh` as an
+argument — not a missing empty command.
+**Fix:** `./pulsar wizard` (preferred) or `./wizard.sh` — no space after `./`.
+
+## Wizard will not stop my container / “not safe_to_stop”
+
+**Hit:** switching models in the wizard refuses cleanup and says it will not
+stop unknown/legacy/mismatch services.
+**Cause:** only inventory `safe_to_stop` stack-managed services (labels
+`io.pulsar.gb10.managed=true` + consistent conf/rank) are eligible. Unlabeled
+legacy, mismatch, unknown GPU consumers, incomplete multi-node views, and
+unreachable workers are read-only.
+**Fix:** run `./pulsar inventory` (or `--json` / `--verbose`). Identify the
+owner. If it is truly stack-managed and complete, `./pulsar stop <conf>` lets
+`down.sh` revalidate labels. If unlabeled or foreign, stop it yourself only
+when you understand the process — the wizard will never kill it.
+**Related:** hard memory FAIL never offers “continue anyway”; free memory or
+stop a proven managed service first. After any stop, re-run inventory —
+reclaim is not assumed.
+
+## Port 8000 in use (host network)
+
+**Hit:** doctor warns port 8000 is listening; `docker ps` shows no published
+port mapping because the stack uses host networking.
+**Fix:** doctor/wizard prefer stack labels + `/v1/models` when identifying
+managed host-network owners. `./pulsar inventory` shows conf/ownership. Do not
+start a second model on the same port.
+
 ## `LocalEntryNotFoundError: Cannot find an appropriate cached snapshot`
 
 **Hit:** first launches of Qwen3.6-27B-FP8 and the 2-node canary.

@@ -19,13 +19,88 @@ curl -fsS --max-time 15 http://127.0.0.1:8000/v1/completions \
 Wire that (not /health) into anything that pages or restarts. Also useful:
 `curl -s :8000/metrics | grep num_requests_` for queue state.
 
+## Root dispatcher (`./pulsar`)
+
+Preferred operator entry point (scripts under `scripts/` remain canonical):
+
+| Command | Action |
+|---|---|
+| `./pulsar` or `./pulsar wizard` | Guided wizard (model select + safe switch) |
+| `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
+| `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
+| `./pulsar stop <model\|--all>` | → `scripts/down.sh` (ownership-gated) |
+| `./pulsar status [model]` | → `scripts/status.sh` |
+| `./pulsar help` | Concise usage |
+
+**Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
+`./` with `wizard.sh` as an argument, yielding `-bash: ./: Is a directory`.
+Use `./pulsar wizard` or `./wizard.sh`.
+
+## Inventory and ownership
+
+`scripts/inventory.sh` (also `./pulsar inventory`) is **read-only**. It never
+stops containers. JSON contract is `schema_version=1` with:
+
+- `services[]`: `conf`, `state` (running/partial/degraded/stale/…), `ownership`
+  (managed/legacy/mismatch/unknown/mixed), `safe_to_stop`, `complete`,
+  `observability`, ranks, estimated footprint, optional GPU memory
+- `unmanaged_gpu_processes[]`: diagnostics only — **no kill action**
+- `worker.status`: `ok` / `unset` / `unreachable` / error
+
+**`safe_to_stop` is true only** when every *observed* rank has
+`io.pulsar.gb10.managed=true` and conf/rank labels that map consistently to a
+repo profile. Lifecycle scripts (`down.sh`, cluster stop) **revalidate** labels
+and IDs before remove. Unlabeled legacy, mismatch, unknown, incomplete, or
+worker-unreachable situations are never auto-stopped.
+
+Human default output is concise (active + actionable managed stale/mismatch);
+`--verbose` includes inactive unknown/legacy detail; `--json` is always full.
+
+## Model switch (wizard)
+
+`./pulsar wizard` runs doctor once, then a **selection loop** (“Choose another
+model” returns to the list without re-running doctor unless you exit).
+
+Before each start plan it consumes inventory JSON + `check-memory.sh` and shows
+a short target summary (not raw JSON). Decision highlights:
+
+1. **Same profile running + API healthy** — Keep running (recommended), Restart
+   (stop only after final confirm), Show status, Choose another model. Never
+   silent replacement.
+2. **Different complete managed blocker** — names conf/state/ranks/memory and
+   `safe_to_stop`; offers stop listed stack-managed service(s) → recheck →
+   start, keep current, choose another, or diagnostics.
+3. **Partial/degraded managed** — explains observed vs expected ranks; cleanup
+   only if every observed rank is inventory-safe and worker observability
+   permits lifecycle revalidation. Never implies completeness. Reinventory
+   after any stop.
+4. **Unknown/unmanaged GPU or unknown port owner** — read-only diagnostics;
+   wizard **will not stop** it. Exit / choose another / diagnostics only.
+5. **Stale managed** — does not hold model memory; safe cleanup only when it
+   blocks the selected exact name and is `safe_to_stop`. Unknown stale
+   summarized and left alone.
+6. **Memory WARN** after cleanup — shows free/footprint/need; explicit continue
+   allowed. **Memory FAIL** — no launch, no continue-anyway. If a previous
+   profile was stopped, offer restart from **current** `models/<conf>.conf`
+   defaults, choose another, or exit stopped.
+7. **Launch fails after replacement** — report failure; offer restart previous
+   from current config or exit stopped. No auto-restart loop.
+
+**Stops are always deferred** until after the final start/replace confirmation.
+After any stop, inventory + cold memory preflight run again (never assume
+reclaim). Speculative-decode prompt defaults are unchanged (flagship
+recommended fast path default-on with confirm).
+
 ## Start / stop
 
-- Single node: `./serve.sh <name> -d`; stop with `docker rm -f vllm-<name>`.
+- Preferred: `./pulsar start <name>` / `./pulsar stop <name>` (or
+  `scripts/up.sh` / `scripts/down.sh`).
+- Single node low-level: `./serve.sh <name> -d`. Do **not** `docker rm -f` by
+  name unless inventory proves ownership — prefer `./pulsar stop <name>`.
 - 2-node: `cluster/preflight.sh <name>` then `cluster/start-cluster.sh <name>`.
-  **ALWAYS `cluster/stop-cluster.sh` before any relaunch** — a leftover
-  worker holds the master port and the new head hangs in rendezvous with no
-  error output.
+  **ALWAYS `cluster/stop-cluster.sh` or `./pulsar stop <name>` before any
+  relaunch** — a leftover worker holds the master port and the new head hangs
+  in rendezvous with no error output.
 - After 2-node health, `start-cluster.sh` runs `validate/warmup.py` once
   (short+medium prompts, c=1 and c=4, stream and non-stream). That pays
   DSpark/Triton/block-FP8 JIT so the first real client is not the cold path.
@@ -100,12 +175,15 @@ hours is a leak signal (none observed in 150-min soaks).
   `--no-spec-decode` as the operational rollback. Its k=5 is fixed by the
   checkpoint, not tunable. **Do not** enable ngram on GDN hybrids (corrupts
   output). Super MTP is opt-in; Laguna DFlash is marginal.
-- Launcher-created containers carry stack ownership, profile, and rank labels.
-  When an already-loaded selected model causes a memory warning, `wizard.sh`
-  may offer to stop it immediately before relaunch and repeat the cold-memory
-  check. It verifies the exact managed profile on both ranks first; transitional
-  pre-label containers must match the canonical name plus model, served-name,
-  and node-rank arguments. Unrelated containers are never offered for removal.
+- Launcher-created containers carry stack ownership, profile, and rank labels
+  (`io.pulsar.gb10.managed`, `.conf`, `.rank`). Wizard and `down.sh` only stop
+  services inventory marks `safe_to_stop`; `down.sh` revalidates before remove.
+  Legacy unlabeled containers are refused. Worker unreachable blocks automatic
+  multi-node cleanup/replacement. See “Model switch (wizard)” above.
+- Rollback after a failed switch: restart the previous conf from **current**
+  profile defaults (`models/<conf>.conf`), not a snapshot of prior CLI flags.
+  Example: `./pulsar start deepseek-v4-flash` or wizard “Restart previous
+  profile from current config”.
 - Never run a GDN hybrid (qwen3.6-27b) cross-node.
 - After any image change: clear `~/.cache/vllm` + Triton cache on BOTH
   nodes, then run docs/REVALIDATE.md before calling it production.

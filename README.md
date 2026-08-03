@@ -72,16 +72,23 @@ scripts/list-models.sh --validated
 
 # First-run HF model (small): download weights if needed, then serve
 scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4   # or qwen3-1.7b canary
-scripts/up.sh nemotron-3-nano-30b-nvfp4             # checks image/weights/memory, waits healthy, smokes
+./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
+# equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
 
 # Guided UI (vendored Gum on Linux ARM64; GUM=0 forces plain menus)
-./wizard.sh
+./pulsar wizard
+# equivalent: ./wizard.sh
+# Note: "./ wizard.sh" (space after ./) → "-bash: ./: Is a directory"; use "./pulsar wizard"
 ```
 
-If memory is tight because the selected model is already running, the wizard
-offers to stop it immediately before relaunch and then repeats the cold-memory
-preflight. The offer appears only for an exact stack-managed service; the final
-explicit start confirmation happens before anything is stopped.
+**Model switch safety (wizard):** before planning a start, the wizard reads
+`scripts/inventory.sh --json` and `scripts/check-memory.sh`. It only offers
+stop for inventory `safe_to_stop` stack-managed services, never for unlabeled,
+legacy, mismatch, unknown, incomplete, or unreachable ranks. Stops run only
+after you confirm the final start/replace action; then inventory and cold
+memory preflight re-run (memory reclaim is never assumed). Hard memory FAIL
+never offers “continue anyway”; WARN may, with an explicit confirmation.
+See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 **Smoke** (lab network only — do **not** expose `:8000` without auth;
 [SECURITY.md](SECURITY.md)):
@@ -96,8 +103,10 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
 ```
 
 ```bash
-scripts/status.sh nemotron-3-nano-30b-nvfp4
-scripts/down.sh nemotron-3-nano-30b-nvfp4
+./pulsar status nemotron-3-nano-30b-nvfp4
+./pulsar stop nemotron-3-nano-30b-nvfp4
+# equivalent: scripts/status.sh / scripts/down.sh
+./pulsar inventory                 # read-only service + memory inventory
 ```
 
 NFS catalog models (e.g. `laguna-s-2.1-nvfp4`) need `/mnt/Models/...` mounted;
@@ -124,8 +133,8 @@ scripts/up.sh deepseek-v4-flash                  # DSpark k=5 default
 # rollback: scripts/up.sh deepseek-v4-flash --no-spec-decode
 # dry-run checks only: scripts/up.sh deepseek-v4-flash --dry-run
 
-scripts/status.sh deepseek-v4-flash
-scripts/down.sh deepseek-v4-flash
+./pulsar status deepseek-v4-flash
+./pulsar stop deepseek-v4-flash
 ```
 
 Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
@@ -134,14 +143,17 @@ Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
 
 | Command | Role |
 |---|---|
+| `./pulsar` / `./pulsar wizard` | Root dispatcher → guided wizard |
+| `./pulsar inventory` | Read-only managed service + memory inventory |
+| `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |
 | `scripts/doctor.sh` | Host GPU/docker/port/cache (+ worker if `.env`) |
 | `scripts/list-models.sh` | Conf catalog |
 | `scripts/check-weights.sh` / `pull-weights.sh` | HF presence / download+rsync |
 | `scripts/check-image.sh` / `sync-image.sh` | Image presence / worker load |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
 | `scripts/detect-fabric.sh` | Propose NCCL IF / HEAD_IP |
-| `scripts/up.sh` / `down.sh` / `status.sh` | Start (with gates) / stop / probe |
-| `./wizard.sh` | Vendored Gum (or plain) guided Path A/B |
+| `scripts/up.sh` / `down.sh` / `status.sh` | Start (with gates) / stop / probe (canonical) |
+| `./wizard.sh` | Direct wizard entry (same as `./pulsar wizard`) |
 | `./serve.sh` / `cluster/*` | Low-level launchers (still supported) |
 
 All servers speak the OpenAI API on :8000. Per-model flags live in

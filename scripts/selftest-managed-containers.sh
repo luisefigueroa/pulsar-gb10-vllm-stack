@@ -35,5 +35,17 @@ fi
 
 grep -q -- '--label "${PULSAR_MANAGED_LABEL}=true"' "$REPO_DIR/serve.sh"
 grep -q -- '--label "${PULSAR_MANAGED_LABEL}=true"' "$REPO_DIR/cluster/start-cluster.sh"
-grep -q 'profile_service_is_stack_owned' "$REPO_DIR/wizard.sh"
-grep -q 'scripts/down.sh' "$REPO_DIR/wizard.sh"
+
+# Wizard safety boundary (inventory contract — not a local ownership re-classifier):
+# consume inventory JSON / safe_to_stop; mutate only via down.sh (or test hook).
+grep -qE 'inventory\.sh|WIZARD_INVENTORY|cmd_inventory_json' "$REPO_DIR/wizard.sh"
+grep -q 'safe_to_stop' "$REPO_DIR/wizard.sh"
+grep -qE 'scripts/down\.sh|WIZARD_DOWN_CMD|cmd_down' "$REPO_DIR/wizard.sh"
+# Must not stop containers with raw Docker from the wizard.
+if grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill' "$REPO_DIR/wizard.sh"; then
+  echo "wizard must not call docker rm/kill directly" >&2
+  exit 1
+fi
+# Lifecycle ownership helpers remain in lib (used by down.sh / cluster stop).
+grep -q 'profile_service_is_stack_owned' "$REPO_DIR/scripts/lib.sh"
+grep -q 'remove_stack_owned_container_local' "$REPO_DIR/scripts/lib.sh"

@@ -41,9 +41,11 @@ images, weights, or stale containers fail. Fix those before
 Not required on the host: vLLM Python install, Ray, host NCCL, jumbo MTU,
 GPUDirect RDMA.
 
-`wizard.sh` uses the vendored Gum v0.17.0 Linux ARM64 binary by default; no
-package installation is required. Set `GUM=0` for plain Bash menus or
-`GUM_BIN=/path/to/gum` to override it. See `THIRD_PARTY_NOTICES.md`.
+`./pulsar wizard` (or `./wizard.sh`) uses the vendored Gum v0.17.0 Linux ARM64
+binary by default; no package installation is required. Set `GUM=0` for plain
+Bash menus or `GUM_BIN=/path/to/gum` to override it. See `THIRD_PARTY_NOTICES.md`.
+Prefer `./pulsar wizard` — `./ wizard.sh` (space after `./`) runs the directory
+`./` and fails with `Is a directory`.
 
 ---
 

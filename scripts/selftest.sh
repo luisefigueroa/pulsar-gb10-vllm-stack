@@ -24,6 +24,9 @@ run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
+run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
+run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
+run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
 
 run "list-models --json" bash -c '
   j=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --json)
@@ -57,7 +60,12 @@ run "digest-pinned image sync repair" bash -c '
 '
 
 run "wizard uses list-models --json" bash -c '
-  grep -q "list-models.sh\" --validated --json" "'"$REPO_DIR"'/wizard.sh"
+  grep -qE "list-models\.sh\" --validated --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
+'
+
+run "dispatcher routes wizard" bash -c '
+  grep -q "wizard.sh" "'"$REPO_DIR"'/pulsar"
+  test -x "'"$REPO_DIR"'/pulsar"
 '
 
 echo "=============================="
