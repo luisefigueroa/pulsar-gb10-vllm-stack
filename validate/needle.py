@@ -10,17 +10,19 @@ and asks for it back. PASS requires every trial to contain the exact value.
 """
 import argparse, json, random, sys, urllib.request
 
+from http_auth import api_headers, resolve_api_key
+
 FILLER = (
     "The quick brown fox jumps over the lazy dog. Pack my box with five dozen "
     "liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz, "
     "judge my vow. "
 )
 
-def chat(url, model, prompt, max_tokens=48):
+def chat(url, model, prompt, api_key, max_tokens=48):
     body = {"model": model, "prompt": prompt, "max_tokens": max_tokens, "temperature": 0}
     req = urllib.request.Request(url + "/v1/completions",
                                  data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"})
+                                 headers=api_headers(api_key, content_type=True))
     with urllib.request.urlopen(req, timeout=3600) as r:
         d = json.load(r)
     return d["choices"][0]["text"], d["usage"]["prompt_tokens"]
@@ -29,10 +31,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", required=True)
+    ap.add_argument("--api-key", default=None,
+                    help="API key; defaults to VLLM_API_KEY or API_KEY environment")
     ap.add_argument("--context-tokens", type=int, required=True)
     ap.add_argument("--depths", nargs="+", type=float, default=[0.05, 0.25, 0.5, 0.75, 0.95])
     ap.add_argument("--trials-per-depth", type=int, default=1)
     a = ap.parse_args()
+    api_key = resolve_api_key(a.api_key)
 
     rng = random.Random(42)
     target_chars = a.context_tokens * 4
@@ -47,7 +52,7 @@ def main():
             prompt = (hay + "\n\nQuestion: What is the secret access code mentioned "
                       "in the text above? Answer with just the number.\nAnswer:")
             try:
-                text, ptoks = chat(a.url, a.model, prompt)
+                text, ptoks = chat(a.url, a.model, prompt, api_key)
             except Exception as e:
                 print(f"depth={depth:4.2f} trial={t} ERROR: {e}")
                 fail += 1

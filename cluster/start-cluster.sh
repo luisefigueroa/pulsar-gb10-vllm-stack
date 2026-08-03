@@ -132,9 +132,9 @@ fi
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "WORKER (ssh $WORKER_IP):"
-  echo "  $(shell_join_q "${WORKER_CMD[@]}")"
+  echo "  $(shell_join_q_redacted "${WORKER_CMD[@]}")"
   echo "HEAD (local):"
-  echo "  $(shell_join_q "${HEAD_CMD[@]}")"
+  echo "  $(shell_join_q_redacted "${HEAD_CMD[@]}")"
   if [ -n "$_api_key" ]; then
     echo "[cluster] API key auth enabled on head (VLLM_API_KEY/API_KEY)"
   else
@@ -214,6 +214,8 @@ fi
 echo "[cluster] head id=${HEAD_CID:0:12}"
 
 echo "[cluster] waiting for http://127.0.0.1:${PORT}/health (cold load can take ~10 min)"
+API_AUTH_ARGS=()
+api_auth_curl_args API_AUTH_ARGS
 for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
   if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
     echo "[cluster] healthy."
@@ -223,6 +225,7 @@ for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
     if [ "$SKIP_WARMUP" = "1" ]; then
       echo "[cluster] --skip-warmup: single smoke only"
       curl -fsS --max-time 120 "http://127.0.0.1:${PORT}/v1/completions" \
+        "${API_AUTH_ARGS[@]}" \
         -H 'Content-Type: application/json' \
         -d "{\"model\":\"${SERVED_NAME}\",\"prompt\":\"2+2=\",\"max_tokens\":4,\"temperature\":0}" && echo
     else

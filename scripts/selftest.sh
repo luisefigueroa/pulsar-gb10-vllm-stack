@@ -24,6 +24,7 @@ run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
+run "API auth and secret redaction" "$REPO_DIR/scripts/selftest-api-auth.sh"
 run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
 run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
 run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"

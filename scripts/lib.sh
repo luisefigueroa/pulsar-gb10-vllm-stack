@@ -374,6 +374,53 @@ raise SystemExit(0 if ok else 1)
 ' >/dev/null 2>&1
 }
 
+pulsar_api_key() {
+  printf '%s' "${VLLM_API_KEY:-${API_KEY:-}}"
+}
+
+# Fill a caller-owned argv array with the OpenAI-compatible Authorization
+# header when API auth is configured. Keeping the header as two argv elements
+# avoids shell re-parsing and command injection.
+api_auth_curl_args() {
+  local destination="${1:?auth argv destination required}"
+  local key
+  key=$(pulsar_api_key)
+  local -n destination_ref="$destination"
+  destination_ref=()
+  if [ -n "$key" ]; then
+    destination_ref=(-H "Authorization: Bearer $key")
+  fi
+}
+
+# Render diagnostic/dry-run argv without disclosing credentials. Execution
+# paths must continue to use the original arrays.
+shell_join_q_redacted() {
+  local out="" arg shown redact_next=0
+  for arg in "$@"; do
+    shown="$arg"
+    if [ "$redact_next" = 1 ]; then
+      shown="<redacted>"
+      redact_next=0
+    else
+      case "$arg" in
+        --api-key)
+          redact_next=1
+          ;;
+        HF_TOKEN=*|VLLM_API_KEY=*|API_KEY=*)
+          shown="${arg%%=*}=<redacted>"
+          ;;
+      esac
+    fi
+    out+="$(printf '%q' "$shown") "
+  done
+  printf '%s' "${out% }"
+}
+
+print_shell_command_redacted() {
+  shell_join_q_redacted "$@"
+  printf '\n'
+}
+
 ssh_worker() {
   [ -n "${WORKER_IP:-}" ] || die "WORKER_IP unset (set in .env for multi-node)"
   ssh -o BatchMode=yes -o ConnectTimeout=8 "$WORKER_IP" "$@"

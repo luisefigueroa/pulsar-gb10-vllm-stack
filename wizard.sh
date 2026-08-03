@@ -191,7 +191,9 @@ api_serves_selected() {
     return
   fi
   local port="${PORT:-8000}"
-  SN="$SERVED_NAME" curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" 2>/dev/null \
+  local -a auth_args=()
+  api_auth_curl_args auth_args
+  SN="$SERVED_NAME" curl -fsS --max-time 2 "${auth_args[@]}" "http://127.0.0.1:${port}/v1/models" 2>/dev/null \
     | SN="$SERVED_NAME" python3 -c '
 import sys, json, os
 try:

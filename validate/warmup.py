@@ -24,6 +24,8 @@ import time
 import urllib.error
 import urllib.request
 
+from http_auth import api_headers, resolve_api_key
+
 # Keep max_tokens small: we only need the engine to take a few decode steps
 # so rejection-sample / DSpark paths compile. Prompt length varies the
 # prefill shape (short vs medium batch tokens).
@@ -55,10 +57,12 @@ def make_prompt(n_tokens: int, seed: int) -> str:
     return f"[warmup {seed}] Continue this sequence: {_words(n_tokens - 8, seed)}"
 
 
-def resolve_model(url: str, model: str | None) -> str:
+def resolve_model(url: str, model: str | None, api_key: str | None) -> str:
     if model:
         return model
-    req = urllib.request.Request(url.rstrip("/") + "/v1/models")
+    req = urllib.request.Request(
+        url.rstrip("/") + "/v1/models", headers=api_headers(api_key)
+    )
     with urllib.request.urlopen(req, timeout=30) as r:
         data = json.load(r)
     ids = [m["id"] for m in data.get("data", [])]
@@ -74,6 +78,7 @@ def one_request(
     max_tokens: int,
     stream: bool,
     timeout: float,
+    api_key: str | None,
 ) -> dict:
     body = {
         "model": model,
@@ -87,7 +92,7 @@ def one_request(
     req = urllib.request.Request(
         url.rstrip("/") + "/v1/completions",
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=api_headers(api_key, content_type=True),
     )
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -117,6 +122,7 @@ def run_phase(
     conc: int,
     stream: bool,
     timeout: float,
+    api_key: str | None,
 ) -> None:
     seeds = list(range(conc))
     t0 = time.perf_counter()
@@ -131,6 +137,7 @@ def run_phase(
             max_tokens,
             stream,
             timeout,
+            api_key,
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=conc) as pool:
@@ -157,6 +164,11 @@ def main() -> int:
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", default=None, help="served-model-name; default: first /v1/models id")
     ap.add_argument(
+        "--api-key",
+        default=None,
+        help="API key; defaults to VLLM_API_KEY or API_KEY environment",
+    )
+    ap.add_argument(
         "--timeout",
         type=float,
         default=300.0,
@@ -170,9 +182,10 @@ def main() -> int:
         "quick = short c=1 stream+sync only",
     )
     a = ap.parse_args()
+    api_key = resolve_api_key(a.api_key)
 
     try:
-        model = resolve_model(a.url, a.model)
+        model = resolve_model(a.url, a.model, api_key)
     except Exception as e:  # noqa: BLE001
         print(f"[warmup] cannot resolve model: {e}", file=sys.stderr)
         return 2
@@ -182,7 +195,9 @@ def main() -> int:
     t0 = time.perf_counter()
     for label, in_toks, max_toks, conc, stream in phases:
         try:
-            run_phase(a.url, model, label, in_toks, max_toks, conc, stream, a.timeout)
+            run_phase(
+                a.url, model, label, in_toks, max_toks, conc, stream, a.timeout, api_key
+            )
         except Exception as e:  # noqa: BLE001
             print(f"[warmup] FAILED at {label}: {e}", file=sys.stderr)
             return 1

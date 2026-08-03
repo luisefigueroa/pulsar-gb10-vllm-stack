@@ -51,12 +51,14 @@ kv_fixed=0
 
 # --- already serving this model? ---
 cname=$(container_name_for "$NAME" "$NODES")
+api_auth_args=()
+api_auth_curl_args api_auth_args
 already=0
 already_how=""
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$cname"; then
   already=1
   already_how="container $cname running"
-elif SN="$SERVED_NAME" curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/v1/models" 2>/dev/null \
+elif SN="$SERVED_NAME" curl -fsS --max-time 2 "${api_auth_args[@]}" "http://127.0.0.1:${PORT}/v1/models" 2>/dev/null \
   | SN="$SERVED_NAME" python3 -c 'import sys,json,os; d=json.load(sys.stdin); ids=[x.get("id","") for x in d.get("data",[])]; raise SystemExit(0 if os.environ.get("SN","") in ids else 1)' 2>/dev/null; then
   already=1
   already_how="API :${PORT} serves id=$SERVED_NAME"

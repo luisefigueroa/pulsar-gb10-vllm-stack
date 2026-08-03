@@ -9,7 +9,9 @@ determinism (hash-identical), node parity, 1-vs-2-node, and HF reference checks.
 """
 import argparse, json, sys, urllib.request
 
-def complete(url, model, prompt, max_tokens):
+from http_auth import api_headers, resolve_api_key
+
+def complete(url, model, prompt, max_tokens, api_key):
     body = {
         "model": model, "prompt": prompt, "max_tokens": max_tokens,
         "temperature": 0, "seed": 42, "logprobs": 1,
@@ -17,7 +19,7 @@ def complete(url, model, prompt, max_tokens):
     req = urllib.request.Request(
         url + "/v1/completions",
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=api_headers(api_key, content_type=True),
     )
     with urllib.request.urlopen(req, timeout=600) as r:
         d = json.load(r)
@@ -35,15 +37,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", required=True)
+    ap.add_argument("--api-key", default=None,
+                    help="API key; defaults to VLLM_API_KEY or API_KEY environment")
     ap.add_argument("--prompts", default="validate/prompts.txt")
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-tokens", type=int, default=64)
     a = ap.parse_args()
+    api_key = resolve_api_key(a.api_key)
 
     prompts = [l.rstrip("\n") for l in open(a.prompts) if l.strip()]
     results = []
     for i, p in enumerate(prompts):
-        results.append(complete(a.url, a.model, p, a.max_tokens))
+        results.append(complete(a.url, a.model, p, a.max_tokens, api_key))
         print(f"  [{i+1}/{len(prompts)}] {p[:40]!r} -> {results[-1]['text'][:40]!r}", file=sys.stderr)
     json.dump(results, open(a.out, "w"), indent=1)
     print(f"wrote {a.out} ({len(results)} prompts)")

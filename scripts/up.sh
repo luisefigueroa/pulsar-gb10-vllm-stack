@@ -220,6 +220,8 @@ if [ "$NODES" = "2" ]; then
 else
   log "starting single-node…"
   "$REPO_DIR/serve.sh" "$NAME" -d ${spec_flag[@]+"${spec_flag[@]}"}
+  api_auth_args=()
+  api_auth_curl_args api_auth_args
   cname=$(container_name_for "$NAME" 1)
   log "waiting for http://127.0.0.1:${PORT}/health (cold load can take minutes)"
   ok=0
@@ -242,6 +244,7 @@ else
   fi
   log "healthy — smoke completion"
   curl -fsS --max-time 120 "http://127.0.0.1:${PORT}/v1/completions" \
+    "${api_auth_args[@]}" \
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"${SERVED_NAME}\",\"prompt\":\"2+2=\",\"max_tokens\":4,\"temperature\":0}" \
     && echo

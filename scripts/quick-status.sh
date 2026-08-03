@@ -63,7 +63,9 @@ cmd_api_models() {
     "$QUICK_STATUS_API_CMD" "$port"
     return $?
   fi
-  curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" 2>/dev/null
+  local -a auth_args=()
+  api_auth_curl_args auth_args
+  curl -fsS --max-time 2 "${auth_args[@]}" "http://127.0.0.1:${port}/v1/models" 2>/dev/null
 }
 
 if ! inv=$(cmd_inventory_json); then

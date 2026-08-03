@@ -101,7 +101,10 @@ if [ -n "$_api_key" ]; then
   CMD+=(--api-key "$_api_key")
 fi
 
-if [ "$DRY_RUN" = "1" ]; then printf '%q ' "${CMD[@]}"; echo; exit 0; fi
+if [ "$DRY_RUN" = "1" ]; then
+  print_shell_command_redacted "${CMD[@]}"
+  exit 0
+fi
 
 # Replace only when the exact name is provably stack-managed for this conf.
 # Capture ID, revalidate labels, remove by ID — never blind docker rm -f by name.

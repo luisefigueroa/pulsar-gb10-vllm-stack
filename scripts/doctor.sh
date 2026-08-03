@@ -116,7 +116,9 @@ if [ "$port_listening" = 1 ]; then
     done < <(docker ps --format '{{.Names}}' 2>/dev/null || true)
 
     api_ids=""
-    if api_json=$(curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" 2>/dev/null); then
+    api_auth_args=()
+    api_auth_curl_args api_auth_args
+    if api_json=$(curl -fsS --max-time 2 "${api_auth_args[@]}" "http://127.0.0.1:${port}/v1/models" 2>/dev/null); then
       api_ids=$(printf '%s' "$api_json" | python3 -c \
         'import sys,json; d=json.load(sys.stdin); print(",".join(x.get("id","") for x in d.get("data",[])))' \
         2>/dev/null || true)
