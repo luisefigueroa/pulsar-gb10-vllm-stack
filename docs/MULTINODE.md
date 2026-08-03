@@ -78,8 +78,9 @@ Root cause of the stock-image hangs is the CUDA-graph path cross-node
 (consistent with upstream vllm#46253) — this also resolves the prior repo's
 multi-day unsolved concurrency hang, whose not-yet-tested list included
 exactly this experiment. Practical rules:
-- DeepSeek-V4-Flash: use the **PR #41834 local build** (`models/deepseek-v4-flash.conf`,
-  recipe in docs/BUILD.md). Graphs on, DSpark recommended.
+- DeepSeek-V4-Flash: pull the **published PR #41834 image** selected by
+  `models/deepseek-v4-flash.conf` (source-build fallback in docs/BUILD.md).
+  Graphs on, DSpark recommended.
 - Anything else 2-node on the official image: add `--enforce-eager` and
   accept ~2x slower decode — or don't run it 2-node (everything else in the
   matrix fits one node anyway, where graphs are stable).

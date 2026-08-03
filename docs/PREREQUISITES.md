@@ -235,7 +235,7 @@ Single-node only needs §1–§2; multi-node needs §3 as well.
 |-----|------|
 | [HARDWARE.md](./HARDWARE.md) | Measured bandwidth, RoCE map, storage |
 | [MULTINODE.md](./MULTINODE.md) | Why native `--nnodes`, TP=2, graph hang workarounds |
-| [BUILD.md](./BUILD.md) | PR #41834 image build for DeepSeek-V4 |
+| [BUILD.md](./BUILD.md) | Published PR #41834 image, provenance, and source-build fallback |
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging to node 2 |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Offline node, missing `refs/main`, TCP fallback, cold load |
 | [REVALIDATE.md](./REVALIDATE.md) | After any image pin change |

@@ -42,8 +42,9 @@ Priority order everywhere: **stability > accuracy > throughput > latency.**
    against a BF16 control, needle tests at every claimed context length,
    and 1-vs-2-node eval-score parity.
 4. **Provenance that gets cheaper over time.** Digest-pinned official
-   images everywhere possible; the one exception is a clean build of a
-   public PR head proposed for main — no private fork lineage. Upstream is
+   images everywhere possible; the PR exception is published as a
+   digest-pinned image built cleanly from a public PR head proposed for main —
+   no private fork lineage. Upstream is
    already absorbing our delta (vllm #49731 merged the same draft-head
    optimization we carried as a patch, one day after we wrote it).
 5. **Cluster operations as first-class deliverables.** Preflight that
@@ -148,12 +149,12 @@ All servers speak the OpenAI API on :8000. Per-model flags live in
 | `vllm/vllm-openai:v0.26.0` (digest-pinned in `Dockerfile`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Qwen, Nemotron, Laguna, and small canaries |
 | `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | **Published arm64 source build of vLLM PR #41834 HEAD** (see below); immutable digest is pinned in model confs | DeepSeek-V4-Flash flagship and Inkling-Small-NVFP4 |
 
-### The PR #41834 build (the only "patch" in the stack)
+### The PR #41834 image (the only "patch" in the stack)
 
 Stock release images **cannot** serve DeepSeek-V4 on GB10 — the
 `FLASHINFER_MLA_SPARSE_SM120` attention kernel livelocks under prefill load
 (upstream vllm#49026; reproduced here, probe series in VALIDATION.md). The
-fix is not merged upstream, so the flagship image is a source build of the
+fix is not merged upstream, so the published flagship image is built from the
 **head of vLLM PR #41834** ("DeepSeek-V4-Flash on SM12x", pinned at commit
 `d64074e6f`) — built as the PR tree, not cherry-picked, because it is the
 community-validated lineage (188 commits) and includes:
@@ -164,7 +165,7 @@ community-validated lineage (188 commits) and includes:
 - **GB10-specific tuned MoE/GEMM configs** (`device_name=NVIDIA_GB10` JSONs)
 - DSpark drafter rejection-sampling fixes
 
-Build: `torch_cuda_arch_list='12.0'` (12.0f family = native sm_121 under
+Build provenance: `torch_cuda_arch_list='12.0'` (12.0f family = native sm_121 under
 CUDA 13.0.3), 1 h 40 min on the 20-core Grace. Full recipe in
 `docs/BUILD.md`. When PR #41834 merges upstream this collapses to a stock
 pin bump + revalidation.
@@ -242,7 +243,7 @@ no leaks, no thermal throttling anywhere).
 ## Upstream tracking
 
 - **vllm PR #41834** — flagship image lineage; our pin IS the current PR
-  head. On merge: retire the local build for a stock pin, rerun the gates.
+  head. On merge: retire the published PR image for a stock pin, rerun the gates.
 - **vllm #49026 / #46253** — the two stock-image blockers we reproduced.
 - **Bump trigger: v0.26.1-final with arm64 images** (rc0 tagged upstream).
   It bumps NCCL 2.28→2.30.7 — full REVALIDATE including fresh Step-0 NCCL

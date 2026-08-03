@@ -79,7 +79,7 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 | Concurrency >= 2 on 2-node (prior-stack killer) | PASS | 8/8 concurrent correct on canary |
 | TP=2 cross-node with a GDN hybrid (Qwen3.6-27B) | **FAIL** | Wrong output on first request ("2+2=" -> "5"), then `RPC call to sample_tokens timed out` -> engine dead on the first capture request. Same signature as the prior repo's unsolved hang. |
 | TP=2 cross-node, Laguna NVFP4 (standard attention), CUDA graphs on | **FAIL** | Healthy, correct smoke output, then fatal `shm_broadcast acquire_read TimeoutError` during the second request. So the stock-image hang is NOT hybrid-specific after all. |
-| TP=2 cross-node, Laguna NVFP4, `--enforce-eager` | **PASS (workaround)** | Full 30-prompt capture + 8 concurrent requests, stays healthy. **Root cause of the stock-image cross-node hangs: the CUDA-graph path** (consistent with upstream vllm#46253 cross-node graph-capture IMA). The prior repo's multi-day unsolved hang is therefore two findings: eager was on their not-yet-tested list. Practical rule: on `vllm/vllm-openai:v0.26.0`, cross-node TP=2 requires `--enforce-eager` (~2x slower decode) — which is why DeepSeek-V4 uses the PR-41834 build (graphs on), not stock v0.26.0. |
+| TP=2 cross-node, Laguna NVFP4, `--enforce-eager` | **PASS (workaround)** | Full 30-prompt capture + 8 concurrent requests, stays healthy. **Root cause of the stock-image cross-node hangs: the CUDA-graph path** (consistent with upstream vllm#46253 cross-node graph-capture IMA). The prior repo's multi-day unsolved hang is therefore two findings: eager was on their not-yet-tested list. Practical rule: on `vllm/vllm-openai:v0.26.0`, cross-node TP=2 requires `--enforce-eager` (~2x slower decode) — which is why DeepSeek-V4 uses the published PR-41834 image (graphs on), not stock v0.26.0. |
 | RDMA (not TCP) transport in vLLM containers | **PASS** | flagship bring-up with NCCL_DEBUG=INFO: `NET/IB : Using [0]rocep1s0f0:1/RoCE`, channels `via NET/IB/0` |
 | DeepSeek-V4-Flash TP=2 serves + concurrency | **PASS** | full battery + soaks on the promoted PR-41834 image (see upstream section); earlier community-binary runs retained as historical baselines |
 | Node-loss behavior documented | **DONE** | Worker killed mid-request on the flagship: (1) in-flight requests hang with no error — clients need their own timeouts; (2) **`/health` keeps returning OK for ~5 minutes** after the worker is gone (until the 300 s execute-model RPC timeout fires) — do not monitor 2-node deployments on `/health` alone, probe with a real 1-token completion; (3) at ~5 min the engine dies (`RPC call to sample_tokens timed out`) and `/health` starts failing, but the container stays "Up" (API process alive, engine dead); (4) **no recovery, ever** — remedy is `cluster/stop-cluster.sh` + relaunch, as predicted. |
@@ -173,9 +173,9 @@ all working community recipes build from). Both open against main, neither
 merged, no maintainer review as of 2026-07-28. See git history for the
 probe commands. `nvfp4_ds_mla` KV (1M ctx) remains fork-only upstream.
 
-## Upstream-lineage DeepSeek-V4 (branch upstream-dsv4-sm121, image vllm-gb10:pr41834-d64074e6f)
+## Upstream-lineage DeepSeek-V4 (branch upstream-dsv4-sm121, published PR-41834 image)
 
-Source build of vLLM PR #41834 head (1h40m build, recipe in BUILD.md). All
+Underlying source build of vLLM PR #41834 head (1h40m build, recipe in BUILD.md). All
 runs TP=2 cross-node, CUDA graphs ON:
 
 | Gate | Result |
@@ -406,8 +406,8 @@ results/lm-eval-dsv4-0731-500kv/. This geometry was canonical until the
 **Supersedes** the 10 GB/rank / 577,640-token geometry as the shipped
 default in `models/deepseek-v4-flash.conf`: 20,000,000,000 bytes/rank,
 **652,465-token** KV capacity (1.30x at 500K), `max-num-seqs 5`,
-`max-num-batched-tokens 16384`, DSpark k=5, image
-`vllm-gb10:pr41834-d64074e6f`.
+`max-num-batched-tokens 16384`, DSpark k=5, with the published PR-41834
+image digest pinned in the model conf.
 
 | Gate | Result |
 |---|---|

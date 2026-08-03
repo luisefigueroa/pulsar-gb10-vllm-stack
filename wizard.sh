@@ -107,7 +107,7 @@ fi
 log "checking image…"
 if ! "$REPO_DIR/scripts/check-image.sh" "$NAME"; then
   case "$IMAGE" in
-    vllm/vllm-openai:*|vllm/*)
+    vllm/vllm-openai:*|vllm/*|ghcr.io/*)
       if confirm "Image missing. docker pull + sync worker if needed?"; then
         spin "Syncing image…" "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
       else
@@ -116,10 +116,9 @@ if ! "$REPO_DIR/scripts/check-image.sh" "$NAME"; then
       ;;
     *)
       cat <<EOF
-Custom image required: $IMAGE
-1. Build on head (docs/BUILD.md)
-2. scripts/sync-image.sh $NAME --yes
-3. Re-run ./wizard.sh
+Unsupported image source: $IMAGE
+All validated profiles use published vLLM or GHCR images. Update the model
+configuration to a published registry reference, then re-run ./wizard.sh.
 EOF
       exit 1
       ;;
