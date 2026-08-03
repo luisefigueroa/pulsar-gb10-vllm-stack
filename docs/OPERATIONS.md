@@ -79,25 +79,33 @@ If a hang does NOT follow a node event, walk TROUBLESHOOTING.md (multi-cause
 ```bash
 rsync -rlptD ~/.cache/huggingface/hub/models--ORG--NAME "$WORKER_IP":.cache/huggingface/hub/
 ssh "$WORKER_IP" 'd=~/.cache/huggingface/hub/models--ORG--NAME; [ -e $d/refs/main ] || { mkdir -p $d/refs; ls $d/snapshots | head -1 | tr -d "\n" > $d/refs/main; }'
-docker save IMAGE | ssh "$WORKER_IP" docker load
+scripts/sync-image.sh <model> --pull --yes
 ```
-(The refs/main line prevents the LocalEntryNotFoundError trap.)
+(The refs/main line prevents the LocalEntryNotFoundError trap. The image helper
+also repairs digest references that a bare `docker load` can omit.)
 
 ## Expected steady-state numbers (alert if far off)
 
-Flagship under load (DSpark recommended): ~27 tok/s base / **~43–48 tok/s**
-spec-on single-stream; ~105 tok/s aggregate at c=8 base path; node temps
+Flagship under load (DSpark default-on): ~27 tok/s rollback/base /
+**~43–48 tok/s** default single-stream; ~105 tok/s aggregate at c=8 base path; node temps
 ≤81–84 C, SM clock ≥2380 MHz. Memory
 available fluctuates ±2 GiB with page cache — only a monotonic decline over
 hours is a leak signal (none observed in 150-min soaks).
 
 ## Safety rails
 
-- Spec decode is **not** "try random methods": only enable paths that have
+- Spec decode is **not** "try random methods": only use paths that have
   validated `SPEC_DECODE_ARGS` and a positive ledger entry
-  (docs/VALIDATION.md). **Do** use `--spec-decode` on the flagship (DSpark
-  k=5 recommended). **Do not** enable ngram on GDN hybrids (corrupts
+  (docs/VALIDATION.md). The flagship defaults to DSpark; use
+  `--no-spec-decode` as the operational rollback. Its k=5 is fixed by the
+  checkpoint, not tunable. **Do not** enable ngram on GDN hybrids (corrupts
   output). Super MTP is opt-in; Laguna DFlash is marginal.
+- Launcher-created containers carry stack ownership, profile, and rank labels.
+  When an already-loaded selected model causes a memory warning, `wizard.sh`
+  may offer to stop it immediately before relaunch and repeat the cold-memory
+  check. It verifies the exact managed profile on both ranks first; transitional
+  pre-label containers must match the canonical name plus model, served-name,
+  and node-rank arguments. Unrelated containers are never offered for removal.
 - Never run a GDN hybrid (qwen3.6-27b) cross-node.
 - After any image change: clear `~/.cache/vllm` + Triton cache on BOTH
   nodes, then run docs/REVALIDATE.md before calling it production.

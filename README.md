@@ -74,9 +74,14 @@ scripts/list-models.sh --validated
 scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4   # or qwen3-1.7b canary
 scripts/up.sh nemotron-3-nano-30b-nvfp4             # checks image/weights/memory, waits healthy, smokes
 
-# Or guided UI (optional: install https://github.com/charmbracelet/gum)
+# Guided UI (vendored Gum on Linux ARM64; GUM=0 forces plain menus)
 ./wizard.sh
 ```
+
+If memory is tight because the selected model is already running, the wizard
+offers to stop it immediately before relaunch and then repeats the cold-memory
+preflight. The offer appears only for an exact stack-managed service; the final
+explicit start confirmation happens before anything is stopped.
 
 **Smoke** (lab network only — do **not** expose `:8000` without auth;
 [SECURITY.md](SECURITY.md)):
@@ -115,8 +120,9 @@ scripts/sync-image.sh deepseek-v4-flash --pull --yes
 scripts/pull-weights.sh deepseek-v4-flash --yes
 
 scripts/doctor.sh
-scripts/up.sh deepseek-v4-flash --spec-decode   # DSpark recommended
-# dry-run checks only: scripts/up.sh deepseek-v4-flash --spec-decode --dry-run
+scripts/up.sh deepseek-v4-flash                  # DSpark k=5 default
+# rollback: scripts/up.sh deepseek-v4-flash --no-spec-decode
+# dry-run checks only: scripts/up.sh deepseek-v4-flash --dry-run
 
 scripts/status.sh deepseek-v4-flash
 scripts/down.sh deepseek-v4-flash
@@ -135,7 +141,7 @@ Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
 | `scripts/detect-fabric.sh` | Propose NCCL IF / HEAD_IP |
 | `scripts/up.sh` / `down.sh` / `status.sh` | Start (with gates) / stop / probe |
-| `./wizard.sh` | gum (or plain) guided Path A/B |
+| `./wizard.sh` | Vendored Gum (or plain) guided Path A/B |
 | `./serve.sh` / `cluster/*` | Low-level launchers (still supported) |
 
 All servers speak the OpenAI API on :8000. Per-model flags live in
@@ -192,10 +198,11 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
   throughput by the accepted-block size; full story in TROUBLESHOOTING +
   the VALIDATION retraction trail). With honest metering and natural
   prompts: DSpark on the flagship **+79%** (48.4 vs 27.1 tok/s c=1),
-  Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). All opt-in
-  via `--spec-decode`; the spec-enabled 150-min soak has now PASSED twice
-  (separate -DSpark checkpoint, then the 0731 integrated drafter), making
-  **DSpark k=5 the recommended flagship mode**. The one standing failure:
+  Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). Optional paths
+  use `--spec-decode`; the flagship's soak-proven DSpark path is default-on
+  and rolls back with `--no-spec-decode`. Its k=5 equals the checkpoint's
+  `dspark_block_size` and is not a tuning knob. The spec-enabled 150-min soak
+  has PASSED twice. The one standing failure:
   ngram on GDN hybrids **corrupts output** — never enable it there.
 - **Deliberately OFF / not load-bearing, by measurement** (not vibes):
   MTU 9000, Ray (native `--nnodes` mp is the validated multi-node path).

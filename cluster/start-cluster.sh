@@ -3,7 +3,8 @@
 # head (API) on this node. Both containers run on --network=host with the
 # NCCL env validated in Step 0 (cluster/cluster-env.sh).
 #
-#   cluster/start-cluster.sh <model-name> [--spec-decode] [--skip-preflight] [--skip-warmup] [--dry-run]
+#   cluster/start-cluster.sh <model-name> [--spec-decode|--no-spec-decode]
+#                            [--skip-preflight] [--skip-warmup] [--dry-run]
 #
 # Multi-node backend: vLLM native --nnodes/--node-rank/--headless with the mp
 # executor (torch.distributed over RoCE). NOT Ray — see docs/MULTINODE.md for
@@ -12,19 +13,17 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
-[ -f .env ] && { set -a; . ./.env; set +a; }
-. cluster/cluster-env.sh
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/lib.sh"
 require_cluster_ips || exit 1
 
-VLLM_IMAGE_MAINLINE="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai:v0.26.0}"
-HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
-
-MODEL_NAME="${1:?usage: cluster/start-cluster.sh <model-name> [--spec-decode] [--skip-preflight] [--skip-warmup] [--dry-run] [--force]}"
+MODEL_NAME="${1:?usage: cluster/start-cluster.sh <model-name> [--spec-decode|--no-spec-decode] [--skip-preflight] [--skip-warmup] [--dry-run] [--force]}"
 shift
-SPEC_DECODE=0 SKIP_PREFLIGHT=0 SKIP_WARMUP=0 DRY_RUN=0 FORCE=0
+SPEC_MODE=auto SKIP_PREFLIGHT=0 SKIP_WARMUP=0 DRY_RUN=0 FORCE=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --spec-decode) SPEC_DECODE=1 ;;
+    --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
+    --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --skip-preflight) SKIP_PREFLIGHT=1 ;;
     --skip-warmup) SKIP_WARMUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -34,28 +33,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-CONF="models/${MODEL_NAME}.conf"
-[ -f "$CONF" ] || { echo "No such config: $CONF" >&2; exit 1; }
-NODES=1 PORT=8000 GPU_MEM_UTIL=0.80 IMAGE=""
-CONTAINER_ENV=() SPEC_DECODE_ARGS=() ENGINE_ARGS=()
-STATUS="?"
-# shellcheck disable=SC1090
-. "$CONF"
-IMAGE="${IMAGE:-$VLLM_IMAGE_MAINLINE}"
-STATUS="${STATUS:-?}"
-
-# shellcheck disable=SC1091
-. "$REPO_DIR/scripts/lib.sh"
+load_conf "$MODEL_NAME"
+resolve_spec_decode "$SPEC_MODE"
 if status_requires_force && [ "$FORCE" != 1 ]; then
   echo "$MODEL_NAME status=$STATUS — refuse start without --force (allowlist: tested*)" >&2
   exit 1
 fi
 
 [ "$NODES" = "2" ] || { echo "$MODEL_NAME is a single-node config; use ./serve.sh" >&2; exit 1; }
-if [ "$SPEC_DECODE" = "1" ] && [ "${#SPEC_DECODE_ARGS[@]}" -eq 0 ]; then
-  echo "$MODEL_NAME has no validated SPEC_DECODE_ARGS; refusing to guess." >&2; exit 1
-fi
-
+echo "[cluster] spec-decode=$([ "$SPEC_DECODE_ENABLED" = 1 ] && echo ON || echo off) ($SPEC_DECODE_SOURCE)"
 if [ "$SKIP_PREFLIGHT" = "0" ]; then
   cluster/preflight.sh "$MODEL_NAME" || { echo "[cluster] preflight FAILED — not starting. (--skip-preflight to override at your own risk)" >&2; exit 1; }
 fi
@@ -67,11 +53,15 @@ MODELS_NFS="${MODELS_NFS:-/mnt/Models}"
 # shellcheck disable=SC2206
 build_docker_cmd() {
   local role_ip="$1"
-  shift
+  local role_rank="$2"
+  shift 2
   local -a role_suffix=("$@")
   local -a cmd=(
     docker run -d
     --name "$CONTAINER"
+    --label "${PULSAR_MANAGED_LABEL}=true"
+    --label "${PULSAR_CONF_LABEL}=${MODEL_NAME}"
+    --label "${PULSAR_RANK_LABEL}=${role_rank}"
     --network host
     --ipc host
     --gpus all
@@ -111,7 +101,7 @@ build_docker_cmd() {
     --master-addr "$HEAD_IP"
     --master-port "$MASTER_PORT"
   )
-  [ "$SPEC_DECODE" = "1" ] && cmd+=("${SPEC_DECODE_ARGS[@]}")
+  [ "$SPEC_DECODE_ENABLED" = "1" ] && cmd+=("${SPEC_DECODE_ARGS[@]}")
   # Capture into a temp then copy — append_vllm_extra_args needs a named global
   _EXTRA_CMD=()
   append_vllm_extra_args _EXTRA_CMD
@@ -128,9 +118,9 @@ shell_join_q() {
   printf '%s' "${out% }"
 }
 
-build_docker_cmd "$WORKER_IP" --node-rank 1 --headless
+build_docker_cmd "$WORKER_IP" 1 --node-rank 1 --headless
 WORKER_CMD=("${_DOCKER_CMD[@]}")
-build_docker_cmd "$HEAD_IP" --node-rank 0
+build_docker_cmd "$HEAD_IP" 0 --node-rank 0
 HEAD_CMD=("${_DOCKER_CMD[@]}")
 # API auth on head only (worker is headless; open lab default when unset)
 _api_key="${VLLM_API_KEY:-${API_KEY:-}}"

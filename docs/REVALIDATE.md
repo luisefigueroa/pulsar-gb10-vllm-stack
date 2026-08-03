@@ -71,7 +71,7 @@ container (TROUBLESHOOTING.md).
 
 ```bash
 cluster/preflight.sh deepseek-v4-flash
-cluster/start-cluster.sh deepseek-v4-flash --spec-decode  # recommended ship path; NCCL_DEBUG=INFO on first bump boot
+cluster/start-cluster.sh deepseek-v4-flash  # default DSpark ship path; NCCL_DEBUG=INFO on first bump boot
 docker logs vllm-cluster-deepseek-v4-flash 2>&1 | grep -m2 "NET/IB"   # RDMA, not TCP
 # THE STOCK-KILLER STRESS SEQUENCE — all three killed stock v0.26.0:
 validate/run-gates.sh deepseek-v4-flash --baseline results/dsv4-0731-dspark-capture.json --tag <bump-tag>

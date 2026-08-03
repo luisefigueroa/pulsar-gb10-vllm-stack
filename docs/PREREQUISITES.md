@@ -41,6 +41,10 @@ images, weights, or stale containers fail. Fix those before
 Not required on the host: vLLM Python install, Ray, host NCCL, jumbo MTU,
 GPUDirect RDMA.
 
+`wizard.sh` uses the vendored Gum v0.17.0 Linux ARM64 binary by default; no
+package installation is required. Set `GUM=0` for plain Bash menus or
+`GUM_BIN=/path/to/gum` to override it. See `THIRD_PARTY_NOTICES.md`.
+
 ---
 
 ## 2. Single-node (`./serve.sh`)
@@ -142,8 +146,8 @@ ssh "$WORKER_IP" 'd=~/.cache/huggingface/hub/models--ORG--NAME; \
   [ -e $d/refs/main ] || { mkdir -p $d/refs; \
   ls $d/snapshots | head -1 | tr -d "\n" > $d/refs/main; }'
 
-# Images
-docker save IMAGE | ssh "$WORKER_IP" docker load
+# Images (also repairs digest references that docker load omits)
+scripts/sync-image.sh <model> --pull --yes
 ```
 
 Use `rsync -rlptD` (not plain `-a`) on some NFS-backed trees.
@@ -152,8 +156,9 @@ Use `rsync -rlptD` (not plain `-a`) on some NFS-backed trees.
 
 ```bash
 cluster/preflight.sh <model>
-# Flagship recommended mode:
-cluster/start-cluster.sh deepseek-v4-flash --spec-decode
+# Flagship validated default (DSpark k=5):
+cluster/start-cluster.sh deepseek-v4-flash
+# Rollback only: cluster/start-cluster.sh deepseek-v4-flash --no-spec-decode
 cluster/stop-cluster.sh                   # before every relaunch
 ```
 

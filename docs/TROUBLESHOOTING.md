@@ -28,8 +28,19 @@ RoCE and the LAN NFS server, nothing else.
 RoCE link moves ~1 GB/s+, a 160 GB model syncs in minutes.)
 Also fix `refs/main` on the target (see above) — and note image staging: pull
 published images on node 1, then run `scripts/sync-image.sh <model> --yes`
-(`docker save | ssh node2 docker load`); only locally reproduced images need a
-source build.
+(LAN `docker save | load`, followed by registry-reference repair when needed);
+only locally reproduced images need a source build.
+
+## `docker load` succeeds but the worker still misses a digest-pinned image
+
+**Hit:** staging the published DeepSeek PR-41834 image printed `Loaded image
+ID`, then `sync-image.sh` failed its exact `repo@sha256:...` inspection.
+**Cause:** Docker transferred every layer but registered the result only as an
+untagged image ID (`RepoTags=[]`, `RepoDigests=[]`). A digest reference cannot
+be restored with `docker tag`.
+**Fix:** `sync-image.sh` now detects this state and runs `docker pull` for the
+exact digest on the worker. Docker reuses the LAN-transferred layers and only
+resolves the registry reference. Prefer the script over a bare save/load pipe.
 
 ## 2-node: server never comes up, no error anywhere
 

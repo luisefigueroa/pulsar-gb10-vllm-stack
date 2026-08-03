@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Orchestrate checks then launch serve.sh or start-cluster.sh.
-#   scripts/up.sh <model-name> [--spec-decode] [--force] [--skip-preflight]
+#   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode] [--force]
+#                 [--skip-preflight]
 #                 [--skip-weights-check] [--accept-memory-warn] [--pull-image]
 #                 [--dry-run] [--yes] [--verbose]
 set -euo pipefail
@@ -12,10 +13,11 @@ NAME="${1:-}"
 [ -n "$NAME" ] || die "usage: $0 <model-name> [options]"
 shift
 
-SPEC=0 FORCE=0 SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0 DRY=0 YES=0 VERBOSE=0
+SPEC_MODE=auto FORCE=0 SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0 DRY=0 YES=0 VERBOSE=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --spec-decode) SPEC=1 ;;
+    --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
+    --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --force) FORCE=1 ;;
     --skip-preflight) SKIP_PF=1 ;;
     --skip-weights-check) SKIP_W=1 ;;
@@ -28,7 +30,8 @@ while [ $# -gt 0 ]; do
       cat <<'EOF'
 usage: scripts/up.sh <model-name> [options]
 
-  --spec-decode          enable conf SPEC_DECODE_ARGS
+  --spec-decode          force on the conf's validated SPEC_DECODE_ARGS
+  --no-spec-decode       force off speculative decode (rollback)
   --dry-run              run checks only (no launch)
   --verbose              full check logs (default is one-line gates)
   --accept-memory-warn   allow start on memory WARN
@@ -45,17 +48,16 @@ EOF
 done
 
 load_conf "$NAME"
+resolve_spec_decode "$SPEC_MODE"
 export QUIET=1
 [ "$VERBOSE" = 1 ] && export QUIET=0
 
 echo "┌─ up  $NAME"
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT  status=$STATUS"
-if [ "$SPEC" = 1 ]; then
-  echo "│  spec-decode=ON"
-elif has_spec_args && [ "${RECOMMENDED_SPEC}" = "1" ]; then
-  echo "│  spec-decode=off  (recommended: add --spec-decode)"
+if [ "$SPEC_DECODE_ENABLED" = 1 ]; then
+  echo "│  spec-decode=ON  ($SPEC_DECODE_SOURCE)"
 else
-  echo "│  spec-decode=off"
+  echo "│  spec-decode=off  ($SPEC_DECODE_SOURCE)"
 fi
 [ "$DRY" = 1 ] && echo "│  mode=DRY-RUN (checks only)"
 echo "├─ checks"
@@ -65,11 +67,6 @@ if status_requires_force && [ "$FORCE" != 1 ]; then
   die "$NAME status=$STATUS — refuse start without --force (allowlist: tested*)"
 fi
 echo "PASS  conf      status=$STATUS"
-
-if [ "$SPEC" = 1 ] && ! has_spec_args; then
-  echo "FAIL  spec      no SPEC_DECODE_ARGS in conf"
-  die "$NAME has no SPEC_DECODE_ARGS; refusing --spec-decode"
-fi
 
 if [ "$NODES" = "2" ]; then
   if ! require_cluster_ips; then
@@ -189,7 +186,11 @@ if [ "$NODES" = "2" ]; then
 fi
 
 spec_flag=()
-[ "$SPEC" = 1 ] && spec_flag=(--spec-decode)
+case "$SPEC_MODE" in
+  on) spec_flag=(--spec-decode) ;;
+  off) spec_flag=(--no-spec-decode) ;;
+  auto) ;;
+esac
 
 echo "└─"
 

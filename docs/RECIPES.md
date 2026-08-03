@@ -10,17 +10,18 @@ Shared doctrine baked into every recipe:
 - HF cache mounted; `HF_HUB_OFFLINE=1` (all weights local)
 - 2-node adds `--network host --device /dev/infiniband` (host networking
   does NOT expose RDMA devices) and the measured NCCL env
-- speculative decode is **opt-in via `--spec-decode`** where the conf has
-  validated `SPEC_DECODE_ARGS` (see VALIDATION.md post-07-31 doctrine):
-  **DSpark k=5 recommended** on the flagship; Super MTP opt-in; Laguna
-  DFlash marginal/off by default; **never** ngram on GDN hybrids
+- speculative decode follows validated profile policy: **DSpark is default-on**
+  for the flagship and `--no-spec-decode` is its rollback; Super MTP and
+  Laguna DFlash remain opt-in via `--spec-decode`; **never** use ngram on GDN
+  hybrids. Only profiles with validated `SPEC_DECODE_ARGS` may enable it.
 - CUDA graphs ON except where noted
 
 ## Flagship: DeepSeek-V4-Flash-0731, 2-node TP=2 — long-session agents @ 500K
 
 Image: published PR-41834 digest pinned in the model conf (docs/BUILD.md).
-**Preferred launch:** `cluster/start-cluster.sh deepseek-v4-flash --spec-decode`
-(runs preflight, dual-node start, then `validate/warmup.py`).
+**Preferred launch:** `cluster/start-cluster.sh deepseek-v4-flash` (runs
+preflight, dual-node start, then `validate/warmup.py`). Roll back to base
+decode with `--no-spec-decode`.
 
 ### Workload these flags target
 
@@ -31,7 +32,7 @@ Image: published PR-41834 digest pinned in the model conf (docs/BUILD.md).
 | Cap at official useful max context | `--max-model-len 500000` (do not chase 1M) |
 | Large prefills (code chunks) | `--max-num-batched-tokens 16384` |
 | Hermes / OpenAI tool_choice=auto | `--enable-auto-tool-choice --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4 --tokenizer-mode deepseek_v4` |
-| Decode throughput | DSpark k=5 via `--spec-decode` |
+| Decode throughput | DSpark default-on; k=5 fixed by checkpoint |
 
 Not the target: high-QPS short chat, 8–16-way concurrency, or packing
 KV to free-memory readings on unified memory (27.5 GB/rank OOM’d node 2).
@@ -39,7 +40,7 @@ KV to free-memory readings on unified memory (27.5 GB/rank OOM’d node 2).
 ### Engine flags (from `models/deepseek-v4-flash.conf`)
 
 ```bash
-# Prefer: cluster/start-cluster.sh deepseek-v4-flash --spec-decode
+# Prefer: cluster/start-cluster.sh deepseek-v4-flash
 # Effective vLLM args on each rank (plus --nnodes/--node-rank/--headless):
 --model deepseek-ai/DeepSeek-V4-Flash-0731
 --served-model-name deepseek-v4-flash
@@ -55,9 +56,14 @@ KV to free-memory readings on unified memory (27.5 GB/rank OOM’d node 2).
 --enable-auto-tool-choice --tool-call-parser deepseek_v4
 --reasoning-parser deepseek_v4
 --distributed-executor-backend mp
-# with --spec-decode:
+# Default-on DSpark path (omit only with --no-spec-decode):
 --speculative-config '{"method":"dspark","num_speculative_tokens":5}'
 ```
+
+`num_speculative_tokens=5` must equal the checkpoint's
+`dspark_block_size=5`; it is not a tuning knob. Larger blocks draft positions
+the checkpoint cannot reach and reduce acceptance. Changing it requires a
+different checkpoint/upstream contract and full revalidation.
 
 Load-bearing details: `--kv-cache-dtype fp8` is REQUIRED (auto asserts:
 "fp8_ds_mla layout only supports fp8 kv-cache"); `--block-size 256` from the

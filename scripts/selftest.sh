@@ -20,10 +20,13 @@ run() {
 
 run "status gate" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
+run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
+run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
+run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 
 run "list-models --json" bash -c '
   j=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --json)
-  echo "$j" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"models\"); assert any(m[\"id\"]==\"deepseek-v4-flash\" for m in d[\"models\"])"
+  echo "$j" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"models\"); assert any(m[\"id\"]==\"deepseek-v4-flash\" and m[\"spec_default_enabled\"] for m in d[\"models\"])"
 '
 
 run "WEIGHTS_GIB disk formula" bash -c '
@@ -45,6 +48,11 @@ run "soak exit policy (syntax + help)" bash -c '
 run "bench_serve asyncio API" bash -c '
   grep -q get_running_loop "'"$REPO_DIR"'/validate/bench_serve.py"
   ! grep -q get_event_loop "'"$REPO_DIR"'/validate/bench_serve.py"
+'
+
+run "digest-pinned image sync repair" bash -c '
+  grep -q "docker load omitted the digest reference" "'"$REPO_DIR"'/scripts/sync-image.sh"
+  grep -q "ssh_worker.*docker pull" "'"$REPO_DIR"'/scripts/sync-image.sh"
 '
 
 run "wizard uses list-models --json" bash -c '

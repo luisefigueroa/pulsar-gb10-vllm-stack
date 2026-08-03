@@ -91,6 +91,51 @@ has_spec_args() {
   [ "${#SPEC_DECODE_ARGS[@]}" -gt 0 ]
 }
 
+# Set a caller-owned speculative-decode mode while rejecting contradictory
+# overrides. Valid modes are auto (profile policy), on, and off.
+set_spec_decode_mode() {
+  local var_name="${1:?set_spec_decode_mode: variable name required}"
+  local requested="${2:?set_spec_decode_mode: requested mode required}"
+  local -n mode_ref="$var_name"
+  case "$requested" in
+    on|off) ;;
+    *) die "invalid speculative-decode mode: $requested" ;;
+  esac
+  if [ "$mode_ref" != "auto" ] && [ "$mode_ref" != "$requested" ]; then
+    die "--spec-decode and --no-spec-decode are mutually exclusive"
+  fi
+  mode_ref="$requested"
+}
+
+# Resolve profile policy plus an explicit CLI override. Call after load_conf.
+# RECOMMENDED_SPEC is executable policy: 1 means the validated fast path is the
+# default. SPEC_DECODE_ENABLED and SPEC_DECODE_SOURCE are set for the caller.
+resolve_spec_decode() {
+  local mode="${1:-auto}"
+  case "$mode" in
+    auto)
+      if [ "${RECOMMENDED_SPEC:-0}" = "1" ]; then
+        has_spec_args || die "$CONF_NAME sets RECOMMENDED_SPEC=1 without validated SPEC_DECODE_ARGS"
+        SPEC_DECODE_ENABLED=1
+        SPEC_DECODE_SOURCE="profile-default"
+      else
+        SPEC_DECODE_ENABLED=0
+        SPEC_DECODE_SOURCE="profile-default"
+      fi
+      ;;
+    on)
+      has_spec_args || die "$CONF_NAME has no validated SPEC_DECODE_ARGS; refusing --spec-decode"
+      SPEC_DECODE_ENABLED=1
+      SPEC_DECODE_SOURCE="forced-on"
+      ;;
+    off)
+      SPEC_DECODE_ENABLED=0
+      SPEC_DECODE_SOURCE="forced-off"
+      ;;
+    *) die "invalid speculative-decode mode: $mode" ;;
+  esac
+}
+
 status_is_tested() {
   case "${STATUS}" in
     tested|tested+soaked|tested*) return 0 ;;
@@ -282,6 +327,10 @@ ssh_worker() {
   ssh -o BatchMode=yes -o ConnectTimeout=8 "$WORKER_IP" "$@"
 }
 
+PULSAR_MANAGED_LABEL="io.pulsar.gb10.managed"
+PULSAR_CONF_LABEL="io.pulsar.gb10.conf"
+PULSAR_RANK_LABEL="io.pulsar.gb10.rank"
+
 container_name_for() {
   local name="$1" nodes="${2:-1}"
   if [ "$nodes" = "2" ]; then
@@ -328,6 +377,72 @@ filter_exact_container_name() {
 container_running_exact() {
   local want="$1"
   docker ps --format '{{.Names}}' 2>/dev/null | filter_exact_container_name "$want" | grep -q .
+}
+
+# Validate targeted docker-inspect metadata without exposing container env.
+# Labeled containers are authoritative. Unlabeled containers are accepted only
+# as a transition path when their exact vLLM argv matches the selected profile.
+container_metadata_matches_profile() {
+  local metadata="$1" conf="$2" model="$3" served="$4" rank="${5:-}"
+  printf '%s' "$metadata" | python3 -c '
+import json
+import sys
+
+conf, model, served, rank, managed_key, conf_key, rank_key = sys.argv[1:]
+meta = json.load(sys.stdin)
+if not meta.get("running"):
+    raise SystemExit(1)
+
+labels = meta.get("labels") or {}
+if str(labels.get(managed_key, "")).lower() == "true":
+    ok = labels.get(conf_key) == conf
+    if rank:
+        ok = ok and labels.get(rank_key) == rank
+    raise SystemExit(0 if ok else 1)
+
+cmd = meta.get("cmd") or []
+def value(flag):
+    try:
+        return cmd[cmd.index(flag) + 1]
+    except (ValueError, IndexError):
+        return None
+
+ok = value("--model") == model and value("--served-model-name") == served
+if rank:
+    ok = ok and value("--node-rank") == rank
+raise SystemExit(0 if ok else 1)
+' "$conf" "$model" "$served" "$rank" \
+    "$PULSAR_MANAGED_LABEL" "$PULSAR_CONF_LABEL" "$PULSAR_RANK_LABEL"
+}
+
+container_profile_owned_local() {
+  local name="$1" conf="$2" model="$3" served="$4" rank="${5:-}"
+  local format metadata
+  format='{"running":{{json .State.Running}},"labels":{{json .Config.Labels}},"cmd":{{json .Config.Cmd}}}'
+  metadata=$(docker inspect --format "$format" "$name" 2>/dev/null) || return 1
+  container_metadata_matches_profile "$metadata" "$conf" "$model" "$served" "$rank"
+}
+
+container_profile_owned_worker() {
+  local name="$1" conf="$2" model="$3" served="$4" rank="${5:-}"
+  local format metadata remote_cmd
+  format='{"running":{{json .State.Running}},"labels":{{json .Config.Labels}},"cmd":{{json .Config.Cmd}}}'
+  remote_cmd="docker inspect --format $(printf '%q' "$format") $(printf '%q' "$name")"
+  metadata=$(ssh_worker "$remote_cmd" 2>/dev/null) || return 1
+  container_metadata_matches_profile "$metadata" "$conf" "$model" "$served" "$rank"
+}
+
+# True only when the selected profile's exact running service is owned by this
+# stack. Two-node ownership requires matching head and worker ranks.
+profile_service_is_stack_owned() {
+  local conf="$1" cname
+  cname=$(container_name_for "$conf" "$NODES")
+  if [ "$NODES" = "2" ]; then
+    container_profile_owned_local "$cname" "$conf" "$MODEL" "$SERVED_NAME" 0 \
+      && container_profile_owned_worker "$cname" "$conf" "$MODEL" "$SERVED_NAME" 1
+  else
+    container_profile_owned_local "$cname" "$conf" "$MODEL" "$SERVED_NAME"
+  fi
 }
 
 container_exists_exact() {

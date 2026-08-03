@@ -66,6 +66,7 @@ with open("$tmp") as f:
         rows.append({
             "id": p[0], "status": p[1], "nodes": int(p[2] or 1),
             "source": p[3], "served_name": p[4], "spec": p[5],
+            "spec_default_enabled": p[5] == "recommended",
             "first_run_candidate": p[6] == "1",
         })
 print(json.dumps({"models": rows}, indent=2))
@@ -93,7 +94,8 @@ Columns:
   SRC          hf = Hugging Face id; nfs = path under /mnt/Models (no auto-download)
   SERVED_NAME  OpenAI API "model" field (may differ from ID)
   SPEC_DECODE  none | optional | recommended
-                 none        = no validated speculative-decode config
-                 optional    = has --spec-decode config; off by default
-                 recommended = use: scripts/up.sh <ID> --spec-decode
+                 none        = no validated speculative-decode configuration
+                 optional    = validated; off by default; --spec-decode enables
+                 recommended = validated and on by default
+                               (--no-spec-decode is the rollback)
 EOF

@@ -10,15 +10,29 @@ cd "$REPO_DIR"
 . "$REPO_DIR/scripts/lib.sh"
 SCRIPT_NAME=wizard
 
+VENDORED_GUM="$REPO_DIR/third_party/gum/linux-arm64/gum"
+GUM_CMD=""
 have_gum=0
-if [ "${GUM:-1}" != 0 ] && command -v gum >/dev/null 2>&1; then
-  have_gum=1
+if [ "${GUM:-1}" != 0 ]; then
+  if [ -n "${GUM_BIN:-}" ]; then
+    if [ -x "$GUM_BIN" ]; then
+      GUM_CMD="$GUM_BIN"
+    else
+      warn "GUM_BIN is not executable: $GUM_BIN"
+    fi
+  elif [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = aarch64 ] \
+      && [ -x "$VENDORED_GUM" ]; then
+    GUM_CMD="$VENDORED_GUM"
+  elif command -v gum >/dev/null 2>&1; then
+    GUM_CMD=$(command -v gum)
+  fi
 fi
+[ -n "$GUM_CMD" ] && have_gum=1
 
 choose() {
   local header="$1"; shift
   if [ "$have_gum" = 1 ]; then
-    printf '%s\n' "$@" | gum choose --header "$header"
+    printf '%s\n' "$@" | "$GUM_CMD" choose --header "$header"
   else
     echo "$header" >&2
     PS3="Select number: "
@@ -30,25 +44,41 @@ choose() {
 
 confirm() {
   local msg="$1"
+  local default="${2:-no}"
   if [ "$have_gum" = 1 ]; then
-    gum confirm "$msg"
+    if [ "$default" = yes ]; then
+      "$GUM_CMD" confirm --default=true "$msg"
+    else
+      "$GUM_CMD" confirm "$msg"
+    fi
   else
-    read -r -p "$msg [y/N] " a
-    case "$a" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+    local prompt="[y/N]"
+    [ "$default" = yes ] && prompt="[Y/n]"
+    read -r -p "$msg $prompt " a
+    case "$a" in
+      y|Y|yes|YES) return 0 ;;
+      n|N|no|NO) return 1 ;;
+      "") [ "$default" = yes ] ;;
+      *) return 1 ;;
+    esac
   fi
 }
 
 spin() {
   local title="$1"; shift
   if [ "$have_gum" = 1 ]; then
-    gum spin --title "$title" --show-output -- "$@"
+    "$GUM_CMD" spin --title "$title" --show-output -- "$@"
   else
     log "$title"
     "$@"
   fi
 }
 
-[ "$have_gum" = 1 ] || log "gum not found — using plain menus (install https://github.com/charmbracelet/gum for a nicer UI)"
+if [ "$have_gum" = 1 ]; then
+  log "using $("$GUM_CMD" --version 2>/dev/null || echo gum) at $GUM_CMD"
+else
+  log "gum unavailable or disabled — using plain menus"
+fi
 
 log "running doctor…"
 if ! "$REPO_DIR/scripts/doctor.sh"; then
@@ -125,33 +155,60 @@ EOF
   esac
 fi
 
+run_memory_preflight() {
+  set +e
+  "$REPO_DIR/scripts/check-memory.sh" "$NAME"
+  mrc=$?
+  set -e
+}
+
 log "memory preflight…"
-set +e
-"$REPO_DIR/scripts/check-memory.sh" "$NAME"
-mrc=$?
-set -e
-if [ "$mrc" = 1 ]; then
-  die "memory preflight failed"
-fi
+run_memory_preflight
 ACCEPT=()
-if [ "$mrc" = 2 ]; then
+STOP_CURRENT=0
+if [ "$mrc" != 0 ] && profile_service_is_stack_owned "$NAME"; then
+  if confirm "Memory is tight while stack-managed $NAME is running. Stop it immediately before relaunch and retry?"; then
+    STOP_CURRENT=1
+  else
+    log "leaving the current service running; no containers changed"
+    exit 0
+  fi
+elif [ "$mrc" = 1 ]; then
+  die "memory preflight failed"
+elif [ "$mrc" = 2 ]; then
   confirm "Memory is tight. Continue anyway?" || die "aborted"
   ACCEPT=(--accept-memory-warn)
 fi
 
 SPEC_ARGS=()
 if has_spec_args; then
-  def_yes=0
-  [ "${RECOMMENDED_SPEC}" = "1" ] && def_yes=1
-  msg="Enable speculative decode (--spec-decode)?"
-  [ "$def_yes" = 1 ] && msg="$msg [recommended for this conf]"
-  if confirm "$msg"; then
+  if [ "${RECOMMENDED_SPEC}" = "1" ]; then
+    if ! confirm "Use the validated speculative-decode fast path?" yes; then
+      SPEC_ARGS=(--no-spec-decode)
+    fi
+  elif confirm "Enable the optional validated speculative-decode path?"; then
     SPEC_ARGS=(--spec-decode)
   fi
 fi
 
 if ! confirm "Start $NAME now?"; then
-  die "aborted"
+  log "aborted; no containers changed"
+  exit 0
+fi
+
+if [ "$STOP_CURRENT" = 1 ]; then
+  log "stopping verified stack-managed $NAME before cold-start preflight…"
+  "$REPO_DIR/scripts/down.sh" "$NAME"
+  log "re-running memory preflight with the old model unloaded…"
+  run_memory_preflight
+  if [ "$mrc" = 1 ]; then
+    die "memory preflight still fails after stopping $NAME"
+  fi
+  if [ "$mrc" = 2 ]; then
+    confirm "Memory is still tight after stopping $NAME. Continue anyway?" \
+      || die "aborted with $NAME stopped"
+    ACCEPT=(--accept-memory-warn)
+  fi
 fi
 
 "$REPO_DIR/scripts/up.sh" "$NAME" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes

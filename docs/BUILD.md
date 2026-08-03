@@ -150,8 +150,8 @@ sm_121 natively under CUDA 13.0.3) plus the 12.0a/12.1a quant-kernel gates.
 
 **Validation:** this image earns nothing until gates in
 `models/deepseek-v4-flash.conf` + docs/VALIDATION.md pass (battery, needle,
-soak). Prefer `cluster/start-cluster.sh deepseek-v4-flash --spec-decode`
-for the recommended DSpark path after the image is loaded on both nodes.
+soak). Use `cluster/start-cluster.sh deepseek-v4-flash` for the default DSpark
+path after the image is loaded on both nodes; `--no-spec-decode` is rollback.
 
 ### DEPRECATED: DSpark draft-path overlay (do not build by default)
 
