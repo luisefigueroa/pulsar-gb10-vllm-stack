@@ -22,6 +22,7 @@ run "status gate" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
+run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 
 run "list-models --json" bash -c '

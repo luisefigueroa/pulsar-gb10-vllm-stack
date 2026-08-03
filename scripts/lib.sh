@@ -48,7 +48,7 @@ load_conf() {
   MODEL="" SERVED_NAME="" IMAGE="" NOTES="" STATUS="?"
   NODES=1 PORT=8000 GPU_MEM_UTIL=0.80
   ENGINE_ARGS=() CONTAINER_ENV=() SPEC_DECODE_ARGS=()
-  WEIGHTS_GIB="" KV_GIB="" OVERHEAD_GIB="" MEM_MIN_FREE_GIB=""
+  WEIGHTS_GIB="" WEIGHTS_RAM_GIB="" KV_GIB="" OVERHEAD_GIB="" MEM_MIN_FREE_GIB=""
   RECOMMENDED_SPEC=0 FIRST_RUN_CANDIDATE=0
 
   # shellcheck disable=SC1090
@@ -291,7 +291,7 @@ estimate_weights_gib() {
 # Unified-memory weight footprint for check-memory (full model GiB).
 # Prefer WEIGHTS_RAM_GIB when disk ≠ resident RAM (quantized / MoE).
 estimate_weights_ram_gib() {
-  if [ -n "${WEIGHTS_RAM_GIB}" ]; then
+  if [ -n "${WEIGHTS_RAM_GIB:-}" ]; then
     echo "$WEIGHTS_RAM_GIB"
     return
   fi
