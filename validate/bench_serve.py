@@ -88,8 +88,7 @@ def make_prompt(n_tokens, seed):
 async def run_level(url, model, conc, nreq, in_toks, out_toks, warm, api_key):
     results = []
     n = conc if warm else nreq
-    seeds = range(1000 + n) if warm else range(n)
-    tasks = []
+    seeds = range(1000, 1000 + n) if warm else range(n)
     sem = asyncio.Semaphore(conc)
     async def guarded(s):
         async with sem:
@@ -101,7 +100,7 @@ async def run_level(url, model, conc, nreq, in_toks, out_toks, warm, api_key):
     wall = time.perf_counter() - t0
     return results, wall
 
-async def main():
+async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", required=True)
@@ -117,20 +116,35 @@ async def main():
                          "stays synthetic for comparability with recorded runs.")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
+    if not a.concurrency or any(c <= 0 for c in a.concurrency):
+        ap.error("--concurrency values must all be positive")
+    if a.input_tokens <= 0:
+        ap.error("--input-tokens must be positive")
+    if a.output_tokens < 2:
+        ap.error("--output-tokens must be at least 2")
+
     api_key = resolve_api_key(a.api_key)
     global PROMPT_STYLE
     PROMPT_STYLE = a.prompt_style
 
     all_rows = []
+    failed_levels = 0
     print(f"{'conc':>4} {'n':>3} {'TTFT p50 ms':>12} {'decode tok/s':>13} {'agg tok/s':>10} {'wall s':>7}")
     for c in a.concurrency:
-        await run_level(a.url, a.model, c, c, a.input_tokens, a.output_tokens,
-                        warm=True, api_key=api_key)
+        warm_results, _ = await run_level(
+            a.url, a.model, c, c, a.input_tokens, a.output_tokens,
+            warm=True, api_key=api_key
+        )
+        if len(warm_results) != c:
+            print(f"{c:>4} FAILED (warmup results {len(warm_results)}/{c})")
+            failed_levels += 1
+            continue
         nreq = max(2 * c, 4)
         results, wall = await run_level(a.url, a.model, c, nreq, a.input_tokens,
                                         a.output_tokens, warm=False, api_key=api_key)
-        if not results:
-            print(f"{c:>4} FAILED (no results)")
+        if len(results) != nreq:
+            print(f"{c:>4} FAILED (measured results {len(results)}/{nreq})")
+            failed_levels += 1
             continue
         ttft = statistics.median(r["ttft"] for r in results) * 1000
         dtps = statistics.median(r["decode_tps"] for r in results)
@@ -141,8 +155,10 @@ async def main():
         all_rows.append(row)
         print(f"{c:>4} {len(results):>3} {ttft:>12.1f} {dtps:>13.2f} {agg:>10.2f} {wall:>7.1f}")
     if a.out:
-        json.dump(all_rows, open(a.out, "w"), indent=1)
+        with open(a.out, "w", encoding="utf-8") as f:
+            json.dump(all_rows, f, indent=1)
         print(f"wrote {a.out}")
+    return 1 if failed_levels else 0
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))
