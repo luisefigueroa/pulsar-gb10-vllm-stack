@@ -134,6 +134,15 @@ mem_available_gib_cmd() {
   echo ""
 }
 
+mem_total_gib_cmd() {
+  # stdout: MemTotal GiB or empty on failure (additive inventory field)
+  if [ -r /proc/meminfo ]; then
+    awk '/MemTotal:/ {printf "%.2f", $2/1048576}' /proc/meminfo 2>/dev/null || true
+    return
+  fi
+  echo ""
+}
+
 collect_gpu_processes_local() {
   # CSV lines: pid,process_name,used_memory_mib  (used_memory may be empty/N/A)
   if ! command -v "$INVENTORY_NVIDIA_SMI" >/dev/null 2>&1; then
@@ -302,14 +311,18 @@ collect_live_snapshot() {
   worker_status="unset"
   worker_reason="WORKER_IP unset — worker not probed (single-node inventory still valid)"
   local worker_mem="" worker_mem_status="unset" worker_mem_source="unset"
+  local worker_mem_total=""
   local head_mem head_mem_status="ok" head_mem_source="proc_meminfo"
+  local head_mem_total=""
 
   head_mem=$(mem_available_gib_cmd)
+  head_mem_total=$(mem_total_gib_cmd)
   if [ -z "$head_mem" ]; then
     head_mem_status="unavailable"
     head_mem_source="unavailable"
     head_mem="null"
   fi
+  [ -n "$head_mem_total" ] || head_mem_total="null"
 
   local tmp_c tmp_g
   tmp_c=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-c.XXXXXX")
@@ -327,6 +340,8 @@ collect_live_snapshot() {
       worker_reason=""
       worker_mem=$(_ssh_worker_raw "$worker_ip" \
         "awk '/MemAvailable:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" 2>/dev/null || true)
+      worker_mem_total=$(_ssh_worker_raw "$worker_ip" \
+        "awk '/MemTotal:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" 2>/dev/null || true)
       if [ -n "$worker_mem" ]; then
         worker_mem_status="ok"
         worker_mem_source="ssh_proc_meminfo"
@@ -335,17 +350,20 @@ collect_live_snapshot() {
         worker_mem_status="unavailable"
         worker_mem_source="unavailable"
       fi
+      [ -n "$worker_mem_total" ] || worker_mem_total="null"
       collect_containers_node worker remote "$worker_ip" >>"$tmp_c" || true
       collect_gpu_processes_remote "$worker_ip" | parse_gpu_csv_to_json_lines worker >>"$tmp_g" || true
     else
       worker_status="unreachable"
       worker_reason="WORKER_IP=${worker_ip} SSH unreachable (BatchMode)"
       worker_mem="null"
+      worker_mem_total="null"
       worker_mem_status="unreachable"
       worker_mem_source="unreachable"
     fi
   else
     worker_mem="null"
+    worker_mem_total="null"
   fi
 
   # Assemble raw snapshot. Profiles JSON may be large — pass via file, not env.
@@ -358,9 +376,11 @@ collect_live_snapshot() {
   WORKER_STATUS="$worker_status" \
   WORKER_REASON="$worker_reason" \
   HEAD_MEM="$head_mem" \
+  HEAD_MEM_TOTAL="$head_mem_total" \
   HEAD_MEM_STATUS="$head_mem_status" \
   HEAD_MEM_SOURCE="$head_mem_source" \
   WORKER_MEM="$worker_mem" \
+  WORKER_MEM_TOTAL="$worker_mem_total" \
   WORKER_MEM_STATUS="$worker_mem_status" \
   WORKER_MEM_SOURCE="$worker_mem_source" \
   CONTAINERS_FILE="$tmp_c" \
@@ -396,11 +416,13 @@ snap = {
     "nodes": {
         "head": {
             "mem_available_gib": num_or_null(os.environ.get("HEAD_MEM")),
+            "mem_total_gib": num_or_null(os.environ.get("HEAD_MEM_TOTAL")),
             "mem_status": os.environ["HEAD_MEM_STATUS"],
             "mem_source": os.environ["HEAD_MEM_SOURCE"],
         },
         "worker": {
             "mem_available_gib": num_or_null(os.environ.get("WORKER_MEM")),
+            "mem_total_gib": num_or_null(os.environ.get("WORKER_MEM_TOTAL")),
             "mem_status": os.environ["WORKER_MEM_STATUS"],
             "mem_source": os.environ["WORKER_MEM_SOURCE"],
         },
@@ -978,11 +1000,13 @@ inv = {
     "nodes": {
         "head": {
             "mem_available_gib": (nodes_info.get("head") or {}).get("mem_available_gib"),
+            "mem_total_gib": (nodes_info.get("head") or {}).get("mem_total_gib"),
             "mem_status": (nodes_info.get("head") or {}).get("mem_status"),
             "mem_source": (nodes_info.get("head") or {}).get("mem_source"),
         },
         "worker": {
             "mem_available_gib": (nodes_info.get("worker") or {}).get("mem_available_gib"),
+            "mem_total_gib": (nodes_info.get("worker") or {}).get("mem_total_gib"),
             "mem_status": (nodes_info.get("worker") or {}).get("mem_status"),
             "mem_source": (nodes_info.get("worker") or {}).get("mem_source"),
         },

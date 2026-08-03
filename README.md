@@ -75,14 +75,28 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4   # or qwen3-1.7b canary
 ./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
 # equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
 
-# Guided UI (vendored Gum on Linux ARM64; GUM=0 forces plain menus)
+# Operator home (neutral workflow menu — no doctor/preflight until you pick)
+./pulsar
+# Direct serve/switch wizard (doctor + preflight; not the no-arg home)
 ./pulsar wizard
 # equivalent: ./wizard.sh
 # Note: "./ wizard.sh" (space after ./) → "-bash: ./: Is a directory"; use "./pulsar wizard"
+# UI: vendored Gum on Linux ARM64 (blue palette). GUM=0 / NO_COLOR /
+# PULSAR_COLOR=never / TERM=dumb → plain uncolored menus (Gum not used).
+# PULSAR_ACCENT overrides blue accent when Gum is color-enabled (default 12)
 ```
 
-**Model switch safety (wizard):** before planning a start, the wizard reads
-`scripts/inventory.sh --json` and `scripts/check-memory.sh`. It only offers
+**Operator home (`./pulsar`):** workflow menu — Current system status (default),
+Serve or switch a model, Stop a serving model, Maintenance, Diagnostics, Exit.
+Home is read-only by default; it does not run doctor/inventory until you choose.
+Quick status is a focused overview (inventory + `/v1/models` advertisement only —
+**not** an inference smoke). Full completion smoke is optional and explicit.
+Stop/maintenance only offer inventory `safe_to_stop` stack-managed services and
+always confirm before calling `scripts/down.sh` (never Docker cleanup directly).
+No automatic stale cleanup on doctor or startup.
+
+**Model switch safety (wizard):** `./pulsar wizard` still runs doctor once, then
+reads `scripts/inventory.sh --json` and `scripts/check-memory.sh`. It only offers
 stop for inventory `safe_to_stop` stack-managed services, never for unlabeled,
 legacy, mismatch, unknown, incomplete, or unreachable ranks. Stops run only
 after you confirm the final start/replace action; then inventory and cold

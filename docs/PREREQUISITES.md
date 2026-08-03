@@ -41,11 +41,22 @@ images, weights, or stale containers fail. Fix those before
 Not required on the host: vLLM Python install, Ray, host NCCL, jumbo MTU,
 GPUDirect RDMA.
 
-`./pulsar wizard` (or `./wizard.sh`) uses the vendored Gum v0.17.0 Linux ARM64
-binary by default; no package installation is required. Set `GUM=0` for plain
-Bash menus or `GUM_BIN=/path/to/gum` to override it. See `THIRD_PARTY_NOTICES.md`.
-Prefer `./pulsar wizard` — `./ wizard.sh` (space after `./`) runs the directory
-`./` and fails with `Is a directory`.
+`./pulsar` opens the neutral operator home menu. `./pulsar wizard` (or
+`./wizard.sh`) is the direct serve/switch shortcut. Both use the vendored Gum
+v0.17.0 Linux ARM64 binary by default (shared `scripts/ui.sh`); no package
+installation is required.
+
+| Variable | Effect |
+|---|---|
+| `GUM=0` | Plain Bash menus (uncolored; good for scripts/selftests) |
+| `GUM_BIN=/path/to/gum` | Override gum binary (color-enabled mode only) |
+| `NO_COLOR`, `TERM=dumb`, `PULSAR_COLOR=never` | Force plain Bash menus (Gum not used; no pink defaults) |
+| `PULSAR_ACCENT` | Override accent when Gum is color-enabled (default ANSI bright blue `12`) |
+
+When color is allowed, Gum accents use terminal-palette blue (not Charm
+pink/purple defaults). Forced no-color never calls Gum with empty style flags.
+See `THIRD_PARTY_NOTICES.md`. Prefer `./pulsar wizard` — `./ wizard.sh` (space
+after `./`) runs the directory `./` and fails with `Is a directory`.
 
 ---
 

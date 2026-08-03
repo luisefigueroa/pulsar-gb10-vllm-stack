@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Root dispatcher for the Pulsar GB10 vLLM stack.
-#   ./pulsar                 → wizard
-#   ./pulsar wizard          → wizard (valid spaced form; avoids ./ wizard.sh)
+#   ./pulsar                 → neutral operator home (workflow menu)
+#   ./pulsar wizard          → serve/switch wizard (doctor + preflight)
 #   ./pulsar inventory …     → scripts/inventory.sh
 #   ./pulsar start <model>…  → scripts/up.sh
 #   ./pulsar stop <model|--all> → scripts/down.sh
-#   ./pulsar status [model]  → scripts/status.sh
+#   ./pulsar status [model]  → scripts/status.sh (includes optional completion)
 #   ./pulsar help
 #
 # Existing scripts under scripts/ remain the canonical implementations;
@@ -20,12 +20,12 @@ usage() {
 Pulsar GB10 vLLM stack — root dispatcher
 
 Usage:
-  ./pulsar                      Open guided wizard
-  ./pulsar wizard               Same as ./pulsar (recommended form)
+  ./pulsar                      Operator home (workflow menu; read-only default)
+  ./pulsar wizard               Serve or switch a model (doctor + preflight)
   ./pulsar inventory [opts]     Read-only service/memory inventory
   ./pulsar start <model> [args] Start a model (scripts/up.sh)
   ./pulsar stop <model|--all>   Stop stack-managed service(s)
-  ./pulsar status [model]       Probe containers + API
+  ./pulsar status [model]       Probe containers + API (may run a completion)
   ./pulsar help                 This message
 
 Inventory options (passed through):
@@ -35,13 +35,20 @@ Inventory options (passed through):
 Start args are passed to scripts/up.sh (e.g. --dry-run, --no-spec-decode).
 
 Notes:
+  • ./pulsar (no args) opens the neutral home menu. It does not run doctor,
+    inventory, or model preflight until you pick a workflow.
+  • ./pulsar wizard is the direct serve/switch shortcut (existing guided flow).
   • Prefer "./pulsar wizard" — not "./ wizard.sh" (space after ./ runs
     directory ./ → "Is a directory"). ./wizard.sh still works directly.
+  • Home “Current system status” is a quick read-only overview (API model
+    advertisement only — not an inference smoke). Full smoke is optional.
   • stop only removes containers that prove stack ownership
     (io.pulsar.gb10.managed=true + consistent conf/rank labels).
-  • inventory and status are read-only; start/stop are the only mutators here.
+  • UI: GUM=0 / NO_COLOR / PULSAR_COLOR=never / TERM=dumb → plain menus
+    (Gum not used). Color-enabled Gum always uses blue palette overrides;
+    PULSAR_ACCENT overrides the accent (default 12).
 
-See docs/OPERATIONS.md for model-switch safety and ownership rules.
+See docs/OPERATIONS.md for home, ownership, and model-switch rules.
 EOF
 }
 
@@ -51,7 +58,10 @@ if [ $# -gt 0 ]; then
 fi
 
 case "$cmd" in
-  ""|wizard)
+  "")
+    exec "$REPO_DIR/scripts/home.sh"
+    ;;
+  wizard)
     exec "$REPO_DIR/wizard.sh" "$@"
     ;;
   inventory)

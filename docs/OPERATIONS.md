@@ -25,16 +25,80 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 
 | Command | Action |
 |---|---|
-| `./pulsar` or `./pulsar wizard` | Guided wizard (model select + safe switch) |
+| `./pulsar` | Neutral **operator home** (workflow menu; no preflight on entry) |
+| `./pulsar wizard` | Serve/switch wizard (doctor + preflight; direct shortcut) |
 | `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
 | `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
 | `./pulsar stop <model\|--all>` | → `scripts/down.sh` (ownership-gated) |
-| `./pulsar status [model]` | → `scripts/status.sh` |
+| `./pulsar status [model]` | → `scripts/status.sh` (may submit a completion) |
 | `./pulsar help` | Concise usage |
 
 **Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
 `./` with `wizard.sh` as an argument, yielding `-bash: ./: Is a directory`.
 Use `./pulsar wizard` or `./wizard.sh`.
+
+## Operator home
+
+`./pulsar` with no arguments opens `scripts/home.sh` immediately — no doctor,
+inventory, weights, image, or model preflight until you pick a workflow.
+
+Menu (default cursor: status):
+
+1. **Current system status** — `scripts/quick-status.sh` (read-only)
+2. **Serve or switch a model** — enters `wizard.sh` (its doctor/preflight)
+3. **Stop a serving model** — inventory-safe active managed only; confirm → `down.sh`
+4. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
+5. **Diagnostics** — run doctor, detailed inventory (read-only)
+6. **Exit**
+
+Read-only actions and cancelled subflows return home. Gum Escape/cancel and EOF
+exit cleanly without mutations. `--all` is not offered in interactive stop or
+maintenance; there is no automatic cleanup on doctor or startup.
+
+### Quick status semantics
+
+Home status is **not** `scripts/status.sh`. It consumes inventory JSON, probes
+only `GET /v1/models` for API **model advertisement**, and never submits a
+completion. Advertisement is **not** an inference health claim. Concise fields:
+active managed conf/ranks, API models, head/worker MemAvailable + MemTotal and
+available %, managed GPU/unified per rank when measured, worker reachability,
+unmanaged GPU count + aggregate MiB, stale managed count (nonblocking / no
+model memory). Optional follow-ups: refresh, detailed inventory, explicit full
+smoke (`status.sh`, may complete), back. Machine-readable: `scripts/quick-status.sh --json`.
+
+### Interactive stop and maintenance
+
+Stop lists only **active** services with `ownership=managed`, `safe_to_stop=true`,
+and proven complete ownership. Unknown, legacy, mismatch, incomplete/unproven,
+foreign GPU, and worker-unobservable multi-node services are excluded. After
+selection, final confirmation is required; only `scripts/down.sh <conf>` runs
+(revalidates labels/IDs). Decline → no mutation.
+
+Maintenance “Clean stale stack-managed containers” lists only **stale** +
+`safe_to_stop` managed entries, explains they are nonblocking, requires
+confirmation, and delegates each conf to `down.sh`.
+
+### UI colors
+
+Shared helpers in `scripts/ui.sh` (home + wizard). Two deterministic modes:
+
+1. **Plain Bash menus (uncolored)** — forced by `GUM=0`, `NO_COLOR`,
+   `PULSAR_COLOR=never`, or `TERM=dumb` (also empty `TERM`). Gum is not invoked
+   at all (same path as `GUM=0`), so Charm pink/purple defaults cannot appear.
+2. **Color-enabled Gum** — only when Gum is available and color is allowed.
+   Always overrides Charm defaults with terminal-palette blue: bright blue
+   **12** for choose cursor/header/**selected** and confirm prompt; confirm
+   selected button blue bg **4** + bright fg **15**. Ordinary list items have
+   no colored background.
+
+| Variable | Effect |
+|---|---|
+| `GUM=0` | Plain Bash menus (uncolored); Gum not used |
+| `GUM_BIN` | Override gum binary path (only when color-enabled) |
+| `NO_COLOR` / `TERM=dumb` / `PULSAR_COLOR=never` | Force plain Bash menus (not “Gum with no flags”) |
+| `PULSAR_ACCENT` | Override accent when Gum is color-enabled (default `12`) |
+
+Plain menus never emit raw ANSI.
 
 ## Inventory and ownership
 
@@ -44,6 +108,7 @@ stops containers. JSON contract is `schema_version=1` with:
 - `services[]`: `conf`, `state` (running/partial/degraded/stale/…), `ownership`
   (managed/legacy/mismatch/unknown/mixed), `safe_to_stop`, `complete`,
   `observability`, ranks, estimated footprint, optional GPU memory
+- `nodes.*.mem_available_gib` / optional additive `mem_total_gib`
 - `unmanaged_gpu_processes[]`: diagnostics only — **no kill action**
 - `worker.status`: `ok` / `unset` / `unreachable` / error
 
@@ -58,8 +123,8 @@ Human default output is concise (active + actionable managed stale/mismatch);
 
 ## Model switch (wizard)
 
-`./pulsar wizard` runs doctor once, then a **selection loop** (“Choose another
-model” returns to the list without re-running doctor unless you exit).
+`./pulsar wizard` (not the no-arg home) runs doctor once, then a **selection loop**
+(“Choose another model” returns to the list without re-running doctor unless you exit).
 
 Before each start plan it consumes inventory JSON + `check-memory.sh` and shows
 a short target summary (not raw JSON). Decision highlights:

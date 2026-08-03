@@ -11,22 +11,47 @@ re-verified them.
 **Cause:** Bash executes the directory `./` and treats `wizard.sh` as an
 argument — not a missing empty command.
 **Fix:** `./pulsar wizard` (preferred) or `./wizard.sh` — no space after `./`.
+Note: bare `./pulsar` is the operator **home** menu; `./pulsar wizard` is the
+serve/switch shortcut.
 
-## Wizard will not stop my container / “not safe_to_stop”
+## Home “Current system status” looks fine but requests hang
 
-**Hit:** switching models in the wizard refuses cleanup and says it will not
-stop unknown/legacy/mismatch services.
+**Hit:** quick status shows an advertised model, but clients hang or time out.
+**Cause:** home quick status probes only `GET /v1/models` (advertisement). It
+does **not** run an inference completion and does not claim inference health.
+On multi-node, `/health` can also lie after worker loss (see monitoring section
+in OPERATIONS.md).
+**Fix:** run an explicit completion smoke (`./pulsar status` or the home
+status follow-up “Full smoke check”), or:
+`curl -fsS --max-time 15 http://127.0.0.1:8000/v1/completions ...`
+
+## Wizard / home will not stop my container / “not safe_to_stop”
+
+**Hit:** home Stop, Maintenance, or wizard switch refuses cleanup and says it
+will not stop unknown/legacy/mismatch services.
 **Cause:** only inventory `safe_to_stop` stack-managed services (labels
 `io.pulsar.gb10.managed=true` + consistent conf/rank) are eligible. Unlabeled
 legacy, mismatch, unknown GPU consumers, incomplete multi-node views, and
-unreachable workers are read-only.
+unreachable workers are read-only. Stale managed containers hold no model
+memory and are optional maintenance only — never auto-cleaned on doctor/start.
 **Fix:** run `./pulsar inventory` (or `--json` / `--verbose`). Identify the
-owner. If it is truly stack-managed and complete, `./pulsar stop <conf>` lets
-`down.sh` revalidate labels. If unlabeled or foreign, stop it yourself only
-when you understand the process — the wizard will never kill it.
+owner. If it is truly stack-managed and complete, `./pulsar stop <conf>` or
+home Stop (after confirmation) lets `down.sh` revalidate labels. If unlabeled
+or foreign, stop it yourself only when you understand the process — home and
+wizard never kill it.
 **Related:** hard memory FAIL never offers “continue anyway”; free memory or
 stop a proven managed service first. After any stop, re-run inventory —
 reclaim is not assumed.
+
+## Gum menus look wrong / want plain text
+
+**Hit:** pink/purple UI, or no TUI in CI/scripts.
+**Fix:** color-enabled Gum always forces terminal-palette blue
+(`PULSAR_ACCENT`, default `12` for choose cursor/header/selected). Set `GUM=0`
+for plain numbered menus. `NO_COLOR`, `TERM=dumb`, or `PULSAR_COLOR=never`
+**force the same plain path** (Gum is not invoked — empty style flags would
+fall back to Charm pink/purple). `GUM_BIN` overrides the binary when color is
+enabled.
 
 ## Port 8000 in use (host network)
 

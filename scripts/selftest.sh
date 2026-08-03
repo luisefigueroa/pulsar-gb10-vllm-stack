@@ -27,6 +27,7 @@ run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
 run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
 run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
+run "operator home + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "list-models --json" bash -c '
   j=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --json)
@@ -63,9 +64,12 @@ run "wizard uses list-models --json" bash -c '
   grep -qE "list-models\.sh\" --validated --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
 '
 
-run "dispatcher routes wizard" bash -c '
+run "dispatcher routes home + wizard" bash -c '
+  grep -q "scripts/home.sh" "'"$REPO_DIR"'/pulsar"
   grep -q "wizard.sh" "'"$REPO_DIR"'/pulsar"
   test -x "'"$REPO_DIR"'/pulsar"
+  test -x "'"$REPO_DIR"'/scripts/home.sh"
+  test -x "'"$REPO_DIR"'/scripts/quick-status.sh"
 '
 
 echo "=============================="

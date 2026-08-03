@@ -15,5 +15,8 @@ grep -q 'archive_sha256=b0b9ed95cbf7c8b7073f17b9591811f5c001e33c7cfd066ca83ce8a0
 grep -q 'binary_sha256=dc0fddd487fbebc563b04a48fdabc6f14c7f58505d4022241cd1d9037fa86698' \
   "$REPO_DIR/third_party/gum/VERSION"
 grep -q 'third_party/gum/LICENSE' "$REPO_DIR/THIRD_PARTY_NOTICES.md"
-grep -q 'VENDORED_GUM=' "$REPO_DIR/wizard.sh"
-grep -q 'GUM_BIN' "$REPO_DIR/wizard.sh"
+# Gum resolution lives in shared scripts/ui.sh (wizard + home source it).
+grep -q 'scripts/ui.sh' "$REPO_DIR/wizard.sh"
+grep -q 'VENDORED_GUM=' "$REPO_DIR/scripts/ui.sh"
+grep -q 'GUM_BIN' "$REPO_DIR/scripts/ui.sh"
+grep -q 'scripts/ui.sh' "$REPO_DIR/scripts/home.sh"

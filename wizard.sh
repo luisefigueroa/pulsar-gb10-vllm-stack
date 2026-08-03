@@ -3,6 +3,7 @@
 # Calls scripts/* only — no Docker/NCCL logic here.
 #   ./wizard.sh
 #   ./pulsar wizard   (recommended; root dispatcher)
+#   ./pulsar          (neutral home; wizard is “Serve or switch a model”)
 #
 # Model-switch flow consumes scripts/inventory.sh --json and
 # scripts/check-memory.sh; never invents its own ownership classifier.
@@ -30,73 +31,9 @@ cd "$REPO_DIR"
 # shellcheck disable=SC1091
 . "$REPO_DIR/scripts/lib.sh"
 SCRIPT_NAME=wizard
-
-# ---------------------------------------------------------------------------
-# UI helpers
-# ---------------------------------------------------------------------------
-VENDORED_GUM="$REPO_DIR/third_party/gum/linux-arm64/gum"
-GUM_CMD=""
-have_gum=0
-if [ "${GUM:-1}" != 0 ]; then
-  if [ -n "${GUM_BIN:-}" ]; then
-    if [ -x "$GUM_BIN" ]; then
-      GUM_CMD="$GUM_BIN"
-    else
-      warn "GUM_BIN is not executable: $GUM_BIN"
-    fi
-  elif [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = aarch64 ] \
-      && [ -x "$VENDORED_GUM" ]; then
-    GUM_CMD="$VENDORED_GUM"
-  elif command -v gum >/dev/null 2>&1; then
-    GUM_CMD=$(command -v gum)
-  fi
-fi
-[ -n "$GUM_CMD" ] && have_gum=1
-
-choose() {
-  local header="$1"; shift
-  if [ "$have_gum" = 1 ]; then
-    printf '%s\n' "$@" | "$GUM_CMD" choose --header "$header"
-  else
-    echo "$header" >&2
-    PS3="Select number: "
-    select opt in "$@"; do
-      [ -n "${opt:-}" ] && { echo "$opt"; break; }
-    done
-  fi
-}
-
-confirm() {
-  local msg="$1"
-  local default="${2:-no}"
-  if [ "$have_gum" = 1 ]; then
-    if [ "$default" = yes ]; then
-      "$GUM_CMD" confirm --default=true "$msg"
-    else
-      "$GUM_CMD" confirm "$msg"
-    fi
-  else
-    local prompt="[y/N]"
-    [ "$default" = yes ] && prompt="[Y/n]"
-    read -r -p "$msg $prompt " a
-    case "$a" in
-      y|Y|yes|YES) return 0 ;;
-      n|N|no|NO) return 1 ;;
-      "") [ "$default" = yes ] ;;
-      *) return 1 ;;
-    esac
-  fi
-}
-
-spin() {
-  local title="$1"; shift
-  if [ "$have_gum" = 1 ]; then
-    "$GUM_CMD" spin --title "$title" --show-output -- "$@"
-  else
-    log "$title"
-    "$@"
-  fi
-}
+# Shared Gum/plain menus + palette policy (scripts/ui.sh)
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/ui.sh"
 
 # ---------------------------------------------------------------------------
 # Injectable command paths (test hooks)
