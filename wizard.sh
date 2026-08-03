@@ -107,7 +107,7 @@ fi
 log "checking image…"
 if ! "$REPO_DIR/scripts/check-image.sh" "$NAME"; then
   case "$IMAGE" in
-    vllm/vllm-openai:*|vllm/*)
+    vllm/vllm-openai:*|vllm/*|ghcr.io/*)
       if confirm "Image missing. docker pull + sync worker if needed?"; then
         spin "Syncing image…" "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
       else
@@ -117,8 +117,8 @@ if ! "$REPO_DIR/scripts/check-image.sh" "$NAME"; then
     *)
       cat <<EOF
 Custom image required: $IMAGE
-1. Build on head (docs/BUILD.md)
-2. scripts/sync-image.sh $NAME --yes
+1. Pull it on head: scripts/sync-image.sh $NAME --pull --yes
+2. If the image is intentionally local, build it as described in docs/BUILD.md
 3. Re-run ./wizard.sh
 EOF
       exit 1
