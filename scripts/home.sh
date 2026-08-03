@@ -71,6 +71,21 @@ cmd_inventory_json() {
   fi
 }
 
+collect_inventory_json() {
+  local destination="${1:?inventory destination required}"
+  local output
+  if ! output=$(cmd_inventory_json); then
+    warn "inventory collection failed — no action was taken; try Diagnostics"
+    return 1
+  fi
+  if ! inventory_json_is_valid "$output"; then
+    warn "inventory returned invalid data — no action was taken; try Diagnostics"
+    return 1
+  fi
+  local -n destination_ref="$destination"
+  destination_ref="$output"
+}
+
 cmd_down() {
   if [ -n "${HOME_DOWN_CMD:-}" ]; then
     "$HOME_DOWN_CMD" "$@"
@@ -239,7 +254,9 @@ workflow_status() {
 workflow_stop() {
   local inv services_json
   log "listing inventory-safe active managed services (read-only)…"
-  inv=$(cmd_inventory_json)
+  if ! collect_inventory_json inv; then
+    return 0
+  fi
   services_json=$(eligible_stop_services_json "$inv")
   local count
   count=$(printf '%s' "$services_json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
@@ -328,7 +345,9 @@ workflow_maintenance() {
 
   local inv services_json count
   log "listing stale stack-managed containers (read-only)…"
-  inv=$(cmd_inventory_json)
+  if ! collect_inventory_json inv; then
+    return 0
+  fi
   services_json=$(eligible_stale_services_json "$inv")
   count=$(printf '%s' "$services_json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
   if [ "${count:-0}" = 0 ]; then

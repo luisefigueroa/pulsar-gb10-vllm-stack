@@ -70,6 +70,44 @@ cmd_check_memory() {
   "$REPO_DIR/scripts/check-memory.sh" "$model" --json
 }
 
+collect_inventory_json_or_die() {
+  local destination="${1:?inventory destination required}"
+  local output
+  if ! output=$(cmd_inventory_json); then
+    die "inventory collection failed — no lifecycle action was taken; run ./pulsar inventory"
+  fi
+  if ! inventory_json_is_valid "$output"; then
+    die "inventory returned invalid data — no lifecycle action was taken; run ./pulsar inventory"
+  fi
+  local -n destination_ref="$destination"
+  destination_ref="$output"
+}
+
+collect_memory_json_or_die() {
+  local json_destination="${1:?memory JSON destination required}"
+  local rc_destination="${2:?memory rc destination required}"
+  local model="${3:?model required}"
+  local output rc
+
+  if output=$(cmd_check_memory "$model" 2>/dev/null); then
+    rc=0
+  else
+    rc=$?
+  fi
+  case "$rc" in
+    0|1|2) ;;
+    *) die "memory preflight failed internally (exit=$rc) — no lifecycle action was taken" ;;
+  esac
+  if ! memory_preflight_json_is_valid "$output" "$rc"; then
+    die "memory preflight returned invalid or inconsistent data (exit=$rc) — no lifecycle action was taken"
+  fi
+
+  local -n json_ref="$json_destination"
+  local -n rc_ref="$rc_destination"
+  json_ref="$output"
+  rc_ref="$rc"
+}
+
 cmd_down() {
   if [ -n "${WIZARD_DOWN_CMD:-}" ]; then
     "$WIZARD_DOWN_CMD" "$@"
@@ -505,13 +543,10 @@ run_post_stop_memory() {
   # After any stop: reinventory + cold memory. Never assume reclaim.
   local inv mem_json mrc
   log "re-running inventory after stop (memory reclaim is not assumed)…"
-  inv=$(cmd_inventory_json)
+  collect_inventory_json_or_die inv
   render_relevant_services "$inv"
   log "cold memory preflight for $NAME…"
-  set +e
-  mem_json=$(cmd_check_memory "$NAME" 2>/dev/null)
-  mrc=$?
-  set -e
+  collect_memory_json_or_die mem_json mrc "$NAME"
   render_target_summary "$inv" "$mem_json" "$mrc"
   if [ "$mrc" = 1 ]; then
     warn "memory preflight FAIL after stop — will not launch"
@@ -563,11 +598,8 @@ plan_selected_model() {
 
   while true; do
     log "collecting inventory (read-only)…"
-    inv=$(cmd_inventory_json)
-    set +e
-    mem_json=$(cmd_check_memory "$NAME" 2>/dev/null)
-    mrc=$?
-    set -e
+    collect_inventory_json_or_die inv
+    collect_memory_json_or_die mem_json mrc "$NAME"
 
     render_target_summary "$inv" "$mem_json" "$mrc"
     render_relevant_services "$inv"

@@ -322,6 +322,58 @@ json_escape() {
     || printf '"%s"' "${1//\"/\\\"}"
 }
 
+# Validate the stable inventory JSON boundary before callers make lifecycle
+# decisions from it. Empty, malformed, or structurally incomplete output is an
+# observability failure, never an empty-machine state.
+inventory_json_is_valid() {
+  local payload="${1:-}"
+  [ -n "$payload" ] || return 1
+  printf '%s' "$payload" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+ok = (
+    isinstance(d, dict)
+    and d.get("schema_version") == 1
+    and isinstance(d.get("services"), list)
+    and isinstance(d.get("worker"), dict)
+    and isinstance(d.get("nodes"), dict)
+    and isinstance(d["nodes"].get("head"), dict)
+)
+raise SystemExit(0 if ok else 1)
+' >/dev/null 2>&1
+}
+
+# Validate both check-memory's JSON contract and its three documented statuses.
+# This prevents crashes, signals, and malformed helper output from becoming an
+# implicit PASS.
+memory_preflight_json_is_valid() {
+  local payload="${1:-}" rc="${2:-}"
+  [ -n "$payload" ] || return 1
+  case "$rc" in
+    0|1|2) ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "$payload" | RC="$rc" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+expected = {"0": "pass", "1": "fail", "2": "warn"}[os.environ["RC"]]
+required = ("result", "mode", "footprint_gib", "need_start_gib", "head_available_gib")
+ok = (
+    isinstance(d, dict)
+    and all(k in d for k in required)
+    and d.get("result") == expected
+    and d.get("mode") in ("cold-start", "already-loaded")
+)
+raise SystemExit(0 if ok else 1)
+' >/dev/null 2>&1
+}
+
 ssh_worker() {
   [ -n "${WORKER_IP:-}" ] || die "WORKER_IP unset (set in .env for multi-node)"
   ssh -o BatchMode=yes -o ConnectTimeout=8 "$WORKER_IP" "$@"

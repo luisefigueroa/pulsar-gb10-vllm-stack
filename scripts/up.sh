@@ -144,18 +144,24 @@ else
   mem_rc=$?
 fi
 set -e
-if [ "$mem_rc" = 1 ]; then
-  die "memory preflight FAILED"
-fi
-if [ "$mem_rc" = 2 ]; then
-  if [ "$DRY" = 1 ]; then
-    echo "      (WARN accepted for dry-run)"
-  elif [ "$ACCEPT_MEM" = 1 ]; then
-    echo "      (WARN accepted via --accept-memory-warn)"
-  else
-    die "memory WARN — re-run with --accept-memory-warn to launch"
-  fi
-fi
+case "$mem_rc" in
+  0) ;;
+  1)
+    die "memory preflight FAILED"
+    ;;
+  2)
+    if [ "$DRY" = 1 ]; then
+      echo "      (WARN accepted for dry-run)"
+    elif [ "$ACCEPT_MEM" = 1 ]; then
+      echo "      (WARN accepted via --accept-memory-warn)"
+    else
+      die "memory WARN — re-run with --accept-memory-warn to launch"
+    fi
+    ;;
+  *)
+    die "memory preflight failed internally (exit=$mem_rc) — refusing launch"
+    ;;
+esac
 
 # --- multi-node preflight ---
 if [ "$NODES" = "2" ]; then

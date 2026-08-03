@@ -66,7 +66,12 @@ cmd_api_models() {
   curl -fsS --max-time 2 "http://127.0.0.1:${port}/v1/models" 2>/dev/null
 }
 
-inv=$(cmd_inventory_json)
+if ! inv=$(cmd_inventory_json); then
+  die "inventory collection failed — status is unavailable; run ./pulsar inventory"
+fi
+if ! inventory_json_is_valid "$inv"; then
+  die "inventory returned invalid data — status is unavailable; run ./pulsar inventory"
+fi
 
 api_body=""
 api_rc=1

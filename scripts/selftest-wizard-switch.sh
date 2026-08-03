@@ -313,6 +313,14 @@ print(json.dumps({
 cat >"$SHIM/inv-cmd" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ -f "${STATE_DIR}/inv_fail" ]; then
+  echo "fixture inventory failure" >&2
+  exit 42
+fi
+if [ -f "${STATE_DIR}/inv_invalid" ]; then
+  echo "not-json"
+  exit 0
+fi
 # STATE_DIR and INV_FILE set by harness
 if [ -f "${STATE_DIR}/inv_override" ]; then
   cat "${STATE_DIR}/inv_override"
@@ -467,7 +475,8 @@ wizard_env() {
 reset_logs() {
   rm -f "$STATE/logs/"* "$STATE/stopped" "$STATE/up_fail" "$STATE/up_fail_once" \
     "$STATE/inv_override" "$STATE/mem_rc_seq" "$STATE/inv_after_stop" \
-    "$STATE/mem_after_stop" 2>/dev/null || true
+    "$STATE/mem_after_stop" "$STATE/inv_fail" "$STATE/inv_invalid" \
+    2>/dev/null || true
   rm -rf "$STATE/mem_by_model"
   mkdir -p "$STATE/logs" "$STATE/mem_by_model"
   : >"$STATE/logs/down.log"
@@ -853,6 +862,55 @@ assert_eq "$LAST_RC" "0" "decline start exit 0"
 assert_false "decline start: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "decline start: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "aborted; no containers changed" "decline start message"
+
+# ---------------------------------------------------------------------------
+# 16) Observability failures fail closed
+# ---------------------------------------------------------------------------
+echo "=== inventory command failure fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+touch "$STATE/inv_fail"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "inventory command failure exits nonzero"
+assert_false "inventory failure: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "inventory failure: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "inventory collection failed.*no lifecycle action" \
+  "inventory failure gives safe operator feedback"
+
+echo "=== malformed inventory fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+touch "$STATE/inv_invalid"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "malformed inventory exits nonzero"
+assert_false "malformed inventory: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "inventory returned invalid data.*no lifecycle action" \
+  "malformed inventory gives safe operator feedback"
+
+echo "=== unexpected memory exit fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+set_mem_model qwen3-1.7b pass
+echo 42 >"$STATE/mem_by_model/qwen3-1.7b.rc"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "unexpected memory exit is not treated as pass"
+assert_false "unexpected memory exit: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "unexpected memory exit: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "memory preflight failed internally \(exit=42\)" \
+  "unexpected memory exit is reported clearly"
+
+echo "=== inconsistent memory result fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+set_mem_model qwen3-1.7b pass
+echo 2 >"$STATE/mem_by_model/qwen3-1.7b.rc"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "memory JSON/exit disagreement exits nonzero"
+assert_false "inconsistent memory result: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "invalid or inconsistent data \(exit=2\)" \
+  "memory JSON/exit disagreement is reported clearly"
 
 # ---------------------------------------------------------------------------
 # Static: wizard does not call down before confirm patterns (source review)

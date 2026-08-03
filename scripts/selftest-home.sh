@@ -682,7 +682,41 @@ assert_file_contains "$STATE/logs/home.combined" "no eligible stale" "unsafe sta
 assert_false "unsafe stale: no down" bash -c "test -s '$STATE/logs/down.log'"
 
 # ---------------------------------------------------------------------------
-# 7) Gum style configuration — runtime fake-Gum argv capture
+# 7) Inventory/status observability failures never offer mutation
+# ---------------------------------------------------------------------------
+echo "=== inventory observability failures ==="
+reset_logs
+printf '%s\n' 'not-json' >"$STATE/inv_current"
+run_home $'3\n6\n'
+assert_eq "$LAST_RC" "0" "home recovers to menu after malformed inventory"
+assert_false "malformed home inventory: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_file_contains "$STATE/logs/home.combined" "inventory returned invalid data.*no action was taken" \
+  "home explains malformed inventory safely"
+
+reset_logs
+export QUICK_STATUS_INVENTORY_CMD=/bin/false
+unset QUICK_STATUS_INVENTORY_JSON
+set +e
+"$REPO_DIR/scripts/quick-status.sh" >"$STATE/logs/quick-fail.out" 2>&1
+quick_rc=$?
+set -e
+assert_eq "$quick_rc" "1" "quick-status inventory failure exits nonzero"
+assert_file_contains "$STATE/logs/quick-fail.out" "inventory collection failed.*status is unavailable" \
+  "quick-status explains collection failure"
+
+printf '%s\n' 'not-json' >"$STATE/inv_current"
+export QUICK_STATUS_INVENTORY_JSON="$STATE/inv_current"
+unset QUICK_STATUS_INVENTORY_CMD
+set +e
+"$REPO_DIR/scripts/quick-status.sh" >"$STATE/logs/quick-invalid.out" 2>&1
+quick_rc=$?
+set -e
+assert_eq "$quick_rc" "1" "quick-status malformed inventory exits nonzero"
+assert_file_contains "$STATE/logs/quick-invalid.out" "inventory returned invalid data.*status is unavailable" \
+  "quick-status explains malformed inventory"
+
+# ---------------------------------------------------------------------------
+# 8) Gum style configuration — runtime fake-Gum argv capture
 # ---------------------------------------------------------------------------
 echo "=== gum style / color policy (runtime argv) ==="
 
@@ -860,7 +894,7 @@ assert_true "ui honors NO_COLOR" grep -q 'NO_COLOR' "$REPO_DIR/scripts/ui.sh"
 assert_true "ui honors PULSAR_COLOR" grep -q 'PULSAR_COLOR' "$REPO_DIR/scripts/ui.sh"
 
 # ---------------------------------------------------------------------------
-# 8) Static safety
+# 9) Static safety
 # ---------------------------------------------------------------------------
 echo "=== static safety ==="
 assert_false "home has no docker rm" grep -qE 'docker[[:space:]]+rm' "$REPO_DIR/scripts/home.sh"
