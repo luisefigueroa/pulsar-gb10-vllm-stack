@@ -177,7 +177,7 @@ fi
 
 echo "[cluster] starting worker on $WORKER_IP"
 worker_raw=""
-if ! worker_raw=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" \
+if ! worker_raw=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" \
   "$(shell_join_q "${WORKER_CMD[@]}")"); then
   WORKER_CID=""
   cluster_abort "worker docker run failed"
@@ -246,10 +246,10 @@ for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
     cluster_abort "head container exited during wait"
     exit 1
   fi
-  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "docker ps --format '{{.Names}}'" 2>/dev/null \
+  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" "docker ps --format '{{.Names}}'" 2>/dev/null \
       | filter_exact_container_name "$CONTAINER" | grep -q .; then
     echo "[cluster] worker container died; last logs:" >&2
-    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "docker logs --tail 80 $(printf '%q' "$CONTAINER")" >&2 || true
+    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" "docker logs --tail 80 $(printf '%q' "$CONTAINER")" >&2 || true
     cluster_abort "worker container exited during wait"
     exit 1
   fi
@@ -258,6 +258,6 @@ done
 echo "[cluster] timed out. Head logs:" >&2
 docker logs --tail 120 "$CONTAINER" >&2 || true
 echo "[cluster] Worker logs:" >&2
-"$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "docker logs --tail 120 $(printf '%q' "$CONTAINER")" >&2 || true
+"$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" "docker logs --tail 120 $(printf '%q' "$CONTAINER")" >&2 || true
 cluster_abort "health wait timed out"
 exit 1

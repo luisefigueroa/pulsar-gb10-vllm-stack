@@ -47,8 +47,9 @@ reclaim is not assumed.
 
 **Hit:** pink/purple UI, or no TUI in CI/scripts.
 **Fix:** color-enabled Gum always forces terminal-palette blue
-(`PULSAR_ACCENT`, default `12` for choose cursor/header/selected). Set `GUM=0`
-for plain numbered menus. `NO_COLOR`, `TERM=dumb`, or `PULSAR_COLOR=never`
+(`PULSAR_ACCENT`, default `12` for choose cursor/header/selected). When stdin
+or stderr is not a terminal, the CLI automatically uses the EOF-safe plain
+path. Set `GUM=0` for plain numbered menus. `NO_COLOR`, `TERM=dumb`, or `PULSAR_COLOR=never`
 **force the same plain path** (Gum is not invoked — empty style flags would
 fall back to Charm pink/purple). `GUM_BIN` overrides the binary when color is
 enabled.
@@ -71,8 +72,11 @@ resolve the revision and fails even though all weights are present.
 **Fix:** write the ref once:
 `printf '%s' "$(ls <cache>/models--ORG--NAME/snapshots/ | head -1)" > <cache>/models--ORG--NAME/refs/main`
 (One-liner over all models in cluster/README or run the loop in git history.)
-Preflight checks weights on both nodes but only directory existence — if you
-see this error with weights on disk, it is almost always the missing ref.
+`scripts/check-weights.sh` (used by wizard/up) requires `refs/main` to resolve
+to a snapshot, a non-empty config and weight file, no `.incomplete` marker,
+and no locally indexed missing/empty shard. It checks both nodes for two-node
+profiles. A missing ref is therefore reported as `partial` before launch;
+repair the ref or rerun `scripts/pull-weights.sh <model> --yes`.
 
 ## Node 2 has no internet route
 

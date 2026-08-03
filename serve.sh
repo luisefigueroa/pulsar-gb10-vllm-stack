@@ -43,14 +43,25 @@ while [ $# -gt 0 ]; do
     --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --dry-run) DRY_RUN=1 ;;
     --force) FORCE=1 ;;
-    --port) PORT_OVERRIDE="$2"; shift ;;
+    --port)
+      [ "$#" -ge 2 ] || die "--port requires a value (1-65535)" 2
+      PORT_OVERRIDE="$2"
+      shift
+      ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
 load_conf "$MODEL_NAME"
-[ -n "$PORT_OVERRIDE" ] && PORT="$PORT_OVERRIDE"
+if [ -n "$PORT_OVERRIDE" ]; then
+  case "$PORT_OVERRIDE" in
+    *[!0-9]*|"") die "invalid --port '$PORT_OVERRIDE' (expected 1-65535)" 2 ;;
+  esac
+  [ "$PORT_OVERRIDE" -ge 1 ] && [ "$PORT_OVERRIDE" -le 65535 ] \
+    || die "invalid --port '$PORT_OVERRIDE' (expected 1-65535)" 2
+  PORT="$PORT_OVERRIDE"
+fi
 resolve_spec_decode "$SPEC_MODE"
 
 if status_requires_force && [ "$FORCE" != 1 ]; then

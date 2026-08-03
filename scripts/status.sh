@@ -33,9 +33,15 @@ fi
 
 if [ -n "${WORKER_IP:-}" ]; then
   echo "[status] containers (worker $WORKER_IP)"
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" \
+  if ! ssh_worker true >/dev/null 2>&1; then
+    warn "worker SSH unreachable"
+  elif ! ssh_worker "docker info >/dev/null 2>&1"; then
+    warn "worker reachable but Docker daemon unavailable"
+  else
+    ssh_worker \
     "printf '%-40s %-30s %s\n' NAMES STATUS IMAGE; docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | awk -F'\t' 'BEGIN{IGNORECASE=1} \$1 ~ /vllm/ || \$3 ~ /vllm/ {printf \"%-40s %-30s %s\n\", \$1, \$2, \$3}'" \
-    2>/dev/null || warn "worker unreachable"
+      2>/dev/null || warn "worker Docker container listing failed"
+  fi
 else
   warn "WORKER_IP unset — skip worker container list (set in .env for Path B)"
 fi

@@ -21,6 +21,18 @@ require_cluster_ips() {
     echo "  Example hostnames: dgx-spark-1 (head), dgx-spark-2 (worker). See docs/HARDWARE.md and .env.example." >&2
     return 1
   fi
+  case "$HEAD_IP" in
+    -*|*[!A-Za-z0-9._:@%+-]*)
+      echo "cluster-env: invalid HEAD_IP '$HEAD_IP' (expected an IP address or hostname)." >&2
+      return 1
+      ;;
+  esac
+  case "$WORKER_IP" in
+    -*|*[!A-Za-z0-9._:@%+-]*)
+      echo "cluster-env: invalid WORKER_IP '$WORKER_IP' (expected an IP address or hostname)." >&2
+      return 1
+      ;;
+  esac
 }
 
 # ---- NCCL: validated ship set ----------------------------------------------

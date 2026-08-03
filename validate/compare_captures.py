@@ -5,7 +5,7 @@
 
 Reports per-prompt and aggregate:
   - exact match (full text identical)
-  - token match rate up to first divergence (prefix match / min length)
+  - token match rate up to first divergence (prefix match / max length)
   - max |logprob delta| over the common matched prefix
 
 Gate guidance (docs/VALIDATION.md): same config run-to-run must be EXACT.

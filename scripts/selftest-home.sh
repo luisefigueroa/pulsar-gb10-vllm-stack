@@ -796,6 +796,7 @@ run_ui_color_gum() {
     export GUM_ARGV_LOG="$argv_log"
     export GUM_BIN="$SHIM/fake-gum"
     export GUM=1
+    export PULSAR_FORCE_GUM=1
     unset NO_COLOR PULSAR_COLOR
     export TERM=xterm-256color
     export PULSAR_ACCENT=12

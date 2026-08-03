@@ -66,6 +66,14 @@ _ui_resolve_gum() {
   if ! pulsar_color_enabled; then
     return 0
   fi
+  # Gum needs a real controlling interaction path. When stdin or stderr is not
+  # a terminal, use the EOF-safe plain menu instead of leaving a hidden TUI
+  # waiting for keystrokes. PULSAR_FORCE_GUM is a test/debug escape hatch.
+  if [ "${PULSAR_FORCE_GUM:-0}" != 1 ]; then
+    if ! [ -t 0 ] || ! [ -t 2 ]; then
+      return 0
+    fi
+  fi
   if [ -n "${GUM_BIN:-}" ]; then
     if [ -x "$GUM_BIN" ]; then
       GUM_CMD="$GUM_BIN"

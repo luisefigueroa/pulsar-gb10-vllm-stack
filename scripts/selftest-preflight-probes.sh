@@ -59,6 +59,7 @@ grep -q -- '-o BatchMode=yes' "$STATE_DIR/ssh.log"
 grep -q -- '-o ConnectTimeout=8' "$STATE_DIR/ssh.log"
 grep -q -- '-o ConnectionAttempts=1' "$STATE_DIR/ssh.log"
 grep -q -- '-o ServerAliveCountMax=2' "$STATE_DIR/ssh.log"
+grep -Eq -- ' -- [^ ]+ true$' "$STATE_DIR/ssh.log"
 echo "OK   worker SSH is bounded"
 
 # Head Docker failure cannot become an empty, apparently safe inventory.
@@ -117,6 +118,8 @@ assert_json_state "$weights_out" partial \
 
 printf 'weight-data\n' >"$STATE_DIR/weight-blob"
 ln -s "$STATE_DIR/weight-blob" "$snapshot/model.safetensors"
+mkdir -p "$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs"
+printf 'test' >"$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs/main"
 HF_CACHE="$STATE_DIR/hf" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json >/dev/null
 echo "OK   Hugging Face weight symlinks are accepted"

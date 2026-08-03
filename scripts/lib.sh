@@ -42,6 +42,11 @@ require_cmd() {
 # Load models/<name>.conf into caller shell. Resets optional fields first.
 load_conf() {
   local name="${1:?load_conf: model name required}"
+  case "$name" in
+    *[!A-Za-z0-9._-]*|"")
+      die "invalid model id '$name' (use letters, numbers, dot, underscore, or hyphen)"
+      ;;
+  esac
   local conf="$REPO_DIR/models/${name}.conf"
   [ -f "$conf" ] || die "no such config: $conf (try scripts/list-models.sh)"
 
@@ -198,7 +203,7 @@ PY
 
 mem_available_gib_remote() {
   local host="${1:?}"
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" \
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
     "awk '/MemAvailable:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" 2>/dev/null \
     || echo "0"
 }
@@ -435,7 +440,7 @@ PULSAR_SSH_OPTS=(
 
 ssh_worker() {
   [ -n "${WORKER_IP:-}" ] || die "WORKER_IP unset (set in .env for multi-node)"
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "$@"
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" "$@"
 }
 
 PULSAR_MANAGED_LABEL="io.pulsar.gb10.managed"
@@ -732,7 +737,7 @@ container_ownership_inspect_remote() {
   remote_cmd+="printf 'PRESENT\\n%s\\n' \"\$meta\"; exit 0; fi; "
   remote_cmd+="printf '%s\\n' ABSENT; exit 0"
 
-  if ! out=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_cmd" 2>/dev/null); then
+  if ! out=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$remote_cmd" 2>/dev/null); then
     return 1
   fi
   status=$(printf '%s\n' "$out" | head -n1 | tr -d '\r')
@@ -866,7 +871,7 @@ remove_stack_owned_container_remote() {
 
   log "removing $name on $host id=$short (managed conf=${conf} rank=${rank})"
   remote_rm="docker rm -f $(printf '%q' "$id") >/dev/null"
-  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_rm"; then
+  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$remote_rm"; then
     warn "docker rm -f failed for $name id=$short on $host"
     return 1
   fi
@@ -896,7 +901,7 @@ remove_container_id_remote() {
     warn "refusing remote id cleanup: invalid container id"
     return 0
   fi
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" \
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
     "docker rm -f $(printf '%q' "$normalized") >/dev/null 2>&1 || true" 2>/dev/null || true
 }
 
@@ -922,7 +927,7 @@ list_managed_container_ids_remote() {
   remote_cmd+="printf '%s\\n' OK; "
   remote_cmd+="if [ -n \"\$ids\" ]; then printf '%s\\n' \"\$ids\"; fi"
 
-  if ! out=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_cmd" 2>/dev/null); then
+  if ! out=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$remote_cmd" 2>/dev/null); then
     return 1
   fi
   status=$(printf '%s\n' "$out" | head -n1 | tr -d '\r')
@@ -1052,7 +1057,7 @@ remove_all_stack_managed_remote() {
     fi
     log "removing stack-managed on $host id=$short conf=$conf rank=$rank (worker)"
     remote_rm="docker rm -f $(printf '%q' "$id") >/dev/null"
-    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_rm"; then
+    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$remote_rm"; then
       warn "docker rm -f failed for id=$short on $host"
       rc=$(lifecycle_merge_rc "$rc" 1)
       continue
@@ -1147,7 +1152,7 @@ remove_stack_owned_cluster_pair() {
 
   if [ -n "$worker_id" ]; then
     log "removing worker $cname id=${worker_id:0:12}"
-    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$worker_ip" \
+    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$worker_ip" \
       "docker rm -f $(printf '%q' "$worker_id") >/dev/null"; then
       warn "failed to remove worker id=${worker_id:0:12}"
       return 1
@@ -1212,7 +1217,7 @@ container_running_exact() {
 }
 container_running_exact_remote() {
   local host="${1:?}" want="${2:?}"
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" \
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
     "docker ps --format '{{.Names}}'" 2>/dev/null \
     | filter_exact_container_name "$want" | grep -q .
 }

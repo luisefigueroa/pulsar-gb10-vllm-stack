@@ -1001,7 +1001,9 @@ for m in d.get('models', []):
       esac
       kind=$(model_source_kind)
       if [ "$kind" = hf ]; then
-        if confirm "Weights missing. Download HF model now${NODES:+ (and sync worker if 2-node)}?"; then
+        weights_scope=""
+        [ "$NODES" = 2 ] && weights_scope=" and sync it to the worker"
+        if confirm "Weights missing or incomplete. Download HF model now${weights_scope}?"; then
           spin "Downloading weights…" "$REPO_DIR/scripts/pull-weights.sh" "$NAME" --yes
         else
           die "cannot start without weights"

@@ -122,7 +122,7 @@ PY
 _ssh_worker_raw() {
   local host="$1"
   shift
-  "$INVENTORY_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$@"
+  "$INVENTORY_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$@"
 }
 
 mem_available_gib_cmd() {

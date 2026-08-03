@@ -17,19 +17,48 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 NAME="${1:?usage: run-gates.sh <served-name> [--url U] [--needle-tokens N] [--baseline F] [--tag T] [--allow-fp-equivalent-run-to-run]}"
+case "$NAME" in
+  *[!A-Za-z0-9._-]*|"")
+    echo "invalid served name: use only letters, numbers, dot, underscore, or hyphen" >&2
+    exit 2
+    ;;
+esac
 shift
 URL="http://127.0.0.1:8000"; NEEDLE=0; BASELINE=""; TAG="$(date +%Y%m%dT%H%M%S)"
 ALLOW_FP_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --url) URL="$2"; shift ;;
-    --needle-tokens) NEEDLE="$2"; shift ;;
-    --baseline) BASELINE="$2"; shift ;;
-    --tag) TAG="$2"; shift ;;
+    --url)
+      [ "$#" -ge 2 ] || { echo "--url requires a value" >&2; exit 2; }
+      URL="$2"; shift
+      ;;
+    --needle-tokens)
+      [ "$#" -ge 2 ] || { echo "--needle-tokens requires a non-negative integer" >&2; exit 2; }
+      NEEDLE="$2"; shift
+      ;;
+    --baseline)
+      [ "$#" -ge 2 ] || { echo "--baseline requires a readable file" >&2; exit 2; }
+      BASELINE="$2"; shift
+      ;;
+    --tag)
+      [ "$#" -ge 2 ] || { echo "--tag requires a value" >&2; exit 2; }
+      TAG="$2"; shift
+      ;;
     --allow-fp-equivalent-run-to-run) ALLOW_FP_RUN=1 ;;
     *) echo "unknown arg $1" >&2; exit 2 ;;
   esac; shift
 done
+
+case "$NEEDLE" in
+  *[!0-9]*|"")
+    echo "invalid --needle-tokens '$NEEDLE' (expected a non-negative integer)" >&2
+    exit 2
+    ;;
+esac
+if [ -n "$BASELINE" ] && [ ! -r "$BASELINE" ]; then
+  echo "baseline is not readable: $BASELINE" >&2
+  exit 2
+fi
 
 case "$TAG" in
   *[!A-Za-z0-9._-]*|"")

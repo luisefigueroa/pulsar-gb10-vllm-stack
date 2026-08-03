@@ -95,7 +95,7 @@ if [ "$img_rc" != 0 ]; then
       die "WORKER_IP unset — cannot verify image on both nodes"
       ;;
     missing-on-worker)
-      if [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; then
+      if [ "$DRY" != 1 ] && { [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; }; then
         "$REPO_DIR/scripts/sync-image.sh" "$NAME" --yes
         QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" \
           || die "image still missing after worker sync"
@@ -104,7 +104,7 @@ if [ "$img_rc" != 0 ]; then
       fi
       ;;
     missing-on-head|missing-both|unknown|"")
-      if [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; then
+      if [ "$DRY" != 1 ] && { [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; }; then
         "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
         QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" || die "image still missing after sync"
       else

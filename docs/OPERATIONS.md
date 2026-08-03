@@ -85,6 +85,8 @@ Shared helpers in `scripts/ui.sh` (home + wizard). Two deterministic modes:
 1. **Plain Bash menus (uncolored)** — forced by `GUM=0`, `NO_COLOR`,
    `PULSAR_COLOR=never`, or `TERM=dumb` (also empty `TERM`). Gum is not invoked
    at all (same path as `GUM=0`), so Charm pink/purple defaults cannot appear.
+   Non-interactive stdin/stderr also selects this EOF-safe path instead of
+   starting a hidden Gum TUI that can wait forever.
 2. **Color-enabled Gum** — only when Gum is available and color is allowed.
    Always overrides Charm defaults with terminal-palette blue: bright blue
    **12** for choose cursor/header/**selected** and confirm prompt; confirm
@@ -117,6 +119,23 @@ stops containers. JSON contract is `schema_version=1` with:
 repo profile. Lifecycle scripts (`down.sh`, cluster stop) **revalidate** labels
 and IDs before remove. Unlabeled legacy, mismatch, unknown, incomplete, or
 worker-unreachable situations are never auto-stopped.
+
+Live inventory fails closed if head Docker cannot answer `info`, enumerate
+containers, or return a valid snapshot. A reachable worker with an unavailable
+Docker daemon is reported as `worker.status=docker-error`; every non-`ok`
+worker status blocks automatic two-node stop/replacement. An operational probe
+failure is never converted into an empty “nothing is running” inventory.
+
+Weight readiness means more than “the cache directory exists.” HF profiles
+must have `refs/main` resolving to a snapshot with a readable non-empty
+`config.json` and at least one non-empty weight file; `.incomplete` markers and
+local shard indexes that reference missing/empty files fail preflight. Two-node
+profiles are checked on both nodes. Docker/SSH failures are reported as
+operational failures and never offered as a download/pull problem.
+
+The memory checker grants “already loaded” mode only to a running exact-name
+service whose stack ownership, selected conf, and every expected rank are
+proven by labels. API model identity or an unlabeled lookalike is insufficient.
 
 Human default output is concise (active + actionable managed stale/mismatch);
 `--verbose` includes inactive unknown/legacy detail; `--json` is always full.
@@ -245,6 +264,11 @@ hours is a leak signal (none observed in 150-min soaks).
   services inventory marks `safe_to_stop`; `down.sh` revalidates before remove.
   Legacy unlabeled containers are refused. Worker unreachable blocks automatic
   multi-node cleanup/replacement. See “Model switch (wizard)” above.
+- Worker SSH uses BatchMode, a finite connect timeout/attempt count, and
+  liveness bounds. Host values are passed after the SSH option terminator.
+- Built-in API probes and Python validators honor `VLLM_API_KEY` / `API_KEY`.
+  Dry-run command rendering redacts HF and API credentials. Prefer environment
+  configuration over putting secrets in shell history.
 - Rollback after a failed switch: restart the previous conf from **current**
   profile defaults (`models/<conf>.conf`), not a snapshot of prior CLI flags.
   Example: `./pulsar start deepseek-v4-flash` or wizard “Restart previous

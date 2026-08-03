@@ -84,6 +84,7 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4   # or qwen3-1.7b canary
 # UI: vendored Gum on Linux ARM64 (blue palette). GUM=0 / NO_COLOR /
 # PULSAR_COLOR=never / TERM=dumb → plain uncolored menus (Gum not used).
 # PULSAR_ACCENT overrides blue accent when Gum is color-enabled (default 12)
+# Non-interactive stdin/stderr automatically uses the EOF-safe plain path
 ```
 
 **Operator home (`./pulsar`):** workflow menu — Current system status (default),
@@ -100,14 +101,18 @@ reads `scripts/inventory.sh --json` and `scripts/check-memory.sh`. It only offer
 stop for inventory `safe_to_stop` stack-managed services, never for unlabeled,
 legacy, mismatch, unknown, incomplete, or unreachable ranks. Stops run only
 after you confirm the final start/replace action; then inventory and cold
-memory preflight re-run (memory reclaim is never assumed). Hard memory FAIL
-never offers “continue anyway”; WARN may, with an explicit confirmation.
+memory preflight re-run (memory reclaim is never assumed). Docker/SSH probe
+errors fail closed and are never presented as missing artifacts; only
+label-proven complete ranks receive the already-loaded memory exemption. Hard
+memory FAIL never offers “continue anyway”; WARN may, with an explicit
+confirmation.
 See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 **Smoke** (lab network only — do **not** expose `:8000` without auth;
 [SECURITY.md](SECURITY.md)):
 
 ```bash
+# If VLLM_API_KEY is set, add: -H "Authorization: Bearer $VLLM_API_KEY"
 curl -fsS http://127.0.0.1:8000/v1/models
 curl -fsS http://127.0.0.1:8000/v1/completions \
   -H 'Content-Type: application/json' \
@@ -162,7 +167,7 @@ Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
 | `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |
 | `scripts/doctor.sh` | Host GPU/docker/port/cache (+ worker if `.env`) |
 | `scripts/list-models.sh` | Conf catalog |
-| `scripts/check-weights.sh` / `pull-weights.sh` | HF presence / download+rsync |
+| `scripts/check-weights.sh` / `pull-weights.sh` | HF snapshot completeness / download+rsync |
 | `scripts/check-image.sh` / `sync-image.sh` | Image presence / worker load |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
 | `scripts/detect-fabric.sh` | Propose NCCL IF / HEAD_IP |

@@ -62,6 +62,27 @@ PY
   echo ok
 }
 
+hf_snapshot_path_local() {
+  local hub="${1:?}" ref
+  [ -s "$hub/refs/main" ] || return 1
+  ref=$(tr -d '\r\n' <"$hub/refs/main")
+  case "$ref" in
+    *[!A-Za-z0-9._-]*|"") return 1 ;;
+  esac
+  [ -d "$hub/snapshots/$ref" ] || return 1
+  printf '%s\n' "$hub/snapshots/$ref"
+}
+
+hf_snapshot_path_remote() {
+  local hub="${1:?}" qhub cmd
+  qhub=$(printf '%q' "$hub")
+  cmd="hub=$qhub; test -s \"\$hub/refs/main\" || exit 3; "
+  cmd+="ref=\$(tr -d '\\r\\n' <\"\$hub/refs/main\"); "
+  cmd+="case \"\$ref\" in ''|*[!A-Za-z0-9._-]*) exit 3;; esac; "
+  cmd+="test -d \"\$hub/snapshots/\$ref\" || exit 3; printf '%s\\n' \"\$hub/snapshots/\$ref\""
+  ssh_worker "$cmd" 2>/dev/null
+}
+
 weight_tree_state_remote() {
   local root="${1:?}" qroot cmd
   qroot=$(printf '%q' "$root")
@@ -86,22 +107,41 @@ if [ "$kind" = nfs ]; then
     if ! ssh_worker true >/dev/null 2>&1; then
       worker_state=unreachable
     else
-      worker_state=$(weight_tree_state_remote "$MODEL")
-      if [ "$worker_state" = missing ] \
-        && ! ssh_worker "test -d /mnt/Models" 2>/dev/null; then
+      remote_state_rc=0
+      worker_state=$(weight_tree_state_remote "$MODEL") || remote_state_rc=$?
+      if [ "$remote_state_rc" != 0 ]; then
+        worker_state=unreachable
+      elif [ "$worker_state" = missing ] \
+          && ! ssh_worker "test -d /mnt/Models" 2>/dev/null; then
         worker_state=nfs-unmounted
       fi
     fi
   fi
 else
   hub=$(hf_hub_path)
-  head_state=$(weight_tree_state_local "$hub")
+  if snapshot=$(hf_snapshot_path_local "$hub"); then
+    head_state=$(weight_tree_state_local "$snapshot")
+  elif [ -d "$hub" ]; then
+    head_state=partial
+  else
+    head_state=missing
+  fi
   if [ "$NODES" = "2" ]; then
     [ -n "${WORKER_IP:-}" ] || die "NODES=2 requires WORKER_IP in .env"
     if ! ssh_worker true >/dev/null 2>&1; then
       worker_state=unreachable
     else
-      worker_state=$(weight_tree_state_remote "$hub")
+      worker_ref_rc=0
+      worker_snapshot=$(hf_snapshot_path_remote "$hub") || worker_ref_rc=$?
+      case "$worker_ref_rc" in
+        0)
+          remote_state_rc=0
+          worker_state=$(weight_tree_state_remote "$worker_snapshot") || remote_state_rc=$?
+          [ "$remote_state_rc" = 0 ] || worker_state=unreachable
+          ;;
+        3) worker_state=partial ;;
+        *) worker_state=unreachable ;;
+      esac
     fi
   fi
 fi
@@ -141,7 +181,14 @@ else
       echo "PASS  weights   source=$kind head=$head_state worker=$worker_state"
     else
       echo "FAIL  weights   state=$state head=$head_state worker=$worker_state"
-      [ "$kind" = nfs ] && echo "      fix: mount catalog / path $path_out" || echo "      fix: scripts/pull-weights.sh $NAME"
+      case "$state" in
+        worker-unreachable) echo "      fix: restore worker SSH, then retry" ;;
+        *)
+          [ "$kind" = nfs ] \
+            && echo "      fix: mount catalog / path $path_out" \
+            || echo "      fix: scripts/pull-weights.sh $NAME"
+          ;;
+      esac
     fi
   else
     log "$NAME source=$kind state=$state head=$head_state worker=$worker_state"
