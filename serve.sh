@@ -102,7 +102,20 @@ if [ -n "$_api_key" ]; then
 fi
 
 if [ "$DRY_RUN" = "1" ]; then printf '%q ' "${CMD[@]}"; echo; exit 0; fi
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+
+# Replace only when the exact name is provably stack-managed for this conf.
+# Capture ID, revalidate labels, remove by ID — never blind docker rm -f by name.
+stale_rc=0
+remove_stack_owned_container_local "$CONTAINER" "$MODEL_NAME" "single" || stale_rc=$?
+if [ "$stale_rc" -eq 2 ]; then
+  echo "[serve] ERROR: refusing to replace $CONTAINER — not provably stack-managed for conf=$MODEL_NAME rank=single" >&2
+  echo "[serve] Inspect labels (${PULSAR_MANAGED_LABEL}/${PULSAR_CONF_LABEL}/${PULSAR_RANK_LABEL}) or remove manually if you intend to clobber it." >&2
+  exit 1
+fi
+if [ "$stale_rc" -ne 0 ]; then
+  echo "[serve] ERROR: failed while removing prior container $CONTAINER (rc=$stale_rc)" >&2
+  exit 1
+fi
 
 echo "[serve] $MODEL_NAME ($MODEL) on port $PORT, image $IMAGE container=$CONTAINER"
 echo "[serve] spec-decode=$([ "$SPEC_DECODE_ENABLED" = 1 ] && echo ON || echo off) ($SPEC_DECODE_SOURCE)"

@@ -56,6 +56,8 @@ build_docker_cmd() {
   local role_rank="$2"
   shift 2
   local -a role_suffix=("$@")
+  # Always emit bare "docker" so the same argv is safe over SSH on the worker.
+  # Local head execution rewrites argv[0] to "$PULSAR_DOCKER" when needed.
   local -a cmd=(
     docker run -d
     --name "$CONTAINER"
@@ -141,31 +143,75 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-# Best-effort teardown both ranks (worker first is fine for leftover RDMA/master).
+# Immutable IDs created by this launch only. Abort cleanup uses IDs — never
+# name-based rm (avoids clobbering a reused/replacement name).
+HEAD_CID=""
+WORKER_CID=""
+
+# Best-effort teardown of containers started by this invocation only.
 cluster_abort() {
   local why="${1:-cluster start failed}"
-  echo "[cluster] ABORT: $why — tearing down head+worker ($CONTAINER)" >&2
-  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  ssh "$WORKER_IP" "docker rm -f $(printf '%q' "$CONTAINER") >/dev/null 2>&1 || true" 2>/dev/null || true
-  if [ -x "$REPO_DIR/cluster/stop-cluster.sh" ]; then
-    "$REPO_DIR/cluster/stop-cluster.sh" "$MODEL_NAME" >/dev/null 2>&1 || true
+  echo "[cluster] ABORT: $why — removing launch-tracked IDs only (not by name)" >&2
+  if [ -n "${HEAD_CID:-}" ]; then
+    echo "[cluster] abort: remove head id=${HEAD_CID:0:12}" >&2
+    remove_container_id_local "$HEAD_CID"
+  fi
+  if [ -n "${WORKER_CID:-}" ]; then
+    echo "[cluster] abort: remove worker id=${WORKER_CID:0:12}" >&2
+    remove_container_id_remote "$WORKER_IP" "$WORKER_CID"
   fi
 }
 
-echo "[cluster] removing stale containers"
-ssh "$WORKER_IP" "docker rm -f $(printf '%q' "$CONTAINER") >/dev/null 2>&1 || true"
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+echo "[cluster] removing stale stack-managed containers (ownership required)"
+stale_rc=0
+remove_stack_owned_cluster_pair "$MODEL_NAME" "$CONTAINER" "$WORKER_IP" || stale_rc=$?
+if [ "$stale_rc" -eq 2 ]; then
+  echo "[cluster] ERROR: refusing start — ownership not proven on every existing rank of $CONTAINER" >&2
+  echo "[cluster] Will not partially replace an ambiguous pair. Inspect labels or stop manually." >&2
+  exit 1
+fi
+if [ "$stale_rc" -ne 0 ]; then
+  echo "[cluster] ERROR: failed while removing stale cluster containers (rc=$stale_rc)" >&2
+  exit 1
+fi
 
 echo "[cluster] starting worker on $WORKER_IP"
-if ! ssh "$WORKER_IP" "$(shell_join_q "${WORKER_CMD[@]}")"; then
+worker_raw=""
+if ! worker_raw=$("$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$WORKER_IP" \
+  "$(shell_join_q "${WORKER_CMD[@]}")"); then
+  WORKER_CID=""
   cluster_abort "worker docker run failed"
   exit 1
 fi
-echo "[cluster] starting head on this node"
-if ! "${HEAD_CMD[@]}"; then
-  cluster_abort "head docker run failed (worker was started — removed)"
+if ! WORKER_CID=$(parse_docker_run_container_id "$worker_raw"); then
+  WORKER_CID=""
+  echo "[cluster] ERROR: worker docker run returned invalid id output (refuse to track/rm garbage)" >&2
+  # Cannot safely bind an ID to this invocation — do not rm by name. Report only.
+  report_untracked_launch_container worker "$MODEL_NAME" 1 "$CONTAINER" "$WORKER_IP"
+  cluster_abort "worker docker run id invalid"
   exit 1
 fi
+echo "[cluster] worker id=${WORKER_CID:0:12}"
+
+echo "[cluster] starting head on this node"
+# Local injectability: tests set PULSAR_DOCKER; production is plain docker.
+HEAD_RUN=("${HEAD_CMD[@]}")
+HEAD_RUN[0]="$PULSAR_DOCKER"
+head_raw=""
+if ! head_raw=$("${HEAD_RUN[@]}"); then
+  HEAD_CID=""
+  cluster_abort "head docker run failed (worker was started — removed by tracked id)"
+  exit 1
+fi
+if ! HEAD_CID=$(parse_docker_run_container_id "$head_raw"); then
+  HEAD_CID=""
+  echo "[cluster] ERROR: head docker run returned invalid id output (refuse to track/rm garbage)" >&2
+  # Leave any untracked head container intact; still tear down tracked worker id.
+  report_untracked_launch_container head "$MODEL_NAME" 0 "$CONTAINER"
+  cluster_abort "head docker run id invalid"
+  exit 1
+fi
+echo "[cluster] head id=${HEAD_CID:0:12}"
 
 echo "[cluster] waiting for http://127.0.0.1:${PORT}/health (cold load can take ~10 min)"
 for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
