@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Root dispatcher for the Pulsar GB10 vLLM stack.
+#   ./pulsar                 → neutral operator home (workflow menu)
+#   ./pulsar wizard          → serve/switch wizard (doctor + preflight)
+#   ./pulsar inventory …     → scripts/inventory.sh
+#   ./pulsar start <model>…  → scripts/up.sh
+#   ./pulsar stop <model|--all> → scripts/down.sh
+#   ./pulsar status [model]  → scripts/status.sh (includes optional completion)
+#   ./pulsar help
+#
+# Existing scripts under scripts/ remain the canonical implementations;
+# this file only routes and prints concise help.
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_DIR"
+
+usage() {
+  cat <<'EOF'
+Pulsar GB10 vLLM stack — root dispatcher
+
+Usage:
+  ./pulsar                      Operator home (workflow menu; read-only default)
+  ./pulsar wizard               Serve or switch a model (doctor + preflight)
+  ./pulsar inventory [opts]     Read-only service/memory inventory
+  ./pulsar start <model> [args] Start a model (scripts/up.sh)
+  ./pulsar stop <model|--all>   Stop stack-managed service(s)
+  ./pulsar status [model]       Probe containers + API (may run a completion)
+  ./pulsar help                 This message
+
+Inventory options (passed through):
+  --json       Full schema_version=1 JSON
+  --verbose    Human mode: include hidden services and diagnostic metadata
+
+Start args are passed to scripts/up.sh (e.g. --dry-run, --no-spec-decode).
+
+Notes:
+  • ./pulsar (no args) opens the neutral home menu. It does not run doctor,
+    inventory, or model preflight until you pick a workflow.
+  • ./pulsar wizard is the direct serve/switch shortcut (existing guided flow).
+  • Prefer "./pulsar wizard" — not "./ wizard.sh" (space after ./ runs
+    directory ./ → "Is a directory"). ./wizard.sh still works directly.
+  • Home “Current system status” is a quick read-only overview (API model
+    advertisement only — not an inference smoke). Full smoke is optional.
+  • stop only removes containers that prove stack ownership
+    (io.pulsar.gb10.managed=true + consistent conf/rank labels).
+  • UI: GUM=0 / NO_COLOR / PULSAR_COLOR=never / TERM=dumb → plain menus
+    (Gum not used). Color-enabled Gum always uses blue palette overrides;
+    PULSAR_ACCENT overrides the accent (default 12).
+
+See docs/OPERATIONS.md for home, ownership, and model-switch rules.
+EOF
+}
+
+cmd="${1:-}"
+if [ $# -gt 0 ]; then
+  shift
+fi
+
+case "$cmd" in
+  "")
+    exec "$REPO_DIR/scripts/home.sh"
+    ;;
+  wizard)
+    exec "$REPO_DIR/wizard.sh" "$@"
+    ;;
+  inventory)
+    exec "$REPO_DIR/scripts/inventory.sh" "$@"
+    ;;
+  start)
+    [ $# -ge 1 ] || { echo "usage: ./pulsar start <model> [up.sh args...]" >&2; exit 2; }
+    exec "$REPO_DIR/scripts/up.sh" "$@"
+    ;;
+  stop)
+    [ $# -ge 1 ] || { echo "usage: ./pulsar stop <model|--all>" >&2; exit 2; }
+    exec "$REPO_DIR/scripts/down.sh" "$@"
+    ;;
+  status)
+    exec "$REPO_DIR/scripts/status.sh" "$@"
+    ;;
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    echo "Try: ./pulsar help" >&2
+    exit 2
+    ;;
+esac

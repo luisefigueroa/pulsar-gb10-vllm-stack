@@ -12,7 +12,9 @@ per stream, aggregate tok/s. Streaming, temperature 0.
 import argparse, asyncio, json, statistics, sys, time
 import urllib.request
 
-async def one_request(url, model, prompt, out_toks, results):
+from http_auth import api_headers, resolve_api_key
+
+async def one_request(url, model, prompt, out_toks, results, api_key):
     t0 = time.perf_counter()
     ttft = None
     ntok = 0
@@ -28,7 +30,7 @@ async def one_request(url, model, prompt, out_toks, results):
         nonlocal ttft, ntok
         req = urllib.request.Request(url + "/v1/completions",
                                      data=json.dumps(body).encode(),
-                                     headers={"Content-Type": "application/json"})
+                                     headers=api_headers(api_key, content_type=True))
         with urllib.request.urlopen(req, timeout=3600) as r:
             for line in r:
                 if not line.startswith(b"data:"):
@@ -83,25 +85,27 @@ def make_prompt(n_tokens, seed):
     body = " ".join(words[(seed + i) % len(words)] for i in range(n_tokens - 8))
     return f"[req {seed}] Repeat this sequence: {body}"
 
-async def run_level(url, model, conc, nreq, in_toks, out_toks, warm):
+async def run_level(url, model, conc, nreq, in_toks, out_toks, warm, api_key):
     results = []
     n = conc if warm else nreq
-    seeds = range(1000 + n) if warm else range(n)
-    tasks = []
+    seeds = range(1000, 1000 + n) if warm else range(n)
     sem = asyncio.Semaphore(conc)
     async def guarded(s):
         async with sem:
             await one_request(url, model, make_prompt(in_toks, s),
-                              out_toks if not warm else min(32, out_toks), results)
+                              out_toks if not warm else min(32, out_toks),
+                              results, api_key)
     t0 = time.perf_counter()
     await asyncio.gather(*(guarded(s) for s in list(seeds)[:n]))
     wall = time.perf_counter() - t0
     return results, wall
 
-async def main():
+async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", required=True)
+    ap.add_argument("--api-key", default=None,
+                    help="API key; defaults to VLLM_API_KEY or API_KEY environment")
     ap.add_argument("--concurrency", nargs="+", type=int, default=[1, 2, 4, 8, 16])
     ap.add_argument("--input-tokens", type=int, default=512)
     ap.add_argument("--output-tokens", type=int, default=256)
@@ -112,17 +116,35 @@ async def main():
                          "stays synthetic for comparability with recorded runs.")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
+    if not a.concurrency or any(c <= 0 for c in a.concurrency):
+        ap.error("--concurrency values must all be positive")
+    if a.input_tokens <= 0:
+        ap.error("--input-tokens must be positive")
+    if a.output_tokens < 2:
+        ap.error("--output-tokens must be at least 2")
+
+    api_key = resolve_api_key(a.api_key)
     global PROMPT_STYLE
     PROMPT_STYLE = a.prompt_style
 
     all_rows = []
+    failed_levels = 0
     print(f"{'conc':>4} {'n':>3} {'TTFT p50 ms':>12} {'decode tok/s':>13} {'agg tok/s':>10} {'wall s':>7}")
     for c in a.concurrency:
-        await run_level(a.url, a.model, c, c, a.input_tokens, a.output_tokens, warm=True)
+        warm_results, _ = await run_level(
+            a.url, a.model, c, c, a.input_tokens, a.output_tokens,
+            warm=True, api_key=api_key
+        )
+        if len(warm_results) != c:
+            print(f"{c:>4} FAILED (warmup results {len(warm_results)}/{c})")
+            failed_levels += 1
+            continue
         nreq = max(2 * c, 4)
-        results, wall = await run_level(a.url, a.model, c, nreq, a.input_tokens, a.output_tokens, warm=False)
-        if not results:
-            print(f"{c:>4} FAILED (no results)")
+        results, wall = await run_level(a.url, a.model, c, nreq, a.input_tokens,
+                                        a.output_tokens, warm=False, api_key=api_key)
+        if len(results) != nreq:
+            print(f"{c:>4} FAILED (measured results {len(results)}/{nreq})")
+            failed_levels += 1
             continue
         ttft = statistics.median(r["ttft"] for r in results) * 1000
         dtps = statistics.median(r["decode_tps"] for r in results)
@@ -133,8 +155,10 @@ async def main():
         all_rows.append(row)
         print(f"{c:>4} {len(results):>3} {ttft:>12.1f} {dtps:>13.2f} {agg:>10.2f} {wall:>7.1f}")
     if a.out:
-        json.dump(all_rows, open(a.out, "w"), indent=1)
+        with open(a.out, "w", encoding="utf-8") as f:
+            json.dump(all_rows, f, indent=1)
         print(f"wrote {a.out}")
+    return 1 if failed_levels else 0
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

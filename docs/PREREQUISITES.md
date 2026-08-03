@@ -41,6 +41,23 @@ images, weights, or stale containers fail. Fix those before
 Not required on the host: vLLM Python install, Ray, host NCCL, jumbo MTU,
 GPUDirect RDMA.
 
+`./pulsar` opens the neutral operator home menu. `./pulsar wizard` (or
+`./wizard.sh`) is the direct serve/switch shortcut. Both use the vendored Gum
+v0.17.0 Linux ARM64 binary by default (shared `scripts/ui.sh`); no package
+installation is required.
+
+| Variable | Effect |
+|---|---|
+| `GUM=0` | Plain Bash menus (uncolored; good for scripts/selftests) |
+| `GUM_BIN=/path/to/gum` | Override gum binary (color-enabled mode only) |
+| `NO_COLOR`, `TERM=dumb`, `PULSAR_COLOR=never` | Force plain Bash menus (Gum not used; no pink defaults) |
+| `PULSAR_ACCENT` | Override accent when Gum is color-enabled (default ANSI bright blue `12`) |
+
+When color is allowed, Gum accents use terminal-palette blue (not Charm
+pink/purple defaults). Forced no-color never calls Gum with empty style flags.
+See `THIRD_PARTY_NOTICES.md`. Prefer `./pulsar wizard` — `./ wizard.sh` (space
+after `./`) runs the directory `./` and fails with `Is a directory`.
+
 ---
 
 ## 2. Single-node (`./serve.sh`)
@@ -142,8 +159,8 @@ ssh "$WORKER_IP" 'd=~/.cache/huggingface/hub/models--ORG--NAME; \
   [ -e $d/refs/main ] || { mkdir -p $d/refs; \
   ls $d/snapshots | head -1 | tr -d "\n" > $d/refs/main; }'
 
-# Images
-docker save IMAGE | ssh "$WORKER_IP" docker load
+# Images (also repairs digest references that docker load omits)
+scripts/sync-image.sh <model> --pull --yes
 ```
 
 Use `rsync -rlptD` (not plain `-a`) on some NFS-backed trees.
@@ -152,8 +169,9 @@ Use `rsync -rlptD` (not plain `-a`) on some NFS-backed trees.
 
 ```bash
 cluster/preflight.sh <model>
-# Flagship recommended mode:
-cluster/start-cluster.sh deepseek-v4-flash --spec-decode
+# Flagship validated default (DSpark k=5):
+cluster/start-cluster.sh deepseek-v4-flash
+# Rollback only: cluster/start-cluster.sh deepseek-v4-flash --no-spec-decode
 cluster/stop-cluster.sh                   # before every relaunch
 ```
 

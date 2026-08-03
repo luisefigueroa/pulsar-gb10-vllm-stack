@@ -56,6 +56,20 @@ fi
 
 log "streaming $IMAGE to $WORKER_IP (this can take several minutes)…"
 docker save "$IMAGE" | ssh_worker "docker load"
+
+# Docker save/load can transfer all layers for a digest-pinned image yet load
+# it as an untagged image ID (RepoTags=[], RepoDigests=[]). Resolve the registry
+# reference on the worker after the LAN transfer; Docker reuses the local layers
+# and normally fetches only manifest metadata.
+if ! ssh_worker "docker image inspect $(printf '%q' "$IMAGE") >/dev/null 2>&1"; then
+  case "$IMAGE" in
+    *@sha256:*)
+      log "docker load omitted the digest reference; resolving it on the worker…"
+      ssh_worker "docker pull $(printf '%q' "$IMAGE")"
+      ;;
+  esac
+fi
+
 ssh_worker "docker image inspect $(printf '%q' "$IMAGE") >/dev/null 2>&1" \
   || die "worker still missing $IMAGE after load"
 log "worker image OK"

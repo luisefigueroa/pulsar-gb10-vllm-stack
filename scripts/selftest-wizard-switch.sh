@@ -1,0 +1,944 @@
+#!/usr/bin/env bash
+# Deterministic wizard + dispatcher scenario suite (no Docker/SSH/GPU/network).
+#   scripts/selftest-wizard-switch.sh
+#
+# Uses GUM=0 plain menus, inventory/memory fixtures, and command shims.
+# Proves: ownership-safe options, no stop before final confirm, and dispatcher
+# routing. Does not invoke live lifecycle against a real daemon.
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+pass=0
+fail=0
+
+assert_eq() {
+  local got="$1" want="$2" msg="$3"
+  if [ "$got" = "$want" ]; then
+    echo "OK   $msg"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $msg (got='$got' want='$want')" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_true() {
+  local msg="$1"
+  shift
+  if "$@"; then
+    echo "OK   $msg"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $msg" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_false() {
+  local msg="$1"
+  shift
+  if "$@"; then
+    echo "FAIL $msg (expected false)" >&2
+    fail=$((fail + 1))
+  else
+    echo "OK   $msg"
+    pass=$((pass + 1))
+  fi
+}
+
+assert_file_contains() {
+  local f="$1" pat="$2" msg="$3"
+  if grep -qE "$pat" "$f" 2>/dev/null; then
+    echo "OK   $msg"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $msg (pattern /$pat/ not in $f)" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+assert_file_not_contains() {
+  local f="$1" pat="$2" msg="$3"
+  if grep -qE "$pat" "$f" 2>/dev/null; then
+    echo "FAIL $msg (unexpected /$pat/ in $f)" >&2
+    fail=$((fail + 1))
+  else
+    echo "OK   $msg"
+    pass=$((pass + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard-selftest.XXXXXX")
+trap 'rm -rf "$STATE"' EXIT
+SHIM="$STATE/bin"
+mkdir -p "$SHIM" "$STATE/inv" "$STATE/mem" "$STATE/logs"
+
+MODELS_JSON='{
+  "models": [
+    {
+      "id": "qwen3-1.7b",
+      "status": "tested",
+      "nodes": 1,
+      "source": "hf",
+      "served_name": "qwen3-1.7b",
+      "spec": "none",
+      "spec_default_enabled": false,
+      "first_run_candidate": true
+    },
+    {
+      "id": "nemotron-3-nano-30b-nvfp4",
+      "status": "tested",
+      "nodes": 1,
+      "source": "hf",
+      "served_name": "nemotron-3-nano",
+      "spec": "none",
+      "spec_default_enabled": false,
+      "first_run_candidate": true
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "status": "tested+soaked",
+      "nodes": 2,
+      "source": "hf",
+      "served_name": "deepseek-v4-flash",
+      "spec": "recommended",
+      "spec_default_enabled": true,
+      "first_run_candidate": false
+    }
+  ]
+}'
+printf '%s\n' "$MODELS_JSON" >"$STATE/models.json"
+
+# Minimal inventory templates via python
+write_inv() {
+  local path="$1"
+  shift
+  # remaining args as python assignment snippets applied to base
+  python3 - "$path" "$@" <<'PY'
+import json, sys
+path = sys.argv[1]
+base = {
+  "schema_version": 1,
+  "generated_at": "2026-08-03T00:00:00Z",
+  "worker": {"ip": "", "status": "unset", "reason": "WORKER_IP unset"},
+  "nodes": {
+    "head": {"mem_available_gib": 100.0, "mem_status": "ok", "mem_source": "fixture"},
+    "worker": {"mem_available_gib": None, "mem_status": "n/a", "mem_source": "unset"},
+  },
+  "services": [],
+  "unmanaged_gpu_processes": [],
+}
+# Optional overlay JSON file as argv[2]
+if len(sys.argv) > 2 and sys.argv[2].startswith("{"):
+    overlay = json.loads(sys.argv[2])
+    base.update({k: overlay[k] for k in overlay if k in base or k in ("services", "unmanaged_gpu_processes", "worker", "nodes")})
+    for k, v in overlay.items():
+        base[k] = v
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(base, f, indent=2)
+    f.write("\n")
+PY
+}
+
+mem_pass() {
+  local path="$1" model="${2:-qwen3-1.7b}"
+  python3 -c "
+import json
+print(json.dumps({
+  'model': '$model', 'result': 'pass', 'mode': 'cold-start',
+  'already_loaded': False, 'already_how': '',
+  'footprint_gib': 12.0, 'need_start_gib': 15.0,
+  'weights_gib_total': 4.0, 'weights_gib_per_rank': 4.0,
+  'kv_gib': 4.0, 'overhead_gib': 4.0, 'buffer_gib': 8.0,
+  'spike_gib': 3.0, 'hard_floor_gib': 4.0,
+  'head_available_gib': 100.0, 'worker_available_gib': None,
+  'max_model_len': None, 'kv_fixed': False, 'note': '', 'reason': '',
+}, indent=2))
+" >"$path"
+}
+
+mem_warn() {
+  local path="$1" model="${2:-qwen3-1.7b}"
+  python3 -c "
+import json
+print(json.dumps({
+  'model': '$model', 'result': 'warn', 'mode': 'cold-start',
+  'already_loaded': False, 'already_how': '',
+  'footprint_gib': 90.0, 'need_start_gib': 93.0,
+  'weights_gib_total': 80.0, 'weights_gib_per_rank': 80.0,
+  'kv_gib': 5.0, 'overhead_gib': 5.0, 'buffer_gib': 8.0,
+  'spike_gib': 3.0, 'hard_floor_gib': 4.0,
+  'head_available_gib': 92.0, 'worker_available_gib': None,
+  'max_model_len': None, 'kv_fixed': False, 'note': '',
+  'reason': 'head: available 92.00 GiB < ideal start 93.00 GiB',
+}, indent=2))
+" >"$path"
+}
+
+mem_fail() {
+  local path="$1" model="${2:-qwen3-1.7b}"
+  python3 -c "
+import json
+print(json.dumps({
+  'model': '$model', 'result': 'fail', 'mode': 'cold-start',
+  'already_loaded': False, 'already_how': '',
+  'footprint_gib': 100.0, 'need_start_gib': 103.0,
+  'weights_gib_total': 90.0, 'weights_gib_per_rank': 90.0,
+  'kv_gib': 5.0, 'overhead_gib': 5.0, 'buffer_gib': 8.0,
+  'spike_gib': 3.0, 'hard_floor_gib': 4.0,
+  'head_available_gib': 20.0, 'worker_available_gib': None,
+  'max_model_len': None, 'kv_fixed': False, 'note': '',
+  'reason': 'head: available 20.00 GiB << footprint 100.00 GiB',
+}, indent=2))
+" >"$path"
+}
+
+svc_managed() {
+  # conf state complete safe [port]
+  # complete/safe: True|False (Python)
+  local conf="$1" state="$2" complete="$3" safe="$4" port="${5:-8000}"
+  local running="True" stale="False"
+  [ "$state" = "stale" ] && running="False" && stale="True"
+  [ "$state" = "stopped" ] && running="False"
+  python3 -c "
+import json
+print(json.dumps({
+  'service_id': '$conf',
+  'profile': '$conf',
+  'conf': '$conf',
+  'served_name': '$conf',
+  'expected_nodes': 1,
+  'expected_ranks': ['single'],
+  'observed_ranks': ['single'],
+  'container_name': 'vllm-$conf',
+  'state': '$state',
+  'ownership': 'managed',
+  'safe_to_stop': $safe,
+  'complete': $complete,
+  'observability': 'complete' if $complete else 'partial',
+  'api_port': $port,
+  'estimated_footprint_gib_per_rank': 12.0,
+  'reasons': [],
+  'ranks': [{
+    'rank': 'single', 'node': 'head', 'expected_node': 'head',
+    'container_name': 'vllm-$conf', 'container_id': 'a'*64,
+    'container_id_short': 'aaaaaaaaaaaa', 'image': 'vllm/vllm-openai:v0.26.0',
+    'running': $running, 'stale': $stale, 'status': '$state',
+    'ownership': 'managed', 'safe_to_stop': $safe,
+    'labels': {'io.pulsar.gb10.managed': 'true', 'io.pulsar.gb10.conf': '$conf', 'io.pulsar.gb10.rank': 'single'},
+    'api_port': $port, 'mem_available_gib': 50.0, 'mem_status': 'ok', 'mem_source': 'fixture',
+    'gpu_memory': {'measured_mib': 8000, 'status': 'ok', 'source': 'fixture'},
+    'estimated_footprint_gib_per_rank': 12.0, 'reasons': [],
+  }],
+}))
+"
+}
+
+svc_partial_2node() {
+  local conf="$1" safe="${2:-True}"
+  python3 -c "
+import json
+safe = '$safe' == 'True'
+print(json.dumps({
+  'service_id': '$conf',
+  'profile': '$conf',
+  'conf': '$conf',
+  'served_name': '$conf',
+  'expected_nodes': 2,
+  'expected_ranks': ['0', '1'],
+  'observed_ranks': ['0'],
+  'container_name': 'vllm-cluster-$conf',
+  'state': 'partial',
+  'ownership': 'managed',
+  'safe_to_stop': safe,
+  'complete': False,
+  'observability': 'partial',
+  'api_port': 8000,
+  'estimated_footprint_gib_per_rank': 100.0,
+  'reasons': ['missing rank 1'],
+  'ranks': [{
+    'rank': '0', 'node': 'head', 'expected_node': 'head',
+    'container_name': 'vllm-cluster-$conf', 'container_id': 'b'*64,
+    'container_id_short': 'bbbbbbbbbbbb', 'image': 'img',
+    'running': True, 'stale': False, 'status': 'running',
+    'ownership': 'managed', 'safe_to_stop': safe,
+    'labels': {'io.pulsar.gb10.managed': 'true', 'io.pulsar.gb10.conf': '$conf', 'io.pulsar.gb10.rank': '0'},
+    'api_port': 8000, 'mem_available_gib': 40.0, 'mem_status': 'ok', 'mem_source': 'fixture',
+    'gpu_memory': {'measured_mib': None, 'status': 'n/a', 'source': 'none'},
+    'estimated_footprint_gib_per_rank': 100.0, 'reasons': [],
+  }],
+}))
+"
+}
+
+svc_unknown() {
+  python3 -c "
+import json
+print(json.dumps({
+  'service_id': 'vllm-mystery',
+  'profile': None,
+  'conf': None,
+  'served_name': None,
+  'expected_nodes': None,
+  'expected_ranks': [],
+  'observed_ranks': ['?'],
+  'container_name': 'vllm-mystery',
+  'state': 'running',
+  'ownership': 'unknown',
+  'safe_to_stop': False,
+  'complete': False,
+  'observability': 'unknown',
+  'api_port': 8000,
+  'estimated_footprint_gib_per_rank': None,
+  'reasons': ['unlabeled unknown'],
+  'ranks': [{
+    'rank': '?', 'node': 'head', 'expected_node': None,
+    'container_name': 'vllm-mystery', 'container_id': 'c'*64,
+    'container_id_short': 'cccccccccccc', 'image': 'other',
+    'running': True, 'stale': False, 'status': 'running',
+    'ownership': 'unknown', 'safe_to_stop': False,
+    'labels': {}, 'api_port': 8000, 'mem_available_gib': 30.0,
+    'mem_status': 'ok', 'mem_source': 'fixture',
+    'gpu_memory': {'measured_mib': 20000, 'status': 'ok', 'source': 'fixture'},
+    'estimated_footprint_gib_per_rank': None, 'reasons': ['unlabeled'],
+  }],
+}))
+"
+}
+
+# Stateful shims: inventory/memory/down/up
+cat >"$SHIM/inv-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ -f "${STATE_DIR}/inv_fail" ]; then
+  echo "fixture inventory failure" >&2
+  exit 42
+fi
+if [ -f "${STATE_DIR}/inv_invalid" ]; then
+  echo "not-json"
+  exit 0
+fi
+# STATE_DIR and INV_FILE set by harness
+if [ -f "${STATE_DIR}/inv_override" ]; then
+  cat "${STATE_DIR}/inv_override"
+elif [ -f "${STATE_DIR}/inv_after_stop" ] && [ -f "${STATE_DIR}/stopped" ]; then
+  cat "${STATE_DIR}/inv_after_stop"
+else
+  cat "${STATE_DIR}/inv_current"
+fi
+SH
+chmod +x "$SHIM/inv-cmd"
+
+cat >"$SHIM/mem-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+model="${1:-}"
+# Per-model fixtures: mem_by_model/<id>.json + optional .rc
+if [ -n "$model" ] && [ -f "${STATE_DIR}/mem_by_model/${model}.json" ]; then
+  cat "${STATE_DIR}/mem_by_model/${model}.json"
+  if [ -f "${STATE_DIR}/mem_by_model/${model}.rc" ]; then
+    exit "$(cat "${STATE_DIR}/mem_by_model/${model}.rc")"
+  fi
+  exit 0
+fi
+# Optional sequence: mem_rc_seq file with one rc per call
+if [ -f "${STATE_DIR}/mem_rc_seq" ]; then
+  rc=$(head -1 "${STATE_DIR}/mem_rc_seq")
+  tail -n +2 "${STATE_DIR}/mem_rc_seq" >"${STATE_DIR}/mem_rc_seq.tmp" || true
+  mv "${STATE_DIR}/mem_rc_seq.tmp" "${STATE_DIR}/mem_rc_seq"
+  case "$rc" in
+    0) cat "${STATE_DIR}/mem_pass" 2>/dev/null || cat "${STATE_DIR}/mem_current" ;;
+    2) cat "${STATE_DIR}/mem_warn" 2>/dev/null || cat "${STATE_DIR}/mem_current" ;;
+    1) cat "${STATE_DIR}/mem_fail" 2>/dev/null || cat "${STATE_DIR}/mem_current" ;;
+    *) cat "${STATE_DIR}/mem_pass" 2>/dev/null || cat "${STATE_DIR}/mem_current"; rc=0 ;;
+  esac
+  exit "$rc"
+fi
+if [ -f "${STATE_DIR}/stopped" ] && [ -f "${STATE_DIR}/mem_after_stop" ]; then
+  cat "${STATE_DIR}/mem_after_stop"
+  exit "${MEM_AFTER_STOP_RC:-0}"
+fi
+cat "${STATE_DIR}/mem_current"
+exit "${MEM_CURRENT_RC:-0}"
+SH
+chmod +x "$SHIM/mem-cmd"
+
+cat >"$SHIM/down-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "down $*" >>"${STATE_DIR}/logs/down.log"
+echo "$*" >>"${STATE_DIR}/stopped"
+# Flip inventory to after-stop if present
+if [ -f "${STATE_DIR}/inv_after_stop" ]; then
+  cp "${STATE_DIR}/inv_after_stop" "${STATE_DIR}/inv_current"
+fi
+exit 0
+SH
+chmod +x "$SHIM/down-cmd"
+
+cat >"$SHIM/up-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "up $*" >>"${STATE_DIR}/logs/up.log"
+# Fail only the first call (for launch-failure → restart-previous scenarios).
+if [ -f "${STATE_DIR}/up_fail_once" ]; then
+  rm -f "${STATE_DIR}/up_fail_once"
+  echo "simulated up failure (once)" >&2
+  exit 1
+fi
+if [ -f "${STATE_DIR}/up_fail" ]; then
+  echo "simulated up failure" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$SHIM/up-cmd"
+
+cat >"$SHIM/status-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "status $*" >>"${STATE_DIR}/logs/status.log"
+echo "[status] fixture ok $*"
+exit 0
+SH
+chmod +x "$SHIM/status-cmd"
+
+cat >"$SHIM/doctor-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "doctor ok" >>"${STATE_DIR}/logs/doctor.log"
+exit 0
+SH
+chmod +x "$SHIM/doctor-cmd"
+
+export STATE_DIR="$STATE"
+
+# seed_inv <out-path> <head-mem> <service-json-or-empty> [worker_status] [extra-python]
+seed_inv() {
+  local out="$1" head_mem="$2" svc_json="${3:-}" worker_status="${4:-unset}"
+  local unmanaged="${5:-[]}"
+  HEAD_MEM="$head_mem" OUT="$out" SVC="$svc_json" WSTATUS="$worker_status" UNMAN="$unmanaged" python3 - <<'PY'
+import json, os
+svc_raw = os.environ.get("SVC") or ""
+services = [json.loads(svc_raw)] if svc_raw.strip() else []
+unmanaged = json.loads(os.environ.get("UNMAN") or "[]")
+wstatus = os.environ.get("WSTATUS") or "unset"
+inv = {
+  "schema_version": 1,
+  "generated_at": "t",
+  "worker": {
+    "ip": "10.0.0.2" if wstatus != "unset" else "",
+    "status": wstatus,
+    "reason": "ssh failed" if wstatus == "unreachable" else "",
+  },
+  "nodes": {
+    "head": {
+      "mem_available_gib": float(os.environ["HEAD_MEM"]),
+      "mem_status": "ok",
+      "mem_source": "fixture",
+    },
+    "worker": {
+      "mem_available_gib": 100.0 if wstatus == "ok" else None,
+      "mem_status": "ok" if wstatus == "ok" else "n/a",
+      "mem_source": wstatus,
+    },
+  },
+  "services": services,
+  "unmanaged_gpu_processes": unmanaged,
+}
+with open(os.environ["OUT"], "w", encoding="utf-8") as f:
+    json.dump(inv, f, indent=2)
+    f.write("\n")
+PY
+}
+
+# Base env for all wizard runs
+wizard_env() {
+  export GUM=0
+  export WIZARD_SKIP_DOCTOR=1
+  export WIZARD_SKIP_WEIGHTS=1
+  export WIZARD_SKIP_IMAGE=1
+  export WIZARD_SKIP_FABRIC_PROMPT=1
+  export WIZARD_LIST_MODELS_JSON="$STATE/models.json"
+  export WIZARD_INVENTORY_CMD="$SHIM/inv-cmd"
+  export WIZARD_CHECK_MEMORY_CMD="$SHIM/mem-cmd"
+  export WIZARD_DOWN_CMD="$SHIM/down-cmd"
+  export WIZARD_UP_CMD="$SHIM/up-cmd"
+  export WIZARD_STATUS_CMD="$SHIM/status-cmd"
+  export WIZARD_DOCTOR_CMD="$SHIM/doctor-cmd"
+  export STATE_DIR="$STATE"
+}
+
+reset_logs() {
+  rm -f "$STATE/logs/"* "$STATE/stopped" "$STATE/up_fail" "$STATE/up_fail_once" \
+    "$STATE/inv_override" "$STATE/mem_rc_seq" "$STATE/inv_after_stop" \
+    "$STATE/mem_after_stop" "$STATE/inv_fail" "$STATE/inv_invalid" \
+    2>/dev/null || true
+  rm -rf "$STATE/mem_by_model"
+  mkdir -p "$STATE/logs" "$STATE/mem_by_model"
+  : >"$STATE/logs/down.log"
+  : >"$STATE/logs/up.log"
+  : >"$STATE/logs/status.log"
+  : >"$STATE/logs/doctor.log"
+  : >"$STATE/logs/wizard.combined"
+  : >"$STATE/logs/wizard.out"
+  : >"$STATE/logs/wizard.err"
+  unset MEM_CURRENT_RC MEM_AFTER_STOP_RC WIZARD_API_HEALTHY 2>/dev/null || true
+  export MEM_CURRENT_RC=0
+  export MEM_AFTER_STOP_RC=0
+}
+
+# Install per-model memory fixture used by mem-cmd (overrides global current/after).
+set_mem_model() {
+  local model="$1" kind="$2" # pass|warn|fail
+  case "$kind" in
+    pass) mem_pass "$STATE/mem_by_model/${model}.json" "$model"; echo 0 >"$STATE/mem_by_model/${model}.rc" ;;
+    warn) mem_warn "$STATE/mem_by_model/${model}.json" "$model"; echo 2 >"$STATE/mem_by_model/${model}.rc" ;;
+    fail) mem_fail "$STATE/mem_by_model/${model}.json" "$model"; echo 1 >"$STATE/mem_by_model/${model}.rc" ;;
+    *) echo "set_mem_model: bad kind $kind" >&2; return 1 ;;
+  esac
+}
+
+run_wizard() {
+  # stdin choices as arguments newline-joined
+  local input="$1"
+  local out="$STATE/logs/wizard.out"
+  local err="$STATE/logs/wizard.err"
+  wizard_env
+  set +e
+  printf '%s' "$input" | "$REPO_DIR/wizard.sh" >"$out" 2>"$err"
+  local rc=$?
+  set -e
+  LAST_RC=$rc
+  cat "$out" >>"$STATE/logs/wizard.combined"
+  cat "$err" >>"$STATE/logs/wizard.combined"
+  return 0
+}
+
+pick_model_qwen() {
+  # models list: qwen first → select 1
+  echo "1"
+}
+
+# ---------------------------------------------------------------------------
+# 1) Dispatcher routing (read-only)
+# ---------------------------------------------------------------------------
+echo "=== dispatcher routing ==="
+chmod +x "$REPO_DIR/pulsar"
+assert_true "pulsar help exits 0" "$REPO_DIR/pulsar" help
+assert_true "pulsar --help exits 0" "$REPO_DIR/pulsar" --help
+out=$("$REPO_DIR/pulsar" help 2>&1)
+assert_true "help mentions wizard" bash -c "printf '%s' \"\$0\" | grep -q wizard" "$out"
+assert_true "help mentions invalid ./ wizard.sh habit" bash -c "printf '%s' \"\$0\" | grep -q 'wizard.sh'" "$out"
+
+# inventory --help via dispatcher (no docker mutation; may run live read-only)
+# Prefer --help path that exits 0 without probing hardware heavily
+out=$("$REPO_DIR/pulsar" inventory --help 2>&1) || true
+assert_true "inventory help via dispatcher" bash -c "printf '%s' \"\$0\" | grep -qi inventory" "$out"
+
+# start/stop without args should fail usage (no mutation)
+set +e
+"$REPO_DIR/pulsar" start >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "2" "pulsar start without model → usage exit 2"
+
+set +e
+"$REPO_DIR/pulsar" stop >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "2" "pulsar stop without target → usage exit 2"
+
+# unknown command
+set +e
+"$REPO_DIR/pulsar" nosuch >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "2" "pulsar unknown command → exit 2"
+
+# ---------------------------------------------------------------------------
+# 2) Same healthy keep — no mutation
+# ---------------------------------------------------------------------------
+echo "=== same healthy keep ==="
+reset_logs
+seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
+mem_pass "$STATE/mem_current" qwen3-1.7b
+export WIZARD_API_HEALTHY=1
+# model=1, keep=1
+run_wizard $'1\n1\n'
+assert_eq "$LAST_RC" "0" "same-healthy keep exit 0"
+assert_false "keep: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "keep: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "keeping qwen3-1.7b running" "keep message"
+assert_file_contains "$STATE/logs/wizard.out" "^TARGET$" "wizard target uses a semantic section"
+assert_file_contains "$STATE/logs/wizard.out" "^PREFLIGHT$" "wizard preflight uses a semantic section"
+assert_file_contains "$STATE/logs/wizard.out" "^RELEVANT SERVICES" \
+  "wizard diagnostics use stacked service sections"
+assert_file_contains "$STATE/logs/wizard.err" "qwen3-1.7b · 1 node · HF · spec none" \
+  "wizard model choice is compact and human-readable"
+
+# ---------------------------------------------------------------------------
+# 3) Same restart — stop only after final confirm
+# ---------------------------------------------------------------------------
+echo "=== same restart after final confirm ==="
+reset_logs
+seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
+seed_inv "$STATE/inv_after_stop" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+export WIZARD_API_HEALTHY=1
+# Abort path: model, restart, final n → no mutation
+run_wizard $'1\n2\nn\n'
+assert_eq "$LAST_RC" "0" "restart decline final confirm exit 0"
+assert_false "restart aborted: no down before/without confirm" bash -c "test -s '$STATE/logs/down.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "aborted; no containers changed" "restart aborted message"
+
+reset_logs
+seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
+seed_inv "$STATE/inv_after_stop" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+export WIZARD_API_HEALTHY=1
+run_wizard $'1\n2\ny\n'
+assert_eq "$LAST_RC" "0" "restart confirmed exit 0"
+assert_file_contains "$STATE/logs/down.log" "qwen3-1.7b" "restart: down called"
+assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "restart: up called"
+
+# ---------------------------------------------------------------------------
+# 4) Different managed blocker — replace
+# ---------------------------------------------------------------------------
+echo "=== different managed replace ==="
+reset_logs
+seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
+seed_inv "$STATE/inv_after_stop" 100 ""
+mem_fail "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+export MEM_CURRENT_RC=1
+export MEM_AFTER_STOP_RC=0
+export WIZARD_API_HEALTHY=0
+# model qwen=1, stop listed=1, final y
+run_wizard $'1\n1\ny\n'
+assert_eq "$LAST_RC" "0" "replace managed exit 0"
+assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "replace: stopped blocker"
+assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "replace: started target"
+
+# ---------------------------------------------------------------------------
+# 5) Decline replace leaves service unchanged
+# ---------------------------------------------------------------------------
+echo "=== decline replace ==="
+reset_logs
+seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
+mem_fail "$STATE/mem_current" qwen3-1.7b
+export MEM_CURRENT_RC=1
+export WIZARD_API_HEALTHY=0
+# model=1, keep current=2
+run_wizard $'1\n2\n'
+assert_eq "$LAST_RC" "0" "decline replace exit 0"
+assert_false "decline: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "decline: no up" bash -c "test -s '$STATE/logs/up.log'"
+
+# ---------------------------------------------------------------------------
+# 6) Hard fail + unknown consumer — no stop / no continue
+# ---------------------------------------------------------------------------
+echo "=== hard fail unknown consumer ==="
+reset_logs
+unmanaged='[{"node":"head","pid":9999,"process_name":"mystery-cuda","used_memory_mib":40000,"note":"read-only"}]'
+seed_inv "$STATE/inv_current" 20 "$(svc_unknown)" unset "$unmanaged"
+mem_fail "$STATE/mem_current" qwen3-1.7b
+export MEM_CURRENT_RC=1
+export WIZARD_API_HEALTHY=0
+# model=1, exit=1
+run_wizard $'1\n1\n'
+assert_eq "$LAST_RC" "0" "unknown consumer exit path"
+assert_false "unknown: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "will not stop" "unknown: will not stop messaging"
+assert_file_not_contains "$STATE/logs/wizard.combined" "Continue with start anyway" "unknown+fail: no continue-anyway"
+
+# ---------------------------------------------------------------------------
+# 7) WARN explicit continuation
+# ---------------------------------------------------------------------------
+echo "=== memory WARN continue ==="
+reset_logs
+seed_inv "$STATE/inv_current" 92 ""
+mem_warn "$STATE/mem_current" qwen3-1.7b
+export MEM_CURRENT_RC=2
+export WIZARD_API_HEALTHY=0
+# model=1, continue warn y, final y
+run_wizard $'1\ny\ny\n'
+assert_eq "$LAST_RC" "0" "warn continue exit 0"
+assert_file_contains "$STATE/logs/up.log" "accept-memory-warn" "warn: up got --accept-memory-warn"
+assert_false "warn clean: no down" bash -c "test -s '$STATE/logs/down.log'"
+
+# ---------------------------------------------------------------------------
+# 8) Partial managed cleanup
+# ---------------------------------------------------------------------------
+echo "=== partial managed cleanup ==="
+reset_logs
+seed_inv "$STATE/inv_current" 40 "$(svc_partial_2node deepseek-v4-flash True)" ok
+seed_inv "$STATE/inv_after_stop" 100 "" ok
+mem_pass "$STATE/mem_current" deepseek-v4-flash
+mem_pass "$STATE/mem_after_stop" deepseek-v4-flash
+export MEM_CURRENT_RC=0
+export MEM_AFTER_STOP_RC=0
+export WIZARD_API_HEALTHY=0
+# model=3, stop partial=1, spec default yes (confirm y), final y
+run_wizard $'3\n1\ny\ny\n'
+assert_eq "$LAST_RC" "0" "partial cleanup exit 0"
+assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" "partial: down partial conf"
+assert_file_contains "$STATE/logs/up.log" "deepseek-v4-flash" "partial: up after cleanup"
+
+# ---------------------------------------------------------------------------
+# 9) Worker unreachable refusal
+# ---------------------------------------------------------------------------
+echo "=== worker unreachable refusal ==="
+reset_logs
+seed_inv "$STATE/inv_current" 40 "$(svc_partial_2node deepseek-v4-flash True)" unreachable
+mem_pass "$STATE/mem_current" deepseek-v4-flash
+export MEM_CURRENT_RC=0
+export WIZARD_API_HEALTHY=0
+# model=3 (deepseek 2-node), exit=1
+run_wizard $'3\n1\n'
+assert_eq "$LAST_RC" "0" "worker unreachable exit"
+assert_false "unreachable: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "unreachable" "unreachable messaging"
+
+# ---------------------------------------------------------------------------
+# 10) Stale managed cleanup
+# ---------------------------------------------------------------------------
+echo "=== stale managed cleanup ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3-1.7b stale True True)"
+seed_inv "$STATE/inv_after_stop" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+export MEM_CURRENT_RC=0
+export WIZARD_API_HEALTHY=0
+# model=1, remove stale=1, final y
+run_wizard $'1\n1\ny\n'
+assert_eq "$LAST_RC" "0" "stale cleanup exit 0"
+assert_file_contains "$STATE/logs/down.log" "qwen3-1.7b" "stale: down"
+assert_file_contains "$STATE/logs/wizard.combined" "does not hold model memory" "stale: memory note"
+
+# ---------------------------------------------------------------------------
+# 11) Stop then still-fail → Exit stopped (no up)
+# ---------------------------------------------------------------------------
+echo "=== stop then still memory fail (exit stopped) ==="
+reset_logs
+seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
+seed_inv "$STATE/inv_after_stop" 30 ""
+set_mem_model qwen3-1.7b fail
+set_mem_model nemotron-3-nano-30b-nvfp4 pass
+export WIZARD_API_HEALTHY=0
+# model=1, stop=1, final y, then Exit stopped=3
+run_wizard $'1\n1\ny\n3\n'
+assert_false "still-fail exit: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/down.log" "nemotron" "still-fail exit: did stop"
+assert_file_contains "$STATE/logs/wizard.combined" "never offers continue-anyway|hard memory failure never offers" "still-fail exit: no continue"
+assert_file_not_contains "$STATE/logs/down.log" "docker" "still-fail exit: no docker in down log"
+assert_file_not_contains "$STATE/logs/wizard.combined" "docker rm|docker kill|kill -9" "still-fail exit: no foreign kill"
+
+# ---------------------------------------------------------------------------
+# 11b) Stop then still-fail → explicit Restart previous profile
+# ---------------------------------------------------------------------------
+echo "=== stop then still memory fail (restart previous) ==="
+reset_logs
+seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
+seed_inv "$STATE/inv_after_stop" 100 ""
+set_mem_model qwen3-1.7b fail
+set_mem_model nemotron-3-nano-30b-nvfp4 pass
+export WIZARD_API_HEALTHY=0
+# model=1 (qwen), stop=1, final y, restart previous=1, final y (start nano)
+run_wizard $'1\n1\ny\n1\ny\n'
+assert_eq "$LAST_RC" "0" "still-fail restart-previous exit 0"
+assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "still-fail restart: stopped blocker once"
+# exactly one down line
+down_lines=$(grep -c . "$STATE/logs/down.log" || true)
+assert_eq "$down_lines" "1" "still-fail restart: single down (no extra stops)"
+assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" "still-fail restart: up previous conf"
+assert_file_not_contains "$STATE/logs/up.log" "qwen3-1.7b" "still-fail restart: never up failed target"
+assert_file_contains "$STATE/logs/wizard.combined" "Restart previous profile from current config|current profile defaults" "still-fail restart: explicit restart messaging"
+assert_file_contains "$STATE/logs/wizard.combined" "planning restart of previous profile" "still-fail restart: planned not auto"
+assert_false "still-fail restart: no docker rm in wizard" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill' "$STATE/logs/wizard.combined"
+
+# ---------------------------------------------------------------------------
+# 12) Launch failure → Exit stopped
+# ---------------------------------------------------------------------------
+echo "=== launch failure after replace (exit stopped) ==="
+reset_logs
+seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
+seed_inv "$STATE/inv_after_stop" 100 ""
+set_mem_model qwen3-1.7b pass
+set_mem_model nemotron-3-nano-30b-nvfp4 pass
+# Force cold-start pressure narrative via after-stop still ok; use current fail until stop
+# Actually for replace path: others_safe with qwen mem can be pass or fail.
+# Use mem_current fail via global for qwen before stop is not needed if others_safe triggers.
+mem_fail "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+export MEM_CURRENT_RC=1
+export MEM_AFTER_STOP_RC=0
+export WIZARD_API_HEALTHY=0
+# Clear per-model so global after-stop applies to qwen launch path
+rm -rf "$STATE/mem_by_model"
+mkdir -p "$STATE/mem_by_model"
+touch "$STATE/up_fail"
+# model=1, stop=1, final y, then Exit stopped=3
+run_wizard $'1\n1\ny\n3\n'
+assert_file_contains "$STATE/logs/down.log" "nemotron" "launch-fail exit: stopped previous"
+assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail exit: attempted up target"
+assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail exit message"
+assert_file_not_contains "$STATE/logs/up.log" "nemotron" "launch-fail exit: no restart up without choice"
+
+# ---------------------------------------------------------------------------
+# 12b) Launch failure → explicit Restart previous profile
+# ---------------------------------------------------------------------------
+echo "=== launch failure after replace (restart previous) ==="
+reset_logs
+seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
+seed_inv "$STATE/inv_after_stop" 100 ""
+mem_fail "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+export MEM_CURRENT_RC=1
+export MEM_AFTER_STOP_RC=0
+# After restart-previous, plan nano with empty inv: need pass for nano
+set_mem_model nemotron-3-nano-30b-nvfp4 pass
+# qwen keeps using global current/after (not per-model) so first up can fail after stop
+export WIZARD_API_HEALTHY=0
+touch "$STATE/up_fail_once"
+# model=1, stop=1, final y, restart previous=1, final y for nano
+run_wizard $'1\n1\ny\n1\ny\n'
+assert_eq "$LAST_RC" "0" "launch-fail restart-previous exit 0"
+assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "launch-fail restart: stopped previous once"
+down_lines=$(grep -c . "$STATE/logs/down.log" || true)
+assert_eq "$down_lines" "1" "launch-fail restart: single down only"
+assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail restart: first up was target"
+assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" "launch-fail restart: second up previous conf"
+# Ensure order: qwen first, then nano
+up_order=$(tr '\n' ' ' <"$STATE/logs/up.log")
+assert_true "launch-fail restart: up order target then previous" bash -c \
+  "printf '%s' \"\$0\" | grep -q 'qwen3-1.7b.*nemotron-3-nano-30b-nvfp4'" "$up_order"
+assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail restart: reported failure"
+assert_file_contains "$STATE/logs/wizard.combined" "planning restart of previous profile|current profile defaults" "launch-fail restart: explicit selection path"
+assert_false "launch-fail restart: no docker mutation language" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill|kill -9' "$STATE/logs/wizard.combined"
+
+# ---------------------------------------------------------------------------
+# 13) Choose-another loop (no re-doctor)
+# ---------------------------------------------------------------------------
+echo "=== choose another model loop ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3-1.7b running True True)"
+mem_pass "$STATE/mem_current" qwen3-1.7b
+export MEM_CURRENT_RC=0
+export WIZARD_API_HEALTHY=1
+# model=1, choose another=4, model=2 (nano), keep current=2
+run_wizard $'1\n4\n2\n2\n'
+assert_file_contains "$STATE/logs/wizard.combined" "returning to selection" "choose-another loop"
+assert_file_contains "$STATE/logs/wizard.combined" "doctor not re-run" "no re-doctor"
+assert_false "choose-another path: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "doctor not invoked in loop" bash -c "test -s '$STATE/logs/doctor.log'"
+
+# ---------------------------------------------------------------------------
+# 14) Unknown port owner
+# ---------------------------------------------------------------------------
+echo "=== unknown port owner ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 "$(svc_unknown)"
+mem_pass "$STATE/mem_current" qwen3-1.7b
+export MEM_CURRENT_RC=0
+export WIZARD_API_HEALTHY=0
+# model=1, exit=1
+run_wizard $'1\n1\n'
+assert_false "unknown port: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "will not stop" "unknown port: will not stop"
+
+# ---------------------------------------------------------------------------
+# 15) No mutation before final confirm (clean start decline)
+# ---------------------------------------------------------------------------
+echo "=== no mutation before final confirm ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+export MEM_CURRENT_RC=0
+export WIZARD_API_HEALTHY=0
+# model=1, final n
+run_wizard $'1\nn\n'
+assert_eq "$LAST_RC" "0" "decline start exit 0"
+assert_false "decline start: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "decline start: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "aborted; no containers changed" "decline start message"
+
+# ---------------------------------------------------------------------------
+# 16) Observability failures fail closed
+# ---------------------------------------------------------------------------
+echo "=== inventory command failure fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+touch "$STATE/inv_fail"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "inventory command failure exits nonzero"
+assert_false "inventory failure: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "inventory failure: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "inventory collection failed.*no lifecycle action" \
+  "inventory failure gives safe operator feedback"
+
+echo "=== malformed inventory fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+touch "$STATE/inv_invalid"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "malformed inventory exits nonzero"
+assert_false "malformed inventory: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "inventory returned invalid data.*no lifecycle action" \
+  "malformed inventory gives safe operator feedback"
+
+echo "=== unexpected memory exit fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+set_mem_model qwen3-1.7b pass
+echo 42 >"$STATE/mem_by_model/qwen3-1.7b.rc"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "unexpected memory exit is not treated as pass"
+assert_false "unexpected memory exit: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "unexpected memory exit: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "memory preflight failed internally \(exit=42\)" \
+  "unexpected memory exit is reported clearly"
+
+echo "=== inconsistent memory result fails closed ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+set_mem_model qwen3-1.7b pass
+echo 2 >"$STATE/mem_by_model/qwen3-1.7b.rc"
+run_wizard $'1\n'
+assert_eq "$LAST_RC" "1" "memory JSON/exit disagreement exits nonzero"
+assert_false "inconsistent memory result: no up" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "invalid or inconsistent data \(exit=2\)" \
+  "memory JSON/exit disagreement is reported clearly"
+
+# ---------------------------------------------------------------------------
+# Static: wizard does not call down before confirm patterns (source review)
+# ---------------------------------------------------------------------------
+echo "=== static safety checks ==="
+# down only via execute_pending_stops / cmd_down after final_confirm_start
+assert_true "wizard has execute_pending_stops" grep -q "execute_pending_stops" "$REPO_DIR/wizard.sh"
+assert_true "wizard defers stop until after final confirm helper" grep -q "final_confirm_start" "$REPO_DIR/wizard.sh"
+# ensure cmd_down is only in execute_pending_stops
+downs=$(grep -n "cmd_down" "$REPO_DIR/wizard.sh" | grep -v '^#' || true)
+# Only definition and execute_pending_stops should call it
+count=$(printf '%s\n' "$downs" | grep -c "cmd_down" || true)
+assert_true "cmd_down references limited" bash -c "[ \"$count\" -le 3 ]"
+
+# No kill/rm docker in wizard
+assert_false "wizard has no docker rm" grep -qE "docker[[:space:]]+rm" "$REPO_DIR/wizard.sh"
+assert_false "wizard has no kill -9" grep -qE "kill[[:space:]]+-9" "$REPO_DIR/wizard.sh"
+
+# ---------------------------------------------------------------------------
+echo "=============================="
+echo "wizard-switch selftest: pass=$pass fail=$fail"
+if [ "$fail" -ne 0 ]; then
+  exit 1
+fi
+exit 0

@@ -17,11 +17,15 @@ multi-tenant SaaS:
   network policy, and/or vLLM `--api-key`.
 - **Optional first-class key:** set `VLLM_API_KEY` (or `API_KEY`) in `.env`.
   `serve.sh` and the multi-node **head** then pass `--api-key` automatically.
-  Unset = open lab default (no auth). Clients use
-  `Authorization: Bearer <key>`.
+  Unset = open lab default (no auth). Built-in HTTP probes and validation
+  clients use the same key as `Authorization: Bearer <key>`. Prefer the
+  environment variable to a command-line secret; dry-run launch output
+  redacts API and Hugging Face credentials.
 - Cluster scripts expect **key-based SSH** from head → worker. Keep those
   keys offline from the git tree; use a local `.env` for `HEAD_IP` /
   `WORKER_IP` and related fabric settings (see `.env.example`).
+  Worker calls use BatchMode, bounded connection/liveness settings, and an
+  SSH option terminator before the validated host value.
 - Never commit `.env`, tokens, or host-specific overlays. `.gitignore`
   already excludes `.env` and common agent instruction files.
 

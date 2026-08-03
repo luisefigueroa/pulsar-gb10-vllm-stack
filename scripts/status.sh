@@ -33,9 +33,15 @@ fi
 
 if [ -n "${WORKER_IP:-}" ]; then
   echo "[status] containers (worker $WORKER_IP)"
-  ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_IP" \
+  if ! ssh_worker true >/dev/null 2>&1; then
+    warn "worker SSH unreachable"
+  elif ! ssh_worker "docker info >/dev/null 2>&1"; then
+    warn "worker reachable but Docker daemon unavailable"
+  else
+    ssh_worker \
     "printf '%-40s %-30s %s\n' NAMES STATUS IMAGE; docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | awk -F'\t' 'BEGIN{IGNORECASE=1} \$1 ~ /vllm/ || \$3 ~ /vllm/ {printf \"%-40s %-30s %s\n\", \$1, \$2, \$3}'" \
-    2>/dev/null || warn "worker unreachable"
+      2>/dev/null || warn "worker Docker container listing failed"
+  fi
 else
   warn "WORKER_IP unset — skip worker container list (set in .env for Path B)"
 fi
@@ -48,9 +54,11 @@ if [ -n "$NAME" ]; then
 fi
 
 echo "[status] HTTP :${PORT_SCAN}"
-if curl -fsS --max-time 3 "http://127.0.0.1:${PORT_SCAN}/health" >/dev/null 2>&1; then
+api_auth_args=()
+api_auth_curl_args api_auth_args
+if curl -fsS --max-time 3 "${api_auth_args[@]}" "http://127.0.0.1:${PORT_SCAN}/health" >/dev/null 2>&1; then
   log "health OK"
-  models_json=$(curl -fsS --max-time 5 "http://127.0.0.1:${PORT_SCAN}/v1/models" 2>/dev/null || true)
+  models_json=$(curl -fsS --max-time 5 "${api_auth_args[@]}" "http://127.0.0.1:${PORT_SCAN}/v1/models" 2>/dev/null || true)
   if [ -n "$models_json" ]; then
     echo "$models_json" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("models:", ", ".join(x["id"] for x in d.get("data",[])))' 2>/dev/null \
       || echo "$models_json" | head -c 400
@@ -65,6 +73,7 @@ if curl -fsS --max-time 3 "http://127.0.0.1:${PORT_SCAN}/health" >/dev/null 2>&1
   if [ -n "${model_json:-}" ]; then
     log "smoke completion model=$model_json"
     curl -fsS --max-time 120 "http://127.0.0.1:${PORT_SCAN}/v1/completions" \
+      "${api_auth_args[@]}" \
       -H 'Content-Type: application/json' \
       -d "{\"model\":\"${model_json}\",\"prompt\":\"2+2=\",\"max_tokens\":8,\"temperature\":0}" \
       && echo

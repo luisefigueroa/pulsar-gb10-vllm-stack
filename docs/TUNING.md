@@ -96,15 +96,21 @@ the acceptance factor). Re-measured with fixed metering + natural prompts:
 
 | Method | Status | Notes |
 |---|---|---|
-| **DSpark k=5** on DeepSeek-V4-Flash (PR-41834, 2-node) | **RECOMMENDED** | +79% c=1 (48.4 vs 27.1); 150-min soaks PASS; launch with `--spec-decode` |
+| **DSpark k=5** on DeepSeek-V4-Flash (PR-41834, 2-node) | **DEFAULT** | +79% c=1 (48.4 vs 27.1); 150-min soaks PASS; roll back with `--no-spec-decode` |
 | **MTP k=1** on Nemotron-Super (triton draft head) | **opt-in WIN** | +47% c=1; lossless; `./serve.sh … --spec-decode` |
 | **DFlash k=15** on Laguna | **marginal opt-in** | +13% c=1; default conf keeps it off |
 | **ngram** on GDN hybrids (Qwen3.6) | **FAIL** | output corruption — never enable |
 | Generic **MTP** on DSV4 (pre-DSpark path) | superseded | use DSpark on the flagship image instead |
 
-Always use `validate/bench_serve.py` (token counts from usage, not SSE
-chunks) and natural prompts for new A/Bs. Historical pre-fix tables in
+Always use `validate/bench_serve.py` (token counts from usage, not SSE chunks)
+and natural prompts for new A/Bs. Historical pre-fix tables in
 VALIDATION.md are retained as the retraction trail, not as ship guidance.
+
+DSpark k is not part of the tuning surface. For DeepSeek-V4-Flash-0731,
+`num_speculative_tokens` must equal the checkpoint's `dspark_block_size=5`.
+Larger values draft structurally unreachable positions and reduce acceptance
+([vLLM PR #41834](https://github.com/vllm-project/vllm/pull/41834)); changing k
+requires a checkpoint/upstream contract change and full revalidation.
 
 ## Determinism knobs
 

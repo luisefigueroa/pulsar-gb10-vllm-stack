@@ -19,14 +19,16 @@ docker save <new-image> | ssh "$WORKER_IP" docker load
 sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 ```
 Update the pin (`Dockerfile` digest or the conf's `IMAGE=`) in a branch.
-Keep the OLD captures in results/ — they are the A/B baselines.
+Keep the OLD captures in results/ — they are the A/B baselines. Use a unique
+`--tag`; the runner refuses to overwrite any matching artifact. Built-in
+Python clients automatically use `VLLM_API_KEY` / `API_KEY` when configured.
 
 ## 1. Canary (10 min)
 
 ```bash
 ./serve.sh qwen3-1.7b -d               # healthy in ~2 min or the image is broken
 validate/run-gates.sh qwen3-1.7b --tag <bump-tag>
-docker rm -f vllm-qwen3-1.7b
+./pulsar stop qwen3-1.7b
 cluster/stop-cluster.sh --all
 cluster/start-cluster.sh qwen3-1.7b-2node   # multi-node plumbing
 cluster/stop-cluster.sh qwen3-1.7b-2node
@@ -43,12 +45,14 @@ validate/run-gates.sh <served-name> \
     --baseline results/<prior-capture-runA>.json \
     --needle-tokens <its validated ctx: 250000 laguna / 125000 nano+qwen / 0 super> \
     --tag <bump-tag>
-docker rm -f vllm-<name>
+./pulsar stop <name>
 ```
-Gate reading: run-to-run must be IDENTICAL for FLASH_ATTN-path models
-(qwen, nano) and FP-EQUIVALENT for Laguna (known FLASHINFER-path noise);
-vs-baseline must have ZERO hard disagreements; bench within ~5% of the
-README table or investigate.
+Gate reading: same-run comparison is strict (`--require-identical`) by
+default. It must be IDENTICAL for FLASH_ATTN-path models (qwen, nano). For
+Laguna only, explicitly append `--allow-fp-equivalent-run-to-run` because its
+known FLASHINFER-path noise is FP-equivalent. Vs-baseline must have ZERO hard
+disagreements; an incomplete warmup or measured concurrency level exits
+nonzero. Bench must remain within ~5% of the README table or be investigated.
 
 **grep the engine log on every first boot** — backend selection changes
 silently across versions:
@@ -71,15 +75,18 @@ container (TROUBLESHOOTING.md).
 
 ```bash
 cluster/preflight.sh deepseek-v4-flash
-cluster/start-cluster.sh deepseek-v4-flash --spec-decode  # recommended ship path; NCCL_DEBUG=INFO on first bump boot
+cluster/start-cluster.sh deepseek-v4-flash  # default DSpark ship path; NCCL_DEBUG=INFO on first bump boot
 docker logs vllm-cluster-deepseek-v4-flash 2>&1 | grep -m2 "NET/IB"   # RDMA, not TCP
 # THE STOCK-KILLER STRESS SEQUENCE — all three killed stock v0.26.0:
 validate/run-gates.sh deepseek-v4-flash --baseline results/dsv4-0731-dspark-capture.json --tag <bump-tag>
 #   (gate 1 = 30 sequential captures; gate 3's fresh prefills = the livelock trigger)
-for i in $(seq 1 8); do curl -fsS --max-time 300 http://127.0.0.1:8000/v1/completions \
+API_KEY_VALUE="${VLLM_API_KEY:-${API_KEY:-}}"
+AUTH_HEADER=()
+[ -n "$API_KEY_VALUE" ] && AUTH_HEADER=(-H "Authorization: Bearer $API_KEY_VALUE")
+for i in $(seq 1 8); do curl -fsS --max-time 300 "${AUTH_HEADER[@]}" http://127.0.0.1:8000/v1/completions \
   -H 'Content-Type: application/json' \
   -d "{\"model\":\"deepseek-v4-flash\",\"prompt\":\"topic $i:\",\"max_tokens\":60,\"temperature\":0}" -o /dev/null & done; wait
-curl -fs http://127.0.0.1:8000/health && echo SURVIVED
+curl -fs "${AUTH_HEADER[@]}" http://127.0.0.1:8000/health && echo SURVIVED
 # needle at the claimed context:
 python3 validate/needle.py --model deepseek-v4-flash --context-tokens 450000 --depths 0.05 0.5 0.95
 # gsm8k as in step 3 (expect ~0.945-0.97)

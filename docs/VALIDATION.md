@@ -16,7 +16,7 @@ HISTORICAL / SUPERSEDED markers.
 
 | Role | What to run | Image | Notes |
 |---|---|---|---|
-| **Flagship (2-node)** | `cluster/start-cluster.sh deepseek-v4-flash --spec-decode` | published PR-41834 digest in model conf | DeepSeek-V4-Flash-**0731**; DSpark k=5 **recommended**; canonical **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01; the 10 GB/577k result remains historical evidence. |
+| **Flagship (2-node)** | `cluster/start-cluster.sh deepseek-v4-flash` | published PR-41834 digest in model conf | DeepSeek-V4-Flash-**0731**; DSpark default-on at checkpoint-fixed k=5; canonical **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01; the 10 GB/577k result remains historical evidence. |
 | Fallback checkpoint | `deepseek-v4-flash-0422` | same PR-41834 image | Fully validated; superseded by 0731 as default conf |
 | **Primary single-node** | `./serve.sh laguna-s-2.1-nvfp4 -d` | `vllm/vllm-openai:v0.26.0` | NVFP4; graphs on; DFlash off by default |
 | Fast single-node | `./serve.sh nemotron-3-nano-30b-nvfp4 -d` | mainline | Fastest tok/s on box |
@@ -99,16 +99,22 @@ GDN/Mamba hybrids). There is no hardware or software drift between nodes.
 After the 2026-07-31 harness metering fix (section below), **present-tense**
 guidance is:
 
-| Path | Default | How to enable |
+| Path | Default | Override |
 |---|---|---|
-| DeepSeek-V4-Flash **DSpark k=5** (PR-41834) | **RECOMMENDED** | `cluster/start-cluster.sh deepseek-v4-flash --spec-decode` |
+| DeepSeek-V4-Flash **DSpark k=5** (PR-41834) | **on** | `--no-spec-decode` rolls back to base decode |
 | Nemotron-Super **MTP k=1** | base; **opt-in win** (+47% c=1) | `./serve.sh nemotron-3-super-120b-nvfp4 --spec-decode` |
 | Laguna **DFlash k=15** | **off** (marginal +13%) | only with a fresh A/B |
 | **ngram** on GDN hybrids | **never** | removed from conf — corrupts output |
 | Generic DSV4 **MTP** | superseded by DSpark on the flagship image | — |
 
-Configs ship `SPEC_DECODE_ARGS` only where validated; the launcher still
-requires `--spec-decode` so base mode stays one flag flip away.
+Configs ship `SPEC_DECODE_ARGS` only where validated. `RECOMMENDED_SPEC=1`
+makes that validated path the default; `--no-spec-decode` is the explicit
+rollback. Optional profiles remain off unless `--spec-decode` is supplied.
+
+For the flagship, k=5 is a checkpoint invariant: it must equal
+`dspark_block_size=5`. It is not a tuning knob; larger blocks draft unreachable
+positions and reduce acceptance
+([vLLM PR #41834](https://github.com/vllm-project/vllm/pull/41834)).
 
 ### Historical pre-fix table (INSTRUMENT ERROR — do not ship from this)
 
@@ -132,7 +138,7 @@ ship with spec decode. That conclusion mixed real ngram-on-GDN corruption
 with **undercounted** throughput. See the corrected A/B table and flagship
 spec-on soaks later in this file. **Do not use this historical bottom line
 for serving decisions.**
-| DeepSeek-V4-Flash 2-node | mtp k=2 (the prior production flag set) | 69.3% (3619/5222) | **17.34 vs 27.02 c=1 (-36%)** *(undercounted)*; worse at c=2/4 | Yes — FP-EQUIVALENT | **HISTORICAL** — generic MTP superseded by **DSpark k=5 recommended** on PR-41834 |
+| DeepSeek-V4-Flash 2-node | mtp k=2 (the prior production flag set) | 69.3% (3619/5222) | **17.34 vs 27.02 c=1 (-36%)** *(undercounted)*; worse at c=2/4 | Yes — FP-EQUIVALENT | **HISTORICAL** — generic MTP superseded by **default DSpark k=5** on PR-41834 |
 
 ## Soaks
 
@@ -185,7 +191,7 @@ runs TP=2 cross-node, CUDA graphs ON:
 | gsm8k | 0.945 strict (sparkrun 0.970; within noise at n=200, note upstream #49927 reports V4 distribution shifts) |
 | Needle @124K | 3/3 PASS |
 | Output vs sparkrun | benign boundary flips only (both coherent, facts identical) |
-| **DSpark k=5 spec decode** | **HISTORICAL (pre-metering-fix):** 81% acceptance but **-47% tok/s reported** (14.3 vs 27.15) with graphs on/off. That throughput is **instrument error** — see corrected +79% A/B. Ported draft opts remain perf-neutral under the fixed meter. **Current: DSpark RECOMMENDED** via `--spec-decode`. |
+| **DSpark k=5 spec decode** | **HISTORICAL (pre-metering-fix):** 81% acceptance but **-47% tok/s reported** (14.3 vs 27.15) with graphs on/off. That throughput is **instrument error** — see corrected +79% A/B. Ported draft opts remain perf-neutral under the fixed meter. **Current: DSpark is default-on**; use `--no-spec-decode` only for rollback. |
 
 **Promotion soak (2026-07-28/29): PASS.** 150 min @ c=8, **3318 requests, 0
 errors**, no leak signal (decile drift +0.78 GiB, page-cache territory), 81 C
@@ -196,7 +202,7 @@ up and healthy for **27+ hours total** across idle and load
 **Needle @447,237 tokens at max-model-len 500000: 3/3 PASS (2026-07-30).**
 
 **PROMOTED 2026-07-30**: `models/deepseek-v4-flash.conf` now runs the
-upstream-lineage image (PR-41834). DSpark is recommended on that flagship
+upstream-lineage image (PR-41834). DSpark is the validated flagship default
 (see corrected A/B + soaks). Community-binary experiments are historical only
 and are not an in-tree launch path. Note historical lines above
 pending
@@ -220,7 +226,7 @@ should cost ~1.5; the structural cost sits in the upstream verify/round
 machinery (rejection trim, MHC bookkeeping, or host-sync stalls), not in
 draft comms. Pinpointing it needs a torch/nsys profile of a single round —
 scoped as future work. The port is kept (correct, harmless, upstreamable);
-spec decode serving decisions follow the corrected doctrine (DSpark recommended), not this pre-fix A/B.
+spec decode serving decisions follow the corrected doctrine (DSpark default-on), not this pre-fix A/B.
 
 Corrected hypothesis trail: "draft comms dominate" (from the 10 MB/round
 arithmetic) is now REFUTED by direct experiment — the arithmetic was right
@@ -273,8 +279,8 @@ harness task limit (preserved as bonus evidence: 1,385 req, 0 errors) and
 rerun detached — total sustained load ~210+ min.
 Raw: results/soak-dsv4-dspark-150min.json + soak-dsv4-dspark-node2-samples.log.
 
-**Consequence: spec decode (DSpark k=5) is now the RECOMMENDED flagship
-serving mode** — every gate (correctness, perf, soak) is earned.
+**Consequence: spec decode (DSpark k=5) is the default flagship serving
+mode** — every gate (correctness, perf, soak) is earned.
 
 ## DeepSeek-V4-Flash-0731 candidate battery (2026-07-31) — PARITY, tested
 
@@ -352,7 +358,7 @@ of continuous load, not `/health`. Raw: results/soak-dsv4-0731-150min.json
 
 **Consequence: 0731 is the flagship.** `models/deepseek-v4-flash.conf` now
 serves DeepSeek-V4-Flash-0731 with the integrated drafter (DSpark k=5
-recommended via `--spec-decode`); the 04-22 checkpoint is demoted to
+default-on with `--no-spec-decode` rollback); the 04-22 checkpoint is demoted to
 `deepseek-v4-flash-0422.conf` (fallback, fully validated); the separate
 `deepseek-v4-flash-dspark.conf` is retired — the integrated drafter
 supersedes the standalone -DSpark checkpoint (conf recoverable from git

@@ -122,7 +122,7 @@ peer_ip_on_if() {
     ssh_opts+=(-o StrictHostKeyChecking=accept-new)
   fi
   # Prefer already-enrolled keys; accept-new only when explicitly requested.
-  ssh "${ssh_opts[@]}" "$host" \
+  ssh "${ssh_opts[@]}" -- "$host" \
     "ip -4 -o addr show dev $(printf '%q' "$ifname") 2>/dev/null | awk '{print \$4}' | cut -d/ -f1 | head -1" \
     2>/dev/null || return 1
 }

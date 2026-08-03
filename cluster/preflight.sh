@@ -8,7 +8,8 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 [ -f .env ] && { set -a; . ./.env; set +a; }
-. cluster/cluster-env.sh
+# shellcheck disable=SC1091
+. scripts/lib.sh
 require_cluster_ips || exit 1
 VLLM_IMAGE_MAINLINE="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai:v0.26.0}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
@@ -26,9 +27,12 @@ if [ -n "${WORKER_IP_RAIL1:-}" ]; then
 else
   warn "WORKER_IP_RAIL1 unset — skip rail-1 ping (set in .env for dual-rail checks)"
 fi
-ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_IP" true 2>/dev/null && ok "ssh $WORKER_IP" || bad "key-based ssh $WORKER_IP"
+ssh_worker true 2>/dev/null && ok "ssh $WORKER_IP" || bad "key-based ssh $WORKER_IP"
 
 echo "[preflight] per-node checks"
+run_head_probe() { bash -c "$1"; }
+run_worker_probe() { ssh_worker "$1"; }
+
 check_node() {
   local name="$1" run="$2"
   local rdma gpu runtime shm
@@ -44,12 +48,12 @@ check_node() {
   avail_kb=$($run "awk '/MemAvailable/{print \$2}' /proc/meminfo" 2>/dev/null)
   if [ "${avail_kb:-0}" -ge 104857600 ]; then ok "$name: $((avail_kb/1048576)) GiB available"; else warn "$name: only $(( ${avail_kb:-0} /1048576)) GiB available — another workload running?"; fi
 }
-check_node "head  " "bash -c"
-check_node "worker" "ssh $WORKER_IP"
+check_node "head  " run_head_probe
+check_node "worker" run_worker_probe
 
 echo "[preflight] stale state"
 STALE_LOCAL=$(docker ps -a --format '{{.Names}}' | grep -c '^vllm-cluster-' || true)
-STALE_REMOTE=$(ssh "$WORKER_IP" "docker ps -a --format '{{.Names}}' | grep -c '^vllm-cluster-'" 2>/dev/null || true)
+STALE_REMOTE=$(ssh_worker "docker ps -a --format '{{.Names}}' | grep -c '^vllm-cluster-'" 2>/dev/null || true)
 [ "${STALE_LOCAL:-0}" -eq 0 ] && ok "head: no stale vllm-cluster containers" || bad "head: $STALE_LOCAL stale vllm-cluster containers (run cluster/stop-cluster.sh)"
 [ "${STALE_REMOTE:-0}" -eq 0 ] && ok "worker: no stale vllm-cluster containers" || bad "worker: $STALE_REMOTE stale (run cluster/stop-cluster.sh)"
 
@@ -62,15 +66,15 @@ if [ -n "${1:-}" ]; then
     IMAGE="${IMAGE:-$VLLM_IMAGE_MAINLINE}"
     echo "[preflight] model $1"
     docker image inspect "$IMAGE" >/dev/null 2>&1 && ok "head: image $IMAGE" || bad "head: image $IMAGE not pulled"
-    ssh "$WORKER_IP" "docker image inspect '$IMAGE' >/dev/null 2>&1" && ok "worker: image $IMAGE" || bad "worker: image $IMAGE not pulled"
+    ssh_worker "docker image inspect $(printf '%q' "$IMAGE") >/dev/null 2>&1" && ok "worker: image $IMAGE" || bad "worker: image $IMAGE not pulled"
     # weights must exist on BOTH nodes (each rank loads locally); do a real read
     HFDIR="models--${MODEL//\//--}"
     if [[ "$MODEL" = /* ]]; then
       head -c 64 "$MODEL/config.json" >/dev/null 2>&1 && ok "head: weights readable at $MODEL" || bad "head: cannot read $MODEL/config.json"
-      ssh "$WORKER_IP" "head -c 64 '$MODEL/config.json' >/dev/null 2>&1" && ok "worker: weights readable" || bad "worker: cannot read $MODEL/config.json"
+      ssh_worker "head -c 64 $(printf '%q' "$MODEL/config.json") >/dev/null 2>&1" && ok "worker: weights readable" || bad "worker: cannot read $MODEL/config.json"
     else
       test -d "$HF_CACHE/hub/$HFDIR" && ok "head: HF cache has $HFDIR" || bad "head: $HFDIR missing from $HF_CACHE/hub"
-      ssh "$WORKER_IP" "test -d '$HF_CACHE/hub/$HFDIR'" && ok "worker: HF cache has $HFDIR" || bad "worker: $HFDIR missing on worker"
+      ssh_worker "test -d $(printf '%q' "$HF_CACHE/hub/$HFDIR")" && ok "worker: HF cache has $HFDIR" || bad "worker: $HFDIR missing on worker"
     fi
   else
     bad "no such config: $CONF"

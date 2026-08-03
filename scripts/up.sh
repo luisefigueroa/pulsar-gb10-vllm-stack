@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Orchestrate checks then launch serve.sh or start-cluster.sh.
-#   scripts/up.sh <model-name> [--spec-decode] [--force] [--skip-preflight]
+#   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode] [--force]
+#                 [--skip-preflight]
 #                 [--skip-weights-check] [--accept-memory-warn] [--pull-image]
 #                 [--dry-run] [--yes] [--verbose]
 set -euo pipefail
@@ -12,10 +13,11 @@ NAME="${1:-}"
 [ -n "$NAME" ] || die "usage: $0 <model-name> [options]"
 shift
 
-SPEC=0 FORCE=0 SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0 DRY=0 YES=0 VERBOSE=0
+SPEC_MODE=auto FORCE=0 SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0 DRY=0 YES=0 VERBOSE=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --spec-decode) SPEC=1 ;;
+    --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
+    --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --force) FORCE=1 ;;
     --skip-preflight) SKIP_PF=1 ;;
     --skip-weights-check) SKIP_W=1 ;;
@@ -28,7 +30,8 @@ while [ $# -gt 0 ]; do
       cat <<'EOF'
 usage: scripts/up.sh <model-name> [options]
 
-  --spec-decode          enable conf SPEC_DECODE_ARGS
+  --spec-decode          force on the conf's validated SPEC_DECODE_ARGS
+  --no-spec-decode       force off speculative decode (rollback)
   --dry-run              run checks only (no launch)
   --verbose              full check logs (default is one-line gates)
   --accept-memory-warn   allow start on memory WARN
@@ -45,17 +48,16 @@ EOF
 done
 
 load_conf "$NAME"
+resolve_spec_decode "$SPEC_MODE"
 export QUIET=1
 [ "$VERBOSE" = 1 ] && export QUIET=0
 
 echo "┌─ up  $NAME"
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT  status=$STATUS"
-if [ "$SPEC" = 1 ]; then
-  echo "│  spec-decode=ON"
-elif has_spec_args && [ "${RECOMMENDED_SPEC}" = "1" ]; then
-  echo "│  spec-decode=off  (recommended: add --spec-decode)"
+if [ "$SPEC_DECODE_ENABLED" = 1 ]; then
+  echo "│  spec-decode=ON  ($SPEC_DECODE_SOURCE)"
 else
-  echo "│  spec-decode=off"
+  echo "│  spec-decode=off  ($SPEC_DECODE_SOURCE)"
 fi
 [ "$DRY" = 1 ] && echo "│  mode=DRY-RUN (checks only)"
 echo "├─ checks"
@@ -65,11 +67,6 @@ if status_requires_force && [ "$FORCE" != 1 ]; then
   die "$NAME status=$STATUS — refuse start without --force (allowlist: tested*)"
 fi
 echo "PASS  conf      status=$STATUS"
-
-if [ "$SPEC" = 1 ] && ! has_spec_args; then
-  echo "FAIL  spec      no SPEC_DECODE_ARGS in conf"
-  die "$NAME has no SPEC_DECODE_ARGS; refusing --spec-decode"
-fi
 
 if [ "$NODES" = "2" ]; then
   if ! require_cluster_ips; then
@@ -98,10 +95,16 @@ if [ "$img_rc" != 0 ]; then
       die "WORKER_IP unset — cannot verify image on both nodes"
       ;;
     missing-on-worker)
-      die "image on head only — run: scripts/sync-image.sh $NAME --yes"
+      if [ "$DRY" != 1 ] && { [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; }; then
+        "$REPO_DIR/scripts/sync-image.sh" "$NAME" --yes
+        QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" \
+          || die "image still missing after worker sync"
+      else
+        die "image on head only — run: scripts/sync-image.sh $NAME --yes"
+      fi
       ;;
     missing-on-head|missing-both|unknown|"")
-      if [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; then
+      if [ "$DRY" != 1 ] && { [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; }; then
         "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
         QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" || die "image still missing after sync"
       else
@@ -126,6 +129,12 @@ if [ "$SKIP_W" != 1 ]; then
   fi
   set -e
   if [ "$w_rc" != 0 ]; then
+    w_json=$("$REPO_DIR/scripts/check-weights.sh" "$NAME" --json 2>/dev/null || true)
+    w_state=$(printf '%s' "$w_json" | python3 -c \
+      'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null || echo unknown)
+    if [ "$w_state" = worker-unreachable ]; then
+      die "worker SSH unavailable — cannot verify weights; no pull or sync attempted"
+    fi
     kind=$(model_source_kind)
     if [ "$kind" = hf ]; then
       die "weights missing — scripts/pull-weights.sh $NAME"
@@ -147,18 +156,24 @@ else
   mem_rc=$?
 fi
 set -e
-if [ "$mem_rc" = 1 ]; then
-  die "memory preflight FAILED"
-fi
-if [ "$mem_rc" = 2 ]; then
-  if [ "$DRY" = 1 ]; then
-    echo "      (WARN accepted for dry-run)"
-  elif [ "$ACCEPT_MEM" = 1 ]; then
-    echo "      (WARN accepted via --accept-memory-warn)"
-  else
-    die "memory WARN — re-run with --accept-memory-warn to launch"
-  fi
-fi
+case "$mem_rc" in
+  0) ;;
+  1)
+    die "memory preflight FAILED"
+    ;;
+  2)
+    if [ "$DRY" = 1 ]; then
+      echo "      (WARN accepted for dry-run)"
+    elif [ "$ACCEPT_MEM" = 1 ]; then
+      echo "      (WARN accepted via --accept-memory-warn)"
+    else
+      die "memory WARN — re-run with --accept-memory-warn to launch"
+    fi
+    ;;
+  *)
+    die "memory preflight failed internally (exit=$mem_rc) — refusing launch"
+    ;;
+esac
 
 # --- multi-node preflight ---
 if [ "$NODES" = "2" ]; then
@@ -189,7 +204,19 @@ if [ "$NODES" = "2" ]; then
 fi
 
 spec_flag=()
-[ "$SPEC" = 1 ] && spec_flag=(--spec-decode)
+case "$SPEC_MODE" in
+  on) spec_flag=(--spec-decode) ;;
+  off) spec_flag=(--no-spec-decode) ;;
+  auto) ;;
+esac
+
+launch_flags=()
+[ "$FORCE" = 1 ] && launch_flags+=(--force)
+if [ "$NODES" = "2" ]; then
+  # up.sh already ran (or explicitly skipped) this preflight. Always suppress
+  # start-cluster.sh's duplicate run while preserving the caller's decision.
+  launch_flags+=(--skip-preflight)
+fi
 
 echo "└─"
 
@@ -199,7 +226,7 @@ if [ "$DRY" = 1 ]; then
 DRY-RUN OK
   conf:     $NAME
   served:   $SERVED_NAME
-  would:    $([ "$NODES" = 2 ] && echo "cluster/start-cluster.sh $NAME ${spec_flag[*]:-}" || echo "serve.sh $NAME -d ${spec_flag[*]:-}")
+  would:    $([ "$NODES" = 2 ] && echo "cluster/start-cluster.sh $NAME ${spec_flag[*]:-} ${launch_flags[*]:-}" || echo "serve.sh $NAME -d ${spec_flag[*]:-} ${launch_flags[*]:-}")
   live:     scripts/status.sh $NAME
   note:     no containers changed
 EOF
@@ -209,15 +236,19 @@ fi
 # --- launch ---
 if [ "$NODES" = "2" ]; then
   log "starting 2-node cluster…"
-  "$REPO_DIR/cluster/start-cluster.sh" "$NAME" ${spec_flag[@]+"${spec_flag[@]}"}
+  "$REPO_DIR/cluster/start-cluster.sh" "$NAME" \
+    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
 else
   log "starting single-node…"
-  "$REPO_DIR/serve.sh" "$NAME" -d ${spec_flag[@]+"${spec_flag[@]}"}
+  "$REPO_DIR/serve.sh" "$NAME" -d \
+    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
+  api_auth_args=()
+  api_auth_curl_args api_auth_args
   cname=$(container_name_for "$NAME" 1)
   log "waiting for http://127.0.0.1:${PORT}/health (cold load can take minutes)"
   ok=0
   for i in $(seq 1 "${WAIT_ATTEMPTS:-90}"); do
-    if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 "${api_auth_args[@]}" "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
       ok=1
       break
     fi
@@ -235,6 +266,7 @@ else
   fi
   log "healthy — smoke completion"
   curl -fsS --max-time 120 "http://127.0.0.1:${PORT}/v1/completions" \
+    "${api_auth_args[@]}" \
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"${SERVED_NAME}\",\"prompt\":\"2+2=\",\"max_tokens\":4,\"temperature\":0}" \
     && echo
@@ -246,7 +278,7 @@ READY
   conf:     $NAME
   served:   $SERVED_NAME
   url:      http://127.0.0.1:${PORT}/v1
-  smoke:    curl -fsS http://127.0.0.1:${PORT}/v1/models
+  inspect:  scripts/quick-status.sh
   status:   scripts/status.sh $NAME
   stop:     scripts/down.sh $NAME
   security: do not expose :${PORT} without auth (SECURITY.md)

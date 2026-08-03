@@ -24,13 +24,15 @@ import threading
 import time
 import urllib.request
 
+from http_auth import api_headers, resolve_api_key
+
 STOP = False
 ERRORS = []
 COMPLETED = [0]
 LOCK = threading.Lock()
 
 
-def worker(url, model, wid):
+def worker(url, model, wid, api_key):
     rng = random.Random(wid)
     while not STOP:
         n_in = rng.choice([64, 256, 1024, 4096])
@@ -50,7 +52,7 @@ def worker(url, model, wid):
             req = urllib.request.Request(
                 url + "/v1/completions",
                 data=json.dumps(body).encode(),
-                headers={"Content-Type": "application/json"},
+                headers=api_headers(api_key, content_type=True),
             )
             with urllib.request.urlopen(req, timeout=1800) as r:
                 json.load(r)
@@ -96,6 +98,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", required=True)
+    ap.add_argument("--api-key", default=None,
+                    help="API key; defaults to VLLM_API_KEY or API_KEY environment")
     ap.add_argument("--minutes", type=float, required=True)
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--out", default=None)
@@ -117,6 +121,7 @@ def main():
         help="mem shrink threshold percent of start-decile mean (default 5)",
     )
     a = ap.parse_args()
+    api_key = resolve_api_key(a.api_key)
 
     threads = [
         threading.Thread(target=worker, args=(a.url, a.model, i), daemon=True)

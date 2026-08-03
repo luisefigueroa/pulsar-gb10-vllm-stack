@@ -20,15 +20,15 @@ record() {
   CHECKS+=("${level}|${id}|${msg}")
   case "$level" in
     ok)
-      [ "$JSON" = 1 ] || printf '  ok   %s\n' "$msg"
+      [ "$JSON" = 1 ] || print_hanging "  ok   " "$msg"
       ;;
     warn)
       WARN=1
-      [ "$JSON" = 1 ] || printf '  warn %s\n' "$msg"
+      [ "$JSON" = 1 ] || print_hanging "  warn " "$msg"
       ;;
     fail)
       FAIL=1
-      [ "$JSON" = 1 ] || printf '  FAIL %s\n' "$msg"
+      [ "$JSON" = 1 ] || print_hanging "  FAIL " "$msg"
       ;;
   esac
 }
@@ -57,40 +57,90 @@ else
 fi
 
 if command -v docker >/dev/null 2>&1; then
-  record ok docker "docker present"
-  runtimes=$(docker info -f '{{range $k,$v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null || true)
-  if echo " $runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
-    record ok docker_nvidia "docker nvidia runtime registered (runtimes: $runtimes)"
-  elif docker info 2>/dev/null | grep -q 'nvidia.com/gpu'; then
-    record ok docker_nvidia "docker nvidia CDI devices present"
-  elif command -v nvidia-container-runtime >/dev/null 2>&1 \
-    || command -v nvidia-container-cli >/dev/null 2>&1; then
-    record warn docker_nvidia "nvidia container tools installed but runtime not listed in docker info yet — try: sudo systemctl restart docker"
+  if docker_info=$(docker info 2>/dev/null); then
+    record ok docker "docker present; daemon reachable"
+    runtimes=$(docker info -f '{{range $k,$v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null || true)
+    if echo " $runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
+      record ok docker_nvidia "docker nvidia runtime registered (runtimes: $runtimes)"
+    elif printf '%s' "$docker_info" | grep -q 'nvidia.com/gpu'; then
+      record ok docker_nvidia "docker nvidia CDI devices present"
+    elif command -v nvidia-container-runtime >/dev/null 2>&1 \
+      || command -v nvidia-container-cli >/dev/null 2>&1; then
+      record warn docker_nvidia "nvidia container tools installed but runtime not listed in docker info yet — try: sudo systemctl restart docker"
+    else
+      record fail docker_nvidia "docker nvidia runtime missing (expected Runtimes includes nvidia)"
+    fi
   else
-    record fail docker_nvidia "docker nvidia runtime missing (expected Runtimes includes nvidia)"
+    record fail docker "docker present but daemon unavailable (start/fix Docker, then retry)"
   fi
 else
   record fail docker "docker missing"
 fi
 
 port="${PORT:-8000}"
+# Identify port owner: published ports, then stack-managed host-network services
+# (labels + /v1/models). Unknown ownership stays a blocking-style warn (read-only).
+port_owner_msg=""
 if command -v ss >/dev/null 2>&1; then
+  port_listening=0
   if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":${port}\$"; then
-    owner=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E ":${port}->|0.0.0.0:${port}" | head -1 || true)
-    if [ -n "$owner" ]; then
-      record warn port "port $port in use by container: $owner (expected if flagship already up — do not up another model on same port)"
-    else
-      record warn port "port $port already listening — identify the owner before up"
-    fi
-  else
-    record ok port "port $port free"
+    port_listening=1
   fi
 elif command -v lsof >/dev/null 2>&1; then
+  port_listening=0
   if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    record warn port "port $port already listening"
-  else
-    record ok port "port $port free"
+    port_listening=1
   fi
+else
+  port_listening=-1
+fi
+
+if [ "$port_listening" = 1 ]; then
+  owner=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
+    | grep -E ":${port}->|0.0.0.0:${port}" | head -1 || true)
+  if [ -n "$owner" ]; then
+    port_owner_msg="port $port in use by container: $owner (expected if a model is already up — do not up another on same port)"
+  else
+    # Host-network managed containers do not show published ports. Prefer labels.
+    managed_hit=""
+    while IFS= read -r cname; do
+      [ -n "$cname" ] || continue
+      meta=$(docker inspect --format \
+        '{{index .Config.Labels "io.pulsar.gb10.managed"}} {{index .Config.Labels "io.pulsar.gb10.conf"}} {{.HostConfig.NetworkMode}}' \
+        "$cname" 2>/dev/null || true)
+      # shellcheck disable=SC2086
+      set -- $meta
+      mflag="${1:-}" conf_l="${2:-}" net="${3:-}"
+      if [ "$mflag" = "true" ] && [ -n "$conf_l" ]; then
+        if [ "$net" = "host" ] || [ "$net" = "default" ]; then
+          managed_hit="$cname conf=$conf_l net=$net"
+          break
+        fi
+      fi
+    done < <(docker ps --format '{{.Names}}' 2>/dev/null || true)
+
+    api_ids=""
+    api_auth_args=()
+    api_auth_curl_args api_auth_args
+    if api_json=$(curl -fsS --max-time 2 "${api_auth_args[@]}" "http://127.0.0.1:${port}/v1/models" 2>/dev/null); then
+      api_ids=$(printf '%s' "$api_json" | python3 -c \
+        'import sys,json; d=json.load(sys.stdin); print(",".join(x.get("id","") for x in d.get("data",[])))' \
+        2>/dev/null || true)
+    fi
+
+    if [ -n "$managed_hit" ] && [ -n "$api_ids" ]; then
+      port_owner_msg="port $port in use by stack-managed host-network service ($managed_hit; API models=$api_ids)"
+    elif [ -n "$managed_hit" ]; then
+      port_owner_msg="port $port in use by stack-managed service ($managed_hit; API not confirmed)"
+    elif [ -n "$api_ids" ]; then
+      port_owner_msg="port $port listening with OpenAI API models=$api_ids (ownership not proven via stack labels — inventory before replace)"
+    else
+      port_owner_msg="port $port already listening — owner unknown (not a proven stack-managed service); identify before up; wizard will not stop unknown owners"
+    fi
+  fi
+  record warn port "$port_owner_msg"
+elif [ "$port_listening" = 0 ]; then
+  record ok port "port $port free"
 else
   record warn port "cannot probe port $port (no ss/lsof)"
 fi
@@ -129,19 +179,23 @@ trap - RETURN
 
 if [ -n "${WORKER_IP:-}" ]; then
   [ "$JSON" = 1 ] || echo "[doctor] worker $WORKER_IP"
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_IP" true 2>/dev/null; then
+  if ssh_worker true 2>/dev/null; then
     record ok worker_ssh "ssh $WORKER_IP"
-    wgpu=$(ssh -o BatchMode=yes "$WORKER_IP" "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" || true)
+    wgpu=$(ssh_worker "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" || true)
     if [ "$wgpu" = "NVIDIA GB10" ]; then
       record ok worker_gpu "worker GPU $wgpu"
     else
       record fail worker_gpu "worker GPU '$wgpu'"
     fi
-    if ssh -o BatchMode=yes "$WORKER_IP" "docker info -f '{{range \$k,\$v := .Runtimes}}{{\$k}} {{end}}' 2>/dev/null" \
-      | grep -Eq '(^|[[:space:]])nvidia([[:space:]]|$)'; then
-      record ok worker_docker_nvidia "worker docker nvidia"
+    if worker_runtimes=$(ssh_worker \
+      "docker info -f '{{range \$k,\$v := .Runtimes}}{{\$k}} {{end}}'" 2>/dev/null); then
+      if echo " $worker_runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
+        record ok worker_docker_nvidia "worker docker nvidia"
+      else
+        record fail worker_docker_nvidia "worker docker reachable but nvidia runtime missing"
+      fi
     else
-      record fail worker_docker_nvidia "worker docker nvidia missing"
+      record fail worker_docker "worker Docker daemon unavailable"
     fi
   else
     record fail worker_ssh "ssh $WORKER_IP failed (key-based BatchMode)"

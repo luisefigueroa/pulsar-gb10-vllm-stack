@@ -20,10 +20,23 @@ run() {
 
 run "status gate" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
+run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
+run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
+run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
+run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
+run "terminal formatting" "$REPO_DIR/scripts/selftest-terminal-format.sh"
+run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"
+run "API auth and secret redaction" "$REPO_DIR/scripts/selftest-api-auth.sh"
+run "validation verdicts" "$REPO_DIR/scripts/selftest-validation.sh"
+run "fail-closed probes" "$REPO_DIR/scripts/selftest-preflight-probes.sh"
+run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
+run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
+run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
+run "operator home + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "list-models --json" bash -c '
   j=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --json)
-  echo "$j" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"models\"); assert any(m[\"id\"]==\"deepseek-v4-flash\" for m in d[\"models\"])"
+  echo "$j" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"models\"); assert any(m[\"id\"]==\"deepseek-v4-flash\" and m[\"spec_default_enabled\"] for m in d[\"models\"])"
 '
 
 run "WEIGHTS_GIB disk formula" bash -c '
@@ -47,8 +60,21 @@ run "bench_serve asyncio API" bash -c '
   ! grep -q get_event_loop "'"$REPO_DIR"'/validate/bench_serve.py"
 '
 
+run "digest-pinned image sync repair" bash -c '
+  grep -q "docker load omitted the digest reference" "'"$REPO_DIR"'/scripts/sync-image.sh"
+  grep -q "ssh_worker.*docker pull" "'"$REPO_DIR"'/scripts/sync-image.sh"
+'
+
 run "wizard uses list-models --json" bash -c '
-  grep -q "list-models.sh\" --validated --json" "'"$REPO_DIR"'/wizard.sh"
+  grep -qE "list-models\.sh\" --validated --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
+'
+
+run "dispatcher routes home + wizard" bash -c '
+  grep -q "scripts/home.sh" "'"$REPO_DIR"'/pulsar"
+  grep -q "wizard.sh" "'"$REPO_DIR"'/pulsar"
+  test -x "'"$REPO_DIR"'/pulsar"
+  test -x "'"$REPO_DIR"'/scripts/home.sh"
+  test -x "'"$REPO_DIR"'/scripts/quick-status.sh"
 '
 
 echo "=============================="

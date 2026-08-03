@@ -72,16 +72,47 @@ scripts/list-models.sh --validated
 
 # First-run HF model (small): download weights if needed, then serve
 scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4   # or qwen3-1.7b canary
-scripts/up.sh nemotron-3-nano-30b-nvfp4             # checks image/weights/memory, waits healthy, smokes
+./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
+# equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
 
-# Or guided UI (optional: install https://github.com/charmbracelet/gum)
-./wizard.sh
+# Operator home (neutral workflow menu — no doctor/preflight until you pick)
+./pulsar
+# Direct serve/switch wizard (doctor + preflight; not the no-arg home)
+./pulsar wizard
+# equivalent: ./wizard.sh
+# Note: "./ wizard.sh" (space after ./) → "-bash: ./: Is a directory"; use "./pulsar wizard"
+# UI: vendored Gum on Linux ARM64 (blue palette). GUM=0 / NO_COLOR /
+# PULSAR_COLOR=never / TERM=dumb → plain uncolored menus (Gum not used).
+# PULSAR_ACCENT overrides blue accent when Gum is color-enabled (default 12)
+# Non-interactive stdin/stderr automatically uses the EOF-safe plain path
 ```
+
+**Operator home (`./pulsar`):** workflow menu — Current system status (default),
+Serve or switch a model, Stop a serving model, Maintenance, Diagnostics, Exit.
+Home is read-only by default; it does not run doctor/inventory until you choose.
+Quick status is a focused overview (inventory + `/v1/models` advertisement only —
+**not** an inference smoke). Full completion smoke is optional and explicit.
+Stop/maintenance only offer inventory `safe_to_stop` stack-managed services and
+always confirm before calling `scripts/down.sh` (never Docker cleanup directly).
+No automatic stale cleanup on doctor or startup.
+
+**Model switch safety (wizard):** `./pulsar wizard` still runs doctor once, then
+reads `scripts/inventory.sh --json` and `scripts/check-memory.sh`. It only offers
+stop for inventory `safe_to_stop` stack-managed services, never for unlabeled,
+legacy, mismatch, unknown, incomplete, or unreachable ranks. Stops run only
+after you confirm the final start/replace action; then inventory and cold
+memory preflight re-run (memory reclaim is never assumed). Docker/SSH probe
+errors fail closed and are never presented as missing artifacts; only
+label-proven complete ranks receive the already-loaded memory exemption. Hard
+memory FAIL never offers “continue anyway”; WARN may, with an explicit
+confirmation.
+See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 **Smoke** (lab network only — do **not** expose `:8000` without auth;
 [SECURITY.md](SECURITY.md)):
 
 ```bash
+# If VLLM_API_KEY is set, add: -H "Authorization: Bearer $VLLM_API_KEY"
 curl -fsS http://127.0.0.1:8000/v1/models
 curl -fsS http://127.0.0.1:8000/v1/completions \
   -H 'Content-Type: application/json' \
@@ -91,8 +122,10 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
 ```
 
 ```bash
-scripts/status.sh nemotron-3-nano-30b-nvfp4
-scripts/down.sh nemotron-3-nano-30b-nvfp4
+./pulsar status nemotron-3-nano-30b-nvfp4
+./pulsar stop nemotron-3-nano-30b-nvfp4
+# equivalent: scripts/status.sh / scripts/down.sh
+./pulsar inventory                 # read-only service + memory inventory
 ```
 
 NFS catalog models (e.g. `laguna-s-2.1-nvfp4`) need `/mnt/Models/...` mounted;
@@ -115,11 +148,12 @@ scripts/sync-image.sh deepseek-v4-flash --pull --yes
 scripts/pull-weights.sh deepseek-v4-flash --yes
 
 scripts/doctor.sh
-scripts/up.sh deepseek-v4-flash --spec-decode   # DSpark recommended
-# dry-run checks only: scripts/up.sh deepseek-v4-flash --spec-decode --dry-run
+scripts/up.sh deepseek-v4-flash                  # DSpark k=5 default
+# rollback: scripts/up.sh deepseek-v4-flash --no-spec-decode
+# dry-run checks only: scripts/up.sh deepseek-v4-flash --dry-run
 
-scripts/status.sh deepseek-v4-flash
-scripts/down.sh deepseek-v4-flash
+./pulsar status deepseek-v4-flash
+./pulsar stop deepseek-v4-flash
 ```
 
 Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
@@ -128,14 +162,17 @@ Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
 
 | Command | Role |
 |---|---|
+| `./pulsar` / `./pulsar wizard` | Root dispatcher → guided wizard |
+| `./pulsar inventory` | Read-only managed service + memory inventory |
+| `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |
 | `scripts/doctor.sh` | Host GPU/docker/port/cache (+ worker if `.env`) |
 | `scripts/list-models.sh` | Conf catalog |
-| `scripts/check-weights.sh` / `pull-weights.sh` | HF presence / download+rsync |
+| `scripts/check-weights.sh` / `pull-weights.sh` | HF snapshot completeness / download+rsync |
 | `scripts/check-image.sh` / `sync-image.sh` | Image presence / worker load |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
 | `scripts/detect-fabric.sh` | Propose NCCL IF / HEAD_IP |
-| `scripts/up.sh` / `down.sh` / `status.sh` | Start (with gates) / stop / probe |
-| `./wizard.sh` | gum (or plain) guided Path A/B |
+| `scripts/up.sh` / `down.sh` / `status.sh` | Start (with gates) / stop / probe (canonical) |
+| `./wizard.sh` | Direct wizard entry (same as `./pulsar wizard`) |
 | `./serve.sh` / `cluster/*` | Low-level launchers (still supported) |
 
 All servers speak the OpenAI API on :8000. Per-model flags live in
@@ -192,10 +229,11 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
   throughput by the accepted-block size; full story in TROUBLESHOOTING +
   the VALIDATION retraction trail). With honest metering and natural
   prompts: DSpark on the flagship **+79%** (48.4 vs 27.1 tok/s c=1),
-  Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). All opt-in
-  via `--spec-decode`; the spec-enabled 150-min soak has now PASSED twice
-  (separate -DSpark checkpoint, then the 0731 integrated drafter), making
-  **DSpark k=5 the recommended flagship mode**. The one standing failure:
+  Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). Optional paths
+  use `--spec-decode`; the flagship's soak-proven DSpark path is default-on
+  and rolls back with `--no-spec-decode`. Its k=5 equals the checkpoint's
+  `dspark_block_size` and is not a tuning knob. The spec-enabled 150-min soak
+  has PASSED twice. The one standing failure:
   ngram on GDN hybrids **corrupts output** — never enable it there.
 - **Deliberately OFF / not load-bearing, by measurement** (not vibes):
   MTU 9000, Ray (native `--nnodes` mp is the validated multi-node path).

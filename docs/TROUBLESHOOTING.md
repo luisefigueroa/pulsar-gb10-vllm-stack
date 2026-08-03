@@ -4,6 +4,64 @@ Every entry below happened during this build. Inherited-wisdom entries from
 the prior repo are marked [prior art] and were only included if we re-hit or
 re-verified them.
 
+## `./ wizard.sh` → `-bash: ./: Is a directory`
+
+**Hit:** typing `./ wizard.sh` (space after `./`) fails with
+`-bash: ./: Is a directory`.
+**Cause:** Bash executes the directory `./` and treats `wizard.sh` as an
+argument — not a missing empty command.
+**Fix:** `./pulsar wizard` (preferred) or `./wizard.sh` — no space after `./`.
+Note: bare `./pulsar` is the operator **home** menu; `./pulsar wizard` is the
+serve/switch shortcut.
+
+## Home “Current system status” looks fine but requests hang
+
+**Hit:** quick status shows an advertised model, but clients hang or time out.
+**Cause:** home quick status probes only `GET /v1/models` (advertisement). It
+does **not** run an inference completion and does not claim inference health.
+On multi-node, `/health` can also lie after worker loss (see monitoring section
+in OPERATIONS.md).
+**Fix:** run an explicit completion smoke (`./pulsar status` or the home
+status follow-up “Full smoke check”), or:
+`curl -fsS --max-time 15 http://127.0.0.1:8000/v1/completions ...`
+
+## Wizard / home will not stop my container / “not safe_to_stop”
+
+**Hit:** home Stop, Maintenance, or wizard switch refuses cleanup and says it
+will not stop unknown/legacy/mismatch services.
+**Cause:** only inventory `safe_to_stop` stack-managed services (labels
+`io.pulsar.gb10.managed=true` + consistent conf/rank) are eligible. Unlabeled
+legacy, mismatch, unknown GPU consumers, incomplete multi-node views, and
+unreachable workers are read-only. Stale managed containers hold no model
+memory and are optional maintenance only — never auto-cleaned on doctor/start.
+**Fix:** run `./pulsar inventory` (or `--json` / `--verbose`). Identify the
+owner. If it is truly stack-managed and complete, `./pulsar stop <conf>` or
+home Stop (after confirmation) lets `down.sh` revalidate labels. If unlabeled
+or foreign, stop it yourself only when you understand the process — home and
+wizard never kill it.
+**Related:** hard memory FAIL never offers “continue anyway”; free memory or
+stop a proven managed service first. After any stop, re-run inventory —
+reclaim is not assumed.
+
+## Gum menus look wrong / want plain text
+
+**Hit:** pink/purple UI, or no TUI in CI/scripts.
+**Fix:** color-enabled Gum always forces terminal-palette blue
+(`PULSAR_ACCENT`, default `12` for choose cursor/header/selected). When stdin
+or stderr is not a terminal, the CLI automatically uses the EOF-safe plain
+path. Set `GUM=0` for plain numbered menus. `NO_COLOR`, `TERM=dumb`, or `PULSAR_COLOR=never`
+**force the same plain path** (Gum is not invoked — empty style flags would
+fall back to Charm pink/purple). `GUM_BIN` overrides the binary when color is
+enabled.
+
+## Port 8000 in use (host network)
+
+**Hit:** doctor warns port 8000 is listening; `docker ps` shows no published
+port mapping because the stack uses host networking.
+**Fix:** doctor/wizard prefer stack labels + `/v1/models` when identifying
+managed host-network owners. `./pulsar inventory` shows conf/ownership. Do not
+start a second model on the same port.
+
 ## `LocalEntryNotFoundError: Cannot find an appropriate cached snapshot`
 
 **Hit:** first launches of Qwen3.6-27B-FP8 and the 2-node canary.
@@ -14,8 +72,11 @@ resolve the revision and fails even though all weights are present.
 **Fix:** write the ref once:
 `printf '%s' "$(ls <cache>/models--ORG--NAME/snapshots/ | head -1)" > <cache>/models--ORG--NAME/refs/main`
 (One-liner over all models in cluster/README or run the loop in git history.)
-Preflight checks weights on both nodes but only directory existence — if you
-see this error with weights on disk, it is almost always the missing ref.
+`scripts/check-weights.sh` (used by wizard/up) requires `refs/main` to resolve
+to a snapshot, a non-empty config and weight file, no `.incomplete` marker,
+and no locally indexed missing/empty shard. It checks both nodes for two-node
+profiles. A missing ref is therefore reported as `partial` before launch;
+repair the ref or rerun `scripts/pull-weights.sh <model> --yes`.
 
 ## Node 2 has no internet route
 
@@ -28,8 +89,19 @@ RoCE and the LAN NFS server, nothing else.
 RoCE link moves ~1 GB/s+, a 160 GB model syncs in minutes.)
 Also fix `refs/main` on the target (see above) — and note image staging: pull
 published images on node 1, then run `scripts/sync-image.sh <model> --yes`
-(`docker save | ssh node2 docker load`); only locally reproduced images need a
-source build.
+(LAN `docker save | load`, followed by registry-reference repair when needed);
+only locally reproduced images need a source build.
+
+## `docker load` succeeds but the worker still misses a digest-pinned image
+
+**Hit:** staging the published DeepSeek PR-41834 image printed `Loaded image
+ID`, then `sync-image.sh` failed its exact `repo@sha256:...` inspection.
+**Cause:** Docker transferred every layer but registered the result only as an
+untagged image ID (`RepoTags=[]`, `RepoDigests=[]`). A digest reference cannot
+be restored with `docker tag`.
+**Fix:** `sync-image.sh` now detects this state and runs `docker pull` for the
+exact digest on the worker. Docker reuses the LAN-transferred layers and only
+resolves the registry reference. Prefer the script over a bare save/load pipe.
 
 ## 2-node: server never comes up, no error anywhere
 
