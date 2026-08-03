@@ -688,6 +688,9 @@ echo "=== gum style / color policy (runtime argv) ==="
 
 # Fake gum records argv (one arg per line, records separated by ---) and
 # implements minimal choose/confirm/version for non-interactive tests.
+# UI markers go to stderr (real Gum draws the TUI there); selection stays stdout.
+FAKE_GUM_CHOOSE_UI_MARKER="FAKE_GUM_CHOOSE_UI_VISIBLE"
+FAKE_GUM_CONFIRM_UI_MARKER="FAKE_GUM_CONFIRM_UI_VISIBLE"
 cat >"$SHIM/fake-gum" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -699,7 +702,9 @@ log="${GUM_ARGV_LOG:?GUM_ARGV_LOG required}"
 cmd="${1:-}"
 case "$cmd" in
   choose)
-    # Echo first stdin line (or empty) so choose() returns success.
+    # Simulate TUI on stderr (must remain visible through choose() capture).
+    printf '%s\n' "FAKE_GUM_CHOOSE_UI_VISIBLE" >&2
+    # Selection on stdout only.
     if IFS= read -r line; then
       printf '%s\n' "$line"
     else
@@ -708,6 +713,7 @@ case "$cmd" in
     exit 0
     ;;
   confirm)
+    printf '%s\n' "FAKE_GUM_CONFIRM_UI_VISIBLE" >&2
     exit 0
     ;;
   --version|version)
@@ -742,9 +748,14 @@ argv_has() {
 }
 
 # Color-enabled Gum path: fake Gum must be invoked with full blue overrides.
+# Captures helper stderr so TUI markers must remain visible (not silenced).
 run_ui_color_gum() {
   local argv_log="$1"
+  local err_log="${2:-}"
   : >"$argv_log"
+  [ -n "$err_log" ] && : >"$err_log"
+  local err_target="/dev/stderr"
+  [ -n "$err_log" ] && err_target="$err_log"
   (
     set -euo pipefail
     export REPO_DIR="$REPO_DIR"
@@ -760,9 +771,11 @@ run_ui_color_gum() {
     . "$REPO_DIR/scripts/ui.sh"
     [ "$have_gum" = 1 ]
     [ "$GUM_CMD" = "$SHIM/fake-gum" ]
-    choose "Test header" "option-a" "option-b" >/dev/null
-    confirm "Proceed?" >/dev/null || true
-  )
+    # stdout is selection only; stderr must carry UI markers to outer capture
+    sel=$(choose "Test header" "option-a" "option-b")
+    [ "$sel" = "option-a" ]
+    confirm "Proceed?" || true
+  ) 2>"$err_target"
 }
 
 # Forced no-color: plain menus only — fake Gum must never be invoked.
@@ -791,9 +804,10 @@ run_ui_plain_no_gum() {
   )
 }
 
-# --- Color enabled: blue overrides on choose + confirm ---
+# --- Color enabled: blue overrides on choose + confirm; TUI stderr visible ---
 ARGV_COLOR="$STATE/logs/gum-argv-color.txt"
-run_ui_color_gum "$ARGV_COLOR"
+ERR_COLOR="$STATE/logs/gum-ui-stderr.txt"
+run_ui_color_gum "$ARGV_COLOR" "$ERR_COLOR"
 assert_eq "$?" "0" "color-enabled Gum path runs with fake-gum"
 assert_true "choose passes cursor.foreground blue" argv_has "$ARGV_COLOR" "--cursor.foreground=12"
 assert_true "choose passes header.foreground blue" argv_has "$ARGV_COLOR" "--header.foreground=12"
@@ -805,6 +819,15 @@ assert_false "choose never sets pink selected.foreground" argv_has "$ARGV_COLOR"
 assert_false "choose never sets pink cursor.foreground" argv_has "$ARGV_COLOR" "--cursor.foreground=212"
 assert_true "color path invoked fake-gum choose" grep -qxF -- "choose" "$ARGV_COLOR"
 assert_true "color path invoked fake-gum confirm" grep -qxF -- "confirm" "$ARGV_COLOR"
+# Regression: Gum TUI is drawn on stderr; choose/confirm must not silence it.
+assert_file_contains "$ERR_COLOR" "$FAKE_GUM_CHOOSE_UI_MARKER" \
+  "choose TUI marker visible on outer stderr (not silenced)"
+assert_file_contains "$ERR_COLOR" "$FAKE_GUM_CONFIRM_UI_MARKER" \
+  "confirm TUI marker visible on outer stderr (not silenced)"
+assert_true "ui choose does not silence gum stderr" bash -c \
+  "! grep -n 'GUM_CMD.*choose\|gum.*choose' '$REPO_DIR/scripts/ui.sh' | grep -q '2>/dev/null'"
+assert_true "ui confirm does not silence gum stderr" bash -c \
+  "! awk '/confirm\\(\\)/,/^}/' '$REPO_DIR/scripts/ui.sh' | grep -q '2>/dev/null'"
 
 # --- NO_COLOR / PULSAR_COLOR=never / TERM=dumb / GUM=0 → plain; Gum never called ---
 ARGV_NC="$STATE/logs/gum-argv-nocolor.txt"

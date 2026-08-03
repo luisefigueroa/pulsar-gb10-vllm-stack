@@ -118,9 +118,11 @@ choose() {
     local out rc
     _ui_gum_choose_style_args
     set +e
+    # Capture selection on stdout only. Do NOT redirect Gum stderr — the
+    # interactive TUI is drawn on stderr; silencing it makes the menu invisible.
     out=$(printf '%s\n' "$@" | "$GUM_CMD" choose \
       "${GUM_CHOOSE_STYLE_ARGS[@]}" \
-      --header "$header" 2>/dev/null)
+      --header "$header")
     rc=$?
     set -e
     if [ "$rc" -ne 0 ] || [ -z "${out:-}" ]; then
@@ -156,14 +158,15 @@ confirm() {
   if [ "$have_gum" = 1 ]; then
     _ui_gum_confirm_style_args
     set +e
+    # Leave stderr open — Gum confirm draws its TUI on stderr.
     if [ "$default" = yes ]; then
       "$GUM_CMD" confirm \
         "${GUM_CONFIRM_STYLE_ARGS[@]}" \
-        --default=true "$msg" 2>/dev/null
+        --default=true "$msg"
     else
       "$GUM_CMD" confirm \
         "${GUM_CONFIRM_STYLE_ARGS[@]}" \
-        "$msg" 2>/dev/null
+        "$msg"
     fi
     local rc=$?
     set -e
