@@ -26,8 +26,10 @@ RoCE and the LAN NFS server, nothing else.
 `rsync -rlptD ~/.cache/huggingface/hub/models--X "$WORKER_IP":.cache/huggingface/hub/`
 (rsync `-a` breaks on some shares here [prior art: NFS `sec=sys` chgrp]; the
 RoCE link moves ~1 GB/s+, a 160 GB model syncs in minutes.)
-Also fix `refs/main` on the target (see above) — and note image pulls: build
-or pull on node 1, `docker save | ssh node2 docker load`.
+Also fix `refs/main` on the target (see above) — and note image staging: pull
+published images on node 1, then run `scripts/sync-image.sh <model> --yes`
+(`docker save | ssh node2 docker load`); only locally reproduced images need a
+source build.
 
 ## 2-node: server never comes up, no error anywhere
 

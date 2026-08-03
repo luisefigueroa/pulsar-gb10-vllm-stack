@@ -16,7 +16,7 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 (needle 3/3 @124K) | MTP not offered | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP k=1 **opt-in +47%** (`--spec-decode`; triton draft) | **tested** — 16.2 tok/s c=1 base, 113 agg c=32, IDENTICAL determinism, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K) | DFlash **marginal +13%** (off by default) | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
-| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **upstream-lineage image** (vllm-gb10:pr41834, source-built PR #41834) | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (client cap; **20 GB/rank KV → 652,465 tok, 1.30x @500K**; `max-num-seqs 5`; prior soaked 10 GB→577k, needle 3/3 @447K) | **DSpark k=5 recommended** (`--spec-decode`; 43–48 tok/s c=1) | **tested+soaked** (model/image) — flagship; **2026-08-01 defaults retuned for few long agent sessions** (see conf header + DeepSeek notes) |
+| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **published, digest-pinned PR-41834 image** | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (client cap; **20 GB/rank KV → 652,465 tok, 1.30x @500K**; `max-num-seqs 5`; prior soaked 10 GB→577k, needle 3/3 @447K) | **DSpark k=5 recommended** (`--spec-decode`; 43–48 tok/s c=1) | **tested+soaked** (model/image) — flagship; **2026-08-01 defaults retuned for few long agent sessions** (see conf header + DeepSeek notes) |
 | `deepseek-v4-flash-0422` | original 04-22 checkpoint (flagship 07-30→07-31) | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested (500K configured) | via retired -DSpark ckpt only | fallback (fully validated; superseded by 0731) |
 | `inkling-small-nvfp4` | Thinkingmachines/Inkling-Small-NVFP4 (NFS catalog, added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 1M configured | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
 | `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — measurement only; stock graphs hang without `--enforce-eager` (baked in conf; still requires `--force`). Prefer 1-node `laguna-s-2.1-nvfp4` |
@@ -58,10 +58,11 @@ headroom is not a deployment.
   the flagship serves the **0731 refresh** (167 GB), which builds the DSpark
   drafter INTO the checkpoint — the old separate `-DSpark` variant and its
   conf are retired (git history), and the 04-22 checkpoint is the fallback.
-  Since 2026-07-30 the flagship runs on the upstream-lineage source build
-  of vLLM PR #41834 (stock release images remain non-viable: kernel-level
-  livelock, VALIDATION.md). There is no in-tree community-binary fallback —
-  build the PR image (docs/BUILD.md) or wait for mainline absorption.
+  Since 2026-07-30 the flagship runs on the published, digest-pinned
+  upstream-lineage image built from vLLM PR #41834 (stock release images remain
+  non-viable: kernel-level livelock, VALIDATION.md). Pull the image named by the
+  model conf; [BUILD.md](BUILD.md) retains the source-build fallback for
+  offline or independently reproduced deployments.
   **Default geometry (2026-08-01) is optimized for few long agent sessions**,
   not high-QPS short chat: ≤5 concurrent (Hermes + occasional sub-agents),
   long tool/code/repo traces, client context capped at **500K** (official

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ensure conf image on head (optional pull for official tags) and worker (docker save|load).
+# Ensure conf image on head (pull published images when requested) and worker (docker save|load).
 #   scripts/sync-image.sh <model-name> [--pull] [--yes]
 set -euo pipefail
 SCRIPT_NAME=sync-image
@@ -33,7 +33,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
       fi
       ;;
     *)
-      die "image missing on head: $IMAGE — build it (docs/BUILD.md) then re-run"
+      die "image missing on head: $IMAGE — build the local image (docs/BUILD.md) then re-run"
       ;;
   esac
 fi
