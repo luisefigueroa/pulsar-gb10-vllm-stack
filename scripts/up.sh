@@ -95,7 +95,13 @@ if [ "$img_rc" != 0 ]; then
       die "WORKER_IP unset — cannot verify image on both nodes"
       ;;
     missing-on-worker)
-      die "image on head only — run: scripts/sync-image.sh $NAME --yes"
+      if [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; then
+        "$REPO_DIR/scripts/sync-image.sh" "$NAME" --yes
+        QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" \
+          || die "image still missing after worker sync"
+      else
+        die "image on head only — run: scripts/sync-image.sh $NAME --yes"
+      fi
       ;;
     missing-on-head|missing-both|unknown|"")
       if [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; then
@@ -123,6 +129,12 @@ if [ "$SKIP_W" != 1 ]; then
   fi
   set -e
   if [ "$w_rc" != 0 ]; then
+    w_json=$("$REPO_DIR/scripts/check-weights.sh" "$NAME" --json 2>/dev/null || true)
+    w_state=$(printf '%s' "$w_json" | python3 -c \
+      'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null || echo unknown)
+    if [ "$w_state" = worker-unreachable ]; then
+      die "worker SSH unavailable — cannot verify weights; no pull or sync attempted"
+    fi
     kind=$(model_source_kind)
     if [ "$kind" = hf ]; then
       die "weights missing — scripts/pull-weights.sh $NAME"
@@ -198,6 +210,14 @@ case "$SPEC_MODE" in
   auto) ;;
 esac
 
+launch_flags=()
+[ "$FORCE" = 1 ] && launch_flags+=(--force)
+if [ "$NODES" = "2" ]; then
+  # up.sh already ran (or explicitly skipped) this preflight. Always suppress
+  # start-cluster.sh's duplicate run while preserving the caller's decision.
+  launch_flags+=(--skip-preflight)
+fi
+
 echo "└─"
 
 if [ "$DRY" = 1 ]; then
@@ -206,7 +226,7 @@ if [ "$DRY" = 1 ]; then
 DRY-RUN OK
   conf:     $NAME
   served:   $SERVED_NAME
-  would:    $([ "$NODES" = 2 ] && echo "cluster/start-cluster.sh $NAME ${spec_flag[*]:-}" || echo "serve.sh $NAME -d ${spec_flag[*]:-}")
+  would:    $([ "$NODES" = 2 ] && echo "cluster/start-cluster.sh $NAME ${spec_flag[*]:-} ${launch_flags[*]:-}" || echo "serve.sh $NAME -d ${spec_flag[*]:-} ${launch_flags[*]:-}")
   live:     scripts/status.sh $NAME
   note:     no containers changed
 EOF
@@ -216,17 +236,19 @@ fi
 # --- launch ---
 if [ "$NODES" = "2" ]; then
   log "starting 2-node cluster…"
-  "$REPO_DIR/cluster/start-cluster.sh" "$NAME" ${spec_flag[@]+"${spec_flag[@]}"}
+  "$REPO_DIR/cluster/start-cluster.sh" "$NAME" \
+    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
 else
   log "starting single-node…"
-  "$REPO_DIR/serve.sh" "$NAME" -d ${spec_flag[@]+"${spec_flag[@]}"}
+  "$REPO_DIR/serve.sh" "$NAME" -d \
+    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
   api_auth_args=()
   api_auth_curl_args api_auth_args
   cname=$(container_name_for "$NAME" 1)
   log "waiting for http://127.0.0.1:${PORT}/health (cold load can take minutes)"
   ok=0
   for i in $(seq 1 "${WAIT_ATTEMPTS:-90}"); do
-    if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 "${api_auth_args[@]}" "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
       ok=1
       break
     fi
@@ -256,7 +278,7 @@ READY
   conf:     $NAME
   served:   $SERVED_NAME
   url:      http://127.0.0.1:${PORT}/v1
-  smoke:    curl -fsS http://127.0.0.1:${PORT}/v1/models
+  inspect:  scripts/quick-status.sh
   status:   scripts/status.sh $NAME
   stop:     scripts/down.sh $NAME
   security: do not expose :${PORT} without auth (SECURITY.md)

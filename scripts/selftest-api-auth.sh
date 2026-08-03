@@ -63,7 +63,6 @@ for file in \
   wizard.sh \
   scripts/quick-status.sh \
   scripts/doctor.sh \
-  scripts/check-memory.sh \
   scripts/status.sh \
   scripts/up.sh \
   cluster/start-cluster.sh; do

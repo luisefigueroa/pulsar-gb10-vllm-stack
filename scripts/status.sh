@@ -33,7 +33,7 @@ fi
 
 if [ -n "${WORKER_IP:-}" ]; then
   echo "[status] containers (worker $WORKER_IP)"
-  ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_IP" \
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" \
     "printf '%-40s %-30s %s\n' NAMES STATUS IMAGE; docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | awk -F'\t' 'BEGIN{IGNORECASE=1} \$1 ~ /vllm/ || \$3 ~ /vllm/ {printf \"%-40s %-30s %s\n\", \$1, \$2, \$3}'" \
     2>/dev/null || warn "worker unreachable"
 else
@@ -50,7 +50,7 @@ fi
 echo "[status] HTTP :${PORT_SCAN}"
 api_auth_args=()
 api_auth_curl_args api_auth_args
-if curl -fsS --max-time 3 "http://127.0.0.1:${PORT_SCAN}/health" >/dev/null 2>&1; then
+if curl -fsS --max-time 3 "${api_auth_args[@]}" "http://127.0.0.1:${PORT_SCAN}/health" >/dev/null 2>&1; then
   log "health OK"
   models_json=$(curl -fsS --max-time 5 "${api_auth_args[@]}" "http://127.0.0.1:${PORT_SCAN}/v1/models" 2>/dev/null || true)
   if [ -n "$models_json" ]; then

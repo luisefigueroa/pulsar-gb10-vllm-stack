@@ -150,6 +150,13 @@ json_field() {
     'import json,sys,os; d=json.load(sys.stdin); v=d.get(os.environ["FIELD"],""); print("" if v is None else v)'
 }
 
+probe_json_has_state() {
+  printf '%s' "$1" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+raise SystemExit(0 if isinstance(d, dict) and isinstance(d.get("state"), str) and d["state"] else 1)'
+}
+
 # Sets free, need, fp from check-memory JSON (caller-scoped variables).
 read_mem_budget_fields() {
   local json="$1"
@@ -427,7 +434,7 @@ for s in services:
 
 print(json.dumps({
     "worker_status": worker_status,
-    "worker_unreachable": worker_status == "unreachable",
+    "worker_unreachable": worker_status != "ok",
     "has_unmanaged_gpu": len(unmanaged) > 0,
     "unmanaged_count": len(unmanaged),
     "same_complete_running": same is not None,
@@ -978,7 +985,20 @@ for m in d.get('models', []):
 
   if [ "${WIZARD_SKIP_WEIGHTS:-0}" != 1 ]; then
     log "checking weights…"
-    if ! "$REPO_DIR/scripts/check-weights.sh" "$NAME"; then
+    weights_json=""
+    weights_rc=0
+    weights_json=$("$REPO_DIR/scripts/check-weights.sh" "$NAME" --json) || weights_rc=$?
+    if [ "$weights_rc" != 0 ]; then
+      if ! probe_json_has_state "$weights_json"; then
+        die "weight preflight returned invalid data — no download or launch attempted"
+      fi
+      weights_state=$(json_field "$weights_json" state)
+      log "weights state=$weights_state"
+      case "$weights_state" in
+        worker-unreachable)
+          die "worker SSH unavailable — cannot verify weights; no download or sync attempted"
+          ;;
+      esac
       kind=$(model_source_kind)
       if [ "$kind" = hf ]; then
         if confirm "Weights missing. Download HF model now${NODES:+ (and sync worker if 2-node)}?"; then
@@ -994,23 +1014,41 @@ for m in d.get('models', []):
 
   if [ "${WIZARD_SKIP_IMAGE:-0}" != 1 ]; then
     log "checking image…"
-    if ! "$REPO_DIR/scripts/check-image.sh" "$NAME"; then
-      case "$IMAGE" in
-        vllm/vllm-openai:*|vllm/*|ghcr.io/*)
-          if confirm "Image missing. docker pull + sync worker if needed?"; then
-            spin "Syncing image…" "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
-          else
-            die "image required"
-          fi
+    image_json=""
+    image_rc=0
+    image_json=$("$REPO_DIR/scripts/check-image.sh" "$NAME" --json) || image_rc=$?
+    if [ "$image_rc" != 0 ]; then
+      if ! probe_json_has_state "$image_json"; then
+        die "image preflight returned invalid data — no pull, sync, or launch attempted"
+      fi
+      image_state=$(json_field "$image_json" state)
+      log "image state=$image_state"
+      case "$image_state" in
+        head-docker-error)
+          die "head Docker daemon unavailable — no image pull or sync attempted"
+          ;;
+        worker-unreachable)
+          die "worker SSH unavailable — no image pull or sync attempted"
+          ;;
+        worker-docker-error)
+          die "worker Docker daemon unavailable — no image pull or sync attempted"
+          ;;
+        need-worker-ip)
+          die "WORKER_IP unset — cannot verify or sync a two-node image"
           ;;
         *)
-          cat <<EOF
-Unsupported image source: $IMAGE
-All validated profiles use published vLLM or GHCR images. Update the model
-configuration to a published registry reference, then re-run ./pulsar wizard
-(or ./wizard.sh).
-EOF
-          exit 1
+          case "$IMAGE" in
+            vllm/vllm-openai:*|vllm/*|ghcr.io/*)
+              if confirm "Image missing. docker pull + sync worker if needed?"; then
+                spin "Syncing image…" "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
+              else
+                die "image required"
+              fi
+              ;;
+            *)
+              die "unsupported local/custom image source — build it first (docs/BUILD.md)"
+              ;;
+          esac
           ;;
       esac
     fi

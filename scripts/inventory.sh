@@ -122,7 +122,7 @@ PY
 _ssh_worker_raw() {
   local host="$1"
   shift
-  "$INVENTORY_SSH" -o BatchMode=yes -o ConnectTimeout=5 "$host" "$@"
+  "$INVENTORY_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$@"
 }
 
 mem_available_gib_cmd() {
@@ -168,9 +168,15 @@ collect_containers_node() {
 
   local ids
   if [ "$mode" = local ]; then
-    ids=$("$INVENTORY_DOCKER" ps -aq 2>/dev/null || true)
+    if ! ids=$("$INVENTORY_DOCKER" ps -aq 2>/dev/null); then
+      warn "$node Docker container enumeration failed"
+      return 1
+    fi
   else
-    ids=$(_ssh_worker_raw "$host" "docker ps -aq 2>/dev/null || true" 2>/dev/null || true)
+    if ! ids=$(_ssh_worker_raw "$host" "docker ps -aq" 2>/dev/null); then
+      warn "$node Docker container enumeration failed"
+      return 1
+    fi
   fi
   [ -n "$ids" ] || return 0
 
@@ -307,6 +313,11 @@ collect_live_snapshot() {
   local profiles_json worker_ip worker_status worker_reason
   profiles_json=$(build_profile_catalog_json)
 
+  if ! "$INVENTORY_DOCKER" info >/dev/null 2>&1; then
+    warn "head Docker daemon unavailable — inventory is incomplete; no lifecycle action is safe"
+    return 1
+  fi
+
   worker_ip="${WORKER_IP:-}"
   worker_status="unset"
   worker_reason="WORKER_IP unset — worker not probed (single-node inventory still valid)"
@@ -331,13 +342,14 @@ collect_live_snapshot() {
   : >"$tmp_c"
   : >"$tmp_g"
 
-  collect_containers_node head local >>"$tmp_c" || true
+  if ! collect_containers_node head local >>"$tmp_c"; then
+    warn "head container inventory failed — no lifecycle action is safe"
+    return 1
+  fi
   collect_gpu_processes_local | parse_gpu_csv_to_json_lines head >>"$tmp_g" || true
 
   if [ -n "$worker_ip" ]; then
     if _ssh_worker_raw "$worker_ip" "true" >/dev/null 2>&1; then
-      worker_status="ok"
-      worker_reason=""
       worker_mem=$(_ssh_worker_raw "$worker_ip" \
         "awk '/MemAvailable:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" 2>/dev/null || true)
       worker_mem_total=$(_ssh_worker_raw "$worker_ip" \
@@ -351,8 +363,18 @@ collect_live_snapshot() {
         worker_mem_source="unavailable"
       fi
       [ -n "$worker_mem_total" ] || worker_mem_total="null"
-      collect_containers_node worker remote "$worker_ip" >>"$tmp_c" || true
       collect_gpu_processes_remote "$worker_ip" | parse_gpu_csv_to_json_lines worker >>"$tmp_g" || true
+      if _ssh_worker_raw "$worker_ip" "docker info >/dev/null 2>&1"; then
+        worker_status="ok"
+        worker_reason=""
+        if ! collect_containers_node worker remote "$worker_ip" >>"$tmp_c"; then
+          worker_status="docker-error"
+          worker_reason="WORKER_IP=${worker_ip} Docker container enumeration failed"
+        fi
+      else
+        worker_status="docker-error"
+        worker_reason="WORKER_IP=${worker_ip} reachable but Docker daemon unavailable"
+      fi
     else
       worker_status="unreachable"
       worker_reason="WORKER_IP=${worker_ip} SSH unreachable (BatchMode)"
@@ -871,9 +893,9 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
                 f"duplicate node placement(s): {','.join(dup_nodes)} "
                 f"(expected one container per role node)"
             )
-        if expected_nodes == 2 and worker_status == "unreachable":
+        if expected_nodes == 2 and worker_status not in ("ok", "unset"):
             state = "degraded"
-            reasons.append("worker unreachable; cannot confirm rank 1")
+            reasons.append(f"worker status={worker_status}; cannot confirm rank 1")
         elif expected_nodes == 2 and worker_status == "unset":
             # Only head observable — do not invent worker state
             if "1" not in observed_sorted:
@@ -919,7 +941,7 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
         observability = "complete"
     elif expected_nodes == 2 and worker_status == "unset":
         observability = "worker_unset"
-    elif expected_nodes == 2 and worker_status == "unreachable":
+    elif expected_nodes == 2 and worker_status not in ("ok", "unset"):
         observability = "worker_unreachable"
     elif missing and not dup_ranks and not any(
         r["ownership"] == "mismatch" for r in ranks_list

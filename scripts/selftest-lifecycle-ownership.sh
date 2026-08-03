@@ -380,6 +380,40 @@ assert_false "placement worker rank0 refused" placement_rank_allowed "qwen3-1.7b
 assert_false "placement worker single refused" placement_rank_allowed "qwen3-1.7b" "single" "worker"
 assert_false "unknown conf placement refused" placement_rank_allowed "no-such-conf" "single" "head"
 
+echo "=== strict loaded-state proof ==="
+load_conf qwen3-1.7b
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b","io.pulsar.gb10.rank":"single"}}
+]))' "$ID_A")"
+assert_true "managed running single rank earns loaded exemption" \
+  profile_service_is_proven_running qwen3-1.7b
+
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{}}
+]))' "$ID_LEGACY")"
+assert_false "legacy exact-name container cannot earn loaded exemption" \
+  profile_service_is_proven_running qwen3-1.7b
+
+load_conf qwen3-1.7b-2node
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-qwen3-1.7b-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b-2node","io.pulsar.gb10.rank":"0"}}
+]))' "$ID_H")"
+seed_state "$WORKER_STATE" '[]'
+assert_false "incomplete cluster cannot earn loaded exemption" \
+  profile_service_is_proven_running qwen3-1.7b-2node
+
+seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-qwen3-1.7b-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b-2node","io.pulsar.gb10.rank":"1"}}
+]))' "$ID_W")"
+assert_true "complete managed cluster earns loaded exemption" \
+  profile_service_is_proven_running qwen3-1.7b-2node
+
+# Restore the common single-node profile for subsequent cases.
+load_conf qwen3-1.7b
+
 echo "=== parse_docker_run_container_id ==="
 valid_id=$(hex64 run-valid)
 got=$(parse_docker_run_container_id "$valid_id")

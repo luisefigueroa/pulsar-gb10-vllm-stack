@@ -158,7 +158,7 @@ for s in inv.get("services") or []:
         exp_nodes = int(exp_nodes)
     except (TypeError, ValueError):
         exp_nodes = 1
-    if exp_nodes >= 2 and worker_status == "unreachable":
+    if exp_nodes >= 2 and worker_status != "ok":
         continue
     if (s.get("observability") or "") == "unreachable":
         continue

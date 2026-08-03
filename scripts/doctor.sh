@@ -57,17 +57,21 @@ else
 fi
 
 if command -v docker >/dev/null 2>&1; then
-  record ok docker "docker present"
-  runtimes=$(docker info -f '{{range $k,$v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null || true)
-  if echo " $runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
-    record ok docker_nvidia "docker nvidia runtime registered (runtimes: $runtimes)"
-  elif docker info 2>/dev/null | grep -q 'nvidia.com/gpu'; then
-    record ok docker_nvidia "docker nvidia CDI devices present"
-  elif command -v nvidia-container-runtime >/dev/null 2>&1 \
-    || command -v nvidia-container-cli >/dev/null 2>&1; then
-    record warn docker_nvidia "nvidia container tools installed but runtime not listed in docker info yet — try: sudo systemctl restart docker"
+  if docker_info=$(docker info 2>/dev/null); then
+    record ok docker "docker present; daemon reachable"
+    runtimes=$(docker info -f '{{range $k,$v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null || true)
+    if echo " $runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
+      record ok docker_nvidia "docker nvidia runtime registered (runtimes: $runtimes)"
+    elif printf '%s' "$docker_info" | grep -q 'nvidia.com/gpu'; then
+      record ok docker_nvidia "docker nvidia CDI devices present"
+    elif command -v nvidia-container-runtime >/dev/null 2>&1 \
+      || command -v nvidia-container-cli >/dev/null 2>&1; then
+      record warn docker_nvidia "nvidia container tools installed but runtime not listed in docker info yet — try: sudo systemctl restart docker"
+    else
+      record fail docker_nvidia "docker nvidia runtime missing (expected Runtimes includes nvidia)"
+    fi
   else
-    record fail docker_nvidia "docker nvidia runtime missing (expected Runtimes includes nvidia)"
+    record fail docker "docker present but daemon unavailable (start/fix Docker, then retry)"
   fi
 else
   record fail docker "docker missing"
@@ -175,19 +179,23 @@ trap - RETURN
 
 if [ -n "${WORKER_IP:-}" ]; then
   [ "$JSON" = 1 ] || echo "[doctor] worker $WORKER_IP"
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$WORKER_IP" true 2>/dev/null; then
+  if ssh_worker true 2>/dev/null; then
     record ok worker_ssh "ssh $WORKER_IP"
-    wgpu=$(ssh -o BatchMode=yes "$WORKER_IP" "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" || true)
+    wgpu=$(ssh_worker "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" || true)
     if [ "$wgpu" = "NVIDIA GB10" ]; then
       record ok worker_gpu "worker GPU $wgpu"
     else
       record fail worker_gpu "worker GPU '$wgpu'"
     fi
-    if ssh -o BatchMode=yes "$WORKER_IP" "docker info -f '{{range \$k,\$v := .Runtimes}}{{\$k}} {{end}}' 2>/dev/null" \
-      | grep -Eq '(^|[[:space:]])nvidia([[:space:]]|$)'; then
-      record ok worker_docker_nvidia "worker docker nvidia"
+    if worker_runtimes=$(ssh_worker \
+      "docker info -f '{{range \$k,\$v := .Runtimes}}{{\$k}} {{end}}'" 2>/dev/null); then
+      if echo " $worker_runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
+        record ok worker_docker_nvidia "worker docker nvidia"
+      else
+        record fail worker_docker_nvidia "worker docker reachable but nvidia runtime missing"
+      fi
     else
-      record fail worker_docker_nvidia "worker docker nvidia missing"
+      record fail worker_docker "worker Docker daemon unavailable"
     fi
   else
     record fail worker_ssh "ssh $WORKER_IP failed (key-based BatchMode)"

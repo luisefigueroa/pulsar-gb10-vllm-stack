@@ -198,7 +198,7 @@ PY
 
 mem_available_gib_remote() {
   local host="${1:?}"
-  ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" \
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" \
     "awk '/MemAvailable:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" 2>/dev/null \
     || echo "0"
 }
@@ -421,18 +421,26 @@ print_shell_command_redacted() {
   printf '\n'
 }
 
+# Injectable docker/ssh for deterministic tests. Production leaves these default.
+PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
+PULSAR_SSH="${PULSAR_SSH:-ssh}"
+PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"
+PULSAR_SSH_OPTS=(
+  -o BatchMode=yes
+  -o "ConnectTimeout=${PULSAR_SSH_CONNECT_TIMEOUT}"
+  -o ConnectionAttempts=1
+  -o ServerAliveInterval=5
+  -o ServerAliveCountMax=2
+)
+
 ssh_worker() {
   [ -n "${WORKER_IP:-}" ] || die "WORKER_IP unset (set in .env for multi-node)"
-  ssh -o BatchMode=yes -o ConnectTimeout=8 "$WORKER_IP" "$@"
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "$@"
 }
 
 PULSAR_MANAGED_LABEL="io.pulsar.gb10.managed"
 PULSAR_CONF_LABEL="io.pulsar.gb10.conf"
 PULSAR_RANK_LABEL="io.pulsar.gb10.rank"
-
-# Injectable docker/ssh for deterministic tests. Production leaves these default.
-PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
-PULSAR_SSH="${PULSAR_SSH:-ssh}"
 
 # Inspect / list probe codes (not remove codes):
 #   0 = present / success (payload on stdout)
@@ -724,7 +732,7 @@ container_ownership_inspect_remote() {
   remote_cmd+="printf 'PRESENT\\n%s\\n' \"\$meta\"; exit 0; fi; "
   remote_cmd+="printf '%s\\n' ABSENT; exit 0"
 
-  if ! out=$("$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$host" "$remote_cmd" 2>/dev/null); then
+  if ! out=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_cmd" 2>/dev/null); then
     return 1
   fi
   status=$(printf '%s\n' "$out" | head -n1 | tr -d '\r')
@@ -858,7 +866,7 @@ remove_stack_owned_container_remote() {
 
   log "removing $name on $host id=$short (managed conf=${conf} rank=${rank})"
   remote_rm="docker rm -f $(printf '%q' "$id") >/dev/null"
-  if ! "$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$host" "$remote_rm"; then
+  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_rm"; then
     warn "docker rm -f failed for $name id=$short on $host"
     return 1
   fi
@@ -888,7 +896,7 @@ remove_container_id_remote() {
     warn "refusing remote id cleanup: invalid container id"
     return 0
   fi
-  "$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$host" \
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" \
     "docker rm -f $(printf '%q' "$normalized") >/dev/null 2>&1 || true" 2>/dev/null || true
 }
 
@@ -914,7 +922,7 @@ list_managed_container_ids_remote() {
   remote_cmd+="printf '%s\\n' OK; "
   remote_cmd+="if [ -n \"\$ids\" ]; then printf '%s\\n' \"\$ids\"; fi"
 
-  if ! out=$("$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$host" "$remote_cmd" 2>/dev/null); then
+  if ! out=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_cmd" 2>/dev/null); then
     return 1
   fi
   status=$(printf '%s\n' "$out" | head -n1 | tr -d '\r')
@@ -1044,7 +1052,7 @@ remove_all_stack_managed_remote() {
     fi
     log "removing stack-managed on $host id=$short conf=$conf rank=$rank (worker)"
     remote_rm="docker rm -f $(printf '%q' "$id") >/dev/null"
-    if ! "$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$host" "$remote_rm"; then
+    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" "$remote_rm"; then
       warn "docker rm -f failed for id=$short on $host"
       rc=$(lifecycle_merge_rc "$rc" 1)
       continue
@@ -1139,7 +1147,7 @@ remove_stack_owned_cluster_pair() {
 
   if [ -n "$worker_id" ]; then
     log "removing worker $cname id=${worker_id:0:12}"
-    if ! "$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$worker_ip" \
+    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$worker_ip" \
       "docker rm -f $(printf '%q' "$worker_id") >/dev/null"; then
       warn "failed to remove worker id=${worker_id:0:12}"
       return 1
@@ -1199,8 +1207,16 @@ filter_exact_container_name() {
 # True if a running container has this exact name (local docker).
 container_running_exact() {
   local want="$1"
-  docker ps --format '{{.Names}}' 2>/dev/null | filter_exact_container_name "$want" | grep -q .
+  "$PULSAR_DOCKER" ps --format '{{.Names}}' 2>/dev/null \
+    | filter_exact_container_name "$want" | grep -q .
 }
+container_running_exact_remote() {
+  local host="${1:?}" want="${2:?}"
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$host" \
+    "docker ps --format '{{.Names}}'" 2>/dev/null \
+    | filter_exact_container_name "$want" | grep -q .
+}
+
 
 # Validate targeted docker-inspect metadata without exposing container env.
 # Labeled containers are authoritative. Unlabeled containers are accepted only
@@ -1265,6 +1281,29 @@ profile_service_is_stack_owned() {
       && container_profile_owned_worker "$cname" "$conf" "$MODEL" "$SERVED_NAME" 1
   else
     container_profile_owned_local "$cname" "$conf" "$MODEL" "$SERVED_NAME"
+  fi
+}
+
+# Strict loaded-state proof for memory exemptions. Unlike the transition
+# classifier above, this accepts labels only; argv resemblance is insufficient.
+profile_service_is_proven_running() {
+  local conf="$1" cname head_meta worker_meta
+  local head_rc=0 worker_rc=0
+  cname=$(container_name_for "$conf" "$NODES")
+
+  container_running_exact "$cname" || return 1
+  head_meta=$(container_ownership_inspect_local "$cname") || head_rc=$?
+  [ "$head_rc" -eq 0 ] || return 1
+  if [ "$NODES" = "2" ]; then
+    container_ownership_is_proven "$head_meta" "$conf" "0" || return 1
+    [ -n "${WORKER_IP:-}" ] || return 1
+    container_running_exact_remote "$WORKER_IP" "$cname" || return 1
+    worker_meta=$(container_ownership_inspect_remote "$WORKER_IP" "$cname") \
+      || worker_rc=$?
+    [ "$worker_rc" -eq 0 ] || return 1
+    container_ownership_is_proven "$worker_meta" "$conf" "1"
+  else
+    container_ownership_is_proven "$head_meta" "$conf" "single"
   fi
 }
 

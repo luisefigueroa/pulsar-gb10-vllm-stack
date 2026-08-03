@@ -177,7 +177,7 @@ fi
 
 echo "[cluster] starting worker on $WORKER_IP"
 worker_raw=""
-if ! worker_raw=$("$PULSAR_SSH" -o BatchMode=yes -o ConnectTimeout=8 "$WORKER_IP" \
+if ! worker_raw=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" \
   "$(shell_join_q "${WORKER_CMD[@]}")"); then
   WORKER_CID=""
   cluster_abort "worker docker run failed"
@@ -217,7 +217,7 @@ echo "[cluster] waiting for http://127.0.0.1:${PORT}/health (cold load can take 
 API_AUTH_ARGS=()
 api_auth_curl_args API_AUTH_ARGS
 for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
-  if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  if curl -fsS --max-time 3 "${API_AUTH_ARGS[@]}" "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
     echo "[cluster] healthy."
     # /health alone is not enough (see docs/OPERATIONS.md). Prefer a real
     # completion path: post-boot warmup pays DSpark/Triton/block-FP8 JIT so
@@ -246,10 +246,10 @@ for i in $(seq 1 "${WAIT_ATTEMPTS:-120}"); do
     cluster_abort "head container exited during wait"
     exit 1
   fi
-  if ! ssh "$WORKER_IP" "docker ps --format '{{.Names}}'" 2>/dev/null \
+  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "docker ps --format '{{.Names}}'" 2>/dev/null \
       | filter_exact_container_name "$CONTAINER" | grep -q .; then
     echo "[cluster] worker container died; last logs:" >&2
-    ssh "$WORKER_IP" "docker logs --tail 80 $(printf '%q' "$CONTAINER")" >&2 || true
+    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "docker logs --tail 80 $(printf '%q' "$CONTAINER")" >&2 || true
     cluster_abort "worker container exited during wait"
     exit 1
   fi
@@ -258,6 +258,6 @@ done
 echo "[cluster] timed out. Head logs:" >&2
 docker logs --tail 120 "$CONTAINER" >&2 || true
 echo "[cluster] Worker logs:" >&2
-ssh "$WORKER_IP" "docker logs --tail 120 $(printf '%q' "$CONTAINER")" >&2 || true
+"$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" "$WORKER_IP" "docker logs --tail 120 $(printf '%q' "$CONTAINER")" >&2 || true
 cluster_abort "health wait timed out"
 exit 1
