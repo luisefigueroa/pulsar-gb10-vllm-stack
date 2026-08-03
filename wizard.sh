@@ -216,7 +216,11 @@ render_target_summary() {
   local inv="$1" mem_json="$2" mrc="$3"
   INV_JSON="$inv" MEM_JSON="$mem_json" \
   python3 - "$NAME" "$SERVED_NAME" "$NODES" "$PORT" "$STATUS" "$mrc" <<'PY'
-import json, os, sys
+import json
+import os
+import sys
+
+from scripts.terminal_format import TerminalWriter
 
 name, served, nodes, port, status, mrc = sys.argv[1:7]
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
@@ -231,34 +235,49 @@ def fmt(v):
     except Exception:
         return str(v)
 
-print(f"[wizard] target  conf={name}  served={served}  nodes={nodes}  port={port}  status={status}")
+term = TerminalWriter()
+term.emit("TARGET")
+term.field("Model", f"{name} · {status}")
+term.field("Serves", f"{served} on :{port}")
+term.field("Topology", f"{nodes} {'node' if nodes == '1' else 'nodes'}")
 head = (inv.get("nodes") or {}).get("head") or {}
 worker = (inv.get("nodes") or {}).get("worker") or {}
 w = inv.get("worker") or {}
-print(
-    f"[wizard] memory  head={fmt(head.get('mem_available_gib'))} GiB free"
-    f"  worker={fmt(worker.get('mem_available_gib'))} GiB"
-    f"  worker_status={w.get('status') or 'unset'}"
+term.field("Memory", f"head   {fmt(head.get('mem_available_gib'))} GiB free")
+term.field(
+    "",
+    f"worker {fmt(worker.get('mem_available_gib'))} GiB · {w.get('status') or 'unset'}",
 )
 if mem:
-    print(
-        f"[wizard] preflight  result={mem.get('result', '?')}  mode={mem.get('mode', '?')}"
-        f"  footprint={fmt(mem.get('footprint_gib'))} GiB/rank"
-        f"  need_start={fmt(mem.get('need_start_gib'))} GiB"
-        f"  (check-memory exit={mrc})"
+    term.blank()
+    term.emit("PREFLIGHT")
+    term.field(
+        "Result",
+        f"{str(mem.get('result') or '?').upper()} · {mem.get('mode') or '?'} "
+        f"· check-memory exit {mrc}",
+    )
+    term.field(
+        "Budget",
+        f"footprint {fmt(mem.get('footprint_gib'))} GiB/rank · "
+        f"need to start {fmt(mem.get('need_start_gib'))} GiB",
     )
     if mem.get("reason"):
-        print(f"[wizard] preflight  reason: {mem['reason']}")
+        term.field("Reason", mem["reason"])
 PY
 }
 
 render_relevant_services() {
   local inv="$1"
   INV_JSON="$inv" NAME="$NAME" PORT="$PORT" python3 - <<'PY'
-import json, os
+import json
+import os
+
+from scripts.terminal_format import TerminalWriter
+
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 name = os.environ.get("NAME", "")
 port = int(os.environ.get("PORT") or 8000)
+term = TerminalWriter()
 
 def active(s):
     st = s.get("state")
@@ -285,43 +304,86 @@ def relevant(s):
 
 services = [s for s in (inv.get("services") or []) if relevant(s)]
 if not services:
-    print("[wizard] active/actionable services: (none relevant)")
+    term.emit("RELEVANT SERVICES  none")
 else:
-    print(f"[wizard] relevant services ({len(services)}):")
+    term.emit(f"RELEVANT SERVICES  {len(services)}")
     for s in services:
         safe = "safe_to_stop" if s.get("safe_to_stop") else "not_safe_to_stop"
         complete = "complete" if s.get("complete") else "incomplete"
         exp = ",".join(str(x) for x in (s.get("expected_ranks") or [])) or "-"
         obs = ",".join(str(x) for x in (s.get("observed_ranks") or [])) or "-"
         fp = s.get("estimated_footprint_gib_per_rank")
-        fp_s = f"{fp:.2f} GiB/rank est" if fp is not None else "est n/a"
-        print(
-            f"  • {s.get('service_id')}  state={s.get('state')} ownership={s.get('ownership')}"
-            f"  {safe} {complete} obs={s.get('observability')}"
-            f"  port={s.get('api_port')} ranks exp={exp} obs={obs}  {fp_s}"
+        fp_s = f"{fp:.2f} GiB/rank" if fp is not None else "n/a"
+        nodes = s.get("expected_nodes")
+        node_word = "node" if nodes == 1 else "nodes"
+        term.blank()
+        term.emit(
+            f"{str(s.get('state') or '?').upper()}  {s.get('service_id') or '?'}",
+            subsequent_indent="  ",
         )
+        api_port = s.get("api_port")
+        endpoint = f"{s.get('served_name') or '?'} on :{api_port}" if api_port is not None else "n/a"
+        term.field("serves", endpoint, indent=2)
+        term.field(
+            "status",
+            f"{s.get('ownership') or '?'} · {complete} · {safe}",
+            indent=2,
+        )
+        term.field(
+            "topology",
+            f"{nodes} {node_word} · ranks expected={exp} observed={obs}",
+            indent=2,
+        )
+        term.field("estimate", fp_s, indent=2)
+        if (s.get("observability") or "?") != "complete":
+            term.field("observe", s.get("observability") or "?", indent=2)
         for r in s.get("ranks") or []:
             g = r.get("gpu_memory") or {}
             gm = g.get("measured_mib")
-            gm_s = f"{gm} MiB" if gm is not None else "n/a"
+            gm_s = f"{float(gm) / 1024:.1f} GiB" if gm is not None else "n/a"
             run = "running" if r.get("running") else ("stale" if r.get("stale") else "stopped")
-            print(
-                f"      - {r.get('node')} rank={r.get('rank')} {r.get('container_name')}"
-                f" {run} ownership={r.get('ownership')}"
-                f" safe={r.get('safe_to_stop')} gpu_mem={gm_s}"
+            rank_safe = "safe_to_stop" if r.get("safe_to_stop") else "not_safe_to_stop"
+            term.blank()
+            term.emit(
+                f"{r.get('node') or '?'} · rank {r.get('rank') or '?'}",
+                initial_indent="  ",
+                subsequent_indent="    ",
             )
+            term.field("container", r.get("container_name") or "?", indent=4)
+            term.field(
+                "status",
+                f"{run} · {r.get('ownership') or '?'} · {rank_safe}",
+                indent=4,
+            )
+            term.field("GPU", gm_s, indent=4)
         for reason in (s.get("reasons") or [])[:3]:
-            print(f"      reason: {reason}")
+            term.field("reason", reason, indent=2)
 
 unmanaged = inv.get("unmanaged_gpu_processes") or []
+term.blank()
 if unmanaged:
-    print(f"[wizard] unmanaged GPU processes (read-only; wizard will not stop them): {len(unmanaged)}")
+    measured = [u.get("used_memory_mib") for u in unmanaged]
+    measured = [m for m in measured if isinstance(m, (int, float))]
+    aggregate = f" · {int(sum(measured)):,} MiB" if measured else ""
+    noun = "process" if len(unmanaged) == 1 else "processes"
+    term.emit(f"UNMANAGED GPU  {len(unmanaged)} {noun}{aggregate}")
+    term.emit(
+        "Read-only; the wizard will not stop these processes.",
+        initial_indent="  ",
+        subsequent_indent="  ",
+    )
     for u in unmanaged[:8]:
         mem = u.get("used_memory_mib")
-        mem_s = f"{mem} MiB" if mem is not None else "n/a"
-        print(f"  • {u.get('node')} pid={u.get('pid')} {u.get('process_name')} mem={mem_s}")
+        mem_s = f"{int(mem):,} MiB" if isinstance(mem, (int, float)) else "n/a"
+        process_path = str(u.get("process_name") or "?")
+        process_name = os.path.basename(process_path.rstrip("/")) or process_path
+        term.emit(
+            f"{u.get('node') or '?'} · PID {u.get('pid') or '?'} · {process_name} · {mem_s}",
+            initial_indent="  ",
+            subsequent_indent="    ",
+        )
 else:
-    print("[wizard] unmanaged GPU processes: (none observed)")
+    term.emit("UNMANAGED GPU  none observed")
 PY
 }
 
@@ -963,16 +1025,17 @@ while true; do
 import json, sys
 d = json.load(sys.stdin)
 for m in d.get('models', []):
-    fr = ' first-run' if m.get('first_run_candidate') else ''
-    print('%s  [%s] nodes=%s src=%s spec=%s%s' % (
-        m['id'], m['status'], m['nodes'], m['source'], m['spec'], fr))
+    fr = ' · first run' if m.get('first_run_candidate') else ''
+    node_word = 'node' if m['nodes'] == 1 else 'nodes'
+    print('%s · %s %s · %s · spec %s%s' % (
+        m['id'], m['nodes'], node_word, m['source'].upper(), m['spec'], fr))
 "
   )
   if [ "${#choices[@]}" -eq 0 ]; then
     die "no validated models found"
   fi
 
-  pick=$(choose "Validated models (Path A: 1-node first; Path B: 2-node flagship)" "${choices[@]}")
+  pick=$(choose "Validated models · Path A 1-node / Path B 2-node" "${choices[@]}")
   NAME=$(echo "$pick" | awk '{print $1}')
   [ -n "$NAME" ] || die "no selection"
 

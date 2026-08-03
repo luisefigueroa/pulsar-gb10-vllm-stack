@@ -88,7 +88,11 @@ API_BODY="$api_body" \
 API_RC="$api_rc" \
 WANT_JSON="$JSON" \
 python3 - <<'PY'
-import json, os, sys
+import json
+import os
+import sys
+
+from scripts.terminal_format import TerminalWriter
 
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 api_rc = int(os.environ.get("API_RC") or "1")
@@ -258,84 +262,85 @@ if want_json:
     raise SystemExit(0)
 
 # Human concise output
-print(f"[quick-status] read-only overview (no inference smoke)")
+term = TerminalWriter()
+term.emit("QUICK STATUS  read-only · no inference smoke")
 ps = overview["primary_service"]
 if ps:
     exp = ",".join(str(x) for x in (ps.get("expected_ranks") or [])) or "-"
     obs = ",".join(str(x) for x in (ps.get("observed_ranks") or [])) or "-"
-    print(
-        f"[quick-status] managed  conf={ps.get('conf')}  served={ps.get('served_name')}"
-        f"  state={ps.get('state')}  ranks exp={exp} obs={obs}"
-        f"  complete={ps.get('complete')}"
-    )
+    state = str(ps.get("state") or "?").upper()
+    complete = "complete" if ps.get("complete") else "incomplete"
+    term.field("Model", f"{state} · {ps.get('conf') or '?'}")
+    api_port = ps.get("api_port") if ps.get("api_port") is not None else port
+    term.field("Serves", f"{ps.get('served_name') or '?'} on :{api_port}")
+    term.field("Ranks", f"expected {exp} · observed {obs} · {complete}")
     if overview["active_managed_count"] > 1:
-        print(f"[quick-status] note  {overview['active_managed_count']} active managed services (showing primary)")
+        term.field(
+            "Note",
+            f"{overview['active_managed_count']} active managed services · showing primary",
+        )
 else:
-    print("[quick-status] managed  (none active)")
+    term.field("Model", "none active")
 
 api = overview["api"]
 if api["status"] == "ok":
-    models_s = ", ".join(api["models"])
-    print(f"[quick-status] API :{port}  advertised: {models_s}")
-    print("[quick-status] API note  model list only — not an inference smoke test")
+    models_s = ", ".join(api["models"]) or "none"
+    term.field("API", f"advertised {models_s} on :{port} · model-list check only")
 elif api["status"] == "empty":
-    print(f"[quick-status] API :{port}  reachable but no models advertised")
+    term.field("API", f"reachable on :{port} · no models advertised")
 else:
-    print(f"[quick-status] API :{port}  unavailable")
+    term.field("API", f"unavailable on :{port}")
 
-def mem_line(label, block):
+
+def mem_summary(block):
     avail = block.get("mem_available_gib")
     total = block.get("mem_total_gib")
     pct = block.get("available_percent")
     if avail is None and total is None:
-        print(f"[quick-status] memory {label}: n/a")
-        return
+        return "n/a"
     pct_s = f"{pct:.1f}% free" if pct is not None else "free% n/a"
-    print(
-        f"[quick-status] memory {label}: {fmt_gib(avail)} / {fmt_gib(total)} GiB avail"
-        f"  ({pct_s})"
-    )
+    return f"{fmt_gib(avail)} / {fmt_gib(total)} GiB · {pct_s}"
 
-mem_line("head", overview["memory"]["head"])
+
+term.field("Memory", f"head   {mem_summary(overview['memory']['head'])}")
 wstat = (overview.get("worker") or {}).get("status") or "unset"
 if wstat == "unset":
-    print("[quick-status] memory worker: n/a (WORKER_IP unset)")
+    term.field("", "worker n/a · WORKER_IP unset")
 else:
-    mem_line("worker", overview["memory"]["worker"])
+    term.field("", f"worker {mem_summary(overview['memory']['worker'])}")
 
 if rank_gpu:
     parts = []
     for r in rank_gpu:
         m = r.get("measured_mib")
-        m_s = f"{m} MiB" if m is not None else "n/a"
-        parts.append(f"{r.get('node')} rank={r.get('rank')} {m_s}")
-    print("[quick-status] managed GPU/unified: " + "; ".join(parts))
+        m_s = f"{float(m) / 1024:.1f} GiB" if m is not None else "n/a"
+        parts.append(f"{r.get('node')}/{r.get('rank')} {m_s}")
+    term.field("GPU", " · ".join(parts))
 else:
-    print("[quick-status] managed GPU/unified: n/a")
+    term.field("GPU", "n/a")
 
 w = overview["worker"]
 wr = w.get("reason") or ""
 if w.get("status") == "unreachable":
-    print(f"[quick-status] worker: unreachable{(' — ' + wr) if wr else ''}")
+    term.field("Worker", f"UNREACHABLE{(' · ' + wr) if wr else ''}")
+elif w.get("status") == "unset":
+    term.field("Worker", "not configured")
 else:
-    print(f"[quick-status] worker: {w.get('status') or 'unset'}")
+    term.field("Worker", str(w.get("status") or "?").upper())
 
 ug = overview["unmanaged_gpu"]
 if ug["count"]:
-    print(
-        f"[quick-status] unmanaged GPU: {ug['count']} process(es),"
-        f" {ug['measured_mib_aggregate']} MiB aggregate measured"
-    )
+    unmanaged_s = f"{ug['count']} unmanaged GPU"
+    if ug["measured_process_count"]:
+        unmanaged_s += f" ({ug['measured_mib_aggregate']:,} MiB)"
 else:
-    print("[quick-status] unmanaged GPU: none observed")
+    unmanaged_s = "no unmanaged GPU"
 
 st = overview["stale_managed"]
 if st["count"]:
-    confs = ",".join(st.get("confs") or []) or "?"
-    print(
-        f"[quick-status] stale managed: {st['count']} ({confs})"
-        f" — nonblocking, no model memory"
-    )
+    confs = ", ".join(st.get("confs") or []) or "?"
+    stale_s = f"{st['count']} stale ({confs}) · nonblocking, no model memory"
 else:
-    print("[quick-status] stale managed: 0")
+    stale_s = "0 stale"
+term.field("Other", f"{unmanaged_s} · {stale_s}")
 PY

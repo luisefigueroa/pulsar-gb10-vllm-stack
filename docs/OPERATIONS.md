@@ -102,6 +102,20 @@ Shared helpers in `scripts/ui.sh` (home + wizard). Two deterministic modes:
 
 Plain menus never emit raw ANSI.
 
+### Human output conventions
+
+Human readability is a primary CLI requirement. Snapshot-style commands use
+short semantic sections, aligned labels, and width-aware hanging indentation;
+interactive choices stay on one compact line and show detail after selection.
+Chronological launch/validation output remains log-oriented because source and
+event order matter there.
+
+`scripts/terminal_format.py` owns the shared Python field/wrapping behavior,
+while `terminal_width` and `print_hanging` in `scripts/lib.sh` cover Bash
+diagnostics. Human views must remain meaningful without color and are tested at
+narrow terminal widths. Automation must consume the documented JSON modes, not
+parse the human presentation.
+
 ## Inventory and ownership
 
 `scripts/inventory.sh` (also `./pulsar inventory`) is **read-only**. It never
@@ -137,8 +151,10 @@ The memory checker grants “already loaded” mode only to a running exact-name
 service whose stack ownership, selected conf, and every expected rank are
 proven by labels. API model identity or an unlabeled lookalike is insufficient.
 
-Human default output is concise (active + actionable managed stale/mismatch);
-`--verbose` includes inactive unknown/legacy detail; `--json` is always full.
+Human default output uses width-aware stacked sections for active + actionable
+managed stale/mismatch services. `--verbose` also includes inactive
+unknown/legacy detail, IDs, probe sources, and full process paths; `--json` is
+always full.
 
 ## Model switch (wizard)
 

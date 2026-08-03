@@ -7,10 +7,10 @@
 # containers with io.pulsar.gb10.managed=true and conf/rank labels that map
 # consistently to a repository profile.
 #
-# Human output (default) is concise: running/partial/degraded services, managed
-# stale/mismatch items (actionable), unmanaged GPU PIDs, and a one-line count of
-# inactive unknown/legacy diagnostics. --verbose prints every service. --json
-# always retains the full inventory (schema_version=1).
+# Human output (default) is a stacked, width-aware operator view of active and
+# actionable services, unmanaged GPU PIDs, and summarized inactive diagnostics.
+# --verbose prints every service plus diagnostic metadata. --json always retains
+# the full inventory (schema_version=1).
 set -euo pipefail
 SCRIPT_NAME=inventory
 # shellcheck disable=SC1091
@@ -32,7 +32,7 @@ usage: scripts/inventory.sh [--json] [--verbose] [--from-fixture path]
 
   --json            machine-readable output (schema_version=1; full inventory)
   --verbose         human mode: show every inactive unknown/legacy container
-                    (default human output summarizes those as a one-line count)
+                    plus IDs, sources, paths, and other diagnostic metadata
   --from-fixture    classify a pre-collected raw snapshot (no Docker/SSH/GPU)
 EOF
 }
@@ -1078,7 +1078,9 @@ else
   inv_json_path=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-out.XXXXXX")
   printf '%s\n' "$inventory" >"$inv_json_path"
   INV_JSON_PATH="$inv_json_path" INV_VERBOSE="$VERBOSE" python3 - <<'PY'
-import json, os
+import json
+import os
+from scripts.terminal_format import TerminalWriter
 
 with open(os.environ["INV_JSON_PATH"], encoding="utf-8") as f:
     inv = json.load(f)
@@ -1087,17 +1089,35 @@ w = inv.get("worker") or {}
 nodes = inv.get("nodes") or {}
 head = nodes.get("head") or {}
 worker = nodes.get("worker") or {}
+term = TerminalWriter()
+emit = term.emit
+
+
+def field(label, value, indent=2):
+    term.field(label, value, indent=indent)
+
 
 def fmt_mem(n):
     if n is None:
         return "n/a"
     return f"{n:.2f} GiB"
 
+
+def fmt_gpu_mem(mib):
+    if mib is None:
+        return "n/a"
+    gib = float(mib) / 1024
+    if verbose:
+        return f"{gib:.1f} GiB ({int(mib):,} MiB)"
+    return f"{gib:.1f} GiB"
+
+
 def service_active(s):
     state = s.get("state")
     if state in ("running", "partial", "degraded"):
         return True
     return any(r.get("running") for r in (s.get("ranks") or []))
+
 
 def service_actionable(s):
     """Managed stale cleanup targets, label mismatches — always show in default."""
@@ -1108,21 +1128,24 @@ def service_actionable(s):
         return True
     return False
 
+
 def service_inactive_unknown_legacy(s):
     own = s.get("ownership")
     if own not in ("unknown", "legacy"):
         return False
     return not service_active(s)
 
+
 def fmt_ranks(vals):
     if not vals:
         return "-"
     return ",".join(str(x) for x in vals)
 
+
 def print_service(s):
-    sid = s.get("service_id")
-    state = s.get("state")
-    own = s.get("ownership")
+    sid = s.get("service_id") or "?"
+    state = s.get("state") or "?"
+    own = s.get("ownership") or "?"
     safe = "safe_to_stop" if s.get("safe_to_stop") else "not_safe_to_stop"
     complete = "complete" if s.get("complete") else "incomplete"
     obs_y = s.get("observability") or "?"
@@ -1132,48 +1155,78 @@ def print_service(s):
     obs = fmt_ranks(s.get("observed_ranks") or [])
     nodes_e = s.get("expected_nodes")
     fp = s.get("estimated_footprint_gib_per_rank")
-    fp_s = f"{fp:.2f} GiB/rank est" if fp is not None else "est n/a"
-    print(
-        f"  • {sid}  state={state} ownership={own} {safe} {complete} obs={obs_y}"
-        f"  served={served} port={port} nodes={nodes_e}"
-        f"  ranks expected={exp} observed={obs}  {fp_s}"
-    )
+    fp_s = f"{fp:.2f} GiB/rank" if fp is not None else "n/a"
+    node_word = "node" if nodes_e == 1 else "nodes"
+
+    emit(f"{state.upper()}  {sid}", subsequent_indent="  ")
+    endpoint = f"{served} on :{port}" if port is not None else served
+    field("serves", endpoint)
+    field("status", f"{own} · {complete} · {safe}")
+    field("topology", f"{nodes_e} {node_word} · ranks expected={exp} observed={obs}")
+    field("estimate", fp_s)
+    if verbose or obs_y != "complete":
+        field("observe", obs_y)
+
     for r in s.get("ranks") or []:
         g = r.get("gpu_memory") or {}
         gm = g.get("measured_mib")
-        if gm is None:
-            gm_s = f"gpu_mem=null ({g.get('status')}/{g.get('source')})"
-        else:
-            gm_s = f"gpu_mem={gm} MiB ({g.get('source')})"
         run = "running" if r.get("running") else ("stale" if r.get("stale") else "stopped")
         st = "safe_to_stop" if r.get("safe_to_stop") else "not_safe_to_stop"
-        print(
-            f"      - {r.get('node')} rank={r.get('rank')} {r.get('container_name')}"
-            f" id={r.get('container_id_short')} {run} ownership={r.get('ownership')} {st}"
-            f"  mem_avail={fmt_mem(r.get('mem_available_gib'))} {gm_s}"
+        print()
+        emit(
+            f"{r.get('node') or '?'} · rank {r.get('rank') or '?'}",
+            initial_indent="  ",
+            subsequent_indent="    ",
         )
+        field("container", r.get("container_name") or "?", indent=4)
+        if verbose:
+            field("id", r.get("container_id_short") or "?", indent=4)
+        field("status", f"{run} · {r.get('ownership') or '?'} · {st}", indent=4)
+        field(
+            "memory",
+            f"GPU {fmt_gpu_mem(gm)} · host available {fmt_mem(r.get('mem_available_gib'))}",
+            indent=4,
+        )
+        if verbose:
+            source = str(g.get("source") or "?").replace("+", " + ")
+            field("source", f"{g.get('status') or '?'} · {source}", indent=4)
         for reason in r.get("reasons") or []:
-            print(f"        reason: {reason}")
+            field("reason", reason, indent=4)
     for reason in s.get("reasons") or []:
-        print(f"      reason: {reason}")
+        field("reason", reason)
 
-print(f"[inventory] schema_version={inv.get('schema_version')}")
+
+print("INVENTORY")
+if verbose:
+    field("Schema", f"version {inv.get('schema_version')}", indent=0)
+    field("Generated", inv.get("generated_at") or "?", indent=0)
+
 ws = w.get("status")
 wr = w.get("reason") or ""
 wip = w.get("ip") or ""
 if ws == "ok":
-    print(f"[inventory] worker={wip} status=ok")
+    field("Worker", f"OK · {wip or 'IP unavailable'}", indent=0)
 elif ws == "unset":
-    print(f"[inventory] worker=unset — {wr}")
+    field("Worker", "not configured", indent=0)
+    if wr:
+        field("reason", wr)
 else:
-    print(f"[inventory] worker={wip or '?'} status={ws} — {wr}")
+    field("Worker", f"{str(ws or '?').upper()} · {wip or 'IP unavailable'}", indent=0)
+    if wr:
+        field("reason", wr)
 
-print(
-    f"[inventory] MemAvailable head={fmt_mem(head.get('mem_available_gib'))}"
-    f" ({head.get('mem_source')})"
-    f" worker={fmt_mem(worker.get('mem_available_gib'))}"
-    f" ({worker.get('mem_source')})"
+field(
+    "Memory",
+    f"head {fmt_mem(head.get('mem_available_gib'))} · "
+    f"worker {fmt_mem(worker.get('mem_available_gib'))} available",
+    indent=0,
 )
+if verbose:
+    field(
+        "Sources",
+        f"head {head.get('mem_source') or '?'} · worker {worker.get('mem_source') or '?'}",
+        indent=0,
+    )
 
 services = inv.get("services") or []
 shown = []
@@ -1187,33 +1240,51 @@ for s in services:
         # e.g. unexpected stopped states — include when not clearly inactive diag
         shown.append(s)
 
+print()
 if not services:
-    print("[inventory] services: (none)")
+    print("SERVICES  none")
 else:
-    mode = "verbose" if verbose else "concise"
-    print(f"[inventory] services shown={len(shown)}/{len(services)} ({mode})")
+    print(f"SERVICES  {len(shown)} shown / {len(services)} total")
     if not shown and not inactive_diag:
-        print("  (none)")
+        emit("none", initial_indent="  ")
     for s in shown:
+        print()
         print_service(s)
     if inactive_diag and not verbose:
-        print(
-            f"[inventory] inactive unknown/legacy containers: {len(inactive_diag)} "
-            f"(use --verbose for detail; not safe_to_stop)"
+        print()
+        print(f"OTHER CONTAINERS  {len(inactive_diag)} inactive/legacy")
+        emit(
+            "Hidden by default; not safe_to_stop. Use --verbose.",
+            initial_indent="  ",
+            subsequent_indent="  ",
         )
 
 unmanaged = inv.get("unmanaged_gpu_processes") or []
+print()
 if unmanaged:
-    print(f"[inventory] unmanaged GPU processes (read-only, no kill): {len(unmanaged)}")
+    measured = [u.get("used_memory_mib") for u in unmanaged]
+    measured = [m for m in measured if isinstance(m, (int, float))]
+    aggregate = f" · {int(sum(measured)):,} MiB" if measured else ""
+    noun = "process" if len(unmanaged) == 1 else "processes"
+    print(f"UNMANAGED GPU  {len(unmanaged)} {noun}{aggregate}")
+    emit(
+        "Read-only; Pulsar will not stop these processes.",
+        initial_indent="  ",
+        subsequent_indent="  ",
+    )
     for u in unmanaged:
         mem = u.get("used_memory_mib")
-        mem_s = f"{mem} MiB" if mem is not None else "n/a"
-        print(
-            f"  • {u.get('node')} pid={u.get('pid')} {u.get('process_name')} mem={mem_s}"
-            f"  — {u.get('note')}"
+        mem_s = f"{int(mem):,} MiB" if isinstance(mem, (int, float)) else "n/a"
+        process_path = str(u.get("process_name") or "?")
+        process_name = os.path.basename(process_path.rstrip("/")) or process_path
+        emit(
+            f"{u.get('node') or '?'} · PID {u.get('pid') or '?'} · {process_name} · {mem_s}",
+            initial_indent="  ",
+            subsequent_indent="    ",
         )
+        if verbose and process_path != process_name:
+            field("path", process_path, indent=4)
 else:
-    print("[inventory] unmanaged GPU processes: (none observed)")
+    print("UNMANAGED GPU  none observed")
 PY
 fi
-

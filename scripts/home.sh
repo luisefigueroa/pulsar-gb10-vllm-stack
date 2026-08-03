@@ -194,31 +194,6 @@ print()
 PY
 }
 
-format_service_choice() {
-  # stdin: one service JSON object → one human choice line
-  python3 - <<'PY'
-import json, sys
-s = json.load(sys.stdin)
-conf = s.get("conf") or s.get("service_id") or "?"
-state = s.get("state") or "?"
-exp = ",".join(str(x) for x in (s.get("expected_ranks") or [])) or "-"
-obs = ",".join(str(x) for x in (s.get("observed_ranks") or [])) or "-"
-complete = "complete" if s.get("complete") else "incomplete"
-# Measured GPU if any rank has it; else estimated footprint
-measured = []
-for r in s.get("ranks") or []:
-    g = (r.get("gpu_memory") or {}).get("measured_mib")
-    if g is not None:
-        measured.append(f"{r.get('node')}:{g}MiB")
-if measured:
-    mem_s = "gpu " + ",".join(measured)
-else:
-    fp = s.get("estimated_footprint_gib_per_rank")
-    mem_s = f"est {fp:.1f} GiB/rank" if fp is not None else "mem n/a"
-print(f"{conf}  state={state}  {complete}  ranks exp={exp} obs={obs}  {mem_s}")
-PY
-}
-
 # ---------------------------------------------------------------------------
 # Workflows
 # ---------------------------------------------------------------------------
@@ -268,7 +243,6 @@ workflow_stop() {
   fi
 
   local choices=()
-  local confs=()
   local line conf
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -279,35 +253,27 @@ import json, os
 services = json.loads(os.environ.get("SERVICES_JSON") or "[]")
 for s in services:
     conf = s.get("conf") or s.get("service_id") or "?"
-    state = s.get("state") or "?"
-    exp = ",".join(str(x) for x in (s.get("expected_ranks") or [])) or "-"
-    obs = ",".join(str(x) for x in (s.get("observed_ranks") or [])) or "-"
-    complete = "complete" if s.get("complete") else "incomplete"
+    state = str(s.get("state") or "?").upper()
+    expected_count = len(s.get("expected_ranks") or [])
+    observed_count = len(s.get("observed_ranks") or [])
     measured = []
     for r in s.get("ranks") or []:
         g = (r.get("gpu_memory") or {}).get("measured_mib")
         if g is not None:
-            measured.append(f"{r.get('node')}:{g}MiB")
+            measured.append(f"{float(g) / 1024:.1f}")
     if measured:
-        mem_s = "gpu " + ",".join(measured)
+        mem_s = "GPU " + "/".join(measured) + " GiB"
     else:
         fp = s.get("estimated_footprint_gib_per_rank")
-        mem_s = f"est {fp:.1f} GiB/rank" if fp is not None else "mem n/a"
+        mem_s = f"est {fp:.1f} GiB/rank" if fp is not None else "memory n/a"
     # conf is first token for parsing
-    print(f"{conf}  state={state}  {complete}  ranks exp={exp} obs={obs}  {mem_s}")
+    print(f"{conf} · {state} · ranks {observed_count}/{expected_count} · {mem_s}")
 PY
-  )
-  while IFS= read -r conf; do
-    [ -n "$conf" ] || continue
-    confs+=("$conf")
-  done < <(
-    printf '%s' "$services_json" | python3 -c \
-      'import json,sys; [print(s.get("conf") or "") for s in json.load(sys.stdin)]'
   )
 
   choices+=("Back")
   local pick
-  if ! pick=$(choose "Stop a serving model (safe_to_stop managed only)" "${choices[@]}"); then
+  if ! pick=$(choose "Stop a serving model · managed + safe_to_stop" "${choices[@]}"); then
     log "cancelled; no containers changed"
     return 0
   fi
@@ -367,7 +333,7 @@ import json, os
 services = json.loads(os.environ.get("SERVICES_JSON") or "[]")
 for s in services:
     conf = s.get("conf") or s.get("service_id") or "?"
-    print(f"{conf}  state=stale  safe_to_stop  (no model memory)")
+    print(f"{conf} · STALE · safe_to_stop · no model memory")
 PY
   )
   choices+=("Back")

@@ -20,15 +20,15 @@ record() {
   CHECKS+=("${level}|${id}|${msg}")
   case "$level" in
     ok)
-      [ "$JSON" = 1 ] || printf '  ok   %s\n' "$msg"
+      [ "$JSON" = 1 ] || print_hanging "  ok   " "$msg"
       ;;
     warn)
       WARN=1
-      [ "$JSON" = 1 ] || printf '  warn %s\n' "$msg"
+      [ "$JSON" = 1 ] || print_hanging "  warn " "$msg"
       ;;
     fail)
       FAIL=1
-      [ "$JSON" = 1 ] || printf '  FAIL %s\n' "$msg"
+      [ "$JSON" = 1 ] || print_hanging "  FAIL " "$msg"
       ;;
   esac
 }

@@ -572,6 +572,12 @@ assert_true "quick-status stale nonblocking" bash -c "printf '%s' \"\$0\" | grep
 assert_true "quick-status not inference smoke" bash -c "printf '%s' \"\$0\" | grep -qiE 'not an inference|no inference'" "$out"
 assert_false "quick-status never logs completion" bash -c "grep -qi completion '$STATE/logs/api.log' && grep -q FORBIDDEN '$STATE/logs/api.log'"
 
+narrow=$(COLUMNS=48 "$REPO_DIR/scripts/quick-status.sh" 2>&1)
+assert_true "quick-status honors narrow terminal width" bash -c \
+  "printf '%s\n' \"\$0\" | python3 -c 'import sys; lines=sys.stdin.read().splitlines(); assert max(map(len, lines)) <= 48'" "$narrow"
+assert_true "quick-status uses labeled human fields" bash -c \
+  "printf '%s' \"\$0\" | grep -q '^QUICK STATUS' && ! printf '%s' \"\$0\" | grep -q '\[quick-status\]'" "$narrow"
+
 j=$("$REPO_DIR/scripts/quick-status.sh" --json)
 assert_true "quick-status json kind" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"kind\"]==\"quick_status\"; assert d[\"inference_smoke\"] is False'" "$j"
 assert_true "quick-status json mem total" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"memory\"][\"head\"][\"mem_total_gib\"]==128.0'" "$j"
@@ -623,6 +629,8 @@ PY
 # Stop: 3, select first (only good-model), decline confirm n, exit 6
 run_home $'3\n1\nn\n6\n'
 assert_file_contains "$STATE/logs/home.combined" "good-model" "stop lists managed safe"
+assert_file_contains "$STATE/logs/home.combined" "good-model · RUNNING · ranks 1/1" \
+  "stop choice is compact and human-readable"
 assert_file_not_contains "$STATE/logs/home.combined" "vllm-mystery|mystery" "stop excludes unknown"
 # Legacy/mismatch conf names might appear in inventory messages? should not in choices - check down not called
 assert_false "decline: no down" bash -c "test -s '$STATE/logs/down.log'"
@@ -667,6 +675,8 @@ seed_inv "$STATE/inv_current" 100 "$(svc_managed stale-qwen stale True True)"
 run_home $'4\n1\n1\nn\n6\n'
 assert_false "stale decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" "stale decline"
+assert_file_contains "$STATE/logs/home.combined" "stale-qwen · STALE · safe_to_stop" \
+  "stale choice is compact and explicit"
 
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed stale-qwen stale True True)"

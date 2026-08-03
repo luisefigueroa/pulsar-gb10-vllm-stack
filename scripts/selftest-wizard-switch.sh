@@ -573,6 +573,12 @@ assert_eq "$LAST_RC" "0" "same-healthy keep exit 0"
 assert_false "keep: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "keep: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "keeping qwen3-1.7b running" "keep message"
+assert_file_contains "$STATE/logs/wizard.out" "^TARGET$" "wizard target uses a semantic section"
+assert_file_contains "$STATE/logs/wizard.out" "^PREFLIGHT$" "wizard preflight uses a semantic section"
+assert_file_contains "$STATE/logs/wizard.out" "^RELEVANT SERVICES" \
+  "wizard diagnostics use stacked service sections"
+assert_file_contains "$STATE/logs/wizard.err" "qwen3-1.7b · 1 node · HF · spec none" \
+  "wizard model choice is compact and human-readable"
 
 # ---------------------------------------------------------------------------
 # 3) Same restart — stop only after final confirm

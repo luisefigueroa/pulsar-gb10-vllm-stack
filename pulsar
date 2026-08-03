@@ -30,7 +30,7 @@ Usage:
 
 Inventory options (passed through):
   --json       Full schema_version=1 JSON
-  --verbose    Human mode: include inactive unknown/legacy detail
+  --verbose    Human mode: include hidden services and diagnostic metadata
 
 Start args are passed to scripts/up.sh (e.g. --dry-run, --no-spec-decode).
 

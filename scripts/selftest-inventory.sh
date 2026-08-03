@@ -380,7 +380,7 @@ snap = {
   ],
   "gpu_processes": [
     {"node": "head", "pid": 4001, "process_name": "VLLM::Worker", "used_memory_mib": 5000, "status": "ok"},
-    {"node": "head", "pid": 99999, "process_name": "python3", "used_memory_mib": 1200, "status": "ok"},
+    {"node": "head", "pid": 99999, "process_name": "/opt/comfy/.venv/bin/python3", "used_memory_mib": 1200, "status": "ok"},
   ],
 }
 print(json.dumps(snap))
@@ -389,10 +389,22 @@ PY
 out=$(run_fixture "unmanaged-gpu" "$body")
 assert_eq "$(py_get "$out" 'len(d["unmanaged_gpu_processes"])')" "1" "unmanaged: one leftover GPU pid"
 assert_eq "$(py_get "$out" 'd["unmanaged_gpu_processes"][0]["pid"]')" "99999" "unmanaged: pid 99999"
+assert_eq "$(py_get "$out" 'd["unmanaged_gpu_processes"][0]["process_name"]')" \
+  "/opt/comfy/.venv/bin/python3" "unmanaged: JSON preserves full process path"
 assert_true "$(py_get "$out" 'int("kill" not in (d["unmanaged_gpu_processes"][0].get("note") or "").lower() or "no kill" in (d["unmanaged_gpu_processes"][0].get("note") or "").lower())')" \
   "unmanaged: note is read-only (no kill action)"
 # ensure no action field
 assert_eq "$(py_get "$out" '"action" in d["unmanaged_gpu_processes"][0]')" "False" "unmanaged: no action field"
+
+hf=$(mktemp)
+printf '%s' "$body" >"$hf"
+unmanaged_human=$(COLUMNS=60 "$INV" --from-fixture "$hf")
+unmanaged_verbose=$(COLUMNS=60 "$INV" --from-fixture "$hf" --verbose)
+rm -f "$hf"
+assert_true "$(printf '%s' "$unmanaged_human" | python3 -c 'import sys; s=sys.stdin.read(); print(int("UNMANAGED GPU  1 process · 1,200 MiB" in s and "python3" in s and "/opt/comfy" not in s and s.count("Pulsar will not stop these processes.") == 1))')" \
+  "human unmanaged section is compact and states safety once"
+assert_true "$(printf '%s' "$unmanaged_verbose" | python3 -c 'import sys; s=sys.stdin.read(); print(int("/opt/comfy/.venv/bin/python3" in s))')" \
+  "verbose human output includes full process path"
 
 # ---------------------------------------------------------------------------
 # 7) Worker unreachable
@@ -502,6 +514,15 @@ else
     fail=$((fail + 1))
   fi
 fi
+
+hf=$(mktemp)
+printf '%s' "$body" >"$hf"
+narrow_human=$(COLUMNS=48 "$INV" --from-fixture "$hf")
+rm -f "$hf"
+assert_true "$(printf '%s\n' "$narrow_human" | python3 -c 'import sys; lines=sys.stdin.read().splitlines(); print(int(bool(lines) and max(map(len, lines)) <= 48))')" \
+  "human output honors narrow terminal width"
+assert_true "$(printf '%s' "$narrow_human" | python3 -c 'import sys; s=sys.stdin.read(); print(int(s.startswith("INVENTORY\n") and "\nSERVICES  " in s and "\nUNMANAGED GPU  " in s and "[inventory]" not in s))')" \
+  "human output uses stacked semantic sections"
 
 # Labels must never dump arbitrary keys / env in output
 assert_eq "$(py_get "$out" 'chr(44).join(sorted(d["services"][0]["ranks"][0]["labels"].keys()))')" \

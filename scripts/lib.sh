@@ -35,6 +35,36 @@ log()  { printf '[%s] %s\n' "${SCRIPT_NAME:-pulsar}" "$*"; }
 warn() { printf '[%s] warn: %s\n' "${SCRIPT_NAME:-pulsar}" "$*" >&2; }
 die()  { printf '[%s] ERROR: %s\n' "${SCRIPT_NAME:-pulsar}" "$*" >&2; exit "${2:-1}"; }
 
+terminal_width() {
+  local width="${COLUMNS:-}"
+  if ! [[ "$width" =~ ^[0-9]+$ ]] && [ -t 1 ] && command -v tput >/dev/null 2>&1; then
+    width=$(tput cols 2>/dev/null || true)
+  fi
+  [[ "$width" =~ ^[0-9]+$ ]] || width=80
+  [ "$width" -ge 32 ] || width=32
+  [ "$width" -le 100 ] || width=100
+  printf '%s\n' "$width"
+}
+
+print_hanging() {
+  # print_hanging PREFIX MESSAGE — wrap MESSAGE with PREFIX-width continuation.
+  local prefix="$1" message="$2" width content_width first line continuation
+  width=$(terminal_width)
+  content_width=$((width - ${#prefix}))
+  [ "$content_width" -ge 8 ] || content_width=8
+  printf -v continuation '%*s' "${#prefix}" ''
+  first=1
+  while IFS= read -r line; do
+    line="${line%"${line##*[![:space:]]}"}"
+    if [ "$first" = 1 ]; then
+      printf '%s%s\n' "$prefix" "$line"
+      first=0
+    else
+      printf '%s%s\n' "$continuation" "$line"
+    fi
+  done < <(printf '%s\n' "$message" | fold -s -w "$content_width")
+}
+
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1 (install it and retry)"
 }
