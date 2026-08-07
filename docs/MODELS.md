@@ -5,19 +5,24 @@ Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 weights + KV, **~200-210 GiB across both**. "Active GB/tok" drives the decode
 roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 
-## Serveable on this cluster
+The control plane may discover more than two GB10 nodes. This table does not
+promote a larger geometry: every serveable row is an exact profile, and no
+three-node profile currently has `STATUS=tested*`. Statements such as “3 nodes
+would fit” are weight arithmetic only, not correctness, stability, context, or
+performance validation.
+
+## Exact profiles and recorded candidates
 
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
 |---|---|---|---|---|---|---|---|
-| `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 3.4 GB | 1 | 32K | — | **tested** (canary) |
-| `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 3.4 GB | 2 / TP=2 | 32K | — | **tested** (plumbing canary) |
+| `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 3.4 GB | 1 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
+| `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 3.4 GB | 2 / TP=2 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
 | `qwen3.6-27b-fp8-2node` | 27B split TP=2 cross-node | FP8 | 29 GB | 2 / TP=2 | — | — | **DO NOT USE** — GDN hybrids hang cross-node (VALIDATION.md) |
 | `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 (hybrid: 16 full-attn + 48 GDN layers) | FP8 block | 29 GB | 1 | 131,072 (needle 3/3 @121K) | ngram **FORBIDDEN** (corrupts) | **tested** |
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 (needle 3/3 @124K) | MTP not offered | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP k=1 **opt-in +47%** (`--spec-decode`; triton draft) | **tested** — 16.2 tok/s c=1 base, 113 agg c=32, IDENTICAL determinism, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K) | DFlash **marginal +13%** (off by default) | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
 | `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **published, digest-pinned PR-41834 image** | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (client cap; **20 GB/rank KV → 652,465 tok, 1.30x @500K**; `max-num-seqs 5`; prior soaked 10 GB→577k, needle 3/3 @447K) | **DSpark default-on; k=5 checkpoint-fixed** (`--no-spec-decode` rollback; 43–48 tok/s c=1) | **tested+soaked** (model/image) — flagship; **2026-08-01 defaults retuned for few long agent sessions** (see conf header + DeepSeek notes) |
-| `deepseek-v4-flash-0422` | original 04-22 checkpoint (flagship 07-30→07-31) | FP8+FP4 | 160 GB | 2 / TP=2 | 447K tested (500K configured) | via retired -DSpark ckpt only | fallback (fully validated; superseded by 0731) |
 | `inkling-small-nvfp4` | Thinkingmachines/Inkling-Small-NVFP4 (NFS catalog, added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 1M configured | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
 | `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — measurement only; stock graphs hang without `--enforce-eager` (baked in conf; still requires `--force`). Prefer 1-node `laguna-s-2.1-nvfp4` |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
@@ -27,7 +32,7 @@ roofline: `~240 GB/s / active-bytes-per-token` (docs/HARDWARE.md).
 "Status" is updated by validation runs only (docs/VALIDATION.md holds the
 numbers). Nothing gets `tested` from arithmetic.
 
-## Explicitly does NOT fit (the answer to "can we serve the big ones?")
+## Does not fit the validated one/two-node serving budget
 
 Weights alone vs ~210 GiB total budget — these are not close, and no
 quantized variants exist in the catalog:
@@ -57,7 +62,7 @@ headroom is not a deployment.
   nodes, NOT in the NFS catalog (catalog has V4-Pro only). Since 2026-07-31
   the flagship serves the **0731 refresh** (167 GB), which builds the DSpark
   drafter INTO the checkpoint — the old separate `-DSpark` variant and its
-  conf are retired (git history), and the 04-22 checkpoint is the fallback.
+  conf are retired (git history), as is the superseded 04-22 checkpoint.
   Since 2026-07-30 the flagship runs on the published, digest-pinned
   upstream-lineage image built from vLLM PR #41834 (stock release images remain
   non-viable: kernel-level livelock, VALIDATION.md). Pull the image named by the

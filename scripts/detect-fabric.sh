@@ -1,284 +1,285 @@
 #!/usr/bin/env bash
-# Detect GPU + RoCE fabric; propose cluster .env values (optional --write-env).
-# Peer WORKER_IP is discovered via assumed hostnames (dgx-spark-1 / dgx-spark-2).
-#   scripts/detect-fabric.sh [--json] [--write-env]
-#   WORKER_HOST=... HEAD_HOST=...  # override peer hostname if needed
+# Discover hostname-agnostic GB10 peers, verify their RoCE mesh, and optionally
+# persist the user-confirmed membership in .cluster-topology.json.
 set -euo pipefail
 SCRIPT_NAME=detect-fabric
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
-JSON=0 WRITE=0 YES=0 ACCEPT_NEW=0
+JSON=0
+WRITE=0
+YES=0
+ACCEPT_NEW=0
+declare -a CLI_CANDIDATES=()
+
+usage() {
+  cat <<'EOF'
+usage: scripts/detect-fabric.sh [options]
+
+Discover SSH services with mDNS, then retain only nodes that independently
+prove aarch64 + NVIDIA GB10 + Docker NVIDIA + active addressed RDMA links.
+Hostnames are descriptive only; cluster identity comes from each machine ID.
+
+  --json                    emit the discovery document as JSON
+  --write-topology          confirm and atomically write .cluster-topology.json
+  --write-env               deprecated alias for --write-topology
+  --candidate HOST          probe an additional hostname or IP (repeatable)
+  --yes, -y                 skip membership confirmation (automation)
+  --accept-new-host-keys    explicitly trust a new SSH host key during discovery
+  -h, --help                show this help
+
+Candidate sources are combined and de-duplicated:
+  * this node (always included)
+  * Avahi/mDNS _ssh._tcp IPv4 advertisements
+  * CLUSTER_CANDIDATES (comma- or whitespace-separated)
+  * --candidate HOST
+  * nodes from an existing confirmed topology
+
+SSH checks are non-interactive and use saved host keys by default. Discovery
+never chooses model geometry; each profile remains an exact validated deployment.
+EOF
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1 ;;
-    --write-env) WRITE=1 ;;
+    --write-topology) WRITE=1 ;;
+    --write-env)
+      WRITE=1
+      [ "$JSON" = 1 ] || warn "--write-env is now an alias for --write-topology; per-node fabric is stored in .cluster-topology.json"
+      ;;
+    --candidate)
+      [ -n "${2:-}" ] || die "--candidate requires a hostname or IP"
+      CLI_CANDIDATES+=("$2")
+      shift
+      ;;
     --yes|-y) YES=1 ;;
     --accept-new-host-keys) ACCEPT_NEW=1 ;;
-    -h|--help)
-      cat <<'EOF'
-usage: scripts/detect-fabric.sh [--json] [--write-env] [--yes] [--accept-new-host-keys]
-
-Discovers local RoCE + NCCL_* and, when possible, the peer Spark's
-same-rail IP via hostname convention:
-  head   = ${HEAD_HOST:-dgx-spark-1.local}
-  worker = ${WORKER_HOST:-dgx-spark-2.local}
-
-Peer SSH uses BatchMode like the rest of the stack and requires the peer
-host key already in ~/.ssh/known_hosts (no silent TOFU by default).
-First-time enroll only:
-  ssh-keyscan -H dgx-spark-2.local >> ~/.ssh/known_hosts
-  # or: scripts/detect-fabric.sh --accept-new-host-keys
-
---write-env              propose writing HEAD_IP / WORKER_IP / NCCL_* to .env
-                         (shows both IPs; confirms unless --yes)
---yes                    skip write confirmation (automation)
---accept-new-host-keys   TOFU once: StrictHostKeyChecking=accept-new for peer
-                         probe only (prefer ssh-keyscan + known_hosts after)
-EOF
-      exit 0
-      ;;
+    -h|--help) usage; exit 0 ;;
     *) die "unknown arg: $1" ;;
   esac
   shift
 done
 
-HEAD_HOST="${HEAD_HOST:-dgx-spark-1.local}"
-WORKER_HOST="${WORKER_HOST:-dgx-spark-2.local}"
-
-gpu="unknown"
-if command -v nvidia-smi >/dev/null 2>&1; then
-  gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | sed 's/^ *//')
+if [ "$JSON" = 1 ] && [ "$WRITE" = 1 ]; then
+  die "--json and --write-topology are separate operations"
 fi
 
-hcas=()
-socket_if=""
-head_ip=""
-worker_ip=""
-peer_host=""
-local_role="unknown"
-confidence=low
-detail=""
-peer_detail=""
+require_cmd python3
+PROBE="$REPO_DIR/scripts/probe-node.py"
+MANIFEST_TOOL="$REPO_DIR/scripts/topology_manifest.py"
+[ -r "$PROBE" ] || die "missing node probe: $PROBE"
+[ -x "$MANIFEST_TOOL" ] || die "missing topology helper: $MANIFEST_TOOL"
 
-# Map RDMA devices -> netdevs
-if command -v rdma >/dev/null 2>&1; then
-  while read -r line; do
-    if echo "$line" | grep -q 'state ACTIVE'; then
-      hca=$(echo "$line" | awk '{print $2}' | cut -d/ -f1)
-      nd=$(echo "$line" | sed -n 's/.*netdev //p' | awk '{print $1}')
-      [ -n "$hca" ] && hcas+=("$hca")
-      if [ -z "$socket_if" ] && [ -n "$nd" ]; then
-        socket_if="$nd"
-      fi
-    fi
-  done < <(rdma link show 2>/dev/null || true)
-fi
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-discovery.XXXXXX")
+trap 'rm -rf "$tmpdir"' EXIT
+candidates_file="$tmpdir/candidates"
+: >"$candidates_file"
 
-if [ ${#hcas[@]} -eq 0 ] && command -v ibdev2netdev >/dev/null 2>&1; then
-  while read -r hca _arrow nd state; do
-    [ -n "$hca" ] || continue
-    hcas+=("$hca")
-    if [ -z "$socket_if" ] && [ -n "$nd" ]; then
-      socket_if="$nd"
-    fi
-  done < <(ibdev2netdev 2>/dev/null || true)
-fi
-
-if [ -n "$socket_if" ]; then
-  head_ip=$(ip -4 -o addr show dev "$socket_if" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)
-fi
-
-# Hostname → role (Spark pair convention)
-local_hn=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown)
-local_hn_lc=$(printf '%s' "$local_hn" | tr '[:upper:]' '[:lower:]')
-case "$local_hn_lc" in
-  *spark-1*|*spark1*)
-    local_role=head
-    peer_host="$WORKER_HOST"
-    ;;
-  *spark-2*|*spark2*)
-    local_role=worker
-    peer_host="$HEAD_HOST"
-    # On worker node, local RoCE IP is WORKER_IP; HEAD_IP comes from peer
-    worker_ip="$head_ip"
-    head_ip=""
-    ;;
-  *)
-    local_role=unknown
-    peer_host="$WORKER_HOST"
-    peer_detail="hostname '$local_hn' not spark-1/spark-2; trying WORKER_HOST=$WORKER_HOST as peer"
-    ;;
-esac
-
-# Resolve peer IPv4 on the same data-plane interface name.
-# Default SSH: BatchMode + known_hosts only (same as preflight/up).
-# Optional TOFU: --accept-new-host-keys or DETECT_FABRIC_ACCEPT_NEW=1
-peer_ip_on_if() {
-  local host="$1" ifname="$2"
-  [ -n "$host" ] && [ -n "$ifname" ] || return 1
-  local -a ssh_opts=(-o BatchMode=yes -o ConnectTimeout=5)
-  if [ "${ACCEPT_NEW:-0}" = 1 ] || [ "${DETECT_FABRIC_ACCEPT_NEW:-0}" = 1 ]; then
-    ssh_opts+=(-o StrictHostKeyChecking=accept-new)
-  fi
-  # Prefer already-enrolled keys; accept-new only when explicitly requested.
-  ssh "${ssh_opts[@]}" -- "$host" \
-    "ip -4 -o addr show dev $(printf '%q' "$ifname") 2>/dev/null | awk '{print \$4}' | cut -d/ -f1 | head -1" \
-    2>/dev/null || return 1
+safe_candidate() {
+  case "${1:-}" in
+    ""|-*|*[!A-Za-z0-9._:@%+-]*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
-try_peer_hosts() {
-  local base="$1"
-  local candidates=("$base")
-  # also try bare short name if .local given, and vice versa
-  if [[ "$base" == *.local ]]; then
-    candidates+=("${base%.local}")
+add_candidate() {
+  local candidate="${1:-}"
+  [ -n "$candidate" ] || return 0
+  if safe_candidate "$candidate"; then
+    printf '%s\n' "$candidate" >>"$candidates_file"
   else
-    candidates+=("${base}.local")
+    warn "skip unsafe SSH candidate '$candidate'"
   fi
-  local h ip
-  for h in "${candidates[@]}"; do
-    ip=$(peer_ip_on_if "$h" "$socket_if" || true)
-    if [ -n "$ip" ]; then
-      peer_host="$h"
-      echo "$ip"
-      return 0
-    fi
+}
+
+for candidate in "${CLI_CANDIDATES[@]}"; do
+  add_candidate "$candidate"
+done
+
+if [ -n "${CLUSTER_CANDIDATES:-}" ]; then
+  candidate_words=${CLUSTER_CANDIDATES//,/ }
+  # shellcheck disable=SC2086 # intentional word splitting for documented list
+  for candidate in $candidate_words; do
+    add_candidate "$candidate"
   done
-  return 1
+fi
+
+if command -v avahi-browse >/dev/null 2>&1; then
+  while IFS=$'\t' read -r mdns_host mdns_ip; do
+    add_candidate "$mdns_host"
+    add_candidate "$mdns_ip"
+  done < <(
+    avahi-browse --resolve --terminate --parsable _ssh._tcp 2>/dev/null \
+      | awk -F';' '$1 == "=" && $3 == "IPv4" {print $7 "\t" $8}' \
+      || true
+  )
+elif [ "$JSON" != 1 ]; then
+  warn "avahi-browse unavailable — probing explicit/existing candidates only"
+fi
+
+# Existing confirmed nodes remain candidates, so regeneration preserves ranks
+# and does not depend on their naming convention.
+if [ -f "$CLUSTER_TOPOLOGY_FILE" ]; then
+  while IFS=$'\t' read -r kind _rank _id _hostname ssh_host _rest; do
+    [ "$kind" = NODE ] || continue
+    [ "$ssh_host" = local ] || add_candidate "$ssh_host"
+  done < <("$MANIFEST_TOOL" rows "$CLUSTER_TOPOLOGY_FILE" 2>/dev/null || true)
+fi
+sort -u "$candidates_file" -o "$candidates_file"
+
+local_probe="$tmpdir/probe-0000.json"
+python3 "$PROBE" --local --ssh-host local >"$local_probe"
+declare -a probe_files=("$local_probe")
+declare -a probe_pids=()
+declare -a probe_outputs=()
+declare -a probe_hosts=()
+
+ssh_opts=("${PULSAR_SSH_OPTS[@]}")
+if [ "$ACCEPT_NEW" = 1 ] || [ "${DETECT_FABRIC_ACCEPT_NEW:-0}" = 1 ]; then
+  ssh_opts+=(-o StrictHostKeyChecking=accept-new)
+fi
+
+index=0
+while IFS= read -r candidate; do
+  [ -n "$candidate" ] || continue
+  index=$((index + 1))
+  output=$(printf '%s/probe-%04d.json' "$tmpdir" "$index")
+  error_output=$(printf '%s/probe-%04d.err' "$tmpdir" "$index")
+  remote_command="python3 - --ssh-host $(printf '%q' "$candidate")"
+  (
+    "$PULSAR_SSH" "${ssh_opts[@]}" -- "$candidate" "$remote_command" \
+      <"$PROBE" >"$output" 2>"$error_output"
+  ) &
+  probe_pids+=("$!")
+  probe_outputs+=("$output")
+  probe_hosts+=("$candidate")
+done <"$candidates_file"
+
+skipped_probe_count=0
+for position in "${!probe_pids[@]}"; do
+  if wait "${probe_pids[$position]}"; then
+    if [ -s "${probe_outputs[$position]}" ]; then
+      probe_files+=("${probe_outputs[$position]}")
+    fi
+  elif [ "$JSON" != 1 ]; then
+    skipped_probe_count=$((skipped_probe_count + 1))
+  fi
+done
+report_skipped_candidates() {
+  local noun=addresses
+  [ "$skipped_probe_count" -gt 0 ] || return 0
+  [ "$skipped_probe_count" -ne 1 ] || noun=address
+  echo "DISCOVERY NOTES"
+  print_hanging "  SSH       " "$skipped_probe_count advertised SSH $noun could not be checked with saved keys."
+  print_hanging "  Help      " "These are usually unrelated devices. If a GB10 is missing, set up key-based SSH and rerun with --candidate HOST."
 }
 
-if [ -n "$socket_if" ] && [ -n "$peer_host" ]; then
-  if peer_ip=$(try_peer_hosts "$peer_host"); then
-    if [ "$local_role" = worker ]; then
-      head_ip="$peer_ip"
-    else
-      worker_ip="$peer_ip"
+
+
+assemble_args=(assemble)
+if [ -f "$CLUSTER_TOPOLOGY_FILE" ]; then
+  assemble_args+=(--existing "$CLUSTER_TOPOLOGY_FILE")
+fi
+assemble_args+=("${probe_files[@]}")
+discovery="$tmpdir/discovery.json"
+"$MANIFEST_TOOL" "${assemble_args[@]}" >"$discovery"
+
+if ! "$MANIFEST_TOOL" validate "$discovery" >/dev/null 2>&1; then
+  if [ "$JSON" = 1 ]; then
+    cat "$discovery"
+  else
+    warn "no usable GB10 RoCE topology found"
+    report_skipped_candidates
+    python3 - "$discovery" <<'PY'
+import json
+import sys
+
+document = json.load(open(sys.argv[1], encoding="utf-8"))
+for item in document.get("rejected") or []:
+    reasons = "; ".join(item.get("reasons") or ["not qualified"])
+    print(f"  skip {item.get('hostname') or '?'} ({item.get('ssh_host') or '?'}): {reasons}")
+PY
+  fi
+  exit 1
+fi
+
+# Verify every advertised rail in both directions. A structurally matching
+# subnet is not enough to become confirmed cluster state.
+ping_plan="$tmpdir/ping-plan"
+"$MANIFEST_TOOL" ping-plan "$discovery" >"$ping_plan"
+connectivity_ok=1
+ping_checks=0
+while IFS=$'\t' read -r source_rank source_host target_rank target_ip network; do
+  [ -n "$source_rank" ] || continue
+  ping_checks=$((ping_checks + 1))
+  source_label=$(human_cluster_node "$source_rank")
+  target_label=$(human_cluster_node "$target_rank")
+  if [ "$source_rank" = 0 ]; then
+    if ! ping -c1 -W2 "$target_ip" >/dev/null 2>&1; then
+      connectivity_ok=0
+      [ "$JSON" = 1 ] || warn "$source_label cannot reach $target_label at $target_ip ($network)"
     fi
   else
-    peer_detail="could not SSH ${peer_host} for same-if ${socket_if} IP (BatchMode SSH keys?)"
+    remote_ping="ping -c1 -W2 $(printf '%q' "$target_ip") >/dev/null 2>&1"
+    if ! "$PULSAR_SSH" "${ssh_opts[@]}" -- "$source_host" "$remote_ping" </dev/null; then
+      connectivity_ok=0
+      [ "$JSON" = 1 ] || warn "$source_label cannot reach $target_label at $target_ip ($network)"
+    fi
   fi
+done <"$ping_plan"
+
+if [ "$connectivity_ok" != 1 ]; then
+  [ "$JSON" = 1 ] && cat "$discovery"
+  [ "$JSON" = 1 ] || warn "pairwise RoCE verification failed; topology will not be written"
+  exit 1
 fi
 
-n_hca=${#hcas[@]}
-if [ "$gpu" = "NVIDIA GB10" ] && [ "$n_hca" -ge 2 ] && [ -n "$socket_if" ] && [ -n "$head_ip" ] && [ -n "$worker_ip" ]; then
-  confidence=high
-elif [ "$gpu" = "NVIDIA GB10" ] && [ "$n_hca" -ge 2 ] && [ -n "$socket_if" ] && [ -n "$head_ip" ]; then
-  confidence=medium
-  detail="${detail}WORKER_IP not resolved — set WORKER_HOST or edit .env. "
-elif [ "$n_hca" -ge 1 ] && [ -n "$socket_if" ]; then
-  confidence=medium
-else
-  confidence=low
-  detail="incomplete RDMA/IP detection — set HEAD_IP/WORKER_IP and NCCL_* manually in .env"
-fi
-[ -n "$peer_detail" ] && detail="${detail}${peer_detail}"
-
-hca_csv=$(IFS=,; echo "${hcas[*]:-}")
+verified="$tmpdir/verified.json"
+"$MANIFEST_TOOL" mark-verified "$discovery" >"$verified"
 
 if [ "$JSON" = 1 ]; then
-  python3 - <<PY
-import json
-print(json.dumps({
-  "gpu": "$gpu",
-  "local_hostname": "$local_hn",
-  "local_role": "$local_role",
-  "peer_host": "$peer_host",
-  "nccl_ib_hca": "$hca_csv",
-  "nccl_socket_ifname": "$socket_if",
-  "head_ip": "$head_ip",
-  "worker_ip": "$worker_ip",
-  "confidence": "$confidence",
-  "detail": """$detail""",
-  "rdma_count": $n_hca,
-}, indent=2))
-PY
-else
-  log "gpu=$gpu confidence=$confidence role=$local_role host=$local_hn"
-  log "NCCL_IB_HCA=${hca_csv:-<unset>}"
-  log "NCCL_SOCKET_IFNAME=${socket_if:-<unset>}"
-  log "HEAD_IP=${head_ip:-<unset>}"
-  log "WORKER_IP=${worker_ip:-<unset>}  (peer host tried: ${peer_host:-none})"
-  [ -n "$detail" ] && warn "$detail"
-  cat <<EOF
-
-# Proposed .env fragment (review before use)
-#HEAD_IP=${head_ip}
-#WORKER_IP=${worker_ip}
-#NCCL_IB_HCA=${hca_csv}
-#NCCL_SOCKET_IFNAME=${socket_if}
-#GLOO_SOCKET_IFNAME=${socket_if}
-#TP_SOCKET_IFNAME=${socket_if}
-EOF
+  cat "$verified"
+  exit 0
 fi
 
-if [ "$WRITE" = 1 ]; then
-  [ -n "$head_ip" ] || die "cannot --write-env without HEAD_IP"
-  envf="$REPO_DIR/.env"
+echo
+"$MANIFEST_TOOL" render "$verified" --skipped-ssh "$skipped_probe_count"
 
+if [ "$WRITE" != 1 ]; then
   echo
-  echo "About to write cluster fabric into: $envf"
-  echo "  local host : $local_hn  (role=$local_role)"
-  echo "  peer host  : ${peer_host:-n/a}"
-  echo "  data IF    : ${socket_if:-n/a}"
-  echo "  HEAD_IP    : $head_ip"
-  if [ -n "$worker_ip" ]; then
-    echo "  WORKER_IP  : $worker_ip"
-  else
-    echo "  WORKER_IP  : (not resolved — will leave existing or unset)"
-  fi
-  [ -n "$hca_csv" ] && echo "  NCCL_IB_HCA: $hca_csv"
-  [ -n "$socket_if" ] && echo "  NCCL_SOCKET_IFNAME / GLOO / TP: $socket_if"
-  if [ -f "$envf" ]; then
-    echo
-    echo "Current .env values (if any):"
-    grep -E '^(HEAD_IP|WORKER_IP|NCCL_IB_HCA|NCCL_SOCKET_IFNAME)=' "$envf" 2>/dev/null | sed 's/^/  /' || echo "  (none of those keys set)"
-  fi
-  echo
-
-  if [ "$YES" != 1 ]; then
-    if [ ! -t 0 ]; then
-      die "refusing --write-env without TTY; re-run interactively or pass --yes"
-    fi
-    printf 'Write these values to .env? [y/N] '
-    read -r ans
-    case "$ans" in
-      y|Y|yes|YES) ;;
-      *)
-        log "aborted — .env not modified"
-        exit 0
-        ;;
-    esac
-  fi
-
-  touch "$envf"
-  upsert() {
-    local k="$1" v="$2"
-    if grep -q "^${k}=" "$envf" 2>/dev/null; then
-      if sed --version >/dev/null 2>&1; then
-        sed -i "s|^${k}=.*|${k}=${v}|" "$envf"
-      else
-        sed -i.bak "s|^${k}=.*|${k}=${v}|" "$envf" && rm -f "${envf}.bak"
-      fi
-    else
-      printf '%s=%s\n' "$k" "$v" >>"$envf"
-    fi
-  }
-  upsert HEAD_IP "$head_ip"
-  if [ -n "$worker_ip" ]; then
-    upsert WORKER_IP "$worker_ip"
-  else
-    warn "WORKER_IP not written (peer unresolved)"
-  fi
-  [ -n "$hca_csv" ] && upsert NCCL_IB_HCA "$hca_csv"
-  if [ -n "$socket_if" ]; then
-    upsert NCCL_SOCKET_IFNAME "$socket_if"
-    upsert GLOO_SOCKET_IFNAME "$socket_if"
-    upsert TP_SOCKET_IFNAME "$socket_if"
-  fi
-  log "updated $envf"
-  echo "Written:"
-  grep -E '^(HEAD_IP|WORKER_IP|NCCL_IB_HCA|NCCL_SOCKET_IFNAME|GLOO_SOCKET_IFNAME|TP_SOCKET_IFNAME)=' "$envf" | sed 's/^/  /'
+  echo "REVIEW ONLY"
+  print_hanging "  Result    " "No files changed."
+  print_hanging "  Next      " "Save this membership later with scripts/detect-fabric.sh --write-topology."
+  exit 0
 fi
 
-[ "$confidence" != low ]
+# Replacing membership while any old or proposed rank is active would make
+# lifecycle ownership ambiguous. Query every rank and fail closed on probe error.
+if [ -f "$CLUSTER_TOPOLOGY_FILE" ]; then
+  require_topology_rewrite_idle "$CLUSTER_TOPOLOGY_FILE" \
+    || die "existing cluster is not idle; stop managed services and restore access to every node"
+fi
+require_topology_rewrite_idle "$verified" \
+  || die "proposed cluster is not idle; stop managed services and restore access to every node"
+
+echo
+"$MANIFEST_TOOL" render-save "$verified" "$CLUSTER_TOPOLOGY_FILE"
+
+if [ "$YES" != 1 ]; then
+  if [ ! -t 0 ]; then
+    die "refusing write without a TTY; rerun interactively or pass --yes"
+  fi
+  printf 'Save this cluster membership? [y/N] '
+  read -r answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *)
+      log "aborted — topology not modified"
+      exit 0
+      ;;
+  esac
+fi
+
+"$MANIFEST_TOOL" write "$verified" "$CLUSTER_TOPOLOGY_FILE"
+log "wrote $CLUSTER_TOPOLOGY_FILE"

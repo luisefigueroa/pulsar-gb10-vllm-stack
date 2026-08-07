@@ -1,11 +1,13 @@
 # Operations runbook — running this stack day to day
 
-Diagnosis lives in TROUBLESHOOTING.md; this page is procedure. Assume
-dgx-spark-1 is where you stand; dgx-spark-2 is `ssh "$WORKER_IP"`.
+Diagnosis lives in TROUBLESHOOTING.md; this page is procedure. Run cluster
+commands on the machine confirmed as rank 0. Remote SSH targets, control
+interfaces, HCAs, and rank placement come from `.cluster-topology.json`; names
+do not need to follow any pattern.
 
-## Monitoring: never trust /health alone on 2-node
+## Monitoring: never trust /health alone on multi-node
 
-After a worker/node loss, the head's `/health` **keeps returning OK for
+After any remote-rank loss, rank 0's `/health` **keeps returning OK for
 ~5 minutes** while every request hangs. The only honest liveness probe is a
 real completion:
 
@@ -29,8 +31,8 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 | `./pulsar wizard` | Serve/switch wizard (doctor + preflight; direct shortcut) |
 | `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
 | `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
-| `./pulsar stop <model\|--all>` | → `scripts/down.sh` (ownership-gated) |
-| `./pulsar status [model]` | → `scripts/status.sh` (may submit a completion) |
+| `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
+| `./pulsar status [model] [--node ID]` | → `scripts/status.sh` (may submit a completion) |
 | `./pulsar help` | Concise usage |
 
 **Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
@@ -60,17 +62,17 @@ maintenance; there is no automatic cleanup on doctor or startup.
 Home status is **not** `scripts/status.sh`. It consumes inventory JSON, probes
 only `GET /v1/models` for API **model advertisement**, and never submits a
 completion. Advertisement is **not** an inference health claim. Concise fields:
-active managed conf/ranks, API models, head/worker MemAvailable + MemTotal and
-available %, managed GPU/unified per rank when measured, worker reachability,
-unmanaged GPU count + aggregate MiB, stale managed count (nonblocking / no
-model memory). Optional follow-ups: refresh, detailed inventory, explicit full
+active managed conf/ranks, API models, MemAvailable + MemTotal for every
+confirmed rank, managed GPU/unified per rank when measured, aggregate remote
+reachability, unmanaged GPU count + aggregate MiB, and stale managed count
+(nonblocking / no model memory). Optional follow-ups: refresh, detailed inventory, explicit full
 smoke (`status.sh`, may complete), back. Machine-readable: `scripts/quick-status.sh --json`.
 
 ### Interactive stop and maintenance
 
 Stop lists only **active** services with `ownership=managed`, `safe_to_stop=true`,
 and proven complete ownership. Unknown, legacy, mismatch, incomplete/unproven,
-foreign GPU, and worker-unobservable multi-node services are excluded. After
+foreign GPU, and any remote-unobservable multi-node services are excluded. After
 selection, final confirmation is required; only `scripts/down.sh <conf>` runs
 (revalidates labels/IDs). Decline → no mutation.
 
@@ -124,27 +126,33 @@ stops containers. JSON contract is `schema_version=1` with:
 - `services[]`: `conf`, `state` (running/partial/degraded/stale/…), `ownership`
   (managed/legacy/mismatch/unknown/mixed), `safe_to_stop`, `complete`,
   `observability`, ranks, estimated footprint, optional GPU memory
-- `nodes.*.mem_available_gib` / optional additive `mem_total_gib`
+- `nodes.*.mem_available_gib` / optional additive `mem_total_gib`; names include
+  `head`, legacy `worker`, and `rank-N` for additional confirmed ranks
 - `unmanaged_gpu_processes[]`: diagnostics only — **no kill action**
-- `worker.status`: `ok` / `unset` / `unreachable` / error
+- `worker.status`: compatibility aggregate for all other confirmed nodes (`ok`,
+  `unset`, `unreachable`, or error)
+
+Machine-readable JSON and Docker labels retain vLLM's zero-based `rank`
+field: rank 0 is this node, rank 1 is the second cluster node, and so on.
+Human-facing output uses those node names instead.
 
 **`safe_to_stop` is true only** when every *observed* rank has
 `io.pulsar.gb10.managed=true` and conf/rank labels that map consistently to a
 repo profile. Lifecycle scripts (`down.sh`, cluster stop) **revalidate** labels
 and IDs before remove. Unlabeled legacy, mismatch, unknown, incomplete, or
-worker-unreachable situations are never auto-stopped.
+remote-unobservable situations are never auto-stopped.
 
-Live inventory fails closed if head Docker cannot answer `info`, enumerate
-containers, or return a valid snapshot. A reachable worker with an unavailable
-Docker daemon is reported as `worker.status=docker-error`; every non-`ok`
-worker status blocks automatic two-node stop/replacement. An operational probe
-failure is never converted into an empty “nothing is running” inventory.
+Live inventory fails closed if rank 0 Docker cannot answer `info`, enumerate
+containers, or return a valid snapshot. It probes every other confirmed node;
+any unreachable rank, Docker error, or enumeration error is accumulated in the
+compatibility `worker.status`/reason and blocks automatic multi-node
+stop/replacement. An operational failure is never converted into an empty
+“nothing is running” inventory.
 
 Weight readiness means more than “the cache directory exists.” HF profiles
 must have `refs/main` resolving to a snapshot with a readable non-empty
 `config.json` and at least one non-empty weight file; `.incomplete` markers and
-local shard indexes that reference missing/empty files fail preflight. Two-node
-profiles are checked on both nodes. Docker/SSH failures are reported as
+local shard indexes that reference missing/empty files fail preflight. Multi-node profiles are checked on every exact active rank. Docker/SSH failures are reported as
 operational failures and never offered as a download/pull problem.
 
 The memory checker grants “already loaded” mode only to a running exact-name
@@ -158,8 +166,22 @@ always full.
 
 ## Model switch (wizard)
 
-`./pulsar wizard` (not the no-arg home) runs doctor once, then a **selection loop**
-(“Choose another model” returns to the list without re-running doctor unless you exit).
+`./pulsar wizard` (not the no-arg home) runs doctor once, offers cluster
+discovery/confirmation when no remote topology is active, then enters a
+**selection loop** (“Choose another model” does not re-run doctor). The menu is
+capacity-aware but validation-gated: it includes only exact `STATUS=tested*`
+profiles with `NODES` no greater than confirmed capacity. It never derives a
+new TP/PP geometry from the discovered node count.
+
+After a one-node model is selected, the wizard evaluates every confirmed
+physical node independently. A candidate must retain the confirmed immutable
+node ID, be reachable through its BatchMode SSH endpoint when remote, have a
+working Docker daemon, and avoid a hard failure under the model's cold-start
+memory policy. The placement screen shows hostname, free memory, Docker state,
+Pulsar/unmanaged occupancy, and the recommended idle target. Artifact checks,
+port ownership, API health, and the final confirmation are then scoped to that
+selected node. Running services on non-overlapping nodes remain visible but do
+not become blockers.
 
 Before each start plan it consumes inventory JSON + `check-memory.sh` and shows
 a short target summary (not raw JSON). Decision highlights:
@@ -171,7 +193,7 @@ a short target summary (not raw JSON). Decision highlights:
    `safe_to_stop`; offers stop listed stack-managed service(s) → recheck →
    start, keep current, choose another, or diagnostics.
 3. **Partial/degraded managed** — explains observed vs expected ranks; cleanup
-   only if every observed rank is inventory-safe and worker observability
+   only if every observed rank is inventory-safe and remote-rank observability
    permits lifecycle revalidation. Never implies completeness. Reinventory
    after any stop.
 4. **Unknown/unmanaged GPU or unknown port owner** — read-only diagnostics;
@@ -195,13 +217,17 @@ recommended fast path default-on with confirm).
 
 - Preferred: `./pulsar start <name>` / `./pulsar stop <name>` (or
   `scripts/up.sh` / `scripts/down.sh`).
+- To place a one-node profile explicitly, pass `--node <node-id>` to
+  `start`, `status`, or `stop`; get the immutable ID from
+  `./pulsar inventory --json`. Named status/stop without `--node` probes all
+  confirmed nodes and proceeds only when it proves one unique placement.
 - Single node low-level: `./serve.sh <name> -d`. Do **not** `docker rm -f` by
   name unless inventory proves ownership — prefer `./pulsar stop <name>`.
-- 2-node: `cluster/preflight.sh <name>` then `cluster/start-cluster.sh <name>`.
-  **ALWAYS `cluster/stop-cluster.sh` or `./pulsar stop <name>` before any
-  relaunch** — a leftover worker holds the master port and the new head hangs
-  in rendezvous with no error output.
-- After 2-node health, `start-cluster.sh` runs `validate/warmup.py` once
+- Multi-node exact profile: `cluster/preflight.sh <name>` then
+  `cluster/start-cluster.sh <name>`. **ALWAYS `cluster/stop-cluster.sh <name>`
+  or `./pulsar stop <name>` before relaunch** — a surviving cluster node can
+  retain rendezvous or RDMA state and make the new rank 0 hang.
+- After multi-node health, `start-cluster.sh` runs `validate/warmup.py` once
   (short+medium prompts, c=1 and c=4, stream and non-stream). That pays
   DSpark/Triton/block-FP8 JIT so the first real client is not the cold path.
   Skip with `--skip-warmup` (falls back to a single smoke completion).
@@ -209,7 +235,7 @@ recommended fast path default-on with confirm).
 - **Flagship DeepSeek defaults** (`models/deepseek-v4-flash.conf`) target
   **few long agent sessions** (≤5 concurrent, 500K client cap, tools/code),
   not high-QPS chat: 20 GB/rank KV, `max-num-seqs 5`, batch 16384, tool+
-  reasoning parsers. Before resizing KV further: `drop_caches` both nodes,
+  reasoning parsers. Before resizing KV further: `drop_caches` on both exact flagship ranks,
   step only (never ≥27.5 GB/rank — known OOM), read boot "GPU KV cache size",
   soak. Details in the conf header and docs/RECIPES.md / docs/MODELS.md.
 - One big model per node, ever. gpu-mem-util 0.85 leaves ~18 GiB for the OS
@@ -242,22 +268,51 @@ If a hang does NOT follow a node event, walk TROUBLESHOOTING.md (multi-cause
 
 ## Logs
 
-- Head: `docker logs vllm-cluster-<name>` (or `vllm-<name>` single-node).
-- Worker: `ssh "$WORKER_IP" docker logs vllm-cluster-<name>` — the head's
-  log usually shows only the RPC timeout; the cause is worker-side.
-- On any first boot / after upgrades, grep selections:
-  `grep -E "attention backend|MoE backend|Unknown vLLM env" ` — vLLM drops
-  env vars silently across versions.
+- Rank 0: `docker logs vllm-cluster-<name>` (or `vllm-<name>` single-node).
+- `./pulsar inventory --verbose` shows every observed rank and node placement.
+  Use the corresponding SSH target from the confirmed topology for remote
+  `docker logs`. `start-cluster.sh` automatically tails every rank on startup
+  failure.
+- On any first boot / after upgrades, grep for
+  `attention backend|MoE backend|Unknown vLLM env`; vLLM can drop environment
+  variables silently across versions.
 
-## Staging anything to node 2 (no internet there)
+## Staging images and weights to exact ranks
 
 ```bash
-rsync -rlptD ~/.cache/huggingface/hub/models--ORG--NAME "$WORKER_IP":.cache/huggingface/hub/
-ssh "$WORKER_IP" 'd=~/.cache/huggingface/hub/models--ORG--NAME; [ -e $d/refs/main ] || { mkdir -p $d/refs; ls $d/snapshots | head -1 | tr -d "\n" > $d/refs/main; }'
-scripts/sync-image.sh <model> --pull --yes
+scripts/pull-weights.sh <profile> --yes
+scripts/sync-image.sh <profile> --pull --yes
+
+# A one-node profile selected for a remote confirmed node:
+scripts/pull-weights.sh <profile> --node <node-id> --yes
+scripts/sync-image.sh <profile> --node <node-id> --pull --yes
 ```
-(The refs/main line prevents the LocalEntryNotFoundError trap. The image helper
-also repairs digest references that a bare `docker load` can omit.)
+
+The weight helper downloads once on this node and copies the complete HF hub
+tree to every other node required by that profile, preserving `refs/main`.
+Its normal output uses readable stages and hostnames; set `PULSAR_VERBOSE=1`
+to expose raw Hugging Face and rsync diagnostics. The image helper loads every
+missing required node and repairs digest references that a bare `docker load`
+can omit. NFS/catalog profiles are not copied: mount the same readable path on
+every required node and run `scripts/check-weights.sh`.
+
+### Experimental single-copy weights
+
+The wizard and ordinary launch remain replicated. The opt-in command
+`scripts/up.sh <profile> --weight-source fabric` uses a topology-bound,
+read-only NFSv4.2/RDMA cache view and records its owner/config IDs in container
+labels and inventory. It never creates a replica or falls back automatically.
+Run `scripts/weight-fabric.sh prerequisites <profile>` for a read-only
+per-node setup report. The explicit `setup-prerequisites` command installs
+missing supported Ubuntu packages and an owner-user `hf` environment when
+passwordless sudo is available. On hosts whose existing policy requires a
+password, run attended setup and storage commands with `--interactive-sudo`;
+authentication stays in the operator terminal, Pulsar stores no password, and
+sudoers is unchanged. Otherwise the report gives manual commands and explains
+the remaining privilege requirement. Setup, exact commands, benchmark
+artifacts, destructive replica cleanup, owner/link fault semantics, and
+recovery are in
+[WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 ## Expected steady-state numbers (alert if far off)
 
@@ -275,12 +330,13 @@ hours is a leak signal (none observed in 150-min soaks).
   `--no-spec-decode` as the operational rollback. Its k=5 is fixed by the
   checkpoint, not tunable. **Do not** enable ngram on GDN hybrids (corrupts
   output). Super MTP is opt-in; Laguna DFlash is marginal.
-- Launcher-created containers carry stack ownership, profile, and rank labels
-  (`io.pulsar.gb10.managed`, `.conf`, `.rank`). Wizard and `down.sh` only stop
+- Launcher-created containers carry stack ownership, profile, rank, topology,
+  and physical-node labels (`io.pulsar.gb10.managed`, `.conf`, `.rank`,
+  `.topology`, `.node-id`). Wizard and `down.sh` only stop
   services inventory marks `safe_to_stop`; `down.sh` revalidates before remove.
-  Legacy unlabeled containers are refused. Worker unreachable blocks automatic
-  multi-node cleanup/replacement. See “Model switch (wizard)” above.
-- Worker SSH uses BatchMode, a finite connect timeout/attempt count, and
+  Legacy unlabeled containers are refused. Any unobservable required node blocks
+  automatic multi-node cleanup/replacement. See “Model switch (wizard)” above.
+- Remote SSH uses BatchMode, a finite connect timeout/attempt count, and
   liveness bounds. Host values are passed after the SSH option terminator.
 - Built-in API probes and Python validators honor `VLLM_API_KEY` / `API_KEY`.
   Dry-run command rendering redacts HF and API credentials. Prefer environment
@@ -290,5 +346,4 @@ hours is a leak signal (none observed in 150-min soaks).
   Example: `./pulsar start deepseek-v4-flash` or wizard “Restart previous
   profile from current config”.
 - Never run a GDN hybrid (qwen3.6-27b) cross-node.
-- After any image change: clear `~/.cache/vllm` + Triton cache on BOTH
-  nodes, then run docs/REVALIDATE.md before calling it production.
+- After any image change: clear `~/.cache/vllm` + Triton cache on every exact active rank, then run docs/REVALIDATE.md before calling it production.

@@ -1,7 +1,9 @@
 # Hardware Findings — 2x NVIDIA DGX Spark (GB10)
 
-All numbers below were measured on these machines on 2026-07-27, not taken from
-spec sheets. Raw benchmark logs live in `bench/results/step0/`.
+All numbers below were measured on this two-node serving pair on 2026-07-27,
+not taken from spec sheets. Raw benchmark logs live in `bench/results/step0/`.
+The control plane can discover more GB10 nodes, but these bandwidth and serving
+results must not be extrapolated to a larger rank count.
 
 ## Nodes
 
@@ -87,21 +89,31 @@ that, so TP=2 across nodes is *theoretically* latency-positive. Real vLLM
 behavior under concurrency is validated separately (see VALIDATION.md);
 prefill and per-step sync overheads shift this in practice.
 
-## Cluster network map
+## Runtime cluster network map
 
-Addresses are **site-local** — set `HEAD_IP` / `WORKER_IP` (and optional
-rail-1 addresses) in a gitignored `.env`. Documentation examples use
-[TEST-NET](https://datatracker.ietf.org/doc/html/rfc5737) ranges only.
+The tables above describe the measured pair. Runtime membership and addresses
+are site-local and are discovered rather than encoded in this document:
 
-| Network | dgx-spark-1 (example head) | dgx-spark-2 (example worker) | Use |
-|---|---|---|---|
-| Admin / LAN | site LAN (not published) | optional | NFS, SSH jump, package mirrors |
-| RoCE rail 0 | `$HEAD_IP` e.g. `192.0.2.1` | `$WORKER_IP` e.g. `192.0.2.2` | NCCL, torch.distributed |
-| RoCE rail 1 | e.g. `198.51.100.1` | e.g. `198.51.100.2` | NCCL dual-rail |
-| Overlay VPN | operator-specific | — | remote admin only; never commit |
+```bash
+scripts/detect-fabric.sh --json            # read-only preview
+scripts/detect-fabric.sh --write-topology  # explicit confirmation
+```
 
-Launch tooling expects **key-based SSH** from head → worker
-(`ssh -o BatchMode=yes "$WORKER_IP" true`).
+The gitignored `.cluster-topology.json` records, for every rank, a control
+address/interface and its active addressed RDMA HCAs, plus every pairwise RoCE
+rail. Hostnames are descriptive only and may use any naming scheme. Discovery
+requires a full mesh containing local rank 0 and verifies each rail in both
+directions.
+
+The control LAN carries SSH, rendezvous, Gloo, and socket bootstrap. NCCL model
+traffic is forced over the recorded per-rank RoCE HCAs. This separation avoids
+using a point-to-point RoCE address as an SSH identity, at the cost of making
+control-network routing, firewall, and latency part of launch readiness.
+
+Documentation examples use
+[TEST-NET](https://datatracker.ietf.org/doc/html/rfc5737) ranges only. Never
+commit real site addresses. Legacy `HEAD_IP`/`WORKER_IP` remains a two-node
+compatibility path; it cannot represent an N-node mesh.
 
 ## Storage
 
@@ -109,6 +121,12 @@ Launch tooling expects **key-based SSH** from head → worker
   under `Official Models/` (see MODELS.md for surveyed catalog and fit arithmetic).
 - Weights over a 1 GbE-class admin link are slow on cold load; keep HF cache /
   local copies for hot models.
+- The three confirmed systems expose Linux NFSv4.2 client/server and
+  RPC-over-RDMA kernel support. The experimental one-copy design therefore
+  uses a read-only NFS/RDMA export on an exact pair-specific RoCE rail, never
+  the admin link. DGX Spark GDS is compatibility mode, so this is ordinary
+  POSIX/page-cache I/O rather than a direct-to-CUDA claim. See
+  [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 ## Prior art
 

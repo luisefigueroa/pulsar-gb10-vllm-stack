@@ -107,8 +107,8 @@ snap = {
   "worker_status": "ok",
   "worker_reason": None,
   "nodes": {
-    "head": {"mem_available_gib": 40.5, "mem_status": "ok", "mem_source": "proc_meminfo"},
-    "worker": {"mem_available_gib": 38.25, "mem_status": "ok", "mem_source": "ssh_proc_meminfo"},
+    "head": {"hostname": "atlas-lab", "mem_available_gib": 40.5, "mem_status": "ok", "mem_source": "proc_meminfo"},
+    "worker": {"hostname": "orion-box", "mem_available_gib": 38.25, "mem_status": "ok", "mem_source": "ssh_proc_meminfo"},
   },
   "containers": [
     {
@@ -153,6 +153,8 @@ PY
 
 out=$(run_fixture "healthy-2rank" "$body")
 assert_eq "$(py_get "$out" 'd["schema_version"]')" "1" "schema_version=1"
+assert_eq "$(py_get "$out" 'd["nodes"]["head"]["hostname"]')" "atlas-lab" "head hostname preserved"
+assert_eq "$(py_get "$out" 'd["nodes"]["worker"]["hostname"]')" "orion-box" "worker hostname preserved"
 assert_eq "$(py_get "$out" 'd["services"][0]["ownership"]')" "managed" "healthy: ownership=managed"
 assert_eq "$(py_get "$out" 'd["services"][0]["safe_to_stop"]')" "True" "healthy: safe_to_stop"
 assert_eq "$(py_get "$out" 'd["services"][0]["state"]')" "running" "healthy: state=running"
@@ -160,6 +162,61 @@ assert_eq "$(py_get "$out" 'chr(44).join(d["services"][0]["observed_ranks"])')" 
 assert_eq "$(py_get "$out" 'd["services"][0]["ranks"][0]["gpu_memory"]["measured_mib"]')" "9000" "healthy: gpu mem correlated"
 assert_eq "$(py_get "$out" 'd["services"][0]["estimated_footprint_gib_per_rank"]')" "10.0" "healthy: profile footprint"
 assert_eq "$(py_get "$out" 'len(d.get("unmanaged_gpu_processes") or [])')" "0" "healthy: no unmanaged GPU"
+
+# Extra confirmed capacity must not affect an exact two-rank service.
+# The compatibility worker status aggregates all remotes and is deliberately
+# unreachable here because idle rank 2 is down; rank 1 remains observable.
+body_extra=$(BODY="$body" python3 - <<'PY'
+import json
+import os
+
+snap = json.loads(os.environ["BODY"])
+snap["worker_status"] = "unreachable"
+snap["worker_reason"] = "rank 2 SSH unreachable"
+snap["nodes"]["head"]["probe_status"] = "ok"
+snap["nodes"]["worker"]["probe_status"] = "ok"
+snap["nodes"]["rank-2"] = {
+    "hostname": "zenith-gb10",
+    "mem_available_gib": None,
+    "mem_status": "unreachable",
+    "mem_source": "unreachable",
+    "probe_status": "unreachable",
+    "probe_reason": "rank 2 SSH unreachable",
+}
+print(json.dumps(snap))
+PY
+)
+out=$(run_fixture "extra-rank-unreachable" "$body_extra")
+assert_eq "$(py_get "$out" 'd["worker"]["status"]')" "unreachable" \
+  "extra rank: aggregate remote status preserved"
+assert_eq "$(py_get "$out" 'd["services"][0]["state"]')" "running" \
+  "extra rank: exact two-rank service stays running"
+assert_eq "$(py_get "$out" 'd["services"][0]["complete"]')" "True" \
+  "extra rank: exact two-rank service remains complete"
+assert_eq "$(py_get "$out" 'd["services"][0]["observability"]')" "complete" \
+  "extra rank: exact required ranks remain observable"
+assert_eq "$(py_get "$out" '[(p["node"], p["status"]) for p in d["services"][0]["required_remote_probes"]]')" \
+  "[('worker', 'ok')]" "extra rank: only required remote probe participates"
+
+hf=$(mktemp)
+printf '%s' "$body_extra" >"$hf"
+extra_human=$(COLUMNS=48 "$INV" --from-fixture "$hf")
+rm -f "$hf"
+assert_true "$(printf '%s' "$extra_human" | python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+memory_nodes = []
+for line in text.splitlines():
+    match = re.match(r"(?:Memory\s+)?(this node|cluster node \d+)\s+·", line.strip())
+    if match:
+        memory_nodes.append(match.group(1))
+flat = " ".join(text.split())
+summary_ok = "Nodes" in text and "2 other cluster nodes confirmed" in flat
+width_ok = all(len(line) <= 48 for line in text.splitlines())
+print(int(memory_nodes[:3] == ["this node", "cluster node 2", "cluster node 3"] and summary_ok and width_ok))
+')" "extra node: human inventory lists every node at narrow width"
 
 # ---------------------------------------------------------------------------
 # 2) Partial / degraded (missing worker rank)
@@ -674,6 +731,81 @@ assert_eq "$(py_get "$out" 'd["services"][0]["ranks"][0]["safe_to_stop"]')" "Fal
 assert_eq "$(py_get "$out" 'd["services"][0]["complete"]')" "False" "single-on-worker: incomplete"
 
 # ---------------------------------------------------------------------------
+# Node-ID and topology labels make the same remote placement authoritative.
+body=$(PROFILES_JSON="$PROFILES_JSON" python3 - <<'PY'
+import json
+import os
+
+profiles = json.loads(os.environ["PROFILES_JSON"])
+topology_id = "fixture-topology"
+worker_id = "worker-node-id"
+snap = {
+  "topology_id": topology_id,
+  "profiles": profiles,
+  "worker_ip": "10.0.0.2",
+  "worker_status": "ok",
+  "worker_reason": None,
+  "nodes": {
+    "head": {
+      "hostname": "atlas-lab",
+      "node_id": "head-node-id",
+      "topology_index": 0,
+      "probe_status": "ok",
+      "mem_available_gib": 50.0,
+      "mem_status": "ok",
+      "mem_source": "proc_meminfo",
+    },
+    "worker": {
+      "hostname": "orion-box",
+      "node_id": worker_id,
+      "topology_index": 1,
+      "probe_status": "ok",
+      "mem_available_gib": 50.0,
+      "mem_status": "ok",
+      "mem_source": "ssh_proc_meminfo",
+    },
+  },
+  "containers": [{
+    "node": "worker",
+    "id": "sha256:" + ("8" * 64),
+    "name": "vllm-qwen3-1.7b",
+    "running": True,
+    "status": "running",
+    "image": "vllm/vllm-openai:v0.26.0",
+    "cmd": [],
+    "labels": {
+      "io.pulsar.gb10.managed": "true",
+      "io.pulsar.gb10.conf": "qwen3-1.7b",
+      "io.pulsar.gb10.rank": "single",
+      "io.pulsar.gb10.topology": topology_id,
+      "io.pulsar.gb10.node-id": worker_id,
+    },
+    "host_pids": [],
+  }],
+  "gpu_processes": [],
+}
+print(json.dumps(snap))
+PY
+)
+out=$(run_fixture "single-on-worker-with-node-id" "$body")
+assert_eq "$(py_get "$out" 'd["services"][0]["ownership"]')" "managed" \
+  "remote single: node-id placement is managed"
+assert_eq "$(py_get "$out" 'd["services"][0]["safe_to_stop"]')" "True" \
+  "remote single: node-id placement is safe_to_stop"
+assert_eq "$(py_get "$out" 'd["services"][0]["complete"]')" "True" \
+  "remote single: service is complete"
+assert_eq "$(py_get "$out" 'd["services"][0]["state"]')" "running" \
+  "remote single: service is running"
+assert_eq "$(py_get "$out" 'd["services"][0]["ranks"][0]["expected_node"]')" "worker" \
+  "remote single: expected physical node follows node-id"
+hf=$(mktemp)
+printf '%s' "$body" >"$hf"
+remote_single_human=$(COLUMNS=48 "$INV" --from-fixture "$hf")
+rm -f "$hf"
+assert_true "$(printf '%s' "$remote_single_human" | python3 -c 'import sys; print(int("orion-box" in sys.stdin.read()))')" \
+  "remote single: human inventory shows physical hostname"
+
+
 # 10) Duplicate rank (two rank-0 on head); individuals may be safe, service incomplete
 # ---------------------------------------------------------------------------
 body=$(PROFILES_JSON="$PROFILES_JSON" python3 - <<'PY'
@@ -732,24 +864,24 @@ assert_true "$(py_get "$out" 'int(any("duplicate rank" in r for r in d["services
 assert_true "$(py_get "$out" 'int(any("duplicate node" in r for r in d["services"][0]["reasons"]))')" \
   "dup: reason mentions duplicate node placement"
 
-# Human ranks render as comma-separated, not Python list repr
+# Human output reports node counts without exposing internal rank lists
 hf=$(mktemp)
 printf '%s' "$body" >"$hf"
 human=$("$INV" --from-fixture "$hf" --verbose)
 rm -f "$hf"
-if printf '%s' "$human" | grep -q 'ranks expected=0,1'; then
-  echo "OK   human ranks comma-separated"
+if printf '%s' "$human" | grep -E -q 'nodes +2 required · 2/2 observed'; then
+  echo "OK   human node counts"
   pass=$((pass + 1))
-elif printf '%s' "$human" | grep -q "ranks expected=\['0'"; then
-  echo "FAIL human ranks still Python list repr" >&2
+elif printf '%s' "$human" | grep -q 'ranks expected'; then
+  echo "FAIL human output exposes internal rank lists" >&2
   fail=$((fail + 1))
 else
-  # duplicate fixture only has expected 0,1 from profile
-  if printf '%s' "$human" | grep -E -q 'ranks expected=0,1|ranks expected=0'; then
-    echo "OK   human ranks comma-separated"
+  # Accept either fixture profile size, but require the plain node-count form.
+  if printf '%s' "$human" | grep -E -q 'nodes +[12] required · [0-9]+/[12] observed'; then
+    echo "OK   human node counts"
     pass=$((pass + 1))
   else
-    echo "FAIL human ranks format unexpected: $(printf '%s' "$human" | grep ranks || true)" >&2
+    echo "FAIL human node format unexpected: $(printf '%s' "$human" | grep -E 'nodes|ranks' || true)" >&2
     fail=$((fail + 1))
   fi
 fi

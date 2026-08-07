@@ -377,8 +377,31 @@ assert_false "placement head rank0 for single-node conf refused" placement_rank_
 assert_true "placement head rank0 for 2-node ok" placement_rank_allowed "qwen3-1.7b-2node" "0" "head"
 assert_true "placement worker rank1 for 2-node ok" placement_rank_allowed "qwen3-1.7b-2node" "1" "worker"
 assert_false "placement worker rank0 refused" placement_rank_allowed "qwen3-1.7b-2node" "0" "worker"
-assert_false "placement worker single refused" placement_rank_allowed "qwen3-1.7b" "single" "worker"
+assert_true "placement worker single allowed; node-id proof gates removal" placement_rank_allowed "qwen3-1.7b" "single" "worker"
+assert_true "placement rank-2 single allowed; node-id proof gates removal" placement_rank_allowed "qwen3-1.7b" "single" "rank-2"
+assert_eq "$(placement_index_for_role rank-2)" "2" \
+  "rank-2 inventory key resolves to physical topology index 2"
 assert_false "unknown conf placement refused" placement_rank_allowed "no-such-conf" "single" "head"
+
+rank2_meta=$(python3 -c 'import json; print(json.dumps({
+  "id":"'"$ID_A"'","name":"/vllm-qwen3-1.7b",
+  "labels":{
+    "io.pulsar.gb10.managed":"true",
+    "io.pulsar.gb10.conf":"qwen3-1.7b",
+    "io.pulsar.gb10.rank":"single",
+    "io.pulsar.gb10.topology":"fixture-topology",
+    "io.pulsar.gb10.node-id":"fixture-node-3"
+  }
+}))')
+rank2_identity_is_proven() (
+  CLUSTER_TOPOLOGY_LOADED=1
+  CLUSTER_TOPOLOGY_COUNT=3
+  CLUSTER_TOPOLOGY_ID=fixture-topology
+  CLUSTER_NODE_IDS=(fixture-node-1 fixture-node-2 fixture-node-3)
+  container_single_node_identity_is_proven "$rank2_meta" rank-2
+)
+assert_true "rank-2 single cleanup proves topology and physical node identity" \
+  rank2_identity_is_proven
 
 echo "=== strict loaded-state proof ==="
 load_conf qwen3-1.7b
@@ -388,6 +411,28 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
 ]))' "$ID_A")"
 assert_true "managed running single rank earns loaded exemption" \
   profile_service_is_proven_running qwen3-1.7b
+warm_rc=0
+warm_json=$("$REPO_DIR/scripts/check-memory.sh" qwen3-1.7b --json) || warm_rc=$?
+warm_mode=$(printf '%s' "$warm_json" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["mode"])')
+warm_loaded=$(printf '%s' "$warm_json" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["already_loaded"])')
+assert_eq "$warm_mode" "already-loaded" \
+  "check-memory uses loaded-state policy by default for a proven service"
+assert_eq "$warm_loaded" "True" \
+  "check-memory reports the proven loaded-state exemption"
+
+cold_rc=0
+cold_json=$("$REPO_DIR/scripts/check-memory.sh" qwen3-1.7b --cold-start --json) \
+  || cold_rc=$?
+cold_mode=$(printf '%s' "$cold_json" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["mode"])')
+cold_loaded=$(printf '%s' "$cold_json" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["already_loaded"])')
+assert_eq "$cold_mode" "cold-start" \
+  "--cold-start bypasses the loaded-state exemption"
+assert_eq "$cold_loaded" "False" \
+  "--cold-start evaluates placement as a fresh launch"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{}}
@@ -395,6 +440,9 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
 assert_false "legacy exact-name container cannot earn loaded exemption" \
   profile_service_is_proven_running qwen3-1.7b
 
+HEAD_IP=head-host
+WORKER_IP=worker-host
+reload_cluster_topology
 load_conf qwen3-1.7b-2node
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-cluster-qwen3-1.7b-2node","labels":{
@@ -935,11 +983,11 @@ assert_true "down --all SSH down left head intact" container_ownership_inspect_l
 echo "=== dry-run static guards ==="
 assert_true "serve dry-run exits before remove" \
   bash -c 'n=$(grep -n "DRY_RUN.*=.*1" "'"$REPO_DIR"'/serve.sh" | head -1 | cut -d: -f1); \
-    m=$(grep -n "remove_stack_owned_container_local" "'"$REPO_DIR"'/serve.sh" | head -1 | cut -d: -f1); \
+    m=$(grep -n "remove_stack_owned_single_at_resolved_node" "'"$REPO_DIR"'/serve.sh" | head -1 | cut -d: -f1); \
     [ -n "$n" ] && [ -n "$m" ] && [ "$n" -lt "$m" ]'
 assert_true "start-cluster dry-run exits before stale remove" \
   bash -c 'n=$(grep -n "DRY_RUN.*=.*1" "'"$REPO_DIR"'/cluster/start-cluster.sh" | head -1 | cut -d: -f1); \
-    m=$(grep -n "remove_stack_owned_cluster_pair" "'"$REPO_DIR"'/cluster/start-cluster.sh" | head -1 | cut -d: -f1); \
+    m=$(grep -n "remove_stack_owned_cluster " "'"$REPO_DIR"'/cluster/start-cluster.sh" | head -1 | cut -d: -f1); \
     [ -n "$n" ] && [ -n "$m" ] && [ "$n" -lt "$m" ]'
 assert_true "start-cluster validates run ids via parse_docker_run_container_id" \
   grep -q parse_docker_run_container_id "$REPO_DIR/cluster/start-cluster.sh"
@@ -951,10 +999,10 @@ assert_true "start-cluster remediation mentions down.sh" \
   grep -q 'scripts/down.sh' "$REPO_DIR/scripts/lib.sh"
 assert_true "stop-cluster loads conf before named remove" \
   bash -c 'n=$(grep -n "load_conf" "'"$REPO_DIR"'/cluster/stop-cluster.sh" | head -1 | cut -d: -f1); \
-    m=$(grep -n "remove_stack_owned_cluster_pair" "'"$REPO_DIR"'/cluster/stop-cluster.sh" | head -1 | cut -d: -f1); \
+    m=$(grep -n "remove_stack_owned_cluster " "'"$REPO_DIR"'/cluster/stop-cluster.sh" | head -1 | cut -d: -f1); \
     [ -n "$n" ] && [ -n "$m" ] && [ "$n" -lt "$m" ]'
-assert_true "stop-cluster requires NODES=2 for named" \
-  grep -q 'NODES.*!=.*2\|NODES" != "2"' "$REPO_DIR/cluster/stop-cluster.sh"
+assert_true "stop-cluster requires a multi-node exact profile" \
+  grep -q 'NODES.*-le.*1' "$REPO_DIR/cluster/stop-cluster.sh"
 
 # ---------------------------------------------------------------------------
 # 12) lifecycle_merge_rc severity + mixed error/refusal

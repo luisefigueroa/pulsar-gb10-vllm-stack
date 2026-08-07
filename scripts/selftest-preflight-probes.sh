@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-preflight-probes.XXXXXX")
 trap 'rm -rf "$STATE_DIR"' EXIT
+export CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
 
 assert_json_state() {
   local body="$1" expected="$2" label="$3"
@@ -46,6 +47,13 @@ cat >"$STATE_DIR/ssh" <<'SHIM'
 set -euo pipefail
 printf '%s\n' "$*" >>"${SSH_LOG:?}"
 [ "${SSH_MODE:-ok}" != down ] || exit 255
+if [ "${SSH_MODE:-ok}" = weights-missing ]; then
+  remote_command="${!#}"
+  case "$remote_command" in
+    *refs/main*) exit 3 ;;
+    *'echo partial || echo missing'*) echo missing; exit 0 ;;
+  esac
+fi
 exit 0
 SHIM
 chmod +x "$STATE_DIR/ssh"
@@ -95,6 +103,7 @@ assert_json_state "$image_out" head-docker-error \
 set +e
 image_out=$(DOCKER_MODE=ok PULSAR_DOCKER="$STATE_DIR/docker" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" SSH_MODE=down \
+  HEAD_IP=head.test WORKER_IP=worker.test \
   "$REPO_DIR/scripts/check-image.sh" deepseek-v4-flash --json)
 image_rc=$?
 set -e
@@ -105,7 +114,9 @@ assert_json_state "$image_out" worker-unreachable \
 # A config file alone is not a complete model cache. Require actual non-empty
 # weights and reject interrupted-download markers.
 snapshot="$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/snapshots/test"
-mkdir -p "$snapshot"
+mkdir -p "$snapshot/inference"
+# A nested component config must never replace the model root config.
+printf '{}\n' >"$snapshot/inference/config.json"
 printf '{}\n' >"$snapshot/config.json"
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/hf" \
@@ -124,6 +135,20 @@ HF_CACHE="$STATE_DIR/hf" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json >/dev/null
 echo "OK   Hugging Face weight symlinks are accepted"
 
+weights_human=$(COLUMNS=48 HF_CACHE="$STATE_DIR/hf" \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b)
+printf '%s\n' "$weights_human" | grep -q '^MODEL FILES READY$'
+printf '%s\n' "$weights_human" | grep -q 'this node.*ready'
+if printf '%s\n' "$weights_human" | grep -Eq 'r0=|rank 0|path='; then
+  echo "direct weight output leaked implementation jargon" >&2
+  exit 1
+fi
+RENDERED_OUTPUT="$weights_human" python3 -c '
+import os
+assert all(len(line) <= 48 for line in os.environ["RENDERED_OUTPUT"].splitlines())
+'
+echo "OK   direct weight diagnostics are readable at narrow width"
+
 printf '{"weight_map":{"layer":"missing-shard.safetensors"}}\n' \
   >"$snapshot/model.safetensors.index.json"
 set +e
@@ -136,6 +161,9 @@ assert_json_state "$weights_out" partial \
   "index referencing a missing shard is partial"
 rm -f "$snapshot/model.safetensors.index.json"
 
+grep -Fq 'python3 -c $qpython' "$REPO_DIR/scripts/check-weights.sh"
+echo "OK   remote weight verification checks every indexed shard"
+
 : >"$snapshot/download.incomplete"
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/hf" \
@@ -145,5 +173,47 @@ set -e
 [ "$weights_rc" -ne 0 ]
 assert_json_state "$weights_out" partial \
   "interrupted download marker is partial"
+rm -f "$snapshot/download.incomplete"
+
+# A nonexistent remote hub is missing, not partial. Preserve the local state
+# when more than one required node is incomplete.
+set +e
+weights_out=$(HF_CACHE="$STATE_DIR/hf" \
+  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
+  SSH_MODE=weights-missing HEAD_IP=head.test WORKER_IP=worker.test \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
+weights_rc=$?
+set -e
+[ "$weights_rc" -ne 0 ]
+assert_json_state "$weights_out" missing-on-worker \
+  "absent remote Hugging Face cache is missing"
+WEIGHTS_JSON="$weights_out" python3 - <<'PY'
+import json
+import os
+
+data = json.loads(os.environ["WEIGHTS_JSON"])
+assert [(item["rank"], item["state"]) for item in data["ranks"]] == [
+    (0, "ok"),
+    (1, "missing"),
+]
+PY
+
+set +e
+weights_out=$(HF_CACHE="$STATE_DIR/empty-hf" \
+  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
+  SSH_MODE=weights-missing HEAD_IP=head.test WORKER_IP=worker.test \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
+weights_rc=$?
+set -e
+[ "$weights_rc" -ne 0 ]
+assert_json_state "$weights_out" missing \
+  "local missing state is not overwritten by remote missing state"
+WEIGHTS_JSON="$weights_out" python3 - <<'PY'
+import json
+import os
+
+data = json.loads(os.environ["WEIGHTS_JSON"])
+assert all(item["state"] == "missing" for item in data["ranks"]), data
+PY
 
 echo "fail-closed probe selftest OK"

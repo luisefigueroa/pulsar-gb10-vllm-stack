@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Host readiness for Path A; multi-node extras when WORKER_IP is set.
+# Serving readiness for this node plus every other confirmed cluster node.
 #   scripts/doctor.sh [--json]
-# exit 0 if Path A essentials pass
+# exit 0 when no blocking issue is found
 set -euo pipefail
 SCRIPT_NAME=doctor
 # shellcheck disable=SC1091
@@ -33,7 +33,31 @@ record() {
   esac
 }
 
-[ "$JSON" = 1 ] || echo "[doctor] host"
+doctor_ready_line() {
+  local message="$1"
+  local use_color=1 colors green reset
+  [ "${GUM:-1}" != 0 ] || use_color=0
+  [ -z "${NO_COLOR:-}" ] || use_color=0
+  case "${PULSAR_COLOR:-}" in
+    never|0|no|off|false) use_color=0 ;;
+  esac
+  case "${TERM:-}" in
+    dumb|"") use_color=0 ;;
+  esac
+  [ -t 1 ] || use_color=0
+  if [ "$use_color" = 1 ] && command -v tput >/dev/null 2>&1; then
+    colors=$(tput colors 2>/dev/null || true)
+    if [[ "$colors" =~ ^[0-9]+$ ]] && [ "$colors" -ge 8 ]; then
+      if green=$(tput setaf 2 2>/dev/null) && reset=$(tput sgr0 2>/dev/null); then
+        printf '[doctor] %sREADY%s — %s\n' "$green" "$reset" "$message"
+        return 0
+      fi
+    fi
+  fi
+  printf '[doctor] READY — %s\n' "$message"
+}
+
+[ "$JSON" = 1 ] || echo "[doctor] this node"
 
 arch=$(uname -m)
 case "$arch" in
@@ -165,43 +189,74 @@ else
   record ok memory "MemAvailable ${avail} GiB"
 fi
 
-[ "$JSON" = 1 ] || echo "[doctor] fabric (informational)"
+[ "$JSON" = 1 ] || echo "[doctor] cluster network"
 _fab_log=$(mktemp "${TMPDIR:-/tmp}/pulsar-doctor-fabric.XXXXXX")
 # shellcheck disable=SC2064
 trap 'rm -f "${_fab_log:-}"' RETURN
-if "$REPO_DIR/scripts/detect-fabric.sh" >"$_fab_log" 2>&1; then
-  record ok fabric "fabric detect confidence not low"
+fabric_nodes=0
+if "$REPO_DIR/scripts/detect-fabric.sh" --json >"$_fab_log" 2>&1; then
+  fabric_nodes=$(python3 - "$_fab_log" 2>/dev/null <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    document = json.load(handle)
+topology = document.get("topology") if "topology" in document else document
+nodes = topology.get("nodes") if isinstance(topology, dict) else None
+if not isinstance(nodes, list) or not nodes:
+    raise SystemExit(1)
+print(len(nodes))
+PY
+  ) || fabric_nodes=0
+  if [[ "$fabric_nodes" =~ ^[1-9][0-9]*$ ]]; then
+    fabric_system_word=system
+    [ "$fabric_nodes" = 1 ] || fabric_system_word=systems
+    record ok fabric "GB10 cluster network check passed · $fabric_nodes GB10 $fabric_system_word discovered"
+  else
+    record warn fabric "cluster discovery returned unreadable results (single-node models remain available)"
+  fi
 else
-  record warn fabric "fabric detect low confidence (fine for single-node)"
+  record warn fabric "cluster network could not be verified (single-node models remain available)"
 fi
 rm -f "$_fab_log"
 trap - RETURN
 
-if [ -n "${WORKER_IP:-}" ]; then
-  [ "$JSON" = 1 ] || echo "[doctor] worker $WORKER_IP"
-  if ssh_worker true 2>/dev/null; then
-    record ok worker_ssh "ssh $WORKER_IP"
-    wgpu=$(ssh_worker "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" || true)
-    if [ "$wgpu" = "NVIDIA GB10" ]; then
-      record ok worker_gpu "worker GPU $wgpu"
-    else
-      record fail worker_gpu "worker GPU '$wgpu'"
-    fi
-    if worker_runtimes=$(ssh_worker \
-      "docker info -f '{{range \$k,\$v := .Runtimes}}{{\$k}} {{end}}'" 2>/dev/null); then
-      if echo " $worker_runtimes " | grep -Eq '[[:space:]]nvidia[[:space:]]'; then
-        record ok worker_docker_nvidia "worker docker nvidia"
+topology_load_ok=1
+load_cluster_topology || topology_load_ok=0
+if [ "$topology_load_ok" = 0 ]; then
+  record warn topology "confirmed topology manifest is invalid"
+elif [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
+  [ "$JSON" = 1 ] || echo "[doctor] other confirmed cluster nodes"
+  for ((rank = 1; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    node_label=$(human_cluster_node "$rank")
+    if "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" true 2>/dev/null; then
+      record ok "rank_${rank}_ssh" "$node_label · SSH reachable at $host"
+      rank_gpu=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
+        "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" \
+        2>/dev/null || true)
+      if [ "$rank_gpu" = "NVIDIA GB10" ]; then
+        record ok "rank_${rank}_gpu" "$node_label · GPU $rank_gpu"
       else
-        record fail worker_docker_nvidia "worker docker reachable but nvidia runtime missing"
+        record fail "rank_${rank}_gpu" "$node_label · GPU '$rank_gpu' (want NVIDIA GB10)"
+      fi
+      if "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
+          "docker info 2>/dev/null | grep -Eq 'nvidia|nvidia.com/gpu'" 2>/dev/null; then
+        record ok "rank_${rank}_docker_nvidia" "$node_label · Docker NVIDIA ready"
+      else
+        record fail "rank_${rank}_docker" "$node_label · Docker NVIDIA unavailable"
       fi
     else
-      record fail worker_docker "worker Docker daemon unavailable"
+      record fail "rank_${rank}_ssh" "$node_label · key-based SSH failed at $host"
     fi
-  else
-    record fail worker_ssh "ssh $WORKER_IP failed (key-based BatchMode)"
-  fi
+  done
+elif [[ "$fabric_nodes" =~ ^[1-9][0-9]*$ ]] && [ "$fabric_nodes" -gt 1 ]; then
+  topology_message="$fabric_nodes GB10 systems discovered, but cluster membership is not confirmed."
+  topology_message+=$'\n'
+  topology_message+="Next: run ./pulsar wizard and confirm cluster discovery to enable multi-node models."
+  record warn topology "$topology_message"
 else
-  record warn worker "WORKER_IP unset — skip multi-node checks (Path B needs .env)"
+  record ok topology "no cluster membership confirmed · single-node models remain available"
 fi
 
 result=pass
@@ -230,9 +285,13 @@ PY
 else
   echo
   if [ "$FAIL" = 0 ]; then
-    echo "[doctor] PASS (Path A essentials)$([ "$WARN" = 1 ] && echo ' with warnings')"
+    if [ "$WARN" = 1 ]; then
+      doctor_ready_line "no blocking issues found; review warnings above"
+    else
+      doctor_ready_line "no blocking issues found"
+    fi
   else
-    echo "[doctor] FAIL — fix items above before serving"
+    echo "[doctor] NOT READY — fix blocking issues above before serving"
   fi
 fi
 

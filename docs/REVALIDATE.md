@@ -8,16 +8,21 @@ mostly machine time.
 ## 0. Prep (5 min)
 
 ```bash
-# From the repository root. Two-node commands require .env with HEAD_IP and
-# WORKER_IP (see .env.example and docs/PREREQUISITES.md).
-# clear JIT caches on BOTH nodes — stale Triton cache silently corrupts on sm_121
+# From the repository root. Multi-node commands require a confirmed topology;
+# .env is only for optional runtime/path/auth overrides.
+scripts/detect-fabric.sh --json
+
+# Clear JIT caches locally, then repeat on every remote SSH target shown above.
+# Stale Triton cache can silently corrupt on sm_121.
 rm -rf ~/.cache/vllm ~/.triton 2>/dev/null
-ssh "$WORKER_IP" 'rm -rf ~/.cache/vllm ~/.triton 2>/dev/null'
-# stage the new image to node 2
-docker save <new-image> | ssh "$WORKER_IP" docker load
-# free memory if other workloads ran
+
+# After updating the candidate profile IMAGE pin, stage it to every exact rank.
+scripts/sync-image.sh <profile> --pull --yes
+
+# Free local memory if other workloads ran; repeat on every exact rank.
 sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 ```
+
 Update the pin (`Dockerfile` digest or the conf's `IMAGE=`) in a branch.
 Keep the OLD captures in results/ — they are the A/B baselines. Use a unique
 `--tag`; the runner refuses to overwrite any matching artifact. Built-in
@@ -33,6 +38,9 @@ cluster/stop-cluster.sh --all
 cluster/start-cluster.sh qwen3-1.7b-2node   # multi-node plumbing
 cluster/stop-cluster.sh qwen3-1.7b-2node
 ```
+
+The canary remains an exact two-node profile. On a larger confirmed topology it
+uses ranks 0 and 1 only; extra ranks do not change this validation claim.
 
 ## 2. Single-node models (~1 h, mostly load time)
 
@@ -71,7 +79,7 @@ ALWAYS `tokenized_requests=False`. Gate: within stderr (±0.035) of the
 recorded score. For broken-tokenizer models run lm-eval inside the vLLM
 container (TROUBLESHOOTING.md).
 
-## 4. Flagship 2-node (~2 h)
+## 4. Flagship exact two-node profile (~2 h)
 
 ```bash
 cluster/preflight.sh deepseek-v4-flash
@@ -106,7 +114,46 @@ error fails; `completed>0`). MemAvailable shrink &gt;5% is a **WARN** finding
 by default — review it; use `--fail-on-mem-shrink` only for strict CI.
 Also check SM clock within ~2% of 2405 in the JSON summary.
 
-## 6. Close out
+## 6. New node-count or geometry promotion
+
+Control-plane support is not a serving promotion. For each new `NODES`, TP, or
+PP combination:
+
+1. Create a separate exact profile variant with `TP × PP == NODES`, explicit
+   topology/rail requirements, and a non-tested status. Do not alter a tested
+   profile in place to cover another world size.
+2. Use `scripts/up.sh <profile> --force` only for the deliberate experiment.
+   The launcher still requires confirmed capacity and the exact topology.
+3. Capture correctness and determinism against the appropriate single- or
+   previously validated control; run concurrency/throughput sweeps, context
+   gates appropriate to the model, a partial-rank/node-loss exercise, and the
+   full soak. Re-measure collectives because adding ranks changes pair count
+   and algorithms.
+4. Store raw outputs under `results/` and add the exact image, hardware ranks,
+   topology ID/class, TP/PP, flags, verdicts, and artifact paths to
+   `VALIDATION.md`.
+5. Promote only that variant to `STATUS=tested*` after every required gate
+   passes. Until then it stays out of the wizard even when discovery finds
+   enough nodes.
+
+No three-node serving profile is promoted by the current ledger.
+
+## 7. Experimental single-copy storage (conditional)
+
+Do not inherit replicated-cache validation for `--weight-source fabric`.
+Follow `WEIGHT_FABRIC.md` and preserve unique result bundles for:
+
+1. two-node replicated-local and fabric cold I/O/startup A/B;
+2. three-node concurrent loading and interface-counter proof;
+3. deterministic/correctness/long-context gates on the healthy fabric service;
+4. interrupted load, link loss, NFS restart, owner reboot, restart loop, and
+   soak recovery;
+5. final proof that clients retain no complete durable model cache.
+
+The path remains experimental if any artifact is absent, even when the same
+model/profile/image is already `tested` with replicated weights.
+
+## 8. Close out
 
 - Update conf `STATUS`/`NOTES` and `docs/VALIDATION.md` with the measured
   numbers, exact image identity, selected backends, and artifact paths.

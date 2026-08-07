@@ -17,14 +17,23 @@ HISTORICAL / SUPERSEDED markers.
 | Role | What to run | Image | Notes |
 |---|---|---|---|
 | **Flagship (2-node)** | `cluster/start-cluster.sh deepseek-v4-flash` | published PR-41834 digest in model conf | DeepSeek-V4-Flash-**0731**; DSpark default-on at checkpoint-fixed k=5; canonical **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01; the 10 GB/577k result remains historical evidence. |
-| Fallback checkpoint | `deepseek-v4-flash-0422` | same PR-41834 image | Fully validated; superseded by 0731 as default conf |
 | **Primary single-node** | `./serve.sh laguna-s-2.1-nvfp4 -d` | `vllm/vllm-openai:v0.26.0` | NVFP4; graphs on; DFlash off by default |
 | Fast single-node | `./serve.sh nemotron-3-nano-30b-nvfp4 -d` | mainline | Fastest tok/s on box |
 | Large single-node | `./serve.sh nemotron-3-super-120b-nvfp4 -d` | mainline | MTP opt-in via `--spec-decode` |
 | Reasoning single-node | `./serve.sh qwen3.6-27b-fp8 -d` | mainline | **Never** ngram spec; not 2-node |
-| Canary | `./serve.sh qwen3-1.7b -d` | mainline | Build/plumbing probe |
+| Diagnostic canary | `./serve.sh qwen3-1.7b -d` | mainline | Build/plumbing probe; hidden from serving wizard |
 
 **Not shipped:** stock `v0.26.0` for DeepSeek-V4 multi-node (livelock); community sparkrun binary (removed from tree); Ray multi-node; ngram on GDN hybrids.
+
+### Experimental weight-storage status
+
+| Path | Status | Evidence / rule |
+|---|---|---|
+| Replicated local HF caches | **SHIPPED DEFAULT** | Existing model/profile rows below; wizard and normal CLI use this path |
+| Single authoritative copy over NFSv4.2/RDMA | **PENDING — NOT PROMOTED** | Deterministic config/manifest/route/launcher/benchmark self-tests exist, but physical two/three-node throughput, startup, faults, correctness, long-context, restart, and soak artifacts are still required by `WEIGHT_FABRIC.md` |
+
+The storage experiment does not change any model's `tested` claim until that
+exact storage source independently passes its promotion battery.
 
 **Security:** API binds `0.0.0.0:8000` without auth — lab network only ([SECURITY.md](../SECURITY.md)).
 
@@ -358,8 +367,9 @@ of continuous load, not `/health`. Raw: results/soak-dsv4-0731-150min.json
 
 **Consequence: 0731 is the flagship.** `models/deepseek-v4-flash.conf` now
 serves DeepSeek-V4-Flash-0731 with the integrated drafter (DSpark k=5
-default-on with `--no-spec-decode` rollback); the 04-22 checkpoint is demoted to
-`deepseek-v4-flash-0422.conf` (fallback, fully validated); the separate
+default-on with `--no-spec-decode` rollback). The fully validated 04-22
+checkpoint was superseded and its serving profile has since been retired;
+the separate
 `deepseek-v4-flash-dspark.conf` is retired — the integrated drafter
 supersedes the standalone -DSpark checkpoint (conf recoverable from git
 history). Next: extend the canonical geometry to a 500K-token KV cache

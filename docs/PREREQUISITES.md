@@ -5,10 +5,11 @@ work. Hardware numbers live in [HARDWARE.md](./HARDWARE.md); day-to-day
 ops in [OPERATIONS.md](./OPERATIONS.md); multi-node detail in
 [MULTINODE.md](./MULTINODE.md). This page is the gate checklist.
 
-Validated on: 2× NVIDIA DGX Spark (GB10), Ubuntu, driver 580.x, CUDA 13.0,
-Docker 29.x + NVIDIA Container Toolkit. Host NCCL is **not** required
-(NCCL comes from the container images). Example hostnames in docs:
-`dgx-spark-1` (head) / `dgx-spark-2` (worker).
+Serving results are validated on 2× NVIDIA DGX Spark (GB10), Ubuntu, driver
+580.x, CUDA 13.0, Docker 29.x + NVIDIA Container Toolkit. The control plane
+supports larger confirmed GB10 topologies, but a node count is serveable only
+when an exact `STATUS=tested*` profile has earned that claim. Hostnames are not
+part of cluster qualification. Host NCCL is not required; images provide it.
 
 ---
 
@@ -17,13 +18,13 @@ Docker 29.x + NVIDIA Container Toolkit. Host NCCL is **not** required
 | Mode | Gate command |
 |------|----------------|
 | Single-node | `./serve.sh --list` then `./serve.sh <model> --dry-run` |
-| Two-node | Copy `.env.example` → `.env`, set `HEAD_IP`/`WORKER_IP`, then `cluster/preflight.sh` and `cluster/preflight.sh <model>` |
+| Multi-node | `scripts/detect-fabric.sh --write-topology`, then `cluster/preflight.sh <exact-profile>` |
 
-`cluster/preflight.sh` exits non-zero if connectivity, RDMA, GPU, Docker,
-images, weights, or stale containers fail. Fix those before
-`start-cluster.sh`. **There are no baked-in cluster IPs** —
-`require_cluster_ips` fails closed if `HEAD_IP`/`WORKER_IP` are unset
-(`cluster/cluster-env.sh`).
+`cluster/preflight.sh` exits non-zero if confirmed capacity, pairwise RoCE,
+SSH, GPU, Docker, images, weights, memory, control bindings, or stale
+containers fail. Fix those before `start-cluster.sh`. There are no baked-in
+cluster addresses: new setups confirm a gitignored `.cluster-topology.json`;
+legacy `HEAD_IP`/`WORKER_IP` is a deprecated two-node-only path.
 
 ---
 
@@ -31,7 +32,7 @@ images, weights, or stale containers fail. Fix those before
 
 | Requirement | Notes |
 |-------------|--------|
-| **NVIDIA GB10** | `nvidia-smi --query-gpu=name --format=csv,noheader` → `NVIDIA GB10` (sm_121). Preflight enforces this on both nodes. |
+| **NVIDIA GB10** | `nvidia-smi --query-gpu=name --format=csv,noheader` → `NVIDIA GB10` (sm_121). Preflight enforces this on every exact active rank. |
 | **Driver + CUDA 13 host stack** | Validated: driver **580.173.02**, CUDA **13.0** (host toolkit 13.0.3). |
 | **Docker + NVIDIA Container Toolkit** | `docker info` must show the **nvidia** runtime. Default host runtime can stay `runc`. |
 | **GPU containers work** | `docker run --rm --gpus all <cuda-image> nvidia-smi` |
@@ -74,8 +75,14 @@ Minimum to serve one model on the box where you run the script:
    - DeepSeek-V4/Inkling: published, digest-pinned PR #41834 image — see
      [BUILD.md](./BUILD.md) and the selected model conf's `IMAGE=`
 3. **Weights on disk** (default `HF_HUB_OFFLINE=1` — no surprise downloads)
+   - The `hf` CLI is required on this node only when downloading an uncached
+     Hugging Face model; already-cached and NFS models do not need it.
    - Hugging Face cache under `$HF_CACHE/hub/models--ORG--NAME`
      (default `HF_CACHE=$HOME/.cache/huggingface`), **or**
+   - Use `scripts/pull-weights.sh <profile> --yes` for downloads. It passes
+     `$HF_CACHE/hub` as the CLI cache directory and copies the verified model
+     to every other node used by the profile. If an older Pulsar run placed the
+     same repository directly under `$HF_CACHE`, the helper adopts it safely.
    - Local / NFS path referenced by the conf (e.g. Laguna under
      `/mnt/Models/...`)
    - If you rsync HF caches manually, ensure `refs/main` exists or load
@@ -87,8 +94,8 @@ Minimum to serve one model on the box where you run the script:
      Mount is always requested; only NFS-catalog models need content there.
 5. **Optional `.env`**
    - Copy `.env.example` → `.env`. Set `HF_TOKEN` only if you pull online.
-   - Defaults for paths/images are conservative; **cluster IPs are never
-     defaulted** — only needed for two-node.
+   - Defaults for paths/images are conservative. Confirmed topology is kept
+     outside `.env`; candidate hints may be placed there.
 
 ```bash
 cp .env.example .env   # optional for single-node path overrides
@@ -105,79 +112,84 @@ in the tooling is 900 s for this reason.
 
 ---
 
-## 3. Two-node (`cluster/*.sh`)
+## 3. Confirmed multi-node topology (`cluster/*.sh`)
 
-Extra requirements beyond §1 on **both** head and worker. **You must set
-topology in `.env`** — scripts do not assume a private lab map.
+Extra requirements beyond §1 apply to every node that an exact profile will
+activate. Run discovery on the machine that will be rank 0 and host the API.
+
+### 3.1 Discovery, identity, and trust
 
 ```bash
-cp .env.example .env
-# Required:
-#   HEAD_IP=...      # RoCE rail-0 address of the head (API) node
-#   WORKER_IP=...    # RoCE rail-0 address of the worker
-# Optional dual-rail preflight:
-#   HEAD_IP_RAIL1=... WORKER_IP_RAIL1=...
-# Optional NCCL/interface overrides if your NIC names differ from cluster-env.sh
+# Preview only; no files changed.
+scripts/detect-fabric.sh --json
+
+# Add arbitrary names or addresses when mDNS is incomplete.
+scripts/detect-fabric.sh --candidate atlas-a --candidate 192.0.2.42
+
+# Review ranks and confirm exact membership.
+scripts/detect-fabric.sh --write-topology
 ```
 
-Example hostnames used in narrative: **dgx-spark-1** (head), **dgx-spark-2**
-(worker). SSH targets may be those hostnames or the RoCE IPs — use whatever
-`ssh -o BatchMode=yes "$WORKER_IP" true` accepts.
+Discovery accepts differently named systems. It combines mDNS SSH services,
+explicit candidates, `CLUSTER_CANDIDATES`, and an existing manifest, then
+requires each node to prove aarch64, exact `NVIDIA GB10`, Docker NVIDIA
+support, a distinct machine identity, a control address, and active addressed
+RDMA links. It selects a full mesh containing local rank 0 and verifies every
+shared rail in both directions for every pair.
 
-### 3.1 Network & RDMA
+SSH must be key-based and non-interactive. Stack probes use `BatchMode=yes`,
+timeouts, liveness bounds, and existing `known_hosts`. Enroll keys normally;
+`--accept-new-host-keys` is an explicit one-time TOFU option. mDNS is candidate
+discovery, not a trust or membership decision.
+
+The confirmed `.cluster-topology.json` is written atomically, mode 0600, and is
+gitignored. It records per-rank SSH target, control IP/interface, node identity,
+HCAs, and pairwise rails. An unverified manifest cannot load. Topology cannot be
+replaced while stack-managed containers are running.
+
+### 3.2 Network and RDMA
 
 | Requirement | Check |
-|-------------|--------|
-| RoCE rail 0 reachable | `ping -c1 -W2 "$HEAD_IP"` and `ping -c1 -W2 "$WORKER_IP"` |
-| RoCE rail 1 (optional) | Set `WORKER_IP_RAIL1` / `HEAD_IP_RAIL1` for dual-rail preflight pings; default NCCL HCA list is dual-rail (`rocep1s0f0,roceP2p1s0f0`) |
-| ≥2 ACTIVE RDMA links per node | `rdma link show` |
-| `/dev/infiniband` present | Launchers pass `--device /dev/infiniband`. Host networking does **not** expose IB; without the device flag NCCL silently uses TCP. |
-| Socket / HCA names | Override `NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME`, `TP_SOCKET_IFNAME`, `NCCL_IB_HCA` in `.env` if `ip -br a` / `rdma link` differ from Spark defaults in `cluster/cluster-env.sh` |
-| Master port free | `MASTER_PORT=29500` (default) on the head |
+|---|---|
+| Full-mesh RoCE | Every selected rank pair has at least the profile-required `MIN_RAILS_PER_PAIR`; discovery and preflight ping every rail both ways |
+| Active RDMA links | `rdma link show`; each selected node must expose enough addressed active HCAs |
+| RDMA devices in containers | `/dev/infiniband` exists; launchers pass `--device /dev/infiniband` |
+| Control binding | Recorded control IP is still bound to the recorded interface on each rank |
+| Master port | `MASTER_PORT=29500` by default on rank 0 |
 
-### 3.2 SSH & Docker on the worker
+The rank 0 control IP is the rendezvous address. Gloo and socket bootstrap use
+each node control interface; NCCL payloads use the recorded per-node HCAs with
+`NCCL_NET=IB`. The control LAN is therefore a launch dependency: firewall,
+routing, DNS/SSH, congestion, or high latency can affect rendezvous. Tensor
+traffic is kept on verified RoCE instead of silently falling back to that LAN.
+
+### 3.3 SSH, artifacts, and launch
 
 | Requirement | Notes |
-|-------------|--------|
-| **Key-based SSH** head → worker | `ssh -o BatchMode=yes "$WORKER_IP" true` — preflight fails without it |
-| **Host keys enrolled** | All stack scripts (including `detect-fabric`) use BatchMode against `known_hosts`. Do **not** rely on silent TOFU. First enroll: `ssh-keyscan -H dgx-spark-2.local >> ~/.ssh/known_hosts` (or one-shot `scripts/detect-fabric.sh --accept-new-host-keys` then prefer known_hosts thereafter). |
-| Docker + nvidia runtime on **worker** | Worker container is started over SSH |
-| Same image on **both** nodes | Preflight: `docker image inspect` head and worker |
-| Weights on **both** nodes | Each TP rank loads locally; missing worker cache fails at load |
-| No stale `vllm-cluster-*` containers | Leftover worker holds master port → silent rendezvous hang. Always `cluster/stop-cluster.sh` before relaunch. |
-
-### 3.3 Node without internet (common for an isolated worker)
-
-If the worker only reaches the head over RoCE (and maybe NFS), stage from the head:
+|---|---|
+| Key-based SSH from this node | Required to every other active cluster node |
+| Docker + NVIDIA support | Required independently on every node used by the profile |
+| Same image | `scripts/sync-image.sh <profile> --pull --yes` stages every required node |
+| Complete weights | `scripts/pull-weights.sh <profile> --yes` downloads here and copies to every other node used by the profile; NFS profiles must be mounted everywhere |
+| Experimental single-copy weights | Optional only: run `scripts/weight-fabric.sh prerequisites <profile>` after configuration; it checks per-node Python, sudo, NFSv4.2/RPC-RDMA, owner server tools, and owner-side `hf`, then offers guarded Ubuntu setup or exact manual guidance. Add `--interactive-sudo` for an attended terminal when existing policy requires a password; Pulsar does not store it or change sudoers. Follow `WEIGHT_FABRIC.md`. |
+| No stale managed container | A leftover container can retain rendezvous/RDMA state; stop the exact profile before relaunch |
 
 ```bash
-# Weights
-rsync -rlptD ~/.cache/huggingface/hub/models--ORG--NAME \
-  "$WORKER_IP":.cache/huggingface/hub/
-# Fix refs after manual copy (see TROUBLESHOOTING.md)
-ssh "$WORKER_IP" 'd=~/.cache/huggingface/hub/models--ORG--NAME; \
-  [ -e $d/refs/main ] || { mkdir -p $d/refs; \
-  ls $d/snapshots | head -1 | tr -d "\n" > $d/refs/main; }'
-
-# Images (also repairs digest references that docker load omits)
-scripts/sync-image.sh <model> --pull --yes
+scripts/check-image.sh <profile>
+scripts/check-weights.sh <profile>
+cluster/preflight.sh <profile>
+cluster/start-cluster.sh <profile>
+cluster/stop-cluster.sh <profile>
 ```
 
-Use `rsync -rlptD` (not plain `-a`) on some NFS-backed trees.
+Other nodes used by the profile start headless first; this node starts last and
+serves the API. The profile contract requires `TP × PP == NODES`, native `mp`,
+and an explicit topology class/rail minimum. Extra discovered nodes stay idle.
+The wizard offers only exact `STATUS=tested*` profiles that fit capacity; it
+does not infer a larger geometry.
 
-### 3.4 Start sequence
-
-```bash
-cluster/preflight.sh <model>
-# Flagship validated default (DSpark k=5):
-cluster/start-cluster.sh deepseek-v4-flash
-# Rollback only: cluster/start-cluster.sh deepseek-v4-flash --no-spec-decode
-cluster/stop-cluster.sh                   # before every relaunch
-```
-
-Worker starts first (`--node-rank 1 --headless`), then head
-(`--node-rank 0`, OpenAI API on :8000). Both use `--network host --ipc host
---gpus all --ulimit memlock=-1 --device /dev/infiniband`.
+`HEAD_IP`/`WORKER_IP` remains supported for old two-node setups, but cannot
+prove per-rank HCAs or an N-node mesh. Migrate with `--write-topology`.
 
 ---
 
@@ -186,36 +198,44 @@ Worker starts first (`--node-rank 1 --headless`), then head
 | Path | Role |
 |------|------|
 | `$HOME/.cache/huggingface` | Default HF hub cache (mounted into containers) |
+| `.weight-fabric/` | Gitignored, topology-bound configs for the experimental single-copy path |
 | `/mnt/Models` | Optional NFS catalog (`Official Models/…`); required only for confs that point there |
 | Docker image store | Multi‑GB images on **each** node that will run a container |
 
-Copy `.env.example` to override `HF_CACHE`, `MODELS_NFS`, image pins, or
-**required** cluster IPs.
+Copy `.env.example` to override `HF_CACHE`, `MODELS_NFS`, image pins,
+auth, or discovery candidate hints. Confirmed membership is not stored there.
 
 ### Weight acquisition (common cases)
 
 ```bash
-# Example: official DeepSeek-V4-Flash-0731 into the HF cache (online once)
-export HF_HUB_OFFLINE=0
-huggingface-cli download deepseek-ai/DeepSeek-V4-Flash-0731
-# Stage the same tree to the worker (two-node), then set HF_HUB_OFFLINE=1 again.
+# Downloads once on this node, then copies and verifies every required node.
+scripts/pull-weights.sh deepseek-v4-flash --yes
+
+# Optional: expose raw Hugging Face and rsync diagnostics.
+PULSAR_VERBOSE=1 scripts/pull-weights.sh deepseek-v4-flash --yes
 ```
+
+The normal view uses width-aware Pulsar sections instead of streaming
+third-party progress renderers. `PULSAR_VERBOSE=1` is intended for diagnosis.
 
 NFS-catalog models (e.g. Laguna) expect the path already present under
 `MODELS_NFS` as referenced in the conf.
 
 ---
 
-## 5. Adapting another DGX Spark pair
+## 5. Adapting another GB10 cluster
 
-1. **Required:** set `HEAD_IP` and `WORKER_IP` in `.env` (no script defaults).
-2. Set `NCCL_IB_HCA` and socket interface names from `rdma link` /
-   `ip -br a` on your boxes if they differ from `cluster-env.sh`.
-3. Ensure key-based SSH and identical images/weights on both nodes.
-4. Point `MODELS_NFS` at your catalog mount, or change confs to local paths.
-5. Re-run `cluster/preflight.sh <model>` until it is green.
+1. Enroll key-based SSH host keys from the future rank 0 to every candidate.
+2. Run read-only discovery with mDNS, arbitrary `--candidate` values, or
+   `CLUSTER_CANDIDATES`; inspect every accepted and rejected system.
+3. Confirm the exact full-mesh membership with `--write-topology`.
+4. Stage the selected exact profile image and weights to its required ranks.
+5. Re-run `cluster/preflight.sh <profile>` until it is green.
+6. Treat a new node count as unvalidated until a separate profile completes
+   `REVALIDATE.md` and is promoted in `VALIDATION.md`.
 
-Single-node only needs §1–§2; multi-node needs §3 as well.
+Single-node only needs §1–§2; multi-node also needs §3. Discovery capacity is
+not permission to serve an unmeasured geometry.
 
 ---
 
@@ -232,17 +252,17 @@ Single-node only needs §1–§2; multi-node needs §3 as well.
 [ ] ./serve.sh --list works
 ```
 
-**Two-node (add)**
+**Multi-node (add)**
 
 ```text
-[ ] .env has HEAD_IP and WORKER_IP (required)
-[ ] dual-rail RoCE; ≥2 ACTIVE RDMA links per node
-[ ] /dev/infiniband on both nodes
-[ ] key-based SSH head → worker
-[ ] NIC / HCA names match fabric (or overridden in .env)
-[ ] same image + weights on both nodes (refs/main if rsynced)
+[ ] key-based SSH + known_hosts from rank 0 to every candidate
+[ ] detect-fabric preview accepts the intended GB10 nodes only
+[ ] every selected pair has the required verified RoCE rails
+[ ] .cluster-topology.json was explicitly confirmed (and remains gitignored)
+[ ] /dev/infiniband, Docker NVIDIA, image, and weights on every exact rank
+[ ] profile has an earned status for this exact NODES / TP / PP geometry
 [ ] no stale vllm-cluster-* containers
-[ ] cluster/preflight.sh <model> exits 0
+[ ] cluster/preflight.sh <profile> exits 0
 ```
 
 ---
@@ -252,9 +272,10 @@ Single-node only needs §1–§2; multi-node needs §3 as well.
 | Doc | When |
 |-----|------|
 | [HARDWARE.md](./HARDWARE.md) | Measured bandwidth, RoCE map, storage |
-| [MULTINODE.md](./MULTINODE.md) | Why native `--nnodes`, TP=2, graph hang workarounds |
+| [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
+| [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Experimental one-copy NFS/RDMA design, operations, faults, and gates |
 | [BUILD.md](./BUILD.md) | Published PR #41834 image, provenance, and source-build fallback |
-| [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging to node 2 |
+| [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Offline node, missing `refs/main`, TCP fallback, cold load |
 | [REVALIDATE.md](./REVALIDATE.md) | After any image pin change |
 | [MODELS.md](./MODELS.md) | What fits which node count |

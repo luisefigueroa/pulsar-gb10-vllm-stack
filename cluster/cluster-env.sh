@@ -1,38 +1,30 @@
 #!/usr/bin/env bash
-# Shared cluster environment for 2x DGX Spark (example hostnames:
-# dgx-spark-1 head / dgx-spark-2 worker).
+# Shared cluster environment for validated multi-node GB10 profiles.
 #
 # Every NCCL value here was measured on a dual-rail RoCE GB10 pair on
 # 2026-07-27 (bench/results/step0/*.log) — see docs/HARDWARE.md. Do not add
 # settings without a before/after number.
 #
-# HEAD_IP / WORKER_IP are not defaulted. Set them in a gitignored .env for
-# 2-node launches (see .env.example). Single-node ./serve.sh does not need them.
+# A confirmed .cluster-topology.json supplies per-rank control IPs, SSH targets,
+# HCAs, and interfaces. HEAD_IP/WORKER_IP remain a two-node compatibility path.
+
+_cluster_env_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+. "$_cluster_env_dir/topology.sh"
 
 # ---- topology ---------------------------------------------------------------
 export HEAD_IP="${HEAD_IP:-}"
 export WORKER_IP="${WORKER_IP:-}"
 export MASTER_PORT="${MASTER_PORT:-29500}"
 
-# Call from cluster/start|stop|preflight after sourcing this file.
+# Compatibility call for legacy two-node callers.
 require_cluster_ips() {
-  if [ -z "${HEAD_IP}" ] || [ -z "${WORKER_IP}" ]; then
-    echo "cluster-env: set HEAD_IP and WORKER_IP to this fabric's RoCE rail-0 addresses (e.g. in .env)." >&2
-    echo "  Example hostnames: dgx-spark-1 (head), dgx-spark-2 (worker). See docs/HARDWARE.md and .env.example." >&2
-    return 1
-  fi
-  case "$HEAD_IP" in
-    -*|*[!A-Za-z0-9._:@%+-]*)
-      echo "cluster-env: invalid HEAD_IP '$HEAD_IP' (expected an IP address or hostname)." >&2
-      return 1
-      ;;
-  esac
-  case "$WORKER_IP" in
-    -*|*[!A-Za-z0-9._:@%+-]*)
-      echo "cluster-env: invalid WORKER_IP '$WORKER_IP' (expected an IP address or hostname)." >&2
-      return 1
-      ;;
-  esac
+  require_cluster_nodes 2 || return 1
+  HEAD_IP="${CLUSTER_NODE_CONTROL_IPS[0]}"
+  WORKER_IP="${CLUSTER_NODE_SSH_HOSTS[1]}"
+  VLLM_HOST_IP_HEAD="$HEAD_IP"
+  VLLM_HOST_IP_WORKER="${CLUSTER_NODE_CONTROL_IPS[1]}"
+  export HEAD_IP WORKER_IP VLLM_HOST_IP_HEAD VLLM_HOST_IP_WORKER
 }
 
 # ---- NCCL: validated ship set ----------------------------------------------
@@ -40,19 +32,20 @@ require_cluster_ips() {
 export NCCL_IB_HCA="${NCCL_IB_HCA:-rocep1s0f0,roceP2p1s0f0}"
 # +9% at >=256MB, no small-message penalty (allreduce-dual-rail-qps4.log)
 export NCCL_IB_QPS_PER_CONNECTION="${NCCL_IB_QPS_PER_CONNECTION:-4}"
-# Bootstrap must be pinned to the RoCE data NIC (not the admin/LAN default route)
+# Legacy .env defaults. Confirmed manifests override these per rank at launch.
 export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-enp1s0f0np0}"
 export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-enp1s0f0np0}"
 export TP_SOCKET_IFNAME="${TP_SOCKET_IFNAME:-enp1s0f0np0}"
 export NCCL_IB_DISABLE=0
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
-# Deliberately NOT set (measured no effect or auto-detect is correct here):
+# Deliberately NOT set globally:
 #   NCCL_IB_GID_INDEX   - auto-detect picks the RoCEv2 GID correctly
-#   NCCL_NET_GDR_LEVEL  - GDR is off on GB10 (separate PCIe root complexes);
-#                         forcing it changes nothing (prior art: +/-0%)
+#   NCCL_NET_GDR_LEVEL  - GDR is off on GB10 (separate PCIe root complexes)
 #   MTU 9000            - +0.7..1.5% only; PCIe Gen5 x4 is the bottleneck
+# Multi-node launch sets NCCL_NET=IB so a broken RDMA path fails closed instead
+# of silently moving model traffic onto the shared control LAN.
 
-# ---- vLLM on unified memory ---------------------------------------------------
+# ---- vLLM on unified memory -------------------------------------------------
 # GB10 has no dedicated VRAM; CUDA, OS, and page cache share 121 GiB.
 # 0.70-0.85 gpu-memory-utilization is set per model in models/*.conf.
 export VLLM_HOST_IP_HEAD="${HEAD_IP}"

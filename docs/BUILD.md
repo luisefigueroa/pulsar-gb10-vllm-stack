@@ -34,7 +34,7 @@ build below). Stock `v0.26.0` livelocks under multi-node load for this model
 | Goal | Path |
 |---|---|
 | Qwen / Nemotron / Laguna / small canaries | Pull `vllm/vllm-openai:v0.26.0` — no source build |
-| DeepSeek-V4-Flash / Inkling | Pull the digest-pinned published PR-41834 image, then stage it to the worker |
+| DeepSeek-V4-Flash / Inkling | Pull the digest-pinned published PR-41834 image, then stage it to every exact active rank |
 
 ### The pins
 
@@ -45,7 +45,7 @@ build below). Stock `v0.26.0` livelocks under multi-node load for this model
 
 Digest-pin discipline: tags are mutable; `Dockerfile` FROMs the digest. When
 bumping, re-run the validation suite (docs/VALIDATION.md) before changing the
-pin — and `rm -rf ~/.cache/vllm` + the Triton cache on both nodes after any
+pin — and `rm -rf ~/.cache/vllm` + the Triton cache on every exact active rank after any
 image change (stale Triton cache is a known silent-corruption source on
 sm_121, vllm#41871).
 
@@ -53,8 +53,8 @@ sm_121, vllm#41871).
 
 ```bash
 docker build -t vllm-gb10:v0.26.0 .
-# and load it on the worker:
-docker save vllm-gb10:v0.26.0 | ssh "$WORKER_IP" docker load
+# Point a candidate profile IMAGE at this local tag, then stage exact ranks:
+scripts/sync-image.sh <profile> --yes
 ```
 
 Build time: **~40 s** (it is an overlay: arch assert + curl + OCI labels; the
@@ -134,11 +134,11 @@ DOCKER_BUILDKIT=1 docker build --target vllm-openai \
   --build-arg torch_cuda_arch_list='12.0' \
   -t vllm-gb10:pr41834-d64074e6f -f docker/Dockerfile .
 
-# 3) Stage the local fallback to the worker (two-node)
-docker save vllm-gb10:pr41834-d64074e6f | ssh "$WORKER_IP" docker load
-
-# 4) For an offline/local fallback, change the selected model conf's IMAGE
+# 3) For an offline/local fallback, change the candidate profile IMAGE
 #    from the published digest to vllm-gb10:pr41834-d64074e6f.
+
+# 4) Stage that exact profile to every required active rank.
+scripts/sync-image.sh <profile> --yes
 ```
 
 `images/pr41834-release.Dockerfile` is the publisher-side metadata and security
@@ -151,7 +151,7 @@ sm_121 natively under CUDA 13.0.3) plus the 12.0a/12.1a quant-kernel gates.
 **Validation:** this image earns nothing until gates in
 `models/deepseek-v4-flash.conf` + docs/VALIDATION.md pass (battery, needle,
 soak). Use `cluster/start-cluster.sh deepseek-v4-flash` for the default DSpark
-path after the image is loaded on both nodes; `--no-spec-decode` is rollback.
+path after the image is loaded on both exact flagship ranks; `--no-spec-decode` is rollback.
 
 ### DEPRECATED: DSpark draft-path overlay (do not build by default)
 

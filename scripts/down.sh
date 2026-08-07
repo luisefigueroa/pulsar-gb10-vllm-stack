@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stop serving containers for a conf, or all stack-managed containers.
-#   scripts/down.sh <model-name|--all>
+#   scripts/down.sh <model-name|--all> [--node NODE_ID]
 #
 # Only removes containers that prove stack ownership via
 # io.pulsar.gb10.managed=true and consistent conf/rank labels. Unlabeled
@@ -13,55 +13,74 @@ SCRIPT_NAME=down
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 TARGET="${1:-}"
-[ -n "$TARGET" ] || die "usage: $0 <model-name|--all>"
+[ -n "$TARGET" ] || die "usage: $0 <model-name|--all> [--node NODE_ID]"
+shift || true
+NODE_SELECTOR=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --node)
+      [ "$#" -ge 2 ] || die "--node requires a topology node id or hostname" 2
+      NODE_SELECTOR="$2"
+      shift
+      ;;
+    *) die "unknown arg: $1" 2 ;;
+  esac
+  shift
+done
 
 if [ "$TARGET" = "--all" ]; then
-  log "stopping all stack-managed Pulsar containers (label ${PULSAR_MANAGED_LABEL}=true)"
-  # If a worker is configured, prove it is reachable BEFORE any head mutation.
-  # Unreachable worker must not report success or remove the head rank alone.
-  if [ -n "${WORKER_IP:-}" ]; then
-    if ! list_managed_container_ids_remote "$WORKER_IP" >/dev/null; then
-      die "worker unreachable or docker error on $WORKER_IP — refusing --all (no head removals)"
-    fi
+  [ -z "$NODE_SELECTOR" ] || die "--node cannot be combined with --all" 2
+  load_cluster_topology || die "confirmed topology is invalid"
+  if [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
+    exec "$REPO_DIR/cluster/stop-cluster.sh" --all
   fi
-
+  log "stopping all local stack-managed Pulsar containers"
   rc=0
-  step=0
-  remove_all_stack_managed_local || step=$?
-  rc=$(lifecycle_merge_rc "$rc" "$step")
-
-  if [ -n "${WORKER_IP:-}" ]; then
-    log "stopping stack-managed containers on worker $WORKER_IP"
-    step=0
-    remove_all_stack_managed_remote "$WORKER_IP" || step=$?
-    rc=$(lifecycle_merge_rc "$rc" "$step")
-  else
-    log "WORKER_IP unset — skip remote managed cleanup"
-  fi
-
-  if [ "$rc" -eq 0 ]; then
-    log "done"
-    exit 0
-  fi
-  if [ "$rc" -eq 2 ]; then
-    die "one or more managed candidates were refused (unknown conf / bad placement / incomplete labels); left intact"
-  fi
-  die "managed container cleanup reported errors"
+  remove_all_stack_managed_local || rc=$?
+  case "$rc" in
+    0) log "done"; exit 0 ;;
+    2) die "one or more managed candidates were refused; left intact" ;;
+    *) die "managed container cleanup reported errors" ;;
+  esac
 fi
 
 load_conf "$TARGET"
-if [ "$NODES" = "2" ]; then
-  require_cluster_ips || exit 1
+if [ "$NODES" -gt 1 ]; then
   exec "$REPO_DIR/cluster/stop-cluster.sh" "$TARGET"
 fi
 
+if [ -z "$NODE_SELECTOR" ]; then
+  placement_index=""
+  rc=0
+  placement_index=$(discover_single_node_index_for_conf "$TARGET") || rc=$?
+  case "$rc" in
+    0)
+      NODE_SELECTOR="${CLUSTER_NODE_IDS[$placement_index]:-}"
+      [ -n "$NODE_SELECTOR" ] \
+        || NODE_SELECTOR=$(single_node_key_for_index "$placement_index")
+      ;;
+    3)
+      log "no stack-managed single-node service found for conf=$TARGET"
+      exit 0
+      ;;
+    2)
+      die "refused to stop $TARGET: placement or ownership is ambiguous"
+      ;;
+    *)
+      die "cannot safely discover $TARGET placement across confirmed nodes"
+      ;;
+  esac
+fi
+
+resolve_single_node_placement "$NODE_SELECTOR" \
+  || die "cannot resolve physical node placement '$NODE_SELECTOR'"
 cname=$(container_name_for "$TARGET" 1)
 rc=0
-remove_stack_owned_container_local "$cname" "$TARGET" "single" || rc=$?
+remove_stack_owned_single_at_resolved_node "$TARGET" || rc=$?
 if [ "$rc" -eq 0 ]; then
   exit 0
 fi
 if [ "$rc" -eq 2 ]; then
-  die "refused to stop $cname: not provably stack-managed for conf=$TARGET rank=single"
+  die "refused to stop $cname on $(single_node_display): ownership or node identity is not proven"
 fi
-die "failed to stop $cname"
+die "failed to stop $cname on $(single_node_display)"

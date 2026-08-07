@@ -19,7 +19,7 @@ serve/switch shortcut.
 **Hit:** quick status shows an advertised model, but clients hang or time out.
 **Cause:** home quick status probes only `GET /v1/models` (advertisement). It
 does **not** run an inference completion and does not claim inference health.
-On multi-node, `/health` can also lie after worker loss (see monitoring section
+On multi-node, `/health` can also lie after a remote-rank loss (see monitoring section
 in OPERATIONS.md).
 **Fix:** run an explicit completion smoke (`./pulsar status` or the home
 status follow-up “Full smoke check”), or:
@@ -32,7 +32,7 @@ will not stop unknown/legacy/mismatch services.
 **Cause:** only inventory `safe_to_stop` stack-managed services (labels
 `io.pulsar.gb10.managed=true` + consistent conf/rank) are eligible. Unlabeled
 legacy, mismatch, unknown GPU consumers, incomplete multi-node views, and
-unreachable workers are read-only. Stale managed containers hold no model
+unreachable required cluster nodes are read-only. Stale managed containers hold no model
 memory and are optional maintenance only — never auto-cleaned on doctor/start.
 **Fix:** run `./pulsar inventory` (or `--json` / `--verbose`). Identify the
 owner. If it is truly stack-managed and complete, `./pulsar stop <conf>` or
@@ -74,23 +74,32 @@ resolve the revision and fails even though all weights are present.
 (One-liner over all models in cluster/README or run the loop in git history.)
 `scripts/check-weights.sh` (used by wizard/up) requires `refs/main` to resolve
 to a snapshot, a non-empty config and weight file, no `.incomplete` marker,
-and no locally indexed missing/empty shard. It checks both nodes for two-node
-profiles. A missing ref is therefore reported as `partial` before launch;
+and no locally indexed missing/empty shard. It checks every exact active rank for multi-node profiles. A missing ref is therefore reported as `partial` before launch;
 repair the ref or rerun `scripts/pull-weights.sh <model> --yes`.
 
-## Node 2 has no internet route
+## Download completed but Pulsar cannot find the cache
 
-**Hit:** `hf download` on dgx-spark-2 fails (repo-not-found style error);
-Docker Hub pulls work only via... they don't. Node 2 reaches node 1 over
-RoCE and the LAN NFS server, nothing else.
-**Fix:** download on dgx-spark-1, then
-`rsync -rlptD ~/.cache/huggingface/hub/models--X "$WORKER_IP":.cache/huggingface/hub/`
-(rsync `-a` breaks on some shares here [prior art: NFS `sec=sys` chgrp]; the
-RoCE link moves ~1 GB/s+, a 160 GB model syncs in minutes.)
-Also fix `refs/main` on the target (see above) — and note image staging: pull
-published images on node 1, then run `scripts/sync-image.sh <model> --yes`
-(LAN `docker save | load`, followed by registry-reference repair when needed);
-only locally reproduced images need a source build.
+**Hit:** Hugging Face reports a completed download, followed by a missing
+`$HF_CACHE/hub/models--ORG--NAME` path or an rsync source error.
+**Cause:** `hf download --cache-dir` takes the exact Hub cache directory.
+Passing Pulsar's Hugging Face home (`$HF_CACHE`) writes
+`models--ORG--NAME` one level above Pulsar's canonical `hub/` directory.
+**Fix:** use `scripts/pull-weights.sh <profile> --yes`. It always downloads
+into `$HF_CACHE/hub`, safely adopts a top-level cache when the canonical
+destination is absent, stops on conflicting copies, and verifies every node
+before returning success. Use `PULSAR_VERBOSE=1` only when raw Hugging Face
+or rsync diagnostics are needed.
+
+## Another cluster node has no internet route
+
+**Hit:** the second node could reach this node and LAN NFS, but direct HF and
+registry downloads failed. This is common on isolated compute fabrics.
+**Fix:** use `scripts/pull-weights.sh <profile> --yes`; it downloads once on
+this node, then copies the complete hub tree (including `refs/main`) to every
+other node used by that exact profile. Use
+`scripts/sync-image.sh <profile> --pull --yes` for images; it streams missing
+images over the control LAN and repairs digest references when needed. NFS
+profiles instead require the same mounted path on every required node.
 
 ## `docker load` succeeds but the worker still misses a digest-pinned image
 
@@ -103,11 +112,11 @@ be restored with `docker tag`.
 exact digest on the worker. Docker reuses the LAN-transferred layers and only
 resolves the registry reference. Prefer the script over a bare save/load pipe.
 
-## 2-node: server never comes up, no error anywhere
+## Multi-node: server never comes up, no error anywhere
 
 **Hit:** intentionally reproduced during teardown testing.
-**Cause:** a leftover worker container from a previous run still holds the
-master port / RDMA state; the new head blocks forever in torch.distributed
+**Cause:** a leftover remote-rank container from a previous run still holds the
+master port / RDMA state; the new rank 0 blocks forever in torch.distributed
 rendezvous.
 **Fix:** `cluster/stop-cluster.sh` before every start (start-cluster.sh
 also removes same-name containers). `cluster/preflight.sh` fails on any
@@ -156,7 +165,7 @@ OS, and page cache share 121 GiB LPDDR5X. Consequences:
 
 [prior art, re-applied as policy] Triton's JIT cache can silently corrupt
 outputs on sm_121 across version bumps (vllm#41871). After ANY image pin
-change: `rm -rf ~/.cache/vllm` and the Triton cache dir on BOTH nodes.
+change: `rm -rf ~/.cache/vllm` and the Triton cache dir on every exact active rank.
 Symptom to watch for in benchmarks: `jit_monitor` warnings about Triton
 compilation *during inference* — those numbers are cold-cache artifacts,
 rerun after warmup (validate/bench_serve.py warms up per level).

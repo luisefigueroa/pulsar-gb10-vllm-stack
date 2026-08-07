@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 # List models/*.conf for humans and gum choose (conf id is first column).
-#   scripts/list-models.sh [--validated] [--json]
+#   scripts/list-models.sh [--validated] [--serving|--diagnostic] [--json]
 set -euo pipefail
 SCRIPT_NAME=list-models
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
-VALIDATED=0 JSON=0
+VALIDATED=0 JSON=0 SCOPE=all
 while [ $# -gt 0 ]; do
   case "$1" in
     --validated) VALIDATED=1 ;;
+    --serving)
+      [ "$SCOPE" = all ] || die "--serving and --diagnostic are mutually exclusive"
+      SCOPE=serving
+      ;;
+    --diagnostic)
+      [ "$SCOPE" = all ] || die "--serving and --diagnostic are mutually exclusive"
+      SCOPE=diagnostic
+      ;;
     --json) JSON=1 ;;
-    -h|--help) echo "usage: $0 [--validated] [--json]"; exit 0 ;;
+    -h|--help)
+      echo "usage: $0 [--validated] [--serving|--diagnostic] [--json]"
+      exit 0
+      ;;
     *) die "unknown arg: $1" ;;
   esac
   shift
@@ -34,6 +45,10 @@ for conf in "$REPO_DIR"/models/*.conf; do
     if [ "$VALIDATED" = 1 ] && ! status_is_tested; then
       exit 0
     fi
+    case "$SCOPE" in
+      serving) [ "$PROFILE_PURPOSE" = serving ] || exit 0 ;;
+      diagnostic) [ "$PROFILE_PURPOSE" = diagnostic ] || exit 0 ;;
+    esac
     src=$(model_source_kind)
     spec="none"
     if has_spec_args; then
@@ -43,8 +58,11 @@ for conf in "$REPO_DIR"/models/*.conf; do
         spec="optional"
       fi
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$name" "$STATUS" "$NODES" "$src" "$SERVED_NAME" "$spec" "${FIRST_RUN_CANDIDATE:-0}"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$name" "$STATUS" "$NODES" "$src" "$SERVED_NAME" "$spec" \
+      "${FIRST_RUN_CANDIDATE:-0}" "$PROFILE_FAMILY" "$VARIANT_LABEL" \
+      "$FAMILY_RECOMMENDED" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
+      "$PROFILE_PURPOSE"
   ) >>"$tmp" || true
 done
 
@@ -61,13 +79,23 @@ with open("$tmp") as f:
         if not line:
             continue
         p = line.split("\\t")
-        while len(p) < 7:
+        while len(p) < 13:
             p.append("")
         rows.append({
-            "id": p[0], "status": p[1], "nodes": int(p[2] or 1),
-            "source": p[3], "served_name": p[4], "spec": p[5],
+            "id": p[0],
+            "status": p[1],
+            "nodes": int(p[2] or 1),
+            "source": p[3],
+            "served_name": p[4],
+            "spec": p[5],
             "spec_default_enabled": p[5] == "recommended",
             "first_run_candidate": p[6] == "1",
+            "family": p[7],
+            "variant": p[8],
+            "family_recommended": p[9] == "1",
+            "topology_class": p[10],
+            "min_rails_per_pair": int(p[11] or 0),
+            "purpose": p[12] or "serving",
         })
 print(json.dumps({"models": rows}, indent=2))
 PY
@@ -81,8 +109,10 @@ fi
 
 printf '%-32s %-14s %5s %-4s %-22s %s\n' "ID" "STATUS" "NODES" "SRC" "SERVED_NAME" "SPEC_DECODE"
 printf '%-32s %-14s %5s %-4s %-22s %s\n' "--------------------------------" "--------------" "-----" "----" "----------------------" "-----------"
-while IFS=$'\t' read -r id st nodes src served spec fr; do
-  printf '%-32s %-14s %5s %-4s %-22s %s\n' "$id" "$st" "$nodes" "$src" "$served" "$spec"
+while IFS=$'\t' read -r id st nodes src served spec _fr _family _variant \
+    _recommended _topology _rails _purpose; do
+  printf '%-32s %-14s %5s %-4s %-22s %s\n' \
+    "$id" "$st" "$nodes" "$src" "$served" "$spec"
 done <"$tmp"
 
 cat <<'EOF'
@@ -90,7 +120,7 @@ cat <<'EOF'
 Columns:
   ID           conf name for scripts/up.sh <ID>
   STATUS       validation ledger status
-  NODES        1 = single-node serve; 2 = cluster (needs .env HEAD_IP/WORKER_IP)
+  NODES        exact active rank count; multi-node needs confirmed topology
   SRC          hf = Hugging Face id; nfs = path under /mnt/Models (no auto-download)
   SERVED_NAME  OpenAI API "model" field (may differ from ID)
   SPEC_DECODE  none | optional | recommended
@@ -98,4 +128,8 @@ Columns:
                  optional    = validated; off by default; --spec-decode enables
                  recommended = validated and on by default
                                (--no-spec-decode is the rollback)
+
+Filters:
+  --serving     profiles offered by the serving wizard
+  --diagnostic  canary profiles reserved for explicit diagnostics
 EOF

@@ -3,7 +3,8 @@
 #   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode] [--force]
 #                 [--skip-preflight]
 #                 [--skip-weights-check] [--accept-memory-warn] [--pull-image]
-#                 [--dry-run] [--yes] [--verbose]
+#                 [--weight-source replicated|fabric]
+#                 [--node NODE_ID] [--dry-run] [--yes] [--verbose]
 set -euo pipefail
 SCRIPT_NAME=up
 # shellcheck disable=SC1091
@@ -13,7 +14,8 @@ NAME="${1:-}"
 [ -n "$NAME" ] || die "usage: $0 <model-name> [options]"
 shift
 
-SPEC_MODE=auto FORCE=0 SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0 DRY=0 YES=0 VERBOSE=0
+SPEC_MODE=auto FORCE=0 SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0
+DRY=0 YES=0 VERBOSE=0 NODE_SELECTOR="" WEIGHT_SOURCE=replicated
 while [ $# -gt 0 ]; do
   case "$1" in
     --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
@@ -23,6 +25,16 @@ while [ $# -gt 0 ]; do
     --skip-weights-check) SKIP_W=1 ;;
     --accept-memory-warn) ACCEPT_MEM=1 ;;
     --pull-image) PULL_IMG=1 ;;
+    --weight-source)
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated or fabric" 2
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
+    --node)
+      [ "$#" -ge 2 ] || die "--node requires a topology node id or hostname" 2
+      NODE_SELECTOR="$2"
+      shift
+      ;;
     --dry-run) DRY=1 ;;
     --yes|-y) YES=1 ;;
     --verbose|-v) VERBOSE=1 ;;
@@ -34,6 +46,8 @@ usage: scripts/up.sh <model-name> [options]
   --no-spec-decode       force off speculative decode (rollback)
   --dry-run              run checks only (no launch)
   --verbose              full check logs (default is one-line gates)
+  --node NODE_ID          place a one-node profile on this confirmed physical node
+  --weight-source MODE    replicated (default) or experimental fabric
   --accept-memory-warn   allow start on memory WARN
   --pull-image / --yes   attempt image pull/sync when missing
   --force                allow non-tested conf statuses (untested/do-not-use/blocked*)
@@ -48,12 +62,34 @@ EOF
 done
 
 load_conf "$NAME"
+case "$WEIGHT_SOURCE" in
+  replicated|fabric) ;;
+  *) die "--weight-source must be replicated or fabric" 2 ;;
+esac
+[ "$WEIGHT_SOURCE" != fabric ] || [ "$NODES" -gt 1 ] \
+  || die "fabric weights are only valid for multi-node profiles" 2
+WEIGHT_ARGS=(--weight-source "$WEIGHT_SOURCE")
+PLACEMENT_ARGS=()
+SERVICE_API_BASE="http://127.0.0.1:$PORT"
+if [ "$NODES" -eq 1 ]; then
+  resolve_single_node_placement "$NODE_SELECTOR" \
+    || die "cannot resolve physical node placement '$NODE_SELECTOR'"
+  PLACEMENT_SELECTOR="${SINGLE_NODE_ID:-$SINGLE_NODE_KEY}"
+  PLACEMENT_ARGS=(--node "$PLACEMENT_SELECTOR")
+  SERVICE_API_BASE=$(single_node_api_base_url "$PORT")
+elif [ -n "$NODE_SELECTOR" ]; then
+  die "--node is only valid for one-node profiles" 2
+fi
 resolve_spec_decode "$SPEC_MODE"
 export QUIET=1
 [ "$VERBOSE" = 1 ] && export QUIET=0
 
 echo "┌─ up  $NAME"
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT  status=$STATUS"
+echo "│  weights=$WEIGHT_SOURCE$([ "$WEIGHT_SOURCE" = fabric ] && printf ' (experimental · cold reads use RoCE)')"
+if [ "$NODES" -eq 1 ]; then
+  echo "│  placement=$(single_node_display)  node-id=${SINGLE_NODE_ID:-standalone}"
+fi
 if [ "$SPEC_DECODE_ENABLED" = 1 ]; then
   echo "│  spec-decode=ON  ($SPEC_DECODE_SOURCE)"
 else
@@ -68,45 +104,53 @@ if status_requires_force && [ "$FORCE" != 1 ]; then
 fi
 echo "PASS  conf      status=$STATUS"
 
-if [ "$NODES" = "2" ]; then
-  if ! require_cluster_ips; then
-    echo "FAIL  fabric    HEAD_IP/WORKER_IP missing — scripts/detect-fabric.sh --write-env"
-    die "2-node conf requires HEAD_IP and WORKER_IP"
+if [ "$NODES" -gt 1 ]; then
+  if ! require_profile_topology \
+      "$NODES" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR"; then
+    echo "FAIL  topology  profile needs $NODES confirmed ranks"
+    die "run scripts/detect-fabric.sh --write-topology, then retry"
   fi
-  echo "PASS  fabric    HEAD_IP=$HEAD_IP  WORKER_IP=$WORKER_IP"
+  echo "PASS  topology  profile=$NODES ranks  available=$CLUSTER_TOPOLOGY_COUNT  id=${CLUSTER_TOPOLOGY_ID:0:12}"
 fi
 
 # --- image ---
 set +e
 if [ "$VERBOSE" = 1 ]; then
-  "$REPO_DIR/scripts/check-image.sh" "$NAME"
+  "$REPO_DIR/scripts/check-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}"
   img_rc=$?
 else
-  img_line=$(QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" 2>&1)
+  img_line=$(QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" 2>&1)
   img_rc=$?
   echo "$img_line"
 fi
-img_json=$(QUIET=0 "$REPO_DIR/scripts/check-image.sh" "$NAME" --json 2>/dev/null || true)
+img_json=$(QUIET=0 "$REPO_DIR/scripts/check-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" --json 2>/dev/null || true)
 set -e
 if [ "$img_rc" != 0 ]; then
   img_state=$(printf '%s' "$img_json" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null || echo unknown)
   case "$img_state" in
-    need-worker-ip)
-      die "WORKER_IP unset — cannot verify image on both nodes"
+    need-worker-ip|need-topology)
+      die "confirmed topology has fewer ranks than this profile requires"
       ;;
-    missing-on-worker)
+    missing-on-worker|missing-on-rank)
       if [ "$DRY" != 1 ] && { [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; }; then
-        "$REPO_DIR/scripts/sync-image.sh" "$NAME" --yes
-        QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" \
-          || die "image still missing after worker sync"
+        "$REPO_DIR/scripts/sync-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" --yes
+        QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" \
+          || die "image still missing after rank sync"
       else
-        die "image on head only — run: scripts/sync-image.sh $NAME --yes"
+        die "image missing on remote rank(s) — run: scripts/sync-image.sh $NAME --yes"
       fi
       ;;
-    missing-on-head|missing-both|unknown|"")
+    worker-unreachable|rank-unreachable|target-unreachable)
+      die "one or more required physical nodes are unreachable over BatchMode SSH"
+      ;;
+    worker-docker-error|rank-docker-error|head-docker-error|target-docker-error)
+      die "Docker is unavailable on one or more required physical nodes"
+      ;;
+    missing-on-head|missing-on-target|missing-both|unknown|"")
       if [ "$DRY" != 1 ] && { [ "$PULL_IMG" = 1 ] || [ "$YES" = 1 ]; }; then
-        "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
-        QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" || die "image still missing after sync"
+        "$REPO_DIR/scripts/sync-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" --pull --yes
+        QUIET=1 "$REPO_DIR/scripts/check-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" \
+          || die "image still missing after sync"
       else
         die "image missing ($img_state): $IMAGE"
       fi
@@ -121,23 +165,30 @@ fi
 if [ "$SKIP_W" != 1 ]; then
   set +e
   if [ "$VERBOSE" = 1 ]; then
-    "$REPO_DIR/scripts/check-weights.sh" "$NAME"
+    "$REPO_DIR/scripts/check-weights.sh" "$NAME" \
+      "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}"
     w_rc=$?
   else
-    QUIET=1 "$REPO_DIR/scripts/check-weights.sh" "$NAME"
+    QUIET=1 "$REPO_DIR/scripts/check-weights.sh" "$NAME" \
+      "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}"
     w_rc=$?
   fi
   set -e
   if [ "$w_rc" != 0 ]; then
-    w_json=$("$REPO_DIR/scripts/check-weights.sh" "$NAME" --json 2>/dev/null || true)
+    w_json=$("$REPO_DIR/scripts/check-weights.sh" "$NAME" \
+      "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" --json 2>/dev/null || true)
     w_state=$(printf '%s' "$w_json" | python3 -c \
       'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null || echo unknown)
-    if [ "$w_state" = worker-unreachable ]; then
-      die "worker SSH unavailable — cannot verify weights; no pull or sync attempted"
+    if [ "$w_state" = worker-unreachable ] || [ "$w_state" = rank-unreachable ] \
+        || [ "$w_state" = unreachable ]; then
+      die "one or more required ranks are unreachable — cannot verify weights"
+    fi
+    if [ "$WEIGHT_SOURCE" = fabric ]; then
+      die "single-copy fabric is not ready (state=$w_state) — run: scripts/weight-fabric.sh check $NAME"
     fi
     kind=$(model_source_kind)
     if [ "$kind" = hf ]; then
-      die "weights missing — scripts/pull-weights.sh $NAME"
+      die "weights missing — scripts/pull-weights.sh $NAME ${PLACEMENT_ARGS[*]}"
     else
       die "NFS weights missing — mount catalog at $MODEL"
     fi
@@ -149,10 +200,10 @@ fi
 # --- memory ---
 set +e
 if [ "$VERBOSE" = 1 ]; then
-  "$REPO_DIR/scripts/check-memory.sh" "$NAME"
+  "$REPO_DIR/scripts/check-memory.sh" "$NAME" "${PLACEMENT_ARGS[@]}"
   mem_rc=$?
 else
-  QUIET=1 "$REPO_DIR/scripts/check-memory.sh" "$NAME"
+  QUIET=1 "$REPO_DIR/scripts/check-memory.sh" "$NAME" "${PLACEMENT_ARGS[@]}"
   mem_rc=$?
 fi
 set -e
@@ -176,19 +227,21 @@ case "$mem_rc" in
 esac
 
 # --- multi-node preflight ---
-if [ "$NODES" = "2" ]; then
+if [ "$NODES" -gt 1 ]; then
   if [ "$SKIP_PF" != 1 ]; then
     if [ "$DRY" = 1 ]; then
       echo "PASS  preflight would-run cluster/preflight.sh $NAME"
     else
       echo "│  running cluster preflight…"
       if [ "$VERBOSE" = 1 ]; then
-        "$REPO_DIR/cluster/preflight.sh" "$NAME" || die "cluster preflight failed"
+        "$REPO_DIR/cluster/preflight.sh" "$NAME" \
+          "${WEIGHT_ARGS[@]}" || die "cluster preflight failed"
       else
         _pf_log=$(mktemp "${TMPDIR:-/tmp}/pulsar-preflight.XXXXXX")
         # shellcheck disable=SC2064
         trap 'rm -f "${_pf_log:-}"' RETURN
-        if "$REPO_DIR/cluster/preflight.sh" "$NAME" >"$_pf_log" 2>&1; then
+        if "$REPO_DIR/cluster/preflight.sh" "$NAME" \
+            "${WEIGHT_ARGS[@]}" >"$_pf_log" 2>&1; then
           echo "PASS  preflight cluster OK"
           rm -f "$_pf_log"
         else
@@ -212,10 +265,12 @@ esac
 
 launch_flags=()
 [ "$FORCE" = 1 ] && launch_flags+=(--force)
-if [ "$NODES" = "2" ]; then
+if [ "$NODES" -gt 1 ]; then
   # up.sh already ran (or explicitly skipped) this preflight. Always suppress
   # start-cluster.sh's duplicate run while preserving the caller's decision.
   launch_flags+=(--skip-preflight)
+  [ "$WEIGHT_SOURCE" = replicated ] \
+    || launch_flags+=(--weight-source "$WEIGHT_SOURCE")
 fi
 
 echo "└─"
@@ -226,46 +281,63 @@ if [ "$DRY" = 1 ]; then
 DRY-RUN OK
   conf:     $NAME
   served:   $SERVED_NAME
-  would:    $([ "$NODES" = 2 ] && echo "cluster/start-cluster.sh $NAME ${spec_flag[*]:-} ${launch_flags[*]:-}" || echo "serve.sh $NAME -d ${spec_flag[*]:-} ${launch_flags[*]:-}")
-  live:     scripts/status.sh $NAME
+  would:    $([ "$NODES" -gt 1 ] && echo "cluster/start-cluster.sh $NAME ${spec_flag[*]:-} ${launch_flags[*]:-}" || echo "serve.sh $NAME -d ${PLACEMENT_ARGS[*]:-} ${spec_flag[*]:-} ${launch_flags[*]:-}")
+  live:     scripts/status.sh $NAME ${PLACEMENT_ARGS[*]:-}
   note:     no containers changed
 EOF
   exit 0
 fi
 
 # --- launch ---
-if [ "$NODES" = "2" ]; then
-  log "starting 2-node cluster…"
+if [ "$NODES" -gt 1 ]; then
+  log "starting exact $NODES-node cluster…"
   "$REPO_DIR/cluster/start-cluster.sh" "$NAME" \
     ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
 else
   log "starting single-node…"
   "$REPO_DIR/serve.sh" "$NAME" -d \
+    "${PLACEMENT_ARGS[@]}" \
     ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
   api_auth_args=()
   api_auth_curl_args api_auth_args
   cname=$(container_name_for "$NAME" 1)
-  log "waiting for http://127.0.0.1:${PORT}/health (cold load can take minutes)"
+  log "waiting for ${SERVICE_API_BASE}/health on $(single_node_display) (cold load can take minutes)"
   ok=0
   for i in $(seq 1 "${WAIT_ATTEMPTS:-90}"); do
-    if curl -fsS --max-time 3 "${api_auth_args[@]}" "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    if curl -fsS --max-time 3 "${api_auth_args[@]}" "${SERVICE_API_BASE}/health" >/dev/null 2>&1; then
       ok=1
       break
     fi
-    if ! docker ps --format '{{.Names}}' | grep -qx "$cname"; then
+    container_rc=0
+    if [ "$SINGLE_NODE_REMOTE" = 1 ]; then
+      container_running_exact_remote "$SINGLE_NODE_SSH_HOST" "$cname" || container_rc=$?
+    else
+      container_running_exact "$cname" || container_rc=$?
+    fi
+    if [ "$container_rc" -ne 0 ]; then
       warn "container died; last logs:"
-      docker logs --tail 80 "$cname" >&2 || true
+      if [ "$SINGLE_NODE_REMOTE" = 1 ]; then
+        remote_logs=$(shell_join_q docker logs --tail 80 "$cname")
+        "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$SINGLE_NODE_SSH_HOST" "$remote_logs" >&2 || true
+      else
+        "$PULSAR_DOCKER" logs --tail 80 "$cname" >&2 || true
+      fi
       exit 1
     fi
     sleep "${WAIT_SECONDS:-5}"
   done
   if [ "$ok" != 1 ]; then
     warn "timed out waiting for health; logs:"
-    docker logs --tail 100 "$cname" >&2 || true
+    if [ "$SINGLE_NODE_REMOTE" = 1 ]; then
+      remote_logs=$(shell_join_q docker logs --tail 100 "$cname")
+      "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$SINGLE_NODE_SSH_HOST" "$remote_logs" >&2 || true
+    else
+      "$PULSAR_DOCKER" logs --tail 100 "$cname" >&2 || true
+    fi
     exit 1
   fi
   log "healthy — smoke completion"
-  curl -fsS --max-time 120 "http://127.0.0.1:${PORT}/v1/completions" \
+  curl -fsS --max-time 120 "${SERVICE_API_BASE}/v1/completions" \
     "${api_auth_args[@]}" \
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"${SERVED_NAME}\",\"prompt\":\"2+2=\",\"max_tokens\":4,\"temperature\":0}" \
@@ -277,9 +349,9 @@ cat <<EOF
 READY
   conf:     $NAME
   served:   $SERVED_NAME
-  url:      http://127.0.0.1:${PORT}/v1
+  url:      ${SERVICE_API_BASE}/v1
   inspect:  scripts/quick-status.sh
-  status:   scripts/status.sh $NAME
-  stop:     scripts/down.sh $NAME
+  status:   scripts/status.sh $NAME ${PLACEMENT_ARGS[*]:-}
+  stop:     scripts/down.sh $NAME ${PLACEMENT_ARGS[*]:-}
   security: do not expose :${PORT} without auth (SECURITY.md)
 EOF

@@ -22,9 +22,9 @@ usage() {
 usage: scripts/quick-status.sh [--json]
 
   Fast read-only overview: active managed service, API model advertisement
-  (not inference health), head/worker MemAvailable/MemTotal, managed GPU
-  allocation per rank when measured, worker reachability, unmanaged GPU
-  aggregate, and stale managed container count.
+  (not inference health), memory on every confirmed node, managed GPU
+  allocation per node when measured, reachability of other cluster nodes,
+  unmanaged GPU aggregate, and stale managed container count.
 
   Never calls /v1/completions or any other inference endpoint.
 EOF
@@ -133,6 +133,51 @@ head = nodes.get("head") or {}
 worker_node = nodes.get("worker") or {}
 unmanaged = inv.get("unmanaged_gpu_processes") or []
 
+
+def node_order(item):
+    name = item[0]
+    if name == "head":
+        return (0, name)
+    if name == "worker":
+        return (1, name)
+    if name.startswith("rank-"):
+        try:
+            return (int(name.split("-", 1)[1]), name)
+        except ValueError:
+            pass
+    return (1_000_000, name)
+
+def node_label(name):
+    hostname = str((nodes.get(name) or {}).get("hostname") or "").strip()
+    if hostname:
+        return f"{hostname} (this node)" if name == "head" else hostname
+    if name == "head":
+        return "this node"
+    return "host unavailable"
+
+
+
+memory_nodes = []
+for node_name, block in sorted(nodes.items(), key=node_order):
+    if (
+        node_name == "worker"
+        and worker.get("status") == "unset"
+        and not block.get("hostname")
+        and block.get("mem_available_gib") is None
+        and block.get("mem_total_gib") is None
+    ):
+        continue
+    avail = block.get("mem_available_gib")
+    total = block.get("mem_total_gib")
+    memory_nodes.append({
+        "name": node_name,
+        "hostname": block.get("hostname"),
+        "mem_available_gib": avail,
+        "mem_total_gib": total,
+        "available_percent": pct_available(avail, total),
+        "mem_status": block.get("mem_status"),
+    })
+
 active_managed = []
 stale_managed = []
 for s in services:
@@ -207,6 +252,7 @@ overview = {
         "note": "model advertisement only — not an inference smoke test",
     },
     "memory": {
+        "nodes": memory_nodes,
         "head": {
             "mem_available_gib": head_avail,
             "mem_total_gib": head_total,
@@ -222,6 +268,10 @@ overview = {
     },
     "worker": {
         "ip": worker.get("ip"),
+        "status": worker.get("status"),
+        "reason": worker.get("reason"),
+    },
+    "remote_ranks": {
         "status": worker.get("status"),
         "reason": worker.get("reason"),
     },
@@ -266,14 +316,14 @@ term = TerminalWriter()
 term.emit("QUICK STATUS  read-only · no inference smoke")
 ps = overview["primary_service"]
 if ps:
-    exp = ",".join(str(x) for x in (ps.get("expected_ranks") or [])) or "-"
-    obs = ",".join(str(x) for x in (ps.get("observed_ranks") or [])) or "-"
+    expected_count = len(ps.get("expected_ranks") or [])
+    observed_count = len(ps.get("observed_ranks") or [])
     state = str(ps.get("state") or "?").upper()
     complete = "complete" if ps.get("complete") else "incomplete"
     term.field("Model", f"{state} · {ps.get('conf') or '?'}")
     api_port = ps.get("api_port") if ps.get("api_port") is not None else port
     term.field("Serves", f"{ps.get('served_name') or '?'} on :{api_port}")
-    term.field("Ranks", f"expected {exp} · observed {obs} · {complete}")
+    term.field("Nodes", f"{observed_count}/{expected_count} observed · {complete}")
     if overview["active_managed_count"] > 1:
         term.field(
             "Note",
@@ -302,31 +352,42 @@ def mem_summary(block):
     return f"{fmt_gib(avail)} / {fmt_gib(total)} GiB · {pct_s}"
 
 
-term.field("Memory", f"head   {mem_summary(overview['memory']['head'])}")
-wstat = (overview.get("worker") or {}).get("status") or "unset"
-if wstat == "unset":
-    term.field("", "worker n/a · WORKER_IP unset")
+memory_rows = overview["memory"].get("nodes") or []
+if memory_rows:
+    for index, block in enumerate(memory_rows):
+        name = block.get("name") or "?"
+        label = node_label(name)
+        detail = mem_summary(block)
+        if detail == "n/a" and block.get("mem_status"):
+            detail += f" · {block['mem_status']}"
+        term.field("Memory" if index == 0 else "", f"{label}  {detail}")
 else:
-    term.field("", f"worker {mem_summary(overview['memory']['worker'])}")
+    term.field("Memory", "n/a")
+
 
 if rank_gpu:
     parts = []
     for r in rank_gpu:
         m = r.get("measured_mib")
         m_s = f"{float(m) / 1024:.1f} GiB" if m is not None else "n/a"
-        parts.append(f"{r.get('node')}/{r.get('rank')} {m_s}")
+        parts.append(f"{node_label(r.get('node') or '?')} {m_s}")
     term.field("GPU", " · ".join(parts))
 else:
     term.field("GPU", "n/a")
 
-w = overview["worker"]
-wr = w.get("reason") or ""
-if w.get("status") == "unreachable":
-    term.field("Worker", f"UNREACHABLE{(' · ' + wr) if wr else ''}")
-elif w.get("status") == "unset":
-    term.field("Worker", "not configured")
+remote = overview["remote_ranks"]
+remote_reason = remote.get("reason") or ""
+if remote.get("status") == "unreachable":
+    detail = f"UNREACHABLE{(' · ' + remote_reason) if remote_reason else ''}"
+elif remote.get("status") == "unset":
+    detail = "none confirmed"
+elif remote.get("status") == "ok":
+    detail = "all observable"
 else:
-    term.field("Worker", str(w.get("status") or "?").upper())
+    detail = str(remote.get("status") or "?").upper()
+    if remote_reason:
+        detail += f" · {remote_reason}"
+term.field("Nodes", detail)
 
 ug = overview["unmanaged_gpu"]
 if ug["count"]:

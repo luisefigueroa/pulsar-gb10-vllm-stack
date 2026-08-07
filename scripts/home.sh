@@ -158,7 +158,16 @@ for s in inv.get("services") or []:
         exp_nodes = int(exp_nodes)
     except (TypeError, ValueError):
         exp_nodes = 1
-    if exp_nodes >= 2 and worker_status != "ok":
+    probes = s.get("required_remote_probes")
+    expected_remote_count = max(exp_nodes - 1, 0)
+    if isinstance(probes, list) and len(probes) == expected_remote_count:
+        if any(
+            not isinstance(probe, dict) or probe.get("status") != "ok"
+            for probe in probes
+        ):
+            continue
+    elif exp_nodes >= 2 and worker_status != "ok":
+        # Compatibility with inventory payloads that predate per-rank probes.
         continue
     if (s.get("observability") or "") == "unreachable":
         continue
@@ -265,9 +274,9 @@ for s in services:
         mem_s = "GPU " + "/".join(measured) + " GiB"
     else:
         fp = s.get("estimated_footprint_gib_per_rank")
-        mem_s = f"est {fp:.1f} GiB/rank" if fp is not None else "memory n/a"
+        mem_s = f"est {fp:.1f} GiB per node" if fp is not None else "memory n/a"
     # conf is first token for parsing
-    print(f"{conf} · {state} · ranks {observed_count}/{expected_count} · {mem_s}")
+    print(f"{conf} · {state} · nodes {observed_count}/{expected_count} · {mem_s}")
 PY
   )
 
@@ -423,7 +432,7 @@ while true; do
       cmd_wizard
       wz=$?
       set -e
-      if [ "$wz" -ne 0 ]; then
+      if [ "$wz" -ne 0 ] && [ "${PULSAR_VERBOSE:-0}" = 1 ]; then
         warn "wizard exited with status $wz"
       fi
       ;;

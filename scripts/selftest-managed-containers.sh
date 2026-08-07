@@ -11,7 +11,7 @@ container_metadata_matches_profile "$legacy" \
   deepseek-v4-flash deepseek-ai/DeepSeek-V4-Flash-0731 deepseek-v4-flash 0
 
 if container_metadata_matches_profile "$legacy" \
-  deepseek-v4-flash-0422 deepseek-ai/DeepSeek-V4-Flash-0422 deepseek-v4-flash-0422 0; then
+  deepseek-v4-flash-legacy deepseek-ai/DeepSeek-V4-Flash-Legacy deepseek-v4-flash-legacy 0; then
   echo "legacy ownership accepted the wrong profile" >&2
   exit 1
 fi
@@ -21,7 +21,7 @@ container_metadata_matches_profile "$labeled" \
   deepseek-v4-flash deepseek-ai/DeepSeek-V4-Flash-0731 deepseek-v4-flash 1
 
 if container_metadata_matches_profile "$labeled" \
-  deepseek-v4-flash-0422 deepseek-ai/DeepSeek-V4-Flash-0422 deepseek-v4-flash-0422 1; then
+  deepseek-v4-flash-legacy deepseek-ai/DeepSeek-V4-Flash-Legacy deepseek-v4-flash-legacy 1; then
   echo "managed label accepted the wrong profile" >&2
   exit 1
 fi
