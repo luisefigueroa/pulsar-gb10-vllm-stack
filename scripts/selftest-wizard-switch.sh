@@ -504,9 +504,17 @@ wizard_env() {
   export WIZARD_SKIP_DOCTOR=1
   export WIZARD_SKIP_WEIGHTS="${TEST_SKIP_WEIGHTS:-1}"
   export WIZARD_SKIP_IMAGE=1
-  export WIZARD_SKIP_FABRIC_PROMPT=1
-  export WIZARD_TOPOLOGY_NODES="${TEST_TOPOLOGY_NODES:-2}"
-  unset CLUSTER_TOPOLOGY_FILE
+  export WIZARD_SKIP_FABRIC_PROMPT="${TEST_SKIP_FABRIC_PROMPT:-1}"
+  if [ "${TEST_USE_LOADED_TOPOLOGY_CAPACITY:-0}" = 1 ]; then
+    unset WIZARD_TOPOLOGY_NODES
+  else
+    export WIZARD_TOPOLOGY_NODES="${TEST_TOPOLOGY_NODES:-2}"
+  fi
+  if [ -n "${TEST_CLUSTER_TOPOLOGY_FILE:-}" ]; then
+    export CLUSTER_TOPOLOGY_FILE="$TEST_CLUSTER_TOPOLOGY_FILE"
+  else
+    unset CLUSTER_TOPOLOGY_FILE
+  fi
   export WIZARD_LIST_MODELS_JSON="$STATE/models.json"
   export WIZARD_INVENTORY_CMD="$SHIM/inv-cmd"
   export WIZARD_CHECK_MEMORY_CMD="$SHIM/mem-cmd"
@@ -524,6 +532,7 @@ reset_logs() {
     "$STATE/inv_override" "$STATE/mem_rc_seq" "$STATE/inv_after_stop" \
     "$STATE/mem_after_stop" "$STATE/inv_fail" "$STATE/inv_invalid" \
     "$STATE/weights.json" "$STATE/weights.rc" "$STATE/pull-weights.rc" \
+    "$STATE/no-topology.json" "$STATE/invalid-topology.json" \
     2>/dev/null || true
   rm -rf "$STATE/mem_by_model"
   mkdir -p "$STATE/logs" "$STATE/mem_by_model"
@@ -536,8 +545,9 @@ reset_logs() {
   : >"$STATE/logs/wizard.out"
   : >"$STATE/logs/wizard.err"
   unset MEM_CURRENT_RC MEM_AFTER_STOP_RC WIZARD_API_HEALTHY \
-    TEST_TOPOLOGY_NODES TEST_SKIP_WEIGHTS CLUSTER_TOPOLOGY_FILE \
-    2>/dev/null || true
+    TEST_TOPOLOGY_NODES TEST_SKIP_WEIGHTS TEST_SKIP_FABRIC_PROMPT \
+    TEST_USE_LOADED_TOPOLOGY_CAPACITY TEST_CLUSTER_TOPOLOGY_FILE \
+    CLUSTER_TOPOLOGY_FILE 2>/dev/null || true
   export MEM_CURRENT_RC=0
   export MEM_AFTER_STOP_RC=0
 }
@@ -611,7 +621,58 @@ set -e
 assert_eq "$rc" "2" "pulsar unknown command → exit 2"
 
 # ---------------------------------------------------------------------------
-# 2) Missing-weight staging failure is explicit and non-mutating
+# 2) Clean clone: declining discovery keeps standalone local serving available
+# ---------------------------------------------------------------------------
+echo "=== clean-clone standalone fallback ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+export TEST_SKIP_FABRIC_PROMPT=0
+export TEST_USE_LOADED_TOPOLOGY_CAPACITY=1
+export TEST_CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json"
+# Decline discovery, choose qwen from the filtered one-node list, decline start.
+run_wizard $'n\n2\nn\n'
+assert_eq "$LAST_RC" "0" "declined discovery continues in standalone mode"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "1 standalone local node available · no cluster membership confirmed" \
+  "standalone capacity is explicit and not called confirmed"
+assert_file_contains "$STATE/logs/wizard.err" \
+  "Choose a validated model · standalone local node" \
+  "standalone model chooser is explicit"
+assert_file_contains "$STATE/logs/wizard.err" \
+  "qwen3-1\\.7b[[:space:]]+1 node" \
+  "one-node profiles remain available"
+assert_file_not_contains "$STATE/logs/wizard.err" "deepseek-v4-flash" \
+  "multi-node profiles are excluded without confirmed membership"
+assert_file_not_contains "$STATE/logs/wizard.combined" \
+  "invalid confirmed topology capacity '0'" \
+  "missing topology no longer becomes invalid zero capacity"
+assert_false "declined discovery writes no topology" \
+  test -e "$STATE/no-topology.json"
+assert_false "standalone decline starts nothing" \
+  bash -c "test -s '$STATE/logs/up.log'"
+assert_false "standalone decline stops nothing" \
+  bash -c "test -s '$STATE/logs/down.log'"
+
+# A present-but-invalid manifest must not receive the missing-file fallback.
+reset_logs
+printf '%s\n' '{"schema_version":1,"nodes":[]}' \
+  >"$STATE/invalid-topology.json"
+export TEST_SKIP_FABRIC_PROMPT=1
+export TEST_USE_LOADED_TOPOLOGY_CAPACITY=1
+export TEST_CLUSTER_TOPOLOGY_FILE="$STATE/invalid-topology.json"
+run_wizard ""
+assert_eq "$LAST_RC" "1" "invalid topology remains fail-closed"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "confirmed topology is invalid" \
+  "invalid topology is not treated as standalone"
+assert_false "invalid topology starts nothing" \
+  bash -c "test -s '$STATE/logs/up.log'"
+assert_false "invalid topology stops nothing" \
+  bash -c "test -s '$STATE/logs/down.log'"
+
+# ---------------------------------------------------------------------------
+# 3) Missing-weight staging failure is explicit and non-mutating
 # ---------------------------------------------------------------------------
 echo "=== weight staging failure feedback ==="
 reset_logs
@@ -643,7 +704,7 @@ assert_file_not_contains "$STATE/logs/wizard.combined" "weight download/copy fai
 assert_false "weight failure: no launch" bash -c "test -s '$STATE/logs/up.log'"
 
 # ---------------------------------------------------------------------------
-# 3) Same healthy keep — no mutation
+# 4) Same healthy keep — no mutation
 # ---------------------------------------------------------------------------
 echo "=== same healthy keep ==="
 reset_logs

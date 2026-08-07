@@ -1555,15 +1555,26 @@ if [ "${WIZARD_SKIP_FABRIC_PROMPT:-0}" != 1 ] \
     reload_cluster_topology || die "newly written topology failed validation"
   fi
 fi
+standalone_capacity=0
 if [ -n "${WIZARD_TOPOLOGY_NODES:-}" ]; then
   topology_capacity="$WIZARD_TOPOLOGY_NODES"
+elif [ "$CLUSTER_TOPOLOGY_COUNT" -eq 0 ]; then
+  # No manifest is a supported standalone state. Do not synthesize confirmed
+  # topology identity merely to make the local one-node path available.
+  topology_capacity=1
+  standalone_capacity=1
 else
   topology_capacity="$CLUSTER_TOPOLOGY_COUNT"
 fi
 [[ "$topology_capacity" =~ ^[1-9][0-9]*$ ]] \
   || die "invalid confirmed topology capacity '$topology_capacity'"
-topology_context="${topology_capacity} confirmed nodes available"
-log "$topology_capacity confirmed nodes available · exact validated profiles only"
+if [ "$standalone_capacity" = 1 ]; then
+  topology_context="standalone local node"
+  log "1 standalone local node available · no cluster membership confirmed"
+else
+  topology_context="${topology_capacity} confirmed nodes available"
+  log "$topology_capacity confirmed nodes available · exact validated profiles only"
+fi
 
 # Selection loop: "Choose another model" returns here without re-running doctor.
 while true; do
@@ -1607,6 +1618,9 @@ for model in models:
 "
   )
   if [ "${#choices[@]}" -eq 0 ]; then
+    if [ "$standalone_capacity" = 1 ]; then
+      die "no validated single-node profile is available for standalone local use"
+    fi
     die "no validated profile fits the $topology_capacity confirmed node(s)"
   fi
 
