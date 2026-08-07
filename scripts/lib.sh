@@ -35,6 +35,17 @@ log()  { printf '[%s] %s\n' "${SCRIPT_NAME:-pulsar}" "$*"; }
 warn() { printf '[%s] warn: %s\n' "${SCRIPT_NAME:-pulsar}" "$*" >&2; }
 die()  { printf '[%s] ERROR: %s\n' "${SCRIPT_NAME:-pulsar}" "$*" >&2; exit "${2:-1}"; }
 
+# Human-facing name for vLLM's zero-based rank. Keep "rank" in machine data
+# and launcher arguments; normal CLI output talks about physical cluster nodes.
+human_cluster_node() {
+  local rank="${1:?node position required}"
+  if [ "$rank" = 0 ]; then
+    printf 'this node\n'
+  else
+    printf 'cluster node %s\n' "$((rank + 1))"
+  fi
+}
+
 terminal_width() {
   local width="${COLUMNS:-}"
   if ! [[ "$width" =~ ^[0-9]+$ ]] && [ -t 1 ] && command -v tput >/dev/null 2>&1; then
@@ -65,6 +76,35 @@ print_hanging() {
   done < <(printf '%s\n' "$message" | fold -s -w "$content_width")
 }
 
+
+# render_human_section TITLE LABEL VALUE [LABEL VALUE ...]
+# Shared semantic section renderer for interactive, width-aware output.
+render_human_section() {
+  local title="${1:?section title required}"
+  shift
+  [ $(( $# % 2 )) -eq 0 ] \
+    || die "render_human_section requires label/value pairs"
+  python3 - "$title" "$@" <<'PY'
+import sys
+
+from scripts.terminal_format import TerminalWriter
+
+title = sys.argv[1]
+fields = sys.argv[2:]
+term = TerminalWriter()
+term.emit(title)
+for index in range(0, len(fields), 2):
+    term.field(fields[index], fields[index + 1])
+PY
+}
+
+format_storage_gib() {
+  local gib="${1:-0}"
+  awk -v value="$gib" 'BEGIN {
+    if (value + 0 >= 1024) printf "%.1f TiB", (value + 0) / 1024
+    else printf "%.0f GiB", value + 0
+  }'
+}
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1 (install it and retry)"
 }
@@ -85,6 +125,8 @@ load_conf() {
   ENGINE_ARGS=() CONTAINER_ENV=() SPEC_DECODE_ARGS=()
   WEIGHTS_GIB="" WEIGHTS_RAM_GIB="" KV_GIB="" OVERHEAD_GIB="" MEM_MIN_FREE_GIB=""
   RECOMMENDED_SPEC=0 FIRST_RUN_CANDIDATE=0
+  PROFILE_FAMILY="" VARIANT_LABEL="" FAMILY_RECOMMENDED=0 PROFILE_PURPOSE="serving"
+  TOPOLOGY_CLASS="" MIN_RAILS_PER_PAIR=""
 
   # shellcheck disable=SC1090
   . "$conf"
@@ -100,8 +142,69 @@ load_conf() {
   MEM_MIN_FREE_GIB="${MEM_MIN_FREE_GIB:-$MIN_OS_BUFFER_GIB}"
   RECOMMENDED_SPEC="${RECOMMENDED_SPEC:-0}"
   FIRST_RUN_CANDIDATE="${FIRST_RUN_CANDIDATE:-0}"
+  PROFILE_FAMILY="${PROFILE_FAMILY:-$SERVED_NAME}"
+  VARIANT_LABEL="${VARIANT_LABEL:-${NODES}-node}"
+  FAMILY_RECOMMENDED="${FAMILY_RECOMMENDED:-0}"
+  PROFILE_PURPOSE="${PROFILE_PURPOSE:-serving}"
+  if [ "$NODES" = 1 ]; then
+    TOPOLOGY_CLASS="${TOPOLOGY_CLASS:-single}"
+    MIN_RAILS_PER_PAIR="${MIN_RAILS_PER_PAIR:-0}"
+  else
+    TOPOLOGY_CLASS="${TOPOLOGY_CLASS:-roce-full-mesh}"
+    MIN_RAILS_PER_PAIR="${MIN_RAILS_PER_PAIR:-2}"
+  fi
   CONF_NAME="$name"
   CONF_PATH="$conf"
+
+  [[ "$NODES" =~ ^[1-9][0-9]*$ ]] || die "$name: NODES must be a positive integer"
+  validate_profile_contract
+}
+
+engine_arg_value() {
+  local wanted="${1:?flag required}" fallback="${2:-}" i
+  for ((i = 0; i < ${#ENGINE_ARGS[@]}; i++)); do
+    case "${ENGINE_ARGS[$i]}" in
+      "$wanted")
+        [ $((i + 1)) -lt "${#ENGINE_ARGS[@]}" ] \
+          || die "$CONF_NAME: $wanted requires a value"
+        printf '%s\n' "${ENGINE_ARGS[$((i + 1))]}"
+        return 0
+        ;;
+      "$wanted"=*)
+        printf '%s\n' "${ENGINE_ARGS[$i]#*=}"
+        return 0
+        ;;
+    esac
+  done
+  printf '%s\n' "$fallback"
+}
+
+validate_profile_contract() {
+  local tp pp world
+  case "$PROFILE_PURPOSE" in
+    serving|diagnostic) ;;
+    *) die "$CONF_NAME: PROFILE_PURPOSE must be serving or diagnostic" ;;
+  esac
+  tp=$(engine_arg_value --tensor-parallel-size 1)
+  pp=$(engine_arg_value --pipeline-parallel-size 1)
+  [[ "$tp" =~ ^[1-9][0-9]*$ ]] \
+    || die "$CONF_NAME: tensor parallel size must be positive"
+  [[ "$pp" =~ ^[1-9][0-9]*$ ]] \
+    || die "$CONF_NAME: pipeline parallel size must be positive"
+  world=$((tp * pp))
+  if [ "$world" -ne "$NODES" ]; then
+    die "$CONF_NAME: exact profile mismatch: TP=$tp × PP=$pp = $world, but NODES=$NODES"
+  fi
+  if [ "$NODES" -gt 1 ]; then
+    [ "$TOPOLOGY_CLASS" = roce-full-mesh ] \
+      || die "$CONF_NAME: multi-node profile requires TOPOLOGY_CLASS=roce-full-mesh"
+    [[ "$MIN_RAILS_PER_PAIR" =~ ^[1-9][0-9]*$ ]] \
+      || die "$CONF_NAME: MIN_RAILS_PER_PAIR must be positive"
+    [ "$(engine_arg_value --distributed-executor-backend "")" = mp ] \
+      || die "$CONF_NAME: validated multi-node profiles require --distributed-executor-backend mp"
+  elif [ "$TOPOLOGY_CLASS" != single ]; then
+    die "$CONF_NAME: single-node profile requires TOPOLOGY_CLASS=single"
+  fi
 }
 
 model_source_kind() {
@@ -118,8 +221,18 @@ hf_hub_dirname() {
   echo "models--${m//\//--}"
 }
 
+hf_hub_cache_root() {
+  echo "${HF_CACHE}/hub"
+}
+
 hf_hub_path() {
-  echo "${HF_CACHE}/hub/$(hf_hub_dirname "${1:-$MODEL}")"
+  echo "$(hf_hub_cache_root)/$(hf_hub_dirname "${1:-$MODEL}")"
+}
+
+# Compatibility location produced when `hf download --cache-dir "$HF_CACHE"`
+# is used even though HF_CACHE is Pulsar's Hugging Face home directory.
+hf_legacy_hub_path() {
+  echo "${HF_CACHE}/$(hf_hub_dirname "${1:-$MODEL}")"
 }
 
 has_spec_args() {
@@ -427,6 +540,15 @@ api_auth_curl_args() {
   fi
 }
 
+# Serialize argv for an SSH remote command without reinterpreting it locally.
+shell_join_q() {
+  local out="" arg
+  for arg in "$@"; do
+    out+="$(printf '%q' "$arg") "
+  done
+  printf '%s' "${out% }"
+}
+
 # Render diagnostic/dry-run argv without disclosing credentials. Execution
 # paths must continue to use the original arrays.
 shell_join_q_redacted() {
@@ -459,6 +581,7 @@ print_shell_command_redacted() {
 # Injectable docker/ssh for deterministic tests. Production leaves these default.
 PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
 PULSAR_SSH="${PULSAR_SSH:-ssh}"
+PULSAR_WEIGHT_FABRIC_TOOL="${PULSAR_WEIGHT_FABRIC_TOOL:-$REPO_DIR/scripts/weight-fabric.sh}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"
 PULSAR_SSH_OPTS=(
   -o BatchMode=yes
@@ -468,14 +591,210 @@ PULSAR_SSH_OPTS=(
   -o ServerAliveCountMax=2
 )
 
+ssh_node() {
+  local rank="${1:?rank required}"
+  shift
+  [ "$rank" -gt 0 ] 2>/dev/null || die "ssh_node requires a remote rank (>0)"
+  require_cluster_nodes "$((rank + 1))" \
+    || die "rank $rank is not present in the confirmed topology"
+  local host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$@"
+}
+
 ssh_worker() {
-  [ -n "${WORKER_IP:-}" ] || die "WORKER_IP unset (set in .env for multi-node)"
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" "$@"
+  # Compatibility wrapper: explicit legacy WORKER_IP remains a bounded SSH
+  # endpoint when no confirmed manifest exists.
+  if [ ! -f "$CLUSTER_TOPOLOGY_FILE" ] && [ -n "${WORKER_IP:-}" ]; then
+    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" "$@"
+  else
+    ssh_node 1 "$@"
+  fi
+}
+
+
+# Resolve a physical target for a one-node profile. The selector is intentionally
+# stable across topology reordering: callers should pass a topology node_id (the
+# wizard does), although an exact hostname, SSH endpoint, control IP, or role key
+# is also accepted for operator convenience. An empty selector preserves the
+# historical local-node behavior.
+#
+# Sets:
+#   SINGLE_NODE_INDEX       zero-based topology position
+#   SINGLE_NODE_KEY         head|worker|rank-N inventory key
+#   SINGLE_NODE_ID          stable topology node_id (may be empty standalone)
+#   SINGLE_NODE_HOSTNAME    human-facing hostname
+#   SINGLE_NODE_SSH_HOST    local or BatchMode SSH endpoint
+#   SINGLE_NODE_CONTROL_IP  API/control address when known
+#   SINGLE_NODE_REMOTE      0 local, 1 remote
+#   SINGLE_NODE_TOPOLOGY_ID confirmed topology identity when known
+single_node_key_for_index() {
+  local index="${1:?node index required}"
+  case "$index" in
+    0) printf 'head\n' ;;
+    1) printf 'worker\n' ;;
+    *[!0-9]*|"") return 1 ;;
+    *) printf 'rank-%s\n' "$index" ;;
+  esac
+}
+
+single_node_index_for_key() {
+  local key="${1:?node key required}" index
+  case "$key" in
+    head) printf '0\n' ;;
+    worker) printf '1\n' ;;
+    rank-*)
+      index="${key#rank-}"
+      [[ "$index" =~ ^[0-9]+$ ]] || return 1
+      printf '%s\n' "$index"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_single_node_placement() {
+  local selector="${1:-}" index=-1 rank local_host
+  load_cluster_topology || return 1
+
+  if [ "$CLUSTER_TOPOLOGY_COUNT" -le 0 ]; then
+    case "$selector" in
+      ""|local|this-node|head) ;;
+      *)
+        warn "node '$selector' is not present: no confirmed topology is loaded"
+        return 1
+        ;;
+    esac
+    local_host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo localhost)
+    SINGLE_NODE_INDEX=0
+    SINGLE_NODE_KEY=head
+    SINGLE_NODE_ID=""
+    SINGLE_NODE_HOSTNAME="$local_host"
+    SINGLE_NODE_SSH_HOST=local
+    SINGLE_NODE_CONTROL_IP=127.0.0.1
+    SINGLE_NODE_REMOTE=0
+    SINGLE_NODE_TOPOLOGY_ID=""
+    return 0
+  fi
+
+  case "$selector" in
+    ""|local|this-node|head)
+      index=0
+      ;;
+    *)
+      for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+        if [ "$selector" = "${CLUSTER_NODE_IDS[$rank]:-}" ] \
+            || [ "$selector" = "${CLUSTER_NODE_HOSTNAMES[$rank]:-}" ] \
+            || [ "$selector" = "${CLUSTER_NODE_SSH_HOSTS[$rank]:-}" ] \
+            || [ "$selector" = "${CLUSTER_NODE_CONTROL_IPS[$rank]:-}" ] \
+            || [ "$selector" = "$(single_node_key_for_index "$rank")" ]; then
+          [ "$index" -eq -1 ] || {
+            warn "node selector '$selector' is ambiguous in the confirmed topology"
+            return 1
+          }
+          index="$rank"
+        fi
+      done
+      ;;
+  esac
+
+  if [ "$index" -lt 0 ] || [ "$index" -ge "$CLUSTER_TOPOLOGY_COUNT" ]; then
+    warn "node '$selector' is not present in the confirmed topology"
+    return 1
+  fi
+
+  SINGLE_NODE_INDEX="$index"
+  SINGLE_NODE_KEY=$(single_node_key_for_index "$index") || return 1
+  SINGLE_NODE_ID="${CLUSTER_NODE_IDS[$index]:-}"
+  SINGLE_NODE_HOSTNAME="${CLUSTER_NODE_HOSTNAMES[$index]:-${CLUSTER_NODE_SSH_HOSTS[$index]:-unknown}}"
+  SINGLE_NODE_SSH_HOST="${CLUSTER_NODE_SSH_HOSTS[$index]:-}"
+  SINGLE_NODE_CONTROL_IP="${CLUSTER_NODE_CONTROL_IPS[$index]:-}"
+  SINGLE_NODE_TOPOLOGY_ID="${CLUSTER_TOPOLOGY_ID:-}"
+  if [ "$index" -eq 0 ]; then
+    SINGLE_NODE_REMOTE=0
+    [ -n "$SINGLE_NODE_SSH_HOST" ] || SINGLE_NODE_SSH_HOST=local
+    [ -n "$SINGLE_NODE_CONTROL_IP" ] || SINGLE_NODE_CONTROL_IP=127.0.0.1
+  else
+    SINGLE_NODE_REMOTE=1
+    [ -n "$SINGLE_NODE_ID" ] || {
+      warn "confirmed node $index has no stable node_id"
+      return 1
+    }
+    [ -n "$SINGLE_NODE_SSH_HOST" ] \
+      && [ "$SINGLE_NODE_SSH_HOST" != local ] || {
+      warn "confirmed node $index has no remote SSH endpoint"
+      return 1
+    }
+  fi
+}
+
+single_node_display() {
+  local suffix=""
+  [ "${SINGLE_NODE_REMOTE:-0}" = 0 ] && suffix=" (this node)"
+  printf '%s%s\n' "${SINGLE_NODE_HOSTNAME:-unknown}" "$suffix"
+}
+
+single_node_api_host() {
+  local host="${SINGLE_NODE_CONTROL_IP:-}"
+  [ -n "$host" ] || host="${SINGLE_NODE_SSH_HOST:-127.0.0.1}"
+  host="${host#*@}"
+  if [[ "$host" == *:* ]] && [[ "$host" != \[*\] ]]; then
+    host="[$host]"
+  fi
+  printf '%s\n' "$host"
+}
+
+single_node_api_base_url() {
+  local port="${1:?port required}"
+  if [ "${SINGLE_NODE_REMOTE:-0}" = 0 ]; then
+    printf 'http://127.0.0.1:%s\n' "$port"
+  else
+    printf 'http://%s:%s\n' "$(single_node_api_host)" "$port"
+  fi
 }
 
 PULSAR_MANAGED_LABEL="io.pulsar.gb10.managed"
 PULSAR_CONF_LABEL="io.pulsar.gb10.conf"
 PULSAR_RANK_LABEL="io.pulsar.gb10.rank"
+PULSAR_WORLD_SIZE_LABEL="io.pulsar.gb10.world-size"
+PULSAR_TOPOLOGY_LABEL="io.pulsar.gb10.topology"
+PULSAR_NODE_ID_LABEL="io.pulsar.gb10.node-id"
+PULSAR_WEIGHT_SOURCE_LABEL="io.pulsar.gb10.weight-source"
+PULSAR_WEIGHT_OWNER_LABEL="io.pulsar.gb10.weight-owner"
+PULSAR_WEIGHT_CONFIG_LABEL="io.pulsar.gb10.weight-config"
+
+require_topology_rewrite_idle() {
+  local manifest="${1:?topology manifest required}"
+  local rows kind rank node_id hostname ssh_host control_ip control_if hcas rdma_ifs
+  local running remote_query
+
+  if ! rows=$(python3 "$REPO_DIR/scripts/topology_manifest.py" rows "$manifest"); then
+    warn "cannot validate topology membership before rewrite: $manifest"
+    return 1
+  fi
+  while IFS=$'\t' read -r kind rank node_id hostname ssh_host \
+      control_ip control_if hcas rdma_ifs; do
+    [ "$kind" = NODE ] || continue
+    running=""
+    if [ "$rank" = 0 ]; then
+      if ! running=$("$PULSAR_DOCKER" ps -q \
+          --filter "label=${PULSAR_MANAGED_LABEL}=true" 2>/dev/null); then
+        warn "cannot query rank 0 Docker before topology rewrite"
+        return 1
+      fi
+    else
+      printf -v remote_query 'docker ps -q --filter %q' \
+        "label=${PULSAR_MANAGED_LABEL}=true"
+      if ! running=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- \
+          "$ssh_host" "$remote_query" 2>/dev/null); then
+        warn "cannot query rank $rank Docker on $ssh_host before topology rewrite"
+        return 1
+      fi
+    fi
+    if [ -n "$running" ]; then
+      warn "rank $rank ($hostname) has running stack-managed containers"
+      return 1
+    fi
+  done <<<"$rows"
+}
 
 # Inspect / list probe codes (not remove codes):
 #   0 = present / success (payload on stdout)
@@ -485,21 +804,26 @@ PULSAR_RANK_LABEL="io.pulsar.gb10.rank"
 
 container_name_for() {
   local name="$1" nodes="${2:-1}"
-  if [ "$nodes" = "2" ]; then
+  if [ "$nodes" -gt 1 ] 2>/dev/null; then
     echo "vllm-cluster-${name}"
   else
     echo "vllm-${name}"
   fi
 }
 
-# Expected rank label for a conf on a placement node (head|worker).
+# Expected rank label for a conf on a placement node (head|worker|rank).
 expected_rank_for_nodes() {
   local nodes="${1:?}" placement="${2:-head}"
-  if [ "$nodes" = "2" ]; then
+  if [ "$nodes" -gt 1 ] 2>/dev/null; then
     case "$placement" in
       head|0) echo 0 ;;
-      worker|1) echo 1 ;;
-      *) die "expected_rank_for_nodes: bad placement $placement" ;;
+      worker) echo 1 ;;
+      *[!0-9]*|"") die "expected_rank_for_nodes: bad placement $placement" ;;
+      *)
+        [ "$placement" -lt "$nodes" ] \
+          || die "expected_rank_for_nodes: rank $placement outside NODES=$nodes"
+        echo "$placement"
+        ;;
     esac
   else
     echo single
@@ -527,25 +851,32 @@ profile_nodes_for_conf() {
   printf '%s' "$nodes"
 }
 
-# True when conf exists and rank is valid for placement on head|worker.
-# head: NODES=1 → single; NODES=2 → 0
-# worker: NODES=2 → 1 only (never single/0; never any rank for NODES=1)
+# True when conf exists and rank is valid for head, any worker, or a rank.
 placement_rank_allowed() {
   local conf="${1:?}" rank="${2:?}" placement="${3:?}"
   local nodes
   nodes=$(profile_nodes_for_conf "$conf") || return 1
+  if [ "$nodes" -eq 1 ]; then
+    [ "$rank" = single ] || return 1
+    placement_index_for_role "$placement" >/dev/null
+    return
+  fi
   case "$placement" in
-    head)
-      if [ "$nodes" = "2" ]; then
-        [ "$rank" = "0" ]
-      else
-        [ "$rank" = "single" ]
-      fi
-      ;;
+    head) [ "$rank" = 0 ] ;;
     worker)
-      [ "$nodes" = "2" ] && [ "$rank" = "1" ]
+      [[ "$rank" =~ ^[1-9][0-9]*$ ]] \
+        && [ "$rank" -lt "$nodes" ]
       ;;
-    *) return 1 ;;
+    rank-*)
+      local index
+      index=$(placement_index_for_role "$placement") || return 1
+      [ "$rank" = "$index" ] && [ "$index" -lt "$nodes" ]
+      ;;
+    *[!0-9]*|"") return 1 ;;
+    *)
+      [ "$rank" = "$placement" ] \
+        && [ "$rank" -lt "$nodes" ]
+      ;;
   esac
 }
 
@@ -580,6 +911,106 @@ container_managed_label_is_true() {
   [ "$managed" = "true" ]
 }
 
+container_placement_identity_fields() {
+  local metadata="${1:?}"
+  printf '%s' "$metadata" | python3 -c '
+import json, sys
+labels = json.load(sys.stdin).get("labels") or {}
+print("\t".join([
+    str(labels.get(sys.argv[1], "") or ""),
+    str(labels.get(sys.argv[2], "") or ""),
+]))
+' "$PULSAR_TOPOLOGY_LABEL" "$PULSAR_NODE_ID_LABEL"
+}
+
+placement_index_for_role() {
+  local placement="${1:?}" index
+  case "$placement" in
+    head) printf '0\n' ;;
+    worker) printf '1\n' ;;
+    rank-*)
+      index="${placement#rank-}"
+      [[ "$index" =~ ^[0-9]+$ ]] || return 1
+      printf '%s\n' "$index"
+      ;;
+    *[!0-9]*|"") return 1 ;;
+    *) printf '%s\n' "$placement" ;;
+  esac
+}
+
+# New remote one-node containers must prove the physical topology node where
+# they were observed. Missing identity remains a compatibility path only for
+# historical local one-node containers.
+container_single_node_identity_is_proven() {
+  local metadata="${1:?}" placement="${2:?}" index expected_id have_topology have_id
+  index=$(placement_index_for_role "$placement") || return 1
+  load_cluster_topology || return 1
+  IFS=$'\t' read -r have_topology have_id \
+    < <(container_placement_identity_fields "$metadata")
+
+  if [ -z "$have_id" ]; then
+    [ "$index" -eq 0 ]
+    return
+  fi
+  [ "$index" -lt "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
+  expected_id="${CLUSTER_NODE_IDS[$index]:-}"
+  [ -n "$expected_id" ] && [ "$have_id" = "$expected_id" ] || return 1
+  if [ -n "$have_topology" ] && [ -n "${CLUSTER_TOPOLOGY_ID:-}" ]; then
+    [ "$have_topology" = "$CLUSTER_TOPOLOGY_ID" ] || return 1
+  fi
+  return 0
+}
+
+container_single_node_identity_refuse_reason() {
+  local metadata="${1:?}" placement="${2:?}" index expected_id have_topology have_id
+  index=$(placement_index_for_role "$placement" 2>/dev/null || echo "?")
+  IFS=$'\t' read -r have_topology have_id \
+    < <(container_placement_identity_fields "$metadata")
+  if [ -z "$have_id" ]; then
+    if [ "$index" = 0 ]; then
+      echo "local legacy single-node container has no node-id"
+    else
+      echo "remote single-node container has no ${PULSAR_NODE_ID_LABEL}"
+    fi
+    return
+  fi
+  load_cluster_topology >/dev/null 2>&1 || {
+    echo "confirmed topology is unavailable"
+    return
+  }
+  expected_id="${CLUSTER_NODE_IDS[$index]:-}"
+  if [ -z "$expected_id" ] || [ "$have_id" != "$expected_id" ]; then
+    echo "node-id mismatch (have='${have_id}' expected='${expected_id:-unknown}')"
+    return
+  fi
+  if [ -n "$have_topology" ] && [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] \
+      && [ "$have_topology" != "$CLUSTER_TOPOLOGY_ID" ]; then
+    echo "topology label mismatch"
+    return
+  fi
+  echo "physical node identity not proven"
+}
+
+container_removal_is_proven() {
+  local metadata="${1:?}" want_conf="${2:-}" want_rank="${3:-}" placement="${4:-}"
+  container_ownership_is_proven "$metadata" "$want_conf" "$want_rank" || return 1
+  if [ -n "$placement" ]; then
+    container_single_node_identity_is_proven "$metadata" "$placement" || return 1
+  fi
+}
+
+container_removal_refuse_reason() {
+  local metadata="${1:?}" want_conf="${2:-}" want_rank="${3:-}" placement="${4:-}"
+  if ! container_ownership_is_proven "$metadata" "$want_conf" "$want_rank"; then
+    container_ownership_refuse_reason "$metadata" "$want_conf" "$want_rank"
+  elif [ -n "$placement" ] \
+      && ! container_single_node_identity_is_proven "$metadata" "$placement"; then
+    container_single_node_identity_refuse_reason "$metadata" "$placement"
+  else
+    echo "ownership not proven"
+  fi
+}
+
 # True when labels prove stack management for want_conf/want_rank.
 # want_conf / want_rank empty means "not constrained by caller" for that field
 # (still requires non-empty conf/rank and managed=true). Used by named stops.
@@ -611,7 +1042,12 @@ container_all_candidate_is_safe() {
   [ -n "$conf" ] || return 1
   [ -n "$rank" ] || return 1
   [ -f "$REPO_DIR/models/${conf}.conf" ] || return 1
-  placement_rank_allowed "$conf" "$rank" "$placement"
+  placement_rank_allowed "$conf" "$rank" "$placement" || return 1
+  local nodes
+  nodes=$(profile_nodes_for_conf "$conf") || return 1
+  if [ "$nodes" -eq 1 ]; then
+    container_single_node_identity_is_proven "$metadata" "$placement"
+  fi
 }
 
 # Describe why ownership failed (for refuse messages). Never claims safe to remove.
@@ -666,7 +1102,16 @@ container_all_refuse_reason() {
     echo "cannot read NODES for conf '${conf}'"
     return
   fi
-  echo "placement mismatch on ${placement}: conf=${conf} nodes=${nodes} rank=${rank}"
+  if ! placement_rank_allowed "$conf" "$rank" "$placement"; then
+    echo "placement mismatch on ${placement}: conf=${conf} nodes=${nodes} rank=${rank}"
+    return
+  fi
+  if [ "$nodes" -eq 1 ] \
+      && ! container_single_node_identity_is_proven "$metadata" "$placement"; then
+    container_single_node_identity_refuse_reason "$metadata" "$placement"
+    return
+  fi
+  echo "ownership not proven"
 }
 
 # Validate docker run -d stdout: exactly one 64-hex id (optional trailing newline).
@@ -707,15 +1152,15 @@ lifecycle_merge_rc() {
 # refuse arbitrary cleanup. Optionally read-only inspect exact name; if labels
 # prove ownership for conf/rank, mention the short id — never remove it.
 # Prints guidance: scripts/inventory.sh then scripts/down.sh <conf>.
-# Usage: report_untracked_launch_container <role> <conf> <rank> <cname> [worker_host]
-# role is head|worker (worker requires host).
+# Usage: report_untracked_launch_container <role> <conf> <rank> <cname> [host]
+# role is local|remote; head|worker remain compatibility aliases.
 report_untracked_launch_container() {
   local role="${1:?}" conf="${2:?}" rank="${3:?}" cname="${4:?}" host="${5:-}"
   local meta rc=0 id short where
 
   case "$role" in
-    head) where="local head" ;;
-    worker) where="worker ${host:-?}" ;;
+    head|local) where="local rank $rank" ;;
+    worker|remote) where="rank $rank (${host:-?})" ;;
     *) where="$role" ;;
   esac
 
@@ -724,8 +1169,7 @@ report_untracked_launch_container() {
   warn "safe remediation: scripts/inventory.sh   then   scripts/down.sh ${conf}"
 
   meta=""
-  if [ "$role" = "worker" ]; then
-    [ -n "$host" ] || return 0
+  if [ -n "$host" ]; then
     meta=$(container_ownership_inspect_remote "$host" "$cname") || rc=$?
   else
     meta=$(container_ownership_inspect_local "$cname") || rc=$?
@@ -807,7 +1251,7 @@ container_id_absent_remote() {
 # Remove one local container by exact name only if labels prove ownership.
 # Exit 0: removed or absent. Exit 2: present but refused. Exit 1: operational error.
 remove_stack_owned_container_local() {
-  local name="${1:?}" want_conf="${2:-}" want_rank="${3:-}"
+  local name="${1:?}" want_conf="${2:-}" want_rank="${3:-}" placement="${4:-}"
   local meta id name_have managed conf rank meta2 id2 reason short rc
 
   rc=0
@@ -822,8 +1266,8 @@ remove_stack_owned_container_local() {
   fi
 
   IFS=$'\t' read -r id name_have managed conf rank < <(container_ownership_fields "$meta")
-  if ! container_ownership_is_proven "$meta" "$want_conf" "$want_rank"; then
-    reason=$(container_ownership_refuse_reason "$meta" "$want_conf" "$want_rank")
+  if ! container_removal_is_proven "$meta" "$want_conf" "$want_rank" "$placement"; then
+    reason=$(container_removal_refuse_reason "$meta" "$want_conf" "$want_rank" "$placement")
     warn "refusing to remove $name: $reason"
     return 2
   fi
@@ -840,8 +1284,9 @@ remove_stack_owned_container_local() {
     return 1
   fi
   IFS=$'\t' read -r id2 _ < <(container_ownership_fields "$meta2")
-  if [ "$id2" != "$id" ] || ! container_ownership_is_proven "$meta2" "$want_conf" "$want_rank"; then
-    reason=$(container_ownership_refuse_reason "$meta2" "$want_conf" "$want_rank")
+  if [ "$id2" != "$id" ] \
+      || ! container_removal_is_proven "$meta2" "$want_conf" "$want_rank" "$placement"; then
+    reason=$(container_removal_refuse_reason "$meta2" "$want_conf" "$want_rank" "$placement")
     warn "refusing to remove $name: ownership revalidation failed ($reason)"
     return 2
   fi
@@ -860,7 +1305,7 @@ remove_stack_owned_container_local() {
 
 # Same as local, via SSH to host. Remote docker binary is always "docker".
 remove_stack_owned_container_remote() {
-  local host="${1:?}" name="${2:?}" want_conf="${3:-}" want_rank="${4:-}"
+  local host="${1:?}" name="${2:?}" want_conf="${3:-}" want_rank="${4:-}" placement="${5:-}"
   local meta id name_have managed conf rank meta2 id2 reason short remote_rm rc
 
   rc=0
@@ -870,13 +1315,13 @@ remove_stack_owned_container_remote() {
     return 0
   fi
   if [ "$rc" -ne 0 ]; then
-    warn "worker unreachable or docker error inspecting $name on $host"
+    warn "remote host unreachable or Docker error inspecting $name on $host"
     return 1
   fi
 
   IFS=$'\t' read -r id name_have managed conf rank < <(container_ownership_fields "$meta")
-  if ! container_ownership_is_proven "$meta" "$want_conf" "$want_rank"; then
-    reason=$(container_ownership_refuse_reason "$meta" "$want_conf" "$want_rank")
+  if ! container_removal_is_proven "$meta" "$want_conf" "$want_rank" "$placement"; then
+    reason=$(container_removal_refuse_reason "$meta" "$want_conf" "$want_rank" "$placement")
     warn "refusing to remove $name on $host: $reason"
     return 2
   fi
@@ -889,12 +1334,13 @@ remove_stack_owned_container_remote() {
     return 0
   fi
   if [ "$rc" -ne 0 ]; then
-    warn "worker unreachable during revalidation of $name id=$short on $host"
+    warn "remote host unreachable during revalidation of $name id=$short on $host"
     return 1
   fi
   IFS=$'\t' read -r id2 _ < <(container_ownership_fields "$meta2")
-  if [ "$id2" != "$id" ] || ! container_ownership_is_proven "$meta2" "$want_conf" "$want_rank"; then
-    reason=$(container_ownership_refuse_reason "$meta2" "$want_conf" "$want_rank")
+  if [ "$id2" != "$id" ] \
+      || ! container_removal_is_proven "$meta2" "$want_conf" "$want_rank" "$placement"; then
+    reason=$(container_removal_refuse_reason "$meta2" "$want_conf" "$want_rank" "$placement")
     warn "refusing to remove $name on $host: ownership revalidation failed ($reason)"
     return 2
   fi
@@ -910,6 +1356,74 @@ remove_stack_owned_container_remote() {
     return 1
   fi
   return 0
+}
+
+# Inspect an exact container reference on a topology node. Exit codes preserve
+# the ownership probe contract: 0 present, 3 absent, 1 operational failure.
+container_ownership_inspect_on_node() {
+  local index="${1:?node index required}" ref="${2:?container ref required}"
+  load_cluster_topology || return 1
+  if [ "$index" -eq 0 ]; then
+    container_ownership_inspect_local "$ref"
+    return
+  fi
+  [ "$index" -lt "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
+  container_ownership_inspect_remote "${CLUSTER_NODE_SSH_HOSTS[$index]}" "$ref"
+}
+
+# Discover the unique physical node holding a one-node profile. Every confirmed
+# node is probed before returning, so an SSH/Docker failure is never interpreted
+# as absence. A conflicting exact name or duplicate managed copy is refused.
+# Exit: 0 unique index on stdout; 3 absent everywhere; 2 refused; 1 probe error.
+discover_single_node_index_for_conf() {
+  local conf="${1:?conf required}" cname count index meta rc role found=-1
+  local reason
+  cname=$(container_name_for "$conf" 1)
+  load_cluster_topology || return 1
+  count="$CLUSTER_TOPOLOGY_COUNT"
+  [ "$count" -gt 0 ] || count=1
+
+  for ((index = 0; index < count; index++)); do
+    rc=0
+    meta=$(container_ownership_inspect_on_node "$index" "$cname") || rc=$?
+    case "$rc" in
+      3) continue ;;
+      0) ;;
+      *)
+        warn "cannot inspect $cname on confirmed node $index"
+        return 1
+        ;;
+    esac
+    role=$(single_node_key_for_index "$index") || return 1
+    if ! container_removal_is_proven "$meta" "$conf" single "$role"; then
+      reason=$(container_removal_refuse_reason "$meta" "$conf" single "$role")
+      warn "refusing $cname on node $index: $reason"
+      return 2
+    fi
+    if [ "$found" -ge 0 ]; then
+      warn "refusing ambiguous placement: $cname exists on nodes $found and $index"
+      return 2
+    fi
+    found="$index"
+  done
+
+  [ "$found" -ge 0 ] || return 3
+  printf '%s\n' "$found"
+}
+
+# Remove a one-node profile at an explicitly resolved physical placement.
+# The underlying helper captures the immutable ID and revalidates ownership,
+# rank, and node identity immediately before removal.
+remove_stack_owned_single_at_resolved_node() {
+  local conf="${1:?conf required}" cname role
+  cname=$(container_name_for "$conf" 1)
+  role="${SINGLE_NODE_KEY:-head}"
+  if [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
+    remove_stack_owned_container_remote "$SINGLE_NODE_SSH_HOST" \
+      "$cname" "$conf" single "$role"
+  else
+    remove_stack_owned_container_local "$cname" "$conf" single "$role"
+  fi
 }
 
 # Best-effort remove by immutable ID only (current-launch cleanup). Never by name.
@@ -1039,10 +1553,10 @@ remove_all_stack_managed_local() {
 }
 
 remove_all_stack_managed_remote() {
-  local host="${1:?}"
+  local host="${1:?}" placement="${2:-worker}"
   local ids id meta conf rank reason rc=0 short remote_rm probe
   ids=$(list_managed_container_ids_remote "$host") || {
-    warn "worker unreachable or docker error listing managed containers on $host"
+    warn "remote host unreachable or Docker error listing managed containers on $host"
     return 1
   }
   if [ -z "${ids//[$' \t\r\n']/}" ]; then
@@ -1062,9 +1576,9 @@ remove_all_stack_managed_remote() {
       continue
     fi
     IFS=$'\t' read -r _ _ _ conf rank < <(container_ownership_fields "$meta")
-    if ! container_all_candidate_is_safe "$meta" "worker"; then
-      reason=$(container_all_refuse_reason "$meta" "worker")
-      warn "refusing managed candidate id=${id:0:12} on worker: $reason"
+    if ! container_all_candidate_is_safe "$meta" "$placement"; then
+      reason=$(container_all_refuse_reason "$meta" "$placement")
+      warn "refusing managed candidate id=${id:0:12} on node $placement: $reason"
       rc=$(lifecycle_merge_rc "$rc" 2)
       continue
     fi
@@ -1079,13 +1593,13 @@ remove_all_stack_managed_remote() {
       rc=$(lifecycle_merge_rc "$rc" 1)
       continue
     fi
-    if ! container_all_candidate_is_safe "$meta" "worker"; then
-      reason=$(container_all_refuse_reason "$meta" "worker")
-      warn "refusing id=$short on worker after revalidation: $reason"
+    if ! container_all_candidate_is_safe "$meta" "$placement"; then
+      reason=$(container_all_refuse_reason "$meta" "$placement")
+      warn "refusing id=$short on node $placement after revalidation: $reason"
       rc=$(lifecycle_merge_rc "$rc" 2)
       continue
     fi
-    log "removing stack-managed on $host id=$short conf=$conf rank=$rank (worker)"
+    log "removing stack-managed on $host id=$short conf=$conf rank=$rank (node $placement)"
     remote_rm="docker rm -f $(printf '%q' "$id") >/dev/null"
     if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$remote_rm"; then
       warn "docker rm -f failed for id=$short on $host"
@@ -1114,7 +1628,7 @@ remove_stack_owned_cluster_pair() {
   # and never allows a partial head-only removal.
   worker_meta=$(container_ownership_inspect_remote "$worker_ip" "$cname") || worker_rc=$?
   if [ "$worker_rc" -eq 1 ]; then
-    warn "worker unreachable or docker error inspecting $cname on $worker_ip — not removing any rank"
+    warn "remote host unreachable or Docker error inspecting $cname on $worker_ip — not removing any rank"
     return 1
   fi
 
@@ -1206,6 +1720,124 @@ remove_stack_owned_cluster_pair() {
   return 0
 }
 
+# N-rank stale/replacement transaction. Probe and prove every existing rank,
+# revalidate every immutable ID, then remove workers high-to-low and rank 0
+# last. No mutation occurs after an unreachable/ambiguous initial probe.
+# Exit 0 removed/absent; 1 operational error; 2 ownership/race refusal.
+remove_stack_owned_cluster() {
+  local conf="${1:?conf required}" cname="${2:?container required}"
+  local nodes="${3:?node count required}"
+  [ "$nodes" -gt 1 ] 2>/dev/null || {
+    warn "remove_stack_owned_cluster requires NODES>1"
+    return 2
+  }
+  require_cluster_nodes "$nodes" || return 1
+
+  local -A ids=()
+  local rank host meta rc reason present=0 container_id
+
+  # Remote probes first: an unavailable rank must never permit head mutation.
+  for ((rank = 1; rank < nodes; rank++)); do
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    rc=0
+    meta=$(container_ownership_inspect_remote "$host" "$cname") || rc=$?
+    if [ "$rc" -eq 1 ]; then
+      warn "rank $rank unreachable or Docker error on $host — not removing any rank"
+      return 1
+    fi
+    if [ "$rc" -eq 0 ]; then
+      if ! container_ownership_is_proven "$meta" "$conf" "$rank"; then
+        reason=$(container_ownership_refuse_reason "$meta" "$conf" "$rank")
+        warn "rank $rank ownership not proven for $cname on $host: $reason"
+        return 2
+      fi
+      IFS=$'\t' read -r container_id _ < <(container_ownership_fields "$meta")
+      ids["$rank"]="$container_id"
+      present=$((present + 1))
+    fi
+  done
+
+  rc=0
+  meta=$(container_ownership_inspect_local "$cname") || rc=$?
+  if [ "$rc" -eq 1 ]; then
+    warn "local Docker error inspecting $cname — not removing any rank"
+    return 1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    if ! container_ownership_is_proven "$meta" "$conf" 0; then
+      reason=$(container_ownership_refuse_reason "$meta" "$conf" 0)
+      warn "rank 0 ownership not proven for $cname: $reason"
+      return 2
+    fi
+    IFS=$'\t' read -r container_id _ < <(container_ownership_fields "$meta")
+    ids[0]="$container_id"
+    present=$((present + 1))
+  fi
+
+  if [ "$present" -eq 0 ]; then
+    log "no existing cluster containers named $cname across $nodes ranks"
+    return 0
+  fi
+
+  # Revalidate every ID before the first rm. Any disappearance/replacement is a
+  # race and therefore an ownership refusal, not permission to continue.
+  for ((rank = 1; rank < nodes; rank++)); do
+    [ -n "${ids[$rank]:-}" ] || continue
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    rc=0
+    meta=$(container_ownership_inspect_remote "$host" "${ids[$rank]}") || rc=$?
+    if [ "$rc" -eq 1 ]; then
+      warn "rank $rank error revalidating $cname on $host"
+      return 1
+    fi
+    if [ "$rc" -ne 0 ] \
+        || ! container_ownership_is_proven "$meta" "$conf" "$rank"; then
+      warn "rank $rank ownership changed while revalidating $cname"
+      return 2
+    fi
+  done
+  if [ -n "${ids[0]:-}" ]; then
+    rc=0
+    meta=$(container_ownership_inspect_local "${ids[0]}") || rc=$?
+    if [ "$rc" -eq 1 ]; then
+      warn "local Docker error revalidating rank 0 for $cname"
+      return 1
+    fi
+    if [ "$rc" -ne 0 ] || ! container_ownership_is_proven "$meta" "$conf" 0; then
+      warn "rank 0 ownership changed while revalidating $cname"
+      return 2
+    fi
+  fi
+
+  for ((rank = nodes - 1; rank >= 1; rank--)); do
+    [ -n "${ids[$rank]:-}" ] || continue
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    log "removing rank $rank $cname id=${ids[$rank]:0:12} on $host"
+    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
+      "docker rm -f $(printf '%q' "${ids[$rank]}") >/dev/null"; then
+      warn "failed to remove rank $rank id=${ids[$rank]:0:12}"
+      return 1
+    fi
+    if ! container_id_absent_remote "$host" "${ids[$rank]}"; then
+      warn "rank $rank id=${ids[$rank]:0:12} remains after rm; rank 0 left intact"
+      return 1
+    fi
+  done
+
+  if [ -n "${ids[0]:-}" ]; then
+    log "removing rank 0 $cname id=${ids[0]:0:12}"
+    if ! "$PULSAR_DOCKER" rm -f "${ids[0]}" >/dev/null; then
+      warn "failed to remove rank 0 id=${ids[0]:0:12}"
+      return 1
+    fi
+    if ! container_id_absent_local "${ids[0]}"; then
+      warn "rank 0 id=${ids[0]:0:12} remains after rm"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 # Append VLLM_EXTRA_ARGS onto a named bash array using shlex (handles
 # spaces/quotes). Bare word-split of VLLM_EXTRA_ARGS is intentionally avoided.
 # Usage: append_vllm_extra_args DEST_ARRAY_NAME
@@ -1226,7 +1858,7 @@ PY
 }
 
 # Exact container name match (Docker --filter name= is substring — unsafe for
-# conf prefixes like deepseek-v4-flash vs deepseek-v4-flash-0422).
+# conf prefixes like qwen3-1.7b vs qwen3-1.7b-2node).
 # Usage: echo "$names_one_per_line" | filter_exact_container_name "$want"
 filter_exact_container_name() {
   local want="$1"
@@ -1297,48 +1929,80 @@ container_profile_owned_local() {
   container_metadata_matches_profile "$metadata" "$conf" "$model" "$served" "$rank"
 }
 
-container_profile_owned_worker() {
-  local name="$1" conf="$2" model="$3" served="$4" rank="${5:-}"
+container_profile_owned_remote() {
+  local host="$1" name="$2" conf="$3" model="$4" served="$5" rank="${6:-}"
   local format metadata remote_cmd
   format='{"running":{{json .State.Running}},"labels":{{json .Config.Labels}},"cmd":{{json .Config.Cmd}}}'
   remote_cmd="docker inspect --format $(printf '%q' "$format") $(printf '%q' "$name")"
-  metadata=$(ssh_worker "$remote_cmd" 2>/dev/null) || return 1
+  metadata=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$remote_cmd" 2>/dev/null) \
+    || return 1
   container_metadata_matches_profile "$metadata" "$conf" "$model" "$served" "$rank"
 }
 
-# True only when the selected profile's exact running service is owned by this
-# stack. Two-node ownership requires matching head and worker ranks.
+container_profile_owned_worker() {
+  local name="$1" conf="$2" model="$3" served="$4" rank="${5:-}"
+  require_cluster_nodes 2 || return 1
+  container_profile_owned_remote "${CLUSTER_NODE_SSH_HOSTS[1]}" \
+    "$name" "$conf" "$model" "$served" "$rank"
+}
+
+# True only when every active rank of the selected exact profile is owned.
 profile_service_is_stack_owned() {
-  local conf="$1" cname
+  local conf="$1" selector="${2:-}" cname rank host
   cname=$(container_name_for "$conf" "$NODES")
-  if [ "$NODES" = "2" ]; then
+  if [ "$NODES" -gt 1 ]; then
+    require_cluster_nodes "$NODES" || return 1
     container_profile_owned_local "$cname" "$conf" "$MODEL" "$SERVED_NAME" 0 \
-      && container_profile_owned_worker "$cname" "$conf" "$MODEL" "$SERVED_NAME" 1
-  else
-    container_profile_owned_local "$cname" "$conf" "$MODEL" "$SERVED_NAME"
+      || return 1
+    for ((rank = 1; rank < NODES; rank++)); do
+      host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+      container_profile_owned_remote "$host" "$cname" "$conf" \
+        "$MODEL" "$SERVED_NAME" "$rank" || return 1
+    done
+    return 0
   fi
+  profile_service_is_proven_running "$conf" "$selector"
 }
 
 # Strict loaded-state proof for memory exemptions. Unlike the transition
 # classifier above, this accepts labels only; argv resemblance is insufficient.
 profile_service_is_proven_running() {
-  local conf="$1" cname head_meta worker_meta
-  local head_rc=0 worker_rc=0
+  local conf="$1" selector="${2:-}" cname head_meta remote_meta host role
+  local head_rc=0 remote_rc=0 rank
   cname=$(container_name_for "$conf" "$NODES")
 
-  container_running_exact "$cname" || return 1
-  head_meta=$(container_ownership_inspect_local "$cname") || head_rc=$?
-  [ "$head_rc" -eq 0 ] || return 1
-  if [ "$NODES" = "2" ]; then
-    container_ownership_is_proven "$head_meta" "$conf" "0" || return 1
-    [ -n "${WORKER_IP:-}" ] || return 1
-    container_running_exact_remote "$WORKER_IP" "$cname" || return 1
-    worker_meta=$(container_ownership_inspect_remote "$WORKER_IP" "$cname") \
-      || worker_rc=$?
-    [ "$worker_rc" -eq 0 ] || return 1
-    container_ownership_is_proven "$worker_meta" "$conf" "1"
+  if [ "$NODES" -gt 1 ]; then
+    container_running_exact "$cname" || return 1
+    head_meta=$(container_ownership_inspect_local "$cname") || head_rc=$?
+    [ "$head_rc" -eq 0 ] || return 1
+    container_ownership_is_proven "$head_meta" "$conf" 0 || return 1
+    require_cluster_nodes "$NODES" || return 1
+    for ((rank = 1; rank < NODES; rank++)); do
+      host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+      container_running_exact_remote "$host" "$cname" || return 1
+      remote_rc=0
+      remote_meta=$(container_ownership_inspect_remote "$host" "$cname") \
+        || remote_rc=$?
+      [ "$remote_rc" -eq 0 ] || return 1
+      container_ownership_is_proven "$remote_meta" "$conf" "$rank" || return 1
+    done
+    return 0
+  fi
+
+  resolve_single_node_placement "$selector" || return 1
+  role="$SINGLE_NODE_KEY"
+  if [ "$SINGLE_NODE_REMOTE" = 1 ]; then
+    container_running_exact_remote "$SINGLE_NODE_SSH_HOST" "$cname" || return 1
+    remote_rc=0
+    remote_meta=$(container_ownership_inspect_remote "$SINGLE_NODE_SSH_HOST" "$cname") \
+      || remote_rc=$?
+    [ "$remote_rc" -eq 0 ] || return 1
+    container_removal_is_proven "$remote_meta" "$conf" single "$role"
   else
-    container_ownership_is_proven "$head_meta" "$conf" "single"
+    container_running_exact "$cname" || return 1
+    head_meta=$(container_ownership_inspect_local "$cname") || head_rc=$?
+    [ "$head_rc" -eq 0 ] || return 1
+    container_removal_is_proven "$head_meta" "$conf" single "$role"
   fi
 }
 

@@ -1,86 +1,206 @@
 #!/usr/bin/env bash
-# Preflight for 2-node serving. Run BEFORE start-cluster.sh starts anything.
-#   cluster/preflight.sh [model-name]
-# With a model-name it additionally verifies the image + weights on both nodes.
-# Exit 0 = all checks passed.
+# Read-only preflight for an exact validated multi-node profile.
+#   cluster/preflight.sh <model-name> [--weight-source replicated|fabric]
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
-[ -f .env ] && { set -a; . ./.env; set +a; }
 # shellcheck disable=SC1091
-. scripts/lib.sh
-require_cluster_ips || exit 1
-VLLM_IMAGE_MAINLINE="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai:v0.26.0}"
-HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
+. "$REPO_DIR/scripts/lib.sh"
+
+PROFILE="${1:-}"
+if [ -n "$PROFILE" ]; then
+  shift
+  load_conf "$PROFILE"
+  EXPECTED_NODES="$NODES"
+else
+  load_cluster_topology || exit 1
+  EXPECTED_NODES="$CLUSTER_TOPOLOGY_COUNT"
+  TOPOLOGY_CLASS=roce-full-mesh
+  MIN_RAILS_PER_PAIR=1
+fi
+WEIGHT_SOURCE=replicated
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --weight-source)
+      [ "$#" -ge 2 ] || {
+        echo "--weight-source requires replicated or fabric" >&2
+        exit 2
+      }
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+case "$WEIGHT_SOURCE" in
+  replicated|fabric) ;;
+  *) echo "--weight-source must be replicated or fabric" >&2; exit 2 ;;
+esac
+[ "$EXPECTED_NODES" -gt 1 ] || {
+  echo "[preflight] profile must require more than one node" >&2
+  exit 1
+}
+require_profile_topology \
+  "$EXPECTED_NODES" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" || exit 1
 
 FAIL=0
 ok()   { printf '  ok   %s\n' "$1"; }
 bad()  { printf '  FAIL %s\n' "$1"; FAIL=1; }
 warn() { printf '  warn %s\n' "$1"; }
 
-echo "[preflight] connectivity"
-ping -c1 -W2 "$WORKER_IP" >/dev/null 2>&1 && ok "ping $WORKER_IP (RoCE rail 0)" || bad "ping $WORKER_IP"
-# Optional second rail (set WORKER_IP_RAIL1 in .env if dual-rail)
-if [ -n "${WORKER_IP_RAIL1:-}" ]; then
-  ping -c1 -W2 "$WORKER_IP_RAIL1" >/dev/null 2>&1 && ok "ping $WORKER_IP_RAIL1 (RoCE rail 1)" || bad "ping rail 1 ($WORKER_IP_RAIL1)"
-else
-  warn "WORKER_IP_RAIL1 unset — skip rail-1 ping (set in .env for dual-rail checks)"
-fi
-ssh_worker true 2>/dev/null && ok "ssh $WORKER_IP" || bad "key-based ssh $WORKER_IP"
-
-echo "[preflight] per-node checks"
-run_head_probe() { bash -c "$1"; }
-run_worker_probe() { ssh_worker "$1"; }
-
-check_node() {
-  local name="$1" run="$2"
-  local rdma gpu runtime shm
-  rdma=$($run "rdma link show 2>/dev/null | grep -c ACTIVE" 2>/dev/null)
-  [ "${rdma:-0}" -ge 2 ] && ok "$name: $rdma RDMA links ACTIVE" || bad "$name: only ${rdma:-0} RDMA links ACTIVE (want 2)"
-  gpu=$($run "nvidia-smi --query-gpu=name --format=csv,noheader" 2>/dev/null)
-  [ "$gpu" = "NVIDIA GB10" ] && ok "$name: GPU $gpu" || bad "$name: GPU '$gpu' (want NVIDIA GB10)"
-  runtime=$($run "docker info 2>/dev/null | grep -c 'nvidia'" 2>/dev/null)
-  [ "${runtime:-0}" -ge 1 ] && ok "$name: docker nvidia runtime" || bad "$name: docker nvidia runtime missing"
-  $run "test -e /dev/infiniband/uverbs0" 2>/dev/null && ok "$name: /dev/infiniband present" || bad "$name: /dev/infiniband missing"
-  # >=100 GiB free (weights + KV need most of the 121 GiB pool)
-  local avail_kb
-  avail_kb=$($run "awk '/MemAvailable/{print \$2}' /proc/meminfo" 2>/dev/null)
-  if [ "${avail_kb:-0}" -ge 104857600 ]; then ok "$name: $((avail_kb/1048576)) GiB available"; else warn "$name: only $(( ${avail_kb:-0} /1048576)) GiB available — another workload running?"; fi
+node_exec() {
+  local rank="${1:?rank required}"
+  shift
+  if [ "$rank" = 0 ]; then
+    bash -c "$1"
+  else
+    local host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$1"
+  fi
 }
-check_node "head  " run_head_probe
-check_node "worker" run_worker_probe
+
+echo "[preflight] topology"
+ok "$EXPECTED_NODES active ranks · topology ${CLUSTER_TOPOLOGY_ID:0:12} · exact profile"
+for ((rank = 0; rank < EXPECTED_NODES; rank++)); do
+  host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+  control_ip="${CLUSTER_NODE_CONTROL_IPS[$rank]}"
+  control_if="${CLUSTER_NODE_CONTROL_IFS[$rank]}"
+  if [ "$rank" = 0 ]; then
+    ok "rank 0 local · ${CLUSTER_NODE_HOSTNAMES[$rank]} · control $control_ip/$control_if"
+  elif node_exec "$rank" true >/dev/null 2>&1; then
+    ok "rank $rank SSH $host · ${CLUSTER_NODE_HOSTNAMES[$rank]} · control $control_ip/$control_if"
+  else
+    bad "rank $rank key-based SSH failed: $host"
+  fi
+done
+
+# Verify every selected pair and rail in both directions on every preflight.
+if [ "$CLUSTER_TOPOLOGY_SOURCE" = manifest ]; then
+  while IFS=$'\t' read -r source_rank _source_host target_rank target_ip network; do
+    [ -n "$source_rank" ] || continue
+    if [ "$source_rank" -ge "$EXPECTED_NODES" ] \
+        || [ "$target_rank" -ge "$EXPECTED_NODES" ]; then
+      continue
+    fi
+    command="ping -c1 -W2 $(printf '%q' "$target_ip") >/dev/null 2>&1"
+    if node_exec "$source_rank" "$command"; then
+      ok "rank $source_rank → rank $target_rank · $target_ip · $network"
+    else
+      bad "rank $source_rank cannot reach rank $target_rank · $target_ip · $network"
+    fi
+  done < <(python3 "$REPO_DIR/scripts/topology_manifest.py" \
+    ping-plan "$CLUSTER_TOPOLOGY_FILE")
+else
+  if ping -c1 -W2 "${CLUSTER_NODE_CONTROL_IPS[1]}" >/dev/null 2>&1; then
+    ok "legacy rank 0 → rank 1"
+  else
+    bad "legacy rank 0 cannot ping rank 1"
+  fi
+  warn "legacy .env topology cannot prove per-pair rails; migrate with detect-fabric --write-topology"
+fi
+
+echo "[preflight] per-node readiness"
+check_node() {
+  local rank="$1" rdma gpu runtime avail_kb control_ip control_if command
+  control_ip="${CLUSTER_NODE_CONTROL_IPS[$rank]}"
+  control_if="${CLUSTER_NODE_CONTROL_IFS[$rank]}"
+
+  rdma=$(node_exec "$rank" \
+    "rdma link show 2>/dev/null | grep -c 'state ACTIVE'" 2>/dev/null || true)
+  if [ "${rdma:-0}" -ge "$MIN_RAILS_PER_PAIR" ]; then
+    ok "rank $rank: ${rdma:-0} RDMA links ACTIVE"
+  else
+    bad "rank $rank: only ${rdma:-0} RDMA links ACTIVE"
+  fi
+
+  gpu=$(node_exec "$rank" \
+    "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" \
+    2>/dev/null || true)
+  [ "$gpu" = "NVIDIA GB10" ] \
+    && ok "rank $rank: GPU $gpu" \
+    || bad "rank $rank: GPU '$gpu' (want NVIDIA GB10)"
+
+  runtime=$(node_exec "$rank" \
+    "docker info 2>/dev/null | grep -Ec 'nvidia|nvidia.com/gpu'" \
+    2>/dev/null || true)
+  [ "${runtime:-0}" -ge 1 ] \
+    && ok "rank $rank: Docker NVIDIA ready" \
+    || bad "rank $rank: Docker NVIDIA runtime/CDI missing"
+
+  node_exec "$rank" "test -e /dev/infiniband/uverbs0" 2>/dev/null \
+    && ok "rank $rank: /dev/infiniband present" \
+    || bad "rank $rank: /dev/infiniband missing"
+
+  command="ip -4 -o addr show dev $(printf '%q' "$control_if")"
+  command+=" | awk '{print \$4}' | cut -d/ -f1 | grep -Fxq $(printf '%q' "$control_ip")"
+  node_exec "$rank" "$command" 2>/dev/null \
+    && ok "rank $rank: control binding $control_ip on $control_if" \
+    || bad "rank $rank: control IP/interface mismatch"
+
+  avail_kb=$(node_exec "$rank" \
+    "awk '/MemAvailable/{print \$2}' /proc/meminfo" 2>/dev/null || true)
+  if [ "${avail_kb:-0}" -ge 104857600 ]; then
+    ok "rank $rank: $((avail_kb / 1048576)) GiB available"
+  else
+    warn "rank $rank: only $(( ${avail_kb:-0} / 1048576)) GiB available"
+  fi
+}
+
+for ((rank = 0; rank < EXPECTED_NODES; rank++)); do
+  check_node "$rank"
+done
 
 echo "[preflight] stale state"
-STALE_LOCAL=$(docker ps -a --format '{{.Names}}' | grep -c '^vllm-cluster-' || true)
-STALE_REMOTE=$(ssh_worker "docker ps -a --format '{{.Names}}' | grep -c '^vllm-cluster-'" 2>/dev/null || true)
-[ "${STALE_LOCAL:-0}" -eq 0 ] && ok "head: no stale vllm-cluster containers" || bad "head: $STALE_LOCAL stale vllm-cluster containers (run cluster/stop-cluster.sh)"
-[ "${STALE_REMOTE:-0}" -eq 0 ] && ok "worker: no stale vllm-cluster containers" || bad "worker: $STALE_REMOTE stale (run cluster/stop-cluster.sh)"
+for ((rank = 0; rank < EXPECTED_NODES; rank++)); do
+  stale=$(node_exec "$rank" \
+    "docker ps -a --format '{{.Names}}' | grep -c '^vllm-cluster-'" \
+    2>/dev/null || true)
+  if [ "${stale:-0}" -eq 0 ]; then
+    ok "rank $rank: no stale vllm-cluster containers"
+  else
+    bad "rank $rank: $stale stale vllm-cluster container(s)"
+  fi
+done
 
-if [ -n "${1:-}" ]; then
-  CONF="models/$1.conf"
-  if [ -f "$CONF" ]; then
-    NODES=1 IMAGE=""; CONTAINER_ENV=(); SPEC_DECODE_ARGS=(); ENGINE_ARGS=()
-    # shellcheck disable=SC1090
-    . "$CONF"
-    IMAGE="${IMAGE:-$VLLM_IMAGE_MAINLINE}"
-    echo "[preflight] model $1"
-    docker image inspect "$IMAGE" >/dev/null 2>&1 && ok "head: image $IMAGE" || bad "head: image $IMAGE not pulled"
-    ssh_worker "docker image inspect $(printf '%q' "$IMAGE") >/dev/null 2>&1" && ok "worker: image $IMAGE" || bad "worker: image $IMAGE not pulled"
-    # weights must exist on BOTH nodes (each rank loads locally); do a real read
-    HFDIR="models--${MODEL//\//--}"
-    if [[ "$MODEL" = /* ]]; then
-      head -c 64 "$MODEL/config.json" >/dev/null 2>&1 && ok "head: weights readable at $MODEL" || bad "head: cannot read $MODEL/config.json"
-      ssh_worker "head -c 64 $(printf '%q' "$MODEL/config.json") >/dev/null 2>&1" && ok "worker: weights readable" || bad "worker: cannot read $MODEL/config.json"
+if [ -n "$PROFILE" ]; then
+  echo "[preflight] model $PROFILE"
+  HFDIR="models--${MODEL//\//--}"
+  for ((rank = 0; rank < EXPECTED_NODES; rank++)); do
+    image_command="docker image inspect $(printf '%q' "$IMAGE") >/dev/null 2>&1"
+    node_exec "$rank" "$image_command" \
+      && ok "rank $rank: image $IMAGE" \
+      || bad "rank $rank: image $IMAGE not present"
+  done
+  if [ "$WEIGHT_SOURCE" = fabric ]; then
+    if "$PULSAR_WEIGHT_FABRIC_TOOL" check "$PROFILE" \
+        --serving-only >/dev/null; then
+      ok "single-copy weights: topology, RDMA mounts, manifest, and no replicas"
     else
-      test -d "$HF_CACHE/hub/$HFDIR" && ok "head: HF cache has $HFDIR" || bad "head: $HFDIR missing from $HF_CACHE/hub"
-      ssh_worker "test -d $(printf '%q' "$HF_CACHE/hub/$HFDIR")" && ok "worker: HF cache has $HFDIR" || bad "worker: $HFDIR missing on worker"
+      bad "single-copy weights are not launch-ready"
     fi
   else
-    bad "no such config: $CONF"
+    for ((rank = 0; rank < EXPECTED_NODES; rank++)); do
+      if [[ "$MODEL" = /* ]]; then
+        weights_command="head -c 64 $(printf '%q' "$MODEL/config.json") >/dev/null 2>&1"
+        node_exec "$rank" "$weights_command" \
+          && ok "rank $rank: weights readable" \
+          || bad "rank $rank: cannot read $MODEL/config.json"
+      else
+        weights_command="test -d $(printf '%q' "$HF_CACHE/hub/$HFDIR")"
+        node_exec "$rank" "$weights_command" \
+          && ok "rank $rank: HF cache has $HFDIR" \
+          || bad "rank $rank: $HFDIR missing"
+      fi
+    done
   fi
 fi
 
 echo
-if [ "$FAIL" = "0" ]; then echo "[preflight] ALL CHECKS PASSED"; else echo "[preflight] FAILURES — fix before starting"; fi
+if [ "$FAIL" = 0 ]; then
+  echo "[preflight] ALL CHECKS PASSED"
+else
+  echo "[preflight] FAILURES — fix before starting"
+fi
 exit "$FAIL"

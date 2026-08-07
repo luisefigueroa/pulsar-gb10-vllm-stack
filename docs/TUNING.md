@@ -64,15 +64,20 @@ already picks — but grep the log to confirm on every image bump):
     `--moe-backend marlin`. Atomic-add is an implementation detail of
     the Marlin path; treat it as conf-local unless you remeasure.
 
-## NCCL (2-node)
+## NCCL (measured two-node baseline)
 
-Ship set in `cluster/cluster-env.sh`, all measured on this cluster:
-dual-rail `NCCL_IB_HCA=rocep1s0f0,roceP2p1s0f0` (+47% large-message),
-`NCCL_IB_QPS_PER_CONNECTION=4` (+9% at >=256 MB, free elsewhere),
-`NCCL_SOCKET_IFNAME=enp1s0f0np0` (bootstrap pin — default route is the
-wrong NIC). MTU stays 1500 (PCIe x4 is the bottleneck; jumbo gains ~1%).
-The DeepSeek config overrides to the exact single-rail env its image was
-validated with; see the comment in `models/deepseek-v4-flash.conf`.
+The Step-0 measurements used dual rail
+`NCCL_IB_HCA=rocep1s0f0,roceP2p1s0f0`, yielding +47% large-message
+bandwidth, plus `NCCL_IB_QPS_PER_CONNECTION=4` (+9% at ≥256 MB with no
+small-message penalty). MTU remains 1500 because PCIe x4 is the bottleneck and
+jumbo frames measured ~1%.
+
+Those interface names are evidence from the measured pair, not cluster-wide
+defaults. A confirmed topology supplies each rank HCA list and control
+interface at launch. The launcher forces `NCCL_NET=IB`; Gloo/socket bootstrap
+uses the control interface while model traffic stays on RoCE. Adding ranks can
+change collective selection and contention, so no two-node NCCL or serving
+number is promoted to a larger world size without remeasurement.
 
 ## Concurrency knobs
 

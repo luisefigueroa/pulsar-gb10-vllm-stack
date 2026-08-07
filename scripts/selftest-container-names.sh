@@ -20,15 +20,15 @@ assert_eq() {
 
 LIST=$(printf '%s\n' \
   vllm-cluster-deepseek-v4-flash \
-  vllm-cluster-deepseek-v4-flash-0422 \
+  vllm-cluster-deepseek-v4-flash-legacy \
   vllm-cluster-qwen3-1.7b-2node \
   vllm-deepseek-v4-flash)
 
 got=$(printf '%s\n' "$LIST" | filter_exact_container_name "vllm-cluster-deepseek-v4-flash")
-assert_eq "$got" "vllm-cluster-deepseek-v4-flash" "exact flash does not pull 0422"
+assert_eq "$got" "vllm-cluster-deepseek-v4-flash" "exact flash does not pull a legacy suffix"
 
-got=$(printf '%s\n' "$LIST" | filter_exact_container_name "vllm-cluster-deepseek-v4-flash-0422")
-assert_eq "$got" "vllm-cluster-deepseek-v4-flash-0422" "exact 0422"
+got=$(printf '%s\n' "$LIST" | filter_exact_container_name "vllm-cluster-deepseek-v4-flash-legacy")
+assert_eq "$got" "vllm-cluster-deepseek-v4-flash-legacy" "exact legacy suffix"
 
 got=$(printf '%s\n' "$LIST" | filter_exact_container_name "vllm-cluster-deepseek-v4")
 assert_eq "$got" "" "prefix alone matches nothing"
@@ -48,7 +48,7 @@ else
 fi
 
 assert_eq "$(container_name_for deepseek-v4-flash 2)" "vllm-cluster-deepseek-v4-flash" "cluster name for flash"
-assert_eq "$(container_name_for deepseek-v4-flash-0422 2)" "vllm-cluster-deepseek-v4-flash-0422" "cluster name for 0422"
+assert_eq "$(container_name_for deepseek-v4-flash-legacy 2)" "vllm-cluster-deepseek-v4-flash-legacy" "cluster name for legacy suffix"
 
 echo "---"
 echo "pass=$pass fail=$fail"

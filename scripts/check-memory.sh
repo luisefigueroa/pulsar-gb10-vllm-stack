@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Memory preflight for conf (+ optional max-model-len note).
-#   scripts/check-memory.sh <model-name> [--max-model-len N] [--json]
+#   scripts/check-memory.sh <model-name> [--node NODE_ID] [--cold-start] [--max-model-len N] [--json]
 # exit 0=pass 1=fail 2=warn (tight)
 #
 # Cold start: require MemAvailable >= footprint + launch spike, residual buffer.
@@ -13,12 +13,20 @@ SCRIPT_NAME=check-memory
 
 JSON=0
 OVERRIDE_LEN=""
+NODE_SELECTOR=""
+FORCE_COLD_START=0
 NAME="${1:-}"
-[ -n "$NAME" ] || die "usage: $0 <model-name> [--max-model-len N] [--json]"
+[ -n "$NAME" ] || die "usage: $0 <model-name> [--node NODE_ID] [--cold-start] [--max-model-len N] [--json]"
 shift || true
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) JSON=1 ;;
+    --node)
+      [ "$#" -ge 2 ] || die "--node requires a topology node id or hostname" 2
+      NODE_SELECTOR="$2"
+      shift
+      ;;
+    --cold-start) FORCE_COLD_START=1 ;;
     --max-model-len) OVERRIDE_LEN="${2:-}"; shift ;;
     *) die "unknown arg: $1" ;;
   esac
@@ -26,6 +34,12 @@ while [ $# -gt 0 ]; do
 done
 
 load_conf "$NAME"
+if [ "$NODES" -eq 1 ]; then
+  resolve_single_node_placement "$NODE_SELECTOR" \
+    || die "cannot resolve physical node placement '$NODE_SELECTOR'"
+elif [ -n "$NODE_SELECTOR" ]; then
+  die "--node is only valid for one-node profiles" 2
+fi
 weights=$(estimate_weights_ram_gib)
 kv=$(estimate_kv_gib)
 overhead="${OVERHEAD_GIB:-$OVERHEAD_GIB_DEFAULT}"
@@ -33,8 +47,9 @@ buffer="${MEM_MIN_FREE_GIB:-$MIN_OS_BUFFER_GIB}"
 spike="${LAUNCH_SPIKE_GIB}"
 floor="${HARD_FLOOR_AVAILABLE_GIB}"
 
-if [ "$NODES" = "2" ]; then
-  w_rank=$(awk -v w="$weights" 'BEGIN{printf "%.2f", w/2}')
+if [ "$NODES" -gt 1 ]; then
+  w_rank=$(awk -v w="$weights" -v n="$NODES" \
+    'BEGIN{printf "%.2f", w/n}')
 else
   w_rank="$weights"
 fi
@@ -53,16 +68,43 @@ kv_fixed=0
 cname=$(container_name_for "$NAME" "$NODES")
 already=0
 already_how=""
-if profile_service_is_proven_running "$NAME"; then
+if [ "$FORCE_COLD_START" != 1 ] \
+    && profile_service_is_proven_running "$NAME" "$NODE_SELECTOR"; then
   already=1
   already_how="proven stack-managed container $cname running with complete rank ownership"
 fi
 
-head_avail=$(mem_available_gib_local)
-worker_avail="n/a"
+declare -a rank_avail=()
+if [ "$NODES" -eq 1 ] && [ "$SINGLE_NODE_REMOTE" = 1 ]; then
+  rank_avail[0]=$(mem_available_gib_remote "$SINGLE_NODE_SSH_HOST")
+else
+  rank_avail[0]=$(mem_available_gib_local)
+fi
 result=pass
 reason=""
 mode="cold-start"
+topology_ready=1
+if [ "$NODES" -gt 1 ]; then
+  if ! require_cluster_nodes "$NODES"; then
+    topology_ready=0
+    result=fail
+    reason="confirmed topology has fewer than $NODES required ranks; "
+    for ((rank = 1; rank < NODES; rank++)); do
+      rank_avail[$rank]=0
+    done
+  else
+    for ((rank = 1; rank < NODES; rank++)); do
+      rank_avail[$rank]=$(mem_available_gib_remote \
+        "${CLUSTER_NODE_SSH_HOSTS[$rank]}")
+    done
+  fi
+fi
+head_avail="${rank_avail[0]}"
+worker_avail="${rank_avail[1]:-n/a}"
+availability_summary=""
+for ((rank = 0; rank < NODES; rank++)); do
+  availability_summary+=" r${rank}=${rank_avail[$rank]}GiB"
+done
 
 check_node_cold() {
   local label="$1" avail="$2"
@@ -106,28 +148,20 @@ check_node_warm() {
   fi
 }
 
-if [ "$already" = 1 ]; then
-  mode="already-loaded"
-  check_node_warm head "$head_avail"
-  if [ "$NODES" = "2" ]; then
-    if [ -z "${WORKER_IP:-}" ]; then
-      reason="${reason}WORKER_IP unset (worker residual not checked); "
-    else
-      worker_avail=$(mem_available_gib_remote "$WORKER_IP")
-      check_node_warm worker "$worker_avail"
-    fi
-  fi
-else
-  check_node_cold head "$head_avail"
-  if [ "$NODES" = "2" ]; then
-    if [ -z "${WORKER_IP:-}" ]; then
-      result=fail
-      reason="WORKER_IP unset (required for NODES=2); "
-      worker_avail=0
-    else
-      worker_avail=$(mem_available_gib_remote "$WORKER_IP")
-      check_node_cold worker "$worker_avail"
-    fi
+if [ "$topology_ready" = 1 ]; then
+  if [ "$already" = 1 ]; then
+    mode="already-loaded"
+    for ((rank = 0; rank < NODES; rank++)); do
+      check_label="rank $rank"
+      [ "$NODES" -eq 1 ] && check_label="$SINGLE_NODE_HOSTNAME"
+      check_node_warm "$check_label" "${rank_avail[$rank]}"
+    done
+  else
+    for ((rank = 0; rank < NODES; rank++)); do
+      check_label="rank $rank"
+      [ "$NODES" -eq 1 ] && check_label="$SINGLE_NODE_HOSTNAME"
+      check_node_cold "$check_label" "${rank_avail[$rank]}"
+    done
   fi
 fi
 
@@ -140,8 +174,32 @@ if [ "$already" = 1 ]; then
 fi
 
 if [ "$JSON" = 1 ]; then
-  python3 - <<PY
+  PLACEMENT_INDEX_V="${SINGLE_NODE_INDEX:-}" \
+  PLACEMENT_KEY_V="${SINGLE_NODE_KEY:-}" \
+  PLACEMENT_ID_V="${SINGLE_NODE_ID:-}" \
+  PLACEMENT_HOSTNAME_V="${SINGLE_NODE_HOSTNAME:-}" \
+  PLACEMENT_SSH_V="${SINGLE_NODE_SSH_HOST:-}" \
+  PLACEMENT_REMOTE_V="${SINGLE_NODE_REMOTE:-0}" \
+  python3 - "$NODES" "${rank_avail[@]}" <<PY
 import json
+import os
+import sys
+
+rank_available = [
+    {"rank": rank, "available_gib": float(value)}
+    for rank, value in enumerate(sys.argv[2:int(sys.argv[1]) + 2])
+]
+placement = None
+if int(sys.argv[1]) == 1:
+    placement = {
+        "topology_index": int(os.environ.get("PLACEMENT_INDEX_V") or 0),
+        "node_key": os.environ.get("PLACEMENT_KEY_V") or "head",
+        "node_id": os.environ.get("PLACEMENT_ID_V") or None,
+        "hostname": os.environ.get("PLACEMENT_HOSTNAME_V") or None,
+        "ssh_host": os.environ.get("PLACEMENT_SSH_V") or None,
+        "remote": os.environ.get("PLACEMENT_REMOTE_V") == "1",
+    }
+    rank_available[0].update(placement)
 print(json.dumps({
   "model": "$NAME",
   "result": "$result",
@@ -159,6 +217,8 @@ print(json.dumps({
   "hard_floor_gib": float("$floor"),
   "head_available_gib": float("$head_avail"),
   "worker_available_gib": None if "$worker_avail" == "n/a" else float("$worker_avail"),
+  "placement": placement,
+  "rank_available_gib": rank_available,
   "max_model_len": "$mml" or None,
   "kv_fixed": bool($kv_fixed),
   "note": """$note""",
@@ -170,29 +230,36 @@ else
     case "$result" in
       pass)
         if [ "$already" = 1 ]; then
-          echo "PASS  memory    already loaded · residual head=${head_avail} GiB worker=${worker_avail} GiB (floor ${floor})"
+          print_hanging "PASS  memory    " \
+            "already loaded · residual${availability_summary} · floor ${floor} GiB"
         else
-          echo "PASS  memory    cold-start OK · free head=${head_avail} GiB need ${need_start} GiB"
+          print_hanging "PASS  memory    " \
+            "cold-start OK · free${availability_summary} · need ${need_start} GiB/rank"
         fi
         ;;
       warn)
         if [ "$already" = 1 ]; then
-          echo "WARN  memory    already loaded · residual ~${head_avail} GiB < preferred ${buffer} GiB (normal for 20GB flagship)"
+          print_hanging "WARN  memory    " \
+            "already loaded · residual${availability_summary} · preferred ${buffer} GiB"
         else
-          echo "WARN  memory    tight · free ${head_avail} GiB vs need ${need_start} GiB"
+          print_hanging "WARN  memory    " \
+            "tight · free${availability_summary} · need ${need_start} GiB/rank"
         fi
         ;;
       *)
         if [ "$already" = 1 ]; then
-          echo "FAIL  memory    residual under hard floor ${floor} GiB (head=${head_avail})"
+          print_hanging "FAIL  memory    " \
+            "residual${availability_summary} · hard floor ${floor} GiB"
         else
-          echo "FAIL  memory    free ${head_avail} GiB < cold-start need ${need_start} GiB"
+          print_hanging "FAIL  memory    " \
+            "free${availability_summary} · cold-start need ${need_start} GiB/rank"
         fi
         ;;
     esac
   else
     log "$NAME result=$result mode=$mode footprint=${need_footprint} GiB/rank start_need=${need_start} (w_rank=$w_rank kv=$kv oh=$overhead +spike=$spike; buffer_target=$buffer)"
-    log "available: head=${head_avail} GiB worker=${worker_avail} GiB"
+    [ "$NODES" -eq 1 ] && log "placement=$(single_node_display) · node-id=${SINGLE_NODE_ID:-standalone}"
+    log "available:${availability_summary}"
     [ "$already" = 1 ] && log "already loaded: $already_how"
     [ -n "$mml" ] && log "max-model-len=${mml}${OVERRIDE_LEN:+ (override)}"
     [ -n "$note" ] && log "$note"

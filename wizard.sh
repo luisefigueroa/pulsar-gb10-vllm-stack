@@ -14,7 +14,8 @@
 #   WIZARD_SKIP_DOCTOR=1           skip doctor
 #   WIZARD_SKIP_WEIGHTS=1          skip weight presence
 #   WIZARD_SKIP_IMAGE=1            skip image presence
-#   WIZARD_SKIP_FABRIC_PROMPT=1    skip multi-node .env prompt
+#   WIZARD_SKIP_FABRIC_PROMPT=1    skip topology discovery prompt
+#   WIZARD_TOPOLOGY_NODES=N         test-only confirmed capacity override
 #   WIZARD_INVENTORY_JSON=path     fixed inventory JSON (or cmd below)
 #   WIZARD_INVENTORY_CMD=path      executable receiving no args → inventory JSON
 #   WIZARD_MEMORY_JSON=path        fixed check-memory JSON body
@@ -22,6 +23,8 @@
 #   WIZARD_CHECK_MEMORY_CMD=path   executable: <model> [--json] → body; exit rc
 #   WIZARD_API_HEALTHY=0|1         force API-healthy probe for selected profile
 #   WIZARD_LIST_MODELS_JSON=path   fixed list-models --validated --json
+#   WIZARD_CHECK_WEIGHTS_CMD=path  executable: <model> --json
+#   WIZARD_PULL_WEIGHTS_CMD=path   executable: <model> --yes
 #   WIZARD_UP_CMD / WIZARD_DOWN_CMD / WIZARD_STATUS_CMD / WIZARD_DOCTOR_CMD
 #   GUM=0                          plain numbered menus (stdin-driven)
 set -euo pipefail
@@ -59,15 +62,32 @@ cmd_inventory_json() {
 # Prints memory JSON to stdout; exit status is pass/warn/fail (0/2/1).
 cmd_check_memory() {
   local model="$1"
+  shift
   if [ -n "${WIZARD_CHECK_MEMORY_CMD:-}" ]; then
-    "$WIZARD_CHECK_MEMORY_CMD" "$model" --json
+    "$WIZARD_CHECK_MEMORY_CMD" "$model" "$@" --json
     return $?
   fi
   if [ -n "${WIZARD_MEMORY_JSON:-}" ]; then
     cat "$WIZARD_MEMORY_JSON"
     return "${WIZARD_MEMORY_RC:-0}"
   fi
-  "$REPO_DIR/scripts/check-memory.sh" "$model" --json
+  "$REPO_DIR/scripts/check-memory.sh" "$model" "$@" --json
+}
+
+cmd_check_weights() {
+  if [ -n "${WIZARD_CHECK_WEIGHTS_CMD:-}" ]; then
+    "$WIZARD_CHECK_WEIGHTS_CMD" "$@"
+  else
+    "$REPO_DIR/scripts/check-weights.sh" "$@"
+  fi
+}
+
+cmd_pull_weights() {
+  if [ -n "${WIZARD_PULL_WEIGHTS_CMD:-}" ]; then
+    "$WIZARD_PULL_WEIGHTS_CMD" "$@"
+  else
+    "$REPO_DIR/scripts/pull-weights.sh" "$@"
+  fi
 }
 
 collect_inventory_json_or_die() {
@@ -87,9 +107,10 @@ collect_memory_json_or_die() {
   local json_destination="${1:?memory JSON destination required}"
   local rc_destination="${2:?memory rc destination required}"
   local model="${3:?model required}"
+  shift 3
   local output rc
 
-  if output=$(cmd_check_memory "$model" 2>/dev/null); then
+  if output=$(cmd_check_memory "$model" "$@" 2>/dev/null); then
     rc=0
   else
     rc=$?
@@ -136,8 +157,36 @@ cmd_list_models_json() {
   if [ -n "${WIZARD_LIST_MODELS_JSON:-}" ]; then
     cat "$WIZARD_LIST_MODELS_JSON"
   else
-    "$REPO_DIR/scripts/list-models.sh" --validated --json
+    "$REPO_DIR/scripts/list-models.sh" --validated --serving --json
   fi
+}
+PLACEMENT_SELECTOR=""
+PLACEMENT_NODE_KEY="head"
+PLACEMENT_NODE_ID=""
+PLACEMENT_HOSTNAME=""
+PLACEMENT_CONTROL_IP="127.0.0.1"
+PLACEMENT_REMOTE=0
+PLACEMENT_AWARE=0
+PLACEMENT_ARGS=()
+
+reset_placement_state() {
+  PLACEMENT_SELECTOR=""
+  PLACEMENT_NODE_KEY="head"
+  PLACEMENT_NODE_ID=""
+  PLACEMENT_HOSTNAME=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo localhost)
+  PLACEMENT_CONTROL_IP="127.0.0.1"
+  PLACEMENT_REMOTE=0
+  PLACEMENT_AWARE=0
+  PLACEMENT_ARGS=()
+}
+
+placement_api_base() {
+  local host="$PLACEMENT_CONTROL_IP"
+  [ -n "$host" ] || host="127.0.0.1"
+  if [[ "$host" == *:* ]] && [[ "$host" != \[*\] ]]; then
+    host="[$host]"
+  fi
+  printf "http://%s:%s\\n" "$host" "$PORT"
 }
 
 # ---------------------------------------------------------------------------
@@ -155,6 +204,269 @@ probe_json_has_state() {
 import json, sys
 d = json.load(sys.stdin)
 raise SystemExit(0 if isinstance(d, dict) and isinstance(d.get("state"), str) and d["state"] else 1)'
+}
+select_single_node_placement() {
+  reset_placement_state
+  [ "$NODES" -eq 1 ] || return 0
+
+  local inv rows key node_id hostname ssh_host control_ip inventory_free
+  local remote occupancy selector mem_json mem_rc free result choice picked
+  local best=-1 i score best_score=-1 marker
+  local -a keys=() ids=() hostnames=() ssh_hosts=() control_ips=()
+  local -a frees=() remotes=() occupancies=() mem_results=()
+  local -a choices=() choice_indices=() fields=()
+
+  log "evaluating confirmed physical nodes for $NAME…"
+  collect_inventory_json_or_die inv
+  rows=$(INV_JSON="$inv" python3 - <<'PY'
+import json
+import os
+
+inv = json.loads(os.environ.get("INV_JSON") or "{}")
+nodes = inv.get("nodes") or {}
+services = inv.get("services") or []
+unmanaged = inv.get("unmanaged_gpu_processes") or []
+
+
+def node_order(item):
+    key = item[0]
+    index = item[1].get("topology_index")
+    if isinstance(index, int):
+        return (index, key)
+    if key == "head":
+        return (0, key)
+    if key == "worker":
+        return (1, key)
+    if key.startswith("rank-"):
+        try:
+            return (int(key.split("-", 1)[1]), key)
+        except ValueError:
+            pass
+    return (1_000_000, key)
+
+
+def clean(value):
+    return str(value or "").replace("\t", " ").replace("\n", " ").strip()
+
+
+for key, node in sorted(nodes.items(), key=node_order):
+    node_id = clean(node.get("node_id"))
+    if not node_id:
+        continue
+    if node.get("confirmed") is False:
+        continue
+    remote = bool(node.get("remote")) or key != "head"
+    probe = clean(node.get("probe_status")).lower()
+    if remote and probe != "ok":
+        continue
+    if not remote and probe not in ("", "ok", "local"):
+        continue
+
+    consumers = []
+    for service in services:
+        for rank in service.get("ranks") or []:
+            if rank.get("node") == key and rank.get("running"):
+                label = service.get("conf") or service.get("served_name") or "managed service"
+                if label not in consumers:
+                    consumers.append(label)
+    unmanaged_here = [item for item in unmanaged if item.get("node") == key]
+    if unmanaged_here:
+        consumers.append(f"{len(unmanaged_here)} unmanaged GPU process"
+                         + ("es" if len(unmanaged_here) != 1 else ""))
+    occupancy = "idle" if not consumers else "Pulsar: " + ", ".join(consumers)
+    fields = [
+        key,
+        node_id,
+        clean(node.get("hostname")) or key,
+        clean(node.get("ssh_host")),
+        clean(node.get("control_ip")),
+        clean(node.get("mem_available_gib")),
+        "1" if remote else "0",
+        occupancy,
+    ]
+    print("\t".join(fields))
+PY
+)
+
+  # Old standalone inventory has no stable physical IDs. Preserve the local
+  # one-node path; the normal plan memory gate still runs before launch.
+  if [ -z "$rows" ]; then
+    log "no stable topology node identities in inventory; using this node"
+    return 0
+  fi
+
+  while IFS=$'\t' read -r key node_id hostname ssh_host control_ip \
+      inventory_free remote occupancy; do
+    [ -n "$node_id" ] || continue
+    selector="$node_id"
+    mem_json=""
+    mem_rc=0
+    if mem_json=$(cmd_check_memory "$NAME" --node "$selector" --cold-start 2>/dev/null); then
+      mem_rc=0
+    else
+      mem_rc=$?
+    fi
+    case "$mem_rc" in
+      0|1|2) ;;
+      *) die "memory preflight failed internally for $hostname (exit=$mem_rc)" ;;
+    esac
+    if ! memory_preflight_json_is_valid "$mem_json" "$mem_rc"; then
+      die "memory preflight returned invalid data for $hostname"
+    fi
+    if [ "$mem_rc" = 1 ]; then
+      log "excluding $hostname ($node_id): hard memory failure"
+      continue
+    fi
+
+    free=$(json_field "$mem_json" head_available_gib)
+    [ -n "$free" ] || free="$inventory_free"
+    [ -n "$free" ] || free="n/a"
+    result=$(json_field "$mem_json" result)
+    keys+=("$key")
+    ids+=("$node_id")
+    hostnames+=("$hostname")
+    ssh_hosts+=("$ssh_host")
+    control_ips+=("$control_ip")
+    frees+=("$free")
+    remotes+=("$remote")
+    occupancies+=("$occupancy")
+    mem_results+=("${result:-unknown}")
+  done <<<"$rows"
+
+  [ "${#keys[@]}" -gt 0 ] \
+    || die "no confirmed reachable Docker node passes the hard memory gate for $NAME"
+
+  for i in "${!keys[@]}"; do
+    score=0
+    [ "${occupancies[$i]}" = idle ] && score=$((score + 1000000))
+    [ "${mem_results[$i]}" = pass ] && score=$((score + 100000))
+    if [[ "${frees[$i]}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      score=$((score + ${frees[$i]%.*}))
+    fi
+    if [ "$score" -gt "$best_score" ]; then
+      best="$i"
+      best_score="$score"
+    fi
+  done
+
+  for i in "${!keys[@]}"; do
+    marker=""
+    [ "$i" -eq "$best" ] && marker=" · recommended"
+    fields+=(
+      "Node" "${hostnames[$i]} · ${frees[$i]} GiB free"
+      "Status" "Docker reachable · ${occupancies[$i]} · memory ${mem_results[$i]}"
+      "Identity" "${ids[$i]:0:12}$marker"
+    )
+  done
+  echo
+  render_human_section "ELIGIBLE PHYSICAL NODES" "${fields[@]}"
+
+  choice="${hostnames[$best]} · recommended"
+  choices+=("$choice")
+  choice_indices+=("$best")
+  for i in "${!keys[@]}"; do
+    [ "$i" -eq "$best" ] && continue
+    [ "${occupancies[$i]}" = idle ] && choice_state=idle || choice_state=occupied
+    choice="${hostnames[$i]} · $choice_state"
+    choices+=("$choice")
+    choice_indices+=("$i")
+  done
+
+  if [ "${#choices[@]}" -eq 1 ]; then
+    picked="${choices[0]}"
+  else
+    picked=$(choose "Choose a physical node for $NAME" "${choices[@]}") \
+      || die "no physical node selected"
+  fi
+  for i in "${!choices[@]}"; do
+    if [ "$picked" = "${choices[$i]}" ]; then
+      best="${choice_indices[$i]}"
+      break
+    fi
+  done
+
+  PLACEMENT_NODE_KEY="${keys[$best]}"
+  PLACEMENT_NODE_ID="${ids[$best]}"
+  PLACEMENT_HOSTNAME="${hostnames[$best]}"
+  PLACEMENT_CONTROL_IP="${control_ips[$best]:-${ssh_hosts[$best]}}"
+  PLACEMENT_REMOTE="${remotes[$best]}"
+  PLACEMENT_SELECTOR="$PLACEMENT_NODE_ID"
+  PLACEMENT_AWARE=1
+  PLACEMENT_ARGS=(--node "$PLACEMENT_SELECTOR")
+  log "selected node: $PLACEMENT_HOSTNAME"
+  log "node-id: $PLACEMENT_NODE_ID"
+}
+
+
+render_weight_status() {
+  local json="$1" hostnames
+  hostnames=$(printf '%s\n' "${CLUSTER_NODE_HOSTNAMES[@]:-}")
+  WEIGHTS_JSON="$json" NODE_HOSTNAMES="$hostnames" python3 - <<'PY'
+import json
+import os
+import socket
+
+from scripts.terminal_format import TerminalWriter
+
+data = json.loads(os.environ.get("WEIGHTS_JSON") or "{}")
+hostnames = os.environ.get("NODE_HOSTNAMES", "").splitlines()
+friendly = {
+    "ok": "ready",
+    "missing": "missing",
+    "partial": "incomplete",
+    "unreachable": "unreachable",
+    "unconfigured": "not confirmed",
+    "nfs-unmounted": "NFS not mounted",
+}
+
+term = TerminalWriter()
+term.emit("MODEL FILES REQUIRED")
+term.field("Model", data.get("model") or "?")
+for index, item in enumerate(data.get("ranks") or []):
+    rank = int(item.get("rank") or 0)
+    hostname = item.get("hostname")
+    if not hostname and rank < len(hostnames) and hostnames[rank]:
+        hostname = hostnames[rank]
+    elif not hostname and rank == 0:
+        hostname = socket.gethostname().split(".", 1)[0]
+    elif not hostname:
+        hostname = f"cluster node {rank + 1}"
+    if rank == 0 and not item.get("remote"):
+        hostname += " (this node)"
+    state = str(item.get("state") or "unknown")
+    term.field(
+        "Status" if index == 0 else "",
+        f"{hostname} · {friendly.get(state, state)}",
+    )
+PY
+}
+
+render_model_selection() {
+  local rank label node
+  local -a fields=(
+    "Model" "$NAME"
+    "Serves" "$SERVED_NAME on :$PORT"
+    "Validation" "$STATUS · exact $NODES-node profile"
+  )
+  if [ "$NODES" -eq 1 ]; then
+    node="$PLACEMENT_HOSTNAME"
+    [ -n "$node" ] || node="this node"
+    [ "$PLACEMENT_REMOTE" = 0 ] && node+=" (this node)"
+    fields+=("Uses" "$node")
+    [ -n "$PLACEMENT_NODE_ID" ] && fields+=("Node ID" "$PLACEMENT_NODE_ID")
+  else
+    for ((rank = 0; rank < NODES; rank++)); do
+      node="${CLUSTER_NODE_HOSTNAMES[$rank]:-}"
+      [ -n "$node" ] || node=$(human_cluster_node "$rank")
+      [ "$rank" = 0 ] && node+=" (this node)"
+      [ "$rank" = 0 ] && label="Uses" || label=""
+      fields+=("$label" "$node")
+    done
+  fi
+  if [ "${PULSAR_VERBOSE:-0}" = 1 ]; then
+    fields+=("Image" "$IMAGE")
+  fi
+  render_human_section "MODEL SELECTED" "${fields[@]}"
 }
 
 # Sets free, need, fp from check-memory JSON (caller-scoped variables).
@@ -177,6 +489,7 @@ def emit(name, val):
 
 emit("same_running", d.get("same_complete_running"))
 emit("worker_unreach", d.get("worker_unreachable"))
+emit("partial_remote_unreach", d.get("partial_remote_unreachable"))
 emit("has_unmanaged", d.get("has_unmanaged_gpu"))
 emit("others_safe", " ".join(d.get("others_safe_confs") or []))
 emit("partial_safe", " ".join(d.get("partial_safe_confs") or []))
@@ -197,10 +510,11 @@ api_serves_selected() {
     [ "${WIZARD_API_HEALTHY}" = "1" ]
     return
   fi
-  local port="${PORT:-8000}"
+  local api_base
+  api_base=$(placement_api_base)
   local -a auth_args=()
   api_auth_curl_args auth_args
-  SN="$SERVED_NAME" curl -fsS --max-time 2 "${auth_args[@]}" "http://127.0.0.1:${port}/v1/models" 2>/dev/null \
+  SN="$SERVED_NAME" curl -fsS --max-time 2 "${auth_args[@]}" "${api_base}/v1/models" 2>/dev/null \
     | SN="$SERVED_NAME" python3 -c '
 import sys, json, os
 try:
@@ -214,7 +528,9 @@ raise SystemExit(0 if os.environ.get("SN", "") in ids else 1)
 
 render_target_summary() {
   local inv="$1" mem_json="$2" mrc="$3"
-  INV_JSON="$inv" MEM_JSON="$mem_json" \
+  INV_JSON="$inv" MEM_JSON="$mem_json" PLACEMENT_KEY="$PLACEMENT_NODE_KEY" \
+  PLACEMENT_HOST="$PLACEMENT_HOSTNAME" PLACEMENT_ID="$PLACEMENT_NODE_ID" \
+  PLACEMENT_REMOTE="$PLACEMENT_REMOTE" \
   python3 - "$NAME" "$SERVED_NAME" "$NODES" "$PORT" "$STATUS" "$mrc" <<'PY'
 import json
 import os
@@ -226,6 +542,10 @@ name, served, nodes, port, status, mrc = sys.argv[1:7]
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 mem_raw = (os.environ.get("MEM_JSON") or "").strip()
 mem = json.loads(mem_raw) if mem_raw else {}
+placement_key = os.environ.get("PLACEMENT_KEY") or "head"
+placement_host = os.environ.get("PLACEMENT_HOST") or "this node"
+placement_id = os.environ.get("PLACEMENT_ID") or ""
+placement_remote = os.environ.get("PLACEMENT_REMOTE") == "1"
 
 def fmt(v):
     if v is None:
@@ -235,19 +555,40 @@ def fmt(v):
     except Exception:
         return str(v)
 
+def node_display(rank):
+    if int(nodes) == 1:
+        suffix = "" if placement_remote else " (this node)"
+        return f"{placement_host}{suffix}"
+    if rank == 0:
+        return "this node"
+    return f"cluster node {rank + 1}"
+
+
 term = TerminalWriter()
 term.emit("TARGET")
 term.field("Model", f"{name} · {status}")
 term.field("Serves", f"{served} on :{port}")
 term.field("Topology", f"{nodes} {'node' if nodes == '1' else 'nodes'}")
-head = (inv.get("nodes") or {}).get("head") or {}
-worker = (inv.get("nodes") or {}).get("worker") or {}
-w = inv.get("worker") or {}
-term.field("Memory", f"head   {fmt(head.get('mem_available_gib'))} GiB free")
-term.field(
-    "",
-    f"worker {fmt(worker.get('mem_available_gib'))} GiB · {w.get('status') or 'unset'}",
-)
+if int(nodes) == 1:
+    term.field("Placement", f"{placement_host} · node-id {placement_id or 'standalone'}")
+inventory_nodes = inv.get("nodes") or {}
+remote_aggregate = inv.get("worker") or {}
+for rank in range(int(nodes)):
+    if int(nodes) == 1:
+        node_name = placement_key
+    else:
+        node_name = "head" if rank == 0 else ("worker" if rank == 1 else f"rank-{rank}")
+    node = inventory_nodes.get(node_name) or {}
+    if int(nodes) == 1:
+        probe_status = node.get("probe_status") or ("ok" if placement_remote else "local")
+    elif rank == 0:
+        probe_status = node.get("probe_status") or "local"
+    else:
+        probe_status = node.get("probe_status") or remote_aggregate.get("status") or "unset"
+    term.field(
+        "Memory" if rank == 0 else "",
+        f"{node_display(rank)} · {fmt(node.get('mem_available_gib'))} GiB free · {probe_status}",
+    )
 if mem:
     term.blank()
     term.emit("PREFLIGHT")
@@ -258,7 +599,7 @@ if mem:
     )
     term.field(
         "Budget",
-        f"footprint {fmt(mem.get('footprint_gib'))} GiB/rank · "
+        f"footprint {fmt(mem.get('footprint_gib'))} GiB per node · "
         f"need to start {fmt(mem.get('need_start_gib'))} GiB",
     )
     if mem.get("reason"):
@@ -278,6 +619,17 @@ inv = json.loads(os.environ.get("INV_JSON") or "{}")
 name = os.environ.get("NAME", "")
 port = int(os.environ.get("PORT") or 8000)
 term = TerminalWriter()
+nodes_info = inv.get("nodes") or {}
+
+def placement_label(node_key):
+    node = nodes_info.get(node_key) or {}
+    hostname = str(node.get("hostname") or "").strip()
+    if hostname:
+        return f"{hostname} (this node)" if node_key == "head" else hostname
+    if node_key == "head":
+        return "this node"
+    return node_key or "unknown node placement"
+
 
 def active(s):
     st = s.get("state")
@@ -310,12 +662,11 @@ else:
     for s in services:
         safe = "safe_to_stop" if s.get("safe_to_stop") else "not_safe_to_stop"
         complete = "complete" if s.get("complete") else "incomplete"
-        exp = ",".join(str(x) for x in (s.get("expected_ranks") or [])) or "-"
-        obs = ",".join(str(x) for x in (s.get("observed_ranks") or [])) or "-"
+        expected_count = len(s.get("expected_ranks") or [])
+        observed_count = len(s.get("observed_ranks") or [])
         fp = s.get("estimated_footprint_gib_per_rank")
-        fp_s = f"{fp:.2f} GiB/rank" if fp is not None else "n/a"
+        fp_s = f"{fp:.2f} GiB per node" if fp is not None else "n/a"
         nodes = s.get("expected_nodes")
-        node_word = "node" if nodes == 1 else "nodes"
         term.blank()
         term.emit(
             f"{str(s.get('state') or '?').upper()}  {s.get('service_id') or '?'}",
@@ -330,8 +681,8 @@ else:
             indent=2,
         )
         term.field(
-            "topology",
-            f"{nodes} {node_word} · ranks expected={exp} observed={obs}",
+            "nodes",
+            f"{nodes} required · {observed_count}/{expected_count} observed",
             indent=2,
         )
         term.field("estimate", fp_s, indent=2)
@@ -345,7 +696,7 @@ else:
             rank_safe = "safe_to_stop" if r.get("safe_to_stop") else "not_safe_to_stop"
             term.blank()
             term.emit(
-                f"{r.get('node') or '?'} · rank {r.get('rank') or '?'}",
+                placement_label(r.get("node")),
                 initial_indent="  ",
                 subsequent_indent="    ",
             )
@@ -378,7 +729,7 @@ if unmanaged:
         process_path = str(u.get("process_name") or "?")
         process_name = os.path.basename(process_path.rstrip("/")) or process_path
         term.emit(
-            f"{u.get('node') or '?'} · PID {u.get('pid') or '?'} · {process_name} · {mem_s}",
+            f"{placement_label(u.get('node'))} · PID {u.get('pid') or '?'} · {process_name} · {mem_s}",
             initial_indent="  ",
             subsequent_indent="    ",
         )
@@ -392,7 +743,7 @@ show_diagnostics() {
   log "diagnostics — inventory summary (read-only)"
   render_relevant_services "$inv"
   if [ -n "${WIZARD_STATUS_CMD:-}" ] || [ -z "${WIZARD_INVENTORY_JSON:-}${WIZARD_INVENTORY_CMD:-}" ]; then
-    cmd_status "$NAME" || true
+    cmd_status "$NAME" "${PLACEMENT_ARGS[@]}" || true
   fi
 }
 
@@ -402,23 +753,98 @@ analyze_inventory() {
   local inv="$1"
   local out
   out=$(
-    INV_JSON="$inv" NAME="$NAME" PORT="$PORT" SERVED_NAME="$SERVED_NAME" python3 - <<'PY'
-import json, os
+    INV_JSON="$inv" NAME="$NAME" PORT="$PORT" NODES="$NODES" \
+      TARGET_NODE_KEY="$PLACEMENT_NODE_KEY" SERVED_NAME="$SERVED_NAME" \
+      python3 - <<'PY'
+import json
+import os
+
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 name = os.environ["NAME"]
 port = int(os.environ.get("PORT") or 8000)
-
+target_count = int(os.environ.get("NODES") or 1)
+selected_node = os.environ.get("TARGET_NODE_KEY") or "head"
 services = inv.get("services") or []
-unmanaged = inv.get("unmanaged_gpu_processes") or []
+all_unmanaged = inv.get("unmanaged_gpu_processes") or []
 worker = inv.get("worker") or {}
 worker_status = worker.get("status") or "unset"
+nodes_info = inv.get("nodes") or {}
 
-def active(s):
-    st = s.get("state")
-    if st in ("running", "partial", "degraded"):
+
+def node_name_for_rank(rank):
+    if rank == 0:
+        return "head"
+    if rank == 1:
+        return "worker"
+    return f"rank-{rank}"
+
+
+if target_count == 1:
+    target_node_keys = {selected_node}
+else:
+    target_node_keys = {
+        node_name_for_rank(rank) for rank in range(target_count)
+    }
+
+
+def required_remote_probes(node_count, service=None):
+    probes = (service or {}).get("required_remote_probes")
+    if isinstance(probes, list) and probes:
+        return probes
+    result = []
+    for rank in range(1, int(node_count or 1)):
+        node_key = node_name_for_rank(rank)
+        info = nodes_info.get(node_key) or {}
+        if "probe_status" in info:
+            status = info.get("probe_status") or "unknown"
+            reason = info.get("probe_reason")
+        else:
+            status = worker_status
+            reason = worker.get("reason")
+        result.append({
+            "rank": str(rank),
+            "node": node_key,
+            "status": status,
+            "reason": reason,
+        })
+    return result
+
+
+if target_count == 1:
+    target_info = nodes_info.get(selected_node) or {}
+    target_remote_unreachable = (
+        selected_node != "head"
+        and (target_info.get("probe_status") or "unknown") != "ok"
+    )
+else:
+    target_remote_unreachable = any(
+        item.get("status") != "ok"
+        for item in required_remote_probes(target_count)
+    )
+
+
+def active(service):
+    state = service.get("state")
+    if state in ("running", "partial", "degraded"):
         return True
-    return any(r.get("running") for r in (s.get("ranks") or []))
+    return any(rank.get("running") for rank in (service.get("ranks") or []))
 
+
+def service_overlaps(service, include_stale=False):
+    for rank in service.get("ranks") or []:
+        if rank.get("node") not in target_node_keys:
+            continue
+        if rank.get("running"):
+            return True
+        if include_stale and rank.get("stale"):
+            return True
+    return False
+
+
+unmanaged = [
+    item for item in all_unmanaged
+    if item.get("node") in target_node_keys
+]
 same = None
 others_managed_safe = []
 others_managed_unsafe = []
@@ -429,74 +855,101 @@ unknown_blockers = []
 legacy_blockers = []
 mismatch_blockers = []
 
-for s in services:
-    conf = s.get("conf") or s.get("profile") or ""
-    own = s.get("ownership") or ""
-    state = s.get("state") or ""
+for service in services:
+    conf = service.get("conf") or service.get("profile") or ""
+    ownership = service.get("ownership") or ""
+    state = service.get("state") or ""
+    overlaps_active = service_overlaps(service)
+    overlaps_any = service_overlaps(service, include_stale=True)
+    if not overlaps_any:
+        continue
     is_same = conf == name
-    is_port = (s.get("api_port") == port) and active(s)
+    is_port = (
+        service.get("api_port") == port
+        and active(service)
+        and overlaps_active
+    )
 
-    if is_same and state == "stale" and own == "managed":
-        stale_same = s
+    if is_same and state == "stale" and ownership == "managed":
+        stale_same = service
         continue
-    if is_same and state == "running" and s.get("complete") and own == "managed":
-        same = s
+    if (
+        is_same
+        and state == "running"
+        and service.get("complete")
+        and ownership == "managed"
+        and overlaps_active
+    ):
+        same = service
         continue
-    if is_same and state in ("partial", "degraded") and own == "managed":
-        if s.get("safe_to_stop") and all(
-            r.get("ownership") == "managed" and r.get("safe_to_stop")
-            for r in (s.get("ranks") or [])
+    if is_same and state in ("partial", "degraded") and ownership == "managed":
+        if service.get("safe_to_stop") and all(
+            rank.get("ownership") == "managed" and rank.get("safe_to_stop")
+            for rank in (service.get("ranks") or [])
         ):
-            partial_safe.append(s)
+            partial_safe.append(service)
         else:
-            partial_unsafe.append(s)
+            partial_unsafe.append(service)
         continue
-    if is_same and own == "managed" and active(s):
-        if s.get("safe_to_stop"):
-            partial_safe.append(s)
+    if is_same and ownership == "managed" and overlaps_active:
+        if service.get("safe_to_stop"):
+            partial_safe.append(service)
         else:
-            partial_unsafe.append(s)
+            partial_unsafe.append(service)
         continue
     if is_same:
-        # Same conf already classified (or inactive/non-blocking residual).
+        continue
+    if not (overlaps_active or is_port):
         continue
 
-    if not (active(s) or is_port):
-        continue
-
-    if own == "managed":
-        if state in ("partial", "degraded") or not s.get("complete"):
-            if s.get("safe_to_stop") and all(
-                r.get("ownership") == "managed" and r.get("safe_to_stop")
-                for r in (s.get("ranks") or [])
+    if ownership == "managed":
+        if state in ("partial", "degraded") or not service.get("complete"):
+            if service.get("safe_to_stop") and all(
+                rank.get("ownership") == "managed" and rank.get("safe_to_stop")
+                for rank in (service.get("ranks") or [])
             ):
-                partial_safe.append(s)
+                partial_safe.append(service)
             else:
-                partial_unsafe.append(s)
-        elif s.get("safe_to_stop") and s.get("complete"):
-            others_managed_safe.append(s)
+                partial_unsafe.append(service)
+        elif service.get("safe_to_stop") and service.get("complete"):
+            others_managed_safe.append(service)
         else:
-            others_managed_unsafe.append(s)
-    elif own == "legacy":
-        legacy_blockers.append(s)
-    elif own == "mismatch" or own == "mixed":
-        mismatch_blockers.append(s)
+            others_managed_unsafe.append(service)
+    elif ownership == "legacy":
+        legacy_blockers.append(service)
+    elif ownership in ("mismatch", "mixed"):
+        mismatch_blockers.append(service)
     else:
-        unknown_blockers.append(s)
+        unknown_blockers.append(service)
 
 port_unknown = False
-for s in services:
-    if s.get("api_port") == port and active(s):
-        conf = s.get("conf") or ""
-        own = s.get("ownership") or ""
-        if conf != name and own not in ("managed",):
+for service in services:
+    if (
+        service.get("api_port") == port
+        and active(service)
+        and service_overlaps(service)
+    ):
+        conf = service.get("conf") or ""
+        ownership = service.get("ownership") or ""
+        if conf != name and ownership in (
+            "unknown", "legacy", "mismatch", "mixed"
+        ):
             port_unknown = True
-        if conf != name and own in ("unknown", "legacy", "mismatch", "mixed"):
-            port_unknown = True
+
+partial_remote_unreachable = any(
+    any(
+        item.get("status") != "ok"
+        for item in required_remote_probes(
+            service.get("expected_nodes") or 1, service
+        )
+    )
+    for service in [*partial_safe, *partial_unsafe]
+)
 
 print(json.dumps({
     "worker_status": worker_status,
-    "worker_unreachable": worker_status != "ok",
+    "worker_unreachable": target_remote_unreachable,
+    "partial_remote_unreachable": partial_remote_unreachable,
     "has_unmanaged_gpu": len(unmanaged) > 0,
     "unmanaged_count": len(unmanaged),
     "same_complete_running": same is not None,
@@ -507,19 +960,39 @@ print(json.dumps({
     "stale_same_name_blocks": bool(
         stale_same and stale_same.get("container_name")
     ),
-    "others_safe_confs": [s.get("conf") for s in others_managed_safe if s.get("conf")],
-    "others_safe_ids": [s.get("service_id") for s in others_managed_safe],
-    "others_unsafe_ids": [s.get("service_id") for s in others_managed_unsafe],
-    "partial_safe_confs": [s.get("conf") for s in partial_safe if s.get("conf")],
-    "partial_safe_ids": [s.get("service_id") for s in partial_safe],
-    "partial_unsafe_ids": [s.get("service_id") for s in partial_unsafe],
-    "unknown_ids": [s.get("service_id") for s in unknown_blockers],
-    "legacy_ids": [s.get("service_id") for s in legacy_blockers],
-    "mismatch_ids": [s.get("service_id") for s in mismatch_blockers],
+    "others_safe_confs": [
+        service.get("conf") for service in others_managed_safe
+        if service.get("conf")
+    ],
+    "others_safe_ids": [
+        service.get("service_id") for service in others_managed_safe
+    ],
+    "others_unsafe_ids": [
+        service.get("service_id") for service in others_managed_unsafe
+    ],
+    "partial_safe_confs": [
+        service.get("conf") for service in partial_safe
+        if service.get("conf")
+    ],
+    "partial_safe_ids": [
+        service.get("service_id") for service in partial_safe
+    ],
+    "partial_unsafe_ids": [
+        service.get("service_id") for service in partial_unsafe
+    ],
+    "unknown_ids": [
+        service.get("service_id") for service in unknown_blockers
+    ],
+    "legacy_ids": [
+        service.get("service_id") for service in legacy_blockers
+    ],
+    "mismatch_ids": [
+        service.get("service_id") for service in mismatch_blockers
+    ],
     "port_unknown": port_unknown,
     "readonly_block": bool(
         unknown_blockers or legacy_blockers or mismatch_blockers
-        or (len(unmanaged) > 0 and not others_managed_safe and same is None)
+        or (unmanaged and not others_managed_safe and same is None)
     ),
 }))
 PY
@@ -558,19 +1031,24 @@ prompt_spec_decode() {
 final_confirm_start() {
   local msg
   if [ "${#PENDING_STOP[@]}" -gt 0 ]; then
-    msg="Stop ${PENDING_STOP[*]}, recheck memory, then start $NAME?"
+    msg="Stop ${PENDING_STOP[*]}, recheck, then start $NAME on $PLACEMENT_HOSTNAME?"
   else
-    msg="Start $NAME now?"
+    msg="Start $NAME on $PLACEMENT_HOSTNAME?"
   fi
   confirm "$msg"
 }
 
 execute_pending_stops() {
   local conf
+  local -a down_args=()
   STOPPED_CONFS=()
   for conf in "${PENDING_STOP[@]}"; do
     log "stopping stack-managed conf=$conf (ownership revalidated by down.sh)…"
-    if ! cmd_down "$conf"; then
+    down_args=()
+    if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
+      down_args=("${PLACEMENT_ARGS[@]}")
+    fi
+    if ! cmd_down "$conf" "${down_args[@]}"; then
       die "stop failed for $conf — no further mutations; inspect with ./pulsar inventory"
     fi
     STOPPED_CONFS+=("$conf")
@@ -596,6 +1074,9 @@ offer_restart_previous() {
     Restart*)
       NAME="$prev"
       load_conf "$NAME"
+      if [ "$NODES" -gt 1 ]; then
+        reset_placement_state
+      fi
       PREVIOUS_PROFILE=""
       STOPPED_CONFS=()
       return 0
@@ -610,20 +1091,77 @@ offer_restart_previous() {
   esac
 }
 
+prelaunch_inventory_is_clear() {
+  local inv="$1" reason
+  reason=$(INV_JSON="$inv" TARGET_NODE_KEY="$PLACEMENT_NODE_KEY" \
+    TARGET_NODE_ID="$PLACEMENT_NODE_ID" PLACEMENT_AWARE="$PLACEMENT_AWARE" \
+    NODES="$NODES" python3 - <<'PY'
+import json
+import os
+
+inv = json.loads(os.environ.get("INV_JSON") or "{}")
+nodes = inv.get("nodes") or {}
+node_count = int(os.environ.get("NODES") or 1)
+selected_key = os.environ.get("TARGET_NODE_KEY") or "head"
+selected_id = os.environ.get("TARGET_NODE_ID") or ""
+placement_aware = os.environ.get("PLACEMENT_AWARE") == "1"
+
+if node_count == 1:
+    target_nodes = {selected_key}
+else:
+    target_nodes = {
+        "head" if rank == 0 else ("worker" if rank == 1 else f"rank-{rank}")
+        for rank in range(node_count)
+    }
+
+if placement_aware:
+    node = nodes.get(selected_key)
+    if not isinstance(node, dict):
+        print(f"selected node {selected_key} disappeared from inventory")
+        raise SystemExit(1)
+    if node.get("confirmed") is False:
+        print(f"selected node {selected_key} is no longer confirmed")
+        raise SystemExit(1)
+    if selected_id and node.get("node_id") != selected_id:
+        print("selected physical node identity changed before launch")
+        raise SystemExit(1)
+    if selected_key != "head" and (node.get("probe_status") or "") != "ok":
+        print(f"selected node {selected_key} is no longer reachable with Docker")
+        raise SystemExit(1)
+
+for service in inv.get("services") or []:
+    for rank in service.get("ranks") or []:
+        if rank.get("node") in target_nodes and rank.get("running"):
+            label = service.get("conf") or service.get("service_id") or "unknown"
+            print(f"service {label} appeared on the selected physical node")
+            raise SystemExit(1)
+raise SystemExit(0)
+PY
+  ) || {
+    warn "prelaunch inventory changed: ${reason:-selected node is not clear}"
+    return 1
+  }
+}
+
 run_post_stop_memory() {
-  # After any stop: reinventory + cold memory. Never assume reclaim.
-  local inv mem_json mrc
-  log "re-running inventory after stop (memory reclaim is not assumed)…"
+  # Always refresh selected-node inventory and memory before launch.
+  local phase="${1:-after-stop}" inv mem_json mrc
+  if [ "$phase" = prelaunch ]; then
+    log "re-running inventory and memory immediately before launch…"
+  else
+    log "re-running inventory after stop (memory reclaim is not assumed)…"
+  fi
   collect_inventory_json_or_die inv
+  prelaunch_inventory_is_clear "$inv" || return 1
   render_relevant_services "$inv"
-  log "cold memory preflight for $NAME…"
-  collect_memory_json_or_die mem_json mrc "$NAME"
+  log "cold memory preflight for $NAME on $PLACEMENT_HOSTNAME…"
+  collect_memory_json_or_die mem_json mrc "$NAME" "${PLACEMENT_ARGS[@]}"
   render_target_summary "$inv" "$mem_json" "$mrc"
   if [ "$mrc" = 1 ]; then
-    warn "memory preflight FAIL after stop — will not launch"
+    warn "memory preflight FAIL immediately before launch — will not launch"
     local free need fp
     read_mem_budget_fields "$mem_json"
-    log "target=$NAME free_head=${free:-?} GiB footprint=${fp:-?} need_start=${need:-?} GiB"
+    log "target=$NAME node=$PLACEMENT_HOSTNAME free=${free:-?} GiB footprint=${fp:-?} need_start=${need:-?} GiB"
     log "hard memory failure never offers continue-anyway"
     if [ -n "${PREVIOUS_PROFILE:-}" ]; then
       local rc=0
@@ -641,8 +1179,8 @@ run_post_stop_memory() {
   if [ "$mrc" = 2 ]; then
     local free need fp
     read_mem_budget_fields "$mem_json"
-    log "memory WARN: free_head=${free:-?} GiB footprint=${fp:-?} need_start=${need:-?} GiB for $NAME"
-    if confirm "Memory is still tight after cleanup. Continue with start anyway?"; then
+    log "memory WARN: node=$PLACEMENT_HOSTNAME free=${free:-?} GiB footprint=${fp:-?} need_start=${need:-?} GiB for $NAME"
+    if confirm "Memory is tight on $PLACEMENT_HOSTNAME. Continue with start anyway?"; then
       ACCEPT=(--accept-memory-warn)
     else
       warn "aborted after stop; previous profile may be down"
@@ -670,14 +1208,14 @@ plan_selected_model() {
   while true; do
     log "collecting inventory (read-only)…"
     collect_inventory_json_or_die inv
-    collect_memory_json_or_die mem_json mrc "$NAME"
+    collect_memory_json_or_die mem_json mrc "$NAME" "${PLACEMENT_ARGS[@]}"
 
     render_target_summary "$inv" "$mem_json" "$mrc"
     render_relevant_services "$inv"
     analyze_inventory "$inv"
     analysis="$ANALYZE_JSON"
 
-    local same_running worker_unreach has_unmanaged
+    local same_running worker_unreach partial_remote_unreach has_unmanaged
     local others_safe partial_safe stale_same port_unknown
     local unknown_ids legacy_ids mismatch_ids others_unsafe partial_unsafe
     local stale_safe
@@ -719,20 +1257,19 @@ plan_selected_model() {
           if [ "$prc" = 2 ]; then return 2; fi
           if [ "$prc" = 10 ]; then return 10; fi
           if [ "$prc" != 0 ]; then exit 1; fi
-          if ! cmd_up "$NAME" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
+          if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
             warn "launch failed after restart of $NAME"
             pick=$(choose "Launch failed — what next?" \
               "Retry start $NAME from current config" \
               "Exit stopped")
             case "$pick" in
               Retry*)
-                cmd_up "$NAME" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes \
-                  || die "retry launch failed"
+                cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes || die "retry launch failed"
                 ;;
               *) log "exiting stopped"; exit 1 ;;
             esac
           fi
-          cmd_status "$NAME" || true
+          cmd_status "$NAME" "${PLACEMENT_ARGS[@]}" || true
           exit 0
           ;;
         Show*)
@@ -789,11 +1326,12 @@ plan_selected_model() {
       esac
     fi
 
-    # ----- worker unreachable blocks multi-node cleanup/replacement -----
-    if [ "$worker_unreach" = "True" ] && [ "$NODES" = "2" ]; then
-      log "worker is unreachable — refusing automatic multi-node cleanup/replacement"
-      log "prove worker SSH/Docker, or clear WORKER_IP for single-node plans"
-      pick=$(choose "Worker unreachable — what next?" \
+    # ----- any remote failure blocks multi-node cleanup/replacement -----
+    if [ "$worker_unreach" = "True" ] \
+        && { [ "$NODES" -gt 1 ] || [ "$PLACEMENT_REMOTE" = 1 ]; }; then
+      log "one or more cluster nodes required by this model are unreachable — refusing automatic cleanup/replacement"
+      log "restore key-based SSH and Docker access on every required cluster node"
+      pick=$(choose "Required cluster node unreachable — what next?" \
         "Exit" \
         "Choose another model" \
         "Show diagnostics")
@@ -803,10 +1341,11 @@ plan_selected_model() {
         *) show_diagnostics "$inv"; continue ;;
       esac
     fi
-    # Partial multi-node with worker unreachable on any 2-node partial
-    if [ "$worker_unreach" = "True" ] && { [ -n "$partial_safe" ] || [ -n "$partial_unsafe" ]; }; then
-      log "worker unreachable with partial/degraded multi-node evidence — refusing automatic cleanup"
-      pick=$(choose "Worker unreachable (partial cluster) — what next?" \
+    # Partial multi-node evidence also needs every required node observable.
+    if [ "$partial_remote_unreach" = "True" ] \
+        && { [ -n "$partial_safe" ] || [ -n "$partial_unsafe" ]; }; then
+      log "a cluster node is unreachable while the existing service is incomplete — refusing automatic cleanup"
+      pick=$(choose "Cluster node unreachable — what next?" \
         "Exit" \
         "Choose another model" \
         "Show diagnostics")
@@ -820,7 +1359,7 @@ plan_selected_model() {
     # ----- partial/degraded managed -----
     if [ -n "$partial_unsafe" ]; then
       log "partial/degraded managed service is not fully inventory-safe: $partial_unsafe"
-      log "observed ranks may be incomplete — Wizard will not imply completeness or force cleanup"
+      log "observed cluster nodes may be incomplete — Wizard will not imply completeness or force cleanup"
       pick=$(choose "Partial managed service (not fully safe) — what next?" \
         "Exit" \
         "Choose another model" \
@@ -833,8 +1372,8 @@ plan_selected_model() {
     fi
 
     if [ -n "$partial_safe" ]; then
-      log "partial/degraded managed service(s) with inventory-safe observed ranks: $partial_safe"
-      log "cleanup covers observed ranks only — not a claim of full cluster completeness"
+      log "partial/degraded managed service(s) with inventory-safe observed nodes: $partial_safe"
+      log "cleanup covers observed nodes only — not a claim of full cluster completeness"
       pick=$(choose "Partial managed service — what next?" \
         "Stop listed stack-managed service(s), recheck, then start $NAME" \
         "Keep current service and exit" \
@@ -955,18 +1494,20 @@ plan_selected_model() {
       exit 0
     fi
 
+    local prc=0
     if [ "${#PENDING_STOP[@]}" -gt 0 ]; then
       log "stops scheduled: ${PENDING_STOP[*]}"
       execute_pending_stops
-      local prc=0
-      run_post_stop_memory || prc=$?
-      if [ "$prc" = 2 ]; then return 2; fi
-      if [ "$prc" = 10 ]; then return 10; fi
-      if [ "$prc" != 0 ]; then exit 1; fi
+      run_post_stop_memory after-stop || prc=$?
+    elif [ "$PLACEMENT_AWARE" = 1 ]; then
+      run_post_stop_memory prelaunch || prc=$?
     fi
+    if [ "$prc" = 2 ]; then return 2; fi
+    if [ "$prc" = 10 ]; then return 10; fi
+    if [ "$prc" != 0 ]; then exit 1; fi
 
     log "launching $NAME…"
-    if ! cmd_up "$NAME" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
+    if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
       warn "launch failed for $NAME"
       if [ -n "${PREVIOUS_PROFILE:-}" ] && [ "${PREVIOUS_PROFILE}" != "$NAME" ]; then
         local rc=0
@@ -983,7 +1524,7 @@ plan_selected_model() {
         *) exit 1 ;;
       esac
     fi
-    cmd_status "$NAME" || true
+    cmd_status "$NAME" "${PLACEMENT_ARGS[@]}" || true
     exit 0
   done
 }
@@ -1006,41 +1547,101 @@ else
   log "skipping doctor (WIZARD_SKIP_DOCTOR=1)"
 fi
 
-if [ "${WIZARD_SKIP_FABRIC_PROMPT:-0}" != 1 ]; then
-  if [ -z "${WORKER_IP:-}" ] || [ -z "${HEAD_IP:-}" ]; then
-    if confirm "Configure multi-node .env from fabric detect? (optional for single-node)"; then
-      "$REPO_DIR/scripts/detect-fabric.sh" || true
-      if confirm "Write detected HEAD_IP/NCCL_* into .env? (you must still set WORKER_IP)"; then
-        "$REPO_DIR/scripts/detect-fabric.sh" --write-env || true
-        warn "edit .env and set WORKER_IP to the peer RoCE IP before Path B"
-      fi
-    fi
+reload_cluster_topology || die "confirmed topology is invalid"
+if [ "${WIZARD_SKIP_FABRIC_PROMPT:-0}" != 1 ] \
+    && [ "$CLUSTER_TOPOLOGY_COUNT" -le 1 ]; then
+  if confirm "Discover and confirm GB10 cluster membership? (single-node remains available if skipped)"; then
+    "$REPO_DIR/scripts/detect-fabric.sh" --write-topology
+    reload_cluster_topology || die "newly written topology failed validation"
   fi
+fi
+standalone_capacity=0
+if [ -n "${WIZARD_TOPOLOGY_NODES:-}" ]; then
+  topology_capacity="$WIZARD_TOPOLOGY_NODES"
+elif [ "$CLUSTER_TOPOLOGY_COUNT" -eq 0 ]; then
+  # No manifest is a supported standalone state. Do not synthesize confirmed
+  # topology identity merely to make the local one-node path available.
+  topology_capacity=1
+  standalone_capacity=1
+else
+  topology_capacity="$CLUSTER_TOPOLOGY_COUNT"
+fi
+[[ "$topology_capacity" =~ ^[1-9][0-9]*$ ]] \
+  || die "invalid confirmed topology capacity '$topology_capacity'"
+if [ "$standalone_capacity" = 1 ]; then
+  topology_context="standalone local node"
+  log "1 standalone local node available · no cluster membership confirmed"
+else
+  topology_context="${topology_capacity} confirmed nodes available"
+  log "$topology_capacity confirmed nodes available · exact validated profiles only"
 fi
 
 # Selection loop: "Choose another model" returns here without re-running doctor.
 while true; do
   mapfile -t choices < <(
-    cmd_list_models_json | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-for m in d.get('models', []):
-    fr = ' · first run' if m.get('first_run_candidate') else ''
-    node_word = 'node' if m['nodes'] == 1 else 'nodes'
-    print('%s · %s %s · %s · spec %s%s' % (
-        m['id'], m['nodes'], node_word, m['source'].upper(), m['spec'], fr))
+    cmd_list_models_json | MAX_NODES="$topology_capacity" python3 -c "
+import json
+import os
+import sys
+
+capacity = int(os.environ.get('MAX_NODES') or 1)
+models = [
+    model for model in json.load(sys.stdin).get('models', [])
+    if int(model.get('nodes') or 1) <= capacity
+]
+models.sort(key=lambda model: str(model.get('id') or '').casefold())
+
+family_models = {}
+for model in models:
+    family = model.get('family') or model.get('served_name') or model['id']
+    family_models.setdefault(family, []).append(model)
+family_min = {}
+for model in models:
+    family = model.get('family') or model.get('served_name') or model['id']
+    family_min[family] = min(family_min.get(family, 10**9), int(model['nodes']))
+
+name_width = max((len(str(model['id'])) for model in models), default=0)
+for model in models:
+    family = model.get('family') or model.get('served_name') or model['id']
+    nodes = int(model['nodes'])
+    suggested = bool(model.get('family_recommended')) or (
+        len(family_models[family]) > 1 and nodes == family_min[family]
+    )
+    marks = []
+    if suggested:
+        marks.append('suggested')
+    if model.get('first_run_candidate'):
+        marks.append('first run')
+    suffix = (' · ' + ' · '.join(marks)) if marks else ''
+    node_word = 'node' if nodes == 1 else 'nodes'
+    print(f\"{model['id']:<{name_width}}  {nodes} {node_word}{suffix}\")
 "
   )
   if [ "${#choices[@]}" -eq 0 ]; then
-    die "no validated models found"
+    if [ "$standalone_capacity" = 1 ]; then
+      die "no validated single-node profile is available for standalone local use"
+    fi
+    die "no validated profile fits the $topology_capacity confirmed node(s)"
   fi
 
-  pick=$(choose "Validated models · Path A 1-node / Path B 2-node" "${choices[@]}")
+  pick=$(choose "Choose a validated model · $topology_context" "${choices[@]}")
   NAME=$(echo "$pick" | awk '{print $1}')
   [ -n "$NAME" ] || die "no selection"
 
   load_conf "$NAME"
-  log "selected $NAME status=$STATUS nodes=$NODES served=$SERVED_NAME image=$IMAGE"
+  if [ "$NODES" -eq 1 ]; then
+    select_single_node_placement
+  else
+    reset_placement_state
+  fi
+  echo
+  render_model_selection
+  if [ "$(model_source_kind)" = hf ]; then
+    render_human_section "WEIGHT STORAGE" \
+      "Mode" "replicated local caches · validated wizard default" \
+      "Cold start" "each serving node reads its own durable copy" \
+      "Single copy" "experimental CLI opt-in · never automatic"
+  fi
 
   if status_requires_force; then
     die "$NAME status=$STATUS is not ship-default (need tested*). Not offered for guided start; use scripts/up.sh --force only if you mean it."
@@ -1050,24 +1651,34 @@ for m in d.get('models', []):
     log "checking weights…"
     weights_json=""
     weights_rc=0
-    weights_json=$("$REPO_DIR/scripts/check-weights.sh" "$NAME" --json) || weights_rc=$?
+    weights_json=$(cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json) || weights_rc=$?
     if [ "$weights_rc" != 0 ]; then
       if ! probe_json_has_state "$weights_json"; then
         die "weight preflight returned invalid data — no download or launch attempted"
       fi
       weights_state=$(json_field "$weights_json" state)
-      log "weights state=$weights_state"
+      render_weight_status "$weights_json"
       case "$weights_state" in
-        worker-unreachable)
-          die "worker SSH unavailable — cannot verify weights; no download or sync attempted"
+        worker-unreachable|rank-unreachable|unreachable)
+          die "one or more cluster nodes required by this model are unreachable — cannot verify weights"
           ;;
       esac
       kind=$(model_source_kind)
       if [ "$kind" = hf ]; then
+        if [ -z "${WIZARD_PULL_WEIGHTS_CMD:-}" ] \
+            && ! command -v hf >/dev/null 2>&1 \
+            && ! command -v huggingface-cli >/dev/null 2>&1; then
+          die "weights are missing, but no Hugging Face downloader is installed. Install the 'hf' CLI, then rerun ./pulsar (see docs/PREREQUISITES.md)."
+        fi
         weights_scope=""
-        [ "$NODES" = 2 ] && weights_scope=" and sync it to the worker"
+        [ "$NODES" -gt 1 ] && weights_scope=" and copy it to every other node used by this model"
+        [ "$PLACEMENT_REMOTE" = 1 ] && weights_scope=" and copy it to $PLACEMENT_HOSTNAME"
         if confirm "Weights missing or incomplete. Download HF model now${weights_scope}?"; then
-          spin "Downloading weights…" "$REPO_DIR/scripts/pull-weights.sh" "$NAME" --yes
+          log "preparing model files…"
+          if ! cmd_pull_weights "$NAME" "${PLACEMENT_ARGS[@]}" --yes; then
+            # pull-weights owns the human-facing failure summary.
+            exit 1
+          fi
         else
           die "cannot start without weights"
         fi
@@ -1081,7 +1692,7 @@ for m in d.get('models', []):
     log "checking image…"
     image_json=""
     image_rc=0
-    image_json=$("$REPO_DIR/scripts/check-image.sh" "$NAME" --json) || image_rc=$?
+    image_json=$("$REPO_DIR/scripts/check-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" --json) || image_rc=$?
     if [ "$image_rc" != 0 ]; then
       if ! probe_json_has_state "$image_json"; then
         die "image preflight returned invalid data — no pull, sync, or launch attempted"
@@ -1089,23 +1700,23 @@ for m in d.get('models', []):
       image_state=$(json_field "$image_json" state)
       log "image state=$image_state"
       case "$image_state" in
-        head-docker-error)
-          die "head Docker daemon unavailable — no image pull or sync attempted"
+        head-docker-error|target-docker-error)
+          die "Docker is unavailable on $PLACEMENT_HOSTNAME — no image staging attempted"
           ;;
-        worker-unreachable)
-          die "worker SSH unavailable — no image pull or sync attempted"
+        worker-unreachable|rank-unreachable|target-unreachable)
+          die "one or more cluster nodes required by this model are unreachable — no image copy attempted"
           ;;
-        worker-docker-error)
-          die "worker Docker daemon unavailable — no image pull or sync attempted"
+        worker-docker-error|rank-docker-error)
+          die "Docker is unavailable on one or more cluster nodes required by this model"
           ;;
-        need-worker-ip)
-          die "WORKER_IP unset — cannot verify or sync a two-node image"
+        need-worker-ip|need-topology)
+          die "fewer cluster nodes are confirmed than this model requires"
           ;;
         *)
           case "$IMAGE" in
             vllm/vllm-openai:*|vllm/*|ghcr.io/*)
-              if confirm "Image missing. docker pull + sync worker if needed?"; then
-                spin "Syncing image…" "$REPO_DIR/scripts/sync-image.sh" "$NAME" --pull --yes
+              if confirm "Image missing. Stage it on $PLACEMENT_HOSTNAME now?"; then
+                spin "Syncing image…" "$REPO_DIR/scripts/sync-image.sh" "$NAME" "${PLACEMENT_ARGS[@]}" --pull --yes
               else
                 die "image required"
               fi

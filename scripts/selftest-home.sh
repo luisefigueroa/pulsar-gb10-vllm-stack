@@ -304,12 +304,14 @@ inv = {
   },
   "nodes": {
     "head": {
+      "hostname": "dgx-spark-1",
       "mem_available_gib": head_mem,
       "mem_total_gib": 128.0,
       "mem_status": "ok",
       "mem_source": "fixture",
     },
     "worker": {
+      "hostname": "dgx-spark-2" if worker_status != "unset" else None,
       "mem_available_gib": 90.0 if worker_status == "ok" else None,
       "mem_total_gib": 128.0 if worker_status == "ok" else None,
       "mem_status": "ok" if worker_status == "ok" else ("unreachable" if worker_status == "unreachable" else "n/a"),
@@ -322,6 +324,53 @@ inv = {
 with open(out, "w", encoding="utf-8") as f:
     json.dump(inv, f, indent=2)
     f.write("\n")
+PY
+}
+
+mark_idle_rank2_unreachable() {
+  local inv_path="$1"
+  INV_PATH="$inv_path" python3 - <<'PY'
+import json
+import os
+
+path = os.environ["INV_PATH"]
+with open(path, encoding="utf-8") as handle:
+    inv = json.load(handle)
+
+inv["worker"] = {
+    "ip": "10.0.0.2",
+    "status": "unreachable",
+    "reason": "rank 2 is unreachable",
+}
+inv.setdefault("nodes", {}).setdefault("worker", {}).update({
+    "mem_available_gib": 90.0,
+    "mem_total_gib": 128.0,
+    "mem_status": "ok",
+    "mem_source": "fixture",
+    "probe_status": "ok",
+    "probe_reason": "",
+})
+inv["nodes"]["rank-2"] = {
+    "hostname": "dgx-spark-3",
+    "mem_available_gib": None,
+    "mem_total_gib": None,
+    "mem_status": "unreachable",
+    "mem_source": "fixture",
+    "probe_status": "unreachable",
+    "probe_reason": "ssh failed",
+}
+for service in inv.get("services") or []:
+    if service.get("expected_nodes") == 2:
+        service["required_remote_probes"] = [{
+            "rank": "1",
+            "node": "worker",
+            "status": "ok",
+            "reason": "",
+        }]
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(inv, handle, indent=2)
+    handle.write("\n")
 PY
 }
 
@@ -358,7 +407,7 @@ cat >"$SHIM/wizard-cmd" <<'SH'
 set -euo pipefail
 echo "wizard" >>"${STATE_DIR}/logs/wizard.log"
 echo "[wizard] fixture entered"
-exit 0
+exit "${WIZARD_FIXTURE_RC:-0}"
 SH
 chmod +x "$SHIM/wizard-cmd"
 
@@ -524,6 +573,15 @@ run_home $'2\n6\n'
 assert_file_contains "$STATE/logs/wizard.log" "wizard" "serve entered wizard shim"
 assert_false "serve path: no down" bash -c "test -s '$STATE/logs/down.log'"
 
+# A failed wizard owns its failure explanation; Home must not append a shell
+# exit status in the normal operator view.
+reset_logs
+export WIZARD_FIXTURE_RC=1
+run_home $'2\n6\n'
+unset WIZARD_FIXTURE_RC
+assert_file_not_contains "$STATE/logs/home.combined" "wizard exited with status" \
+  "home hides technical wizard exit status by default"
+
 # Diagnostics doctor → Exit
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
@@ -556,6 +614,13 @@ stale = json.loads('''$(svc_managed other-model stale True True)'''.replace("oth
 # fix conf name in embedded
 stale = json.loads(r'''$(svc_managed stale-qwen stale True True)''')
 inv["services"].append(stale)
+inv["nodes"]["rank-2"] = {
+    "hostname": "dgx-spark-3",
+    "mem_available_gib": 88.0,
+    "mem_total_gib": 128.0,
+    "mem_status": "ok",
+    "mem_source": "fixture",
+}
 with open("$STATE/inv_current", "w") as f:
     json.dump(inv, f, indent=2)
     f.write("\n")
@@ -566,6 +631,9 @@ export QUICK_STATUS_API_CMD="$SHIM/api-forbid-completion"
 out=$("$REPO_DIR/scripts/quick-status.sh" 2>&1)
 assert_true "quick-status mentions conf" bash -c "printf '%s' \"\$0\" | grep -q qwen3-1.7b" "$out"
 assert_true "quick-status memory head" bash -c "printf '%s' \"\$0\" | grep -qi memory" "$out"
+assert_true "quick-status local hostname label" bash -c "printf '%s' \"\$0\" | grep -q 'dgx-spark-1 (this node)'" "$out"
+assert_true "quick-status remote hostname" bash -c "printf '%s' \"\$0\" | grep -q 'dgx-spark-3'" "$out"
+assert_false "quick-status omits numbered node labels" bash -c "printf '%s' \"\$0\" | grep -q 'cluster node'" "$out"
 assert_true "quick-status API advertised" bash -c "printf '%s' \"\$0\" | grep -qiE 'advertised|nemotron'" "$out"
 assert_true "quick-status unmanaged" bash -c "printf '%s' \"\$0\" | grep -qi unmanaged" "$out"
 assert_true "quick-status stale nonblocking" bash -c "printf '%s' \"\$0\" | grep -qiE 'stale|nonblocking'" "$out"
@@ -581,6 +649,8 @@ assert_true "quick-status uses labeled human fields" bash -c \
 j=$("$REPO_DIR/scripts/quick-status.sh" --json)
 assert_true "quick-status json kind" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"kind\"]==\"quick_status\"; assert d[\"inference_smoke\"] is False'" "$j"
 assert_true "quick-status json mem total" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"memory\"][\"head\"][\"mem_total_gib\"]==128.0'" "$j"
+assert_true "quick-status json rank 2" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert [n for n in d[\"memory\"][\"nodes\"] if n[\"name\"]==\"rank-2\"][0][\"mem_available_gib\"]==88.0'" "$j"
+assert_true "quick-status json rank 2 hostname" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert [n for n in d[\"memory\"][\"nodes\"] if n[\"name\"]==\"rank-2\"][0][\"hostname\"]==\"dgx-spark-3\"'" "$j"
 assert_true "quick-status json unmanaged agg" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"unmanaged_gpu\"][\"count\"]==1; assert d[\"unmanaged_gpu\"][\"measured_mib_aggregate\"]==4096'" "$j"
 assert_true "quick-status json stale count" bash -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"stale_managed\"][\"count\"]>=1'" "$j"
 
@@ -629,7 +699,7 @@ PY
 # Stop: 3, select first (only good-model), decline confirm n, exit 6
 run_home $'3\n1\nn\n6\n'
 assert_file_contains "$STATE/logs/home.combined" "good-model" "stop lists managed safe"
-assert_file_contains "$STATE/logs/home.combined" "good-model · RUNNING · ranks 1/1" \
+assert_file_contains "$STATE/logs/home.combined" "good-model · RUNNING · nodes 1/1" \
   "stop choice is compact and human-readable"
 assert_file_not_contains "$STATE/logs/home.combined" "vllm-mystery|mystery" "stop excludes unknown"
 # Legacy/mismatch conf names might appear in inventory messages? should not in choices - check down not called
@@ -664,6 +734,17 @@ seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True)" 
 run_home $'3\n6\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "worker-unreach 2-node excluded"
 assert_false "unreach: no down" bash -c "test -s '$STATE/logs/down.log'"
+
+# Aggregate remote health may be degraded by an idle rank outside this exact
+# validated service. The required rank remains observable and stoppable.
+reset_logs
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True)" unreachable
+mark_idle_rank2_unreachable "$STATE/inv_current"
+run_home $'3\n1\ny\n6\n'
+assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" \
+  "idle rank 2 does not hide exact 2-node stop"
+assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
+  "idle rank 2 preserves exact-service eligibility"
 
 # ---------------------------------------------------------------------------
 # 6) Stale maintenance

@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# Tear down 2-node serving on BOTH nodes. Always safe to run; run it before
-# every start if in doubt. A half-torn-down cluster (worker still holding the
-# RDMA QPs / master port) is the classic way to lose an afternoon.
-#   cluster/stop-cluster.sh [model-name|--all]
-#
-# Exact name matching only for a named conf (never prefix-match
-# deepseek-v4-flash onto deepseek-v4-flash-0422). Only removes containers that
-# prove stack ownership (managed + conf/rank). Unlabeled/legacy are refused.
-# Worker SSH/Docker errors are operational failures — never treated as absence.
-#
-# Named stops load models/<name>.conf and require NODES=2 before any
-# inspect/remove. Unknown confs and single-node confs fail closed.
+# Fail-closed teardown for an exact N-rank profile or all stack-managed ranks.
+#   cluster/stop-cluster.sh <model-name|--all>
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,77 +11,102 @@ cd "$REPO_DIR"
 ARG="${1:-}"
 [ -n "$ARG" ] || { echo "usage: $0 <model-name|--all>" >&2; exit 2; }
 
-if [ "$ARG" = "--all" ]; then
-  require_cluster_ips || exit 1
-  echo "[stop] removing all stack-managed containers on head and worker"
-  # Probe worker before any head mutation.
-  if ! list_managed_container_ids_remote "$WORKER_IP" >/dev/null; then
-    echo "[stop] ERROR: worker unreachable or docker error on $WORKER_IP — refusing --all (no head removals)" >&2
+if [ "$ARG" = --all ]; then
+  load_cluster_topology || exit 1
+  [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ] || {
+    echo "[stop] ERROR: no confirmed remote cluster ranks" >&2
+    exit 1
+  }
+  echo "[stop] removing stack-managed containers across $CLUSTER_TOPOLOGY_COUNT confirmed ranks"
+
+  # Prove every Docker endpoint before the first mutation.
+  if ! list_managed_container_ids_local >/dev/null; then
+    echo "[stop] ERROR: rank 0 Docker unavailable" >&2
+    echo "[stop] No containers were removed." >&2
     exit 1
   fi
+
+  for ((rank = 1; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    if ! list_managed_container_ids_remote "$host" >/dev/null; then
+      echo "[stop] ERROR: rank $rank unreachable or Docker error on $host" >&2
+      echo "[stop] No containers were removed." >&2
+      exit 1
+    fi
+  done
+
   rc=0
+  for ((rank = CLUSTER_TOPOLOGY_COUNT - 1; rank >= 1; rank--)); do
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    step=0
+    remove_all_stack_managed_remote "$host" "$rank" || step=$?
+    rc=$(lifecycle_merge_rc "$rc" "$step")
+  done
   step=0
   remove_all_stack_managed_local || step=$?
   rc=$(lifecycle_merge_rc "$rc" "$step")
-  step=0
-  remove_all_stack_managed_remote "$WORKER_IP" || step=$?
-  rc=$(lifecycle_merge_rc "$rc" "$step")
-  if [ "$rc" -eq 0 ]; then
-    echo "[stop] clean — no stack-managed containers remain (or none were present)"
-    exit 0
-  fi
-  if [ "$rc" -eq 2 ]; then
-    echo "[stop] WARNING: some managed candidates refused (unknown conf / bad placement)" >&2
-    exit 1
-  fi
-  echo "[stop] WARNING: managed cleanup reported errors" >&2
+
+  case "$rc" in
+    0)
+      echo "[stop] clean — no stack-managed containers remain"
+      exit 0
+      ;;
+    2)
+      echo "[stop] WARNING: some candidates were refused (unknown conf or rank placement)" >&2
+      ;;
+    *)
+      echo "[stop] WARNING: managed cleanup reported an operational error" >&2
+      ;;
+  esac
   exit 1
 fi
 
-# Named conf: validate profile before any inspect/remove.
 load_conf "$ARG"
-if [ "$NODES" != "2" ]; then
-  echo "[stop] ERROR: $ARG is a single-node conf (NODES=$NODES); use scripts/down.sh $ARG" >&2
+if [ "$NODES" -le 1 ]; then
+  echo "[stop] ERROR: $ARG is a single-node profile; use scripts/down.sh $ARG" >&2
   exit 1
 fi
-require_cluster_ips || exit 1
+require_profile_topology "$NODES" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
+  || exit 1
 
-# Both ranks must be proven or absent; refuse partial/ambiguous.
-# Worker unreachable ⇒ operational error (do not remove head alone).
-EXACT=$(container_name_for "$ARG" 2)
-echo "[stop] stopping stack-managed cluster conf=$ARG container=$EXACT"
+EXACT=$(container_name_for "$ARG" "$NODES")
+echo "[stop] stopping exact profile=$ARG · $NODES ranks · container=$EXACT"
 rc=0
-remove_stack_owned_cluster_pair "$ARG" "$EXACT" "$WORKER_IP" || rc=$?
-if [ "$rc" -eq 0 ]; then
-  left_head=0
-  left_worker=0
-  probe=0
-  container_ownership_inspect_local "$EXACT" >/dev/null 2>&1 && left_head=1 || {
-    probe=$?
-    if [ "$probe" -eq 1 ]; then
-      echo "[stop] WARNING: local docker error verifying $EXACT gone" >&2
-      exit 1
-    fi
-  }
-  probe=0
-  container_ownership_inspect_remote "$WORKER_IP" "$EXACT" >/dev/null 2>&1 && left_worker=1 || {
-    probe=$?
-    if [ "$probe" -eq 1 ]; then
-      echo "[stop] WARNING: worker error verifying $EXACT gone" >&2
-      exit 1
-    fi
-  }
-  LEFT=$((left_head + left_worker))
-  if [ "$LEFT" -eq 0 ]; then
-    echo "[stop] clean — no container named $EXACT on either node"
-    exit 0
-  fi
-  echo "[stop] WARNING: $EXACT still present on $LEFT node(s)" >&2
-  exit 1
-fi
+remove_stack_owned_cluster "$ARG" "$EXACT" "$NODES" || rc=$?
 if [ "$rc" -eq 2 ]; then
   echo "[stop] refused: ownership not proven for every existing rank of $EXACT" >&2
   exit 1
 fi
-echo "[stop] failed to stop $EXACT (operational error; no partial remove)" >&2
+if [ "$rc" -ne 0 ]; then
+  echo "[stop] failed (operational error; initial probe was fail-closed)" >&2
+  exit 1
+fi
+
+left=0
+probe_rc=0
+container_ownership_inspect_local "$EXACT" >/dev/null 2>&1 && left=$((left + 1)) || {
+  probe_rc=$?
+  if [ "$probe_rc" -eq 1 ]; then
+    echo "[stop] WARNING: local Docker error verifying rank 0" >&2
+    exit 1
+  fi
+}
+for ((rank = 1; rank < NODES; rank++)); do
+  host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+  probe_rc=0
+  container_ownership_inspect_remote "$host" "$EXACT" >/dev/null 2>&1 \
+    && left=$((left + 1)) || {
+      probe_rc=$?
+      if [ "$probe_rc" -eq 1 ]; then
+        echo "[stop] WARNING: rank $rank error verifying $EXACT is gone" >&2
+        exit 1
+      fi
+    }
+done
+
+if [ "$left" -eq 0 ]; then
+  echo "[stop] clean — $EXACT absent from all $NODES active ranks"
+  exit 0
+fi
+echo "[stop] WARNING: $EXACT remains on $left rank(s)" >&2
 exit 1

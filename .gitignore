@@ -1,4 +1,6 @@
 .env
+.cluster-topology.json
+.weight-fabric/
 *.log.tmp
 __pycache__/
 .venv/

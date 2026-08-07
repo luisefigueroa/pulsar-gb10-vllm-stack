@@ -3,15 +3,16 @@
 These are the COMPLETE effective launch commands (rendered from
 `./serve.sh <name> --dry-run` / `cluster/start-cluster.sh <name> --dry-run`,
 not hand-transcribed). Day-to-day operators can use `./pulsar start <name>`
-(or `./pulsar wizard` for guided Path A/B and safe model switch).
+(or `./pulsar wizard` for a guided single- or multi-node model switch).
 `models/*.conf` remain the source of truth; this page exists so a recipe
 survives outside the tooling. Numbers: docs/VALIDATION.md.
 
 Shared doctrine baked into every recipe:
 - `--ipc=host --ulimit memlock=-1 --ulimit stack=67108864` (SHM + RDMA verbs)
 - HF cache mounted; `HF_HUB_OFFLINE=1` (all weights local)
-- 2-node adds `--network host --device /dev/infiniband` (host networking
-  does NOT expose RDMA devices) and the measured NCCL env
+- multi-node adds `--network host --device /dev/infiniband` (host networking
+  does NOT expose RDMA devices), per-rank interfaces from the confirmed
+  topology, and the measured shared NCCL policy
 - speculative decode follows validated profile policy: **DSpark is default-on**
   for the flagship and `--no-spec-decode` is its rollback; Super MTP and
   Laguna DFlash remain opt-in via `--spec-decode`; **never** use ngram on GDN
@@ -148,6 +149,8 @@ unsupported.
 
 - **Canaries**: `qwen3-1.7b` (E2E smoke, ~2 min to healthy) and
   `qwen3-1.7b-2node` (multi-node plumbing check, TP=2 mp backend).
+  They are hidden from the serving wizard; list them with
+  `scripts/list-models.sh --validated --diagnostic`.
 - **Bit-exact reproducibility run** (standard-attention models only): add
   `-e VLLM_BATCH_INVARIANT=1` → greedy outputs identical across nodes AND
   boots (30/30 verified). Not for production throughput paths.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only managed-service + memory inventory for DGX Spark head/worker.
+# Read-only managed-service + memory inventory for confirmed DGX Spark ranks.
 #   scripts/inventory.sh [--json] [--verbose] [--from-fixture path]
 #
 # Live mode probes Docker/SSH/nvidia-smi (never mutates). Fixture mode is pure
@@ -26,8 +26,8 @@ usage() {
   cat <<'EOF'
 usage: scripts/inventory.sh [--json] [--verbose] [--from-fixture path]
 
-  Read-only inventory of vLLM-related containers on head and (when configured)
-  worker. Reports service grouping, ownership, safe_to_stop, MemAvailable, and
+  Read-only inventory of vLLM-related containers on this node and every other
+  confirmed cluster node. Reports ownership, safe_to_stop, MemAvailable, and
   best-effort GPU/unified memory via nvidia-smi + docker top (never docker stats).
 
   --json            machine-readable output (schema_version=1; full inventory)
@@ -79,8 +79,8 @@ build_profile_catalog_json() {
       k=$(estimate_kv_gib)
       o="${OVERHEAD_GIB}"
       nodes="${NODES}"
-      if [ "$nodes" = "2" ]; then
-        wr=$(awk -v w="$w" 'BEGIN{printf "%.2f", w/2}')
+      if [ "$nodes" -gt 1 ]; then
+        wr=$(awk -v w="$w" -v n="$nodes" 'BEGIN{printf "%.2f", w/n}')
       else
         wr="$w"
       fi
@@ -102,7 +102,7 @@ with open(path, encoding="utf-8") as f:
             continue
         conf_name, served, nodes, port, fp, cname = line.split("\t")
         nodes_i = int(nodes)
-        ranks = ["0", "1"] if nodes_i == 2 else ["single"]
+        ranks = [str(rank) for rank in range(nodes_i)] if nodes_i > 1 else ["single"]
         out[conf_name] = {
             "served_name": served,
             "nodes": nodes_i,
@@ -219,6 +219,11 @@ owned_keys = (
     "io.pulsar.gb10.managed",
     "io.pulsar.gb10.conf",
     "io.pulsar.gb10.rank",
+    "io.pulsar.gb10.topology",
+    "io.pulsar.gb10.node-id",
+    "io.pulsar.gb10.weight-source",
+    "io.pulsar.gb10.weight-owner",
+    "io.pulsar.gb10.weight-config",
 )
 labels = {k: labels_all[k] for k in owned_keys if k in labels_all and labels_all[k] is not None}
 
@@ -310,151 +315,214 @@ PY
 }
 
 collect_live_snapshot() {
-  local profiles_json worker_ip worker_status worker_reason
+  local profiles_json worker_ip worker_status worker_reason topology_count
+  local local_hostname
   profiles_json=$(build_profile_catalog_json)
 
   if ! "$INVENTORY_DOCKER" info >/dev/null 2>&1; then
-    warn "head Docker daemon unavailable — inventory is incomplete; no lifecycle action is safe"
+    warn "Docker is unavailable on this node — inventory is incomplete; no lifecycle action is safe"
     return 1
   fi
 
-  worker_ip="${WORKER_IP:-}"
-  worker_status="unset"
-  worker_reason="WORKER_IP unset — worker not probed (single-node inventory still valid)"
-  local worker_mem="" worker_mem_status="unset" worker_mem_source="unset"
-  local worker_mem_total=""
-  local head_mem head_mem_status="ok" head_mem_source="proc_meminfo"
-  local head_mem_total=""
-
-  head_mem=$(mem_available_gib_cmd)
-  head_mem_total=$(mem_total_gib_cmd)
-  if [ -z "$head_mem" ]; then
-    head_mem_status="unavailable"
-    head_mem_source="unavailable"
-    head_mem="null"
+  topology_count=0
+  if load_cluster_topology; then
+    topology_count="$CLUSTER_TOPOLOGY_COUNT"
   fi
-  [ -n "$head_mem_total" ] || head_mem_total="null"
+  local_hostname="${CLUSTER_NODE_HOSTNAMES[0]:-}"
+  if [ -z "$local_hostname" ]; then
+    local_hostname=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo localhost)
+  fi
+  worker_ip=""
+  worker_status="unset"
+  worker_reason="no other cluster nodes confirmed"
+  if [ "$topology_count" -gt 1 ]; then
+    worker_ip="${CLUSTER_NODE_SSH_HOSTS[1]}"
+    worker_status="ok"
+    worker_reason=""
+  fi
 
-  local tmp_c tmp_g
+  local tmp_c tmp_g tmp_n profiles_file
   tmp_c=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-c.XXXXXX")
   tmp_g=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-g.XXXXXX")
-
+  tmp_n=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-n.XXXXXX")
+  profiles_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-prof.XXXXXX")
   : >"$tmp_c"
   : >"$tmp_g"
+  : >"$tmp_n"
+
+  local head_mem head_total head_node_id head_ssh_host head_control_ip
+  head_mem=$(mem_available_gib_cmd)
+  head_total=$(mem_total_gib_cmd)
+  [ -n "$head_mem" ] || head_mem=null
+  [ -n "$head_total" ] || head_total=null
+  head_node_id="${CLUSTER_NODE_IDS[0]:-}"
+  head_ssh_host="${CLUSTER_NODE_SSH_HOSTS[0]:-local}"
+  head_control_ip="${CLUSTER_NODE_CONTROL_IPS[0]:-127.0.0.1}"
+  printf 'head\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t0\n' \
+    "$local_hostname" "$head_mem" "$head_total" \
+    "$([ "$head_mem" = null ] && echo unavailable || echo ok)" \
+    "$([ "$head_mem" = null ] && echo unavailable || echo proc_meminfo)" \
+    ok "" "$head_node_id" "$head_ssh_host" "$head_control_ip" >>"$tmp_n"
 
   if ! collect_containers_node head local >>"$tmp_c"; then
-    warn "head container inventory failed — no lifecycle action is safe"
+    warn "container inventory failed on this node"
     return 1
   fi
-  collect_gpu_processes_local | parse_gpu_csv_to_json_lines head >>"$tmp_g" || true
+  collect_gpu_processes_local \
+    | parse_gpu_csv_to_json_lines head >>"$tmp_g" || true
 
-  if [ -n "$worker_ip" ]; then
-    if _ssh_worker_raw "$worker_ip" "true" >/dev/null 2>&1; then
-      worker_mem=$(_ssh_worker_raw "$worker_ip" \
-        "awk '/MemAvailable:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" 2>/dev/null || true)
-      worker_mem_total=$(_ssh_worker_raw "$worker_ip" \
-        "awk '/MemTotal:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" 2>/dev/null || true)
-      if [ -n "$worker_mem" ]; then
-        worker_mem_status="ok"
-        worker_mem_source="ssh_proc_meminfo"
-      else
-        worker_mem="null"
-        worker_mem_status="unavailable"
-        worker_mem_source="unavailable"
-      fi
-      [ -n "$worker_mem_total" ] || worker_mem_total="null"
-      collect_gpu_processes_remote "$worker_ip" | parse_gpu_csv_to_json_lines worker >>"$tmp_g" || true
-      if _ssh_worker_raw "$worker_ip" "docker info >/dev/null 2>&1"; then
-        worker_status="ok"
-        worker_reason=""
-        if ! collect_containers_node worker remote "$worker_ip" >>"$tmp_c"; then
-          worker_status="docker-error"
-          worker_reason="WORKER_IP=${worker_ip} Docker container enumeration failed"
-        fi
-      else
-        worker_status="docker-error"
-        worker_reason="WORKER_IP=${worker_ip} reachable but Docker daemon unavailable"
-      fi
-    else
-      worker_status="unreachable"
-      worker_reason="WORKER_IP=${worker_ip} SSH unreachable (BatchMode)"
-      worker_mem="null"
-      worker_mem_total="null"
-      worker_mem_status="unreachable"
-      worker_mem_source="unreachable"
-    fi
-  else
-    worker_mem="null"
-    worker_mem_total="null"
+  if [ "$topology_count" -le 1 ]; then
+    printf 'worker\t\tnull\tnull\tunset\tunset\tunset\tno other cluster nodes confirmed\t\t\t\t\n' \
+      >>"$tmp_n"
   fi
 
-  # Assemble raw snapshot. Profiles JSON may be large — pass via file, not env.
-  local profiles_file
-  profiles_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-prof.XXXXXX")
-  printf '%s' "$profiles_json" >"$profiles_file"
+  local rank host node_name node_hostname node_label rank_mem rank_total rank_mem_status
+  local rank_mem_source rank_status rank_reason node_id control_ip
+  for ((rank = 1; rank < topology_count; rank++)); do
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    if [ "$rank" = 1 ]; then
+      node_name=worker
+    else
+      node_name="rank-$rank"
+    fi
+    node_hostname="${CLUSTER_NODE_HOSTNAMES[$rank]:-$host}"
+    node_id="${CLUSTER_NODE_IDS[$rank]:-}"
+    control_ip="${CLUSTER_NODE_CONTROL_IPS[$rank]:-}"
+    rank_mem=null
+    rank_total=null
+    rank_mem_status=unreachable
+    rank_mem_source=unreachable
+    rank_status=unreachable
+    node_label=$(human_cluster_node "$rank")
+    rank_reason="$node_label · SSH unreachable ($host)"
 
+    if _ssh_worker_raw "$host" true >/dev/null 2>&1; then
+      rank_mem=$(_ssh_worker_raw "$host" \
+        "awk '/MemAvailable:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" \
+        2>/dev/null || true)
+      rank_total=$(_ssh_worker_raw "$host" \
+        "awk '/MemTotal:/ {printf \"%.2f\", \$2/1048576}' /proc/meminfo" \
+        2>/dev/null || true)
+      if [ -n "$rank_mem" ]; then
+        rank_mem_status=ok
+        rank_mem_source=ssh_proc_meminfo
+      else
+        rank_mem=null
+        rank_mem_status=unavailable
+        rank_mem_source=unavailable
+      fi
+      [ -n "$rank_total" ] || rank_total=null
+      collect_gpu_processes_remote "$host" \
+        | parse_gpu_csv_to_json_lines "$node_name" >>"$tmp_g" || true
+
+      if _ssh_worker_raw "$host" "docker info >/dev/null 2>&1"; then
+        rank_status=ok
+        rank_reason=""
+        if ! collect_containers_node "$node_name" remote "$host" >>"$tmp_c"; then
+          rank_status=docker-error
+          rank_reason="$node_label · Docker container inventory failed ($host)"
+        fi
+      else
+        rank_status=docker-error
+        rank_reason="$node_label · reachable, but Docker is unavailable ($host)"
+      fi
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$node_name" "$node_hostname" "$rank_mem" "$rank_total" \
+      "$rank_mem_status" "$rank_mem_source" \
+      "$rank_status" "$rank_reason" "$node_id" "$host" "$control_ip" "$rank" \
+      >>"$tmp_n"
+    if [ "$rank_status" != ok ]; then
+      worker_status="$rank_status"
+      worker_reason="${worker_reason:+$worker_reason; }$rank_reason"
+    fi
+  done
+
+  printf '%s' "$profiles_json" >"$profiles_file"
   PROFILES_FILE="$profiles_file" \
-  WORKER_IP_V="${worker_ip}" \
+  WORKER_IP_V="$worker_ip" \
   WORKER_STATUS="$worker_status" \
   WORKER_REASON="$worker_reason" \
-  HEAD_MEM="$head_mem" \
-  HEAD_MEM_TOTAL="$head_mem_total" \
-  HEAD_MEM_STATUS="$head_mem_status" \
-  HEAD_MEM_SOURCE="$head_mem_source" \
-  WORKER_MEM="$worker_mem" \
-  WORKER_MEM_TOTAL="$worker_mem_total" \
-  WORKER_MEM_STATUS="$worker_mem_status" \
-  WORKER_MEM_SOURCE="$worker_mem_source" \
+  TOPOLOGY_ID_V="${CLUSTER_TOPOLOGY_ID:-}" \
+  NODES_FILE="$tmp_n" \
   CONTAINERS_FILE="$tmp_c" \
   GPU_FILE="$tmp_g" \
-  python3 - <<'PY'
-import json, os
+  python3 - <<'PY_SNAPSHOT'
+import json
+import os
+
 
 def load_ndjson(path):
     rows = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
             line = line.strip()
             if line:
                 rows.append(json.loads(line))
     return rows
 
-def num_or_null(s):
-    if s in ("", "null", None):
+
+def number(value):
+    if value in ("", "null", None):
         return None
     try:
-        return float(s)
+        return float(value)
     except ValueError:
         return None
 
-with open(os.environ["PROFILES_FILE"], encoding="utf-8") as pf:
-    profiles = json.load(pf)
 
-snap = {
+with open(os.environ["PROFILES_FILE"], encoding="utf-8") as handle:
+    profiles = json.load(handle)
+
+nodes = {}
+with open(os.environ["NODES_FILE"], encoding="utf-8") as handle:
+    for line in handle:
+        parts = line.rstrip("\n").split("\t", 11)
+        while len(parts) < 12:
+            parts.append("")
+        (
+            name,
+            hostname,
+            available,
+            total,
+            status,
+            source,
+            probe_status,
+            probe_reason,
+            node_id,
+            ssh_host,
+            control_ip,
+            topology_index,
+        ) = parts
+        nodes[name] = {
+            "hostname": hostname or None,
+            "node_id": node_id or None,
+            "ssh_host": ssh_host or None,
+            "control_ip": control_ip or None,
+            "topology_index": int(topology_index) if topology_index else None,
+            "local": name == "head",
+            "confirmed": bool(node_id) or name == "head",
+            "mem_available_gib": number(available),
+            "mem_total_gib": number(total),
+            "mem_status": status,
+            "mem_source": source,
+            "probe_status": probe_status or "unknown",
+            "probe_reason": probe_reason or None,
+        }
+
+print(json.dumps({
     "profiles": profiles,
+    "topology_id": os.environ.get("TOPOLOGY_ID_V") or None,
     "worker_ip": os.environ.get("WORKER_IP_V") or None,
     "worker_status": os.environ["WORKER_STATUS"],
     "worker_reason": os.environ.get("WORKER_REASON") or None,
-    "nodes": {
-        "head": {
-            "mem_available_gib": num_or_null(os.environ.get("HEAD_MEM")),
-            "mem_total_gib": num_or_null(os.environ.get("HEAD_MEM_TOTAL")),
-            "mem_status": os.environ["HEAD_MEM_STATUS"],
-            "mem_source": os.environ["HEAD_MEM_SOURCE"],
-        },
-        "worker": {
-            "mem_available_gib": num_or_null(os.environ.get("WORKER_MEM")),
-            "mem_total_gib": num_or_null(os.environ.get("WORKER_MEM_TOTAL")),
-            "mem_status": os.environ["WORKER_MEM_STATUS"],
-            "mem_source": os.environ["WORKER_MEM_SOURCE"],
-        },
-    },
+    "nodes": nodes,
     "containers": load_ndjson(os.environ["CONTAINERS_FILE"]),
     "gpu_processes": load_ndjson(os.environ["GPU_FILE"]),
-}
-print(json.dumps(snap))
-PY
-  rm -f "$tmp_c" "$tmp_g" "$profiles_file"
+}))
+PY_SNAPSHOT
+  rm -f "$tmp_c" "$tmp_g" "$tmp_n" "$profiles_file"
 }
 
 # ---------------------------------------------------------------------------
@@ -474,6 +542,11 @@ SCHEMA_VERSION = 1
 MANAGED_KEY = "io.pulsar.gb10.managed"
 CONF_KEY = "io.pulsar.gb10.conf"
 RANK_KEY = "io.pulsar.gb10.rank"
+TOPOLOGY_KEY = "io.pulsar.gb10.topology"
+NODE_ID_KEY = "io.pulsar.gb10.node-id"
+WEIGHT_SOURCE_KEY = "io.pulsar.gb10.weight-source"
+WEIGHT_OWNER_KEY = "io.pulsar.gb10.weight-owner"
+WEIGHT_CONFIG_KEY = "io.pulsar.gb10.weight-config"
 
 with open(os.environ["SNAP_PATH"], encoding="utf-8") as _sf:
     snap = json.load(_sf)
@@ -481,6 +554,12 @@ profiles = snap.get("profiles") or {}
 containers = snap.get("containers") or []
 gpu_procs = snap.get("gpu_processes") or []
 nodes_info = snap.get("nodes") or {}
+topology_id = snap.get("topology_id")
+node_name_by_id = {
+    str(info.get("node_id")): name
+    for name, info in nodes_info.items()
+    if isinstance(info, dict) and info.get("node_id")
+}
 worker_status = snap.get("worker_status") or "unset"
 worker_reason = snap.get("worker_reason")
 worker_ip = snap.get("worker_ip")
@@ -507,7 +586,16 @@ def short_id(cid):
 def filter_labels(labels):
     labels = labels or {}
     out = {}
-    for k in (MANAGED_KEY, CONF_KEY, RANK_KEY):
+    for k in (
+        MANAGED_KEY,
+        CONF_KEY,
+        RANK_KEY,
+        TOPOLOGY_KEY,
+        NODE_ID_KEY,
+        WEIGHT_SOURCE_KEY,
+        WEIGHT_OWNER_KEY,
+        WEIGHT_CONFIG_KEY,
+    ):
         if k in labels and labels[k] is not None:
             out[k] = str(labels[k])
     return out
@@ -538,20 +626,66 @@ def rank_valid_for_profile(rank, profile):
     return rank in expected
 
 
-def expected_node_for_rank(rank, profile):
-    """Canonical placement: single/0 → head; two-node rank 1 → worker."""
+def expected_node_for_rank(rank, profile, labels=None):
+    """Resolve exact physical placement while preserving canonical multi-rank roles."""
     if not profile or rank is None or rank == "":
         return None
     nodes = int(profile.get("nodes") or 1)
     if nodes == 1:
-        if rank == "single":
-            return "head"
+        if rank != "single":
+            return None
+        node_id = str((labels or {}).get(NODE_ID_KEY) or "")
+        # Compatibility: old managed one-node containers had no node-id and
+        # were local-only. A remote one-node container must prove its identity.
+        return node_name_by_id.get(node_id) if node_id else "head"
+    try:
+        rank_i = int(rank)
+    except (TypeError, ValueError):
         return None
-    if rank == "0":
+    if rank_i == 0:
         return "head"
-    if rank == "1":
+    if rank_i == 1 and nodes > 1:
         return "worker"
+    if 1 < rank_i < nodes:
+        return f"rank-{rank_i}"
     return None
+
+
+def remote_probe_states(profile, ranks=None):
+    """Probe states for only the physical nodes required by this service."""
+    states = []
+    nodes = int((profile or {}).get("nodes") or 1)
+    targets = []
+    if nodes == 1:
+        for item in ranks or []:
+            node = item.get("_expected_node")
+            if node and node not in targets:
+                targets.append(node)
+        rank_nodes = [("single", node) for node in targets]
+    else:
+        rank_nodes = [
+            (rank, expected_node_for_rank(rank, profile))
+            for rank in (profile or {}).get("expected_ranks") or []
+        ]
+
+    for rank, node in rank_nodes:
+        if not node or node == "head":
+            continue
+        info = nodes_info.get(node) or {}
+        if "probe_status" in info:
+            status = info.get("probe_status") or "unknown"
+            reason = info.get("probe_reason")
+        else:
+            # schema_version=1 fixture/consumer compatibility
+            status = worker_status
+            reason = worker_reason
+        states.append({
+            "rank": rank,
+            "node": node,
+            "status": status,
+            "reason": reason,
+        })
+    return states
 
 
 def classify_container(c):
@@ -584,10 +718,35 @@ def classify_container(c):
                 f"(expected {','.join(profile.get('expected_ranks') or [])})"
             )
             return "mismatch", False, conf, rank, reasons, profile
-        want_node = expected_node_for_rank(rank, profile)
+        want_node = expected_node_for_rank(rank, profile, labels)
+        profile_nodes = int(profile.get("nodes") or 1)
+        node_id = str(labels.get(NODE_ID_KEY) or "")
+        if profile_nodes == 1 and node_id and not want_node:
+            reasons.append(
+                f"single-node placement references unknown node-id '{node_id}'"
+            )
+            return "mismatch", False, conf, rank, reasons, profile
+        if profile_nodes == 1 and node != "head" and not node_id:
+            reasons.append(
+                "remote single-node placement has no physical node-id label"
+            )
+            return "mismatch", False, conf, rank, reasons, profile
         if want_node and node != want_node:
             reasons.append(
                 f"rank '{rank}' expected on {want_node}, observed on {node}"
+            )
+            return "mismatch", False, conf, rank, reasons, profile
+        label_topology = str(labels.get(TOPOLOGY_KEY) or "")
+        if (
+            profile_nodes == 1
+            and node_id
+            and topology_id
+            and label_topology
+            and label_topology != topology_id
+        ):
+            reasons.append(
+                "single-node placement topology label does not match "
+                "the confirmed topology"
             )
             return "mismatch", False, conf, rank, reasons, profile
         # Labels + placement map consistently → rank may be safe_to_stop.
@@ -736,8 +895,10 @@ for c in containers:
     elif conf and conf in profiles:
         port = profiles[conf].get("port")
 
+    expected_node = expected_node_for_rank(rank, profile, labels)
     rec = {
         "node": c.get("node") or "head",
+        "_expected_node": expected_node,
         "container_name": c.get("name") or "",
         "container_id": c.get("id") or "",
         "container_id_short": short_id(c.get("id") or ""),
@@ -801,6 +962,15 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
             if r.get("estimated_footprint_gib_per_rank") is not None:
                 est = r["estimated_footprint_gib_per_rank"]
 
+    remote_states = remote_probe_states(profile, ranks_list) if profile else []
+    remote_bad = [
+        item for item in remote_states
+        if item.get("status") not in ("ok", "unset")
+    ]
+    remote_unset = [
+        item for item in remote_states if item.get("status") == "unset"
+    ]
+
     observed = []
     for r in ranks_list:
         if r.get("rank") is not None and r["rank"] not in observed:
@@ -849,6 +1019,40 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
             if tagged not in reasons:
                 reasons.append(tagged)
 
+    weight_sources = {
+        str((r.get("labels") or {}).get(WEIGHT_SOURCE_KEY) or "")
+        for r in ranks_list
+        if (r.get("labels") or {}).get(WEIGHT_SOURCE_KEY)
+    }
+    weight_owners = {
+        str((r.get("labels") or {}).get(WEIGHT_OWNER_KEY) or "")
+        for r in ranks_list
+        if (r.get("labels") or {}).get(WEIGHT_OWNER_KEY)
+    }
+    weight_configs = {
+        str((r.get("labels") or {}).get(WEIGHT_CONFIG_KEY) or "")
+        for r in ranks_list
+        if (r.get("labels") or {}).get(WEIGHT_CONFIG_KEY)
+    }
+    weight_source = (
+        next(iter(weight_sources)) if len(weight_sources) == 1
+        else ("mixed" if weight_sources else None)
+    )
+    weight_owner = (
+        next(iter(weight_owners)) if len(weight_owners) == 1 else None
+    )
+    weight_config = (
+        next(iter(weight_configs)) if len(weight_configs) == 1 else None
+    )
+    if weight_source == "fabric" and (
+        len(weight_owners) != 1 or len(weight_configs) != 1
+    ):
+        reasons.append(
+            "single-copy weight provenance labels are missing or inconsistent"
+        )
+    if len(weight_sources) > 1:
+        reasons.append("ranks disagree on weight source")
+
     state = "running"
     any_running = any(r["running"] for r in ranks_list)
     all_stale = all(r["stale"] for r in ranks_list)
@@ -893,14 +1097,25 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
                 f"duplicate node placement(s): {','.join(dup_nodes)} "
                 f"(expected one container per role node)"
             )
-        if expected_nodes == 2 and worker_status not in ("ok", "unset"):
+        if remote_bad:
             state = "degraded"
-            reasons.append(f"worker status={worker_status}; cannot confirm rank 1")
-        elif expected_nodes == 2 and worker_status == "unset":
-            # Only head observable — do not invent worker state
-            if "1" not in observed_sorted:
+            details = "; ".join(
+                f"rank {item['rank']} {item['status']}"
+                + (f" ({item['reason']})" if item.get("reason") else "")
+                for item in remote_bad
+            )
+            reasons.append(f"required remote probe failure: {details}")
+        elif remote_unset:
+            missing_remote = [
+                item["rank"] for item in remote_unset
+                if item["rank"] not in observed_sorted
+            ]
+            if missing_remote:
                 state = "degraded"
-                reasons.append("WORKER_IP unset; worker rank not probed")
+                reasons.append(
+                    "confirmed remote topology unavailable for rank(s): "
+                    + ",".join(missing_remote)
+                )
         if any(r["stale"] for r in ranks_list) and any(r["running"] for r in ranks_list):
             state = "degraded"
             reasons.append("mixed running/stale ranks")
@@ -928,20 +1143,18 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
             and all(r.get("safe_to_stop") for r in ranks_list)
             and all(r.get("rank") in expected_ranks for r in ranks_list)
         )
-        # 2-node complete requires worker observability when rank 1 is expected
-        if complete and expected_nodes == 2 and worker_status not in ("ok",):
-            # Rank 1 was observed on worker only if worker was probed; if status
-            # is not ok, do not claim complete cluster view.
-            if worker_status != "ok":
-                complete = False
+        # Exact-profile completeness depends only on its required other nodes.
+        # Extra confirmed capacity may be offline without invalidating this view.
+        if complete and any(item.get("status") != "ok" for item in remote_states):
+            complete = False
 
     if not profile:
         observability = "unknown"
     elif complete and state in ("running", "stale"):
         observability = "complete"
-    elif expected_nodes == 2 and worker_status == "unset":
+    elif remote_unset:
         observability = "worker_unset"
-    elif expected_nodes == 2 and worker_status not in ("ok", "unset"):
+    elif remote_bad:
         observability = "worker_unreachable"
     elif missing and not dup_ranks and not any(
         r["ownership"] == "mismatch" for r in ranks_list
@@ -952,7 +1165,7 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
 
     rank_entries = []
     for r in sorted(ranks_list, key=lambda x: (x.get("node") or "", rank_sort(x.get("rank")))):
-        want = expected_node_for_rank(r.get("rank"), profile) if profile else None
+        want = r.get("_expected_node") if profile else None
         rank_entries.append({
             "rank": r.get("rank"),
             "node": r.get("node"),
@@ -991,7 +1204,11 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
         "safe_to_stop": safe_to_stop,
         "complete": complete,
         "observability": observability,
+        "required_remote_probes": remote_states,
         "api_port": port,
+        "weight_source": weight_source,
+        "weight_owner_node_id": weight_owner,
+        "weight_configuration_id": weight_config,
         "estimated_footprint_gib_per_rank": est,
         "reasons": reasons,
         "ranks": rank_entries,
@@ -1014,25 +1231,13 @@ for node, by_pid in sorted(gpu_by_node.items()):
 inv = {
     "schema_version": SCHEMA_VERSION,
     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "topology_id": topology_id,
     "worker": {
         "ip": worker_ip,
         "status": worker_status,
         "reason": worker_reason,
     },
-    "nodes": {
-        "head": {
-            "mem_available_gib": (nodes_info.get("head") or {}).get("mem_available_gib"),
-            "mem_total_gib": (nodes_info.get("head") or {}).get("mem_total_gib"),
-            "mem_status": (nodes_info.get("head") or {}).get("mem_status"),
-            "mem_source": (nodes_info.get("head") or {}).get("mem_source"),
-        },
-        "worker": {
-            "mem_available_gib": (nodes_info.get("worker") or {}).get("mem_available_gib"),
-            "mem_total_gib": (nodes_info.get("worker") or {}).get("mem_total_gib"),
-            "mem_status": (nodes_info.get("worker") or {}).get("mem_status"),
-            "mem_source": (nodes_info.get("worker") or {}).get("mem_source"),
-        },
-    },
+    "nodes": nodes_info,
     "services": services,
     "unmanaged_gpu_processes": unmanaged,
 }
@@ -1087,8 +1292,6 @@ with open(os.environ["INV_JSON_PATH"], encoding="utf-8") as f:
 verbose = os.environ.get("INV_VERBOSE", "0") == "1"
 w = inv.get("worker") or {}
 nodes = inv.get("nodes") or {}
-head = nodes.get("head") or {}
-worker = nodes.get("worker") or {}
 term = TerminalWriter()
 emit = term.emit
 
@@ -1101,6 +1304,40 @@ def fmt_mem(n):
     if n is None:
         return "n/a"
     return f"{n:.2f} GiB"
+
+
+def node_order(item):
+    name = item[0]
+    if name == "head":
+        return (0, name)
+    if name == "worker":
+        return (1, name)
+    if name.startswith("rank-"):
+        try:
+            return (int(name.split("-", 1)[1]), name)
+        except ValueError:
+            pass
+    return (1_000_000, name)
+
+
+def node_label(name):
+    if name == "head":
+        return "this node"
+    if name == "worker":
+        return "cluster node 2"
+    if name.startswith("rank-"):
+        try:
+            return f"cluster node {int(name.split('-', 1)[1]) + 1}"
+        except ValueError:
+            pass
+    return name
+
+
+def placement_label(node_name):
+    hostname = str((nodes.get(node_name) or {}).get("hostname") or "").strip()
+    if hostname:
+        return f"{hostname} (this node)" if node_name == "head" else hostname
+    return node_label(node_name) if node_name else "unknown node placement"
 
 
 def fmt_gpu_mem(mib):
@@ -1151,18 +1388,26 @@ def print_service(s):
     obs_y = s.get("observability") or "?"
     served = s.get("served_name") or "?"
     port = s.get("api_port")
-    exp = fmt_ranks(s.get("expected_ranks") or [])
-    obs = fmt_ranks(s.get("observed_ranks") or [])
+    expected_count = len(s.get("expected_ranks") or [])
+    observed_count = len(s.get("observed_ranks") or [])
     nodes_e = s.get("expected_nodes")
     fp = s.get("estimated_footprint_gib_per_rank")
-    fp_s = f"{fp:.2f} GiB/rank" if fp is not None else "n/a"
-    node_word = "node" if nodes_e == 1 else "nodes"
+    fp_s = f"{fp:.2f} GiB per node" if fp is not None else "n/a"
 
     emit(f"{state.upper()}  {sid}", subsequent_indent="  ")
     endpoint = f"{served} on :{port}" if port is not None else served
     field("serves", endpoint)
     field("status", f"{own} · {complete} · {safe}")
-    field("topology", f"{nodes_e} {node_word} · ranks expected={exp} observed={obs}")
+    field("nodes", f"{nodes_e} required · {observed_count}/{expected_count} observed")
+    weight_source = s.get("weight_source")
+    if weight_source == "fabric":
+        owner = str(s.get("weight_owner_node_id") or "?")[:12]
+        config = str(s.get("weight_configuration_id") or "?")[:12]
+        field("weights", f"single-copy NFS/RDMA · owner {owner} · config {config}")
+    elif weight_source:
+        field("weights", weight_source)
+    elif verbose:
+        field("weights", "unlabeled legacy runtime")
     field("estimate", fp_s)
     if verbose or obs_y != "complete":
         field("observe", obs_y)
@@ -1174,7 +1419,7 @@ def print_service(s):
         st = "safe_to_stop" if r.get("safe_to_stop") else "not_safe_to_stop"
         print()
         emit(
-            f"{r.get('node') or '?'} · rank {r.get('rank') or '?'}",
+            placement_label(r.get("node")),
             initial_indent="  ",
             subsequent_indent="    ",
         )
@@ -1204,29 +1449,67 @@ if verbose:
 ws = w.get("status")
 wr = w.get("reason") or ""
 wip = w.get("ip") or ""
+ordered_nodes = sorted(nodes.items(), key=node_order)
+remote_nodes = [
+    (name, block)
+    for name, block in ordered_nodes
+    if name != "head"
+    and not (
+        name == "worker"
+        and ws == "unset"
+        and block.get("mem_available_gib") is None
+        and block.get("probe_status") in (None, "", "unset")
+    )
+]
 if ws == "ok":
-    field("Worker", f"OK · {wip or 'IP unavailable'}", indent=0)
+    noun = "node" if len(remote_nodes) == 1 else "nodes"
+    remote_detail = f"{len(remote_nodes)} other cluster {noun} confirmed"
+    if wip:
+        remote_detail += f" · cluster node 2 SSH {wip}"
+    field("Nodes", f"OK · {remote_detail}", indent=0)
 elif ws == "unset":
-    field("Worker", "not configured", indent=0)
+    field("Nodes", "no other cluster nodes confirmed", indent=0)
     if wr:
         field("reason", wr)
 else:
-    field("Worker", f"{str(ws or '?').upper()} · {wip or 'IP unavailable'}", indent=0)
+    noun = "node" if len(remote_nodes) == 1 else "nodes"
+    field(
+        "Nodes",
+        f"{str(ws or '?').upper()} · {len(remote_nodes)} other cluster {noun} confirmed",
+        indent=0,
+    )
     if wr:
         field("reason", wr)
 
-field(
-    "Memory",
-    f"head {fmt_mem(head.get('mem_available_gib'))} · "
-    f"worker {fmt_mem(worker.get('mem_available_gib'))} available",
-    indent=0,
-)
-if verbose:
+display_nodes = [
+    (name, block)
+    for name, block in ordered_nodes
+    if name == "head" or (name, block) in remote_nodes
+]
+if not display_nodes:
+    field("Memory", "unavailable", indent=0)
+for index, (name, block) in enumerate(display_nodes):
+    if name == "head":
+        probe_status = block.get("mem_status")
+    else:
+        probe_status = (
+            block.get("probe_status")
+            or (ws if name == "worker" else block.get("mem_status"))
+        )
+    status_detail = f" · {probe_status}" if probe_status else ""
     field(
-        "Sources",
-        f"head {head.get('mem_source') or '?'} · worker {worker.get('mem_source') or '?'}",
+        "Memory" if index == 0 else "",
+        f"{node_label(name)} · {fmt_mem(block.get('mem_available_gib'))} "
+        f"available{status_detail}",
         indent=0,
     )
+if verbose:
+    for index, (name, block) in enumerate(display_nodes):
+        field(
+            "Sources" if index == 0 else "",
+            f"{node_label(name)} · {block.get('mem_source') or '?'}",
+            indent=0,
+        )
 
 services = inv.get("services") or []
 shown = []

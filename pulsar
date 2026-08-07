@@ -4,8 +4,9 @@
 #   ./pulsar wizard          → serve/switch wizard (doctor + preflight)
 #   ./pulsar inventory …     → scripts/inventory.sh
 #   ./pulsar start <model>…  → scripts/up.sh
-#   ./pulsar stop <model|--all> → scripts/down.sh
-#   ./pulsar status [model]  → scripts/status.sh (includes optional completion)
+#   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
+#   ./pulsar status [model] [--node ID] → scripts/status.sh (optional completion)
+#   ./pulsar weight-fabric … → experimental single-copy weight workflow
 #   ./pulsar help
 #
 # Existing scripts under scripts/ remain the canonical implementations;
@@ -24,8 +25,12 @@ Usage:
   ./pulsar wizard               Serve or switch a model (doctor + preflight)
   ./pulsar inventory [opts]     Read-only service/memory inventory
   ./pulsar start <model> [args] Start a model (scripts/up.sh)
-  ./pulsar stop <model|--all>   Stop stack-managed service(s)
-  ./pulsar status [model]       Probe containers + API (may run a completion)
+  ./pulsar stop <model|--all> [--node ID]
+                                Stop stack-managed service(s)
+  ./pulsar status [model] [--node ID]
+                                Probe containers + API (may run a completion)
+  ./pulsar weight-fabric [args]
+                                Experimental single-copy weight workflow
   ./pulsar help                 This message
 
 Inventory options (passed through):
@@ -33,6 +38,8 @@ Inventory options (passed through):
   --verbose    Human mode: include hidden services and diagnostic metadata
 
 Start args are passed to scripts/up.sh (e.g. --dry-run, --no-spec-decode).
+For one-node profiles, --node NODE_ID selects a confirmed physical node for
+start, status, or stop. Use the immutable node_id from inventory --json.
 
 Notes:
   • ./pulsar (no args) opens the neutral home menu. It does not run doctor,
@@ -43,7 +50,9 @@ Notes:
   • Home “Current system status” is a quick read-only overview (API model
     advertisement only — not an inference smoke). Full smoke is optional.
   • stop only removes containers that prove stack ownership
-    (io.pulsar.gb10.managed=true + consistent conf/rank labels).
+    (io.pulsar.gb10.managed=true + consistent profile/node-placement labels).
+  • weight-fabric is explicit and experimental; normal starts keep replicated
+    local caches unless --weight-source fabric is passed.
   • UI: GUM=0 / NO_COLOR / PULSAR_COLOR=never / TERM=dumb → plain menus
     (Gum not used). Color-enabled Gum always uses blue palette overrides;
     PULSAR_ACCENT overrides the accent (default 12).
@@ -72,11 +81,14 @@ case "$cmd" in
     exec "$REPO_DIR/scripts/up.sh" "$@"
     ;;
   stop)
-    [ $# -ge 1 ] || { echo "usage: ./pulsar stop <model|--all>" >&2; exit 2; }
+    [ $# -ge 1 ] || { echo "usage: ./pulsar stop <model|--all> [--node NODE_ID]" >&2; exit 2; }
     exec "$REPO_DIR/scripts/down.sh" "$@"
     ;;
   status)
     exec "$REPO_DIR/scripts/status.sh" "$@"
+    ;;
+  weight-fabric)
+    exec "$REPO_DIR/scripts/weight-fabric.sh" "$@"
     ;;
   help|-h|--help)
     usage

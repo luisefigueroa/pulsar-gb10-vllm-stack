@@ -74,7 +74,7 @@ assert_file_not_contains() {
 STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard-selftest.XXXXXX")
 trap 'rm -rf "$STATE"' EXIT
 SHIM="$STATE/bin"
-mkdir -p "$SHIM" "$STATE/inv" "$STATE/mem" "$STATE/logs"
+mkdir -p "$SHIM" "$STATE/inv" "$STATE/mem" "$STATE/logs" "$STATE/mem_by_node"
 
 MODELS_JSON='{
   "models": [
@@ -86,7 +86,9 @@ MODELS_JSON='{
       "served_name": "qwen3-1.7b",
       "spec": "none",
       "spec_default_enabled": false,
-      "first_run_candidate": true
+      "first_run_candidate": true,
+      "family": "qwen3-1.7b",
+      "family_recommended": true
     },
     {
       "id": "nemotron-3-nano-30b-nvfp4",
@@ -336,6 +338,24 @@ cat >"$SHIM/mem-cmd" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 model="${1:-}"
+shift || true
+printf '%s' "$model" >>"${STATE_DIR}/logs/memory.log"
+printf ' %s' "$@" >>"${STATE_DIR}/logs/memory.log"
+printf '\n' >>"${STATE_DIR}/logs/memory.log"
+node=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --node)
+      node="${2:-}"
+      shift
+      ;;
+  esac
+  shift
+done
+if [ -n "$node" ] && [ -f "${STATE_DIR}/mem_by_node/${node}.json" ]; then
+  cat "${STATE_DIR}/mem_by_node/${node}.json"
+  exit "$(cat "${STATE_DIR}/mem_by_node/${node}.rc" 2>/dev/null || echo 0)"
+fi
 # Per-model fixtures: mem_by_model/<id>.json + optional .rc
 if [ -n "$model" ] && [ -f "${STATE_DIR}/mem_by_model/${model}.json" ]; then
   cat "${STATE_DIR}/mem_by_model/${model}.json"
@@ -365,6 +385,29 @@ cat "${STATE_DIR}/mem_current"
 exit "${MEM_CURRENT_RC:-0}"
 SH
 chmod +x "$SHIM/mem-cmd"
+
+cat >"$SHIM/weights-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+cat "${STATE_DIR}/weights.json"
+exit "$(cat "${STATE_DIR}/weights.rc")"
+SH
+chmod +x "$SHIM/weights-cmd"
+
+cat >"$SHIM/pull-weights-cmd" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "pull-weights $*" >>"${STATE_DIR}/logs/pull-weights.log"
+rc=$(cat "${STATE_DIR}/pull-weights.rc")
+if [ "$rc" -ne 0 ]; then
+  printf '%s\n' \
+    "MODEL FILE PREPARATION FAILED" \
+    "Problem   simulated weight staging failure" \
+    "Result    Model was not started."
+fi
+exit "$rc"
+SH
+chmod +x "$SHIM/pull-weights-cmd"
 
 cat >"$SHIM/down-cmd" <<'SH'
 #!/usr/bin/env bash
@@ -459,12 +502,24 @@ PY
 wizard_env() {
   export GUM=0
   export WIZARD_SKIP_DOCTOR=1
-  export WIZARD_SKIP_WEIGHTS=1
+  export WIZARD_SKIP_WEIGHTS="${TEST_SKIP_WEIGHTS:-1}"
   export WIZARD_SKIP_IMAGE=1
-  export WIZARD_SKIP_FABRIC_PROMPT=1
+  export WIZARD_SKIP_FABRIC_PROMPT="${TEST_SKIP_FABRIC_PROMPT:-1}"
+  if [ "${TEST_USE_LOADED_TOPOLOGY_CAPACITY:-0}" = 1 ]; then
+    unset WIZARD_TOPOLOGY_NODES
+  else
+    export WIZARD_TOPOLOGY_NODES="${TEST_TOPOLOGY_NODES:-2}"
+  fi
+  if [ -n "${TEST_CLUSTER_TOPOLOGY_FILE:-}" ]; then
+    export CLUSTER_TOPOLOGY_FILE="$TEST_CLUSTER_TOPOLOGY_FILE"
+  else
+    unset CLUSTER_TOPOLOGY_FILE
+  fi
   export WIZARD_LIST_MODELS_JSON="$STATE/models.json"
   export WIZARD_INVENTORY_CMD="$SHIM/inv-cmd"
   export WIZARD_CHECK_MEMORY_CMD="$SHIM/mem-cmd"
+  export WIZARD_CHECK_WEIGHTS_CMD="$SHIM/weights-cmd"
+  export WIZARD_PULL_WEIGHTS_CMD="$SHIM/pull-weights-cmd"
   export WIZARD_DOWN_CMD="$SHIM/down-cmd"
   export WIZARD_UP_CMD="$SHIM/up-cmd"
   export WIZARD_STATUS_CMD="$SHIM/status-cmd"
@@ -476,6 +531,8 @@ reset_logs() {
   rm -f "$STATE/logs/"* "$STATE/stopped" "$STATE/up_fail" "$STATE/up_fail_once" \
     "$STATE/inv_override" "$STATE/mem_rc_seq" "$STATE/inv_after_stop" \
     "$STATE/mem_after_stop" "$STATE/inv_fail" "$STATE/inv_invalid" \
+    "$STATE/weights.json" "$STATE/weights.rc" "$STATE/pull-weights.rc" \
+    "$STATE/no-topology.json" "$STATE/invalid-topology.json" \
     2>/dev/null || true
   rm -rf "$STATE/mem_by_model"
   mkdir -p "$STATE/logs" "$STATE/mem_by_model"
@@ -483,10 +540,14 @@ reset_logs() {
   : >"$STATE/logs/up.log"
   : >"$STATE/logs/status.log"
   : >"$STATE/logs/doctor.log"
+  : >"$STATE/logs/pull-weights.log"
   : >"$STATE/logs/wizard.combined"
   : >"$STATE/logs/wizard.out"
   : >"$STATE/logs/wizard.err"
-  unset MEM_CURRENT_RC MEM_AFTER_STOP_RC WIZARD_API_HEALTHY 2>/dev/null || true
+  unset MEM_CURRENT_RC MEM_AFTER_STOP_RC WIZARD_API_HEALTHY \
+    TEST_TOPOLOGY_NODES TEST_SKIP_WEIGHTS TEST_SKIP_FABRIC_PROMPT \
+    TEST_USE_LOADED_TOPOLOGY_CAPACITY TEST_CLUSTER_TOPOLOGY_FILE \
+    CLUSTER_TOPOLOGY_FILE 2>/dev/null || true
   export MEM_CURRENT_RC=0
   export MEM_AFTER_STOP_RC=0
 }
@@ -560,25 +621,118 @@ set -e
 assert_eq "$rc" "2" "pulsar unknown command → exit 2"
 
 # ---------------------------------------------------------------------------
-# 2) Same healthy keep — no mutation
+# 2) Clean clone: declining discovery keeps standalone local serving available
+# ---------------------------------------------------------------------------
+echo "=== clean-clone standalone fallback ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+mem_pass "$STATE/mem_current" qwen3-1.7b
+export TEST_SKIP_FABRIC_PROMPT=0
+export TEST_USE_LOADED_TOPOLOGY_CAPACITY=1
+export TEST_CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json"
+# Decline discovery, choose qwen from the filtered one-node list, decline start.
+run_wizard $'n\n2\nn\n'
+assert_eq "$LAST_RC" "0" "declined discovery continues in standalone mode"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "1 standalone local node available · no cluster membership confirmed" \
+  "standalone capacity is explicit and not called confirmed"
+assert_file_contains "$STATE/logs/wizard.err" \
+  "Choose a validated model · standalone local node" \
+  "standalone model chooser is explicit"
+assert_file_contains "$STATE/logs/wizard.err" \
+  "qwen3-1\\.7b[[:space:]]+1 node" \
+  "one-node profiles remain available"
+assert_file_not_contains "$STATE/logs/wizard.err" "deepseek-v4-flash" \
+  "multi-node profiles are excluded without confirmed membership"
+assert_file_not_contains "$STATE/logs/wizard.combined" \
+  "invalid confirmed topology capacity '0'" \
+  "missing topology no longer becomes invalid zero capacity"
+assert_false "declined discovery writes no topology" \
+  test -e "$STATE/no-topology.json"
+assert_false "standalone decline starts nothing" \
+  bash -c "test -s '$STATE/logs/up.log'"
+assert_false "standalone decline stops nothing" \
+  bash -c "test -s '$STATE/logs/down.log'"
+
+# A present-but-invalid manifest must not receive the missing-file fallback.
+reset_logs
+printf '%s\n' '{"schema_version":1,"nodes":[]}' \
+  >"$STATE/invalid-topology.json"
+export TEST_SKIP_FABRIC_PROMPT=1
+export TEST_USE_LOADED_TOPOLOGY_CAPACITY=1
+export TEST_CLUSTER_TOPOLOGY_FILE="$STATE/invalid-topology.json"
+run_wizard ""
+assert_eq "$LAST_RC" "1" "invalid topology remains fail-closed"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "confirmed topology is invalid" \
+  "invalid topology is not treated as standalone"
+assert_false "invalid topology starts nothing" \
+  bash -c "test -s '$STATE/logs/up.log'"
+assert_false "invalid topology stops nothing" \
+  bash -c "test -s '$STATE/logs/down.log'"
+
+# ---------------------------------------------------------------------------
+# 3) Missing-weight staging failure is explicit and non-mutating
+# ---------------------------------------------------------------------------
+echo "=== weight staging failure feedback ==="
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+cat >"$STATE/weights.json" <<'JSON'
+{
+  "model": "qwen3-1.7b",
+  "state": "missing",
+  "ranks": [{"rank": 0, "state": "missing", "ok": false}]
+}
+JSON
+echo 1 >"$STATE/weights.rc"
+echo 1 >"$STATE/pull-weights.rc"
+export TEST_SKIP_WEIGHTS=0
+run_wizard $'3\ny\n'
+assert_eq "$LAST_RC" "1" "weight staging failure exits nonzero"
+assert_file_contains "$STATE/logs/wizard.out" "^MODEL FILES REQUIRED$" \
+  "missing weights use a semantic section"
+assert_file_contains "$STATE/logs/wizard.out" "this node.*missing" \
+  "missing weights identify this node"
+assert_file_contains "$STATE/logs/pull-weights.log" "qwen3-1.7b" \
+  "confirmed weight staging invokes helper"
+assert_file_contains "$STATE/logs/wizard.combined" "^MODEL FILE PREPARATION FAILED$" \
+  "weight staging failure retains the helper's semantic summary"
+assert_file_contains "$STATE/logs/wizard.combined" "Model was not started" \
+  "weight staging failure states the outcome"
+assert_file_not_contains "$STATE/logs/wizard.combined" "weight download/copy failed" \
+  "wizard does not add a duplicate generic failure"
+assert_false "weight failure: no launch" bash -c "test -s '$STATE/logs/up.log'"
+
+# ---------------------------------------------------------------------------
+# 4) Same healthy keep — no mutation
 # ---------------------------------------------------------------------------
 echo "=== same healthy keep ==="
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
 mem_pass "$STATE/mem_current" qwen3-1.7b
 export WIZARD_API_HEALTHY=1
-# model=1, keep=1
-run_wizard $'1\n1\n'
+# model=3, keep=1
+run_wizard $'3\n1\n'
 assert_eq "$LAST_RC" "0" "same-healthy keep exit 0"
 assert_false "keep: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "keep: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "keeping qwen3-1.7b running" "keep message"
+assert_file_contains "$STATE/logs/wizard.out" "^MODEL SELECTED$" \
+  "wizard model selection uses a semantic section"
+assert_file_not_contains "$STATE/logs/wizard.out" "sha256:" "default model selection hides image digest"
 assert_file_contains "$STATE/logs/wizard.out" "^TARGET$" "wizard target uses a semantic section"
 assert_file_contains "$STATE/logs/wizard.out" "^PREFLIGHT$" "wizard preflight uses a semantic section"
 assert_file_contains "$STATE/logs/wizard.out" "^RELEVANT SERVICES" \
   "wizard diagnostics use stacked service sections"
-assert_file_contains "$STATE/logs/wizard.err" "qwen3-1.7b · 1 node · HF · spec none" \
-  "wizard model choice is compact and human-readable"
+assert_file_contains "$STATE/logs/wizard.err" "qwen3-1\\.7b[[:space:]]+1 node · suggested · first run" "wizard model choice is compact and human-readable"
+assert_file_not_contains "$STATE/logs/wizard.err" "spec none" "wizard model choice omits profile-detail clutter"
+assert_true "wizard model list is sorted by model name" python3 -c '
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+names = sys.argv[2:]
+positions = [text.find(name) for name in names]
+raise SystemExit(0 if min(positions) >= 0 and positions == sorted(positions) else 1)
+' "$STATE/logs/wizard.err" deepseek-v4-flash nemotron-3-nano-30b-nvfp4 qwen3-1.7b
 
 # ---------------------------------------------------------------------------
 # 3) Same restart — stop only after final confirm
@@ -591,7 +745,7 @@ mem_pass "$STATE/mem_current" qwen3-1.7b
 mem_pass "$STATE/mem_after_stop" qwen3-1.7b
 export WIZARD_API_HEALTHY=1
 # Abort path: model, restart, final n → no mutation
-run_wizard $'1\n2\nn\n'
+run_wizard $'3\n2\nn\n'
 assert_eq "$LAST_RC" "0" "restart decline final confirm exit 0"
 assert_false "restart aborted: no down before/without confirm" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "aborted; no containers changed" "restart aborted message"
@@ -602,7 +756,7 @@ seed_inv "$STATE/inv_after_stop" 100 ""
 mem_pass "$STATE/mem_current" qwen3-1.7b
 mem_pass "$STATE/mem_after_stop" qwen3-1.7b
 export WIZARD_API_HEALTHY=1
-run_wizard $'1\n2\ny\n'
+run_wizard $'3\n2\ny\n'
 assert_eq "$LAST_RC" "0" "restart confirmed exit 0"
 assert_file_contains "$STATE/logs/down.log" "qwen3-1.7b" "restart: down called"
 assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "restart: up called"
@@ -619,8 +773,8 @@ mem_pass "$STATE/mem_after_stop" qwen3-1.7b
 export MEM_CURRENT_RC=1
 export MEM_AFTER_STOP_RC=0
 export WIZARD_API_HEALTHY=0
-# model qwen=1, stop listed=1, final y
-run_wizard $'1\n1\ny\n'
+# model qwen=3, stop listed=1, final y
+run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "replace managed exit 0"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "replace: stopped blocker"
 assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "replace: started target"
@@ -634,8 +788,8 @@ seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 runnin
 mem_fail "$STATE/mem_current" qwen3-1.7b
 export MEM_CURRENT_RC=1
 export WIZARD_API_HEALTHY=0
-# model=1, keep current=2
-run_wizard $'1\n2\n'
+# model=3, keep current=2
+run_wizard $'3\n2\n'
 assert_eq "$LAST_RC" "0" "decline replace exit 0"
 assert_false "decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "decline: no up" bash -c "test -s '$STATE/logs/up.log'"
@@ -650,8 +804,8 @@ seed_inv "$STATE/inv_current" 20 "$(svc_unknown)" unset "$unmanaged"
 mem_fail "$STATE/mem_current" qwen3-1.7b
 export MEM_CURRENT_RC=1
 export WIZARD_API_HEALTHY=0
-# model=1, exit=1
-run_wizard $'1\n1\n'
+# model=3, exit=1
+run_wizard $'3\n1\n'
 assert_eq "$LAST_RC" "0" "unknown consumer exit path"
 assert_false "unknown: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "will not stop" "unknown: will not stop messaging"
@@ -666,8 +820,8 @@ seed_inv "$STATE/inv_current" 92 ""
 mem_warn "$STATE/mem_current" qwen3-1.7b
 export MEM_CURRENT_RC=2
 export WIZARD_API_HEALTHY=0
-# model=1, continue warn y, final y
-run_wizard $'1\ny\ny\n'
+# model=3, continue warn y, final y
+run_wizard $'3\ny\ny\n'
 assert_eq "$LAST_RC" "0" "warn continue exit 0"
 assert_file_contains "$STATE/logs/up.log" "accept-memory-warn" "warn: up got --accept-memory-warn"
 assert_false "warn clean: no down" bash -c "test -s '$STATE/logs/down.log'"
@@ -684,8 +838,8 @@ mem_pass "$STATE/mem_after_stop" deepseek-v4-flash
 export MEM_CURRENT_RC=0
 export MEM_AFTER_STOP_RC=0
 export WIZARD_API_HEALTHY=0
-# model=3, stop partial=1, spec default yes (confirm y), final y
-run_wizard $'3\n1\ny\ny\n'
+# model=1, stop partial=1, spec default yes (confirm y), final y
+run_wizard $'1\n1\ny\ny\n'
 assert_eq "$LAST_RC" "0" "partial cleanup exit 0"
 assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" "partial: down partial conf"
 assert_file_contains "$STATE/logs/up.log" "deepseek-v4-flash" "partial: up after cleanup"
@@ -699,11 +853,52 @@ seed_inv "$STATE/inv_current" 40 "$(svc_partial_2node deepseek-v4-flash True)" u
 mem_pass "$STATE/mem_current" deepseek-v4-flash
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
-# model=3 (deepseek 2-node), exit=1
-run_wizard $'3\n1\n'
+# model=1 (deepseek 2-node), exit=1
+run_wizard $'1\n1\n'
 assert_eq "$LAST_RC" "0" "worker unreachable exit"
 assert_false "unreachable: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "unreachable" "unreachable messaging"
+
+# ---------------------------------------------------------------------------
+# 9b) Idle extra rank does not block an exact validated subset
+# ---------------------------------------------------------------------------
+echo "=== idle extra rank does not block exact subset ==="
+reset_logs
+write_inv "$STATE/inv_current" '{
+  "worker": {"ip": "10.0.0.2", "status": "unreachable", "reason": "rank 2 is unreachable"},
+  "nodes": {
+    "head": {"mem_available_gib": 100.0, "mem_status": "ok", "mem_source": "fixture"},
+    "worker": {
+      "mem_available_gib": 100.0,
+      "mem_status": "ok",
+      "mem_source": "fixture",
+      "probe_status": "ok",
+      "probe_reason": ""
+    },
+    "rank-2": {
+      "mem_available_gib": null,
+      "mem_status": "unreachable",
+      "mem_source": "fixture",
+      "probe_status": "unreachable",
+      "probe_reason": "ssh failed"
+    }
+  }
+}'
+mem_pass "$STATE/mem_current" deepseek-v4-flash
+export MEM_CURRENT_RC=0
+export WIZARD_API_HEALTHY=0
+export TEST_TOPOLOGY_NODES=3
+# model=1 (validated 2-node profile), spec default yes, final yes
+run_wizard $'1\ny\ny\n'
+assert_eq "$LAST_RC" "0" "idle rank 2 exact-subset launch exit 0"
+assert_file_contains "$STATE/logs/up.log" "deepseek-v4-flash" \
+  "idle rank 2: exact 2-node profile launches"
+assert_file_not_contains "$STATE/logs/wizard.combined" "Required cluster node unreachable" \
+  "idle rank 2: no false required-node refusal"
+assert_file_contains "$STATE/logs/wizard.out" "cluster node 2 · 100.00 GiB free.*ok" \
+  "idle rank 2: target summary reports required cluster node"
+assert_file_not_contains "$STATE/logs/wizard.out" "cluster node 3" \
+  "idle rank 2: target summary excludes unused capacity"
 
 # ---------------------------------------------------------------------------
 # 10) Stale managed cleanup
@@ -716,8 +911,8 @@ mem_pass "$STATE/mem_current" qwen3-1.7b
 mem_pass "$STATE/mem_after_stop" qwen3-1.7b
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
-# model=1, remove stale=1, final y
-run_wizard $'1\n1\ny\n'
+# model=3, remove stale=1, final y
+run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "stale cleanup exit 0"
 assert_file_contains "$STATE/logs/down.log" "qwen3-1.7b" "stale: down"
 assert_file_contains "$STATE/logs/wizard.combined" "does not hold model memory" "stale: memory note"
@@ -732,8 +927,8 @@ seed_inv "$STATE/inv_after_stop" 30 ""
 set_mem_model qwen3-1.7b fail
 set_mem_model nemotron-3-nano-30b-nvfp4 pass
 export WIZARD_API_HEALTHY=0
-# model=1, stop=1, final y, then Exit stopped=3
-run_wizard $'1\n1\ny\n3\n'
+# model=3, stop=1, final y, then Exit stopped=3
+run_wizard $'3\n1\ny\n3\n'
 assert_false "still-fail exit: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/down.log" "nemotron" "still-fail exit: did stop"
 assert_file_contains "$STATE/logs/wizard.combined" "never offers continue-anyway|hard memory failure never offers" "still-fail exit: no continue"
@@ -750,8 +945,8 @@ seed_inv "$STATE/inv_after_stop" 100 ""
 set_mem_model qwen3-1.7b fail
 set_mem_model nemotron-3-nano-30b-nvfp4 pass
 export WIZARD_API_HEALTHY=0
-# model=1 (qwen), stop=1, final y, restart previous=1, final y (start nano)
-run_wizard $'1\n1\ny\n1\ny\n'
+# model=3 (qwen), stop=1, final y, restart previous=1, final y (start nano)
+run_wizard $'3\n1\ny\n1\ny\n'
 assert_eq "$LAST_RC" "0" "still-fail restart-previous exit 0"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "still-fail restart: stopped blocker once"
 # exactly one down line
@@ -784,8 +979,8 @@ export WIZARD_API_HEALTHY=0
 rm -rf "$STATE/mem_by_model"
 mkdir -p "$STATE/mem_by_model"
 touch "$STATE/up_fail"
-# model=1, stop=1, final y, then Exit stopped=3
-run_wizard $'1\n1\ny\n3\n'
+# model=3, stop=1, final y, then Exit stopped=3
+run_wizard $'3\n1\ny\n3\n'
 assert_file_contains "$STATE/logs/down.log" "nemotron" "launch-fail exit: stopped previous"
 assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail exit: attempted up target"
 assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail exit message"
@@ -807,8 +1002,8 @@ set_mem_model nemotron-3-nano-30b-nvfp4 pass
 # qwen keeps using global current/after (not per-model) so first up can fail after stop
 export WIZARD_API_HEALTHY=0
 touch "$STATE/up_fail_once"
-# model=1, stop=1, final y, restart previous=1, final y for nano
-run_wizard $'1\n1\ny\n1\ny\n'
+# model=3, stop=1, final y, restart previous=1, final y for nano
+run_wizard $'3\n1\ny\n1\ny\n'
 assert_eq "$LAST_RC" "0" "launch-fail restart-previous exit 0"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "launch-fail restart: stopped previous once"
 down_lines=$(grep -c . "$STATE/logs/down.log" || true)
@@ -832,8 +1027,8 @@ seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3-1.7b running True True)"
 mem_pass "$STATE/mem_current" qwen3-1.7b
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=1
-# model=1, choose another=4, model=2 (nano), keep current=2
-run_wizard $'1\n4\n2\n2\n'
+# model=3, choose another=4, model=2 (nano), keep current=2
+run_wizard $'3\n4\n2\n2\n'
 assert_file_contains "$STATE/logs/wizard.combined" "returning to selection" "choose-another loop"
 assert_file_contains "$STATE/logs/wizard.combined" "doctor not re-run" "no re-doctor"
 assert_false "choose-another path: no down" bash -c "test -s '$STATE/logs/down.log'"
@@ -848,8 +1043,8 @@ seed_inv "$STATE/inv_current" 100 "$(svc_unknown)"
 mem_pass "$STATE/mem_current" qwen3-1.7b
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
-# model=1, exit=1
-run_wizard $'1\n1\n'
+# model=3, exit=1
+run_wizard $'3\n1\n'
 assert_false "unknown port: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "will not stop" "unknown port: will not stop"
 
@@ -862,14 +1057,181 @@ seed_inv "$STATE/inv_current" 100 ""
 mem_pass "$STATE/mem_current" qwen3-1.7b
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
-# model=1, final n
-run_wizard $'1\nn\n'
+# model=3, final n
+run_wizard $'3\nn\n'
 assert_eq "$LAST_RC" "0" "decline start exit 0"
 assert_false "decline start: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "decline start: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "aborted; no containers changed" "decline start message"
 
 # ---------------------------------------------------------------------------
+# 16) Three-node placement: keep a two-node service, launch on idle node 3
+# ---------------------------------------------------------------------------
+echo "=== three-node idle placement ==="
+reset_logs
+python3 - "$STATE/inv_current" <<'PY'
+import json
+import sys
+
+head_id = "11111111111111111111"
+worker_id = "22222222222222222222"
+idle_id = "33333333333333333333"
+inv = {
+    "schema_version": 1,
+    "generated_at": "2026-08-06T00:00:00Z",
+    "topology_id": "fixture-three-node",
+    "worker": {"ip": "node-2", "status": "ok", "reason": None},
+    "nodes": {
+        "head": {
+            "hostname": "dgx-spark-1",
+            "node_id": head_id,
+            "ssh_host": "local",
+            "control_ip": "192.0.2.1",
+            "topology_index": 0,
+            "local": True,
+            "remote": False,
+            "confirmed": True,
+            "mem_available_gib": 10.0,
+            "mem_total_gib": 128.0,
+            "mem_status": "ok",
+            "probe_status": "ok",
+        },
+        "worker": {
+            "hostname": "dgx-spark-2",
+            "node_id": worker_id,
+            "ssh_host": "node-2",
+            "control_ip": "192.0.2.2",
+            "topology_index": 1,
+            "local": False,
+            "remote": True,
+            "confirmed": True,
+            "mem_available_gib": 9.0,
+            "mem_total_gib": 128.0,
+            "mem_status": "ok",
+            "probe_status": "ok",
+        },
+        "rank-2": {
+            "hostname": "dgx-spark-3",
+            "node_id": idle_id,
+            "ssh_host": "node-3",
+            "control_ip": "192.0.2.3",
+            "topology_index": 2,
+            "local": False,
+            "remote": True,
+            "confirmed": True,
+            "mem_available_gib": 118.0,
+            "mem_total_gib": 128.0,
+            "mem_status": "ok",
+            "probe_status": "ok",
+        },
+    },
+    "services": [{
+        "service_id": "deepseek-v4-flash",
+        "profile": "deepseek-v4-flash",
+        "conf": "deepseek-v4-flash",
+        "served_name": "deepseek-v4-flash",
+        "expected_nodes": 2,
+        "expected_ranks": ["0", "1"],
+        "observed_ranks": ["0", "1"],
+        "container_name": "vllm-cluster-deepseek-v4-flash",
+        "state": "running",
+        "ownership": "managed",
+        "safe_to_stop": True,
+        "complete": True,
+        "observability": "complete",
+        "required_remote_probes": [{
+            "rank": "1", "node": "worker", "status": "ok", "reason": None
+        }],
+        "api_port": 8000,
+        "estimated_footprint_gib_per_rank": 106.0,
+        "reasons": [],
+        "ranks": [
+            {
+                "rank": "0", "node": "head", "expected_node": "head",
+                "container_name": "vllm-cluster-deepseek-v4-flash",
+                "container_id": "a" * 64, "container_id_short": "a" * 12,
+                "running": True, "stale": False, "status": "running",
+                "ownership": "managed", "safe_to_stop": True,
+                "labels": {}, "api_port": 8000,
+                "gpu_memory": {"measured_mib": 105000, "status": "ok"},
+                "reasons": [],
+            },
+            {
+                "rank": "1", "node": "worker", "expected_node": "worker",
+                "container_name": "vllm-cluster-deepseek-v4-flash",
+                "container_id": "b" * 64, "container_id_short": "b" * 12,
+                "running": True, "stale": False, "status": "running",
+                "ownership": "managed", "safe_to_stop": True,
+                "labels": {}, "api_port": 8000,
+                "gpu_memory": {"measured_mib": 105000, "status": "ok"},
+                "reasons": [],
+            },
+        ],
+    }],
+    "unmanaged_gpu_processes": [],
+}
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(inv, handle, indent=2)
+    handle.write("\n")
+PY
+mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_fail "$STATE/mem_by_node/11111111111111111111.json" qwen3-1.7b
+printf '1\n' >"$STATE/mem_by_node/11111111111111111111.rc"
+mem_pass "$STATE/mem_by_node/22222222222222222222.json" qwen3-1.7b
+printf '0\n' >"$STATE/mem_by_node/22222222222222222222.rc"
+mem_pass "$STATE/mem_by_node/33333333333333333333.json" qwen3-1.7b
+printf '0\n' >"$STATE/mem_by_node/33333333333333333333.rc"
+export TEST_TOPOLOGY_NODES=3
+export WIZARD_API_HEALTHY=0
+export COLUMNS=48
+# model qwen=3, recommended idle placement=1, final confirm=y
+run_wizard $'3\n1\ny\n'
+unset COLUMNS
+assert_eq "$LAST_RC" "0" "three-node placement launch exits 0"
+assert_file_contains "$STATE/logs/wizard.out" "^ELIGIBLE PHYSICAL NODES$" \
+  "placement lists eligible confirmed Docker nodes"
+assert_true "hard memory failure is excluded from eligible placement" python3 -c '
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+start = text.index("ELIGIBLE PHYSICAL NODES")
+end = text.index("MODEL SELECTED", start)
+raise SystemExit(0 if "dgx-spark-1" not in text[start:end] else 1)
+' "$STATE/logs/wizard.out"
+assert_file_contains "$STATE/logs/wizard.out" "dgx-spark-2" \
+  "placement lists node 2 hostname and memory"
+assert_file_contains "$STATE/logs/wizard.out" "dgx-spark-3" \
+  "placement lists node 3 hostname and memory"
+assert_file_contains "$STATE/logs/wizard.out" "Pulsar:" \
+  "placement shows existing Pulsar occupancy"
+assert_file_contains "$STATE/logs/wizard.out" "idle" \
+  "placement shows idle capacity"
+assert_file_contains "$STATE/logs/wizard.out" "333333333333.*recommended" \
+  "idle node 3 is recommended"
+assert_file_contains "$STATE/logs/memory.log" \
+  "qwen3-1.7b --node 33333333333333333333 --cold-start --json" \
+  "placement eligibility explicitly uses the cold-start memory policy"
+assert_file_contains "$STATE/logs/up.log" \
+  "qwen3-1.7b --node 33333333333333333333 --yes" \
+  "single-node launch targets node 3 by stable ID"
+assert_file_contains "$STATE/logs/status.log" \
+  "qwen3-1.7b --node 33333333333333333333" \
+  "status follows the remote placement"
+assert_false "non-overlapping DeepSeek service is not stopped" \
+  bash -c "grep -q deepseek '$STATE/logs/down.log'"
+assert_file_not_contains "$STATE/logs/wizard.combined" \
+  "Managed service blocks target" \
+  "non-overlapping service is not treated as a blocker"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "re-running inventory and memory immediately before launch" \
+  "inventory and memory are rerun immediately before launch"
+assert_true "placement section honors a 48-column terminal" python3 -c '
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+start = text.index("ELIGIBLE PHYSICAL NODES")
+end = text.index("MODEL SELECTED", start)
+raise SystemExit(0 if all(len(line) <= 48 for line in text[start:end].splitlines()) else 1)
+' "$STATE/logs/wizard.out"
+
 # 16) Observability failures fail closed
 # ---------------------------------------------------------------------------
 echo "=== inventory command failure fails closed ==="
@@ -877,7 +1239,7 @@ reset_logs
 seed_inv "$STATE/inv_current" 100 ""
 mem_pass "$STATE/mem_current" qwen3-1.7b
 touch "$STATE/inv_fail"
-run_wizard $'1\n'
+run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "inventory command failure exits nonzero"
 assert_false "inventory failure: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "inventory failure: no up" bash -c "test -s '$STATE/logs/up.log'"
@@ -889,7 +1251,7 @@ reset_logs
 seed_inv "$STATE/inv_current" 100 ""
 mem_pass "$STATE/mem_current" qwen3-1.7b
 touch "$STATE/inv_invalid"
-run_wizard $'1\n'
+run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "malformed inventory exits nonzero"
 assert_false "malformed inventory: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "inventory returned invalid data.*no lifecycle action" \
@@ -900,7 +1262,7 @@ reset_logs
 seed_inv "$STATE/inv_current" 100 ""
 set_mem_model qwen3-1.7b pass
 echo 42 >"$STATE/mem_by_model/qwen3-1.7b.rc"
-run_wizard $'1\n'
+run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "unexpected memory exit is not treated as pass"
 assert_false "unexpected memory exit: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "unexpected memory exit: no up" bash -c "test -s '$STATE/logs/up.log'"
@@ -912,7 +1274,7 @@ reset_logs
 seed_inv "$STATE/inv_current" 100 ""
 set_mem_model qwen3-1.7b pass
 echo 2 >"$STATE/mem_by_model/qwen3-1.7b.rc"
-run_wizard $'1\n'
+run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "memory JSON/exit disagreement exits nonzero"
 assert_false "inconsistent memory result: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "invalid or inconsistent data \(exit=2\)" \

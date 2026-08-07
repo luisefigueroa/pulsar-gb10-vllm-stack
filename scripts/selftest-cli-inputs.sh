@@ -3,6 +3,9 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-cli-inputs.XXXXXX")
+trap 'rm -rf "$tmpdir"' EXIT
+export CLUSTER_TOPOLOGY_FILE="$tmpdir/no-topology.json"
 
 expect_failure() {
   local expected_rc="$1" needle="$2" label="$3"

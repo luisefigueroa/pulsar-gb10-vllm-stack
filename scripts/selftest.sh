@@ -20,6 +20,7 @@ run() {
 
 run "status gate" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
+run "N-node topology + exact profile subset" "$REPO_DIR/scripts/selftest-topology.sh"
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
@@ -29,14 +30,23 @@ run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"
 run "API auth and secret redaction" "$REPO_DIR/scripts/selftest-api-auth.sh"
 run "validation verdicts" "$REPO_DIR/scripts/selftest-validation.sh"
 run "fail-closed probes" "$REPO_DIR/scripts/selftest-preflight-probes.sh"
+run "weight staging + cache layout" "$REPO_DIR/scripts/selftest-pull-weights.sh"
+run "single-copy weight fabric" "$REPO_DIR/scripts/selftest-weight-fabric.sh"
 run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
 run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
 run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
 run "operator home + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
-run "list-models --json" bash -c '
-  j=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --json)
-  echo "$j" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"models\"); assert any(m[\"id\"]==\"deepseek-v4-flash\" and m[\"spec_default_enabled\"] for m in d[\"models\"])"
+run "model catalog scopes" bash -c '
+  set -e
+  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --json)
+  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert m[\"qwen3-1.7b\"][\"purpose\"]==\"diagnostic\"; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\""
+
+  serving=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --serving --json)
+  echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert not any(x[\"id\"].startswith(\"qwen3-1.7b\") for x in m); assert any(x[\"id\"]==\"deepseek-v4-flash\" and x[\"spec_default_enabled\"] for x in m)"
+
+  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --diagnostic --json)
+  echo "$diagnostic" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert {x[\"id\"] for x in m}=={\"qwen3-1.7b\",\"qwen3-1.7b-2node\"}"
 '
 
 run "WEIGHTS_GIB disk formula" bash -c '
@@ -60,14 +70,36 @@ run "bench_serve asyncio API" bash -c '
   ! grep -q get_event_loop "'"$REPO_DIR"'/validate/bench_serve.py"
 '
 
-run "digest-pinned image sync repair" bash -c '
+run "digest-pinned N-rank image sync repair" bash -c '
   grep -q "docker load omitted the digest reference" "'"$REPO_DIR"'/scripts/sync-image.sh"
-  grep -q "ssh_worker.*docker pull" "'"$REPO_DIR"'/scripts/sync-image.sh"
+  grep -Fq "for ((rank = 1; rank < NODES; rank++))" "'"$REPO_DIR"'/scripts/sync-image.sh"
+  grep -q "docker pull" "'"$REPO_DIR"'/scripts/sync-image.sh"
 '
 
-run "wizard uses list-models --json" bash -c '
-  grep -qE "list-models\.sh\" --validated --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
+run "API base covers one- and multi-node launches" bash -c '
+  grep -Fq "SERVICE_API_BASE=\"http://127.0.0.1:\$PORT\"" "'"$REPO_DIR"'/scripts/up.sh"
+  grep -Fq "SERVICE_API_BASE=\$(single_node_api_base_url \"\$PORT\")" "'"$REPO_DIR"'/scripts/up.sh"
+  ! grep -Fq SINGLE_API_BASE "'"$REPO_DIR"'/scripts/up.sh"
 '
+
+run "wizard uses serving-only model catalog" bash -c '
+  grep -qE "list-models\.sh\" --validated --serving --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
+'
+run "guided CLI uses plain node language" bash -c '
+  grep -Fq "doctor_ready_line \"no blocking issues found\"" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "tput setaf 2" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "NO_COLOR" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "detect-fabric.sh\" --json" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "GB10 systems discovered, but cluster membership is not confirmed." "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "Next: run ./pulsar wizard and confirm cluster discovery" "'"$REPO_DIR"'/scripts/doctor.sh"
+  ! grep -Fq "Path A essentials" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "cluster node" "'"$REPO_DIR"'/wizard.sh"
+  ! grep -Fq "Remote rank unreachable" "'"$REPO_DIR"'/wizard.sh"
+  grep -Fq "CLUSTER DISCOVERY" "'"$REPO_DIR"'/scripts/topology_manifest.py"
+  grep -Fq "SAVE CLUSTER MEMBERSHIP" "'"$REPO_DIR"'/scripts/topology_manifest.py"
+  grep -Fq "same system already listed" "'"$REPO_DIR"'/scripts/topology_manifest.py"
+'
+
 
 run "dispatcher routes home + wizard" bash -c '
   grep -q "scripts/home.sh" "'"$REPO_DIR"'/pulsar"

@@ -8,11 +8,12 @@
 *Validated vLLM serving on one or two NVIDIA DGX Spark systems: nothing
 ships here until it has earned its status on GB10 hardware.*
 
-Upstream-oriented serving and validation stack for a two-node
-Grace-Blackwell GB10 cluster
-(dgx-spark-1 head + dgx-spark-2 worker as example hostnames; 121 GiB unified
-LPDDR5X each, dual-rail 200GbE RoCE between them). Built and validated
-2026-07-27..31; every claim below traces to a measured run in
+Upstream-oriented control plane for Grace-Blackwell GB10 clusters. It can
+discover and operate any number of differently named nodes, while serving
+remains evidence-gated by exact profiles. The published serving matrix is
+currently validated on one or two nodes (dgx-spark-1 / dgx-spark-2 are example
+names; each has 121 GiB unified LPDDR5X and dual-rail 200GbE RoCE). Built and
+validated 2026-07-27..31; every serving claim below traces to a measured run in
 `docs/VALIDATION.md` with raw evidence in `results/`.
 
 Priority order everywhere: **stability > accuracy > throughput > latency.**
@@ -47,10 +48,10 @@ Priority order everywhere: **stability > accuracy > throughput > latency.**
    no private fork lineage. Upstream is
    already absorbing our delta (vllm #49731 merged the same draft-head
    optimization we carried as a patch, one day after we wrote it).
-5. **Cluster operations as first-class deliverables.** Preflight that
-   checks both nodes for the failure modes actually hit here, teardown
-   that verifies, pin-bump and on-call runbooks, and a launcher that
-   refuses unvalidated speculative configs by design.
+5. **Cluster operations as first-class deliverables.** Discovery verifies
+   hostname-independent GB10 membership and every RoCE pair; preflight and
+   teardown visit every node used by the selected profile. Pin-bump and on-call runbooks plus
+   profile status gates keep unvalidated node counts out of the wizard.
 
 ## Quick start
 
@@ -58,7 +59,7 @@ Priority order everywhere: **stability > accuracy > throughput > latency.**
 Stack needs Docker + NVIDIA Container Toolkit on GB10 (aarch64). Full host
 checklist: [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
 
-### Path A — one Spark, first token (recommended first)
+### Single-node quick start — first token
 
 ```bash
 git clone <this-repo> && cd pulsar-gb10-vllm-stack   # or your local path
@@ -67,11 +68,11 @@ docker pull vllm/vllm-openai:v0.26.0
 # Host sanity (GPU, docker, port, cache)
 scripts/doctor.sh
 
-# List validated profiles (ID is the conf name; SERVED_NAME is the API id)
-scripts/list-models.sh --validated
+# List validated serving profiles (ID is the conf name; SERVED_NAME is the API id)
+scripts/list-models.sh --validated --serving
 
-# First-run HF model (small): download weights if needed, then serve
-scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4   # or qwen3-1.7b canary
+# First serving model: download weights if needed, then serve
+scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 ./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
 # equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
 
@@ -99,13 +100,21 @@ No automatic stale cleanup on doctor or startup.
 **Model switch safety (wizard):** `./pulsar wizard` still runs doctor once, then
 reads `scripts/inventory.sh --json` and `scripts/check-memory.sh`. It only offers
 stop for inventory `safe_to_stop` stack-managed services, never for unlabeled,
-legacy, mismatch, unknown, incomplete, or unreachable ranks. Stops run only
+legacy, mismatch, unknown, incomplete, or unreachable nodes. Stops run only
 after you confirm the final start/replace action; then inventory and cold
 memory preflight re-run (memory reclaim is never assumed). Docker/SSH probe
 errors fail closed and are never presented as missing artifacts; only
-label-proven complete ranks receive the already-loaded memory exemption. Hard
+label-proven complete node placements receive the already-loaded memory exemption. Hard
 memory FAIL never offers “continue anyway”; WARN may, with an explicit
 confirmation.
+
+For a one-node profile on a confirmed topology, the wizard now makes physical
+placement explicit. It lists only identity-confirmed nodes whose Docker endpoint
+is reachable and whose **cold-start** memory check does not hard-fail, shows
+free memory and current Pulsar occupancy, and recommends an idle eligible node.
+Every later artifact, port, ownership, launch, health, status, restart, and stop
+step follows that immutable node ID. A service on other physical nodes is not a
+blocker and is never scheduled for replacement.
 See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 **Smoke** (lab network only — do **not** expose `:8000` without auth;
@@ -126,29 +135,40 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
 ./pulsar stop nemotron-3-nano-30b-nvfp4
 # equivalent: scripts/status.sh / scripts/down.sh
 ./pulsar inventory                 # read-only service + memory inventory
+
+# Explicit one-node placement (copy node_id from inventory --json):
+./pulsar start qwen3-1.7b --node <node-id>
+./pulsar status qwen3-1.7b --node <node-id>
+./pulsar stop qwen3-1.7b --node <node-id>
 ```
 
 NFS catalog models (e.g. `laguna-s-2.1-nvfp4`) need `/mnt/Models/...` mounted;
 `pull-weights` will **not** fetch those — it only downloads Hugging Face ids.
 
-### Path B — two Sparks, DeepSeek-V4 flagship
+### Confirmed cluster — validated two-node flagship
 
-Harder path: published custom image + weights on **both** nodes + RoCE `.env`.
+Harder path: confirm the RoCE topology, then stage the published custom image
+and weights on every node required by the exact profile. DeepSeek remains an
+exact two-node profile; extra discovered capacity stays idle.
 
 ```bash
+# Read-only discovery preview. Differently named hosts are supported.
+scripts/detect-fabric.sh --json
+# If mDNS is incomplete, add --candidate HOST repeatedly or set
+# CLUSTER_CANDIDATES=atlas-a,atlas-b.
+
+# Review and confirm exact membership; writes gitignored .cluster-topology.json.
+scripts/detect-fabric.sh --write-topology
+
+# Optional runtime/path/auth overrides only; topology is not stored in .env.
 cp .env.example .env
-# Set HEAD_IP / WORKER_IP to RoCE rail-0 addresses (not admin/LAN/Tailscale).
-# Optional assist: scripts/detect-fabric.sh   # then set WORKER_IP by hand
-# scripts/detect-fabric.sh --write-env       # writes HEAD_IP + NCCL_* guesses
 
-# Image: pull the qualified digest on head, then stage it to worker
+# Pull/stage the qualified digest and weights to every node used by the profile.
 scripts/sync-image.sh deepseek-v4-flash --pull --yes
-
-# Weights on head + worker (~167 GB)
 scripts/pull-weights.sh deepseek-v4-flash --yes
 
 scripts/doctor.sh
-scripts/up.sh deepseek-v4-flash                  # DSpark k=5 default
+scripts/up.sh deepseek-v4-flash                  # exact NODES=2, DSpark k=5
 # rollback: scripts/up.sh deepseek-v4-flash --no-spec-decode
 # dry-run checks only: scripts/up.sh deepseek-v4-flash --dry-run
 
@@ -156,7 +176,16 @@ scripts/up.sh deepseek-v4-flash                  # DSpark k=5 default
 ./pulsar stop deepseek-v4-flash
 ```
 
-Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
+The wizard offers only exact `STATUS=tested*` profiles that fit confirmed
+capacity. No three-node profile is promoted today. Smoke served name:
+`deepseek-v4-flash`; cold load can take ~10+ minutes.
+
+**Experimental storage research:** replicated local Hugging Face caches remain
+the default. A separate, unpromoted NFSv4.2/RDMA path can keep one
+authoritative copy, mount exact clients read-only over confirmed RoCE rails,
+seal it with SHA-256 manifests, and benchmark two or three storage consumers.
+It requires explicit `--weight-source fabric`; the wizard never selects it or
+falls back to it. See [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md).
 
 ### What the tools do
 
@@ -165,12 +194,13 @@ Smoke served name: `deepseek-v4-flash`. Cold load can take ~10+ minutes.
 | `./pulsar` / `./pulsar wizard` | Root dispatcher → guided wizard |
 | `./pulsar inventory` | Read-only managed service + memory inventory |
 | `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |
-| `scripts/doctor.sh` | Host GPU/docker/port/cache (+ worker if `.env`) |
+| `scripts/doctor.sh` | Readiness of this node plus every other confirmed cluster node |
 | `scripts/list-models.sh` | Conf catalog |
-| `scripts/check-weights.sh` / `pull-weights.sh` | HF snapshot completeness / download+rsync |
-| `scripts/check-image.sh` / `sync-image.sh` | Image presence / worker load |
+| `scripts/check-weights.sh` / `pull-weights.sh` | Artifact completeness / stage every exact rank |
+| `./pulsar weight-fabric` | Experimental single-copy NFS/RDMA lifecycle and evidence |
+| `scripts/check-image.sh` / `sync-image.sh` | Image presence / stage every exact rank |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
-| `scripts/detect-fabric.sh` | Propose NCCL IF / HEAD_IP |
+| `scripts/detect-fabric.sh` | Discover, verify, and confirm N-node topology |
 | `scripts/up.sh` / `down.sh` / `status.sh` | Start (with gates) / stop / probe (canonical) |
 | `./wizard.sh` | Direct wizard entry (same as `./pulsar wizard`) |
 | `./serve.sh` / `cluster/*` | Low-level launchers (still supported) |
@@ -245,7 +275,6 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
 | Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
 | **deepseek-v4-flash** (2-node TP=2, PR-41834; **0731, DSpark, 20 GB/rank KV → 652k**) | **27.15** base (68%) / **43–48** DSpark | 104 @ c=8 | 0.935 | 3/3 @ **447K** | **150 min @ c=5, 3201 req, 0 err** (20 GB canonical) |
-| deepseek-v4-flash-0422 (fallback; flagship until 07-31) | 27.15 (68%) / 48.4 w/ -DSpark ckpt | 105 @ c=8 | 0.945 | 3/3 @ 447K | 2× 150 min (base 3318, spec-on 3440), 0 err |
 | laguna-s-2.1-nvfp4 (1-node, NFS catalog) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |
 | nemotron-3-nano-30b-nvfp4 | 61.9 (86%) | 399 @ c=16 | 0.830 | 3/3 @ 124K | 15 min clean |
@@ -296,7 +325,7 @@ no leaks, no thermal throttling anywhere).
 | Path | What |
 |---|---|
 | `models/*.conf` | one validated flag set per model; statuses earned by runs |
-| `cluster/` | 2-node launch/preflight/teardown + measured NCCL env |
+| `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
@@ -304,8 +333,9 @@ no leaks, no thermal throttling anywhere).
 | `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **RECIPES** (flag-exact), MULTINODE, BUILD, TUNING, VALIDATION, **REVALIDATE** (pin-bump runbook), **OPERATIONS** (on-call runbook), TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
-Set `HEAD_IP` / `WORKER_IP` in a gitignored `.env` before 2-node launches
-(see `.env.example`). Do not commit site addresses.
+Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.
+The resulting `.cluster-topology.json` is gitignored; do not commit site
+addresses. `HEAD_IP` / `WORKER_IP` remain legacy two-node compatibility only.
 
 ## License
 
