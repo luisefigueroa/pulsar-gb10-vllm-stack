@@ -565,9 +565,45 @@ assert_eq "fabric_claims_fast_path false" "$fp" "False"
 
 assert_true "bench-activate documented in CLI" \
   grep -q bench-activate "$REPO_DIR/scripts/model-library.sh"
+assert_true "bench-ssh-roce documented in CLI" \
+  grep -q bench-ssh-roce "$REPO_DIR/scripts/model-library.sh"
+assert_true "probe-ssh-roce documented in CLI" \
+  grep -q probe-ssh-roce "$REPO_DIR/scripts/model-library.sh"
+
+python3 "$PY" compare-ssh-roce-bench \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --model-id Qwen/Qwen3-1.7B \
+  --bytes-logical 1000 \
+  --control-seconds 100 \
+  --ssh-roce-seconds 70 \
+  --tag unit-ssh-roce-win \
+  --nodes 2 \
+  --home-rank 1 \
+  --output "$STATE/ssh-roce-win.json" >/dev/null
+v=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-win.json"'"))["verdict"])')
+assert_eq "ssh-roce bench ssh_roce_faster when roce < control" "$v" "ssh_roce_faster"
+fp=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-win.json"'"))["ssh_roce_claims_faster"])')
+assert_eq "ssh_roce_claims_faster true" "$fp" "True"
+pd=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-win.json"'"))["product_default_unchanged"])')
+assert_eq "ssh-roce product_default_unchanged" "$pd" "True"
+
+python3 "$PY" compare-ssh-roce-bench \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --model-id Qwen/Qwen3-1.7B \
+  --bytes-logical 1000 \
+  --control-seconds 80 \
+  --ssh-roce-seconds 100 \
+  --tag unit-ssh-roce-lose \
+  --nodes 2 \
+  --home-rank 1 \
+  --output "$STATE/ssh-roce-lose.json" >/dev/null
+v=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-lose.json"'"))["verdict"])')
+assert_eq "ssh-roce bench control_faster when roce > control" "$v" "control_faster"
 
 # tree_bytes must not double-count HF snapshot symlinks
-if STATE="$STATE" python3 - <<'PY'
+if STATE="$STATE" REPO_DIR="$REPO_DIR" python3 - <<'PY'
 import os, sys
 from pathlib import Path
 sys.path.insert(0, os.environ.get("REPO_DIR", "."))

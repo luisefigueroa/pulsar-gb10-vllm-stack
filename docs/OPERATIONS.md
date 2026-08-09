@@ -406,6 +406,31 @@ NFS export/mount is **batched** into fewer sudo sessions and skips
 `copy_phases` / `fabric_phases`. Wall-clock is often limited by full-tree
 materialize + setup, not raw RoCE line rate.
 
+**SSH-over-RoCE experiment (not product default):** same copy activate
+(rsync + SSH), but SSH targets are topology **RoCE IPs** so bulk TCP rides the
+fabric NIC without NFS/RDMA. Prerequisites: `sshd` reachable on fabric IPs
+(BatchMode keys), routes via the RoCE netdev. Product default remains control
+SSH hosts and optional NFS/RDMA fabric.
+
+```bash
+# 1) Prove SSH to fabric IPs (hostname check per rank)
+scripts/model-library.sh probe-ssh-roce deepseek-v4-flash
+
+# 2) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between)
+#    Stay for the run; no sudo required for pure copy paths.
+export PULSAR_HOT_BUDGET_BYTES=$((450 * 1024 * 1024 * 1024))  # if auto budget insufficient
+scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
+  --tag "ssh-roce-$(date -u +%Y%m%dT%H%M%SZ)"
+
+# Manual one-shot over RoCE IPs only:
+# PULSAR_COPY_SSH_MODE=roce scripts/model-library.sh activate <profile> --backend copy --yes
+```
+
+Report: `results/model-library/<profile>-ssh-roce-<tag>.json` with
+`verdict` (`ssh_roce_faster` | `control_faster` | `tie` | `inconclusive`),
+phase maps, and the RoCE IP map used. Use this before deciding whether to
+rethink NFS/RDMA fabric activate vs “copy over RoCE TCP.”
+
 ## Expected steady-state numbers (alert if far off)
 
 Flagship under load (DSpark default-on): ~27 tok/s rollback/base /

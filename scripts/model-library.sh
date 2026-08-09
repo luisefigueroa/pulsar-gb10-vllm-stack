@@ -42,6 +42,9 @@ Usage:
       [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
   scripts/model-library.sh bench-activate <profile> [--tag TAG] [--yes]
       [--interactive-sudo] [--output PATH] [--nodes N]
+  scripts/model-library.sh probe-ssh-roce <profile> [--nodes N] [--rail-index N]
+  scripts/model-library.sh bench-ssh-roce <profile> [--tag TAG] [--yes]
+      [--output PATH] [--nodes N] [--rail-index N]
   scripts/model-library.sh release-transfer <profile> [--yes] [--interactive-sudo]
   scripts/model-library.sh pin <profile>
   scripts/model-library.sh unpin <profile>
@@ -57,14 +60,29 @@ Notes:
   • Labels entries validated vs unvalidated using models/*.conf STATUS.
   • Duplicate complete homes refuse resolve until a primary is chosen.
   • activate --backend copy rsyncs over the control path into PULSAR_HOT_ROOT.
+    Experiment: PULSAR_COPY_SSH_MODE=roce uses topology RoCE IPs for rsync SSH
+    (TCP over RoCE NIC; not NFS/RDMA). Default remains control hosts.
   • activate --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
     to fill hot, then releases mounts/export. No silent fallback to copy.
   • bench-activate runs copy then fabric (purge between), writes a JSON report;
     fabric_claims_fast_path only if fabric wall time is strictly less than copy.
+  • probe-ssh-roce / bench-ssh-roce: experimental control SSH vs SSH-over-RoCE
+    A/B (no product default change). Requires sshd on fabric IPs.
   • pin keeps hot for home-independent restart; purge removes hot (budget).
   • Does not change wizard defaults or --weight-source fabric.
 EOF
 }
+
+# Experiment: control (default) vs roce (rsync -e ssh to fabric IPs).
+COPY_SSH_MODE="${PULSAR_COPY_SSH_MODE:-control}"
+case "$COPY_SSH_MODE" in
+  control|roce) ;;
+  *) die "PULSAR_COPY_SSH_MODE must be control or roce" ;;
+esac
+# Populated by load_copy_ssh_roce_map when COPY_SSH_MODE=roce
+declare -A LIBRARY_SSH_ROCE_IP=()
+declare -A LIBRARY_SSH_ROCE_HOSTNAME=()
+LIBRARY_SSH_ROCE_MAP_JSON=""
 
 cold_root_args() {
   if [ -n "${COLD_ROOT:-}" ]; then
@@ -491,11 +509,56 @@ cmd_cleanup_recommend() {
   fi
 }
 
+# SSH endpoint used for rsync bulk bytes (control hostname or RoCE IP).
+copy_ssh_data_host() {
+  local rank="${1:?}"
+  local host
+  if [ "$COPY_SSH_MODE" = roce ]; then
+    host="${LIBRARY_SSH_ROCE_IP[$rank]:-}"
+    [ -n "$host" ] || die "rank $rank: no RoCE IP in map (run probe-ssh-roce / load map)"
+    printf '%s\n' "$host"
+    return 0
+  fi
+  host="${CLUSTER_NODE_SSH_HOSTS[$rank]:-}"
+  [ -n "$host" ] || die "rank $rank: missing control ssh host"
+  printf '%s\n' "$host"
+}
+
+load_copy_ssh_roce_map() {
+  local home_rank="${1:?}" nodes="${2:?}" rail_index="${3:-0}"
+  local map ranks_csv r
+  ranks_csv=$(seq -s, 0 $((nodes - 1)))
+  map=$(python3 "$PY_TOOL" ssh-roce-map \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --home-rank "$home_rank" \
+    --nodes "$nodes" \
+    --ranks "$ranks_csv" \
+    --rail-index "$rail_index") \
+    || die "ssh-roce-map failed"
+  LIBRARY_SSH_ROCE_MAP_JSON="$map"
+  LIBRARY_SSH_ROCE_IP=()
+  LIBRARY_SSH_ROCE_HOSTNAME=()
+  while IFS=$'\t' read -r r ip hostname; do
+    [ -n "$r" ] || continue
+    LIBRARY_SSH_ROCE_IP["$r"]="$ip"
+    LIBRARY_SSH_ROCE_HOSTNAME["$r"]="$hostname"
+  done < <(printf '%s' "$map" | python3 -c '
+import json,sys
+m=json.load(sys.stdin)
+for _k,v in sorted((m.get("ranks") or {}).items(), key=lambda kv: int(kv[0])):
+    print("%s\t%s\t%s" % (v["rank"], v["roce_ip"], v.get("hostname") or ""))
+')
+  log "copy SSH mode=roce rail=$rail_index map ranks=${!LIBRARY_SSH_ROCE_IP[*]}"
+}
+
 # Copy hub tree from source path to dest path on a target rank.
 # Source is always read from the home node (controller uses local path or ssh).
+# Bulk rsync uses copy_ssh_data_host (control or RoCE IP per PULSAR_COPY_SSH_MODE).
 copy_hub_to_rank() {
   local target_rank="${1:?}" hub_source="${2:?}" hub_dest="${3:?}" home_rank="${4:?}"
-  local home_host dest_parent qsrc qdst
+  local home_host dest_host dest_parent qdst mode_tag
+
+  mode_tag="ssh_${COPY_SSH_MODE}"
 
   # Home rank: zero-copy symlink / reflink when possible.
   if [ "$target_rank" = "$home_rank" ]; then
@@ -512,34 +575,33 @@ copy_hub_to_rank() {
       # unreachable: home_rank==0 handled above
       materialize_tree_on_rank 0 "$hub_source" "$hub_dest" force-copy
     else
-      home_host="${CLUSTER_NODE_SSH_HOSTS[$home_rank]:-}"
-      [ -n "$home_host" ] || die "home rank $home_rank: missing ssh host"
+      home_host=$(copy_ssh_data_host "$home_rank")
       rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
         "${home_host}:${hub_source}/" "$hub_dest"/
-      log "rank 0 materialize=rsync_ssh from home rank $home_rank"
+      log "rank 0 materialize=rsync_${mode_tag} from home rank $home_rank host=$home_host"
     fi
     return 0
   fi
 
-  # Remote non-home target
+  # Remote non-home target (control-plane ssh_node for mkdir; rsync may use RoCE IP)
   qdst=$(printf '%q' "$hub_dest")
   ssh_node "$target_rank" "mkdir -p $(printf '%q' "$dest_parent") && rm -rf $qdst && mkdir -p $qdst"
+  dest_host=$(copy_ssh_data_host "$target_rank")
   if [ "$home_rank" = 0 ]; then
     rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
-      "$hub_source"/ "${CLUSTER_NODE_SSH_HOSTS[$target_rank]}:${hub_dest}/"
-    log "rank $target_rank materialize=rsync_ssh from rank 0"
+      "$hub_source"/ "${dest_host}:${hub_dest}/"
+    log "rank $target_rank materialize=rsync_${mode_tag} from rank 0 host=$dest_host"
   else
     # home remote -> target remote (pull to controller temp then push)
-    home_host="${CLUSTER_NODE_SSH_HOSTS[$home_rank]:-}"
-    [ -n "$home_host" ] || die "home rank $home_rank: missing ssh host"
+    home_host=$(copy_ssh_data_host "$home_rank")
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-hot-stage.XXXXXX")
     # shellcheck disable=SC2064
     trap "rm -rf '$tmp'" RETURN
     rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
       "${home_host}:${hub_source}/" "$tmp"/
     rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
-      "$tmp"/ "${CLUSTER_NODE_SSH_HOSTS[$target_rank]}:${hub_dest}/"
-    log "rank $target_rank materialize=rsync_via_controller from home rank $home_rank"
+      "$tmp"/ "${dest_host}:${hub_dest}/"
+    log "rank $target_rank materialize=rsync_via_controller_${mode_tag} home=$home_host dest=$dest_host"
   fi
 }
 
@@ -1014,6 +1076,12 @@ cmd_activate() {
     return 0
   fi
 
+  # Experimental: copy bulk rsync over RoCE IPs (TCP), not product default.
+  if [ "$backend" = copy ] && [ "$COPY_SSH_MODE" = roce ]; then
+    load_copy_ssh_roce_map "$home_rank" "$NODES" "${PULSAR_FABRIC_RAIL_INDEX:-0}"
+    log "experimental PULSAR_COPY_SSH_MODE=roce (rsync SSH targets are fabric IPs)"
+  fi
+
   if [ "$yes" != 1 ]; then
     if [ "$action" = fabric-copy ]; then
       log "fabric plan ready (ephemeral NFS/RDMA transfer → hot)"
@@ -1441,6 +1509,234 @@ cmd_bench_activate() {
   fi
 }
 
+# Probe: can we SSH to each rank's RoCE IP (BatchMode) and match expected hostname?
+cmd_probe_ssh_roce() {
+  local profile="" nodes_override="" rail_index="${PULSAR_FABRIC_RAIL_INDEX:-0}"
+  local plan home_rank nodes map expected_host ip rank rc=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --nodes)
+        [ $# -ge 2 ] || die "--nodes requires a value"
+        nodes_override="$2"
+        shift
+        ;;
+      --rail-index)
+        [ $# -ge 2 ] || die "--rail-index requires a value"
+        rail_index="$2"
+        shift
+        ;;
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$profile" ] || die "unexpected arg: $1"
+        profile="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: probe-ssh-roce <profile> [--nodes N] [--rail-index N]"
+  require_py
+  ensure_catalog
+  load_conf "$profile"
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  nodes="${nodes_override:-$NODES}"
+  # plan-activate enforces hot budget even for probe (home lookup only)
+  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ]; then
+    export PULSAR_HOT_BUDGET_BYTES=$((1024 * 1024 * 1024 * 1024))
+  fi
+  plan=$(python3 "$PY_TOOL" plan-activate \
+    --catalog "$CATALOG_FILE" \
+    --profile "$profile" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --hot-root "$HOT_ROOT" \
+    --backend copy \
+    --nodes "$nodes") \
+    || die "probe-ssh-roce: plan-activate failed"
+  home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
+  load_copy_ssh_roce_map "$home_rank" "$nodes" "$rail_index"
+  log "probe-ssh-roce profile=$profile home_rank=$home_rank nodes=$nodes"
+  printf '%s\n' "$LIBRARY_SSH_ROCE_MAP_JSON" | python3 -c '
+import json,sys
+m=json.load(sys.stdin)
+print("network", m.get("network"))
+for _k,v in sorted((m.get("ranks") or {}).items(), key=lambda kv: int(kv[0])):
+    print("rank", v["rank"], "role", v["role"],
+          "control", v.get("control_ssh_host") or "-",
+          "roce_ip", v["roce_ip"],
+          "host", v.get("hostname") or "-")
+'
+  for rank in $(seq 0 $((nodes - 1))); do
+    ip="${LIBRARY_SSH_ROCE_IP[$rank]:-}"
+    expected_host="${LIBRARY_SSH_ROCE_HOSTNAME[$rank]:-}"
+    [ -n "$ip" ] || { warn "rank $rank: missing RoCE IP"; rc=1; continue; }
+    # Rank 0 may be this controller — still SSH to its RoCE IP to prove path.
+    if ! out=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=8 \
+        -- "$ip" 'hostname -s; hostname' 2>&1); then
+      warn "rank $rank: SSH to RoCE IP $ip FAILED: $out"
+      rc=1
+      continue
+    fi
+    got=$(printf '%s\n' "$out" | head -1 | tr -d '\r')
+    if [ -n "$expected_host" ] && [ "$got" != "$expected_host" ] \
+        && [ "$got" != "${expected_host%%.*}" ]; then
+      # Accept short vs FQDN mismatch only if one prefixes the other
+      case "$expected_host" in
+        "$got"|"$got".*) ;;
+        *)
+          warn "rank $rank: RoCE $ip hostname mismatch expected=$expected_host got=$got"
+          rc=1
+          continue
+          ;;
+      esac
+    fi
+    log "rank $rank: SSH OK roce_ip=$ip hostname=$got"
+  done
+  if [ "$rc" -ne 0 ]; then
+    die "probe-ssh-roce: one or more ranks failed (sshd on fabric IP? route? host keys?)"
+  fi
+  log "probe-ssh-roce: all ranks OK"
+  return 0
+}
+
+# Experiment A/B: control-path SSH copy vs SSH-over-RoCE-IP copy (no NFS/RDMA).
+cmd_bench_ssh_roce() {
+  local profile="" tag="" output="" nodes_override="" yes=0
+  local rail_index="${PULSAR_FABRIC_RAIL_INDEX:-0}"
+  local nodes plan model_id bytes_logical topo_id home_rank
+  local control_s roce_s control_phases_file roce_phases_file
+  local control_phases_json roce_phases_json
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tag)
+        [ $# -ge 2 ] || die "--tag requires a value"
+        tag="$2"
+        shift
+        ;;
+      --output)
+        [ $# -ge 2 ] || die "--output requires a path"
+        output="$2"
+        shift
+        ;;
+      --nodes)
+        [ $# -ge 2 ] || die "--nodes requires a value"
+        nodes_override="$2"
+        shift
+        ;;
+      --rail-index)
+        [ $# -ge 2 ] || die "--rail-index requires a value"
+        rail_index="$2"
+        shift
+        ;;
+      --yes|-y) yes=1 ;;
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$profile" ] || die "unexpected arg: $1"
+        profile="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: bench-ssh-roce <profile> [--tag TAG] [--yes] [--nodes N]"
+  [ "$yes" = 1 ] || die "bench-ssh-roce is destructive to hot staging — re-run with --yes"
+  require_py
+  ensure_catalog
+  load_conf "$profile"
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  nodes="${nodes_override:-$NODES}"
+  if ! [[ "$nodes" =~ ^[0-9]+$ ]] || [ "$nodes" -lt 2 ]; then
+    die "bench-ssh-roce: need --nodes >= 2 (single-rank is not a RoCE path test)"
+  fi
+  if [ "$nodes" -gt "$CLUSTER_TOPOLOGY_COUNT" ]; then
+    die "bench-ssh-roce: --nodes $nodes exceeds topology count $CLUSTER_TOPOLOGY_COUNT"
+  fi
+  [ -n "$tag" ] || tag="ssh-roce-bench-$(date -u +%Y%m%dT%H%M%SZ)"
+  [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-ssh-roce-${tag}.json"
+  mkdir -p "$(dirname "$output")"
+
+  local auto_budget=0
+  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ]; then
+    export PULSAR_HOT_BUDGET_BYTES=$((1024 * 1024 * 1024 * 1024))
+    auto_budget=1
+    log "bench-ssh-roce: provisional PULSAR_HOT_BUDGET_BYTES=$PULSAR_HOT_BUDGET_BYTES"
+  fi
+  plan=$(python3 "$PY_TOOL" plan-activate \
+    --catalog "$CATALOG_FILE" \
+    --profile "$profile" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --hot-root "$HOT_ROOT" \
+    --backend copy \
+    --nodes "$nodes") \
+    || die "bench-ssh-roce: plan-activate failed"
+  model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
+  home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
+  topo_id="$CLUSTER_TOPOLOGY_ID"
+  if [ "$auto_budget" = 1 ] && [ "${bytes_logical:-0}" -gt 0 ]; then
+    local need=$((bytes_logical + bytes_logical / 4))
+    local default_budget=$((100 * 1024 * 1024 * 1024))
+    if [ "$need" -lt "$default_budget" ]; then
+      need=$default_budget
+    fi
+    export PULSAR_HOT_BUDGET_BYTES="$need"
+    log "bench-ssh-roce: PULSAR_HOT_BUDGET_BYTES=$need"
+  fi
+
+  # Fail closed before long copies if fabric SSH is broken.
+  cmd_probe_ssh_roce "$profile" --nodes "$nodes" --rail-index "$rail_index"
+
+  control_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-ctrl-phases.XXXXXX")
+  roce_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-roce-phases.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -f '$control_phases_file' '$roce_phases_file'" RETURN
+
+  log "bench-ssh-roce $profile tag=$tag home_rank=$home_rank"
+  log "running timed CONTROL (mgmt) SSH copy activate…"
+  COPY_SSH_MODE=control
+  export PULSAR_COPY_SSH_MODE=control
+  control_s=$(timed_activate_backend "$profile" copy "$control_phases_file")
+  log "control wall_time_seconds=$control_s"
+  control_phases_json=$(phases_tsv_to_json "$control_phases_file")
+
+  log "running timed SSH-over-RoCE copy activate…"
+  COPY_SSH_MODE=roce
+  export PULSAR_COPY_SSH_MODE=roce
+  export PULSAR_FABRIC_RAIL_INDEX="$rail_index"
+  # Map reloaded inside activate; ensure env visible to child
+  roce_s=$(timed_activate_backend "$profile" copy "$roce_phases_file")
+  log "ssh_roce wall_time_seconds=$roce_s"
+  roce_phases_json=$(phases_tsv_to_json "$roce_phases_file")
+
+  # Restore default for rest of shell
+  COPY_SSH_MODE=control
+  export PULSAR_COPY_SSH_MODE=control
+
+  python3 "$PY_TOOL" compare-ssh-roce-bench \
+    --profile "$profile" \
+    --topology-id "$topo_id" \
+    --model-id "$model_id" \
+    --bytes-logical "$bytes_logical" \
+    --control-seconds "$control_s" \
+    --ssh-roce-seconds "$roce_s" \
+    --tag "$tag" \
+    --nodes "$nodes" \
+    --home-rank "$home_rank" \
+    --control-phases-json "$control_phases_json" \
+    --ssh-roce-phases-json "$roce_phases_json" \
+    --ssh-roce-map-json "$LIBRARY_SSH_ROCE_MAP_JSON" \
+    --notes "experiment: same rsync activate; control SSH host vs topology RoCE IP (TCP over RoCE NIC, not NFS/RDMA). Product default unchanged." \
+    --output "$output"
+
+  local verdict
+  verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["verdict"])' "$output")
+  if [ "$verdict" = ssh_roce_faster ]; then
+    log "SSH-RoCE experiment: RoCE path faster than control (verdict=$verdict) — consider as activate option"
+  else
+    log "SSH-RoCE experiment: does not beat control (verdict=$verdict); no product change"
+  fi
+  log "report: $output"
+}
+
 main() {
   [ $# -ge 1 ] || { usage; exit 2; }
   local cmd="$1"
@@ -1473,6 +1769,8 @@ main() {
       ;;
     activate) cmd_activate "$@" ;;
     bench-activate) cmd_bench_activate "$@" ;;
+    probe-ssh-roce) cmd_probe_ssh_roce "$@" ;;
+    bench-ssh-roce) cmd_bench_ssh_roce "$@" ;;
     release-transfer) cmd_release_transfer "$@" ;;
     pin) cmd_pin "$@" ;;
     unpin) cmd_unpin "$@" ;;

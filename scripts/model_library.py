@@ -2330,6 +2330,223 @@ def compare_activate_bench(
     return report
 
 
+def build_ssh_roce_map(
+    topology: dict[str, Any],
+    *,
+    home_rank: int,
+    target_ranks: list[int],
+    rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
+) -> dict[str, Any]:
+    """Map ranks → control SSH host and RoCE IP for experimental SSH-over-RoCE copy.
+
+    Uses the same selected_rail() as fabric NFS. Does not change product activate
+    defaults — experiment-only addressing for rsync -e ssh over fabric IPs.
+    """
+    nodes = topology.get("nodes") or []
+    by_rank: dict[int, dict[str, Any]] = {}
+    for node in nodes:
+        try:
+            r = int(node["rank"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        by_rank[r] = node
+
+    if home_rank not in by_rank:
+        fail(f"ssh-roce-map: home_rank {home_rank} not in topology")
+
+    ranks = sorted(set(int(r) for r in target_ranks))
+    if home_rank not in ranks:
+        ranks = sorted(ranks + [home_rank])
+
+    peers = [r for r in ranks if r != home_rank]
+    if not peers:
+        fail(
+            "ssh-roce-map: need at least one non-home target rank "
+            "(single-rank is not a RoCE path experiment)"
+        )
+
+    rank_entries: dict[str, Any] = {}
+    home_ip: str | None = None
+    network: str | None = None
+    for peer in peers:
+        server, client, net = selected_rail_between(
+            topology, home_rank, peer, rail_index
+        )
+        if home_ip is None:
+            home_ip = str(server["ip"])
+            network = str(net)
+        elif str(server["ip"]) != home_ip:
+            fail(
+                f"ssh-roce-map: home rank {home_rank} has inconsistent RoCE IPs "
+                f"across peers ({home_ip} vs {server['ip']})"
+            )
+        peer_node = by_rank[peer]
+        rank_entries[str(peer)] = {
+            "rank": peer,
+            "role": "client",
+            "control_ssh_host": peer_node.get("ssh_host") or "",
+            "hostname": peer_node.get("hostname") or "",
+            "node_id": peer_node.get("node_id") or "",
+            "roce_ip": str(client["ip"]),
+            "roce_hca": client.get("hca") or "",
+            "roce_netdev": client.get("netdev") or "",
+            "network": str(net),
+            "rail_index": rail_index,
+        }
+
+    home_node = by_rank[home_rank]
+    # Home endpoint from first peer rail (server side).
+    server0, _client0, net0 = selected_rail_between(
+        topology, home_rank, peers[0], rail_index
+    )
+    rank_entries[str(home_rank)] = {
+        "rank": home_rank,
+        "role": "home",
+        "control_ssh_host": home_node.get("ssh_host") or "",
+        "hostname": home_node.get("hostname") or "",
+        "node_id": home_node.get("node_id") or "",
+        "roce_ip": str(server0["ip"]),
+        "roce_hca": server0.get("hca") or "",
+        "roce_netdev": server0.get("netdev") or "",
+        "network": str(net0),
+        "rail_index": rail_index,
+    }
+
+    return {
+        "schema_version": 1,
+        "kind": "model-library-ssh-roce-map",
+        "topology_id": topology.get("topology_id") or "",
+        "home_rank": home_rank,
+        "rail_index": rail_index,
+        "network": network or net0,
+        "target_ranks": ranks,
+        "ranks": rank_entries,
+        "notes": (
+            "Experiment only: rsync -e ssh to roce_ip uses the RoCE NIC as TCP/IP "
+            "(not NFS/RDMA). Requires sshd reachable on fabric IPs."
+        ),
+    }
+
+
+def compare_ssh_roce_bench(
+    *,
+    profile: str,
+    topology_id: str,
+    model_id: str,
+    bytes_logical: int,
+    control_seconds: float,
+    ssh_roce_seconds: float,
+    tag: str,
+    nodes: int,
+    home_rank: int,
+    ssh_roce_map: dict[str, Any] | None = None,
+    control_phases: dict[str, Any] | None = None,
+    ssh_roce_phases: dict[str, Any] | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Compare control-path SSH copy vs SSH-over-RoCE-IP copy (experiment)."""
+    if control_seconds < 0 or ssh_roce_seconds < 0:
+        fail("bench times must be non-negative")
+    if control_seconds == 0:
+        ratio = None
+        verdict = "inconclusive"
+        reason = "control_seconds is zero; cannot compute speedup"
+    else:
+        ratio = ssh_roce_seconds / control_seconds
+        if ssh_roce_seconds < control_seconds:
+            verdict = "ssh_roce_faster"
+            reason = "SSH-over-RoCE wall time is strictly less than control SSH"
+        elif ssh_roce_seconds == control_seconds:
+            verdict = "tie"
+            reason = "SSH-over-RoCE and control SSH wall times are equal"
+        else:
+            verdict = "control_faster"
+            reason = "SSH-over-RoCE wall time is not less than control SSH"
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "model-library-ssh-roce-bench",
+        "tag": tag,
+        "profile": profile,
+        "model_id": model_id,
+        "topology_id": topology_id,
+        "nodes": nodes,
+        "home_rank": home_rank,
+        "bytes_logical": bytes_logical,
+        "control_seconds": control_seconds,
+        "ssh_roce_seconds": ssh_roce_seconds,
+        "ssh_roce_over_control_ratio": ratio,
+        "verdict": verdict,
+        "reason": reason,
+        "ssh_roce_claims_faster": verdict == "ssh_roce_faster",
+        "product_default_unchanged": True,
+        "recorded_at": utc_now(),
+    }
+    if ssh_roce_map:
+        report["ssh_roce_map"] = ssh_roce_map
+    if control_phases:
+        report["control_phases"] = control_phases
+    if ssh_roce_phases:
+        report["ssh_roce_phases"] = ssh_roce_phases
+    if notes:
+        report["notes"] = notes
+    return report
+
+
+def cmd_ssh_roce_map(args: argparse.Namespace) -> int:
+    topology = load_topology_for_plan(args.topology_file)
+    ranks = [int(x) for x in args.ranks.split(",") if str(x).strip() != ""]
+    if not ranks:
+        ranks = list(range(int(args.nodes)))
+    report = build_ssh_roce_map(
+        topology,
+        home_rank=int(args.home_rank),
+        target_ranks=ranks,
+        rail_index=int(args.rail_index),
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_compare_ssh_roce_bench(args: argparse.Namespace) -> int:
+    control_phases = None
+    ssh_roce_phases = None
+    ssh_map = None
+    if getattr(args, "control_phases_json", None):
+        try:
+            control_phases = json.loads(args.control_phases_json)
+        except json.JSONDecodeError as exc:
+            fail(f"control-phases-json: {exc}")
+    if getattr(args, "ssh_roce_phases_json", None):
+        try:
+            ssh_roce_phases = json.loads(args.ssh_roce_phases_json)
+        except json.JSONDecodeError as exc:
+            fail(f"ssh-roce-phases-json: {exc}")
+    if getattr(args, "ssh_roce_map_json", None):
+        try:
+            ssh_map = json.loads(args.ssh_roce_map_json)
+        except json.JSONDecodeError as exc:
+            fail(f"ssh-roce-map-json: {exc}")
+    report = compare_ssh_roce_bench(
+        profile=args.profile,
+        topology_id=args.topology_id,
+        model_id=args.model_id,
+        bytes_logical=args.bytes_logical,
+        control_seconds=args.control_seconds,
+        ssh_roce_seconds=args.ssh_roce_seconds,
+        tag=args.tag,
+        nodes=args.nodes,
+        home_rank=args.home_rank,
+        ssh_roce_map=ssh_map if isinstance(ssh_map, dict) else None,
+        control_phases=control_phases if isinstance(control_phases, dict) else None,
+        ssh_roce_phases=ssh_roce_phases if isinstance(ssh_roce_phases, dict) else None,
+        notes=getattr(args, "notes", None) or None,
+    )
+    if args.output:
+        atomic_write_json(args.output, report, mode=0o644)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_compare_bench(args: argparse.Namespace) -> int:
     copy_phases = None
     fabric_phases = None
@@ -2554,6 +2771,46 @@ def build_parser() -> argparse.ArgumentParser:
     inv = sub.add_parser("inventory-digest", help="Digest a hub tree")
     inv.add_argument("--hub-path", required=True)
     inv.set_defaults(func=cmd_inventory_digest)
+
+    srm = sub.add_parser(
+        "ssh-roce-map",
+        help="Map ranks to RoCE IPs for experimental SSH-over-RoCE rsync",
+    )
+    srm.add_argument("--topology-file", required=True)
+    srm.add_argument("--home-rank", type=int, required=True)
+    srm.add_argument(
+        "--nodes",
+        type=int,
+        default=2,
+        help="If --ranks omitted, use ranks 0..nodes-1",
+    )
+    srm.add_argument(
+        "--ranks",
+        default="",
+        help="Comma-separated ranks (default: 0..nodes-1)",
+    )
+    srm.add_argument("--rail-index", type=int, default=DEFAULT_FABRIC_RAIL_INDEX)
+    srm.set_defaults(func=cmd_ssh_roce_map)
+
+    csrb = sub.add_parser(
+        "compare-ssh-roce-bench",
+        help="Compare control SSH copy vs SSH-over-RoCE copy (experiment)",
+    )
+    csrb.add_argument("--profile", required=True)
+    csrb.add_argument("--topology-id", required=True)
+    csrb.add_argument("--model-id", required=True)
+    csrb.add_argument("--bytes-logical", type=int, required=True)
+    csrb.add_argument("--control-seconds", type=float, required=True)
+    csrb.add_argument("--ssh-roce-seconds", type=float, required=True)
+    csrb.add_argument("--tag", required=True)
+    csrb.add_argument("--nodes", type=int, required=True)
+    csrb.add_argument("--home-rank", type=int, required=True)
+    csrb.add_argument("--control-phases-json", default="")
+    csrb.add_argument("--ssh-roce-phases-json", default="")
+    csrb.add_argument("--ssh-roce-map-json", default="")
+    csrb.add_argument("--notes", default="")
+    csrb.add_argument("--output", default="")
+    csrb.set_defaults(func=cmd_compare_ssh_roce_bench)
 
     bench = sub.add_parser(
         "compare-bench",
