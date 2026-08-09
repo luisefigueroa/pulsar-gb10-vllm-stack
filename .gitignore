@@ -1,6 +1,7 @@
 .env
 .cluster-topology.json
 .weight-fabric/
+.model-library/
 *.log.tmp
 __pycache__/
 .venv/
