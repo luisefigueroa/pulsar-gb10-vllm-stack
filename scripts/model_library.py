@@ -15,6 +15,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -114,14 +115,19 @@ def read_revision(hub_root: pathlib.Path) -> str | None:
 
 
 def tree_bytes(path: pathlib.Path) -> int:
+    """Sum regular-file sizes without following symlinks (HF blobs counted once)."""
     total = 0
     try:
         for root, _dirs, files in os.walk(path, followlinks=False):
             for name in files:
                 try:
-                    total += (pathlib.Path(root) / name).stat().st_size
+                    st = (pathlib.Path(root) / name).lstat()
                 except OSError:
                     continue
+                if stat.S_ISLNK(st.st_mode):
+                    continue
+                if stat.S_ISREG(st.st_mode):
+                    total += st.st_size
     except OSError:
         return 0
     return total
@@ -2275,6 +2281,9 @@ def compare_activate_bench(
     fabric_seconds: float,
     tag: str,
     nodes: int,
+    copy_phases: dict[str, Any] | None = None,
+    fabric_phases: dict[str, Any] | None = None,
+    notes: str | None = None,
 ) -> dict[str, Any]:
     """Compare copy vs fabric wall times. Fabric wins only if strictly faster."""
     if copy_seconds < 0 or fabric_seconds < 0:
@@ -2295,7 +2304,7 @@ def compare_activate_bench(
         else:
             verdict = "copy_faster"
             reason = "fabric wall time is not less than copy"
-    return {
+    report: dict[str, Any] = {
         "schema_version": 1,
         "kind": "model-library-activate-bench",
         "tag": tag,
@@ -2312,9 +2321,28 @@ def compare_activate_bench(
         "fabric_claims_fast_path": verdict == "fabric_faster",
         "recorded_at": utc_now(),
     }
+    if copy_phases:
+        report["copy_phases"] = copy_phases
+    if fabric_phases:
+        report["fabric_phases"] = fabric_phases
+    if notes:
+        report["notes"] = notes
+    return report
 
 
 def cmd_compare_bench(args: argparse.Namespace) -> int:
+    copy_phases = None
+    fabric_phases = None
+    if getattr(args, "copy_phases_json", None):
+        try:
+            copy_phases = json.loads(args.copy_phases_json)
+        except json.JSONDecodeError as exc:
+            fail(f"copy-phases-json: {exc}")
+    if getattr(args, "fabric_phases_json", None):
+        try:
+            fabric_phases = json.loads(args.fabric_phases_json)
+        except json.JSONDecodeError as exc:
+            fail(f"fabric-phases-json: {exc}")
     report = compare_activate_bench(
         profile=args.profile,
         topology_id=args.topology_id,
@@ -2324,6 +2352,9 @@ def cmd_compare_bench(args: argparse.Namespace) -> int:
         fabric_seconds=args.fabric_seconds,
         tag=args.tag,
         nodes=args.nodes,
+        copy_phases=copy_phases if isinstance(copy_phases, dict) else None,
+        fabric_phases=fabric_phases if isinstance(fabric_phases, dict) else None,
+        notes=getattr(args, "notes", None) or None,
     )
     if args.output:
         atomic_write_json(args.output, report, mode=0o644)
@@ -2536,6 +2567,9 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--fabric-seconds", type=float, required=True)
     bench.add_argument("--tag", required=True)
     bench.add_argument("--nodes", type=int, required=True)
+    bench.add_argument("--copy-phases-json", default="")
+    bench.add_argument("--fabric-phases-json", default="")
+    bench.add_argument("--notes", default="")
     bench.add_argument("--output", default="")
     bench.add_argument("--json", action="store_true")
     bench.set_defaults(func=cmd_compare_bench)

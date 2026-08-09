@@ -399,6 +399,13 @@ and `fabric_claims_fast_path` (true only if fabric is strictly faster). Prefer a
 fabric is local-only and is not a meaningful B-gate. Default output:
 `results/model-library/<profile>-<tag>.json`.
 
+**Fabric activate performance:** home rank prefers **symlink/reflink** into hot
+(no second full write of the durable home); ranks materialize in **parallel**;
+NFS export/mount is **batched** into fewer sudo sessions and skips
+`nfs-server` restart when RDMA is already listening. Bench JSON may include
+`copy_phases` / `fabric_phases`. Wall-clock is often limited by full-tree
+materialize + setup, not raw RoCE line rate.
+
 ## Expected steady-state numbers (alert if far off)
 
 Flagship under load (DSpark default-on): ~27 tok/s rollback/base /
