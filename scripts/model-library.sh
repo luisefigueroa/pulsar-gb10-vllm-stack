@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Federated model library: warm catalog + copy activate into hot staging.
+# Federated model library: warm catalog + optional cold + hot staging.
 # Does not change replicated defaults or experimental live fabric launch.
 set -euo pipefail
 SCRIPT_NAME=model-library
@@ -10,6 +10,12 @@ PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
 CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-$LIBRARY_DIR/catalog.json}"
 HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
+# Optional cold archive (site NFS). Empty PULSAR_COLD_ROOT disables cold.
+# When unset, MODELS_NFS (default /mnt/Models from lib.sh) is used.
+COLD_ROOT="${PULSAR_COLD_ROOT-}"
+if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
+  COLD_ROOT="${MODELS_NFS:-}"
+fi
 LIBRARY_SUDO_MODE="${LIBRARY_SUDO_MODE:-passwordless}"
 case "$LIBRARY_SUDO_MODE" in
   passwordless|interactive) ;;
@@ -18,14 +24,20 @@ esac
 
 usage() {
   cat <<'EOF'
-Federated model library (warm catalog + hot staging)
+Federated model library (warm catalog + optional cold + hot staging)
 
 Usage:
   scripts/model-library.sh catalog refresh [--json] [--local-only]
   scripts/model-library.sh catalog list [--validated] [--json]
   scripts/model-library.sh catalog show <model_id|profile> [--json]
-  scripts/model-library.sh resolve <profile|model_id> [--json]
+  scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
+  scripts/model-library.sh cold scan [--json] [--complete-only] [--root PATH]
+  scripts/model-library.sh cold show <model_id|/abs/path> [--json]
+  scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
+      [--cache-root PATH] [--yes]
+  scripts/model-library.sh cold stage-only <profile>
+      [--allow-unvalidated] [--yes] [--nodes N]
   scripts/model-library.sh activate <profile> [--backend copy|fabric]
       [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
   scripts/model-library.sh release-transfer <profile> [--yes] [--interactive-sudo]
@@ -36,6 +48,10 @@ Usage:
 
 Notes:
   • Scans default HF cache hubs on confirmed topology nodes (warm catalog).
+  • Optional cold archive (PULSAR_COLD_ROOT or MODELS_NFS): Official Models/
+    org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
+  • cold adopt imports into a durable warm HF home; cold stage-only fills hot
+    only (cold remains sole durable copy; pin still allows warm restart).
   • Labels entries validated vs unvalidated using models/*.conf STATUS.
   • Duplicate complete homes refuse resolve until a primary is chosen.
   • activate --backend copy rsyncs over the control path into PULSAR_HOT_ROOT.
@@ -44,6 +60,12 @@ Notes:
   • pin keeps hot for home-independent restart; purge removes hot (budget).
   • Does not change wizard defaults or --weight-source fabric.
 EOF
+}
+
+cold_root_args() {
+  if [ -n "${COLD_ROOT:-}" ]; then
+    printf '%s\n' --cold-root "$COLD_ROOT"
+  fi
 }
 
 require_py() {
@@ -191,10 +213,17 @@ cmd_catalog_show() {
 }
 
 cmd_resolve() {
-  local query="" json=0
+  local query="" json=0 no_cold=0
+  local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json=1 ;;
+      --no-cold) no_cold=1 ;;
+      --cold-root)
+        shift
+        [ $# -gt 0 ] || die "--cold-root needs a path"
+        COLD_ROOT="$1"
+        ;;
       -h|--help) usage; return 0 ;;
       *)
         [ -z "$query" ] || die "unexpected arg: $1"
@@ -203,30 +232,240 @@ cmd_resolve() {
     esac
     shift
   done
-  [ -n "$query" ] || die "usage: resolve <profile|model_id> [--json]"
+  [ -n "$query" ] || die "usage: resolve <profile|model_id|/abs/path> [--json] [--no-cold]"
   require_py
-  # Absolute-path / NFS profiles are Phase 3
-  if [[ "$query" == /* ]]; then
-    die "resolve: absolute/cold paths are not supported yet (Phase 3)"
-  fi
-  if [[ "$query" != */* ]]; then
-    # profile name — reject nfs confs early
-    if [ -f "$REPO_DIR/models/${query}.conf" ]; then
-      # shellcheck disable=SC1090
-      MODEL=""
-      # shellcheck disable=SC1090
-      . "$REPO_DIR/models/${query}.conf"
-      case "${MODEL:-}" in
-        /*) die "resolve: profile $query uses NFS/catalog path (Phase 3); warm catalog is HF-hub only" ;;
-      esac
-    fi
-  fi
-  ensure_catalog
-  if [ "$json" = 1 ]; then
-    python3 "$PY_TOOL" resolve --catalog "$CATALOG_FILE" --json "$query"
+  args=(resolve --models-dir "$REPO_DIR/models")
+  if [ -f "$CATALOG_FILE" ]; then
+    args+=(--catalog "$CATALOG_FILE")
   else
-    python3 "$PY_TOOL" resolve --catalog "$CATALOG_FILE" "$query"
+    args+=(--allow-missing-catalog)
   fi
+  if [ "$no_cold" = 1 ]; then
+    args+=(--no-cold)
+  else
+    # shellcheck disable=SC2207
+    args+=($(cold_root_args))
+  fi
+  if [ "$json" = 1 ]; then
+    args+=(--json)
+  fi
+  args+=("$query")
+  python3 "$PY_TOOL" "${args[@]}"
+}
+
+cmd_cold_scan() {
+  local json=0 complete_only=0 root="" args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      --complete-only) complete_only=1 ;;
+      --root)
+        shift
+        [ $# -gt 0 ] || die "--root needs a path"
+        root="$1"
+        ;;
+      -h|--help) usage; return 0 ;;
+      *) die "unknown arg: $1" ;;
+    esac
+    shift
+  done
+  require_py
+  args=(scan-cold)
+  if [ -n "$root" ]; then
+    args+=(--cold-root "$root")
+  else
+    # shellcheck disable=SC2207
+    args+=($(cold_root_args))
+  fi
+  [ "$complete_only" = 1 ] && args+=(--complete-only)
+  [ "$json" = 1 ] && args+=(--json)
+  python3 "$PY_TOOL" "${args[@]}"
+}
+
+cmd_cold_show() {
+  local query="" root=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --root)
+        shift
+        [ $# -gt 0 ] || die "--root needs a path"
+        root="$1"
+        ;;
+      --json) ;; # always JSON object
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$query" ] || die "unexpected arg: $1"
+        query="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] || die "usage: cold show <model_id|/abs/path>"
+  require_py
+  local args=(find-cold)
+  if [ -n "$root" ]; then
+    args+=(--cold-root "$root")
+  else
+    # shellcheck disable=SC2207
+    args+=($(cold_root_args))
+  fi
+  args+=("$query")
+  python3 "$PY_TOOL" "${args[@]}"
+}
+
+cmd_cold_adopt() {
+  local query="" yes=0 cache_root="${HF_CACHE:-$HOME/.cache/huggingface}"
+  local root=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y) yes=1 ;;
+      --cache-root)
+        shift
+        [ $# -gt 0 ] || die "--cache-root needs a path"
+        cache_root="$1"
+        ;;
+      --root)
+        shift
+        [ $# -gt 0 ] || die "--root needs a path"
+        root="$1"
+        ;;
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$query" ] || die "unexpected arg: $1"
+        query="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] || die "usage: cold adopt <model_id|profile|/abs/path> [--cache-root PATH] [--yes]"
+  require_py
+
+  local plan_args=(plan-cold-adopt --cache-root "$cache_root" --models-dir "$REPO_DIR/models")
+  if [ -n "$root" ]; then
+    plan_args+=(--cold-root "$root")
+  else
+    # shellcheck disable=SC2207
+    plan_args+=($(cold_root_args))
+  fi
+  if [[ "$query" == /* ]]; then
+    plan_args+=(--path "$query")
+  elif [[ "$query" == */* ]]; then
+    plan_args+=(--model "$query")
+  else
+    plan_args+=(--profile "$query")
+  fi
+
+  local plan
+  plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
+  local model_id source dest bytes
+  model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  source=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_path"])')
+  dest=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dest_hub"])')
+  bytes=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("bytes") or 0)')
+
+  library_confirm "$yes" \
+    "Adopt cold → warm HF home
+  model:  $model_id
+  source: $source
+  dest:   $dest
+  bytes:  $bytes
+  After adopt, run: scripts/model-library.sh catalog refresh"
+
+  # Prefer Python materialize (handles flat→hub); works on controller filesystem.
+  python3 "$PY_TOOL" "${plan_args[@]}" --execute
+  log "adopted $model_id into $dest"
+  log "next: scripts/model-library.sh catalog refresh"
+}
+
+cmd_cold_stage_only() {
+  local profile="" yes=0 allow_unval=0 nodes=1 root=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y) yes=1 ;;
+      --allow-unvalidated) allow_unval=1 ;;
+      --nodes)
+        shift
+        [ $# -gt 0 ] || die "--nodes needs a value"
+        nodes="$1"
+        ;;
+      --root)
+        shift
+        [ $# -gt 0 ] || die "--root needs a path"
+        root="$1"
+        ;;
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$profile" ] || die "unexpected arg: $1"
+        profile="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: cold stage-only <profile> [--yes] [--allow-unvalidated]"
+  require_py
+  load_cluster_topology >/dev/null \
+    || die "confirmed topology required (scripts/detect-fabric.sh --write-topology)"
+
+  local plan_args=(
+    plan-cold-stage
+    --profile "$profile"
+    --topology-id "${CLUSTER_TOPOLOGY_ID}"
+    --hot-root "$HOT_ROOT"
+    --models-dir "$REPO_DIR/models"
+    --nodes "$nodes"
+  )
+  if [ -f "$CATALOG_FILE" ]; then
+    plan_args+=(--catalog "$CATALOG_FILE")
+  fi
+  if [ -n "$root" ]; then
+    plan_args+=(--cold-root "$root")
+  else
+    # shellcheck disable=SC2207
+    plan_args+=($(cold_root_args))
+  fi
+  [ "$allow_unval" = 1 ] && plan_args+=(--allow-unvalidated)
+
+  local plan action
+  plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
+  action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+  if [ "$action" = "skip" ]; then
+    log "hot already ready for $profile (stage-only skip)"
+    printf '%s\n' "$plan"
+    return 0
+  fi
+
+  local model_id source hub_dest instance bytes
+  model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  source=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_path"])')
+  hub_dest=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_dest"])')
+  instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  bytes=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("bytes_logical") or 0)')
+
+  library_confirm "$yes" \
+    "Stage-only cold → hot (no durable warm home)
+  profile: $profile
+  model:   $model_id
+  source:  $source
+  hot:     $hub_dest
+  bytes:   $bytes
+  Unpinned restart will need cold again."
+
+  # Local controller materialize + stamp (multi-rank stage-only copies hub_dest
+  # via the same rsync path as activate when nodes>1 — rank 0 first).
+  python3 "$PY_TOOL" "${plan_args[@]}" --execute >/dev/null
+
+  if [ "$nodes" -gt 1 ]; then
+    local rank
+    for ((rank = 1; rank < nodes; rank++)); do
+      copy_hub_to_rank "$rank" "$hub_dest" "$hub_dest" 0
+      local stamp_json
+      stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
+      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+      verify_hot_on_rank "$rank" "$instance" "$profile" "${CLUSTER_TOPOLOGY_ID}"
+    done
+  fi
+  log "stage-only ready: $instance"
+  printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["executed"]=True; print(json.dumps(d, indent=2, sort_keys=True))'
 }
 
 cmd_cleanup_recommend() {
@@ -896,6 +1135,18 @@ main() {
       ;;
     resolve) cmd_resolve "$@" ;;
     cleanup-recommend) cmd_cleanup_recommend "$@" ;;
+    cold)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      local cold_sub="$1"
+      shift
+      case "$cold_sub" in
+        scan) cmd_cold_scan "$@" ;;
+        show) cmd_cold_show "$@" ;;
+        adopt) cmd_cold_adopt "$@" ;;
+        stage-only) cmd_cold_stage_only "$@" ;;
+        *) usage; exit 2 ;;
+      esac
+      ;;
     activate) cmd_activate "$@" ;;
     release-transfer) cmd_release_transfer "$@" ;;
     pin) cmd_pin "$@" ;;

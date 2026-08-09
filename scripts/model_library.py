@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Federated model library: warm catalog + hot staging stamps (Phase 0–1 brain).
+"""Federated model library: warm catalog + optional cold + hot staging.
 
-Bash owns topology/SSH, rsync activate, and operator entrypoints. This module
-owns schemas, hub completeness, labels, digests, hot.json, and disk budget.
+Bash owns topology/SSH, rsync activate/adopt, and operator entrypoints. This
+module owns schemas, hub/flat completeness, labels, digests, hot.json, disk
+budget, and cold-archive resolve (warm → cold → fail closed).
 """
 
 from __future__ import annotations
@@ -30,6 +31,14 @@ DEFAULT_FABRIC_PORT = 20049
 DEFAULT_FABRIC_RAIL_INDEX = 0
 TRANSFER_MOUNT_OPTIONS = (
     "ro,vers=4.2,proto=rdma,port=20049,hard,timeo=600,retrans=2"
+)
+# Site cold archive category dirs (org/name trees under each).
+COLD_CATEGORY_DIRS = ("Official Models", "Community Models")
+# Hub cache roots relative to cold root (in addition to cold_root/hub).
+COLD_HUB_REL_PATHS = (
+    "hub",
+    ".cache/huggingface/hub",
+    "huggingface/hub",
 )
 
 
@@ -118,38 +127,35 @@ def tree_bytes(path: pathlib.Path) -> int:
     return total
 
 
-def hub_tree_state(hub_root: pathlib.Path) -> str:
-    """Return complete | partial | missing for a hub model directory."""
-    if not hub_root.is_dir():
-        return "missing"
+def _has_incomplete_marker(root: pathlib.Path) -> bool:
     try:
-        for root, _dirs, files in os.walk(hub_root, followlinks=False):
+        for dirpath, _dirs, files in os.walk(root, followlinks=False):
             for name in files:
                 if name.endswith(".incomplete"):
-                    return "partial"
+                    return True
     except OSError:
-        return "partial"
+        return True
+    return False
 
-    revision = read_revision(hub_root)
-    if revision is None:
+
+def weight_dir_state(weight_dir: pathlib.Path) -> str:
+    """Return complete | partial for a directory holding config + weight files."""
+    if not weight_dir.is_dir():
         return "partial"
-    snapshot = hub_root / "snapshots" / revision
-    config = snapshot / "config.json"
+    config = weight_dir / "config.json"
     if not config.is_file() or config.stat().st_size <= 0:
-        # Nested configs: accept any config.json under snapshot
         found = False
         try:
-            for path in snapshot.rglob("config.json"):
+            for path in weight_dir.rglob("config.json"):
                 if path.is_file() and path.stat().st_size > 0:
                     found = True
-                    config = path
+                    weight_dir = path.parent
                     break
         except OSError:
             return "partial"
         if not found:
             return "partial"
 
-    weight_dir = config.parent
     has_weight = False
     try:
         for path in weight_dir.iterdir():
@@ -177,6 +183,58 @@ def hub_tree_state(hub_root: pathlib.Path) -> str:
             if not shard.is_file() or shard.stat().st_size <= 0:
                 return "partial"
     return "complete"
+
+
+def hub_tree_state(hub_root: pathlib.Path) -> str:
+    """Return complete | partial | missing for a hub model directory."""
+    if not hub_root.is_dir():
+        return "missing"
+    if _has_incomplete_marker(hub_root):
+        return "partial"
+
+    revision = read_revision(hub_root)
+    if revision is None:
+        return "partial"
+    snapshot = hub_root / "snapshots" / revision
+    return weight_dir_state(snapshot)
+
+
+def flat_tree_state(model_root: pathlib.Path) -> str:
+    """Return complete | partial | missing for a flat (non-hub) model tree."""
+    if not model_root.is_dir():
+        return "missing"
+    if _has_incomplete_marker(model_root):
+        return "partial"
+    return weight_dir_state(model_root)
+
+
+def detect_model_layout(path: pathlib.Path) -> str | None:
+    """Return 'hub' | 'flat' | None for a model directory."""
+    if not path.is_dir():
+        return None
+    if (path / "refs").is_dir() and (path / "snapshots").is_dir():
+        return "hub"
+    if (path / "config.json").is_file():
+        return "flat"
+    try:
+        for child in path.iterdir():
+            if child.is_file() and child.name == "config.json":
+                return "flat"
+            if child.is_dir() and child.name == "snapshots":
+                return "hub"
+    except OSError:
+        return None
+    # Nested config under flat tree
+    try:
+        for cfg in path.rglob("config.json"):
+            if cfg.is_file():
+                # Prefer hub if snapshots exists at root
+                if (path / "snapshots").is_dir():
+                    return "hub"
+                return "flat"
+    except OSError:
+        return None
+    return None
 
 
 def scan_hub_cache(
@@ -222,6 +280,387 @@ def scan_hub_cache(
             }
         )
     return homes
+
+
+# --- Optional cold storage archive ---
+
+
+def configured_cold_root() -> str | None:
+    """Return configured cold root, or None if cold tier is disabled.
+
+    Precedence:
+      1. PULSAR_COLD_ROOT — empty string disables cold explicitly
+      2. MODELS_NFS — site default (often /mnt/Models)
+    """
+    if "PULSAR_COLD_ROOT" in os.environ:
+        raw = os.environ["PULSAR_COLD_ROOT"].strip()
+        if raw == "":
+            return None
+        return raw
+    raw = os.environ.get("MODELS_NFS", "").strip()
+    if raw == "":
+        return None
+    return raw
+
+
+def resolve_cold_root(explicit: str | None = None) -> str | None:
+    """Resolve cold root from explicit arg or environment."""
+    if explicit is not None:
+        value = explicit.strip()
+        if value in {"", "-", "none", "None"}:
+            return None
+        return value
+    return configured_cold_root()
+
+
+def cold_root_status(root: str | pathlib.Path | None) -> dict[str, Any]:
+    """Report whether cold is configured and readable."""
+    if root is None or str(root).strip() == "":
+        return {
+            "configured": False,
+            "available": False,
+            "root": None,
+            "reason": "cold tier disabled (PULSAR_COLD_ROOT empty or MODELS_NFS unset)",
+        }
+    path = pathlib.Path(root).expanduser()
+    if not path.exists():
+        return {
+            "configured": True,
+            "available": False,
+            "root": str(path),
+            "reason": f"cold root does not exist: {path}",
+        }
+    if not path.is_dir():
+        return {
+            "configured": True,
+            "available": False,
+            "root": str(path),
+            "reason": f"cold root is not a directory: {path}",
+        }
+    try:
+        next(path.iterdir(), None)
+    except OSError as exc:
+        return {
+            "configured": True,
+            "available": False,
+            "root": str(path),
+            "reason": f"cold root unreadable: {path}: {exc}",
+        }
+    return {
+        "configured": True,
+        "available": True,
+        "root": str(path),
+        "reason": None,
+    }
+
+
+def _cold_entry(
+    *,
+    model_id: str,
+    path: pathlib.Path,
+    layout: str,
+    category: str = "",
+) -> dict[str, Any]:
+    if layout == "hub":
+        state = hub_tree_state(path)
+        revision = read_revision(path) if state == "complete" else None
+    else:
+        state = flat_tree_state(path)
+        revision = None
+        if state == "complete":
+            # Synthetic revision from inventory digest (stable for same bytes).
+            revision = "cold-" + inventory_digest(path)[:12]
+    identity = f"{model_id}@{revision}" if revision else f"{model_id}@unknown"
+    return {
+        "model_id": model_id,
+        "revision": revision,
+        "identity_key": identity,
+        "path": str(path),
+        "layout": layout,
+        "category": category,
+        "state": state,
+        "bytes": tree_bytes(path) if state == "complete" else 0,
+        "tier": "cold",
+    }
+
+
+def _scan_cold_hub_dir(hub_dir: pathlib.Path, *, category: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not hub_dir.is_dir():
+        return out
+    try:
+        entries = sorted(hub_dir.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return out
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        model_id = hub_dirname_to_model_id(entry.name)
+        if model_id is None:
+            continue
+        out.append(
+            _cold_entry(
+                model_id=model_id,
+                path=entry,
+                layout="hub",
+                category=category,
+            )
+        )
+    return out
+
+
+def _scan_cold_category(category_dir: pathlib.Path, *, category: str) -> list[dict[str, Any]]:
+    """Scan Official Models/org/name (or Community Models) flat trees."""
+    out: list[dict[str, Any]] = []
+    if not category_dir.is_dir():
+        return out
+    try:
+        orgs = sorted(category_dir.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return out
+    for org_dir in orgs:
+        if not org_dir.is_dir() or org_dir.name.startswith("."):
+            continue
+        try:
+            models = sorted(org_dir.iterdir(), key=lambda p: p.name)
+        except OSError:
+            continue
+        for model_dir in models:
+            if not model_dir.is_dir() or model_dir.name.startswith("."):
+                continue
+            layout = detect_model_layout(model_dir)
+            if layout is None:
+                continue
+            model_id = f"{org_dir.name}/{model_dir.name}"
+            out.append(
+                _cold_entry(
+                    model_id=model_id,
+                    path=model_dir,
+                    layout=layout,
+                    category=category,
+                )
+            )
+    return out
+
+
+def scan_cold_archive(cold_root: str | pathlib.Path) -> list[dict[str, Any]]:
+    """Scan optional cold archive for hub and Official/Community Models trees."""
+    status = cold_root_status(cold_root)
+    if not status["available"]:
+        fail(status["reason"] or f"cold root unavailable: {cold_root}")
+    root = pathlib.Path(status["root"])
+    entries: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+
+    for rel in COLD_HUB_REL_PATHS:
+        hub_dir = root / rel
+        for item in _scan_cold_hub_dir(hub_dir, category=f"hub:{rel}"):
+            if item["path"] in seen_paths:
+                continue
+            seen_paths.add(item["path"])
+            entries.append(item)
+
+    for cat in COLD_CATEGORY_DIRS:
+        for item in _scan_cold_category(root / cat, category=cat):
+            if item["path"] in seen_paths:
+                continue
+            seen_paths.add(item["path"])
+            entries.append(item)
+
+    entries.sort(key=lambda e: (e["model_id"], e["path"]))
+    return entries
+
+
+def find_cold_entry(
+    cold_root: str | pathlib.Path,
+    *,
+    model_id: str | None = None,
+    path: str | None = None,
+    require_complete: bool = True,
+) -> dict[str, Any] | None:
+    """Find one cold entry by absolute path or model_id (org/name)."""
+    status = cold_root_status(cold_root)
+    if not status["available"]:
+        fail(status["reason"] or f"cold root unavailable: {cold_root}")
+    root = pathlib.Path(status["root"]).resolve()
+
+    if path:
+        candidate = pathlib.Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / path
+        try:
+            candidate = candidate.resolve()
+        except OSError:
+            return None
+        # Allow path under cold root only (fail-closed boundary).
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            fail(f"cold path outside cold root: {candidate} (root={root})")
+        layout = detect_model_layout(candidate)
+        if layout is None:
+            return None
+        # Infer model_id from Official/Community layout or hub dirname.
+        mid = model_id
+        if mid is None:
+            mid = _infer_model_id_from_cold_path(root, candidate, layout)
+        if mid is None:
+            fail(f"cold path: cannot infer model_id for {candidate}")
+        entry = _cold_entry(model_id=mid, path=candidate, layout=layout, category="path")
+        if require_complete and entry["state"] != "complete":
+            return None
+        return entry
+
+    if not model_id:
+        fail("find_cold_entry requires model_id or path")
+
+    # Prefer exact path matches under known layouts before full scan.
+    candidates: list[pathlib.Path] = []
+    hub_name = model_id_to_hub_dirname(model_id)
+    for rel in COLD_HUB_REL_PATHS:
+        candidates.append(root / rel / hub_name)
+    if "/" in model_id:
+        org, name = model_id.split("/", 1)
+        for cat in COLD_CATEGORY_DIRS:
+            candidates.append(root / cat / org / name)
+        # Also try case-insensitive org/name under categories if exact miss.
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        layout = detect_model_layout(candidate)
+        if layout is None:
+            continue
+        entry = _cold_entry(
+            model_id=model_id,
+            path=candidate,
+            layout=layout,
+            category="lookup",
+        )
+        if require_complete and entry["state"] != "complete":
+            continue
+        return entry
+
+    # Fallback: scan and match model_id (case-sensitive first, then ci).
+    scanned = scan_cold_archive(root)
+    exact = [e for e in scanned if e["model_id"] == model_id]
+    if not exact:
+        lower = model_id.lower()
+        exact = [e for e in scanned if e["model_id"].lower() == lower]
+    if require_complete:
+        exact = [e for e in exact if e["state"] == "complete"]
+    if not exact:
+        return None
+    # Prefer hub layout, then Official Models, then others.
+    def rank(entry: dict[str, Any]) -> tuple[int, str]:
+        layout_rank = 0 if entry.get("layout") == "hub" else 1
+        cat = entry.get("category") or ""
+        cat_rank = 0 if cat.startswith("Official") else 1
+        return (layout_rank, f"{cat_rank}-{entry['path']}")
+
+    exact.sort(key=rank)
+    return exact[0]
+
+
+def _infer_model_id_from_cold_path(
+    root: pathlib.Path, path: pathlib.Path, layout: str
+) -> str | None:
+    if layout == "hub":
+        return hub_dirname_to_model_id(path.name)
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return None
+    parts = rel.parts
+    # Official Models/org/name or Community Models/org/name
+    if len(parts) >= 3 and parts[0] in COLD_CATEGORY_DIRS:
+        return f"{parts[1]}/{parts[2]}"
+    if len(parts) >= 2:
+        return f"{parts[-2]}/{parts[-1]}"
+    return None
+
+
+def model_id_from_profile_or_path(
+    *,
+    profile: str | None = None,
+    model_id: str | None = None,
+    models_dir: str | pathlib.Path | None = None,
+    query: str | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """Return (model_id, profile, absolute_path) from resolve inputs."""
+    abs_path: str | None = None
+    if query:
+        if query.startswith("/"):
+            abs_path = query
+        elif "/" in query:
+            model_id = model_id or query
+        else:
+            profile = profile or query
+    if profile and models_dir:
+        conf = pathlib.Path(models_dir) / f"{profile}.conf"
+        if conf.is_file():
+            parsed = parse_profile_conf_any(conf)
+            if parsed:
+                if parsed.get("absolute_path"):
+                    abs_path = parsed["absolute_path"]
+                    model_id = model_id or parsed.get("model_id")
+                else:
+                    model_id = model_id or parsed.get("model_id")
+    if model_id and model_id.startswith("/"):
+        abs_path = model_id
+        model_id = None
+    return model_id, profile, abs_path
+
+
+def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
+    """Parse conf for MODEL/STATUS/NODES; includes absolute-path models."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    model = None
+    status = "?"
+    nodes = 1
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("MODEL="):
+            value = line.split("=", 1)[1].strip().strip("\"'")
+            model = value
+        elif line.startswith("STATUS="):
+            status = line.split("=", 1)[1].strip().strip("\"'")
+        elif line.startswith("NODES="):
+            try:
+                nodes = int(line.split("=", 1)[1].strip())
+            except ValueError:
+                nodes = 1
+    if not model:
+        return None
+    absolute = model.startswith("/")
+    model_id = None
+    if absolute:
+        # Infer org/name from Official Models/... when possible.
+        parts = pathlib.Path(model).parts
+        if "Official Models" in parts:
+            idx = parts.index("Official Models")
+            if len(parts) >= idx + 3:
+                model_id = f"{parts[idx + 1]}/{parts[idx + 2]}"
+        elif "Community Models" in parts:
+            idx = parts.index("Community Models")
+            if len(parts) >= idx + 3:
+                model_id = f"{parts[idx + 1]}/{parts[idx + 2]}"
+        if model_id is None and len(parts) >= 2:
+            model_id = f"{parts[-2]}/{parts[-1]}"
+    else:
+        model_id = model
+    return {
+        "profile": path.stem,
+        "model_id": model_id,
+        "absolute_path": model if absolute else None,
+        "status": status,
+        "nodes": nodes,
+        "validated": bool(STATUS_TESTED.match(status)),
+    }
 
 
 def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
@@ -411,33 +850,153 @@ def find_model_entry(
     return None
 
 
-def resolve_entry(catalog: dict[str, Any], *, model_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
-    entry = find_model_entry(catalog, model_id=model_id, profile=profile)
-    if entry is None:
-        target = profile or model_id or "?"
-        fail(f"resolve: {target}: not found in warm catalog")
-    complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
-    if not complete:
+def resolve_entry(
+    catalog: dict[str, Any] | None,
+    *,
+    model_id: str | None = None,
+    profile: str | None = None,
+    absolute_path: str | None = None,
+    cold_root: str | None | object = ...,
+    models_dir: str | pathlib.Path | None = None,
+) -> dict[str, Any]:
+    """Resolve warm primary home, then optional cold archive.
+
+    cold_root:
+      Ellipsis (default) — use configured env (PULSAR_COLD_ROOT / MODELS_NFS)
+      None / "" / "none" — disable cold fall-through
+      str — explicit cold root
+    """
+    # Profile conf may supply model_id or absolute cold path.
+    if profile and models_dir and (model_id is None or absolute_path is None):
+        conf = pathlib.Path(models_dir) / f"{profile}.conf"
+        if conf.is_file():
+            parsed = parse_profile_conf_any(conf)
+            if parsed:
+                model_id = model_id or parsed.get("model_id")
+                absolute_path = absolute_path or parsed.get("absolute_path")
+
+    warm_error: str | None = None
+    if catalog is not None and not absolute_path:
+        entry = find_model_entry(catalog, model_id=model_id, profile=profile)
+        if entry is None:
+            target = profile or model_id or "?"
+            warm_error = f"resolve: {target}: not found in warm catalog"
+        else:
+            complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+            if not complete:
+                warm_error = (
+                    f"resolve: {entry['model_id']}: no complete warm home "
+                    "(download/place weights, then catalog refresh)"
+                )
+            elif entry.get("duplicate") and not entry.get("has_primary"):
+                # Fail closed — do not fall through to cold on ambiguous warm dups.
+                fail(
+                    f"resolve: {entry['model_id']}: duplicate complete homes without primary; "
+                    "run: scripts/model-library.sh cleanup-recommend"
+                )
+            else:
+                primary = next((h for h in complete if h.get("primary")), None)
+                if primary is None:
+                    fail(f"resolve: {entry['model_id']}: no primary home selected")
+                return {
+                    "model_id": entry["model_id"],
+                    "revision": entry.get("revision"),
+                    "identity_key": entry["identity_key"],
+                    "validation": entry.get("validation"),
+                    "profiles": entry.get("profiles") or [],
+                    "home": primary,
+                    "duplicate": bool(entry.get("duplicate")),
+                    "tier": "warm",
+                    "source_path": primary.get("hub_path"),
+                    "layout": "hub",
+                }
+    elif catalog is None and not absolute_path and model_id is None and profile is None:
+        fail("resolve: need catalog, model_id, profile, or absolute_path")
+
+    # --- cold fall-through ---
+    if cold_root is ...:
+        root = configured_cold_root()
+    else:
+        root = resolve_cold_root(None if cold_root is None else str(cold_root))
+
+    target = profile or model_id or absolute_path or "?"
+    if root is None:
+        if warm_error:
+            fail(warm_error + "; cold tier not configured")
+        if absolute_path:
+            fail(
+                f"resolve: absolute path {absolute_path} needs cold root "
+                "(set PULSAR_COLD_ROOT or MODELS_NFS)"
+            )
+        fail(f"resolve: {target}: not in warm catalog; cold tier not configured")
+
+    status = cold_root_status(root)
+    if not status["available"]:
+        # Fail only when cold is needed (warm miss or absolute path).
         fail(
-            f"resolve: {entry['model_id']}: no complete warm home "
-            "(download/place weights, then catalog refresh)"
+            f"resolve: {target}: warm miss and cold unavailable "
+            f"({status.get('reason') or root})"
         )
-    if entry.get("duplicate") and not entry.get("has_primary"):
-        fail(
-            f"resolve: {entry['model_id']}: duplicate complete homes without primary; "
-            "run: scripts/model-library.sh cleanup-recommend"
+
+    cold: dict[str, Any] | None = None
+    try:
+        if absolute_path:
+            cold = find_cold_entry(root, path=absolute_path, require_complete=True)
+        elif model_id:
+            cold = find_cold_entry(root, model_id=model_id, require_complete=True)
+        elif profile and catalog is not None:
+            # Profile known but no model_id — already tried warm via profile.
+            entry = find_model_entry(catalog, profile=profile)
+            if entry and entry.get("model_id"):
+                cold = find_cold_entry(
+                    root, model_id=entry["model_id"], require_complete=True
+                )
+    except ModelLibraryError:
+        raise
+
+    if cold is None:
+        if warm_error:
+            fail(warm_error + f"; not found complete in cold archive ({root})")
+        fail(f"resolve: {target}: not found complete in cold archive ({root})")
+
+    # Synthetic "home" so activate/stage paths can treat cold like a source.
+    cold_home = {
+        "rank": -1,
+        "node_id": "cold",
+        "hostname": "",
+        "ssh_host": "cold",
+        "cache_root": str(root),
+        "hub_path": cold["path"],
+        "state": cold["state"],
+        "bytes": cold.get("bytes") or 0,
+        "primary": True,
+        "tier": "cold",
+        "layout": cold["layout"],
+    }
+    validation = "unvalidated"
+    profiles: list[str] = []
+    if catalog is not None:
+        warm_entry = find_model_entry(
+            catalog, model_id=cold["model_id"], profile=profile
         )
-    primary = next((h for h in complete if h.get("primary")), None)
-    if primary is None:
-        fail(f"resolve: {entry['model_id']}: no primary home selected")
+        if warm_entry:
+            validation = warm_entry.get("validation") or validation
+            profiles = warm_entry.get("profiles") or []
+    if profile and profile not in profiles:
+        profiles = list(profiles) + [profile]
+
     return {
-        "model_id": entry["model_id"],
-        "revision": entry.get("revision"),
-        "identity_key": entry["identity_key"],
-        "validation": entry.get("validation"),
-        "profiles": entry.get("profiles") or [],
-        "home": primary,
-        "duplicate": bool(entry.get("duplicate")),
+        "model_id": cold["model_id"],
+        "revision": cold.get("revision"),
+        "identity_key": cold["identity_key"],
+        "validation": validation,
+        "profiles": profiles,
+        "home": cold_home,
+        "duplicate": False,
+        "tier": "cold",
+        "source_path": cold["path"],
+        "layout": cold["layout"],
+        "cold": cold,
     }
 
 
@@ -469,6 +1028,301 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return recommendations
+
+
+def materialize_hub_tree(
+    source: str | pathlib.Path,
+    dest_hub: str | pathlib.Path,
+    *,
+    layout: str | None = None,
+    revision: str | None = None,
+) -> dict[str, Any]:
+    """Copy cold/flat or hub source into a complete HF hub tree at dest_hub."""
+    source = pathlib.Path(source)
+    dest_hub = pathlib.Path(dest_hub)
+    if not source.is_dir():
+        fail(f"materialize: source missing: {source}")
+    layout = layout or detect_model_layout(source)
+    if layout is None:
+        fail(f"materialize: cannot detect layout at {source}")
+
+    if layout == "hub":
+        state = hub_tree_state(source)
+        if state != "complete":
+            fail(f"materialize: source hub is {state}: {source}")
+        rev = revision or read_revision(source)
+        if not rev:
+            fail(f"materialize: source hub has no revision: {source}")
+        if dest_hub.exists():
+            shutil.rmtree(dest_hub)
+        dest_hub.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, dest_hub, symlinks=False)
+        if hub_tree_state(dest_hub) != "complete":
+            fail(f"materialize: dest hub incomplete after copy: {dest_hub}")
+        return {
+            "layout": "hub",
+            "source": str(source),
+            "dest_hub": str(dest_hub),
+            "revision": rev,
+            "bytes": tree_bytes(dest_hub),
+        }
+
+    # flat → hub snapshots/<rev>/
+    state = flat_tree_state(source)
+    if state != "complete":
+        fail(f"materialize: source flat tree is {state}: {source}")
+    rev = revision or ("cold-" + inventory_digest(source)[:12])
+    if not SAFE_REV.fullmatch(rev):
+        fail(f"materialize: invalid revision {rev!r}")
+    if dest_hub.exists():
+        shutil.rmtree(dest_hub)
+    snap = dest_hub / "snapshots" / rev
+    snap.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, snap, symlinks=False)
+    refs = dest_hub / "refs"
+    refs.mkdir(parents=True, exist_ok=True)
+    (refs / "main").write_text(rev + "\n", encoding="utf-8")
+    if hub_tree_state(dest_hub) != "complete":
+        fail(f"materialize: dest hub incomplete after flat import: {dest_hub}")
+    return {
+        "layout": "flat",
+        "source": str(source),
+        "dest_hub": str(dest_hub),
+        "revision": rev,
+        "bytes": tree_bytes(dest_hub),
+    }
+
+
+def plan_cold_adopt(
+    *,
+    cold_root: str | None = None,
+    model_id: str | None = None,
+    path: str | None = None,
+    profile: str | None = None,
+    models_dir: str | pathlib.Path | None = None,
+    cache_root: str | pathlib.Path,
+    catalog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Plan adopt: cold complete tree → durable warm HF hub home."""
+    root = resolve_cold_root(cold_root) if cold_root else configured_cold_root()
+    if root is None:
+        fail("cold adopt: cold root not configured (PULSAR_COLD_ROOT or MODELS_NFS)")
+
+    if profile and models_dir and not model_id and not path:
+        conf = pathlib.Path(models_dir) / f"{profile}.conf"
+        parsed = parse_profile_conf_any(conf) if conf.is_file() else None
+        if parsed:
+            model_id = parsed.get("model_id")
+            path = parsed.get("absolute_path")
+
+    entry = find_cold_entry(
+        root,
+        model_id=model_id,
+        path=path,
+        require_complete=True,
+    )
+    if entry is None:
+        target = path or model_id or profile or "?"
+        fail(f"cold adopt: no complete cold tree for {target}")
+
+    cache_root = pathlib.Path(cache_root).expanduser()
+    dest_hub = cache_root / "hub" / model_id_to_hub_dirname(entry["model_id"])
+    existing_state = hub_tree_state(dest_hub) if dest_hub.exists() else "missing"
+    return {
+        "action": "adopt",
+        "tier": "cold",
+        "model_id": entry["model_id"],
+        "identity_key": entry["identity_key"],
+        "revision": entry.get("revision"),
+        "layout": entry["layout"],
+        "source_path": entry["path"],
+        "cache_root": str(cache_root),
+        "dest_hub": str(dest_hub),
+        "bytes": entry.get("bytes") or 0,
+        "existing_dest_state": existing_state,
+        "note": (
+            "Copies cold archive into a durable warm HF hub home. "
+            "Run catalog refresh afterward to register the home."
+        ),
+    }
+
+
+def execute_cold_adopt(plan: dict[str, Any]) -> dict[str, Any]:
+    """Execute adopt plan on local filesystem (selftests / single-node)."""
+    if plan.get("action") != "adopt":
+        fail(f"execute_cold_adopt: unexpected action {plan.get('action')!r}")
+    result = materialize_hub_tree(
+        plan["source_path"],
+        plan["dest_hub"],
+        layout=plan.get("layout"),
+        revision=plan.get("revision"),
+    )
+    return {
+        **plan,
+        "executed": True,
+        "revision": result["revision"],
+        "dest_bytes": result["bytes"],
+        "dest_state": hub_tree_state(pathlib.Path(plan["dest_hub"])),
+    }
+
+
+def plan_cold_stage(
+    *,
+    cold_root: str | None = None,
+    profile: str,
+    topology_id: str,
+    hot_root: str,
+    model_id: str | None = None,
+    absolute_path: str | None = None,
+    catalog_path: str | None = None,
+    models_dir: str | pathlib.Path | None = None,
+    allow_unvalidated: bool = False,
+    nodes: int | None = None,
+) -> dict[str, Any]:
+    """Plan stage-only: cold → hot (no durable warm home)."""
+    root = resolve_cold_root(cold_root) if cold_root else configured_cold_root()
+    if root is None:
+        fail("cold stage-only: cold root not configured (PULSAR_COLD_ROOT or MODELS_NFS)")
+
+    if profile and models_dir and not model_id and not absolute_path:
+        conf = pathlib.Path(models_dir) / f"{profile}.conf"
+        parsed = parse_profile_conf_any(conf) if conf.is_file() else None
+        if parsed:
+            model_id = parsed.get("model_id")
+            absolute_path = parsed.get("absolute_path")
+
+    # Catalog may supply model_id / validation for HF profiles.
+    catalog = load_catalog(catalog_path) if catalog_path else None
+    validation = "unvalidated"
+    if catalog is not None:
+        warm_entry = find_model_entry(catalog, model_id=model_id, profile=profile)
+        if warm_entry:
+            validation = warm_entry.get("validation") or validation
+            model_id = model_id or warm_entry.get("model_id")
+
+    entry = find_cold_entry(
+        root,
+        model_id=model_id,
+        path=absolute_path,
+        require_complete=True,
+    )
+    if entry is None:
+        target = absolute_path or model_id or profile or "?"
+        fail(f"cold stage-only: no complete cold tree for {target}")
+
+    if validation != "validated" and not allow_unvalidated:
+        fail(
+            f"cold stage-only: {entry['model_id']} is unvalidated; "
+            "pass --allow-unvalidated to proceed"
+        )
+
+    source = pathlib.Path(entry["path"])
+    layout = entry.get("layout") or detect_model_layout(source)
+    if layout == "hub":
+        if hub_tree_state(source) != "complete":
+            fail(f"cold stage-only: source hub incomplete: {source}")
+    else:
+        if flat_tree_state(source) != "complete":
+            fail(f"cold stage-only: source flat incomplete: {source}")
+    source_digest = inventory_digest(source)
+    # Instance path is keyed by source identity so flat→hub rewrite stays stable.
+    cid = content_id_for(entry["identity_key"], source_digest)
+    bytes_logical = dir_size_bytes(source)
+    instance = hot_instance_dir(hot_root, profile, topology_id, cid)
+    hub_dest = hot_hub_path(instance, entry["model_id"])
+    target_ranks = list(range(nodes if nodes is not None else 1))
+
+    if hot_stamp_path(instance).is_file():
+        existing = load_hot_stamp(instance)
+        same_source = (
+            existing.get("source_content_digest") == source_digest
+            or (
+                layout == "hub"
+                and existing.get("content_digest") == source_digest
+            )
+        )
+        if (
+            same_source
+            and existing.get("identity_key") == entry["identity_key"]
+            and existing.get("state") in {"ready", "pinned"}
+        ):
+            return {
+                "action": "skip",
+                "reason": "hot already ready with matching digest",
+                "mode": "stage-only",
+                "tier": "cold",
+                "profile": profile,
+                "model_id": entry["model_id"],
+                "identity_key": entry["identity_key"],
+                "revision": entry.get("revision"),
+                "layout": layout,
+                "source_path": str(source),
+                "hot_root": hot_root,
+                "instance_dir": str(instance),
+                "hub_dest": str(hub_dest),
+                "content_id": cid,
+                "content_digest": existing.get("content_digest") or source_digest,
+                "source_content_digest": source_digest,
+                "bytes_logical": bytes_logical,
+                "backend": "copy",
+                "stamp": existing,
+            }
+
+    ensure_budget_for_add(hot_root, bytes_logical)
+    # content_digest is finalized after materialize for flat→hub (paths change).
+    # Hub-layout cold sources keep source_digest as the verify digest.
+    provisional_digest = source_digest if layout == "hub" else source_digest
+    stamp = build_hot_stamp(
+        profile=profile,
+        model_id=entry["model_id"],
+        identity_key=entry["identity_key"],
+        revision=entry.get("revision"),
+        topology_id=topology_id,
+        home_node_id="cold",
+        content_id=cid,
+        content_digest=provisional_digest,
+        backend="copy",
+        bytes_logical=bytes_logical,
+    )
+    stamp["tier"] = "cold"
+    stamp["mode"] = "stage-only"
+    stamp["source_path"] = str(source)
+    stamp["layout"] = layout
+    stamp["source_content_digest"] = source_digest
+    return {
+        "action": "stage-only",
+        "mode": "stage-only",
+        "tier": "cold",
+        "profile": profile,
+        "model_id": entry["model_id"],
+        "identity_key": entry["identity_key"],
+        "revision": entry.get("revision"),
+        "layout": layout,
+        "source_path": str(source),
+        "home": {
+            "rank": -1,
+            "node_id": "cold",
+            "hub_path": str(source),
+            "state": entry["state"],
+            "primary": True,
+            "tier": "cold",
+            "layout": layout,
+        },
+        "hot_root": hot_root,
+        "instance_dir": str(instance),
+        "hub_dest": str(hub_dest),
+        "content_id": cid,
+        "content_digest": provisional_digest,
+        "source_content_digest": source_digest,
+        "bytes_logical": bytes_logical,
+        "backend": "copy",
+        "target_ranks": target_ranks,
+        "stamp": stamp,
+        "note": (
+            "Stages cold → hot only; no durable warm home. "
+            "Unpinned restart needs cold again unless you pin hot."
+        ),
+    }
 
 
 # --- Hot staging (working set; not durable library) ---
@@ -830,7 +1684,13 @@ def plan_activate(
             f"(catalog={catalog['topology_id'][:12]}… live={topology_id[:12]}…); "
             "run catalog refresh"
         )
-    resolved = resolve_entry(catalog, profile=profile)
+    # Activate is warm-catalog only; cold uses adopt or stage-only.
+    resolved = resolve_entry(catalog, profile=profile, cold_root=None)
+    if resolved.get("tier") == "cold":
+        fail(
+            "activate: cold source requires "
+            "`cold adopt` (durable warm home) or `cold stage-only` (hot only)"
+        )
     if resolved.get("validation") != "validated" and not allow_unvalidated:
         fail(
             f"activate: {resolved['model_id']} is unvalidated; "
@@ -1113,15 +1973,37 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 def cmd_resolve(args: argparse.Namespace) -> int:
-    catalog = load_catalog(args.catalog)
+    catalog = None
+    if args.catalog:
+        if pathlib.Path(args.catalog).is_file():
+            catalog = load_catalog(args.catalog)
+        elif not getattr(args, "allow_missing_catalog", False):
+            fail(f"resolve: catalog missing: {args.catalog}")
     model_id = args.model
     profile = args.profile
+    absolute_path = None
     if args.query:
-        if "/" in args.query:
+        if args.query.startswith("/"):
+            absolute_path = args.query
+        elif "/" in args.query:
             model_id = args.query
         else:
             profile = args.query
-    result = resolve_entry(catalog, model_id=model_id, profile=profile)
+    cold_root: Any
+    if getattr(args, "no_cold", False):
+        cold_root = None
+    elif getattr(args, "cold_root", None):
+        cold_root = args.cold_root
+    else:
+        cold_root = ...
+    result = resolve_entry(
+        catalog,
+        model_id=model_id,
+        profile=profile,
+        absolute_path=absolute_path,
+        cold_root=cold_root,
+        models_dir=getattr(args, "models_dir", None) or None,
+    )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
@@ -1129,10 +2011,128 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         print(f"model     {result['model_id']}")
         print(f"revision  {result.get('revision') or '-'}")
         print(f"validation {result.get('validation')}")
+        print(f"tier      {result.get('tier') or 'warm'}")
+        print(f"layout    {result.get('layout') or 'hub'}")
         print(f"home rank {home['rank']}  node_id={home['node_id']}")
         print(f"hub_path  {home['hub_path']}")
+        if result.get("source_path") and result.get("source_path") != home.get("hub_path"):
+            print(f"source    {result['source_path']}")
         if result.get("duplicate"):
             print("note      duplicates present; using selected primary")
+        if result.get("tier") == "cold":
+            print("note      resolved from cold archive (not a warm home)")
+    return 0
+
+
+def cmd_scan_cold(args: argparse.Namespace) -> int:
+    root = args.cold_root or configured_cold_root()
+    if root is None:
+        fail("scan-cold: cold root not configured (pass --cold-root or set MODELS_NFS)")
+    entries = scan_cold_archive(root)
+    if args.complete_only:
+        entries = [e for e in entries if e.get("state") == "complete"]
+    out = {
+        "cold_root": str(pathlib.Path(root).expanduser()),
+        "count": len(entries),
+        "entries": entries,
+    }
+    if args.json:
+        print(json.dumps(out, indent=2, sort_keys=True))
+    else:
+        print(f"cold root  {out['cold_root']}")
+        print(f"entries    {out['count']}")
+        print()
+        print(f"{'MODEL':<40} {'STATE':<10} {'LAYOUT':<6}  PATH")
+        for e in entries:
+            print(
+                f"{e['model_id']:<40} {e['state']:<10} {e['layout']:<6}  {e['path']}"
+            )
+    return 0
+
+
+def cmd_find_cold(args: argparse.Namespace) -> int:
+    root = args.cold_root or configured_cold_root()
+    if root is None:
+        fail("find-cold: cold root not configured")
+    path = args.path
+    model_id = args.model
+    if args.query:
+        if args.query.startswith("/"):
+            path = args.query
+        else:
+            model_id = args.query
+    entry = find_cold_entry(
+        root,
+        model_id=model_id,
+        path=path,
+        require_complete=not args.allow_partial,
+    )
+    if entry is None:
+        fail(f"find-cold: no entry for {args.query or model_id or path!r}")
+    print(json.dumps(entry, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_plan_cold_adopt(args: argparse.Namespace) -> int:
+    plan = plan_cold_adopt(
+        cold_root=args.cold_root or None,
+        model_id=args.model,
+        path=args.path,
+        profile=args.profile,
+        models_dir=args.models_dir or None,
+        cache_root=args.cache_root,
+    )
+    if args.execute:
+        result = execute_cold_adopt(plan)
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
+    plan = plan_cold_stage(
+        cold_root=args.cold_root or None,
+        profile=args.profile,
+        topology_id=args.topology_id,
+        hot_root=args.hot_root or default_hot_root(),
+        model_id=args.model,
+        absolute_path=args.path,
+        catalog_path=args.catalog or None,
+        models_dir=args.models_dir or None,
+        allow_unvalidated=args.allow_unvalidated,
+        nodes=args.nodes,
+    )
+    if args.execute and plan.get("action") == "stage-only":
+        # Local materialize into hub_dest + write stamp (selftests / single-node).
+        materialize_hub_tree(
+            plan["source_path"],
+            plan["hub_dest"],
+            layout=plan.get("layout"),
+            revision=plan.get("revision"),
+        )
+        # Flat→hub rewrites paths; verify digest is always of the final hub tree.
+        hub_digest = inventory_digest(plan["hub_dest"])
+        stamp = dict(plan["stamp"])
+        stamp["content_digest"] = hub_digest
+        stamp["source_content_digest"] = plan.get("source_content_digest") or stamp.get(
+            "source_content_digest"
+        )
+        write_hot_stamp(pathlib.Path(plan["instance_dir"]), stamp)
+        verify = verify_hot_ready(
+            plan["instance_dir"],
+            profile=args.profile,
+            topology_id=args.topology_id,
+            require_digest=True,
+        )
+        plan = {
+            **plan,
+            "executed": True,
+            "content_digest": hub_digest,
+            "stamp": stamp,
+            "verify": verify,
+        }
+    print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
 
 
@@ -1298,13 +2298,91 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--json", action="store_true")
     show.set_defaults(func=cmd_show)
 
-    resolve = sub.add_parser("resolve", help="Resolve profile/model to primary home")
-    resolve.add_argument("--catalog", required=True)
+    resolve = sub.add_parser(
+        "resolve", help="Resolve profile/model: warm home, then optional cold"
+    )
+    resolve.add_argument("--catalog", default="")
     resolve.add_argument("--profile")
     resolve.add_argument("--model")
     resolve.add_argument("query", nargs="?")
     resolve.add_argument("--json", action="store_true")
+    resolve.add_argument(
+        "--cold-root",
+        default="",
+        help="Cold archive root (default: PULSAR_COLD_ROOT or MODELS_NFS)",
+    )
+    resolve.add_argument(
+        "--no-cold",
+        action="store_true",
+        help="Disable cold fall-through (warm catalog only)",
+    )
+    resolve.add_argument(
+        "--models-dir",
+        default="",
+        help="models/*.conf dir for profile → MODEL mapping",
+    )
+    resolve.add_argument(
+        "--allow-missing-catalog",
+        action="store_true",
+        help="Allow resolve with only cold when catalog file is absent",
+    )
     resolve.set_defaults(func=cmd_resolve)
+
+    scan_cold = sub.add_parser("scan-cold", help="Scan optional cold archive")
+    scan_cold.add_argument("--cold-root", default="")
+    scan_cold.add_argument("--complete-only", action="store_true")
+    scan_cold.add_argument("--json", action="store_true")
+    scan_cold.set_defaults(func=cmd_scan_cold)
+
+    find_cold = sub.add_parser("find-cold", help="Find one model in cold archive")
+    find_cold.add_argument("--cold-root", default="")
+    find_cold.add_argument("--model")
+    find_cold.add_argument("--path")
+    find_cold.add_argument("query", nargs="?")
+    find_cold.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Return partial trees (default: complete only)",
+    )
+    find_cold.set_defaults(func=cmd_find_cold)
+
+    adopt = sub.add_parser(
+        "plan-cold-adopt",
+        help="Plan (or execute) cold → durable warm HF hub home",
+    )
+    adopt.add_argument("--cold-root", default="")
+    adopt.add_argument("--model")
+    adopt.add_argument("--path")
+    adopt.add_argument("--profile")
+    adopt.add_argument("--models-dir", default="")
+    adopt.add_argument("--cache-root", required=True, help="Warm HF cache root")
+    adopt.add_argument(
+        "--execute",
+        action="store_true",
+        help="Copy into cache-root (local filesystem)",
+    )
+    adopt.set_defaults(func=cmd_plan_cold_adopt)
+
+    stage = sub.add_parser(
+        "plan-cold-stage",
+        help="Plan (or execute) cold → hot stage-only (no warm home)",
+    )
+    stage.add_argument("--cold-root", default="")
+    stage.add_argument("--profile", required=True)
+    stage.add_argument("--topology-id", required=True)
+    stage.add_argument("--hot-root", default="")
+    stage.add_argument("--model")
+    stage.add_argument("--path")
+    stage.add_argument("--catalog", default="")
+    stage.add_argument("--models-dir", default="")
+    stage.add_argument("--nodes", type=int, default=1)
+    stage.add_argument("--allow-unvalidated", action="store_true")
+    stage.add_argument(
+        "--execute",
+        action="store_true",
+        help="Materialize hub into hot + write stamp (local)",
+    )
+    stage.set_defaults(func=cmd_plan_cold_stage)
 
     cleanup = sub.add_parser("cleanup-recommend", help="Recommend cleanup for duplicates")
     cleanup.add_argument("--catalog", required=True)
