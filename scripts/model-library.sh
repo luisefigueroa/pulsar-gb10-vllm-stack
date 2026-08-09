@@ -41,7 +41,7 @@ Usage:
   scripts/model-library.sh activate <profile> [--backend copy|fabric]
       [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
   scripts/model-library.sh bench-activate <profile> [--tag TAG] [--yes]
-      [--interactive-sudo] [--output PATH]
+      [--interactive-sudo] [--output PATH] [--nodes N]
   scripts/model-library.sh release-transfer <profile> [--yes] [--interactive-sudo]
   scripts/model-library.sh pin <profile>
   scripts/model-library.sh unpin <profile>
@@ -1140,7 +1140,7 @@ timed_activate_backend() {
 }
 
 cmd_bench_activate() {
-  local profile="" tag="" yes=0 output=""
+  local profile="" tag="" yes=0 output="" nodes_override=""
   local copy_s fabric_s model_id bytes_logical nodes topo_id
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -1154,6 +1154,11 @@ cmd_bench_activate() {
         output="$2"
         shift
         ;;
+      --nodes)
+        [ $# -ge 2 ] || die "--nodes requires a value"
+        nodes_override="$2"
+        shift
+        ;;
       --yes|-y) yes=1 ;;
       --interactive-sudo) LIBRARY_SUDO_MODE=interactive ;;
       -h|--help) usage; return 0 ;;
@@ -1164,17 +1169,25 @@ cmd_bench_activate() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: bench-activate <profile> [--tag TAG] [--yes]"
+  [ -n "$profile" ] || die "usage: bench-activate <profile> [--tag TAG] [--yes] [--nodes N]"
   [ "$yes" = 1 ] || die "bench-activate is destructive to hot staging — re-run with --yes"
   require_py
   ensure_catalog
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
+  nodes="${nodes_override:-$NODES}"
+  if ! [[ "$nodes" =~ ^[0-9]+$ ]] || [ "$nodes" -lt 1 ]; then
+    die "bench-activate: --nodes must be a positive integer"
+  fi
+  if [ "$nodes" -gt "$CLUSTER_TOPOLOGY_COUNT" ]; then
+    die "bench-activate: --nodes $nodes exceeds topology count $CLUSTER_TOPOLOGY_COUNT"
+  fi
   [ -n "$tag" ] || tag="activate-bench-$(date -u +%Y%m%dT%H%M%SZ)"
   [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-${tag}.json"
   mkdir -p "$(dirname "$output")"
 
-  # Metadata from plan (no execute)
+  # Metadata from plan (no execute). Raise hot budget if unset so large models
+  # (e.g. flagship ~300GiB) are not refused by the 100GiB default mid-bench.
   local plan
   plan=$(python3 "$PY_TOOL" plan-activate \
     --catalog "$CATALOG_FILE" \
@@ -1183,11 +1196,22 @@ cmd_bench_activate() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend copy \
-    --nodes "$NODES")
+    --nodes "$nodes") \
+    || die "bench-activate: plan-activate failed (catalog primary? hot budget? set PULSAR_HOT_BUDGET_BYTES large enough for the model)"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
   bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
   topo_id="$CLUSTER_TOPOLOGY_ID"
-  nodes="$NODES"
+  # Ensure budget covers one full hot tree for both runs (copy + fabric).
+  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ] && [ "${bytes_logical:-0}" -gt 0 ]; then
+    # 1.25× headroom; floor at default 100GiB
+    local need=$((bytes_logical + bytes_logical / 4))
+    local default_budget=$((100 * 1024 * 1024 * 1024))
+    if [ "$need" -lt "$default_budget" ]; then
+      need=$default_budget
+    fi
+    export PULSAR_HOT_BUDGET_BYTES="$need"
+    log "bench-activate: PULSAR_HOT_BUDGET_BYTES=$need (auto for model size)"
+  fi
 
   log "bench-activate $profile tag=$tag"
   log "running timed copy activate…"
