@@ -495,7 +495,13 @@ cmd_cleanup_recommend() {
 # Source is always read from the home node (controller uses local path or ssh).
 copy_hub_to_rank() {
   local target_rank="${1:?}" hub_source="${2:?}" hub_dest="${3:?}" home_rank="${4:?}"
-  local home_host dest_parent qsrc qdst remote
+  local home_host dest_parent qsrc qdst
+
+  # Home rank: zero-copy symlink / reflink when possible.
+  if [ "$target_rank" = "$home_rank" ]; then
+    materialize_tree_on_rank "$target_rank" "$hub_source" "$hub_dest" auto
+    return 0
+  fi
 
   dest_parent=$(dirname "$hub_dest")
   if [ "$target_rank" = 0 ]; then
@@ -503,28 +509,27 @@ copy_hub_to_rank() {
     rm -rf "$hub_dest"
     mkdir -p "$hub_dest"
     if [ "$home_rank" = 0 ]; then
-      rsync -a --delete "$hub_source"/ "$hub_dest"/
+      # unreachable: home_rank==0 handled above
+      materialize_tree_on_rank 0 "$hub_source" "$hub_dest" force-copy
     else
       home_host="${CLUSTER_NODE_SSH_HOSTS[$home_rank]:-}"
       [ -n "$home_host" ] || die "home rank $home_rank: missing ssh host"
       rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
         "${home_host}:${hub_source}/" "$hub_dest"/
+      log "rank 0 materialize=rsync_ssh from home rank $home_rank"
     fi
     return 0
   fi
 
-  # Remote target: stage via ssh + rsync
+  # Remote non-home target
   qdst=$(printf '%q' "$hub_dest")
   ssh_node "$target_rank" "mkdir -p $(printf '%q' "$dest_parent") && rm -rf $qdst && mkdir -p $qdst"
   if [ "$home_rank" = 0 ]; then
     rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
       "$hub_source"/ "${CLUSTER_NODE_SSH_HOSTS[$target_rank]}:${hub_dest}/"
-  elif [ "$home_rank" = "$target_rank" ]; then
-    # Home is this remote rank: local copy on remote
-    qsrc=$(printf '%q' "$hub_source")
-    ssh_node "$target_rank" "rsync -a --delete $qsrc/ $qdst/"
+    log "rank $target_rank materialize=rsync_ssh from rank 0"
   else
-    # home remote -> target remote (pull to controller temp then push — simpler via rsync remote-remote if permitted)
+    # home remote -> target remote (pull to controller temp then push)
     home_host="${CLUSTER_NODE_SSH_HOSTS[$home_rank]:-}"
     [ -n "$home_host" ] || die "home rank $home_rank: missing ssh host"
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-hot-stage.XXXXXX")
@@ -534,6 +539,7 @@ copy_hub_to_rank() {
       "${home_host}:${hub_source}/" "$tmp"/
     rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
       "$tmp"/ "${CLUSTER_NODE_SSH_HOSTS[$target_rank]}:${hub_dest}/"
+    log "rank $target_rank materialize=rsync_via_controller from home rank $home_rank"
   fi
 }
 
@@ -656,24 +662,125 @@ library_confirm() {
   esac
 }
 
-# Copy into hot using per-rank source path (local hub or transfer mount).
-copy_from_source_on_rank() {
-  local rank="${1:?}" source="${2:?}" hub_dest="${3:?}"
-  local dest_parent qsrc qdst
+# Run a multi-line root script with a single sudo (batched privilege).
+library_node_root_script() {
+  local rank="${1:?}" root_script="${2:?}"
+  local payload command host
+  payload=$(printf '%s' "$root_script" | base64 -w 0)
+  if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
+    command='sudo -v'
+    command+=" && $(shell_join_q printf %s "$payload")"
+    command+=' | base64 -d | sudo -n bash -s'
+    log "sudo authentication required on rank $rank…"
+    if [ "$rank" = 0 ]; then
+      bash -c "$command"
+    else
+      host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+      "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -tt -- "$host" "$command"
+    fi
+  elif [ "$rank" = 0 ]; then
+    printf '%s' "$root_script" | sudo -n bash -s
+  else
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    printf '%s' "$root_script" \
+      | "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "sudo -n bash -s"
+  fi
+}
+
+# Optional phase log: ACTIVATE_PHASE_LOG is tab-separated name\tseconds lines.
+phase_record() {
+  local name="${1:?}" seconds="${2:?}"
+  log "phase ${name}=${seconds}s"
+  if [ -n "${ACTIVATE_PHASE_LOG:-}" ]; then
+    # flock if available (parallel rank materialize)
+    if command -v flock >/dev/null 2>&1; then
+      (
+        flock 9
+        printf '%s\t%s\n' "$name" "$seconds" >>"$ACTIVATE_PHASE_LOG"
+      ) 9>>"$ACTIVATE_PHASE_LOG"
+    else
+      printf '%s\t%s\n' "$name" "$seconds" >>"$ACTIVATE_PHASE_LOG"
+    fi
+  fi
+}
+
+# Materialize source tree into hub_dest on rank.
+# mode: auto | force-copy
+# For durable home on the same rank (not under .transfer/), prefer symlink (zero-copy)
+# then reflink, then cp -a, then rsync.
+materialize_tree_on_rank() {
+  local rank="${1:?}" source="${2:?}" hub_dest="${3:?}" mode="${4:-auto}"
+  local dest_parent qsrc qdst qparent home_local=0 method
   dest_parent=$(dirname "$hub_dest")
   qsrc=$(printf '%q' "$source")
   qdst=$(printf '%q' "$hub_dest")
+  qparent=$(printf '%q' "$dest_parent")
+
+  if [ "$mode" = auto ] && [[ "$source" != *"/.transfer/"* ]]; then
+    home_local=1
+  fi
+
+  # Local rank 0
   if [ "$rank" = 0 ]; then
     mkdir -p "$dest_parent"
     rm -rf "$hub_dest"
+    if [ "$home_local" = 1 ]; then
+      if ln -sfn "$source" "$hub_dest" 2>/dev/null; then
+        log "rank 0 materialize=symlink_home → $hub_dest"
+        return 0
+      fi
+      if cp -a --reflink=always "$source" "$hub_dest" 2>/dev/null; then
+        log "rank 0 materialize=reflink → $hub_dest"
+        return 0
+      fi
+      if cp -a --reflink=auto "$source" "$hub_dest" 2>/dev/null; then
+        log "rank 0 materialize=cp_reflink_auto → $hub_dest"
+        return 0
+      fi
+      if cp -a "$source" "$hub_dest" 2>/dev/null; then
+        log "rank 0 materialize=cp_a → $hub_dest"
+        return 0
+      fi
+    fi
     mkdir -p "$hub_dest"
     rsync -a --delete "$source"/ "$hub_dest"/
+    log "rank 0 materialize=rsync → $hub_dest"
     return 0
   fi
-  ssh_node "$rank" "mkdir -p $(printf '%q' "$dest_parent") && rm -rf $qdst && mkdir -p $qdst"
-  # Prefer remote-local rsync when source is already on the target (mount path).
-  ssh_node "$rank" "rsync -a --delete $qsrc/ $qdst/" \
-    || die "rank $rank: rsync from $source failed"
+
+  # Remote rank: single ssh script for materialize
+  if [ "$home_local" = 1 ]; then
+    ssh_node "$rank" \
+      "set -euo pipefail
+       mkdir -p $qparent
+       rm -rf $qdst
+       if ln -sfn $qsrc $qdst 2>/dev/null; then echo symlink_home; exit 0; fi
+       if cp -a --reflink=always $qsrc $qdst 2>/dev/null; then echo reflink; exit 0; fi
+       if cp -a --reflink=auto $qsrc $qdst 2>/dev/null; then echo cp_reflink_auto; exit 0; fi
+       if cp -a $qsrc $qdst 2>/dev/null; then echo cp_a; exit 0; fi
+       mkdir -p $qdst
+       rsync -a --delete $qsrc/ $qdst/
+       echo rsync" \
+      | { read -r method || method=rsync; log "rank $rank materialize=${method} → $hub_dest"; }
+    return 0
+  fi
+
+  # NFS mount / remote path: fresh dest + rsync (or cp -a)
+  ssh_node "$rank" \
+    "set -euo pipefail
+     mkdir -p $qparent
+     rm -rf $qdst
+     mkdir -p $qdst
+     if cp -a $qsrc/. $qdst/ 2>/dev/null; then echo cp_a; exit 0; fi
+     rsync -a --delete $qsrc/ $qdst/
+     echo rsync" \
+    | { read -r method || method=rsync; log "rank $rank materialize=${method} → $hub_dest"; }
+}
+
+# Copy into hot using per-rank source path (local hub or transfer mount).
+copy_from_source_on_rank() {
+  local rank="${1:?}" source="${2:?}" hub_dest="${3:?}"
+  materialize_tree_on_rank "$rank" "$source" "$hub_dest" auto
 }
 
 fabric_release_transfer() {
@@ -765,54 +872,37 @@ for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
   nfs_conf=$'[nfsd]\n'
   nfs_conf+="rdma = ${port}"$'\n'
 
-  # Privilege preflight
-  library_node_privileged "$home_rank" true \
-    || die "home privilege preflight failed (try --interactive-sudo)"
-  while IFS=$'\t' read -r rank _a _b _c; do
-    [ -n "$rank" ] || continue
-    library_node_privileged "$rank" true \
-      || die "rank $rank privilege preflight failed (try --interactive-sudo)"
-  done < <(printf '%s' "$plan_json" | python3 -c '
-import json,sys
-for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
-    print("%s\t.\t.\t." % c["rank"])
-')
+  local portlist_re export_b64 nfs_b64 owner_script client_script
+  portlist_re="(rdma[[:space:]]+${port}|${port}[[:space:]]+rdma|rdma.*${port}|${port}.*rdma)"
 
-  log "installing ephemeral export on home rank $home_rank"
-  library_install_content "$home_rank" "$export_file" 0644 "$export_line"
-  library_install_content "$home_rank" "$nfs_file" 0644 "$nfs_conf"
-  library_node_privileged "$home_rank" modprobe svcrdma || true
-  library_node_privileged "$home_rank" exportfs -ra
-  library_node_privileged "$home_rank" systemctl enable --now nfs-server
-  library_node_privileged "$home_rank" systemctl restart nfs-server
+  log "installing ephemeral export on home rank $home_rank (batched)"
+  export_b64=$(printf '%s' "$export_line" | base64 -w 0)
+  nfs_b64=$(printf '%s' "$nfs_conf" | base64 -w 0)
+  owner_script=$'set -euo pipefail\n'
+  owner_script+="printf '%s' $(printf '%q' "$export_b64") | base64 -d | install -D -m 0644 /dev/stdin $(printf '%q' "$export_file")"$'\n'
+  owner_script+="printf '%s' $(printf '%q' "$nfs_b64") | base64 -d | install -D -m 0644 /dev/stdin $(printf '%q' "$nfs_file")"$'\n'
+  owner_script+=$'modprobe svcrdma 2>/dev/null || true\n'
+  owner_script+=$'exportfs -ra\n'
+  owner_script+="if ! { test -r /proc/fs/nfsd/portlist && grep -Eq $(printf '%q' "$portlist_re") /proc/fs/nfsd/portlist; }; then"$'\n'
+  owner_script+=$'  systemctl enable --now nfs-server\n'
+  owner_script+=$'  systemctl restart nfs-server\n'
+  owner_script+=$'fi\n'
+  owner_script+="for i in \$(seq 1 30); do test -r /proc/fs/nfsd/portlist && grep -Eq $(printf '%q' "$portlist_re") /proc/fs/nfsd/portlist && exit 0; sleep 1; done"$'\n'
+  owner_script+="echo 'NFS/RDMA port ${port} not in /proc/fs/nfsd/portlist after export' >&2; exit 1"$'\n'
+  library_node_root_script "$home_rank" "$owner_script" \
+    || die "home rank $home_rank: fabric export setup failed (try --interactive-sudo)"
 
-  # Wait for RDMA NFS port
-  local waited=0
-  while [ "$waited" -lt 30 ]; do
-    if library_node_exec "$home_rank" "ss -ln | grep -q ':${port} '"; then
-      break
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-  library_node_exec "$home_rank" "ss -ln | grep -q ':${port} '" \
-    || die "NFS/RDMA port $port not listening on home after export"
-
-  log "mounting RoCE clients"
+  log "mounting RoCE clients (batched per rank)"
   while IFS=$'\t' read -r rank server_ip client_ip mount_path; do
     [ -n "$rank" ] || continue
     log "  mount rank $rank  $server_ip:$export_path → $mount_path"
-    library_node_privileged "$rank" mkdir -p "$mount_path"
-    # Replace stale mount if present
-    if library_node_exec "$rank" "findmnt -rn -M $(printf '%q' "$mount_path")" >/dev/null 2>&1; then
-      library_node_privileged "$rank" umount "$mount_path" || true
-    fi
-    library_node_privileged "$rank" mount -t nfs4 -o "$mount_options" \
-      "${server_ip}:${export_path}" "$mount_path"
-    # Fail closed: must be rdma
-    library_node_exec "$rank" "findmnt -rn -M $(printf '%q' "$mount_path") -o OPTIONS" \
-      | grep -q 'proto=rdma' \
-      || die "rank $rank: mount is not proto=rdma (refusing TCP fallback)"
+    client_script=$'set -euo pipefail\n'
+    client_script+="mkdir -p $(printf '%q' "$mount_path")"$'\n'
+    client_script+="if findmnt -rn -M $(printf '%q' "$mount_path") >/dev/null 2>&1; then umount $(printf '%q' "$mount_path") || true; fi"$'\n'
+    client_script+="mount -t nfs4 -o $(printf '%q' "$mount_options") $(printf '%q' "${server_ip}:${export_path}") $(printf '%q' "$mount_path")"$'\n'
+    client_script+="findmnt -rn -M $(printf '%q' "$mount_path") -o OPTIONS | grep -q 'proto=rdma'"$'\n'
+    library_node_root_script "$rank" "$client_script" \
+      || die "rank $rank: NFS/RDMA mount failed (refusing TCP fallback)"
   done < <(printf '%s' "$plan_json" | python3 -c '
 import json,sys
 for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
@@ -963,31 +1053,89 @@ print("re-run with --yes to execute (no silent fallback to copy)")
   trap cleanup_partial ERR
 
   [ "$time_it" = 1 ] && start_ts=$(date +%s)
+  local t0 t1
+  local -a pids=()
+  local pid rank_fail=0
 
   if [ "$action" = fabric-copy ]; then
+    t0=$(date +%s)
     fabric_apply_transfer "$plan" 1
     transfer_armed=1
+    t1=$(date +%s)
+    phase_record "fabric_setup" "$((t1 - t0))"
+
+    # Parallel materialize + stamp; verify serially after barrier.
+    t0=$(date +%s)
+    pids=()
     for rank in "${target_ranks[@]}"; do
       source=$(printf '%s' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["rank_sources"][sys.argv[1]])' "$rank")
-      log "fabric copy → rank $rank from $source"
-      copy_from_source_on_rank "$rank" "$source" "$hub_dest"
+      (
+        set -euo pipefail
+        log "fabric materialize → rank $rank from $source"
+        rt0=$(date +%s)
+        copy_from_source_on_rank "$rank" "$source" "$hub_dest"
+        write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+        rt1=$(date +%s)
+        phase_record "transfer_rank_${rank}" "$((rt1 - rt0))"
+      ) &
+      pids+=("$!")
       touched+=("$rank")
-      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
-      verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
-        || die "rank $rank: verify failed after fabric copy"
     done
+    for pid in "${pids[@]}"; do
+      if ! wait "$pid"; then
+        rank_fail=1
+      fi
+    done
+    [ "$rank_fail" = 0 ] || die "fabric materialize failed on one or more ranks"
+    t1=$(date +%s)
+    phase_record "transfer_all" "$((t1 - t0))"
+
+    t0=$(date +%s)
+    for rank in "${target_ranks[@]}"; do
+      verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
+        || die "rank $rank: verify failed after fabric materialize"
+    done
+    t1=$(date +%s)
+    phase_record "verify" "$((t1 - t0))"
+
+    t0=$(date +%s)
     fabric_release_transfer "$plan"
     transfer_armed=0
+    t1=$(date +%s)
+    phase_record "fabric_release" "$((t1 - t0))"
   else
-    # control-path copy
+    # control-path copy — parallel ranks when N>1
+    t0=$(date +%s)
+    pids=()
     for rank in "${target_ranks[@]}"; do
-      log "copy → rank $rank"
-      copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"
+      (
+        set -euo pipefail
+        log "copy → rank $rank"
+        rt0=$(date +%s)
+        copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"
+        write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+        rt1=$(date +%s)
+        phase_record "transfer_rank_${rank}" "$((rt1 - rt0))"
+      ) &
+      pids+=("$!")
       touched+=("$rank")
-      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+    done
+    for pid in "${pids[@]}"; do
+      if ! wait "$pid"; then
+        rank_fail=1
+      fi
+    done
+    [ "$rank_fail" = 0 ] || die "copy materialize failed on one or more ranks"
+    t1=$(date +%s)
+    phase_record "transfer_all" "$((t1 - t0))"
+
+    t0=$(date +%s)
+    for rank in "${target_ranks[@]}"; do
       verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
         || die "rank $rank: verify failed after copy"
     done
+    t1=$(date +%s)
+    phase_record "verify" "$((t1 - t0))"
   fi
 
   trap - ERR
@@ -1121,22 +1269,57 @@ cmd_budget() {
   fi
 }
 
-# Fair cold-ish activate timing: purge hot, run backend, return seconds on stdout last line.
+# Fair cold-ish activate timing: purge hot, run backend.
+# Activate logs go to stderr so command-substitution captures only seconds.
+# Optional second arg path: write phase TSV (name\tseconds) for bench JSON.
 timed_activate_backend() {
-  local profile="${1:?}" backend="${2:?}"
-  local start_ts end_ts
+  local profile="${1:?}" backend="${2:?}" phase_out="${3:-}"
+  local start_ts end_ts phase_tmp
   # Best-effort purge so skip path does not under-report times
   "$0" purge-hot "$profile" --yes --force-unpin >/dev/null 2>&1 || true
-  start_ts=$(date +%s)
+  phase_tmp=$(mktemp "${TMPDIR:-/tmp}/pulsar-activate-phases.XXXXXX")
+  : >"$phase_tmp"
+  start_ts=$(date +%s.%N 2>/dev/null || date +%s)
   if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
-    "$0" activate "$profile" --backend "$backend" --yes --interactive-sudo \
-      || die "timed activate --backend $backend failed"
+    if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
+      "$0" activate "$profile" --backend "$backend" --yes --interactive-sudo 1>&2; then
+      rm -f "$phase_tmp"
+      die "timed activate --backend $backend failed"
+    fi
   else
-    "$0" activate "$profile" --backend "$backend" --yes \
-      || die "timed activate --backend $backend failed"
+    if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
+      "$0" activate "$profile" --backend "$backend" --yes 1>&2; then
+      rm -f "$phase_tmp"
+      die "timed activate --backend $backend failed"
+    fi
   fi
-  end_ts=$(date +%s)
-  printf '%s\n' "$((end_ts - start_ts))"
+  end_ts=$(date +%s.%N 2>/dev/null || date +%s)
+  if [ -n "$phase_out" ]; then
+    cp -f "$phase_tmp" "$phase_out" || true
+  fi
+  rm -f "$phase_tmp"
+  # Integer seconds (wall clock)
+  python3 -c "print(max(0, int(float('$end_ts') - float('$start_ts') + 0.5)))"
+}
+
+phases_tsv_to_json() {
+  local path="${1:?}"
+  python3 - <<'PY' "$path"
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+out = {}
+if path.is_file():
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or "\t" not in line:
+            continue
+        name, sec = line.split("\t", 1)
+        try:
+            out[name] = int(float(sec))
+        except ValueError:
+            out[name] = sec
+print(json.dumps(out, sort_keys=True))
+PY
 }
 
 cmd_bench_activate() {
@@ -1186,8 +1369,14 @@ cmd_bench_activate() {
   [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-${tag}.json"
   mkdir -p "$(dirname "$output")"
 
-  # Metadata from plan (no execute). Raise hot budget if unset so large models
-  # (e.g. flagship ~300GiB) are not refused by the 100GiB default mid-bench.
+  # Plan checks hot budget; raise before plan when unset (100GiB default is too
+  # small for flagship). Provisional 1TiB, then tighten to 1.25× model bytes.
+  local auto_budget=0
+  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ]; then
+    export PULSAR_HOT_BUDGET_BYTES=$((1024 * 1024 * 1024 * 1024))
+    auto_budget=1
+    log "bench-activate: provisional PULSAR_HOT_BUDGET_BYTES=$PULSAR_HOT_BUDGET_BYTES"
+  fi
   local plan
   plan=$(python3 "$PY_TOOL" plan-activate \
     --catalog "$CATALOG_FILE" \
@@ -1201,26 +1390,32 @@ cmd_bench_activate() {
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
   bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
   topo_id="$CLUSTER_TOPOLOGY_ID"
-  # Ensure budget covers one full hot tree for both runs (copy + fabric).
-  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ] && [ "${bytes_logical:-0}" -gt 0 ]; then
-    # 1.25× headroom; floor at default 100GiB
+  if [ "$auto_budget" = 1 ] && [ "${bytes_logical:-0}" -gt 0 ]; then
     local need=$((bytes_logical + bytes_logical / 4))
     local default_budget=$((100 * 1024 * 1024 * 1024))
     if [ "$need" -lt "$default_budget" ]; then
       need=$default_budget
     fi
     export PULSAR_HOT_BUDGET_BYTES="$need"
-    log "bench-activate: PULSAR_HOT_BUDGET_BYTES=$need (auto for model size)"
+    log "bench-activate: PULSAR_HOT_BUDGET_BYTES=$need (from model size)"
   fi
 
   log "bench-activate $profile tag=$tag"
+  local copy_phases_file fabric_phases_file copy_phases_json fabric_phases_json
+  copy_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-copy-phases.XXXXXX")
+  fabric_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-fabric-phases.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -f '$copy_phases_file' '$fabric_phases_file'" RETURN
+
   log "running timed copy activate…"
-  copy_s=$(timed_activate_backend "$profile" copy)
+  copy_s=$(timed_activate_backend "$profile" copy "$copy_phases_file")
   log "copy wall_time_seconds=$copy_s"
+  copy_phases_json=$(phases_tsv_to_json "$copy_phases_file")
 
   log "running timed fabric activate…"
-  fabric_s=$(timed_activate_backend "$profile" fabric)
+  fabric_s=$(timed_activate_backend "$profile" fabric "$fabric_phases_file")
   log "fabric wall_time_seconds=$fabric_s"
+  fabric_phases_json=$(phases_tsv_to_json "$fabric_phases_file")
 
   python3 "$PY_TOOL" compare-bench \
     --profile "$profile" \
@@ -1231,6 +1426,9 @@ cmd_bench_activate() {
     --fabric-seconds "$fabric_s" \
     --tag "$tag" \
     --nodes "$nodes" \
+    --copy-phases-json "$copy_phases_json" \
+    --fabric-phases-json "$fabric_phases_json" \
+    --notes "home-rank prefers symlink/reflink; ranks materialize in parallel; fabric setup batched" \
     --output "$output" \
     --json
 

@@ -566,6 +566,42 @@ assert_eq "fabric_claims_fast_path false" "$fp" "False"
 assert_true "bench-activate documented in CLI" \
   grep -q bench-activate "$REPO_DIR/scripts/model-library.sh"
 
+# tree_bytes must not double-count HF snapshot symlinks
+if STATE="$STATE" python3 - <<'PY'
+import os, sys
+from pathlib import Path
+sys.path.insert(0, os.environ.get("REPO_DIR", "."))
+# import from script path
+import importlib.util
+spec = importlib.util.spec_from_file_location(
+    "model_library", Path(os.environ["REPO_DIR"]) / "scripts" / "model_library.py"
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+root = Path(os.environ["STATE"]) / "byte-test"
+blob = root / "blobs" / "x"
+snap = root / "snapshots" / "rev"
+blob.parent.mkdir(parents=True)
+snap.mkdir(parents=True)
+blob.write_bytes(b"hello-world-12345")
+(snap / "model.safetensors").symlink_to(blob)
+# size should be blob once (~17), not twice
+n = mod.tree_bytes(root)
+assert n == blob.stat().st_size, n
+PY
+then
+  ok "tree_bytes skips symlink targets double-count"
+else
+  not_ok "tree_bytes skips symlink targets double-count"
+fi
+
+assert_true "fabric setup batches root script" \
+  grep -q library_node_root_script "$REPO_DIR/scripts/model-library.sh"
+assert_true "home materialize prefers symlink" \
+  grep -q symlink_home "$REPO_DIR/scripts/model-library.sh"
+assert_true "activate materializes ranks in parallel" \
+  grep -q 'pids+=("$!")' "$REPO_DIR/scripts/model-library.sh"
+
 echo
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
