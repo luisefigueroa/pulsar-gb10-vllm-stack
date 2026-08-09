@@ -2265,6 +2265,81 @@ def cmd_inventory_digest(args: argparse.Namespace) -> int:
     return 0
 
 
+def compare_activate_bench(
+    *,
+    profile: str,
+    topology_id: str,
+    model_id: str,
+    bytes_logical: int,
+    copy_seconds: float,
+    fabric_seconds: float,
+    tag: str,
+    nodes: int,
+) -> dict[str, Any]:
+    """Compare copy vs fabric wall times. Fabric wins only if strictly faster."""
+    if copy_seconds < 0 or fabric_seconds < 0:
+        fail("bench times must be non-negative")
+    if copy_seconds == 0:
+        # Avoid div-by-zero; treat as inconclusive rather than fabric win
+        ratio = None
+        verdict = "inconclusive"
+        reason = "copy_seconds is zero; cannot compute speedup"
+    else:
+        ratio = fabric_seconds / copy_seconds
+        if fabric_seconds < copy_seconds:
+            verdict = "fabric_faster"
+            reason = "fabric wall time is strictly less than copy"
+        elif fabric_seconds == copy_seconds:
+            verdict = "tie"
+            reason = "fabric and copy wall times are equal"
+        else:
+            verdict = "copy_faster"
+            reason = "fabric wall time is not less than copy"
+    return {
+        "schema_version": 1,
+        "kind": "model-library-activate-bench",
+        "tag": tag,
+        "profile": profile,
+        "model_id": model_id,
+        "topology_id": topology_id,
+        "nodes": nodes,
+        "bytes_logical": bytes_logical,
+        "copy_seconds": copy_seconds,
+        "fabric_seconds": fabric_seconds,
+        "fabric_over_copy_ratio": ratio,
+        "verdict": verdict,
+        "reason": reason,
+        "fabric_claims_fast_path": verdict == "fabric_faster",
+        "recorded_at": utc_now(),
+    }
+
+
+def cmd_compare_bench(args: argparse.Namespace) -> int:
+    report = compare_activate_bench(
+        profile=args.profile,
+        topology_id=args.topology_id,
+        model_id=args.model_id,
+        bytes_logical=args.bytes_logical,
+        copy_seconds=args.copy_seconds,
+        fabric_seconds=args.fabric_seconds,
+        tag=args.tag,
+        nodes=args.nodes,
+    )
+    if args.output:
+        atomic_write_json(args.output, report, mode=0o644)
+    if args.json or args.output:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(f"profile   {report['profile']}")
+        print(f"copy_s    {report['copy_seconds']}")
+        print(f"fabric_s  {report['fabric_seconds']}")
+        print(f"verdict   {report['verdict']}")
+        print(f"fast_path {report['fabric_claims_fast_path']}")
+        if args.output:
+            print(f"wrote     {args.output}", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pulsar federated model library")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2448,6 +2523,22 @@ def build_parser() -> argparse.ArgumentParser:
     inv = sub.add_parser("inventory-digest", help="Digest a hub tree")
     inv.add_argument("--hub-path", required=True)
     inv.set_defaults(func=cmd_inventory_digest)
+
+    bench = sub.add_parser(
+        "compare-bench",
+        help="Compare copy vs fabric activate wall times (B gate)",
+    )
+    bench.add_argument("--profile", required=True)
+    bench.add_argument("--topology-id", required=True)
+    bench.add_argument("--model-id", required=True)
+    bench.add_argument("--bytes-logical", type=int, required=True)
+    bench.add_argument("--copy-seconds", type=float, required=True)
+    bench.add_argument("--fabric-seconds", type=float, required=True)
+    bench.add_argument("--tag", required=True)
+    bench.add_argument("--nodes", type=int, required=True)
+    bench.add_argument("--output", default="")
+    bench.add_argument("--json", action="store_true")
+    bench.set_defaults(func=cmd_compare_bench)
 
     return parser
 
