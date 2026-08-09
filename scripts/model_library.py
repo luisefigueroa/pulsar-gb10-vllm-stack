@@ -1,0 +1,669 @@
+#!/usr/bin/env python3
+"""Federated model library catalog: scan, label, resolve (Phase 0–1 brain).
+
+Bash owns topology/SSH and operator entrypoints. This module owns schemas,
+hub completeness, validation labels, duplicate detection, and catalog I/O.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import re
+import sys
+import tempfile
+from datetime import datetime, timezone
+from typing import Any
+
+SCHEMA_VERSION = 1
+HUB_DIR_RE = re.compile(r"^models--(.+)$")
+SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
+STATUS_TESTED = re.compile(r"^tested")
+
+
+class ModelLibraryError(ValueError):
+    """Operator-facing library error."""
+
+
+def fail(message: str) -> None:
+    raise ModelLibraryError(message)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def load_json(path: str | pathlib.Path) -> Any:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"{path}: {exc}")
+
+
+def atomic_write_json(path: str | pathlib.Path, value: Any, mode: int = 0o600) -> None:
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(value, indent=2, sort_keys=True) + "\n"
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        dir=str(path.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_name, mode)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def hub_dirname_to_model_id(dirname: str) -> str | None:
+    match = HUB_DIR_RE.fullmatch(dirname)
+    if not match:
+        return None
+    # models--org--name → org/name (HF uses -- between path segments)
+    return match.group(1).replace("--", "/")
+
+
+def model_id_to_hub_dirname(model_id: str) -> str:
+    return "models--" + model_id.replace("/", "--")
+
+
+def read_revision(hub_root: pathlib.Path) -> str | None:
+    ref_path = hub_root / "refs" / "main"
+    if not ref_path.is_file():
+        return None
+    try:
+        rev = ref_path.read_text(encoding="utf-8").strip().replace("\r", "")
+    except OSError:
+        return None
+    if not rev or not SAFE_REV.fullmatch(rev):
+        return None
+    if not (hub_root / "snapshots" / rev).is_dir():
+        return None
+    return rev
+
+
+def tree_bytes(path: pathlib.Path) -> int:
+    total = 0
+    try:
+        for root, _dirs, files in os.walk(path, followlinks=False):
+            for name in files:
+                try:
+                    total += (pathlib.Path(root) / name).stat().st_size
+                except OSError:
+                    continue
+    except OSError:
+        return 0
+    return total
+
+
+def hub_tree_state(hub_root: pathlib.Path) -> str:
+    """Return complete | partial | missing for a hub model directory."""
+    if not hub_root.is_dir():
+        return "missing"
+    try:
+        for root, _dirs, files in os.walk(hub_root, followlinks=False):
+            for name in files:
+                if name.endswith(".incomplete"):
+                    return "partial"
+    except OSError:
+        return "partial"
+
+    revision = read_revision(hub_root)
+    if revision is None:
+        return "partial"
+    snapshot = hub_root / "snapshots" / revision
+    config = snapshot / "config.json"
+    if not config.is_file() or config.stat().st_size <= 0:
+        # Nested configs: accept any config.json under snapshot
+        found = False
+        try:
+            for path in snapshot.rglob("config.json"):
+                if path.is_file() and path.stat().st_size > 0:
+                    found = True
+                    config = path
+                    break
+        except OSError:
+            return "partial"
+        if not found:
+            return "partial"
+
+    weight_dir = config.parent
+    has_weight = False
+    try:
+        for path in weight_dir.iterdir():
+            if not path.is_file():
+                continue
+            if path.suffix in {".safetensors", ".bin", ".gguf"} and path.stat().st_size > 0:
+                has_weight = True
+                break
+    except OSError:
+        return "partial"
+    if not has_weight:
+        return "partial"
+
+    index_files = list(weight_dir.glob("*.index.json"))
+    for index_path in index_files:
+        try:
+            data = json.loads(index_path.read_text(encoding="utf-8"))
+            names = set((data.get("weight_map") or {}).values())
+        except (OSError, ValueError, AttributeError, TypeError):
+            return "partial"
+        if not names:
+            return "partial"
+        for name in names:
+            shard = index_path.parent / name
+            if not shard.is_file() or shard.stat().st_size <= 0:
+                return "partial"
+    return "complete"
+
+
+def scan_hub_cache(
+    cache_root: str | pathlib.Path,
+    *,
+    rank: int,
+    node_id: str,
+    hostname: str = "",
+    ssh_host: str = "",
+) -> list[dict[str, Any]]:
+    """Scan HF_CACHE for hub/models--* trees on one node."""
+    cache_root = pathlib.Path(cache_root).expanduser()
+    hub = cache_root / "hub"
+    homes: list[dict[str, Any]] = []
+    if not hub.is_dir():
+        return homes
+    try:
+        entries = sorted(hub.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return homes
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        model_id = hub_dirname_to_model_id(entry.name)
+        if model_id is None:
+            continue
+        state = hub_tree_state(entry)
+        revision = read_revision(entry) if state == "complete" else None
+        identity = f"{model_id}@{revision}" if revision else f"{model_id}@unknown"
+        homes.append(
+            {
+                "model_id": model_id,
+                "revision": revision,
+                "identity_key": identity,
+                "rank": rank,
+                "node_id": node_id,
+                "hostname": hostname,
+                "ssh_host": ssh_host,
+                "cache_root": str(cache_root),
+                "hub_path": str(entry),
+                "state": state,
+                "bytes": tree_bytes(entry) if state == "complete" else 0,
+            }
+        )
+    return homes
+
+
+def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
+    """Minimal shell conf parse for MODEL / STATUS / NODES (HF profiles only)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    model = None
+    status = "?"
+    nodes = 1
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("MODEL="):
+            value = line.split("=", 1)[1].strip().strip("\"'")
+            model = value
+        elif line.startswith("STATUS="):
+            status = line.split("=", 1)[1].strip().strip("\"'")
+        elif line.startswith("NODES="):
+            try:
+                nodes = int(line.split("=", 1)[1].strip())
+            except ValueError:
+                nodes = 1
+    if not model or model.startswith("/"):
+        return None
+    return {
+        "profile": path.stem,
+        "model_id": model,
+        "status": status,
+        "nodes": nodes,
+        "validated": bool(STATUS_TESTED.match(status)),
+    }
+
+
+def load_hf_profiles(models_dir: str | pathlib.Path) -> list[dict[str, Any]]:
+    models_dir = pathlib.Path(models_dir)
+    profiles: list[dict[str, Any]] = []
+    if not models_dir.is_dir():
+        return profiles
+    for path in sorted(models_dir.glob("*.conf")):
+        parsed = parse_profile_conf(path)
+        if parsed is not None:
+            profiles.append(parsed)
+    return profiles
+
+
+def build_catalog(
+    *,
+    topology_id: str,
+    homes: list[dict[str, Any]],
+    profiles: list[dict[str, Any]],
+    primary_overrides: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Merge scanned homes with profile validation labels."""
+    primary_overrides = primary_overrides or {}
+    by_model: dict[str, dict[str, Any]] = {}
+
+    profile_by_model: dict[str, list[dict[str, Any]]] = {}
+    for profile in profiles:
+        profile_by_model.setdefault(profile["model_id"], []).append(profile)
+
+    for home in homes:
+        model_id = home["model_id"]
+        revision = home.get("revision") or "unknown"
+        identity = home.get("identity_key") or f"{model_id}@{revision}"
+        entry = by_model.setdefault(
+            identity,
+            {
+                "model_id": model_id,
+                "revision": home.get("revision"),
+                "identity_key": identity,
+                "validation": "unvalidated",
+                "profiles": [],
+                "homes": [],
+                "duplicate": False,
+            },
+        )
+        entry["homes"].append(
+            {
+                "rank": home["rank"],
+                "node_id": home["node_id"],
+                "hostname": home.get("hostname") or "",
+                "ssh_host": home.get("ssh_host") or "",
+                "cache_root": home["cache_root"],
+                "hub_path": home["hub_path"],
+                "state": home["state"],
+                "bytes": home.get("bytes") or 0,
+                "primary": False,
+            }
+        )
+
+    # Attach profiles / validation for any identity with matching model_id
+    for identity, entry in by_model.items():
+        model_id = entry["model_id"]
+        matched = profile_by_model.get(model_id) or []
+        entry["profiles"] = [p["profile"] for p in matched]
+        if any(p["validated"] for p in matched):
+            entry["validation"] = "validated"
+        else:
+            entry["validation"] = "unvalidated"
+
+    # Also surface validated profiles with zero homes (not on disk)
+    seen_models = {e["model_id"] for e in by_model.values()}
+    for profile in profiles:
+        if profile["model_id"] in seen_models:
+            continue
+        identity = f"{profile['model_id']}@missing"
+        by_model[identity] = {
+            "model_id": profile["model_id"],
+            "revision": None,
+            "identity_key": identity,
+            "validation": "validated" if profile["validated"] else "unvalidated",
+            "profiles": [profile["profile"]],
+            "homes": [],
+            "duplicate": False,
+            "on_disk": False,
+        }
+
+    models_out: list[dict[str, Any]] = []
+    for identity in sorted(by_model.keys()):
+        entry = by_model[identity]
+        complete_homes = [h for h in entry["homes"] if h["state"] == "complete"]
+        partial_homes = [h for h in entry["homes"] if h["state"] != "complete"]
+        entry["homes"] = complete_homes + partial_homes
+        entry["on_disk"] = bool(complete_homes)
+        entry["duplicate"] = len(complete_homes) > 1
+
+        override = primary_overrides.get(entry["identity_key"]) or primary_overrides.get(
+            entry["model_id"]
+        )
+        primary_set = False
+        if override:
+            for home in complete_homes:
+                if home["node_id"] == override or str(home["rank"]) == str(override):
+                    home["primary"] = True
+                    primary_set = True
+                    break
+        if not primary_set and len(complete_homes) == 1:
+            complete_homes[0]["primary"] = True
+            primary_set = True
+        if not primary_set and len(complete_homes) > 1:
+            # Fail-closed: no automatic primary when duplicates exist
+            for home in complete_homes:
+                home["primary"] = False
+        entry["has_primary"] = any(h.get("primary") for h in complete_homes)
+        models_out.append(entry)
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "refreshed_at": utc_now(),
+        "topology_id": topology_id,
+        "models": models_out,
+    }
+
+
+def load_catalog(path: str | pathlib.Path) -> dict[str, Any]:
+    data = load_json(path)
+    if not isinstance(data, dict):
+        fail(f"{path}: expected object")
+    if data.get("schema_version") != SCHEMA_VERSION:
+        fail(f"{path}: unsupported schema_version {data.get('schema_version')!r}")
+    return data
+
+
+def find_model_entry(
+    catalog: dict[str, Any],
+    *,
+    model_id: str | None = None,
+    profile: str | None = None,
+    identity_key: str | None = None,
+) -> dict[str, Any] | None:
+    for entry in catalog.get("models") or []:
+        if identity_key and entry.get("identity_key") == identity_key:
+            return entry
+        if profile and profile in (entry.get("profiles") or []):
+            return entry
+        if model_id and entry.get("model_id") == model_id and entry.get("on_disk", True):
+            # Prefer complete-on-disk entries for model_id
+            if any(h.get("state") == "complete" for h in entry.get("homes") or []):
+                return entry
+    if model_id:
+        for entry in catalog.get("models") or []:
+            if entry.get("model_id") == model_id:
+                return entry
+    return None
+
+
+def resolve_entry(catalog: dict[str, Any], *, model_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
+    entry = find_model_entry(catalog, model_id=model_id, profile=profile)
+    if entry is None:
+        target = profile or model_id or "?"
+        fail(f"resolve: {target}: not found in warm catalog")
+    complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+    if not complete:
+        fail(
+            f"resolve: {entry['model_id']}: no complete warm home "
+            "(download/place weights, then catalog refresh)"
+        )
+    if entry.get("duplicate") and not entry.get("has_primary"):
+        fail(
+            f"resolve: {entry['model_id']}: duplicate complete homes without primary; "
+            "run: scripts/model-library.sh cleanup-recommend"
+        )
+    primary = next((h for h in complete if h.get("primary")), None)
+    if primary is None:
+        fail(f"resolve: {entry['model_id']}: no primary home selected")
+    return {
+        "model_id": entry["model_id"],
+        "revision": entry.get("revision"),
+        "identity_key": entry["identity_key"],
+        "validation": entry.get("validation"),
+        "profiles": entry.get("profiles") or [],
+        "home": primary,
+        "duplicate": bool(entry.get("duplicate")),
+    }
+
+
+def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    recommendations: list[dict[str, Any]] = []
+    for entry in catalog.get("models") or []:
+        if not entry.get("duplicate"):
+            continue
+        complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+        recommendations.append(
+            {
+                "model_id": entry["model_id"],
+                "identity_key": entry["identity_key"],
+                "homes": [
+                    {
+                        "rank": h["rank"],
+                        "node_id": h["node_id"],
+                        "hostname": h.get("hostname") or "",
+                        "bytes": h.get("bytes") or 0,
+                        "hub_path": h.get("hub_path") or "",
+                        "primary": bool(h.get("primary")),
+                    }
+                    for h in complete
+                ],
+                "action": (
+                    "Choose one primary home (node_id or rank) and remove or ignore "
+                    "the other complete copies. Activate refuses until a primary is set."
+                ),
+            }
+        )
+    return recommendations
+
+
+def render_catalog_human(catalog: dict[str, Any], *, validated_only: bool = False) -> None:
+    models = catalog.get("models") or []
+    if validated_only:
+        models = [m for m in models if m.get("validation") == "validated"]
+    print(f"model library  topology={str(catalog.get('topology_id') or '')[:12]}")
+    print(f"refreshed      {catalog.get('refreshed_at')}")
+    print(f"entries        {len(models)}")
+    print()
+    if not models:
+        print("(empty)")
+        return
+    print(f"{'MODEL':<36} {'VAL':<12} {'HOMES':>5} {'DUP':>3}  PROFILES")
+    for entry in models:
+        complete = sum(1 for h in entry.get("homes") or [] if h.get("state") == "complete")
+        dup = "yes" if entry.get("duplicate") else "no"
+        profiles = ",".join(entry.get("profiles") or []) or "-"
+        print(
+            f"{entry.get('model_id', '?'):<36} "
+            f"{entry.get('validation', '?'):<12} "
+            f"{complete:>5} {dup:>3}  {profiles}"
+        )
+
+
+def cmd_scan_hub(args: argparse.Namespace) -> int:
+    homes = scan_hub_cache(
+        args.cache_root,
+        rank=args.rank,
+        node_id=args.node_id,
+        hostname=args.hostname or "",
+        ssh_host=args.ssh_host or "",
+    )
+    print(json.dumps(homes, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    homes: list[dict[str, Any]] = []
+    if args.homes_json:
+        raw = load_json(args.homes_json)
+        if not isinstance(raw, list):
+            fail("--homes-json must be a JSON array")
+        homes = raw
+    profiles = load_hf_profiles(args.models_dir)
+    primary: dict[str, str] = {}
+    if args.primary:
+        for item in args.primary:
+            if "=" not in item:
+                fail(f"--primary expects identity_or_model=node_id (got {item!r})")
+            key, value = item.split("=", 1)
+            primary[key] = value
+    catalog = build_catalog(
+        topology_id=args.topology_id,
+        homes=homes,
+        profiles=profiles,
+        primary_overrides=primary,
+    )
+    if args.output:
+        atomic_write_json(args.output, catalog)
+    if args.json:
+        print(json.dumps(catalog, indent=2, sort_keys=True))
+    else:
+        render_catalog_human(catalog)
+        if args.output:
+            print(f"wrote {args.output}", file=sys.stderr)
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog)
+    if args.json:
+        models = catalog.get("models") or []
+        if args.validated:
+            models = [m for m in models if m.get("validation") == "validated"]
+        print(json.dumps({"schema_version": SCHEMA_VERSION, "models": models}, indent=2, sort_keys=True))
+    else:
+        render_catalog_human(catalog, validated_only=args.validated)
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog)
+    entry = find_model_entry(
+        catalog,
+        model_id=args.query if "/" in args.query else None,
+        profile=args.query if "/" not in args.query else None,
+        identity_key=args.query if "@" in args.query else None,
+    )
+    if entry is None and "/" not in args.query and "@" not in args.query:
+        entry = find_model_entry(catalog, profile=args.query)
+    if entry is None:
+        fail(f"show: no entry matching {args.query!r}")
+    if args.json:
+        print(json.dumps(entry, indent=2, sort_keys=True))
+    else:
+        print(json.dumps(entry, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog)
+    model_id = args.model
+    profile = args.profile
+    if args.query:
+        if "/" in args.query:
+            model_id = args.query
+        else:
+            profile = args.query
+    result = resolve_entry(catalog, model_id=model_id, profile=profile)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        home = result["home"]
+        print(f"model     {result['model_id']}")
+        print(f"revision  {result.get('revision') or '-'}")
+        print(f"validation {result.get('validation')}")
+        print(f"home rank {home['rank']}  node_id={home['node_id']}")
+        print(f"hub_path  {home['hub_path']}")
+        if result.get("duplicate"):
+            print("note      duplicates present; using selected primary")
+    return 0
+
+
+def cmd_cleanup_recommend(args: argparse.Namespace) -> int:
+    catalog = load_catalog(args.catalog)
+    recs = cleanup_recommend(catalog)
+    if args.json:
+        print(json.dumps({"recommendations": recs}, indent=2, sort_keys=True))
+        return 0
+    if not recs:
+        print("No duplicate complete homes found.")
+        return 0
+    print(f"Found {len(recs)} model(s) with duplicate complete homes:\n")
+    for rec in recs:
+        print(f"## {rec['model_id']}  ({rec['identity_key']})")
+        for home in rec["homes"]:
+            primary = " PRIMARY" if home.get("primary") else ""
+            print(
+                f"  - rank={home['rank']} node_id={home['node_id']} "
+                f"host={home.get('hostname') or '-'} bytes={home.get('bytes')}{primary}"
+            )
+            print(f"    {home.get('hub_path')}")
+        print(f"  → {rec['action']}\n")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Pulsar federated model library")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    scan = sub.add_parser("scan-hub", help="Scan one HF cache root for hub models")
+    scan.add_argument("--cache-root", required=True)
+    scan.add_argument("--rank", type=int, required=True)
+    scan.add_argument("--node-id", required=True)
+    scan.add_argument("--hostname", default="")
+    scan.add_argument("--ssh-host", default="")
+    scan.set_defaults(func=cmd_scan_hub)
+
+    build = sub.add_parser("build", help="Build catalog from homes JSON + profiles")
+    build.add_argument("--topology-id", required=True)
+    build.add_argument("--models-dir", required=True)
+    build.add_argument("--homes-json", help="JSON array of scanned homes")
+    build.add_argument("--output", help="Write catalog.json here")
+    build.add_argument("--primary", action="append", default=[], help="identity_or_model=node_id")
+    build.add_argument("--json", action="store_true")
+    build.set_defaults(func=cmd_build)
+
+    list_p = sub.add_parser("list", help="List catalog entries")
+    list_p.add_argument("--catalog", required=True)
+    list_p.add_argument("--validated", action="store_true")
+    list_p.add_argument("--json", action="store_true")
+    list_p.set_defaults(func=cmd_list)
+
+    show = sub.add_parser("show", help="Show one catalog entry")
+    show.add_argument("--catalog", required=True)
+    show.add_argument("query")
+    show.add_argument("--json", action="store_true")
+    show.set_defaults(func=cmd_show)
+
+    resolve = sub.add_parser("resolve", help="Resolve profile/model to primary home")
+    resolve.add_argument("--catalog", required=True)
+    resolve.add_argument("--profile")
+    resolve.add_argument("--model")
+    resolve.add_argument("query", nargs="?")
+    resolve.add_argument("--json", action="store_true")
+    resolve.set_defaults(func=cmd_resolve)
+
+    cleanup = sub.add_parser("cleanup-recommend", help="Recommend cleanup for duplicates")
+    cleanup.add_argument("--catalog", required=True)
+    cleanup.add_argument("--json", action="store_true")
+    cleanup.set_defaults(func=cmd_cleanup_recommend)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except ModelLibraryError as exc:
+        print(f"model-library: ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
