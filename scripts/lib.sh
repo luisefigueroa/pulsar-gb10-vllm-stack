@@ -582,6 +582,8 @@ print_shell_command_redacted() {
 PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
 PULSAR_SSH="${PULSAR_SSH:-ssh}"
 PULSAR_WEIGHT_FABRIC_TOOL="${PULSAR_WEIGHT_FABRIC_TOOL:-$REPO_DIR/scripts/weight-fabric.sh}"
+PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
+PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"
 PULSAR_SSH_OPTS=(
   -o BatchMode=yes
@@ -760,6 +762,41 @@ PULSAR_NODE_ID_LABEL="io.pulsar.gb10.node-id"
 PULSAR_WEIGHT_SOURCE_LABEL="io.pulsar.gb10.weight-source"
 PULSAR_WEIGHT_OWNER_LABEL="io.pulsar.gb10.weight-owner"
 PULSAR_WEIGHT_CONFIG_LABEL="io.pulsar.gb10.weight-config"
+
+# Resolve a ready hot-staging instance for library-hot launch.
+# Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
+# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_PINNED.
+# Requires load_conf + load_cluster_topology (or single-node topology id).
+resolve_library_hot_for_profile() {
+  local profile="${1:?profile required}" info
+  local topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
+  [ -n "$topology_id" ] \
+    || die "library-hot requires confirmed topology (scripts/detect-fabric.sh --write-topology)"
+  [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
+  info=$(
+    python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
+      --profile "$profile" \
+      --topology-id "$topology_id" \
+      --hot-root "$PULSAR_HOT_ROOT"
+  ) || die "library-hot: no ready hot instance for $profile — run: scripts/model-library.sh activate $profile --yes"
+  LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["hub_path"])')
+  LIBRARY_HOT_HOME_NODE_ID=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")')
+  LIBRARY_HOT_CONTENT_ID=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
+  LIBRARY_HOT_MODEL_ID=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["stamp"].get("model_id") or "")')
+  LIBRARY_HOT_PINNED=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print("1" if json.load(sys.stdin)["stamp"].get("pinned") else "0")')
+  python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
+    --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
+    --profile "$profile" \
+    --topology-id "$topology_id" >/dev/null \
+    || die "library-hot: hot instance failed verify for $profile"
+}
 
 require_topology_rewrite_idle() {
   local manifest="${1:?topology manifest required}"

@@ -3,7 +3,8 @@
 #   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode] [--force]
 #                 [--skip-preflight]
 #                 [--skip-weights-check] [--accept-memory-warn] [--pull-image]
-#                 [--weight-source replicated|fabric]
+#                 [--weight-source replicated|fabric|library-hot]
+#                 [--weight-mode library-hot]  (alias for --weight-source library-hot)
 #                 [--node NODE_ID] [--dry-run] [--yes] [--verbose]
 set -euo pipefail
 SCRIPT_NAME=up
@@ -26,7 +27,12 @@ while [ $# -gt 0 ]; do
     --accept-memory-warn) ACCEPT_MEM=1 ;;
     --pull-image) PULL_IMG=1 ;;
     --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated or fabric" 2
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated|fabric|library-hot" 2
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
+    --weight-mode)
+      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated|fabric)" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
@@ -47,7 +53,8 @@ usage: scripts/up.sh <model-name> [options]
   --dry-run              run checks only (no launch)
   --verbose              full check logs (default is one-line gates)
   --node NODE_ID          place a one-node profile on this confirmed physical node
-  --weight-source MODE    replicated (default) or experimental fabric
+  --weight-source MODE    replicated (default), fabric, or library-hot
+  --weight-mode MODE      alias for --weight-source (library-hot recommended name)
   --accept-memory-warn   allow start on memory WARN
   --pull-image / --yes   attempt image pull/sync when missing
   --force                allow non-tested conf statuses (untested/do-not-use/blocked*)
@@ -63,8 +70,8 @@ done
 
 load_conf "$NAME"
 case "$WEIGHT_SOURCE" in
-  replicated|fabric) ;;
-  *) die "--weight-source must be replicated or fabric" 2 ;;
+  replicated|fabric|library-hot) ;;
+  *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
 esac
 [ "$WEIGHT_SOURCE" != fabric ] || [ "$NODES" -gt 1 ] \
   || die "fabric weights are only valid for multi-node profiles" 2
@@ -86,7 +93,11 @@ export QUIET=1
 
 echo "┌─ up  $NAME"
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT  status=$STATUS"
-echo "│  weights=$WEIGHT_SOURCE$([ "$WEIGHT_SOURCE" = fabric ] && printf ' (experimental · cold reads use RoCE)')"
+case "$WEIGHT_SOURCE" in
+  fabric) echo "│  weights=fabric (experimental · cold reads use RoCE)" ;;
+  library-hot) echo "│  weights=library-hot (experimental · local hot staging)" ;;
+  *) echo "│  weights=$WEIGHT_SOURCE" ;;
+esac
 if [ "$NODES" -eq 1 ]; then
   echo "│  placement=$(single_node_display)  node-id=${SINGLE_NODE_ID:-standalone}"
 fi
@@ -185,6 +196,9 @@ if [ "$SKIP_W" != 1 ]; then
     fi
     if [ "$WEIGHT_SOURCE" = fabric ]; then
       die "single-copy fabric is not ready (state=$w_state) — run: scripts/weight-fabric.sh check $NAME"
+    fi
+    if [ "$WEIGHT_SOURCE" = library-hot ]; then
+      die "library-hot is not ready (state=$w_state) — run: scripts/model-library.sh activate $NAME --yes"
     fi
     kind=$(model_source_kind)
     if [ "$kind" = hf ]; then
@@ -295,9 +309,13 @@ if [ "$NODES" -gt 1 ]; then
     ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
 else
   log "starting single-node…"
+  single_weight=()
+  [ "$WEIGHT_SOURCE" = replicated ] \
+    || single_weight=(--weight-source "$WEIGHT_SOURCE")
   "$REPO_DIR/serve.sh" "$NAME" -d \
     "${PLACEMENT_ARGS[@]}" \
-    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
+    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}" \
+    ${single_weight[@]+"${single_weight[@]}"}
   api_auth_args=()
   api_auth_curl_args api_auth_args
   cname=$(container_name_for "$NAME" 1)

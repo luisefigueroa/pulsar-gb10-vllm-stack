@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Read-only preflight for an exact validated multi-node profile.
-#   cluster/preflight.sh <model-name> [--weight-source replicated|fabric]
+#   cluster/preflight.sh <model-name> [--weight-source replicated|fabric|library-hot]
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +24,15 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --weight-source)
       [ "$#" -ge 2 ] || {
-        echo "--weight-source requires replicated or fabric" >&2
+        echo "--weight-source requires replicated|fabric|library-hot" >&2
+        exit 2
+      }
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
+    --weight-mode)
+      [ "$#" -ge 2 ] || {
+        echo "--weight-mode requires library-hot (or replicated|fabric)" >&2
         exit 2
       }
       WEIGHT_SOURCE="$2"
@@ -35,8 +43,8 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$WEIGHT_SOURCE" in
-  replicated|fabric) ;;
-  *) echo "--weight-source must be replicated or fabric" >&2; exit 2 ;;
+  replicated|fabric|library-hot) ;;
+  *) echo "--weight-source must be replicated, fabric, or library-hot" >&2; exit 2 ;;
 esac
 [ "$EXPECTED_NODES" -gt 1 ] || {
   echo "[preflight] profile must require more than one node" >&2
@@ -179,6 +187,13 @@ if [ -n "$PROFILE" ]; then
       ok "single-copy weights: topology, RDMA mounts, manifest, and no replicas"
     else
       bad "single-copy weights are not launch-ready"
+    fi
+  elif [ "$WEIGHT_SOURCE" = library-hot ]; then
+    if "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" \
+        --weight-source library-hot >/dev/null; then
+      ok "library-hot: ready hot staging for $PROFILE"
+    else
+      bad "library-hot not ready — run: scripts/model-library.sh activate $PROFILE --yes"
     fi
   else
     for ((rank = 0; rank < EXPECTED_NODES; rank++)); do

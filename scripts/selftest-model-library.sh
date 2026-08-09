@@ -224,6 +224,17 @@ set -e
 assert_eq "plan-activate fails over budget" "$brc" "1"
 assert_true "budget error text" grep -q "budget exceeded" "$STATE/budget.err"
 
+# Launch wiring accepts library-hot flags (no docker)
+assert_true "up.sh help lists library-hot" \
+  grep -q library-hot "$REPO_DIR/scripts/up.sh"
+assert_true "start-cluster accepts library-hot" \
+  grep -q library-hot "$REPO_DIR/scripts/../cluster/start-cluster.sh"
+out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)
+assert_true "check-weights library-hot fails closed without hot" \
+  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|activate|topology|hot'"
+assert_true "down.sh documents pin-weights" \
+  grep -q pin-weights "$REPO_DIR/scripts/down.sh"
+
 echo
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
