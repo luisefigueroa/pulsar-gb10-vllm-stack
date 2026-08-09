@@ -1,0 +1,16 @@
+{
+  "cache_state": "warm",
+  "configuration_id": null,
+  "first_healthy_at": "2026-08-08T15:17:04.631Z",
+  "kind": "container-launch-to-first-health",
+  "model": "Qwen/Qwen3-1.7B",
+  "nodes": 2,
+  "owner_node_fingerprint": null,
+  "profile": "qwen3-1.7b-2node",
+  "schema_version": 1,
+  "started_at": "2026-08-08T15:15:29.870Z",
+  "tag": "qwen17b-replicated-serving-warm-eager-20260808",
+  "time_to_first_healthy_seconds": 94.761,
+  "topology_id": "9adae412f284cbc49ea03ab26e677fc62e9d5c8e7be16b9fce5f1d0fcb5649f8",
+  "weight_source": "replicated"
+}

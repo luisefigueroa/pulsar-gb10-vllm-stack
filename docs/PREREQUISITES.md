@@ -274,6 +274,8 @@ not permission to serve an unmeasured geometry.
 | [HARDWARE.md](./HARDWARE.md) | Measured bandwidth, RoCE map, storage |
 | [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
 | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Experimental one-copy NFS/RDMA design, operations, faults, and gates |
+| [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Agreed future direction** — federated library, activate, hot/pin (not implemented) |
+| [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) | Archived exploration / option history only |
 | [BUILD.md](./BUILD.md) | Published PR #41834 image, provenance, and source-build fallback |
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Offline node, missing `refs/main`, TCP fallback, cold load |

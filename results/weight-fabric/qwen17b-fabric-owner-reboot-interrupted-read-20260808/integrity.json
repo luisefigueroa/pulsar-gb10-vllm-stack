@@ -1,0 +1,36 @@
+{
+  "configuration_id": "28822c68f5e8bc2edeef8d175cf6f9b846c21909785e8da035a7b7eaa27b717b",
+  "mode": "full",
+  "nodes": [
+    {
+      "detail": null,
+      "integrity": true,
+      "mount": true,
+      "node_fingerprint": "9908424efe7c646e",
+      "rank": 0,
+      "replica_absent": true,
+      "role": "client",
+      "route": true
+    },
+    {
+      "detail": null,
+      "integrity": true,
+      "mount": true,
+      "node_fingerprint": "33164e12001f503d",
+      "rank": 1,
+      "replica_absent": true,
+      "role": "owner",
+      "route": true
+    }
+  ],
+  "ok": true,
+  "owner": {
+    "node_fingerprint": "33164e12001f503d",
+    "rank": 1
+  },
+  "profile": "qwen3-1.7b-2node",
+  "schema_version": 1,
+  "source": "fabric",
+  "state": "ok",
+  "transport": "nfs-rdma"
+}

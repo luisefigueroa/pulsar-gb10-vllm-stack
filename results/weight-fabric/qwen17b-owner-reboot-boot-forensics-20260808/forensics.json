@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "kind": "weight-fabric-owner-reboot-boot-forensics",
+  "state": "diagnosed",
+  "verdict": "display-presence-correlates-with-gdm-plymouth-handoff",
+  "recorded_at": "2026-08-08T22:22:44.794Z",
+  "profile": "qwen3-1.7b-2node",
+  "topology_id": "9adae412f284cbc49ea03ab26e677fc62e9d5c8e7be16b9fce5f1d0fcb5649f8",
+  "configuration_id": "28822c68f5e8bc2edeef8d175cf6f9b846c21909785e8da035a7b7eaa27b717b",
+  "collection": {
+    "mode": "read-only",
+    "ranks": 3,
+    "sudo_used": false,
+    "service_actions": false,
+    "configuration_changes": false,
+    "reboots": false,
+    "all_collectors_exited_zero": true,
+    "raw_capture_sha256": {
+      "rank_0": "cab17227669572aa859bf4cb22e6fe39a352d06d32161488fe05bc4b7d04c31a",
+      "rank_1": "6f82c2f99c79e2f71dbe1d4e524bf645219fd39cbf0366d98286f876fbf52e78",
+      "rank_2": "c07add24205a06420d2ef1be1c2a82ce0daaa15a7c20198176ae81377dbbf49b"
+    },
+    "raw_capture_bytes": {
+      "rank_0": 127708,
+      "rank_1": 127375,
+      "rank_2": 133829
+    }
+  },
+  "shared_inputs": {
+    "default_target": "graphical.target",
+    "kernel_release": "6.17.0-1029-nvidia",
+    "semantic_kernel_command_line_equal": true,
+    "kernel_command_line_flags": [
+      "quiet",
+      "splash",
+      "plymouth.ignore-serial-consoles",
+      "plymouth.use-simpledrm",
+      "vt.handoff=7"
+    ],
+    "package_versions_equal": true,
+    "packages": {
+      "systemd": "255.4-1ubuntu8.16",
+      "plymouth": "24.004.60-1ubuntu7.2",
+      "gdm3": "46.2-1ubuntu1~24.04.9"
+    },
+    "grub_configuration_equal": true,
+    "gdm_configuration_equal": true,
+    "on_disk_unit_fragments_equal": true,
+    "custom_relevant_drop_ins_found": false,
+    "canonical_fragment_sha256": {
+      "plymouth_start": "4cbe8e5956606bef5a0d4ac894dc1015f3d85461e3fb60b676a93036e5f07105",
+      "plymouth_quit": "bd1ccb81f982df35e6d573dd254217226c2086d2c60ab3d0fca3251a62983e53",
+      "plymouth_quit_wait": "5161207f039b065a240fed60b19e740358157e95bbf68d74271d5f6de93477e9",
+      "gdm": "bfdc24432ed4a3d1b931d540bc5de0c5c83d0c7c420a056b26cd5474242b725e"
+    }
+  },
+  "ranks": [
+    {
+      "rank": 0,
+      "role": "affected-serving",
+      "simpledrm_present_at_boot": false,
+      "connected_display_at_boot": false,
+      "xorg_empty_configuration": true,
+      "gdm_session_registered": false,
+      "current_boot_wait_seconds": 61661.353238,
+      "current_boot_wait_completion": "nonautomatic-quit-transaction",
+      "previous_boot_wait_completed": false,
+      "previous_boot_wait_observed_seconds": 87122.894255,
+      "systemd_running_after_quit": true,
+      "graphical_target_active_after_quit": true,
+      "display_manager_active_after_quit": false,
+      "graphical_session_present_after_quit": false
+    },
+    {
+      "rank": 1,
+      "role": "affected-serving-owner",
+      "simpledrm_present_at_boot": false,
+      "connected_display_at_boot": false,
+      "xorg_empty_configuration": true,
+      "gdm_session_registered": false,
+      "current_boot_wait_seconds": 1788.887406,
+      "current_boot_wait_completion": "attended-plymouth-quit-service",
+      "previous_boot_wait_completed": true,
+      "previous_boot_wait_seconds": 128562.123743,
+      "previous_boot_wait_completion": "plymouth-quit-service",
+      "systemd_running_after_quit": true,
+      "graphical_target_active_after_quit": true,
+      "display_manager_active_after_quit": false,
+      "graphical_session_present_after_quit": false
+    },
+    {
+      "rank": 2,
+      "role": "unaffected-storage",
+      "simpledrm_present_at_boot": true,
+      "connected_display_at_boot": true,
+      "xorg_empty_configuration": false,
+      "gdm_session_registered": true,
+      "current_boot_wait_seconds": 3.313574,
+      "current_boot_wait_completion": "gdm-session-registration",
+      "previous_boot_wait_completed": true,
+      "previous_boot_wait_seconds": 5.764198,
+      "previous_boot_wait_completion": "gdm-session-registration",
+      "systemd_running": true,
+      "graphical_target_active": true,
+      "display_manager_active": true,
+      "graphical_session_present": true
+    }
+  ],
+  "established_findings": [
+    "The two affected ranks booted with no connected display, no simpledrm framebuffer, and an NVIDIA NULL MetaMode.",
+    "GNOME Shell never registered its GDM session on either affected rank, so GDM did not complete its declared responsibility to quit Plymouth.",
+    "The unaffected rank had a connected display and simpledrm framebuffer, registered its GDM session, and completed Plymouth wait automatically in 3.314 seconds on the current boot and 5.764 seconds on the previous boot.",
+    "Packages, semantic kernel options, GRUB and GDM configuration, on-disk unit fragments, and relevant drop-in state do not explain the rank split.",
+    "Starting the standard Plymouth quit service completed systemd targets on the affected owner by conflicting with and stopping GDM; it did not restore a graphical session."
+  ],
+  "hypothesis": {
+    "statement": "Absence of a boot display/framebuffer prevents the GDM greeter from registering, leaving Plymouth running indefinitely because this distribution delegates the quit operation to GDM.",
+    "confidence": "medium-high",
+    "causality_proven": false,
+    "controlled_reboot_required": true
+  },
+  "interpretation_correction": {
+    "prior_field": "full_boot_after_intervention",
+    "prior_value": "pass",
+    "measured_scope": "systemd running, normal targets active, and zero failed units",
+    "new_limit": "The display manager was inactive and no graphical session existed after the attended quit transaction.",
+    "correct_claim": "storage and serving recovered after intervention; graphical boot did not"
+  },
+  "gui_preserving_candidates": [
+    {
+      "candidate": "connected-display-at-boot",
+      "evidence_alignment": "highest",
+      "status": "unvalidated-controlled-test",
+      "note": "A real display or separately validated display emulator may reproduce the unaffected handoff without changing boot mode."
+    },
+    {
+      "candidate": "remove-splash-keep-graphical-target",
+      "evidence_alignment": "plausible-bypass",
+      "status": "unvalidated",
+      "note": "This prevents Plymouth startup but does not by itself prove that a headless GDM greeter registers or that later GUI attachment works."
+    },
+    {
+      "candidate": "conditional-direct-plymouth-quit",
+      "evidence_alignment": "plausible-bypass",
+      "status": "unvalidated",
+      "note": "A direct quit could release the wait without the GDM conflict, but it still does not prove graphical-session health."
+    }
+  ],
+  "rejected_shortcuts": [
+    "mask-plymouth-quit-wait",
+    "ad-hoc-gdm-conflict-or-ordering-rewrite",
+    "claim-graphical-recovery-from-target-state-alone"
+  ]
+}

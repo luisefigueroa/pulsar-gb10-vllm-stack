@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "kind": "weight-fabric-owner-reboot-recovery",
+  "state": "recovered-with-intervention",
+  "verdict": "automatic-boot-recovery-failed",
+  "recorded_at": "2026-08-08T20:43:59.573Z",
+  "tag": "qwen17b-fabric-owner-reboot-storage-recovery-20260808",
+  "profile": "qwen3-1.7b-2node",
+  "model": "Qwen/Qwen3-1.7B",
+  "topology_id": "9adae412f284cbc49ea03ab26e677fc62e9d5c8e7be16b9fce5f1d0fcb5649f8",
+  "configuration_id": "28822c68f5e8bc2edeef8d175cf6f9b846c21909785e8da035a7b7eaa27b717b",
+  "manifest_id": "5094934e106d330a66e14855878cdd0f94a9767bc76f73aaf2b43cbd1b2f04bb",
+  "owner": {
+    "rank": 1,
+    "before_boot_fingerprint": "170a6afb93e8c543",
+    "after_boot_fingerprint": "a98a397e583f6bfd"
+  },
+  "timing": {
+    "reboot_command_to_offline_seconds": 0.947,
+    "observed_offline_seconds": 36.284,
+    "reboot_command_to_ssh_seconds": 37.231,
+    "nfs_rdma_recovery_seconds_upper_bound": 62.974,
+    "reboot_command_to_manually_completed_system_running_seconds": 1826.941,
+    "plymouth_completion_seconds": 13.763
+  },
+  "client_read": {
+    "rank": 0,
+    "bytes_read": 4079450110,
+    "started_at": "2026-08-08T17:25:51.909+00:00",
+    "finished_at": "2026-08-08T17:26:57.213+00:00",
+    "started_before_reboot_seconds": 2.33,
+    "completed_after_ssh_seconds": 25.743
+  },
+  "recovery": {
+    "storage": "pass",
+    "full_boot_automatic": "fail",
+    "full_boot_after_intervention": "pass",
+    "boot_blocker": "plymouth-quit-wait.service",
+    "intervention": "start-plymouth-quit-service",
+    "nfs_rdma_exact_timestamp_captured": false,
+    "interrupted_read_artifact": "results/weight-fabric/qwen17b-fabric-owner-reboot-interrupted-read-20260808"
+  },
+  "evidence": {
+    "owner_boot_identity_changed": true,
+    "owner_offline_observed": true,
+    "owner_local_read_interrupted_as_expected": true,
+    "independent_client_read_completed": true,
+    "exact_export_recovered": true,
+    "docker_recovered": true,
+    "nfs_rdma_recovered": true,
+    "all_storage_ranks_verified": true,
+    "durable_client_replicas_absent": true,
+    "manual_boot_completion_required": true
+  },
+  "throughput_comparable": false
+}

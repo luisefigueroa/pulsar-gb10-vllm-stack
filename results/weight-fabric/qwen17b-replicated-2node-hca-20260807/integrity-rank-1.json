@@ -1,0 +1,11 @@
+{
+  "bytes_hashed": 4079450110,
+  "file_count": 12,
+  "manifest_id": "5094934e106d330a66e14855878cdd0f94a9767bc76f73aaf2b43cbd1b2f04bb",
+  "mode": "full",
+  "seconds": 1.86195,
+  "snapshot_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+  "state": "ok",
+  "throughput_gib_s": 2.040486,
+  "total_bytes": 4079450110
+}
