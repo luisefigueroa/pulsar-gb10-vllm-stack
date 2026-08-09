@@ -357,6 +357,181 @@ assert_true "release-transfer command exists" \
 assert_true "no silent fabric-to-copy fallback on yes" \
   bash -c "! grep -q 'auto.*copy\\|fallback to copy' '$REPO_DIR/scripts/model-library.sh' || grep -q 'no silent fallback' '$REPO_DIR/scripts/model-library.sh'"
 
+# --- optional cold storage tier ---
+COLD="$STATE/cold"
+FLAT_ORG="$COLD/Official Models/DemoOrg"
+FLAT_COMPLETE="$FLAT_ORG/Demo-Model-Complete"
+FLAT_PARTIAL="$FLAT_ORG/Demo-Model-Partial"
+HUB_COLD="$COLD/hub/models--ColdOrg--HubModel"
+mkdir -p "$FLAT_COMPLETE" "$FLAT_PARTIAL" "$HUB_COLD/snapshots/revcold1" "$HUB_COLD/refs"
+# flat complete
+printf '{"architectures":["X"]}\n' >"$FLAT_COMPLETE/config.json"
+printf 'weights\n' >"$FLAT_COMPLETE/model.safetensors"
+# flat partial (config only)
+printf '{"architectures":["X"]}\n' >"$FLAT_PARTIAL/config.json"
+# hub complete under cold
+printf 'revcold1\n' >"$HUB_COLD/refs/main"
+printf '{"architectures":["X"]}\n' >"$HUB_COLD/snapshots/revcold1/config.json"
+printf 'weights\n' >"$HUB_COLD/snapshots/revcold1/model.safetensors"
+
+# profile that only exists on cold (HF id matching Official Models org/name)
+cat >"$STATE/models/demo-cold-only.conf" <<'EOF'
+MODEL="DemoOrg/Demo-Model-Complete"
+STATUS="tested"
+NODES=1
+EOF
+cat >"$STATE/models/demo-cold-abs.conf" <<'EOF'
+MODEL="/mnt/Models/Official Models/DemoOrg/Demo-Model-Complete"
+STATUS="tested"
+NODES=1
+EOF
+
+# empty warm homes catalog for cold-only resolve
+python3 "$PY" build \
+  --topology-id topo-cold-001 \
+  --models-dir "$STATE/models" \
+  --homes-json "$STATE/homes.json" \
+  --output "$STATE/catalog-cold.json" >/dev/null 2>&1
+
+export PULSAR_COLD_ROOT="$COLD"
+unset MODELS_NFS || true
+
+scan_cold=$(python3 "$PY" scan-cold --cold-root "$COLD" --json)
+cold_count=$(printf '%s' "$scan_cold" | python3 -c 'import json,sys; print(json.load(sys.stdin)["count"])')
+assert_eq "scan-cold finds 3 trees" "$cold_count" "3"
+
+complete_cold=$(python3 "$PY" scan-cold --cold-root "$COLD" --complete-only --json)
+complete_n=$(printf '%s' "$complete_cold" | python3 -c 'import json,sys; print(json.load(sys.stdin)["count"])')
+assert_eq "scan-cold complete-only is 2" "$complete_n" "2"
+
+find_flat=$(python3 "$PY" find-cold --cold-root "$COLD" --json DemoOrg/Demo-Model-Complete 2>/dev/null || \
+  python3 "$PY" find-cold --cold-root "$COLD" DemoOrg/Demo-Model-Complete)
+flat_layout=$(printf '%s' "$find_flat" | python3 -c 'import json,sys; print(json.load(sys.stdin)["layout"])')
+assert_eq "find-cold flat layout" "$flat_layout" "flat"
+
+find_hub=$(python3 "$PY" find-cold --cold-root "$COLD" ColdOrg/HubModel)
+hub_layout=$(printf '%s' "$find_hub" | python3 -c 'import json,sys; print(json.load(sys.stdin)["layout"])')
+assert_eq "find-cold hub layout" "$hub_layout" "hub"
+
+# warm miss → cold hit
+resolve_cold=$(PULSAR_COLD_ROOT="$COLD" python3 "$PY" resolve \
+  --catalog "$STATE/catalog-cold.json" \
+  --models-dir "$STATE/models" \
+  --cold-root "$COLD" \
+  --json demo-cold-only)
+tier=$(printf '%s' "$resolve_cold" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
+assert_eq "resolve warm miss falls through to cold" "$tier" "cold"
+src=$(printf '%s' "$resolve_cold" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_path"])')
+assert_true "resolve cold source is flat complete" test -f "$src/config.json"
+
+# warm hit prefers warm (no cold needed)
+resolve_warm=$(PULSAR_COLD_ROOT="$COLD" python3 "$PY" resolve \
+  --catalog "$STATE/catalog2.json" \
+  --models-dir "$STATE/models" \
+  --cold-root "$COLD" \
+  --json qwen3-1.7b-2node)
+tier_w=$(printf '%s' "$resolve_warm" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
+assert_eq "resolve prefers warm when present" "$tier_w" "warm"
+
+# cold disabled → warm miss fails without cold
+set +e
+PULSAR_COLD_ROOT= python3 "$PY" resolve \
+  --catalog "$STATE/catalog-cold.json" \
+  --models-dir "$STATE/models" \
+  --no-cold \
+  --json demo-cold-only >"$STATE/resolve-nocold.err" 2>&1
+nc_rc=$?
+set -e
+assert_eq "resolve --no-cold fails without warm home" "$nc_rc" "1"
+
+# configured but missing root fails when needed
+set +e
+python3 "$PY" resolve \
+  --catalog "$STATE/catalog-cold.json" \
+  --models-dir "$STATE/models" \
+  --cold-root "$STATE/missing-cold-root" \
+  --json demo-cold-only >"$STATE/resolve-badcold.err" 2>&1
+bc_rc=$?
+set -e
+assert_eq "resolve fails when cold needed but unavailable" "$bc_rc" "1"
+assert_true "unavailable cold error text" grep -qi "cold\|unavailable\|not exist" "$STATE/resolve-badcold.err"
+
+# absolute path resolve under cold root (use real temp path)
+abs_path="$FLAT_COMPLETE"
+resolve_abs=$(python3 "$PY" resolve \
+  --allow-missing-catalog \
+  --cold-root "$COLD" \
+  --json "$abs_path")
+tier_a=$(printf '%s' "$resolve_abs" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
+assert_eq "resolve absolute cold path" "$tier_a" "cold"
+
+# adopt flat → warm hub
+ADOPT_CACHE="$STATE/adopt-cache"
+mkdir -p "$ADOPT_CACHE"
+adopt=$(python3 "$PY" plan-cold-adopt \
+  --cold-root "$COLD" \
+  --model DemoOrg/Demo-Model-Complete \
+  --cache-root "$ADOPT_CACHE" \
+  --execute)
+adopt_state=$(printf '%s' "$adopt" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dest_state"])')
+assert_eq "adopt produces complete hub" "$adopt_state" "complete"
+adopt_dest=$(printf '%s' "$adopt" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dest_hub"])')
+assert_true "adopt dest under cache hub" test -f "$adopt_dest/refs/main"
+assert_true "adopt snapshot has weights" \
+  test -f "$adopt_dest/snapshots/$(cat "$adopt_dest/refs/main")/model.safetensors"
+
+# adopt hub layout as-is
+adopt_hub=$(python3 "$PY" plan-cold-adopt \
+  --cold-root "$COLD" \
+  --model ColdOrg/HubModel \
+  --cache-root "$ADOPT_CACHE" \
+  --execute)
+assert_eq "adopt hub dest complete" \
+  "$(printf '%s' "$adopt_hub" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dest_state"])')" \
+  "complete"
+
+# stage-only cold → hot
+export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))
+stage=$(python3 "$PY" plan-cold-stage \
+  --cold-root "$COLD" \
+  --profile demo-cold-only \
+  --topology-id topo-cold-001 \
+  --hot-root "$HOT" \
+  --catalog "$STATE/catalog-cold.json" \
+  --models-dir "$STATE/models" \
+  --execute)
+stage_action=$(printf '%s' "$stage" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+assert_eq "stage-only action" "$stage_action" "stage-only"
+stage_inst=$(printf '%s' "$stage" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+python3 "$PY" verify-hot --instance-dir "$stage_inst" --profile demo-cold-only --topology-id topo-cold-001 >/dev/null \
+  && ok "verify-hot after cold stage-only" || not_ok "verify-hot after cold stage-only"
+
+stage2=$(python3 "$PY" plan-cold-stage \
+  --cold-root "$COLD" \
+  --profile demo-cold-only \
+  --topology-id topo-cold-001 \
+  --hot-root "$HOT" \
+  --catalog "$STATE/catalog-cold.json" \
+  --models-dir "$STATE/models")
+stage2_action=$(printf '%s' "$stage2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+assert_eq "stage-only skip when hot ready" "$stage2_action" "skip"
+
+# activate stays warm-only (cold profile with no warm home fails)
+set +e
+python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog-cold.json" \
+  --profile demo-cold-only \
+  --topology-id topo-cold-001 \
+  --hot-root "$HOT" \
+  --backend copy \
+  --nodes 1 >/dev/null 2>"$STATE/activate-cold.err"
+ac_rc=$?
+set -e
+assert_eq "plan-activate refuses cold-only model" "$ac_rc" "1"
+
+assert_true "model-library.sh documents cold" \
+  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold'"
+
 echo
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

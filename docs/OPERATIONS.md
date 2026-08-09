@@ -333,6 +333,37 @@ Hot trees live under `PULSAR_HOT_ROOT` (default `/var/tmp/pulsar-hot`), not as
 durable N copies in every node’s HF cache. Defaults and the wizard stay on
 replicated weights until this path is promoted.
 
+**Optional cold archive:** shared/local fill tier (conventionally
+`MODELS_NFS=/mnt/Models`, overridable with `PULSAR_COLD_ROOT`; empty
+`PULSAR_COLD_ROOT` disables cold). Layouts scanned:
+
+- `Official Models/<org>/<name>/` (and `Community Models/…`) — flat trees
+- `hub/models--org--name/` or `.cache/huggingface/hub/…` — HF hub trees
+
+Resolve order is **warm complete home → cold (if configured) → fail closed**.
+Cold is preferred over a fresh Hugging Face download when warm misses; it is
+**not** the multi-node runtime filesystem.
+
+```bash
+# inventory
+scripts/model-library.sh cold scan --json
+scripts/model-library.sh cold show poolside/Laguna-S-2.1-NVFP4
+scripts/model-library.sh resolve laguna-s-2.1-nvfp4 --json   # warm, else cold
+
+# grow federated library (durable warm home on this node’s HF cache)
+scripts/model-library.sh cold adopt poolside/Laguna-S-2.1-NVFP4 --yes
+scripts/model-library.sh catalog refresh
+
+# or stage for this job only (cold remains sole durable copy)
+scripts/model-library.sh cold stage-only laguna-s-2.1-nvfp4 --yes
+scripts/up.sh laguna-s-2.1-nvfp4 --weight-mode library-hot
+```
+
+Unset/empty cold config skips the tier (no mount required). If cold is
+configured but unreadable, flows that **need** cold (warm miss, absolute-path
+conf, explicit `cold *`) fail closed; pure warm-catalog hits never require it.
+See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) §3.
+
 **Fabric activate (RoCE transfer into hot):** ephemeral NFSv4.2/`proto=rdma`
 from the catalog primary home over confirmed RoCE rails into hot staging, then
 **release** of mounts/export (not a long-lived mount under vLLM):

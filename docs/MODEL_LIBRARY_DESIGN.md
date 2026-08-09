@@ -334,6 +334,7 @@ Inventory/labels should surface mode, home, hot ready, pinned, library released.
 | 2026-08-08 | Temporary hot disk allowed; warm restart without home required via pins; pins bounded by disk budget. |
 | 2026-08-08 | Copy = non-RoCE control-path transfer; fabric = RoCE activate transport; fabric B bar = beat copy. |
 | 2026-08-08 | Cold optional; resolve warm → cold? → HF; cold preferred over HF when configured; adopt and stage-only both allowed. |
+| 2026-08-08 | Implemented optional cold tier: scan Official Models + hub layouts, resolve warm→cold fall-through, cold adopt, cold stage-only (`scripts/model-library.sh cold *`). |
 | 2026-08-08 | Scan all hub trees; label validated vs unvalidated; duplicates recommend cleanup tool. |
 | 2026-08-08 | New download placement: most free space + `--node` override (recommended default). |
 | 2026-08-08 | Release after hot verified, before launch (default independence claim). |
