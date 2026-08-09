@@ -10,6 +10,11 @@ PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
 CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-$LIBRARY_DIR/catalog.json}"
 HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
+LIBRARY_SUDO_MODE="${LIBRARY_SUDO_MODE:-passwordless}"
+case "$LIBRARY_SUDO_MODE" in
+  passwordless|interactive) ;;
+  *) die "LIBRARY_SUDO_MODE must be passwordless or interactive" ;;
+esac
 
 usage() {
   cat <<'EOF'
@@ -21,7 +26,9 @@ Usage:
   scripts/model-library.sh catalog show <model_id|profile> [--json]
   scripts/model-library.sh resolve <profile|model_id> [--json]
   scripts/model-library.sh cleanup-recommend [--json]
-  scripts/model-library.sh activate <profile> [--backend copy|fabric] [--allow-unvalidated] [--yes]
+  scripts/model-library.sh activate <profile> [--backend copy|fabric]
+      [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
+  scripts/model-library.sh release-transfer <profile> [--yes] [--interactive-sudo]
   scripts/model-library.sh pin <profile>
   scripts/model-library.sh unpin <profile>
   scripts/model-library.sh purge-hot <profile> [--yes] [--force-unpin]
@@ -32,8 +39,8 @@ Notes:
   • Labels entries validated vs unvalidated using models/*.conf STATUS.
   • Duplicate complete homes refuse resolve until a primary is chosen.
   • activate --backend copy rsyncs over the control path into PULSAR_HOT_ROOT.
-  • activate --backend fabric plans ephemeral NFSv4.2/RDMA transfer (RoCE);
-    privileged apply/release is a follow-up; no silent fallback to copy.
+  • activate --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
+    to fill hot, then releases mounts/export. No silent fallback to copy.
   • pin keeps hot for home-independent restart; purge removes hot (budget).
   • Does not change wizard defaults or --weight-source fabric.
 EOF
@@ -324,9 +331,292 @@ verify_hot_on_rank() {
     <"$PY_TOOL" >/dev/null
 }
 
+# --- privileged helpers (mirror weight-fabric patterns; never store passwords) ---
+
+library_node_exec() {
+  local rank="${1:?}"
+  shift
+  if [ "$rank" = 0 ]; then
+    bash -c "$*"
+  else
+    ssh_node "$rank" "$@"
+  fi
+}
+
+library_node_privileged() {
+  local rank="${1:?}"
+  shift
+  local command host root_script payload
+  if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
+    root_script=$'set -euo pipefail\n'
+    root_script+="$(shell_join_q "$@")"$'\n'
+    payload=$(printf '%s' "$root_script" | base64 -w 0)
+    command='sudo -v'
+    command+=" && $(shell_join_q printf %s "$payload")"
+    command+=' | base64 -d | sudo -n bash -s'
+    log "sudo authentication required on rank $rank…"
+    if [ "$rank" = 0 ]; then
+      bash -c "$command"
+    else
+      host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+      "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -tt -- "$host" "$command"
+    fi
+  elif [ "$rank" = 0 ]; then
+    sudo -n "$@"
+  else
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    command=$(shell_join_q sudo -n "$@")
+    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$command"
+  fi
+}
+
+library_install_content() {
+  local rank="${1:?}" destination="${2:?}" mode="${3:?}" content="${4-}"
+  local command host encoded root_script payload
+  if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
+    encoded=$(printf '%s' "$content" | base64 -w 0)
+    root_script=$'set -euo pipefail\n'
+    root_script+="$(shell_join_q printf %s "$encoded")"
+    root_script+=" | base64 -d | "
+    root_script+="$(shell_join_q install -D -m "$mode" /dev/stdin "$destination")"
+    root_script+=$'\n'
+    payload=$(printf '%s' "$root_script" | base64 -w 0)
+    command='sudo -v'
+    command+=" && $(shell_join_q printf %s "$payload")"
+    command+=' | base64 -d | sudo -n bash -s'
+    log "sudo authentication required on rank $rank…"
+    if [ "$rank" = 0 ]; then
+      bash -c "$command"
+    else
+      host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+      "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -tt -- "$host" "$command"
+    fi
+  elif [ "$rank" = 0 ]; then
+    printf '%s' "$content" \
+      | sudo -n install -D -m "$mode" /dev/stdin "$destination"
+  else
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+    command=$(shell_join_q sudo -n install -D -m "$mode" /dev/stdin "$destination")
+    printf '%s' "$content" \
+      | "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$command"
+  fi
+}
+
+library_confirm() {
+  local yes="${1:-0}" message="${2:?}"
+  [ "$yes" = 1 ] && return 0
+  printf '%s\n' "$message"
+  read -r -p "Continue? [y/N] " answer
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) die "aborted" 3 ;;
+  esac
+}
+
+# Copy into hot using per-rank source path (local hub or transfer mount).
+copy_from_source_on_rank() {
+  local rank="${1:?}" source="${2:?}" hub_dest="${3:?}"
+  local dest_parent qsrc qdst
+  dest_parent=$(dirname "$hub_dest")
+  qsrc=$(printf '%q' "$source")
+  qdst=$(printf '%q' "$hub_dest")
+  if [ "$rank" = 0 ]; then
+    mkdir -p "$dest_parent"
+    rm -rf "$hub_dest"
+    mkdir -p "$hub_dest"
+    rsync -a --delete "$source"/ "$hub_dest"/
+    return 0
+  fi
+  ssh_node "$rank" "mkdir -p $(printf '%q' "$dest_parent") && rm -rf $qdst && mkdir -p $qdst"
+  # Prefer remote-local rsync when source is already on the target (mount path).
+  ssh_node "$rank" "rsync -a --delete $qsrc/ $qdst/" \
+    || die "rank $rank: rsync from $source failed"
+}
+
+fabric_release_transfer() {
+  local plan_json="${1:?}" home_rank export_file nfs_file rank mount_path export_path
+  home_rank=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["home_rank"])')
+  export_file=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("export_file") or "")')
+  nfs_file=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; t=json.load(sys.stdin)["transfer"]; print(t.get("nfs_file") or "")')
+  export_path=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("export_path") or "")')
+
+  # Unmount clients first (best-effort).
+  while IFS=$'\t' read -r rank mount_path; do
+    [ -n "$rank" ] || continue
+    if [ "$rank" = 0 ]; then
+      if findmnt -rn -M "$mount_path" >/dev/null 2>&1; then
+        library_node_privileged 0 umount "$mount_path" 2>/dev/null || true
+      fi
+    else
+      if library_node_exec "$rank" "findmnt -rn -M $(printf '%q' "$mount_path")" >/dev/null 2>&1; then
+        library_node_privileged "$rank" umount "$mount_path" 2>/dev/null || true
+      fi
+    fi
+  done < <(printf '%s' "$plan_json" | python3 -c '
+import json,sys
+t=json.load(sys.stdin).get("transfer") or {}
+for c in t.get("clients") or []:
+    print("%s\t%s" % (c["rank"], c["mount_path"]))
+')
+
+  if [ -n "$export_file" ]; then
+    if [ -z "$nfs_file" ]; then
+      nfs_file="/etc/nfs.conf.d/$(basename "$export_file" .exports).conf"
+    fi
+    library_node_privileged "$home_rank" rm -f "$export_file" "$nfs_file" 2>/dev/null || true
+    library_node_privileged "$home_rank" exportfs -ra 2>/dev/null || true
+    # Do not stop nfs-server globally — other exports may exist.
+  fi
+  log "released fabric transfer plane"
+}
+
+fabric_apply_transfer() {
+  local plan_json="${1:?}" yes="${2:-0}"
+  local home_rank export_path export_file nfs_file port mount_options
+  local export_line nfs_conf uid_gid uid gid client_line rank mount_path server_ip
+
+  home_rank=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["home_rank"])')
+  export_path=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["export_path"])')
+  export_file=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["export_file"])')
+  port=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("port") or 20049)')
+  mount_options=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("mount_options") or "")')
+  nfs_file="/etc/nfs.conf.d/$(basename "$export_file" .exports).conf"
+
+  # Prerequisites
+  library_node_exec "$home_rank" "command -v exportfs >/dev/null 2>&1" \
+    || die "home rank $home_rank: nfs-kernel-server/exportfs missing (see weight-fabric setup-prerequisites)"
+  while IFS=$'\t' read -r rank _rest; do
+    [ -n "$rank" ] || continue
+    library_node_exec "$rank" "command -v mount.nfs >/dev/null 2>&1 || command -v mount.nfs4 >/dev/null 2>&1" \
+      || die "rank $rank: NFS client tools missing"
+  done < <(printf '%s' "$plan_json" | python3 -c '
+import json,sys
+for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
+    print(c["rank"], "x", sep="\t")
+')
+
+  library_confirm "$yes" \
+    "Arm ephemeral NFS/RDMA export on home rank $home_rank and mount RoCE clients for library activate?"
+
+  # Owner identity for root_squash mapping
+  if [ "$home_rank" = 0 ]; then
+    uid_gid=$(stat -c '%u:%g' "$export_path" 2>/dev/null) \
+      || die "cannot stat export path $export_path"
+  else
+    uid_gid=$(library_node_exec "$home_rank" "stat -c '%u:%g' $(printf '%q' "$export_path")") \
+      || die "cannot stat export path on home rank $home_rank"
+  fi
+  uid=${uid_gid%%:*}
+  gid=${uid_gid##*:}
+
+  export_line="\"$export_path\""
+  while IFS=$'\t' read -r rank server_ip client_ip mount_path; do
+    [ -n "$rank" ] || continue
+    export_line+=" ${client_ip}(ro,sync,insecure,root_squash,all_squash,anonuid=${uid},anongid=${gid},no_subtree_check)"
+  done < <(printf '%s' "$plan_json" | python3 -c '
+import json,sys
+for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
+    print("%s\t%s\t%s\t%s" % (c["rank"], c["server_ip"], c["client_ip"], c["mount_path"]))
+')
+  export_line+=$'\n'
+  nfs_conf=$'[nfsd]\n'
+  nfs_conf+="rdma = ${port}"$'\n'
+
+  # Privilege preflight
+  library_node_privileged "$home_rank" true \
+    || die "home privilege preflight failed (try --interactive-sudo)"
+  while IFS=$'\t' read -r rank _a _b _c; do
+    [ -n "$rank" ] || continue
+    library_node_privileged "$rank" true \
+      || die "rank $rank privilege preflight failed (try --interactive-sudo)"
+  done < <(printf '%s' "$plan_json" | python3 -c '
+import json,sys
+for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
+    print("%s\t.\t.\t." % c["rank"])
+')
+
+  log "installing ephemeral export on home rank $home_rank"
+  library_install_content "$home_rank" "$export_file" 0644 "$export_line"
+  library_install_content "$home_rank" "$nfs_file" 0644 "$nfs_conf"
+  library_node_privileged "$home_rank" modprobe svcrdma || true
+  library_node_privileged "$home_rank" exportfs -ra
+  library_node_privileged "$home_rank" systemctl enable --now nfs-server
+  library_node_privileged "$home_rank" systemctl restart nfs-server
+
+  # Wait for RDMA NFS port
+  local waited=0
+  while [ "$waited" -lt 30 ]; do
+    if library_node_exec "$home_rank" "ss -ln | grep -q ':${port} '"; then
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  library_node_exec "$home_rank" "ss -ln | grep -q ':${port} '" \
+    || die "NFS/RDMA port $port not listening on home after export"
+
+  log "mounting RoCE clients"
+  while IFS=$'\t' read -r rank server_ip client_ip mount_path; do
+    [ -n "$rank" ] || continue
+    log "  mount rank $rank  $server_ip:$export_path → $mount_path"
+    library_node_privileged "$rank" mkdir -p "$mount_path"
+    # Replace stale mount if present
+    if library_node_exec "$rank" "findmnt -rn -M $(printf '%q' "$mount_path")" >/dev/null 2>&1; then
+      library_node_privileged "$rank" umount "$mount_path" || true
+    fi
+    library_node_privileged "$rank" mount -t nfs4 -o "$mount_options" \
+      "${server_ip}:${export_path}" "$mount_path"
+    # Fail closed: must be rdma
+    library_node_exec "$rank" "findmnt -rn -M $(printf '%q' "$mount_path") -o OPTIONS" \
+      | grep -q 'proto=rdma' \
+      || die "rank $rank: mount is not proto=rdma (refusing TCP fallback)"
+  done < <(printf '%s' "$plan_json" | python3 -c '
+import json,sys
+for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
+    print("%s\t%s\t%s\t%s" % (c["rank"], c["server_ip"], c["client_ip"], c["mount_path"]))
+')
+  log "fabric transfer plane armed"
+}
+
+cmd_release_transfer() {
+  local profile="" yes=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y) yes=1 ;;
+      --interactive-sudo) LIBRARY_SUDO_MODE=interactive ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: release-transfer <profile> [--yes]"
+  require_py
+  load_conf "$profile"
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  ensure_catalog
+  local plan
+  plan=$(python3 "$PY_TOOL" plan-activate \
+    --catalog "$CATALOG_FILE" \
+    --profile "$profile" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --hot-root "$HOT_ROOT" \
+    --backend fabric \
+    --nodes "$NODES")
+  local action
+  action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+  if [ "$action" != fabric-copy ]; then
+    log "no multi-rank fabric transfer plane for this profile (action=$action)"
+    return 0
+  fi
+  library_confirm "$yes" "Release ephemeral library-activate NFS/RDMA mounts/export for $profile?"
+  fabric_release_transfer "$plan"
+}
+
 cmd_activate() {
-  local profile="" backend=copy allow_unvalidated=0 yes=0
-  local plan plan_file stamp_json instance hub_source hub_dest home_rank rank
+  local profile="" backend=copy allow_unvalidated=0 yes=0 time_it=0
+  local plan stamp_json instance hub_source hub_dest home_rank rank source
+  local start_ts end_ts elapsed
   local -a target_ranks=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -337,6 +627,8 @@ cmd_activate() {
         ;;
       --allow-unvalidated) allow_unvalidated=1 ;;
       --yes|-y) yes=1 ;;
+      --interactive-sudo) LIBRARY_SUDO_MODE=interactive ;;
+      --time) time_it=1 ;;
       -h|--help) usage; return 0 ;;
       *)
         [ -z "$profile" ] || die "unexpected arg: $1"
@@ -389,9 +681,8 @@ cmd_activate() {
     return 0
   fi
 
-  if [ "$action" = fabric-copy ]; then
-    # PR-A: plan only. Privileged NFS export/mount lands in the next PR.
-    if [ "$yes" != 1 ]; then
+  if [ "$yes" != 1 ]; then
+    if [ "$action" = fabric-copy ]; then
       log "fabric plan ready (ephemeral NFS/RDMA transfer → hot)"
       printf '%s\n' "$plan" | python3 -c '
 import json,sys
@@ -400,25 +691,24 @@ t=d.get("transfer") or {}
 print("home_rank", t.get("home_rank"), "clients", len(t.get("clients") or []))
 for c in t.get("clients") or []:
     print("  client rank", c["rank"], c["server_ip"], "->", c["client_ip"], c["mount_path"])
-print("re-run with --yes after fabric transfer plane is implemented (next PR)")
+print("re-run with --yes to execute (no silent fallback to copy)")
 '
-      return 0
+    else
+      log "will copy model to hot staging on ranks: ${target_ranks[*]}"
+      log "source rank=$home_rank → $hub_dest"
+      log "re-run with --yes to execute"
     fi
-    die "activate --backend fabric execution is not implemented yet (plan OK; transfer plane next). Use --backend copy --yes for now."
-  fi
-
-  if [ "$yes" != 1 ]; then
-    log "will copy model to hot staging on ranks: ${target_ranks[*]}"
-    log "source rank=$home_rank → $hub_dest"
-    log "re-run with --yes to execute"
     return 0
   fi
 
-  # All-or-nothing: on failure, purge partial instances on ranks we touched
   local -a touched=()
+  local transfer_armed=0
   # shellcheck disable=SC2317
   cleanup_partial() {
     local r
+    if [ "$transfer_armed" = 1 ]; then
+      fabric_release_transfer "$plan" 2>/dev/null || true
+    fi
     for r in "${touched[@]:-}"; do
       if [ "$r" = 0 ]; then
         python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --force-unpin 2>/dev/null || true
@@ -429,15 +719,40 @@ print("re-run with --yes after fabric transfer plane is implemented (next PR)")
   }
   trap cleanup_partial ERR
 
-  for rank in "${target_ranks[@]}"; do
-    log "copy → rank $rank"
-    copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"
-    touched+=("$rank")
-    write_stamp_on_rank "$rank" "$instance" "$stamp_json"
-    verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
-      || die "rank $rank: verify failed after copy"
-  done
+  [ "$time_it" = 1 ] && start_ts=$(date +%s)
+
+  if [ "$action" = fabric-copy ]; then
+    fabric_apply_transfer "$plan" 1
+    transfer_armed=1
+    for rank in "${target_ranks[@]}"; do
+      source=$(printf '%s' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["rank_sources"][sys.argv[1]])' "$rank")
+      log "fabric copy → rank $rank from $source"
+      copy_from_source_on_rank "$rank" "$source" "$hub_dest"
+      touched+=("$rank")
+      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+      verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
+        || die "rank $rank: verify failed after fabric copy"
+    done
+    fabric_release_transfer "$plan"
+    transfer_armed=0
+  else
+    # control-path copy
+    for rank in "${target_ranks[@]}"; do
+      log "copy → rank $rank"
+      copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"
+      touched+=("$rank")
+      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+      verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
+        || die "rank $rank: verify failed after copy"
+    done
+  fi
+
   trap - ERR
+  if [ "$time_it" = 1 ]; then
+    end_ts=$(date +%s)
+    elapsed=$((end_ts - start_ts))
+    log "activate wall_time_seconds=$elapsed backend=$backend"
+  fi
   log "activate complete"
   printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["instance_dir"]); print(d["hub_dest"])'
 }
@@ -582,6 +897,7 @@ main() {
     resolve) cmd_resolve "$@" ;;
     cleanup-recommend) cmd_cleanup_recommend "$@" ;;
     activate) cmd_activate "$@" ;;
+    release-transfer) cmd_release_transfer "$@" ;;
     pin) cmd_pin "$@" ;;
     unpin) cmd_unpin "$@" ;;
     purge-hot) cmd_purge_hot "$@" ;;

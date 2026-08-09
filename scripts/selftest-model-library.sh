@@ -350,6 +350,12 @@ assert_true "check-weights library-hot fails closed without hot" \
   bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|activate|topology|hot'"
 assert_true "down.sh documents pin-weights" \
   grep -q pin-weights "$REPO_DIR/scripts/down.sh"
+assert_true "activate implements fabric transfer plane" \
+  grep -q fabric_apply_transfer "$REPO_DIR/scripts/model-library.sh"
+assert_true "release-transfer command exists" \
+  grep -q release-transfer "$REPO_DIR/scripts/model-library.sh"
+assert_true "no silent fabric-to-copy fallback on yes" \
+  bash -c "! grep -q 'auto.*copy\\|fallback to copy' '$REPO_DIR/scripts/model-library.sh' || grep -q 'no silent fallback' '$REPO_DIR/scripts/model-library.sh'"
 
 echo
 echo "pass=$pass fail=$fail"
