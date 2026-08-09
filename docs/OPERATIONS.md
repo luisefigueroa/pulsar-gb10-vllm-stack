@@ -333,6 +333,24 @@ Hot trees live under `PULSAR_HOT_ROOT` (default `/var/tmp/pulsar-hot`), not as
 durable N copies in every node’s HF cache. Defaults and the wizard stay on
 replicated weights until this path is promoted.
 
+**Fabric activate (RoCE transfer into hot):** ephemeral NFSv4.2/`proto=rdma`
+from the catalog primary home over confirmed RoCE rails into hot staging, then
+**release** of mounts/export (not a long-lived mount under vLLM):
+
+```bash
+scripts/model-library.sh activate <profile> --backend fabric --yes
+# optional attended sudo:
+scripts/model-library.sh activate <profile> --backend fabric --yes --interactive-sudo
+# measure wall time:
+scripts/model-library.sh activate <profile> --backend fabric --yes --time
+# emergency cleanup of transfer plane:
+scripts/model-library.sh release-transfer <profile> --yes
+```
+
+No silent fallback to control-path copy. Fabric may only be advertised as the
+fast path when wall-clock activate time beats `--backend copy` on the same
+model/topology (see [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md)).
+
 ## Expected steady-state numbers (alert if far off)
 
 Flagship under load (DSpark default-on): ~27 tok/s rollback/base /

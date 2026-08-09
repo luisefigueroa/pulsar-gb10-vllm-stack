@@ -26,6 +26,11 @@ SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
 STATUS_TESTED = re.compile(r"^tested")
 DEFAULT_HOT_ROOT = "/var/tmp/pulsar-hot"
 DEFAULT_HOT_BUDGET_BYTES = 100 * 1024**3  # 100 GiB
+DEFAULT_FABRIC_PORT = 20049
+DEFAULT_FABRIC_RAIL_INDEX = 0
+TRANSFER_MOUNT_OPTIONS = (
+    "ro,vers=4.2,proto=rdma,port=20049,hard,timeo=600,retrans=2"
+)
 
 
 class ModelLibraryError(ValueError):
@@ -684,6 +689,124 @@ def ensure_budget_for_add(
     return report
 
 
+def load_topology_for_plan(topology_file: str | pathlib.Path | None) -> dict[str, Any]:
+    """Load confirmed topology for fabric rail selection."""
+    if not topology_file:
+        fail("fabric activate requires --topology-file (confirmed cluster topology)")
+    path = pathlib.Path(topology_file)
+    if not path.is_file():
+        fail(f"topology file missing: {path}")
+    try:
+        try:
+            from scripts.topology_manifest import (
+                extract_topology,
+                validate_manifest,
+            )
+        except ModuleNotFoundError:
+            from topology_manifest import extract_topology, validate_manifest
+
+        topology = extract_topology(load_json(path))
+        validate_manifest(topology, require_verified=True)
+        return topology
+    except ModelLibraryError:
+        raise
+    except Exception as exc:
+        fail(f"topology: {exc}")
+
+
+def selected_rail_between(
+    topology: dict[str, Any],
+    home_rank: int,
+    client_rank: int,
+    rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    try:
+        try:
+            from scripts.weight_fabric import selected_rail
+        except ModuleNotFoundError:
+            from weight_fabric import selected_rail
+    except Exception as exc:
+        fail(f"cannot import rail selection: {exc}")
+    try:
+        return selected_rail(topology, home_rank, client_rank, rail_index)
+    except Exception as exc:
+        fail(f"rail selection ranks {home_rank}/{client_rank}: {exc}")
+
+
+def transfer_mount_path(
+    hot_root: str | pathlib.Path,
+    profile: str,
+    topology_id: str,
+    content_id: str,
+) -> pathlib.Path:
+    """Ephemeral NFS mount point — not the final hot hub path."""
+    topo12 = (topology_id or "notopology")[:12]
+    return (
+        pathlib.Path(hot_root)
+        / ".transfer"
+        / f"{profile}-{topo12}"
+        / content_id
+    )
+
+
+def build_fabric_transfer(
+    *,
+    topology: dict[str, Any],
+    home: dict[str, Any],
+    hub_path: str,
+    profile: str,
+    topology_id: str,
+    content_id: str,
+    target_ranks: list[int],
+    hot_root: str,
+    port: int = DEFAULT_FABRIC_PORT,
+    rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
+) -> dict[str, Any]:
+    """Build ephemeral NFS/RDMA transfer plan from catalog home to clients."""
+    home_rank = int(home["rank"])
+    export_path = str(pathlib.Path(hub_path))
+    mount_base = transfer_mount_path(hot_root, profile, topology_id, content_id)
+    clients: list[dict[str, Any]] = []
+    for rank in target_ranks:
+        if rank == home_rank:
+            continue
+        server, client, network = selected_rail_between(
+            topology, home_rank, rank, rail_index
+        )
+        clients.append(
+            {
+                "rank": rank,
+                "server_ip": server["ip"],
+                "server_hca": server.get("hca") or "",
+                "server_netdev": server.get("netdev") or "",
+                "client_ip": client["ip"],
+                "client_hca": client.get("hca") or "",
+                "client_netdev": client.get("netdev") or "",
+                "network": network,
+                "mount_path": str(mount_base / f"rank-{rank}"),
+                "mount_options": TRANSFER_MOUNT_OPTIONS,
+            }
+        )
+    export_file = f"/etc/exports.d/pulsar-library-activate-{profile}.exports"
+    return {
+        "kind": "nfs-rdma",
+        "port": port,
+        "rail_index": rail_index,
+        "export_path": export_path,
+        "export_file": export_file,
+        "export_scope": "model-repository",
+        "home_rank": home_rank,
+        "home_node_id": home["node_id"],
+        "mount_options": TRANSFER_MOUNT_OPTIONS,
+        "clients": clients,
+        # Per-rank source after transfer plane is up
+        "sources": {
+            str(home_rank): export_path,
+            **{str(c["rank"]): c["mount_path"] for c in clients},
+        },
+    }
+
+
 def plan_activate(
     *,
     catalog_path: str,
@@ -693,10 +816,13 @@ def plan_activate(
     backend: str = "copy",
     allow_unvalidated: bool = False,
     nodes: int | None = None,
+    topology_file: str | None = None,
+    rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
+    fabric_port: int = DEFAULT_FABRIC_PORT,
 ) -> dict[str, Any]:
-    """Return activate plan JSON for bash to execute (copy + stamp)."""
-    if backend != "copy":
-        fail(f"activate: backend {backend!r} not supported yet (use copy)")
+    """Return activate plan JSON for bash to execute (copy/fabric + stamp)."""
+    if backend not in {"copy", "fabric"}:
+        fail(f"activate: backend {backend!r} not supported (use copy or fabric)")
     catalog = load_catalog(catalog_path)
     if catalog.get("topology_id") and topology_id and catalog["topology_id"] != topology_id:
         fail(
@@ -719,6 +845,7 @@ def plan_activate(
     cid = content_id_for(resolved["identity_key"], digest)
     bytes_logical = dir_size_bytes(pathlib.Path(hub_path))
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
+    target_ranks = list(range(nodes if nodes is not None else 1))
     existing = None
     if hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
@@ -743,8 +870,9 @@ def plan_activate(
                 "bytes_logical": bytes_logical,
                 "backend": backend,
                 "topology_id": topology_id,
-                "target_ranks": list(range(nodes if nodes is not None else 1)),
+                "target_ranks": target_ranks,
                 "stamp": existing,
+                "transfer": None,
             }
 
     ensure_budget_for_add(
@@ -766,9 +894,51 @@ def plan_activate(
         pinned=False,
         state="ready",
     )
-    target_ranks = list(range(nodes if nodes is not None else 1))
+
+    transfer = None
+    action = "copy"
+    hub_source = hub_path
+    if backend == "fabric":
+        # Single-rank / home-only: no NFS needed — local read on home.
+        needs_transfer = any(r != int(home["rank"]) for r in target_ranks)
+        if needs_transfer:
+            topology = load_topology_for_plan(topology_file)
+            if topology.get("topology_id") and topology["topology_id"] != topology_id:
+                fail(
+                    "fabric activate: live topology_id does not match plan topology_id"
+                )
+            transfer = build_fabric_transfer(
+                topology=topology,
+                home=home,
+                hub_path=hub_path,
+                profile=profile,
+                topology_id=topology_id,
+                content_id=cid,
+                target_ranks=target_ranks,
+                hot_root=hot_root,
+                port=fabric_port,
+                rail_index=rail_index,
+            )
+            action = "fabric-copy"
+            # hub_source for home remains durable path; clients use mount after apply
+            hub_source = hub_path
+        else:
+            # Degenerate fabric on single node: local copy, still stamp backend=fabric
+            action = "copy"
+            transfer = {
+                "kind": "local-only",
+                "port": fabric_port,
+                "rail_index": rail_index,
+                "export_path": hub_path,
+                "clients": [],
+                "home_rank": int(home["rank"]),
+                "home_node_id": home["node_id"],
+                "sources": {str(home["rank"]): hub_path},
+                "note": "single-rank fabric activate uses local home path (no NFS)",
+            }
+
     return {
-        "action": "copy",
+        "action": action,
         "profile": profile,
         "model_id": resolved["model_id"],
         "identity_key": resolved["identity_key"],
@@ -776,7 +946,7 @@ def plan_activate(
         "home": home,
         "hot_root": hot_root,
         "instance_dir": str(instance),
-        "hub_source": hub_path,
+        "hub_source": hub_source,
         "hub_dest": str(hot_hub_path(instance, resolved["model_id"])),
         "content_id": cid,
         "content_digest": digest,
@@ -785,6 +955,12 @@ def plan_activate(
         "topology_id": topology_id,
         "target_ranks": target_ranks,
         "stamp": stamp,
+        "transfer": transfer,
+        "rank_sources": (
+            transfer["sources"]
+            if transfer and transfer.get("sources")
+            else {str(r): hub_path for r in target_ranks}
+        ),
     }
 
 
@@ -992,6 +1168,9 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
         backend=args.backend,
         allow_unvalidated=args.allow_unvalidated,
         nodes=args.nodes,
+        topology_file=args.topology_file or None,
+        rail_index=args.rail_index,
+        fabric_port=args.fabric_port,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -1132,14 +1311,23 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--json", action="store_true")
     cleanup.set_defaults(func=cmd_cleanup_recommend)
 
-    plan = sub.add_parser("plan-activate", help="Plan copy activate into hot staging")
+    plan = sub.add_parser(
+        "plan-activate", help="Plan copy/fabric activate into hot staging"
+    )
     plan.add_argument("--catalog", required=True)
     plan.add_argument("--profile", required=True)
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
-    plan.add_argument("--backend", default="copy")
+    plan.add_argument("--backend", default="copy", choices=("copy", "fabric"))
     plan.add_argument("--nodes", type=int, default=1)
     plan.add_argument("--allow-unvalidated", action="store_true")
+    plan.add_argument(
+        "--topology-file",
+        default="",
+        help="Confirmed topology JSON (required for multi-rank fabric)",
+    )
+    plan.add_argument("--rail-index", type=int, default=DEFAULT_FABRIC_RAIL_INDEX)
+    plan.add_argument("--fabric-port", type=int, default=DEFAULT_FABRIC_PORT)
     plan.set_defaults(func=cmd_plan_activate)
 
     whs = sub.add_parser("write-hot-stamp", help="Write hot.json for an instance dir")
