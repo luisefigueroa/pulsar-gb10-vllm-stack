@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
-"""Federated model library catalog: scan, label, resolve (Phase 0–1 brain).
+"""Federated model library: warm catalog + hot staging stamps (Phase 0–1 brain).
 
-Bash owns topology/SSH and operator entrypoints. This module owns schemas,
-hub completeness, validation labels, duplicate detection, and catalog I/O.
+Bash owns topology/SSH, rsync activate, and operator entrypoints. This module
+owns schemas, hub completeness, labels, digests, hot.json, and disk budget.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
 import re
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timezone
 from typing import Any
 
 SCHEMA_VERSION = 1
+HOT_SCHEMA_VERSION = 1
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
 STATUS_TESTED = re.compile(r"^tested")
+DEFAULT_HOT_ROOT = "/var/tmp/pulsar-hot"
+DEFAULT_HOT_BUDGET_BYTES = 100 * 1024**3  # 100 GiB
 
 
 class ModelLibraryError(ValueError):
@@ -461,6 +466,378 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return recommendations
 
 
+# --- Hot staging (working set; not durable library) ---
+
+
+def default_hot_root() -> str:
+    return os.environ.get("PULSAR_HOT_ROOT") or DEFAULT_HOT_ROOT
+
+
+def default_hot_budget_bytes() -> int:
+    raw = os.environ.get("PULSAR_HOT_BUDGET_BYTES")
+    if raw is None or raw == "":
+        return DEFAULT_HOT_BUDGET_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        fail(f"PULSAR_HOT_BUDGET_BYTES must be an integer (got {raw!r})")
+    if value < 1:
+        fail("PULSAR_HOT_BUDGET_BYTES must be positive")
+    return value
+
+
+def inventory_digest(hub_path: str | pathlib.Path) -> str:
+    """Content identity from relative paths + sizes (not full file SHA-256)."""
+    root = pathlib.Path(hub_path)
+    if not root.is_dir():
+        fail(f"inventory_digest: not a directory: {root}")
+    lines: list[str] = []
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        rel_dir = pathlib.Path(dirpath).relative_to(root).as_posix()
+        for name in sorted(filenames):
+            path = pathlib.Path(dirpath) / name
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
+            lines.append(f"{rel}\t{size}")
+    payload = "\n".join(lines).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def content_id_for(identity_key: str, digest: str) -> str:
+    raw = f"{identity_key}|{digest}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+
+def hot_instance_dir(
+    hot_root: str | pathlib.Path,
+    profile: str,
+    topology_id: str,
+    content_id: str,
+) -> pathlib.Path:
+    topo12 = (topology_id or "notopology")[:12]
+    return pathlib.Path(hot_root) / f"{profile}-{topo12}" / content_id
+
+
+def hot_hub_path(instance_dir: pathlib.Path, model_id: str) -> pathlib.Path:
+    return instance_dir / "hub" / model_id_to_hub_dirname(model_id)
+
+
+def hot_stamp_path(instance_dir: pathlib.Path) -> pathlib.Path:
+    return instance_dir / ".pulsar" / "hot.json"
+
+
+def build_hot_stamp(
+    *,
+    profile: str,
+    model_id: str,
+    identity_key: str,
+    revision: str | None,
+    topology_id: str,
+    home_node_id: str,
+    content_id: str,
+    content_digest: str,
+    backend: str,
+    bytes_logical: int,
+    pinned: bool = False,
+    state: str = "ready",
+) -> dict[str, Any]:
+    return {
+        "schema_version": HOT_SCHEMA_VERSION,
+        "state": state,
+        "profile": profile,
+        "model_id": model_id,
+        "revision": revision,
+        "identity_key": identity_key,
+        "home_node_id": home_node_id,
+        "topology_id": topology_id,
+        "content_id": content_id,
+        "content_digest": content_digest,
+        "backend": backend,
+        "bytes_logical": bytes_logical,
+        "activated_at": utc_now(),
+        "pinned": pinned,
+        "budget_bytes_accounted": bytes_logical,
+    }
+
+
+def write_hot_stamp(instance_dir: pathlib.Path, stamp: dict[str, Any]) -> pathlib.Path:
+    path = hot_stamp_path(instance_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(path, stamp)
+    return path
+
+
+def load_hot_stamp(instance_dir: str | pathlib.Path) -> dict[str, Any]:
+    path = hot_stamp_path(pathlib.Path(instance_dir))
+    if not path.is_file():
+        fail(f"hot stamp missing: {path}")
+    data = load_json(path)
+    if not isinstance(data, dict):
+        fail(f"{path}: expected object")
+    if data.get("schema_version") != HOT_SCHEMA_VERSION:
+        fail(f"{path}: unsupported hot schema")
+    return data
+
+
+def find_hot_instance_for_profile(
+    hot_root: str | pathlib.Path,
+    profile: str,
+    topology_id: str,
+) -> pathlib.Path | None:
+    """Return newest ready/pinned instance dir for profile+topology, if any."""
+    topo12 = (topology_id or "notopology")[:12]
+    parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
+    if not parent.is_dir():
+        return None
+    candidates: list[tuple[str, pathlib.Path]] = []
+    try:
+        for child in parent.iterdir():
+            if not child.is_dir():
+                continue
+            stamp_path = hot_stamp_path(child)
+            if not stamp_path.is_file():
+                continue
+            try:
+                stamp = load_json(stamp_path)
+            except ModelLibraryError:
+                continue
+            if not isinstance(stamp, dict):
+                continue
+            if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
+                if stamp.get("state") != "ready":
+                    continue
+            activated = str(stamp.get("activated_at") or "")
+            candidates.append((activated, child))
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def dir_size_bytes(path: pathlib.Path) -> int:
+    return tree_bytes(path)
+
+
+def budget_report(
+    hot_root: str | pathlib.Path,
+    budget_bytes: int | None = None,
+) -> dict[str, Any]:
+    hot_root = pathlib.Path(hot_root)
+    budget = budget_bytes if budget_bytes is not None else default_hot_budget_bytes()
+    used = 0
+    instances: list[dict[str, Any]] = []
+    if hot_root.is_dir():
+        for stamp_path in hot_root.rglob("hot.json"):
+            if stamp_path.parent.name != ".pulsar":
+                continue
+            instance = stamp_path.parent.parent
+            try:
+                stamp = load_json(stamp_path)
+            except ModelLibraryError:
+                continue
+            size = dir_size_bytes(instance)
+            used += size
+            instances.append(
+                {
+                    "path": str(instance),
+                    "profile": stamp.get("profile") if isinstance(stamp, dict) else None,
+                    "state": stamp.get("state") if isinstance(stamp, dict) else None,
+                    "pinned": bool(stamp.get("pinned")) if isinstance(stamp, dict) else False,
+                    "bytes": size,
+                }
+            )
+    remaining = budget - used
+    return {
+        "hot_root": str(hot_root),
+        "budget_bytes": budget,
+        "used_bytes": used,
+        "remaining_bytes": remaining,
+        "over_budget": remaining < 0,
+        "instances": sorted(instances, key=lambda i: i["path"]),
+    }
+
+
+def ensure_budget_for_add(
+    hot_root: str | pathlib.Path,
+    add_bytes: int,
+    *,
+    budget_bytes: int | None = None,
+    replacing_path: str | pathlib.Path | None = None,
+) -> dict[str, Any]:
+    report = budget_report(hot_root, budget_bytes=budget_bytes)
+    used = report["used_bytes"]
+    if replacing_path is not None:
+        rep = pathlib.Path(replacing_path)
+        if rep.is_dir():
+            used = max(0, used - dir_size_bytes(rep))
+    budget = report["budget_bytes"]
+    if used + add_bytes > budget:
+        fail(
+            f"hot budget exceeded: need {add_bytes} more bytes, "
+            f"used={used}, budget={budget}, hot_root={report['hot_root']}"
+        )
+    return report
+
+
+def plan_activate(
+    *,
+    catalog_path: str,
+    profile: str,
+    topology_id: str,
+    hot_root: str,
+    backend: str = "copy",
+    allow_unvalidated: bool = False,
+    nodes: int | None = None,
+) -> dict[str, Any]:
+    """Return activate plan JSON for bash to execute (copy + stamp)."""
+    if backend != "copy":
+        fail(f"activate: backend {backend!r} not supported yet (use copy)")
+    catalog = load_catalog(catalog_path)
+    if catalog.get("topology_id") and topology_id and catalog["topology_id"] != topology_id:
+        fail(
+            f"activate: catalog topology_id mismatch "
+            f"(catalog={catalog['topology_id'][:12]}… live={topology_id[:12]}…); "
+            "run catalog refresh"
+        )
+    resolved = resolve_entry(catalog, profile=profile)
+    if resolved.get("validation") != "validated" and not allow_unvalidated:
+        fail(
+            f"activate: {resolved['model_id']} is unvalidated; "
+            "pass --allow-unvalidated to proceed"
+        )
+    home = resolved["home"]
+    hub_path = home["hub_path"]
+    state = hub_tree_state(pathlib.Path(hub_path))
+    if state != "complete":
+        fail(f"activate: home hub is {state}: {hub_path}")
+    digest = inventory_digest(hub_path)
+    cid = content_id_for(resolved["identity_key"], digest)
+    bytes_logical = dir_size_bytes(pathlib.Path(hub_path))
+    instance = hot_instance_dir(hot_root, profile, topology_id, cid)
+    existing = None
+    if hot_stamp_path(instance).is_file():
+        existing = load_hot_stamp(instance)
+        if (
+            existing.get("content_digest") == digest
+            and existing.get("identity_key") == resolved["identity_key"]
+            and existing.get("state") in {"ready", "pinned"}
+        ):
+            return {
+                "action": "skip",
+                "reason": "hot already ready with matching digest",
+                "profile": profile,
+                "model_id": resolved["model_id"],
+                "identity_key": resolved["identity_key"],
+                "revision": resolved.get("revision"),
+                "home": home,
+                "hot_root": hot_root,
+                "instance_dir": str(instance),
+                "hub_dest": str(hot_hub_path(instance, resolved["model_id"])),
+                "content_id": cid,
+                "content_digest": digest,
+                "bytes_logical": bytes_logical,
+                "backend": backend,
+                "topology_id": topology_id,
+                "target_ranks": list(range(nodes if nodes is not None else 1)),
+                "stamp": existing,
+            }
+
+    ensure_budget_for_add(
+        hot_root,
+        bytes_logical,
+        replacing_path=instance if instance.is_dir() else None,
+    )
+    stamp = build_hot_stamp(
+        profile=profile,
+        model_id=resolved["model_id"],
+        identity_key=resolved["identity_key"],
+        revision=resolved.get("revision"),
+        topology_id=topology_id,
+        home_node_id=home["node_id"],
+        content_id=cid,
+        content_digest=digest,
+        backend=backend,
+        bytes_logical=bytes_logical,
+        pinned=False,
+        state="ready",
+    )
+    target_ranks = list(range(nodes if nodes is not None else 1))
+    return {
+        "action": "copy",
+        "profile": profile,
+        "model_id": resolved["model_id"],
+        "identity_key": resolved["identity_key"],
+        "revision": resolved.get("revision"),
+        "home": home,
+        "hot_root": hot_root,
+        "instance_dir": str(instance),
+        "hub_source": hub_path,
+        "hub_dest": str(hot_hub_path(instance, resolved["model_id"])),
+        "content_id": cid,
+        "content_digest": digest,
+        "bytes_logical": bytes_logical,
+        "backend": backend,
+        "topology_id": topology_id,
+        "target_ranks": target_ranks,
+        "stamp": stamp,
+    }
+
+
+def verify_hot_ready(
+    instance_dir: str | pathlib.Path,
+    *,
+    profile: str | None = None,
+    topology_id: str | None = None,
+    require_digest: bool = True,
+) -> dict[str, Any]:
+    instance_dir = pathlib.Path(instance_dir)
+    stamp = load_hot_stamp(instance_dir)
+    if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
+        fail(f"hot not ready: state={stamp.get('state')!r} at {instance_dir}")
+    if profile and stamp.get("profile") != profile:
+        fail(f"hot profile mismatch: stamp={stamp.get('profile')} want={profile}")
+    if topology_id and stamp.get("topology_id") != topology_id:
+        fail("hot topology_id mismatch")
+    hub = hot_hub_path(instance_dir, stamp["model_id"])
+    if hub_tree_state(hub) != "complete":
+        fail(f"hot hub incomplete: {hub}")
+    if require_digest:
+        digest = inventory_digest(hub)
+        if digest != stamp.get("content_digest"):
+            fail("hot content_digest mismatch after copy")
+    return {"stamp": stamp, "hub_path": str(hub), "instance_dir": str(instance_dir)}
+
+
+def set_hot_pinned(instance_dir: str | pathlib.Path, pinned: bool) -> dict[str, Any]:
+    stamp = load_hot_stamp(instance_dir)
+    stamp["pinned"] = pinned
+    stamp["state"] = "pinned" if pinned else "ready"
+    write_hot_stamp(pathlib.Path(instance_dir), stamp)
+    return stamp
+
+
+def purge_hot_instance(
+    instance_dir: str | pathlib.Path,
+    *,
+    force_unpin: bool = False,
+) -> None:
+    instance_dir = pathlib.Path(instance_dir)
+    if not instance_dir.is_dir():
+        fail(f"purge: not a directory: {instance_dir}")
+    stamp_path = hot_stamp_path(instance_dir)
+    if stamp_path.is_file():
+        stamp = load_json(stamp_path)
+        if isinstance(stamp, dict) and stamp.get("pinned") and not force_unpin:
+            fail("purge: instance is pinned; pass --force-unpin to remove")
+    # Safety: only delete under hot root pattern
+    shutil.rmtree(instance_dir)
+
+
 def render_catalog_human(catalog: dict[str, Any], *, validated_only: bool = False) -> None:
     models = catalog.get("models") or []
     if validated_only:
@@ -606,6 +983,109 @@ def cmd_cleanup_recommend(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plan_activate(args: argparse.Namespace) -> int:
+    plan = plan_activate(
+        catalog_path=args.catalog,
+        profile=args.profile,
+        topology_id=args.topology_id,
+        hot_root=args.hot_root or default_hot_root(),
+        backend=args.backend,
+        allow_unvalidated=args.allow_unvalidated,
+        nodes=args.nodes,
+    )
+    print(json.dumps(plan, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_write_hot_stamp(args: argparse.Namespace) -> int:
+    if args.stamp_json:
+        try:
+            stamp = json.loads(args.stamp_json)
+        except json.JSONDecodeError as exc:
+            fail(f"stamp-json: {exc}")
+    elif args.stamp_file:
+        stamp = load_json(args.stamp_file)
+    else:
+        fail("write-hot-stamp requires --stamp-file or --stamp-json")
+    if not isinstance(stamp, dict):
+        fail("stamp must be a JSON object")
+    path = write_hot_stamp(pathlib.Path(args.instance_dir), stamp)
+    if args.json:
+        print(json.dumps({"path": str(path), "stamp": stamp}, indent=2, sort_keys=True))
+    else:
+        print(path)
+    return 0
+
+
+def cmd_verify_hot(args: argparse.Namespace) -> int:
+    result = verify_hot_ready(
+        args.instance_dir,
+        profile=args.profile,
+        topology_id=args.topology_id,
+        require_digest=not args.skip_digest,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_find_hot(args: argparse.Namespace) -> int:
+    path = find_hot_instance_for_profile(
+        args.hot_root or default_hot_root(),
+        args.profile,
+        args.topology_id,
+    )
+    if path is None:
+        fail(f"find-hot: no ready instance for profile {args.profile}")
+    stamp = load_hot_stamp(path)
+    out = {
+        "instance_dir": str(path),
+        "hub_path": str(hot_hub_path(path, stamp["model_id"])),
+        "stamp": stamp,
+    }
+    print(json.dumps(out, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_set_pinned(args: argparse.Namespace) -> int:
+    stamp = set_hot_pinned(args.instance_dir, pinned=args.pinned)
+    print(json.dumps(stamp, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_purge_hot(args: argparse.Namespace) -> int:
+    purge_hot_instance(args.instance_dir, force_unpin=args.force_unpin)
+    if args.json:
+        print(json.dumps({"purged": args.instance_dir}, indent=2, sort_keys=True))
+    else:
+        print(f"purged {args.instance_dir}")
+    return 0
+
+
+def cmd_budget(args: argparse.Namespace) -> int:
+    report = budget_report(
+        args.hot_root or default_hot_root(),
+        budget_bytes=args.budget_bytes,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(f"hot_root   {report['hot_root']}")
+        print(f"budget     {report['budget_bytes']} bytes")
+        print(f"used       {report['used_bytes']} bytes")
+        print(f"remaining  {report['remaining_bytes']} bytes")
+        print(f"instances  {len(report['instances'])}")
+        for item in report["instances"]:
+            pin = " pinned" if item.get("pinned") else ""
+            print(f"  - {item['profile']} {item['bytes']}B{pin}")
+            print(f"    {item['path']}")
+    return 0
+
+
+def cmd_inventory_digest(args: argparse.Namespace) -> int:
+    print(inventory_digest(args.hub_path))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pulsar federated model library")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -651,6 +1131,57 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--catalog", required=True)
     cleanup.add_argument("--json", action="store_true")
     cleanup.set_defaults(func=cmd_cleanup_recommend)
+
+    plan = sub.add_parser("plan-activate", help="Plan copy activate into hot staging")
+    plan.add_argument("--catalog", required=True)
+    plan.add_argument("--profile", required=True)
+    plan.add_argument("--topology-id", required=True)
+    plan.add_argument("--hot-root", default="")
+    plan.add_argument("--backend", default="copy")
+    plan.add_argument("--nodes", type=int, default=1)
+    plan.add_argument("--allow-unvalidated", action="store_true")
+    plan.set_defaults(func=cmd_plan_activate)
+
+    whs = sub.add_parser("write-hot-stamp", help="Write hot.json for an instance dir")
+    whs.add_argument("--instance-dir", required=True)
+    whs.add_argument("--stamp-file")
+    whs.add_argument("--stamp-json")
+    whs.add_argument("--json", action="store_true")
+    whs.set_defaults(func=cmd_write_hot_stamp)
+
+    vh = sub.add_parser("verify-hot", help="Verify hot instance is ready")
+    vh.add_argument("--instance-dir", required=True)
+    vh.add_argument("--profile")
+    vh.add_argument("--topology-id")
+    vh.add_argument("--skip-digest", action="store_true")
+    vh.set_defaults(func=cmd_verify_hot)
+
+    fh = sub.add_parser("find-hot", help="Find ready hot instance for profile")
+    fh.add_argument("--profile", required=True)
+    fh.add_argument("--topology-id", required=True)
+    fh.add_argument("--hot-root", default="")
+    fh.set_defaults(func=cmd_find_hot)
+
+    sp = sub.add_parser("set-pinned", help="Set pinned flag on hot stamp")
+    sp.add_argument("--instance-dir", required=True)
+    sp.add_argument("--pinned", action=argparse.BooleanOptionalAction, default=True)
+    sp.set_defaults(func=cmd_set_pinned)
+
+    ph = sub.add_parser("purge-hot", help="Delete a hot instance directory")
+    ph.add_argument("--instance-dir", required=True)
+    ph.add_argument("--force-unpin", action="store_true")
+    ph.add_argument("--json", action="store_true")
+    ph.set_defaults(func=cmd_purge_hot)
+
+    bud = sub.add_parser("budget", help="Report hot staging disk budget")
+    bud.add_argument("--hot-root", default="")
+    bud.add_argument("--budget-bytes", type=int, default=None)
+    bud.add_argument("--json", action="store_true")
+    bud.set_defaults(func=cmd_budget)
+
+    inv = sub.add_parser("inventory-digest", help="Digest a hub tree")
+    inv.add_argument("--hub-path", required=True)
+    inv.set_defaults(func=cmd_inventory_digest)
 
     return parser
 

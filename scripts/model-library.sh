@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Federated model library (Phase 0–1): warm catalog scan, resolve, cleanup hints.
+# Federated model library: warm catalog + copy activate into hot staging.
 # Does not change replicated defaults or experimental live fabric launch.
 set -euo pipefail
 SCRIPT_NAME=model-library
@@ -9,10 +9,11 @@ SCRIPT_NAME=model-library
 PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
 CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-$LIBRARY_DIR/catalog.json}"
+HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
 
 usage() {
   cat <<'EOF'
-Federated model library (warm catalog)
+Federated model library (warm catalog + hot staging)
 
 Usage:
   scripts/model-library.sh catalog refresh [--json] [--local-only]
@@ -20,13 +21,21 @@ Usage:
   scripts/model-library.sh catalog show <model_id|profile> [--json]
   scripts/model-library.sh resolve <profile|model_id> [--json]
   scripts/model-library.sh cleanup-recommend [--json]
+  scripts/model-library.sh activate <profile> [--backend copy] [--allow-unvalidated] [--yes]
+  scripts/model-library.sh pin <profile>
+  scripts/model-library.sh unpin <profile>
+  scripts/model-library.sh purge-hot <profile> [--yes] [--force-unpin]
+  scripts/model-library.sh budget [--json]
 
 Notes:
   • Scans default HF cache hubs on confirmed topology nodes (warm catalog).
   • Labels entries validated vs unvalidated using models/*.conf STATUS.
-  • Duplicate complete homes refuse resolve until a primary is chosen later.
-  • Cold storage and activate/hot are not implemented in this command set yet.
+  • Duplicate complete homes refuse resolve until a primary is chosen.
+  • activate copies into PULSAR_HOT_ROOT (default /var/tmp/pulsar-hot), never
+    into durable HF_CACHE library homes on clients.
+  • pin keeps hot for home-independent restart; purge removes hot (budget).
   • Does not change wizard defaults or --weight-source fabric.
+  • Launch --weight-mode library-hot is a separate follow-up.
 EOF
 }
 
@@ -232,6 +241,306 @@ cmd_cleanup_recommend() {
   fi
 }
 
+# Copy hub tree from source path to dest path on a target rank.
+# Source is always read from the home node (controller uses local path or ssh).
+copy_hub_to_rank() {
+  local target_rank="${1:?}" hub_source="${2:?}" hub_dest="${3:?}" home_rank="${4:?}"
+  local home_host dest_parent qsrc qdst remote
+
+  dest_parent=$(dirname "$hub_dest")
+  if [ "$target_rank" = 0 ]; then
+    mkdir -p "$dest_parent"
+    rm -rf "$hub_dest"
+    mkdir -p "$hub_dest"
+    if [ "$home_rank" = 0 ]; then
+      rsync -a --delete "$hub_source"/ "$hub_dest"/
+    else
+      home_host="${CLUSTER_NODE_SSH_HOSTS[$home_rank]:-}"
+      [ -n "$home_host" ] || die "home rank $home_rank: missing ssh host"
+      rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
+        "${home_host}:${hub_source}/" "$hub_dest"/
+    fi
+    return 0
+  fi
+
+  # Remote target: stage via ssh + rsync
+  qdst=$(printf '%q' "$hub_dest")
+  ssh_node "$target_rank" "mkdir -p $(printf '%q' "$dest_parent") && rm -rf $qdst && mkdir -p $qdst"
+  if [ "$home_rank" = 0 ]; then
+    rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
+      "$hub_source"/ "${CLUSTER_NODE_SSH_HOSTS[$target_rank]}:${hub_dest}/"
+  elif [ "$home_rank" = "$target_rank" ]; then
+    # Home is this remote rank: local copy on remote
+    qsrc=$(printf '%q' "$hub_source")
+    ssh_node "$target_rank" "rsync -a --delete $qsrc/ $qdst/"
+  else
+    # home remote -> target remote (pull to controller temp then push — simpler via rsync remote-remote if permitted)
+    home_host="${CLUSTER_NODE_SSH_HOSTS[$home_rank]:-}"
+    [ -n "$home_host" ] || die "home rank $home_rank: missing ssh host"
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-hot-stage.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp'" RETURN
+    rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
+      "${home_host}:${hub_source}/" "$tmp"/
+    rsync -a --delete -e "ssh ${PULSAR_SSH_OPTS[*]}" \
+      "$tmp"/ "${CLUSTER_NODE_SSH_HOSTS[$target_rank]}:${hub_dest}/"
+  fi
+}
+
+write_stamp_on_rank() {
+  local rank="${1:?}" instance_dir="${2:?}" stamp_json="${3:?}"
+  local stamp_file
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" write-hot-stamp \
+      --instance-dir "$instance_dir" \
+      --stamp-json "$stamp_json" >/dev/null
+    return 0
+  fi
+  stamp_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-hot-stamp.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -f '$stamp_file'" RETURN
+  printf '%s\n' "$stamp_json" >"$stamp_file"
+  # Stream py + stamp file content
+  ssh_node "$rank" "mkdir -p $(printf '%q' "$instance_dir/.pulsar")"
+  rsync -a -e "ssh ${PULSAR_SSH_OPTS[*]}" \
+    "$stamp_file" "${CLUSTER_NODE_SSH_HOSTS[$rank]}:${instance_dir}/.pulsar/hot.json.tmp"
+  # Use remote python to atomic-replace via write-hot-stamp from stdin module
+  ssh_node "$rank" \
+    "python3 - write-hot-stamp --instance-dir $(printf '%q' "$instance_dir") --stamp-file $(printf '%q' "$instance_dir/.pulsar/hot.json.tmp")" \
+    <"$PY_TOOL" >/dev/null
+}
+
+verify_hot_on_rank() {
+  local rank="${1:?}" instance_dir="${2:?}" profile="${3:?}" topology_id="${4:?}"
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" verify-hot \
+      --instance-dir "$instance_dir" \
+      --profile "$profile" \
+      --topology-id "$topology_id" >/dev/null
+    return 0
+  fi
+  ssh_node "$rank" \
+    "python3 - verify-hot --instance-dir $(printf '%q' "$instance_dir") --profile $(printf '%q' "$profile") --topology-id $(printf '%q' "$topology_id")" \
+    <"$PY_TOOL" >/dev/null
+}
+
+cmd_activate() {
+  local profile="" backend=copy allow_unvalidated=0 yes=0
+  local plan plan_file stamp_json instance hub_source hub_dest home_rank rank
+  local -a target_ranks=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --backend)
+        [ $# -ge 2 ] || die "--backend requires copy"
+        backend="$2"
+        shift
+        ;;
+      --allow-unvalidated) allow_unvalidated=1 ;;
+      --yes|-y) yes=1 ;;
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$profile" ] || die "unexpected arg: $1"
+        profile="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: activate <profile> [--backend copy]"
+  [ "$backend" = copy ] || die "activate: only --backend copy is implemented"
+  require_py
+  ensure_catalog
+  load_conf "$profile"
+  load_cluster_topology >/dev/null \
+    || die "confirmed topology required"
+
+  local plan_flags=(
+    plan-activate
+    --catalog "$CATALOG_FILE"
+    --profile "$profile"
+    --topology-id "$CLUSTER_TOPOLOGY_ID"
+    --hot-root "$HOT_ROOT"
+    --backend "$backend"
+    --nodes "$NODES"
+  )
+  [ "$allow_unvalidated" = 1 ] && plan_flags+=(--allow-unvalidated)
+
+  plan=$(python3 "$PY_TOOL" "${plan_flags[@]}")
+  action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+  instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  hub_source=$(printf '%s' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("hub_source") or "")')
+  hub_dest=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_dest"])')
+  home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
+  stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
+  mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
+
+  log "activate $profile action=$action backend=$backend hot=$instance"
+
+  if [ "$action" = skip ]; then
+    log "hot already ready — verifying ranks"
+    for rank in "${target_ranks[@]}"; do
+      verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
+        || die "rank $rank: hot verify failed"
+    done
+    log "activate complete (reused hot)"
+    return 0
+  fi
+
+  if [ "$yes" != 1 ]; then
+    log "will copy model to hot staging on ranks: ${target_ranks[*]}"
+    log "source rank=$home_rank → $hub_dest"
+    log "re-run with --yes to execute"
+    return 0
+  fi
+
+  # All-or-nothing: on failure, purge partial instances on ranks we touched
+  local -a touched=()
+  # shellcheck disable=SC2317
+  cleanup_partial() {
+    local r
+    for r in "${touched[@]:-}"; do
+      if [ "$r" = 0 ]; then
+        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --force-unpin 2>/dev/null || true
+      else
+        ssh_node "$r" "rm -rf $(printf '%q' "$instance")" 2>/dev/null || true
+      fi
+    done
+  }
+  trap cleanup_partial ERR
+
+  for rank in "${target_ranks[@]}"; do
+    log "copy → rank $rank"
+    copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"
+    touched+=("$rank")
+    write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+    verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
+      || die "rank $rank: verify failed after copy"
+  done
+  trap - ERR
+  log "activate complete"
+  printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["instance_dir"]); print(d["hub_dest"])'
+}
+
+hot_instance_for_profile() {
+  local profile="${1:?}"
+  python3 "$PY_TOOL" find-hot \
+    --profile "$profile" \
+    --topology-id "${CLUSTER_TOPOLOGY_ID}" \
+    --hot-root "$HOT_ROOT"
+}
+
+cmd_pin() {
+  local profile="" 
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: pin <profile>"
+  require_py
+  load_conf "$profile"
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  local info instance rank
+  info=$(hot_instance_for_profile "$profile")
+  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  for ((rank = 0; rank < NODES; rank++)); do
+    if [ "$rank" = 0 ]; then
+      python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --pinned >/dev/null
+    else
+      ssh_node "$rank" \
+        "python3 - set-pinned --instance-dir $(printf '%q' "$instance") --pinned" \
+        <"$PY_TOOL" >/dev/null
+    fi
+  done
+  log "pinned $profile at $instance"
+}
+
+cmd_unpin() {
+  local profile=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: unpin <profile>"
+  require_py
+  load_conf "$profile"
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  local info instance rank
+  info=$(hot_instance_for_profile "$profile")
+  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  for ((rank = 0; rank < NODES; rank++)); do
+    if [ "$rank" = 0 ]; then
+      python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --no-pinned >/dev/null
+    else
+      ssh_node "$rank" \
+        "python3 - set-pinned --instance-dir $(printf '%q' "$instance") --no-pinned" \
+        <"$PY_TOOL" >/dev/null
+    fi
+  done
+  log "unpinned $profile at $instance"
+}
+
+cmd_purge_hot() {
+  local profile="" yes=0 force_unpin=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y) yes=1 ;;
+      --force-unpin) force_unpin=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: purge-hot <profile> [--yes] [--force-unpin]"
+  require_py
+  load_conf "$profile"
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  local info instance rank
+  info=$(hot_instance_for_profile "$profile") || die "no hot instance for $profile"
+  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  [ "$yes" = 1 ] || die "purge-hot will delete $instance — re-run with --yes"
+  for ((rank = 0; rank < NODES; rank++)); do
+    if [ "$rank" = 0 ]; then
+      if [ "$force_unpin" = 1 ]; then
+        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --force-unpin
+      else
+        python3 "$PY_TOOL" purge-hot --instance-dir "$instance"
+      fi
+    else
+      if [ "$force_unpin" = 1 ]; then
+        ssh_node "$rank" "rm -rf $(printf '%q' "$instance")" || true
+      else
+        ssh_node "$rank" \
+          "python3 - purge-hot --instance-dir $(printf '%q' "$instance")" \
+          <"$PY_TOOL" || die "rank $rank: purge failed (pinned? use --force-unpin)"
+      fi
+    fi
+  done
+  log "purged hot for $profile"
+}
+
+cmd_budget() {
+  local json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) die "unknown arg: $1" ;;
+    esac
+    shift
+  done
+  require_py
+  if [ "$json" = 1 ]; then
+    python3 "$PY_TOOL" budget --hot-root "$HOT_ROOT" --json
+  else
+    python3 "$PY_TOOL" budget --hot-root "$HOT_ROOT"
+  fi
+}
+
 main() {
   [ $# -ge 1 ] || { usage; exit 2; }
   local cmd="$1"
@@ -250,6 +559,11 @@ main() {
       ;;
     resolve) cmd_resolve "$@" ;;
     cleanup-recommend) cmd_cleanup_recommend "$@" ;;
+    activate) cmd_activate "$@" ;;
+    pin) cmd_pin "$@" ;;
+    unpin) cmd_unpin "$@" ;;
+    purge-hot) cmd_purge_hot "$@" ;;
+    budget) cmd_budget "$@" ;;
     -h|--help|help) usage ;;
     *) usage; exit 2 ;;
   esac

@@ -156,6 +156,74 @@ assert_true "model-library.sh is executable" test -x "$REPO_DIR/scripts/model-li
 assert_true "catalog written outside node caches" test -f "$STATE/catalog.json"
 assert_true "node0 hub untouched by build" test -f "$NODE0/hub/models--Qwen--Qwen3-1.7B/refs/main"
 
+# --- hot staging: plan / stamp / budget / pin / purge (local only) ---
+HOT="$STATE/hot"
+export PULSAR_HOT_ROOT="$HOT"
+export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))
+
+plan=$(python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog2.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --hot-root "$HOT" \
+  --backend copy \
+  --nodes 1)
+action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+assert_eq "plan-activate wants copy" "$action" "copy"
+instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+hub_src=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_source"])')
+hub_dst=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_dest"])')
+assert_true "hot dest not under HF cache" bash -c "[[ '$hub_dst' != *'/.cache/huggingface'* ]]"
+
+mkdir -p "$(dirname "$hub_dst")"
+rm -rf "$hub_dst"
+mkdir -p "$hub_dst"
+rsync -a "$hub_src"/ "$hub_dst"/
+stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
+python3 "$PY" write-hot-stamp --instance-dir "$instance" --stamp-json "$stamp_json" >/dev/null
+python3 "$PY" verify-hot --instance-dir "$instance" --profile qwen3-1.7b-2node --topology-id topo-test-001 >/dev/null \
+  && ok "verify-hot after local copy" || not_ok "verify-hot after local copy"
+
+plan2=$(python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog2.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --hot-root "$HOT" \
+  --backend copy \
+  --nodes 1)
+action2=$(printf '%s' "$plan2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+assert_eq "second plan skips matching hot" "$action2" "skip"
+
+python3 "$PY" set-pinned --instance-dir "$instance" --pinned >/dev/null
+set +e
+python3 "$PY" purge-hot --instance-dir "$instance" >/dev/null 2>&1
+prc=$?
+set -e
+assert_eq "purge refuses pinned" "$prc" "1"
+python3 "$PY" purge-hot --instance-dir "$instance" --force-unpin >/dev/null \
+  && ok "purge with force-unpin" || not_ok "purge with force-unpin"
+assert_true "instance removed" bash -c "test ! -d '$instance'"
+
+# budget math
+python3 "$PY" budget --hot-root "$HOT" --json >"$STATE/budget.json"
+python3 -c 'import json; d=json.load(open("'"$STATE/budget.json"'")); assert d["budget_bytes"]==50*1024*1024; assert d["used_bytes"]==0' \
+  && ok "budget empty after purge" || not_ok "budget empty after purge"
+
+# budget refuse (hub fixture is tiny but still > 1 byte)
+export PULSAR_HOT_BUDGET_BYTES=1
+set +e
+python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog2.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --hot-root "$HOT" \
+  --backend copy \
+  --nodes 1 >/dev/null 2>"$STATE/budget.err"
+brc=$?
+set -e
+assert_eq "plan-activate fails over budget" "$brc" "1"
+assert_true "budget error text" grep -q "budget exceeded" "$STATE/budget.err"
+
 echo
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
