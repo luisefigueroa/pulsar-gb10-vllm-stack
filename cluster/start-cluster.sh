@@ -3,7 +3,7 @@
 # then local rank 0 with the API. Every active rank is one GB10.
 #
 #   cluster/start-cluster.sh <model-name> [--spec-decode|--no-spec-decode]
-#                            [--weight-source replicated|fabric]
+#                            [--weight-source replicated|fabric|library-hot]
 #                            [--skip-preflight] [--skip-warmup] [--dry-run]
 #
 # Backend: vLLM native --nnodes/--node-rank with the mp executor over RoCE.
@@ -31,7 +31,12 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1 ;;
     --force) FORCE=1 ;;
     --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated or fabric" 2
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated|fabric|library-hot" 2
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
+    --weight-mode)
+      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated|fabric)" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
@@ -42,8 +47,8 @@ done
 
 load_conf "$MODEL_NAME"
 case "$WEIGHT_SOURCE" in
-  replicated|fabric) ;;
-  *) die "--weight-source must be replicated or fabric" 2 ;;
+  replicated|fabric|library-hot) ;;
+  *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
 esac
 resolve_spec_decode "$SPEC_MODE"
 if status_requires_force && [ "$FORCE" != 1 ]; then
@@ -63,6 +68,7 @@ for ((rank = 0; rank < NODES; rank++)); do
 done
 WEIGHT_OWNER_ID=""
 WEIGHT_CONFIG_ID=""
+LIBRARY_HOT_HUB_PATH=""
 if [ "$WEIGHT_SOURCE" = fabric ]; then
   fabric_dir="${WEIGHT_FABRIC_DIR:-$REPO_DIR/.weight-fabric}"
   fabric_config="${WEIGHT_FABRIC_CONFIG:-$fabric_dir/$MODEL_NAME.json}"
@@ -86,10 +92,19 @@ if [ "$WEIGHT_SOURCE" = fabric ]; then
     || die "single-copy fabric configuration has incomplete runtime rows"
   "$PULSAR_WEIGHT_FABRIC_TOOL" check "$MODEL_NAME" --serving-only \
     || die "single-copy fabric is not launch-ready"
+elif [ "$WEIGHT_SOURCE" = library-hot ]; then
+  resolve_library_hot_for_profile "$MODEL_NAME"
+  WEIGHT_OWNER_ID="${LIBRARY_HOT_HOME_NODE_ID}"
+  WEIGHT_CONFIG_ID="${LIBRARY_HOT_CONTENT_ID}"
+  LIBRARY_HOT_HUB_PATH="${LIBRARY_HOT_HUB_PATH}"
 fi
 
 echo "[cluster] exact profile: $MODEL_NAME · $NODES ranks · topology ${CLUSTER_TOPOLOGY_ID:0:12}"
-echo "[cluster] weights: $WEIGHT_SOURCE$([ "$WEIGHT_SOURCE" = fabric ] && printf ' · NFS/RDMA · cold reads cross the fabric')"
+case "$WEIGHT_SOURCE" in
+  fabric) echo "[cluster] weights: fabric · NFS/RDMA · cold reads cross the fabric" ;;
+  library-hot) echo "[cluster] weights: library-hot · local hot staging · home=${WEIGHT_OWNER_ID:0:12}" ;;
+  *) echo "[cluster] weights: $WEIGHT_SOURCE" ;;
+esac
 echo "[cluster] spec-decode=$([ "$SPEC_DECODE_ENABLED" = 1 ] && echo ON || echo off) ($SPEC_DECODE_SOURCE)"
 if [ "$SKIP_PREFLIGHT" = 0 ]; then
   cluster/preflight.sh "$MODEL_NAME" --weight-source "$WEIGHT_SOURCE" || {
@@ -113,7 +128,14 @@ build_docker_cmd() {
   local node_id="${CLUSTER_NODE_IDS[$role_rank]}"
   local weight_cache="${WEIGHT_CACHE_ROOTS[$role_rank]}"
   local weight_volume="${weight_cache}:/root/.cache/huggingface"
-  [ "$WEIGHT_SOURCE" = fabric ] && weight_volume+=":ro"
+  local model_cache_name model_cache_target
+  if [ "$WEIGHT_SOURCE" = fabric ]; then
+    weight_volume+=":ro"
+  elif [ "$WEIGHT_SOURCE" = library-hot ]; then
+    model_cache_name=$(hf_hub_dirname "$MODEL")
+    model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
+    weight_volume="${LIBRARY_HOT_HUB_PATH}:${model_cache_target}:ro"
+  fi
   [ -n "$role_ip" ] || die "rank $role_rank has no control IP"
   [ -n "$control_if" ] || die "rank $role_rank has no control interface"
   [ -n "$hcas" ] || die "rank $role_rank has no active RDMA HCA"
@@ -149,7 +171,7 @@ build_docker_cmd() {
     -e "NCCL_DEBUG=${NCCL_DEBUG}"
   )
   cmd+=(--label "${PULSAR_WEIGHT_SOURCE_LABEL}=${WEIGHT_SOURCE}")
-  if [ "$WEIGHT_SOURCE" = fabric ]; then
+  if [ "$WEIGHT_SOURCE" = fabric ] || [ "$WEIGHT_SOURCE" = library-hot ]; then
     cmd+=(
       --label "${PULSAR_WEIGHT_OWNER_LABEL}=${WEIGHT_OWNER_ID}"
       --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${WEIGHT_CONFIG_ID}"

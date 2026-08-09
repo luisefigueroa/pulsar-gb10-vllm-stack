@@ -298,7 +298,9 @@ every required node and run `scripts/check-weights.sh`.
 
 ### Experimental single-copy weights
 
-The wizard and ordinary launch remain replicated. The opt-in command
+The wizard and ordinary launch remain replicated.
+
+**Live fabric (NFS/RDMA under vLLM):** the opt-in command
 `scripts/up.sh <profile> --weight-source fabric` uses a topology-bound,
 read-only NFSv4.2/RDMA cache view and records its owner/config IDs in container
 labels and inventory. It never creates a replica or falls back automatically.
@@ -313,6 +315,23 @@ the remaining privilege requirement. Setup, exact commands, benchmark
 artifacts, destructive replica cleanup, owner/link fault semantics, and
 recovery are in
 [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
+
+**Library-hot (federated catalog + local hot staging):** experimental path
+aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). Typical
+flow:
+
+```bash
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh activate <profile> --backend copy --yes
+scripts/up.sh <profile> --weight-mode library-hot
+# optional after stop:
+scripts/down.sh <profile> --pin-weights   # keep hot for restart without home
+scripts/down.sh <profile> --purge-hot     # free hot disk budget
+```
+
+Hot trees live under `PULSAR_HOT_ROOT` (default `/var/tmp/pulsar-hot`), not as
+durable N copies in every node’s HF cache. Defaults and the wizard stay on
+replicated weights until this path is promoted.
 
 ## Expected steady-state numbers (alert if far off)
 

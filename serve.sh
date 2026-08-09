@@ -3,6 +3,7 @@
 #
 #   ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-decode]
 #              [--dry-run] [--port N] [--node NODE_ID] [--force]
+#              [--weight-source replicated|library-hot]
 #   ./serve.sh --list
 #
 # <model-name> is a file in models/ without the .conf suffix.
@@ -36,6 +37,7 @@ MODEL_NAME="${1:?usage: ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-de
 shift
 
 DETACH="" SPEC_MODE=auto DRY_RUN=0 PORT_OVERRIDE="" FORCE=0 NODE_SELECTOR=""
+WEIGHT_SOURCE=replicated
 while [ $# -gt 0 ]; do
   case "$1" in
     -d) DETACH="-d" ;;
@@ -43,6 +45,16 @@ while [ $# -gt 0 ]; do
     --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --dry-run) DRY_RUN=1 ;;
     --force) FORCE=1 ;;
+    --weight-source)
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
+    --weight-mode)
+      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot or replicated" 2
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
     --node)
       [ "$#" -ge 2 ] || die "--node requires a topology node id or hostname" 2
       NODE_SELECTOR="$2"
@@ -59,6 +71,11 @@ while [ $# -gt 0 ]; do
 done
 
 load_conf "$MODEL_NAME"
+case "$WEIGHT_SOURCE" in
+  replicated|library-hot) ;;
+  fabric) die "serve.sh does not support fabric; use multi-node start-cluster" 2 ;;
+  *) die "--weight-source must be replicated or library-hot" 2 ;;
+esac
 if [ -n "$PORT_OVERRIDE" ]; then
   case "$PORT_OVERRIDE" in
     *[!0-9]*|"") die "invalid --port '$PORT_OVERRIDE' (expected 1-65535)" 2 ;;
@@ -81,18 +98,33 @@ fi
 resolve_single_node_placement "$NODE_SELECTOR" \
   || die "cannot resolve physical node placement '$NODE_SELECTOR'"
 
+weight_volume="${HF_CACHE}:/root/.cache/huggingface"
+LIBRARY_HOT_HOME_NODE_ID=""
+LIBRARY_HOT_CONTENT_ID=""
+if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  # Prefer topology from placement when available
+  if [ -z "${CLUSTER_TOPOLOGY_ID:-}" ] && [ -n "${SINGLE_NODE_TOPOLOGY_ID:-}" ]; then
+    CLUSTER_TOPOLOGY_ID="$SINGLE_NODE_TOPOLOGY_ID"
+  fi
+  load_cluster_topology >/dev/null 2>&1 \
+    || die "library-hot requires confirmed topology"
+  resolve_library_hot_for_profile "$MODEL_NAME"
+  model_cache_name=$(hf_hub_dirname "$MODEL")
+  weight_volume="${LIBRARY_HOT_HUB_PATH}:/root/.cache/huggingface/hub/${model_cache_name}:ro"
+fi
+
 CONTAINER=$(container_name_for "$MODEL_NAME" 1)
 
 CMD=(docker run --name "$CONTAINER" ${DETACH:+$DETACH}
   --label "${PULSAR_MANAGED_LABEL}=true"
   --label "${PULSAR_CONF_LABEL}=${MODEL_NAME}"
   --label "${PULSAR_RANK_LABEL}=single"
-  --label "${PULSAR_WEIGHT_SOURCE_LABEL}=replicated"
+  --label "${PULSAR_WEIGHT_SOURCE_LABEL}=${WEIGHT_SOURCE}"
   --gpus all
   --ipc=host
   --ulimit memlock=-1 --ulimit stack=67108864
   -p "${PORT}:${PORT}"
-  -v "${HF_CACHE}:/root/.cache/huggingface"
+  -v "$weight_volume"
   -v "${MODELS_NFS}:/mnt/Models:ro"
   -e "HF_TOKEN=${HF_TOKEN:-}"
   -e "HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}"
@@ -102,6 +134,12 @@ CMD=(docker run --name "$CONTAINER" ${DETACH:+$DETACH}
   --health-start-period "${HEALTH_START_PERIOD:-900s}"
   --restart "${RESTART_POLICY:-no}"
 )
+if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  CMD+=(
+    --label "${PULSAR_WEIGHT_OWNER_LABEL}=${LIBRARY_HOT_HOME_NODE_ID}"
+    --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${LIBRARY_HOT_CONTENT_ID}"
+  )
+fi
 if [ -n "$SINGLE_NODE_TOPOLOGY_ID" ]; then
   CMD+=(--label "${PULSAR_TOPOLOGY_LABEL}=${SINGLE_NODE_TOPOLOGY_ID}")
 fi

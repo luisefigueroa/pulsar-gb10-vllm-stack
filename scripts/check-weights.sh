@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check whether exact-profile weights exist on every active rank.
 #   scripts/check-weights.sh <model-name> [--node NODE_ID]
-#                            [--weight-source replicated|fabric] [--json]
+#                            [--weight-source replicated|fabric|library-hot] [--json]
 set -euo pipefail
 SCRIPT_NAME=check-weights
 # shellcheck disable=SC1091
@@ -22,7 +22,12 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated or fabric" 2
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated|fabric|library-hot" 2
+      WEIGHT_SOURCE="$2"
+      shift
+      ;;
+    --weight-mode)
+      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated|fabric)" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
@@ -32,8 +37,8 @@ while [ $# -gt 0 ]; do
 done
 load_conf "$NAME"
 case "$WEIGHT_SOURCE" in
-  replicated|fabric) ;;
-  *) die "--weight-source must be replicated or fabric" 2 ;;
+  replicated|fabric|library-hot) ;;
+  *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
 esac
 if [ "$NODES" -eq 1 ]; then
   resolve_single_node_placement "$NODE_SELECTOR" \
@@ -67,6 +72,57 @@ if [ "$WEIGHT_SOURCE" = fabric ]; then
     exit "$fabric_rc"
   fi
   exec "$PULSAR_WEIGHT_FABRIC_TOOL" check "$NAME" --serving-only
+fi
+
+if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  load_cluster_topology >/dev/null 2>&1 \
+    || die "library-hot requires confirmed topology"
+  if ! hot_info=$(
+    python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
+      --profile "$NAME" \
+      --topology-id "$CLUSTER_TOPOLOGY_ID" \
+      --hot-root "$PULSAR_HOT_ROOT" 2>/dev/null
+  ); then
+    if [ "$JSON" = 1 ]; then
+      printf '%s\n' '{"state":"missing","source":"library-hot","ok":false}'
+    elif [ "${QUIET:-0}" = 1 ]; then
+      echo "FAIL  weights   source=library-hot · hot missing"
+    else
+      echo "library-hot: no ready hot instance — run: scripts/model-library.sh activate $NAME --yes" >&2
+    fi
+    exit 1
+  fi
+  instance=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  if ! python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
+      --instance-dir "$instance" \
+      --profile "$NAME" \
+      --topology-id "$CLUSTER_TOPOLOGY_ID" >/dev/null; then
+    if [ "$JSON" = 1 ]; then
+      printf '%s\n' '{"state":"invalid","source":"library-hot","ok":false}'
+    elif [ "${QUIET:-0}" = 1 ]; then
+      echo "FAIL  weights   source=library-hot · hot invalid"
+    else
+      echo "library-hot: hot instance failed verify" >&2
+    fi
+    exit 1
+  fi
+  if [ "$JSON" = 1 ]; then
+    printf '%s\n' "$hot_info" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print(json.dumps({"state":"ok","source":"library-hot","ok":True,
+  "instance_dir":d["instance_dir"],"hub_path":d["hub_path"],
+  "home_node_id":d["stamp"].get("home_node_id"),
+  "content_id":d["stamp"].get("content_id"),
+  "pinned":bool(d["stamp"].get("pinned"))}, indent=2, sort_keys=True))
+'
+  elif [ "${QUIET:-0}" = 1 ]; then
+    echo "PASS  weights   source=library-hot · hot ready"
+  else
+    echo "library-hot OK  instance=$instance"
+    printf '%s\n' "$hot_info" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("hub", d["hub_path"]); print("home", d["stamp"].get("home_node_id")); print("pinned", d["stamp"].get("pinned"))'
+  fi
+  exit 0
 fi
 
 weight_tree_state_local() {
