@@ -532,6 +532,40 @@ assert_eq "plan-activate refuses cold-only model" "$ac_rc" "1"
 assert_true "model-library.sh documents cold" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold'"
 
+# --- B-gate compare-bench (no hardware) ---
+python3 "$PY" compare-bench \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --model-id Qwen/Qwen3-1.7B \
+  --bytes-logical 1000 \
+  --copy-seconds 10 \
+  --fabric-seconds 7 \
+  --tag unit-fabric-win \
+  --nodes 2 \
+  --output "$STATE/bench-win.json" --json >/dev/null
+v=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-win.json"'"))["verdict"])')
+assert_eq "bench fabric_faster when fabric < copy" "$v" "fabric_faster"
+fp=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-win.json"'"))["fabric_claims_fast_path"])')
+assert_eq "fabric_claims_fast_path true" "$fp" "True"
+
+python3 "$PY" compare-bench \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --model-id Qwen/Qwen3-1.7B \
+  --bytes-logical 1000 \
+  --copy-seconds 8 \
+  --fabric-seconds 12 \
+  --tag unit-copy-win \
+  --nodes 2 \
+  --json >"$STATE/bench-lose.json"
+v=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-lose.json"'"))["verdict"])')
+assert_eq "bench copy_faster when fabric > copy" "$v" "copy_faster"
+fp=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-lose.json"'"))["fabric_claims_fast_path"])')
+assert_eq "fabric_claims_fast_path false" "$fp" "False"
+
+assert_true "bench-activate documented in CLI" \
+  grep -q bench-activate "$REPO_DIR/scripts/model-library.sh"
+
 echo
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

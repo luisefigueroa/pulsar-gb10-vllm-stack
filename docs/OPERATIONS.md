@@ -382,6 +382,18 @@ No silent fallback to control-path copy. Fabric may only be advertised as the
 fast path when wall-clock activate time beats `--backend copy` on the same
 model/topology (see [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md)).
 
+**Activate A/B (B-gate):**
+
+```bash
+scripts/model-library.sh bench-activate <profile> --yes [--interactive-sudo] \
+  [--tag my-run] [--output results/model-library/<file>.json]
+```
+
+Runs timed **copy** then timed **fabric** (purges hot between), writes a JSON
+report with `verdict` (`fabric_faster` | `copy_faster` | `tie` | `inconclusive`)
+and `fabric_claims_fast_path` (true only if fabric is strictly faster). Default
+output: `results/model-library/<profile>-<tag>.json`.
+
 ## Expected steady-state numbers (alert if far off)
 
 Flagship under load (DSpark default-on): ~27 tok/s rollback/base /

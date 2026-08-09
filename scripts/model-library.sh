@@ -40,6 +40,8 @@ Usage:
       [--allow-unvalidated] [--yes] [--nodes N]
   scripts/model-library.sh activate <profile> [--backend copy|fabric]
       [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
+  scripts/model-library.sh bench-activate <profile> [--tag TAG] [--yes]
+      [--interactive-sudo] [--output PATH]
   scripts/model-library.sh release-transfer <profile> [--yes] [--interactive-sudo]
   scripts/model-library.sh pin <profile>
   scripts/model-library.sh unpin <profile>
@@ -57,6 +59,8 @@ Notes:
   • activate --backend copy rsyncs over the control path into PULSAR_HOT_ROOT.
   • activate --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
     to fill hot, then releases mounts/export. No silent fallback to copy.
+  • bench-activate runs copy then fabric (purge between), writes a JSON report;
+    fabric_claims_fast_path only if fabric wall time is strictly less than copy.
   • pin keeps hot for home-independent restart; purge removes hot (budget).
   • Does not change wizard defaults or --weight-source fabric.
 EOF
@@ -1117,6 +1121,104 @@ cmd_budget() {
   fi
 }
 
+# Fair cold-ish activate timing: purge hot, run backend, return seconds on stdout last line.
+timed_activate_backend() {
+  local profile="${1:?}" backend="${2:?}"
+  local start_ts end_ts
+  # Best-effort purge so skip path does not under-report times
+  "$0" purge-hot "$profile" --yes --force-unpin >/dev/null 2>&1 || true
+  start_ts=$(date +%s)
+  if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
+    "$0" activate "$profile" --backend "$backend" --yes --interactive-sudo \
+      || die "timed activate --backend $backend failed"
+  else
+    "$0" activate "$profile" --backend "$backend" --yes \
+      || die "timed activate --backend $backend failed"
+  fi
+  end_ts=$(date +%s)
+  printf '%s\n' "$((end_ts - start_ts))"
+}
+
+cmd_bench_activate() {
+  local profile="" tag="" yes=0 output=""
+  local copy_s fabric_s model_id bytes_logical nodes topo_id
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tag)
+        [ $# -ge 2 ] || die "--tag requires a value"
+        tag="$2"
+        shift
+        ;;
+      --output)
+        [ $# -ge 2 ] || die "--output requires a path"
+        output="$2"
+        shift
+        ;;
+      --yes|-y) yes=1 ;;
+      --interactive-sudo) LIBRARY_SUDO_MODE=interactive ;;
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$profile" ] || die "unexpected arg: $1"
+        profile="$1"
+        ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] || die "usage: bench-activate <profile> [--tag TAG] [--yes]"
+  [ "$yes" = 1 ] || die "bench-activate is destructive to hot staging — re-run with --yes"
+  require_py
+  ensure_catalog
+  load_conf "$profile"
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  [ -n "$tag" ] || tag="activate-bench-$(date -u +%Y%m%dT%H%M%SZ)"
+  [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-${tag}.json"
+  mkdir -p "$(dirname "$output")"
+
+  # Metadata from plan (no execute)
+  local plan
+  plan=$(python3 "$PY_TOOL" plan-activate \
+    --catalog "$CATALOG_FILE" \
+    --profile "$profile" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --hot-root "$HOT_ROOT" \
+    --backend copy \
+    --nodes "$NODES")
+  model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
+  topo_id="$CLUSTER_TOPOLOGY_ID"
+  nodes="$NODES"
+
+  log "bench-activate $profile tag=$tag"
+  log "running timed copy activate…"
+  copy_s=$(timed_activate_backend "$profile" copy)
+  log "copy wall_time_seconds=$copy_s"
+
+  log "running timed fabric activate…"
+  fabric_s=$(timed_activate_backend "$profile" fabric)
+  log "fabric wall_time_seconds=$fabric_s"
+
+  python3 "$PY_TOOL" compare-bench \
+    --profile "$profile" \
+    --topology-id "$topo_id" \
+    --model-id "$model_id" \
+    --bytes-logical "$bytes_logical" \
+    --copy-seconds "$copy_s" \
+    --fabric-seconds "$fabric_s" \
+    --tag "$tag" \
+    --nodes "$nodes" \
+    --output "$output" \
+    --json
+
+  local verdict
+  verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["verdict"])' "$output")
+  if [ "$verdict" = fabric_faster ]; then
+    log "B-gate: fabric claims fast path (fabric < copy)"
+  else
+    log "B-gate: fabric does NOT claim fast path (verdict=$verdict); keep advertising copy as default activate"
+  fi
+}
+
 main() {
   [ $# -ge 1 ] || { usage; exit 2; }
   local cmd="$1"
@@ -1148,6 +1250,7 @@ main() {
       esac
       ;;
     activate) cmd_activate "$@" ;;
+    bench-activate) cmd_bench_activate "$@" ;;
     release-transfer) cmd_release_transfer "$@" ;;
     pin) cmd_pin "$@" ;;
     unpin) cmd_unpin "$@" ;;
