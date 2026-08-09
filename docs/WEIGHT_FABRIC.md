@@ -74,6 +74,7 @@ bytes rather than assuming one network read per checkpoint byte.
 | Application-level streaming/sharding | Deferred. It would modify or wrap vLLM/PyTorch loading and must reproduce SafeTensors indexing, failure recovery, and per-format correctness. |
 | Third-party streamed loaders | Deferred until their GB10/aarch64 dependencies, cache semantics, licensing, and vLLM image integration are validated. vLLM's supported loader surface is described in its [load configuration](https://docs.vllm.ai/en/stable/api/vllm/config/load/). |
 | GPUDirect Storage | Not the baseline. NVIDIA documents DGX Spark GDS as compatibility mode, and the current vLLM/SafeTensors path does not invoke cuFile. Do not load `nvidia-fs` merely for this feature. See the [DGX Spark hardware guide](https://docs.nvidia.com/dgx/dgx-spark/hardware.html) and [GDS release notes](https://docs.nvidia.com/gpudirect-storage/release-notes/index.html). |
+| Federated library + activate + hot staging | **Agreed future direction; not implemented.** Single-copy (federated) library, optional cold tier, activate via copy or RoCE, serve from hot/pinned local trees—not long-lived mount under vLLM as the product path. See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). Historical exploration: [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md). This document remains the live NFS/RDMA **experiment** runbook. |
 
 The vLLM distributed-filesystem guidance also expects every node to see a
 shared model path; this design supplies that path while keeping inference

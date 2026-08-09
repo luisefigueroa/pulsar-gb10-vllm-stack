@@ -1,0 +1,8 @@
+2026-08-08T17:25:32.340Z	fault-unit-armed
+2026-08-08T17:25:53.929Z	read-start-observed
+2026-08-08T17:25:54.239Z	reboot-trigger-sent
+2026-08-08T17:25:55.186Z	owner-offline-observed
+2026-08-08T17:26:31.470Z	owner-new-boot-ssh-ready
+2026-08-08T17:56:07.416Z	plymouth-boot-completion-started
+2026-08-08T17:56:21.180Z	owner-system-running
+2026-08-08T17:56:37.112Z	full-fabric-verified-after-boot-completion

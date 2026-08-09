@@ -1,0 +1,43 @@
+{
+  "bytes_read": 4079450110,
+  "cpu_seconds": 0.682352,
+  "cpu_system_seconds": 0.677252,
+  "cpu_user_seconds": 0.0051,
+  "cpu_utilization_percent": 1.122,
+  "file_count": 12,
+  "finished_at": "2026-08-08T16:28:10.401+00:00",
+  "kind": "model-io",
+  "label": "qwen17b-fabric-link-loss-recovery-control-path-20260808",
+  "manifest_id": "5094934e106d330a66e14855878cdd0f94a9767bc76f73aaf2b43cbd1b2f04bb",
+  "max_rss_bytes": 30302208,
+  "memory_after": {
+    "cached_bytes": 4541636608,
+    "mem_available_bytes": 126633439232,
+    "sreclaimable_bytes": 81051648
+  },
+  "memory_before": {
+    "cached_bytes": 455766016,
+    "mem_available_bytes": 126632120320,
+    "sreclaimable_bytes": 81182720
+  },
+  "memory_delta": {
+    "cached_bytes": 4085870592,
+    "mem_available_bytes": 1318912,
+    "sreclaimable_bytes": -131072
+  },
+  "model": "Qwen/Qwen3-1.7B",
+  "node_fingerprint": "9908424efe7c646e",
+  "profile": "qwen3-1.7b-2node",
+  "rank": 0,
+  "rate_limit_mib_s": 64.0,
+  "read_pattern": "sequential-buffered-full-snapshot",
+  "role": "client",
+  "schema_version": 1,
+  "seconds": 60.788939,
+  "sha256_verified": false,
+  "snapshot_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+  "source": "fabric",
+  "started_at": "2026-08-08T16:27:09.612+00:00",
+  "state": "ok",
+  "throughput_gib_s": 0.0625
+}

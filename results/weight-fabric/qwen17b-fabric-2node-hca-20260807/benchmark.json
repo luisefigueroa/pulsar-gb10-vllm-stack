@@ -1,0 +1,190 @@
+{
+  "aggregate": {
+    "client_fabric_rx_bytes": 4312686040,
+    "control_lan_bytes": 216489,
+    "cpu_seconds": 0.914846,
+    "logical_bytes_read": 8158900220,
+    "logical_throughput_gib_s": 2.112057,
+    "max_rank_seconds": 3.59771,
+    "owner_fabric_tx_bytes": 4312686040,
+    "rank_count": 2,
+    "remote_logical_bytes": 4079450110
+  },
+  "cache_state": "cold",
+  "concurrent": true,
+  "configuration_id": "268c169d4ed1d057c1d433ec13f5c24604c240e4facdd9919e7a0f12264c5974",
+  "kind": "weight-fabric-benchmark",
+  "manifest_id": "5094934e106d330a66e14855878cdd0f94a9767bc76f73aaf2b43cbd1b2f04bb",
+  "measurement_kind": "performance",
+  "model": "Qwen/Qwen3-1.7B",
+  "network": [
+    {
+      "counter_source": "netdev-statistics-bytes",
+      "hca": null,
+      "netdev": "enP7s7",
+      "node_fingerprint": "9908424efe7c646e",
+      "rank": 0,
+      "role": "control",
+      "rx_bytes": 21464,
+      "tx_bytes": 89969
+    },
+    {
+      "counter_source": "infiniband-port-data-x4",
+      "hca": "rocep1s0f0",
+      "netdev": "enp1s0f0np0",
+      "node_fingerprint": "9908424efe7c646e",
+      "rank": 0,
+      "role": "fabric-client",
+      "rx_bytes": 4312686040,
+      "tx_bytes": 4755796
+    },
+    {
+      "counter_source": "netdev-statistics-bytes",
+      "hca": null,
+      "netdev": "enP7s7",
+      "node_fingerprint": "33164e12001f503d",
+      "rank": 1,
+      "role": "control",
+      "rx_bytes": 85927,
+      "tx_bytes": 19129
+    },
+    {
+      "counter_source": "infiniband-port-data-x4",
+      "hca": "rocep1s0f0",
+      "netdev": "enp1s0f0np0",
+      "node_fingerprint": "33164e12001f503d",
+      "rank": 1,
+      "role": "fabric-owner",
+      "rx_bytes": 4755796,
+      "tx_bytes": 4312686040
+    }
+  ],
+  "owner": {
+    "node_fingerprint": "33164e12001f503d",
+    "rank": 1
+  },
+  "profile": "qwen3-1.7b-2node",
+  "ranks": [
+    {
+      "bytes_read": 4079450110,
+      "cpu_seconds": 0.295166,
+      "cpu_system_seconds": 0.291297,
+      "cpu_user_seconds": 0.003869,
+      "cpu_utilization_percent": 8.204,
+      "file_count": 12,
+      "finished_at": "2026-08-07T23:58:32.462+00:00",
+      "kind": "model-io",
+      "label": "qwen17b-fabric-2node-hca-20260807",
+      "manifest_id": "5094934e106d330a66e14855878cdd0f94a9767bc76f73aaf2b43cbd1b2f04bb",
+      "max_rss_bytes": 29696000,
+      "memory_after": {
+        "cached_bytes": 4418179072,
+        "mem_available_bytes": 126681300992,
+        "sreclaimable_bytes": 78094336
+      },
+      "memory_before": {
+        "cached_bytes": 338694144,
+        "mem_available_bytes": 126693629952,
+        "sreclaimable_bytes": 78094336
+      },
+      "memory_delta": {
+        "cached_bytes": 4079484928,
+        "mem_available_bytes": -12328960,
+        "sreclaimable_bytes": 0
+      },
+      "model": "Qwen/Qwen3-1.7B",
+      "node_fingerprint": "9908424efe7c646e",
+      "profile": "qwen3-1.7b-2node",
+      "rank": 0,
+      "rate_limit_mib_s": null,
+      "read_pattern": "sequential-buffered-full-snapshot",
+      "role": "client",
+      "schema_version": 1,
+      "seconds": 3.59771,
+      "sha256_verified": false,
+      "snapshot_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "source": "fabric",
+      "started_at": "2026-08-07T23:58:28.865+00:00",
+      "state": "ok",
+      "throughput_gib_s": 1.056028
+    },
+    {
+      "bytes_read": 4079450110,
+      "cpu_seconds": 0.61968,
+      "cpu_system_seconds": 0.61968,
+      "cpu_user_seconds": 0.0,
+      "cpu_utilization_percent": 19.084,
+      "file_count": 12,
+      "finished_at": "2026-08-07T23:58:32.461+00:00",
+      "kind": "model-io",
+      "label": "qwen17b-fabric-2node-hca-20260807",
+      "manifest_id": "5094934e106d330a66e14855878cdd0f94a9767bc76f73aaf2b43cbd1b2f04bb",
+      "max_rss_bytes": 29736960,
+      "memory_after": {
+        "cached_bytes": 4282531840,
+        "mem_available_bytes": 127095353344,
+        "sreclaimable_bytes": 69853184
+      },
+      "memory_before": {
+        "cached_bytes": 629817344,
+        "mem_available_bytes": 127082319872,
+        "sreclaimable_bytes": 69853184
+      },
+      "memory_delta": {
+        "cached_bytes": 3652714496,
+        "mem_available_bytes": 13033472,
+        "sreclaimable_bytes": 0
+      },
+      "model": "Qwen/Qwen3-1.7B",
+      "node_fingerprint": "33164e12001f503d",
+      "profile": "qwen3-1.7b-2node",
+      "rank": 1,
+      "rate_limit_mib_s": null,
+      "read_pattern": "sequential-buffered-full-snapshot",
+      "role": "owner",
+      "schema_version": 1,
+      "seconds": 3.247134,
+      "sha256_verified": false,
+      "snapshot_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "source": "fabric",
+      "started_at": "2026-08-07T23:58:29.214+00:00",
+      "state": "ok",
+      "throughput_gib_s": 1.170042
+    }
+  ],
+  "rate_limit_mib_s": null,
+  "recorded_at": "2026-08-07T23:58:33.223+00:00",
+  "schema_version": 1,
+  "scope": "serving",
+  "serving_nodes": 2,
+  "source": "fabric",
+  "state": "ok",
+  "storage_nodes": 3,
+  "tag": "qwen17b-fabric-2node-hca-20260807",
+  "throughput_comparable": true,
+  "topology_id": "9adae412f284cbc49ea03ab26e677fc62e9d5c8e7be16b9fce5f1d0fcb5649f8",
+  "traffic_proof": {
+    "checks": [
+      {
+        "minimum_bytes": 3263560088,
+        "name": "rank-0-fabric-rx",
+        "observed_bytes": 4312686040,
+        "pass": true
+      },
+      {
+        "minimum_bytes": 3263560088,
+        "name": "owner-fabric-tx",
+        "observed_bytes": 4312686040,
+        "pass": true
+      },
+      {
+        "maximum_bytes": 815890022,
+        "name": "control-lan-upper-bound",
+        "observed_bytes": 216489,
+        "pass": true
+      }
+    ],
+    "state": "pass"
+  },
+  "transport": "nfs-rdma"
+}

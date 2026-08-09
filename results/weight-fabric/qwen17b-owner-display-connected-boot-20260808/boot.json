@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "kind": "weight-fabric-owner-display-connected-boot",
+  "state": "ok",
+  "verdict": "connected-display-at-boot-passed-twice",
+  "recorded_at": "2026-08-08T23:15:46.334Z",
+  "updated_at": "2026-08-08T23:56:54.986Z",
+  "profile": "qwen3-1.7b-2node",
+  "topology_id": "9adae412f284cbc49ea03ab26e677fc62e9d5c8e7be16b9fce5f1d0fcb5649f8",
+  "configuration_id": "28822c68f5e8bc2edeef8d175cf6f9b846c21909785e8da035a7b7eaa27b717b",
+  "test": {
+    "owner_rank": 1,
+    "intervention": "real-display-connected-before-boot",
+    "display_powered_and_input_selected": true,
+    "reboot_scope": "owner-only",
+    "boot_target": "graphical.target",
+    "boot_configuration_changed": false,
+    "fault_injection": false,
+    "model_workload": false,
+    "manual_boot_repair_after_reboot": false
+  },
+  "boot_observation": {
+    "offline_observed": true,
+    "changed_boot_identity_observed": true,
+    "offline_observed_at": "2026-08-08T23:10:43Z",
+    "new_boot_ssh_reachable_at": "2026-08-08T23:11:19Z",
+    "observed_offline_seconds": 36,
+    "systemd_state": "running",
+    "graphical_target_active": true,
+    "multi_user_target_active": true,
+    "display_manager_active": true,
+    "gdm_active": true,
+    "gdm_greeter_registered_on_seat0": true,
+    "connected_drm_outputs": 1,
+    "failed_units": 0,
+    "plymouth_wait": {
+      "result": "success",
+      "active_state": "active",
+      "sub_state": "exited",
+      "start_monotonic_seconds": 16.947901,
+      "finish_monotonic_seconds": 20.165995,
+      "duration_seconds": 3.218094
+    },
+    "gdm_service_started_monotonic_seconds": 17.02434
+  },
+  "repeat_boot_observation": {
+    "changed_boot_identity_observed": true,
+    "offline_observed": false,
+    "offline_timing_available": false,
+    "offline_timing_note": "The pre-armed watcher expired before the attended reboot command, so no offline interval is claimed.",
+    "systemd_state": "running",
+    "graphical_target_active": true,
+    "multi_user_target_active": true,
+    "display_manager_active": true,
+    "gdm_active": true,
+    "gdm_greeter_registered_on_seat0": true,
+    "connected_drm_outputs": 1,
+    "failed_units": 0,
+    "manual_boot_repair_after_reboot": false,
+    "plymouth_wait": {
+      "result": "success",
+      "active_state": "active",
+      "sub_state": "exited",
+      "start_monotonic_seconds": 16.742971,
+      "finish_monotonic_seconds": 19.99481,
+      "duration_seconds": 3.251839
+    },
+    "gdm_service_started_monotonic_seconds": 16.81262,
+    "storage": {
+      "docker_active": true,
+      "nfs_server_active": true,
+      "nfs_rdma_port_ready": true,
+      "exact_model_repository_export_only": true,
+      "full_single_copy_check": "ok",
+      "verified_ranks": 3,
+      "all_routes_ready": true,
+      "all_mounts_ready": true,
+      "all_manifest_integrity_checks_passed": true,
+      "durable_client_replicas_absent": true
+    },
+    "final_inventory": {
+      "confirmed_nodes_ok": 3,
+      "services": 0,
+      "unmanaged_gpu_processes": 0
+    }
+  },
+  "storage_observation": {
+    "docker_active": true,
+    "nfs_server_active": true,
+    "nfs_rdma_port_ready": true,
+    "exact_model_repository_export_only": true,
+    "full_single_copy_check": "ok",
+    "verified_ranks": 3,
+    "all_routes_ready": true,
+    "all_mounts_ready": true,
+    "all_manifest_integrity_checks_passed": true,
+    "durable_client_replicas_absent": true
+  },
+  "collection": {
+    "post_reboot_mode": "read-only",
+    "sudo_used_for_collection": false,
+    "service_actions_after_reboot": false,
+    "configuration_changes_after_reboot": false,
+    "all_collectors_exited_zero": true,
+    "raw_capture_sha256": {
+      "rank_0": "17363f8c6a4c94a28ab486bf3f86b685ea7890f9c14ac60d69dbfcf7c6567e95",
+      "rank_1": "459088a127774655898167470b034f5bceba900676668fe4a91b1a60824a8e29",
+      "rank_2": "2defb8176e6de27f1a7cd6b7f182c2e04228bb27adc97752f15a0a45364eaf99"
+    },
+    "raw_capture_bytes": {
+      "rank_0": 127708,
+      "rank_1": 126284,
+      "rank_2": 138008
+    }
+  },
+  "repeat_collection": {
+    "post_reboot_mode": "read-only",
+    "sudo_used_for_collection": false,
+    "service_actions_after_reboot": false,
+    "configuration_changes_after_reboot": false,
+    "all_collectors_exited_zero": true,
+    "raw_capture_sha256": {
+      "rank_0": "7a014bbbf34457570c49ca8e5f4489882396fc5f662b0dd46eb5d45dae23f892",
+      "rank_1": "87042de235bdfd8f61bbf1b0b7576c87d06677d74c254db9340b908a04533f0d",
+      "rank_2": "ef485d78c179be05be15d9c168101439c154f6fdae5566c384f3ec5a54f1d880"
+    },
+    "raw_capture_bytes": {
+      "rank_0": 127696,
+      "rank_1": 127603,
+      "rank_2": 138008
+    }
+  },
+  "interpretation": {
+    "display_trigger_hypothesis": "supported-by-two-controlled-reboots",
+    "confidence": "high",
+    "connected_display_boot_policy_repeated": true,
+    "headless_graphical_boot_fixed": false,
+    "promotion_gate_passed": false,
+    "reason": "The same owner that repeatedly stalled without a boot display completed the GDM-to-Plymouth handoff automatically in two clean boots when a real display was present. The connected-display boot policy is repeatable, but the physical owner-reboot fault has not yet been rerun.",
+    "remaining_evidence": [
+      "rerun the owner-reboot storage fault with the display connected",
+      "repeat post-reboot serving correctness and teardown gates"
+    ]
+  },
+  "tooling_observation": {
+    "state": "diagnostic-false-negative",
+    "affected_command": "scripts/inventory.sh --json",
+    "symptom": "The raw saved SSH alias was reported unreachable while the confirmed control endpoint was reachable.",
+    "cause": "The inventory remote probe bypasses the confirmed endpoint resolver used by the shared SSH helper.",
+    "boot_or_storage_failure": false,
+    "recommended_action": "Route inventory probes through the confirmed control endpoint and add a regression test.",
+    "resolution": {
+      "state": "fixed-and-hardware-verified",
+      "inventory_uses_shared_confirmed_endpoint_resolver": true,
+      "saved_alias_resolution_available_during_live_test": false,
+      "live_inventory_confirmed_nodes_ok": 3,
+      "live_inventory_services": 0,
+      "live_inventory_unmanaged_gpu_processes": 0,
+      "deterministic_alias-failure_regression": "pass",
+      "inventory_classifier_tests": 77,
+      "inventory_classifier_failures": 0,
+      "fail_closed_probe_suite": "pass",
+      "full_control_plane_selftest": "pass"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "bytes_scanned": 18763,
+  "checks": {
+    "no_private_json_fields": true,
+    "no_private_site_values": true,
+    "no_private_staging_files": true,
+    "regular_utf8_files_only": true
+  },
+  "configuration_id": "268c169d4ed1d057c1d433ec13f5c24604c240e4facdd9919e7a0f12264c5974",
+  "files_scanned": 11,
+  "kind": "weight-fabric-artifact-audit",
+  "schema_version": 1,
+  "state": "pass",
+  "topology_id": "9adae412f284cbc49ea03ab26e677fc62e9d5c8e7be16b9fce5f1d0fcb5649f8"
+}

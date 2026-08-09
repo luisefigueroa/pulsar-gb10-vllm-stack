@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "needle-in-haystack",
+  "state": "pass",
+  "model": "qwen3-1.7b-2node",
+  "context_tokens_requested": 30000,
+  "depths": [
+    0.05,
+    0.5,
+    0.95
+  ],
+  "trials_per_depth": 1,
+  "passes": 3,
+  "failures": 0,
+  "records": [
+    {
+      "depth": 0.05,
+      "trial": 0,
+      "expected": "85822412",
+      "prompt_tokens": 29097,
+      "response": " 85822412\n\nThe quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz, judge my vow",
+      "status": "pass"
+    },
+    {
+      "depth": 0.5,
+      "trial": 0,
+      "expected": "14942603",
+      "prompt_tokens": 29097,
+      "response": " 14942603\nThe quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz, judge my vow",
+      "status": "pass"
+    },
+    {
+      "depth": 0.95,
+      "trial": 0,
+      "expected": "03356886",
+      "prompt_tokens": 29097,
+      "response": " 03356886\nThe quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. Sphinx of black quartz, judge my vow",
+      "status": "pass"
+    }
+  ]
+}

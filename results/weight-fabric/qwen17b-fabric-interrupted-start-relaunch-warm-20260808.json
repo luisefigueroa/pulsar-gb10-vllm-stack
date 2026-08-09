@@ -1,0 +1,16 @@
+{
+  "cache_state": "warm",
+  "configuration_id": "28822c68f5e8bc2edeef8d175cf6f9b846c21909785e8da035a7b7eaa27b717b",
+  "first_healthy_at": "2026-08-08T15:34:57.336Z",
+  "kind": "container-launch-to-first-health",
+  "model": "Qwen/Qwen3-1.7B",
+  "nodes": 2,
+  "owner_node_fingerprint": "33164e12001f503d",
+  "profile": "qwen3-1.7b-2node",
+  "schema_version": 1,
+  "started_at": "2026-08-08T15:33:22.945Z",
+  "tag": "qwen17b-fabric-interrupted-start-relaunch-warm-20260808",
+  "time_to_first_healthy_seconds": 94.392,
+  "topology_id": "9adae412f284cbc49ea03ab26e677fc62e9d5c8e7be16b9fce5f1d0fcb5649f8",
+  "weight_source": "fabric"
+}
