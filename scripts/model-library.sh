@@ -21,7 +21,7 @@ Usage:
   scripts/model-library.sh catalog show <model_id|profile> [--json]
   scripts/model-library.sh resolve <profile|model_id> [--json]
   scripts/model-library.sh cleanup-recommend [--json]
-  scripts/model-library.sh activate <profile> [--backend copy] [--allow-unvalidated] [--yes]
+  scripts/model-library.sh activate <profile> [--backend copy|fabric] [--allow-unvalidated] [--yes]
   scripts/model-library.sh pin <profile>
   scripts/model-library.sh unpin <profile>
   scripts/model-library.sh purge-hot <profile> [--yes] [--force-unpin]
@@ -31,11 +31,11 @@ Notes:
   • Scans default HF cache hubs on confirmed topology nodes (warm catalog).
   • Labels entries validated vs unvalidated using models/*.conf STATUS.
   • Duplicate complete homes refuse resolve until a primary is chosen.
-  • activate copies into PULSAR_HOT_ROOT (default /var/tmp/pulsar-hot), never
-    into durable HF_CACHE library homes on clients.
+  • activate --backend copy rsyncs over the control path into PULSAR_HOT_ROOT.
+  • activate --backend fabric plans ephemeral NFSv4.2/RDMA transfer (RoCE);
+    privileged apply/release is a follow-up; no silent fallback to copy.
   • pin keeps hot for home-independent restart; purge removes hot (budget).
   • Does not change wizard defaults or --weight-source fabric.
-  • Launch --weight-mode library-hot is a separate follow-up.
 EOF
 }
 
@@ -331,7 +331,7 @@ cmd_activate() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --backend)
-        [ $# -ge 2 ] || die "--backend requires copy"
+        [ $# -ge 2 ] || die "--backend requires copy or fabric"
         backend="$2"
         shift
         ;;
@@ -345,8 +345,11 @@ cmd_activate() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: activate <profile> [--backend copy]"
-  [ "$backend" = copy ] || die "activate: only --backend copy is implemented"
+  [ -n "$profile" ] || die "usage: activate <profile> [--backend copy|fabric]"
+  case "$backend" in
+    copy|fabric) ;;
+    *) die "activate: --backend must be copy or fabric" ;;
+  esac
   require_py
   ensure_catalog
   load_conf "$profile"
@@ -358,6 +361,7 @@ cmd_activate() {
     --catalog "$CATALOG_FILE"
     --profile "$profile"
     --topology-id "$CLUSTER_TOPOLOGY_ID"
+    --topology-file "$CLUSTER_TOPOLOGY_FILE"
     --hot-root "$HOT_ROOT"
     --backend "$backend"
     --nodes "$NODES"
@@ -383,6 +387,24 @@ cmd_activate() {
     done
     log "activate complete (reused hot)"
     return 0
+  fi
+
+  if [ "$action" = fabric-copy ]; then
+    # PR-A: plan only. Privileged NFS export/mount lands in the next PR.
+    if [ "$yes" != 1 ]; then
+      log "fabric plan ready (ephemeral NFS/RDMA transfer → hot)"
+      printf '%s\n' "$plan" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+t=d.get("transfer") or {}
+print("home_rank", t.get("home_rank"), "clients", len(t.get("clients") or []))
+for c in t.get("clients") or []:
+    print("  client rank", c["rank"], c["server_ip"], "->", c["client_ip"], c["mount_path"])
+print("re-run with --yes after fabric transfer plane is implemented (next PR)")
+'
+      return 0
+    fi
+    die "activate --backend fabric execution is not implemented yet (plan OK; transfer plane next). Use --backend copy --yes for now."
   fi
 
   if [ "$yes" != 1 ]; then

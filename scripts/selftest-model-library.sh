@@ -224,6 +224,122 @@ set -e
 assert_eq "plan-activate fails over budget" "$brc" "1"
 assert_true "budget error text" grep -q "budget exceeded" "$STATE/budget.err"
 
+# --- fabric plan (rails) without privileged NFS ---
+export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))
+STATE="$STATE" REPO_DIR="$REPO_DIR" python3 - <<'PY'
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, os.environ["REPO_DIR"])
+from scripts.topology_manifest import topology_digest
+state = Path(os.environ["STATE"])
+topo = {
+  "schema_version": 1,
+  "class": "roce-full-mesh",
+  "connectivity_verified": True,
+  "validation": {
+    "class": "roce-full-mesh",
+    "full_mesh": True,
+    "min_rails_per_pair": 1,
+    "connectivity_verified": True,
+  },
+  "nodes": [
+    {
+      "rank": 0,
+      "node_id": "node-a",
+      "hostname": "host-a",
+      "ssh_host": "host-a.local",
+      "arch": "aarch64",
+      "gpu": "NVIDIA GB10",
+      "control": {"interface": "mgmt0", "ip": "192.168.1.10"},
+      "rdma": [
+        {"hca": "roce0", "netdev": "enp1s0f0", "cidrs": ["10.0.0.1/24"]}
+      ],
+    },
+    {
+      "rank": 1,
+      "node_id": "node-b",
+      "hostname": "host-b",
+      "ssh_host": "host-b.local",
+      "arch": "aarch64",
+      "gpu": "NVIDIA GB10",
+      "control": {"interface": "mgmt0", "ip": "192.168.1.11"},
+      "rdma": [
+        {"hca": "roce0", "netdev": "enp1s0f0", "cidrs": ["10.0.0.2/24"]}
+      ],
+    },
+  ],
+  "links": [
+    {
+      "ranks": [0, 1],
+      "rails": [
+        {
+          "network": "10.0.0.0/24",
+          "a": {"hca": "roce0", "netdev": "enp1s0f0", "ip": "10.0.0.1"},
+          "b": {"hca": "roce0", "netdev": "enp1s0f0", "ip": "10.0.0.2"},
+        }
+      ],
+    }
+  ],
+}
+topo["topology_id"] = topology_digest(topo)
+(state / "topology.json").write_text(json.dumps(topo), encoding="utf-8")
+(state / "topology_id.txt").write_text(topo["topology_id"], encoding="utf-8")
+PY
+TOPO_ID=$(cat "$STATE/topology_id.txt")
+
+python3 "$PY" build \
+  --topology-id "$TOPO_ID" \
+  --models-dir "$STATE/models" \
+  --homes-json "$STATE/homes.json" \
+  --primary "Qwen/Qwen3-1.7B=node-b" \
+  --output "$STATE/catalog-fabric.json" >/dev/null 2>&1
+
+fplan=$(python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog-fabric.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id "$TOPO_ID" \
+  --topology-file "$STATE/topology.json" \
+  --hot-root "$HOT" \
+  --backend fabric \
+  --nodes 2)
+faction=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+assert_eq "fabric multi-rank plan action" "$faction" "fabric-copy"
+fclients=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["transfer"]["clients"]))')
+assert_eq "fabric plan one NFS client" "$fclients" "1"
+fproto=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print("proto=rdma" in json.load(sys.stdin)["transfer"]["mount_options"])')
+assert_eq "fabric plan mount is rdma" "$fproto" "True"
+fbackend=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"]["backend"])')
+assert_eq "fabric stamp backend" "$fbackend" "fabric"
+
+set +e
+python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog2.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --hot-root "$HOT" \
+  --backend nfs >/dev/null 2>&1
+bad_rc=$?
+set -e
+assert_true "unknown backend rejected" test "$bad_rc" -ne 0
+
+python3 "$PY" build \
+  --topology-id topo-test-001 \
+  --models-dir "$STATE/models" \
+  --homes-json "$STATE/homes.json" \
+  --primary "Qwen/Qwen3-1.7B=node-a" \
+  --output "$STATE/catalog-home0.json" >/dev/null 2>&1
+splan=$(python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog-home0.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --hot-root "$HOT" \
+  --backend fabric \
+  --nodes 1)
+saction=$(printf '%s' "$splan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+assert_eq "single-rank fabric is local copy action" "$saction" "copy"
+skind=$(printf '%s' "$splan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["kind"])')
+assert_eq "single-rank fabric transfer local-only" "$skind" "local-only"
+
 # Launch wiring accepts library-hot flags (no docker)
 assert_true "up.sh help lists library-hot" \
   grep -q library-hot "$REPO_DIR/scripts/up.sh"
