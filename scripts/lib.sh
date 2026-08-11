@@ -292,16 +292,10 @@ validate_profile_contract() {
   fi
 }
 
-validate_loaded_profile_bundle() {
-  local tool item output
-  local -a args
-  tool="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
-  [ -f "$tool" ] || die "missing $tool"
-  args=(
-    verify-profile-bundle
-    --models-dir "$REPO_DIR/models"
-    --profile "$CONF_NAME"
-    --expected-seal-ref "$EXPECTED_MODEL_SEAL"
+append_loaded_profile_contract_args() {
+  local target_name="${1:?target array name required}" item
+  local -n target="$target_name"
+  target+=(
     --model-id "$MODEL"
     --served-name "$SERVED_NAME"
     --image "$IMAGE"
@@ -319,14 +313,28 @@ validate_loaded_profile_bundle() {
     "--mem-min-free-gib=$MEM_MIN_FREE_GIB"
   )
   for item in ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"}; do
-    args+=("--engine-arg=$item")
+    target+=("--engine-arg=$item")
   done
   for item in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do
-    args+=("--container-env=$item")
+    target+=("--container-env=$item")
   done
   for item in ${SPEC_DECODE_ARGS[@]+"${SPEC_DECODE_ARGS[@]}"}; do
-    args+=("--spec-decode-arg=$item")
+    target+=("--spec-decode-arg=$item")
   done
+}
+
+validate_loaded_profile_bundle() {
+  local tool output
+  local -a args
+  tool="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
+  [ -f "$tool" ] || die "missing $tool"
+  args=(
+    verify-profile-bundle
+    --models-dir "$REPO_DIR/models"
+    --profile "$CONF_NAME"
+    --expected-seal-ref "$EXPECTED_MODEL_SEAL"
+  )
+  append_loaded_profile_contract_args args
   if ! output=$(python3 "$tool" "${args[@]}"); then
     die "$CONF_NAME: reviewed validation bundle does not match the sourced profile"
   fi

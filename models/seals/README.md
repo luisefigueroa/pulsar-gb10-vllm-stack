@@ -36,20 +36,26 @@ Schema version 1 has these exact fields:
 Every evidence path must exist in the same checkout. The canonical JSON used
 for `seal_id` sorts object keys, uses UTF-8, and uses separators `,` and `:`
 without extra whitespace. The implementation helper
-`expected_model_seal_id()` in `scripts/model_library.py` is the reference
+`expected_model_seal_id()` in `scripts/model_identity.py` is the reference
 calculation.
 
 ## Lab release workflow
 
-1. Resolve and retain the immutable upstream commit before validation.
-2. Build the complete SHA-256 snapshot manifest from the exact lab bytes.
+1. Resolve and retain the immutable upstream commit before validation, pin the
+   image digest, and inspect the profile with
+   `scripts/model-release.sh plan <profile> --json`.
+2. Build the complete SHA-256 snapshot manifest from the exact lab bytes with
+   `scripts/model-release.sh manifest <profile> --hub-path <path> --revision
+   <commit>`.
 3. Run all required model, image, profile, geometry, correctness, context, and
    soak gates and publish sanitized repository-relative evidence.
-4. Author the complete validation bundle under
-   `models/validation-bundles/<validation_bundle_id>.json` from those lab
-   inputs and evidence.
-5. Commit the seal, bundle, and profile `EXPECTED_MODEL_SEAL` reference in the
-   same pull request.
+4. Assemble and verify the explicitly unreviewed documents with
+   `scripts/model-release.sh assemble` and `verify-candidate`. Candidate output
+   has no authority and cannot write this directory.
+5. Review exact lab provenance, evidence privacy, profile identity, and
+   reproducibility. Then deliberately place the reviewed bundle and seal in
+   their trusted paths and commit them with the profile
+   `EXPECTED_MODEL_SEAL` reference in one pull request.
 6. Run `scripts/model-library.sh validation-bundle verify <profile>` and
    `scripts/selftest.sh`, refresh the site catalog, and activate without
    `--allow-unvalidated`. Activation must full-hash the source and report
@@ -82,6 +88,7 @@ external-artifact identities/digests, and the normalized live profile contract
 including the digest-pinned image and geometry. No real profile seal or bundle ships yet;
 trusted lab issuance remains a reviewed release activity and is never derived
 from user state. See
-[validation-bundles/README.md](../validation-bundles/README.md). The witness is
+[validation-bundles/README.md](../validation-bundles/README.md) and
+[docs/MODEL_RELEASE.md](../../docs/MODEL_RELEASE.md). The witness is
 only an accelerator for identity previously established by full verification.
 It is never a seal issuer.

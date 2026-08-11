@@ -31,7 +31,7 @@ Schema version 1 has these exact top-level fields:
 
 The canonical JSON sorts object keys, uses UTF-8, and uses separators `,` and
 `:` without extra whitespace. `validation_bundle_id()` in
-`scripts/model_library.py` is the reference calculation. The filename must
+`scripts/model_identity.py` is the reference calculation. The filename must
 equal `bundle_id`.
 
 Each `models` entry contains:
@@ -85,19 +85,27 @@ establish the validated runtime identity.
 ## Lab release workflow
 
 1. Resolve every model and external artifact to immutable identity before the
-   validation run.
-2. Run the applicable serving, correctness, determinism, context, performance,
+   validation run, pin the image digest, and inspect the normalized contract
+   with `scripts/model-release.sh plan <profile> --json`.
+2. Build the complete snapshot manifest with `scripts/model-release.sh
+   manifest <profile> --hub-path <path> --revision <commit>` using the exact
+   retained lab bytes.
+3. Run the applicable serving, correctness, determinism, context, performance,
    and soak gates with the exact normalized profile and resolved image digest.
-3. Publish sanitized repository-relative evidence.
-4. Author the complete bundle, calculate `bundle_id`, and save it under the
-   content-addressed filename.
-5. Author the expected-model seal with the same model projection, provenance,
-   evidence, and `validation_bundle_id`.
-6. Add both files and `EXPECTED_MODEL_SEAL` to the profile in one reviewed
-   change.
+4. Publish sanitized repository-relative evidence.
+5. Run `scripts/model-release.sh assemble <profile> ...` and then
+   `scripts/model-release.sh verify-candidate <profile> --candidate-dir <dir>`.
+   The generated bundle/seal are deterministic **unreviewed candidates**, not
+   trusted files.
+6. Review provenance, evidence privacy, exact inputs, and candidate
+   reproducibility. In one deliberate pull request, place the reviewed bundle
+   under its content-addressed filename, place the reviewed seal under the
+   profile name, and add `EXPECTED_MODEL_SEAL` to the profile.
 7. Run `scripts/model-library.sh validation-bundle verify <profile>` and
    `scripts/selftest.sh` before release.
 
 Profile load fails closed when the bundle is missing, malformed, renamed,
 inconsistent with its seal, or different from the live sourced profile. A
 local user edit or observed cache content cannot issue or refresh a lab claim.
+See [docs/MODEL_RELEASE.md](../../docs/MODEL_RELEASE.md) for exact candidate
+commands and the current manual review/publication boundary.

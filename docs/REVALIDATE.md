@@ -23,7 +23,10 @@ request. A future mirror may distribute the bytes, but hosting location is not
 validation identity. The rank-local serve witness is implemented: activation
 creates it only after full verification, while unchanged launch uses metadata
 and drift visibly rehashes before refresh. The standalone bundle verifier is
-implemented; trusted issuance of a real bundle remains pending.
+implemented. Maintainer-only `scripts/model-release.sh` can now hash an exact
+commit and assemble/verify deterministic unreviewed candidates, but trusted
+review and issuance of a real bundle remain pending. See
+[MODEL_RELEASE.md](./MODEL_RELEASE.md).
 
 ## 0. Prep (5 min)
 
@@ -221,11 +224,16 @@ model/profile/image is already `tested` with replicated weights.
 - Update conf `STATUS`/`NOTES` and `docs/VALIDATION.md` with the measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
-- Publish the complete lab-reviewed validation bundle and expected seal in the
-  same evidence pull request, then add the profile `EXPECTED_MODEL_SEAL`
-  reference. Run `scripts/model-library.sh validation-bundle verify <profile>`
-  before merge. Never promote a locally observed user seal or bundle into
-  expected identity.
+- Build the exact manifest and unreviewed documents with
+  `scripts/model-release.sh manifest` and `assemble`, then run
+  `verify-candidate` against the final profile. Candidate output is not a
+  trusted claim and stays outside `models/`.
+- Review provenance, evidence privacy, exact inputs, and reproducibility. Only
+  then publish the complete lab-reviewed validation bundle and expected seal
+  in the same evidence pull request and add the profile
+  `EXPECTED_MODEL_SEAL` reference. Run
+  `scripts/model-library.sh validation-bundle verify <profile>` before merge.
+  Never promote a locally observed user seal or bundle into expected identity.
 - Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
 - Archive the new raw results under `results/` using a unique bump tag.
 - Run a current-tree secret/path scan and inspect `git diff` before merge.
