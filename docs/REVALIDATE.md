@@ -181,12 +181,25 @@ Do not inherit replicated-cache validation for `--weight-source fabric` or
      sibling preservation and catalog refresh. Never delete a production or
      serving-validation canary durable home merely to prove the guard; create a
      disposable synthetic repository instead.
+9. exact hot-storage admission before writes:
+   - every selected rank is observed exactly once and unreachable/missing ranks
+     fail closed;
+   - warm-home charges zero model bytes on the home rank and exact manifest
+     bytes on each non-home rank; cold stage-only charges every rank;
+   - the flagship-sized dry-run preserves the default
+     `max(64 GiB, 5% filesystem capacity)` reserve on every selected rank;
+   - an explicit undersized hard cap blocks before mutation; and
+   - no automatic eviction, reserve relaxation, or transport fallback occurs.
 
 The current guard passed that deterministic and three-node physical gate on
 2026-08-11. See
 `results/model-library/model-library-home-removal-guard-20260811.json`.
 Repeat the gate when removal targeting, reference observation, or lifecycle
 locking semantics change.
+
+Record a sanitized admission artifact without hostnames, node IDs, topology
+IDs, IPs, interface names, or absolute paths. `budget --json` is site-local
+input and must not be published verbatim.
 
 The path remains experimental if any artifact is absent, even when the same
 model/profile/image is already `tested` with replicated weights.

@@ -44,6 +44,9 @@ EXPECTED_MODEL_SEAL_KIND = "pulsar-expected-model-seal"
 HOME_REMOVAL_PLAN_SCHEMA_VERSION = 1
 HOME_REMOVAL_PLAN_KIND = "pulsar-model-library-home-removal-plan"
 HOME_REMOVAL_RESULT_KIND = "pulsar-model-library-home-removal-result"
+HOT_BUDGET_SCHEMA_VERSION = 1
+HOT_BUDGET_OBSERVATION_KIND = "pulsar-model-library-hot-budget-observation"
+HOT_BUDGET_PLAN_KIND = "pulsar-model-library-hot-budget-plan"
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 HF_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
 HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
@@ -51,7 +54,8 @@ HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
 STATUS_TESTED = re.compile(r"^tested")
 DEFAULT_HOT_ROOT = "/var/tmp/pulsar-hot"
-DEFAULT_HOT_BUDGET_BYTES = 100 * 1024**3  # 100 GiB
+DEFAULT_HOT_RESERVE_BYTES = 64 * 1024**3
+DEFAULT_HOT_RESERVE_PERCENT = 5
 DEFAULT_FABRIC_PORT = 20049
 DEFAULT_FABRIC_RAIL_INDEX = 0
 TRANSFER_MOUNT_OPTIONS = (
@@ -1836,6 +1840,12 @@ def plan_cold_stage(
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     hub_dest = hot_hub_path(instance, entry["model_id"])
     target_ranks = list(range(nodes if nodes is not None else 1))
+    hot_storage_requirements = build_hot_storage_requirements(
+        target_ranks=target_ranks,
+        bytes_logical=bytes_logical,
+        instance_dir=instance,
+        home_rank=None,
+    )
 
     if hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
@@ -1873,10 +1883,10 @@ def plan_cold_stage(
                 "validation": validation,
                 "bytes_logical": bytes_logical,
                 "backend": "copy",
+                "hot_storage_requirements": hot_storage_requirements,
                 "stamp": existing,
             }
 
-    ensure_budget_for_add(hot_root, bytes_logical)
     # content_digest is finalized after materialize for flat→hub (paths change).
     # Hub-layout cold sources keep source_digest as the verify digest.
     provisional_digest = source_digest if layout == "hub" else source_digest
@@ -1929,6 +1939,7 @@ def plan_cold_stage(
         "bytes_logical": bytes_logical,
         "backend": "copy",
         "target_ranks": target_ranks,
+        "hot_storage_requirements": hot_storage_requirements,
         "stamp": stamp,
         "note": (
             "Stages cold → hot only; no durable warm home. "
@@ -1944,16 +1955,29 @@ def default_hot_root() -> str:
     return os.environ.get("PULSAR_HOT_ROOT") or DEFAULT_HOT_ROOT
 
 
-def default_hot_budget_bytes() -> int:
+def configured_hot_budget_bytes() -> int | None:
     raw = os.environ.get("PULSAR_HOT_BUDGET_BYTES")
     if raw is None or raw == "":
-        return DEFAULT_HOT_BUDGET_BYTES
+        return None
     try:
         value = int(raw)
     except ValueError:
         fail(f"PULSAR_HOT_BUDGET_BYTES must be an integer (got {raw!r})")
     if value < 1:
         fail("PULSAR_HOT_BUDGET_BYTES must be positive")
+    return value
+
+
+def configured_hot_reserve_bytes() -> int | None:
+    raw = os.environ.get("PULSAR_HOT_RESERVE_BYTES")
+    if raw is None or raw == "":
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        fail(f"PULSAR_HOT_RESERVE_BYTES must be an integer (got {raw!r})")
+    if value < 0:
+        fail("PULSAR_HOT_RESERVE_BYTES must be non-negative")
     return value
 
 
@@ -3041,43 +3065,339 @@ def activation_home_inventory(
     )
 
 
+def build_hot_storage_requirements(
+    *,
+    target_ranks: list[int],
+    bytes_logical: int,
+    instance_dir: str | pathlib.Path,
+    home_rank: int | None,
+) -> list[dict[str, Any]]:
+    if (
+        isinstance(bytes_logical, bool)
+        or not isinstance(bytes_logical, int)
+        or bytes_logical < 1
+    ):
+        fail("hot storage requirements: model bytes must be positive")
+    if len(set(target_ranks)) != len(target_ranks) or any(
+        isinstance(rank, bool) or not isinstance(rank, int) or rank < 0
+        for rank in target_ranks
+    ):
+        fail("hot storage requirements: target ranks are invalid")
+    instance = pathlib.Path(instance_dir)
+    if not instance.is_absolute():
+        fail("hot storage requirements: instance path must be absolute")
+    requirements: list[dict[str, Any]] = []
+    for rank in sorted(target_ranks):
+        durable_view = home_rank is not None and rank == home_rank
+        requirements.append(
+            {
+                "rank": rank,
+                "runtime_source": "durable-home" if durable_view else "sealed-hot",
+                "required_owned_bytes": 0 if durable_view else bytes_logical,
+                "replacing_path": str(instance),
+            }
+        )
+    return requirements
+
+
 def budget_report(
     hot_root: str | pathlib.Path,
     budget_bytes: int | None = None,
+    *,
+    reserve_bytes: int | None = None,
+    filesystem_total_bytes: int | None = None,
+    filesystem_available_bytes: int | None = None,
 ) -> dict[str, Any]:
     hot_root = pathlib.Path(hot_root)
-    budget = budget_bytes if budget_bytes is not None else default_hot_budget_bytes()
-    used = 0
+    if not hot_root.is_absolute():
+        fail(f"hot budget: hot root must be absolute: {hot_root}")
+    if hot_root.exists():
+        try:
+            root_mode = hot_root.lstat().st_mode
+        except OSError as exc:
+            fail(f"hot budget: cannot inspect hot root {hot_root}: {exc}")
+        if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+            fail(f"hot budget: hot root must be a non-symlinked directory: {hot_root}")
+
+    if (filesystem_total_bytes is None) != (filesystem_available_bytes is None):
+        fail("hot budget: filesystem total and available bytes must be supplied together")
+    if filesystem_total_bytes is None:
+        probe = hot_root
+        while not probe.exists():
+            if probe.parent == probe:
+                fail(f"hot budget: no existing filesystem parent for {hot_root}")
+            probe = probe.parent
+        try:
+            filesystem = os.statvfs(probe)
+        except OSError as exc:
+            fail(f"hot budget: cannot inspect filesystem for {hot_root}: {exc}")
+        block_size = filesystem.f_frsize or filesystem.f_bsize
+        filesystem_total_bytes = int(filesystem.f_blocks) * int(block_size)
+        filesystem_available_bytes = int(filesystem.f_bavail) * int(block_size)
+        filesystem_probe = str(probe)
+    else:
+        if filesystem_total_bytes < 1 or filesystem_available_bytes < 0:
+            fail("hot budget: injected filesystem capacity is invalid")
+        if filesystem_available_bytes > filesystem_total_bytes:
+            fail("hot budget: filesystem available bytes exceed total bytes")
+        filesystem_probe = str(hot_root)
+
+    hard_cap = (
+        budget_bytes if budget_bytes is not None else configured_hot_budget_bytes()
+    )
+    if hard_cap is not None and hard_cap < 1:
+        fail("hot budget: hard cap must be positive")
+    reserve_override = (
+        reserve_bytes
+        if reserve_bytes is not None
+        else configured_hot_reserve_bytes()
+    )
+    if reserve_override is not None and reserve_override < 0:
+        fail("hot budget: reserve must be non-negative")
+    default_reserve = max(
+        DEFAULT_HOT_RESERVE_BYTES,
+        (
+            filesystem_total_bytes * DEFAULT_HOT_RESERVE_PERCENT
+            + 99
+        )
+        // 100,
+    )
+    reserve = reserve_override if reserve_override is not None else default_reserve
+
+    used = tree_bytes(hot_root) if hot_root.is_dir() else 0
     instances: list[dict[str, Any]] = []
+    scan_errors: list[dict[str, str]] = []
+    accounted_instances: set[pathlib.Path] = set()
+    accounted_instance_bytes = 0
+    pinned_bytes = 0
+    reclaimable_bytes = 0
     if hot_root.is_dir():
-        for stamp_path in hot_root.rglob("hot.json"):
-            if stamp_path.parent.name != ".pulsar":
+        for dirpath, dirnames, filenames in os.walk(hot_root, followlinks=False):
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if not (pathlib.Path(dirpath) / name).is_symlink()
+            ]
+            if pathlib.Path(dirpath).name != ".pulsar" or "hot.json" not in filenames:
                 continue
+            stamp_path = pathlib.Path(dirpath) / "hot.json"
             instance = stamp_path.parent.parent
+            if instance in accounted_instances:
+                continue
+            accounted_instances.add(instance)
+            size = dir_size_bytes(instance)
+            accounted_instance_bytes += size
             try:
                 stamp = load_json(stamp_path)
-            except ModelLibraryError:
+            except ModelLibraryError as exc:
+                scan_errors.append({"path": str(stamp_path), "detail": str(exc)})
+                instances.append(
+                    {
+                        "path": str(instance),
+                        "profile": None,
+                        "state": "invalid",
+                        "pinned": False,
+                        "runtime_source": "unknown",
+                        "bytes": size,
+                    }
+                )
                 continue
-            size = dir_size_bytes(instance)
-            used += size
+            if not isinstance(stamp, dict):
+                scan_errors.append(
+                    {
+                        "path": str(stamp_path),
+                        "detail": "hot metadata is not an object",
+                    }
+                )
+                continue
+            pinned = bool(stamp.get("pinned"))
+            model_id = stamp.get("model_id")
+            runtime_source = "unknown"
+            if isinstance(model_id, str) and model_id:
+                hub_path = hot_hub_path(instance, model_id)
+                runtime_source = (
+                    "durable-home" if hub_path.is_symlink() else "sealed-hot"
+                )
+            if pinned:
+                pinned_bytes += size
+            else:
+                reclaimable_bytes += size
             instances.append(
                 {
                     "path": str(instance),
-                    "profile": stamp.get("profile") if isinstance(stamp, dict) else None,
-                    "state": stamp.get("state") if isinstance(stamp, dict) else None,
-                    "pinned": bool(stamp.get("pinned")) if isinstance(stamp, dict) else False,
+                    "profile": stamp.get("profile"),
+                    "state": stamp.get("state"),
+                    "pinned": pinned,
+                    "runtime_source": runtime_source,
                     "bytes": size,
                 }
             )
-    remaining = budget - used
+    untracked_bytes = max(0, used - accounted_instance_bytes)
+    physical_remaining = max(0, filesystem_available_bytes - reserve)
+    if hard_cap is None:
+        quota_remaining = physical_remaining
+        effective_budget = used + physical_remaining
+    else:
+        quota_remaining = max(0, hard_cap - used)
+        effective_budget = hard_cap
+    remaining = min(physical_remaining, quota_remaining)
+    blockers: list[dict[str, Any]] = []
+    if filesystem_available_bytes < reserve:
+        blockers.append(
+            {
+                "code": "filesystem-reserve-breached",
+                "detail": (
+                    f"filesystem available={filesystem_available_bytes} is below "
+                    f"the required reserve={reserve}"
+                ),
+            }
+        )
+    if hard_cap is not None and used > hard_cap:
+        blockers.append(
+            {
+                "code": "hard-cap-exceeded",
+                "detail": f"owned hot bytes={used} exceed hard cap={hard_cap}",
+            }
+        )
     return {
+        "schema_version": HOT_BUDGET_SCHEMA_VERSION,
+        "kind": HOT_BUDGET_OBSERVATION_KIND,
         "hot_root": str(hot_root),
-        "budget_bytes": budget,
+        "policy": {
+            "mode": "filesystem-reserve",
+            "hard_cap_bytes": hard_cap,
+            "hard_cap_source": "environment-or-argument" if hard_cap is not None else "none",
+            "reserve_bytes": reserve,
+            "reserve_source": (
+                "environment-or-argument"
+                if reserve_override is not None
+                else "default-max-64gib-or-5-percent"
+            ),
+            "default_reserve_bytes": DEFAULT_HOT_RESERVE_BYTES,
+            "default_reserve_percent": DEFAULT_HOT_RESERVE_PERCENT,
+            "automatic_eviction": False,
+        },
+        "filesystem": {
+            "probe_path": filesystem_probe,
+            "total_bytes": filesystem_total_bytes,
+            "available_bytes": filesystem_available_bytes,
+            "projected_available_bytes": filesystem_available_bytes,
+        },
+        "budget_bytes": effective_budget,
         "used_bytes": used,
+        "owned_hot_bytes": used,
         "remaining_bytes": remaining,
-        "over_budget": remaining < 0,
+        "physical_remaining_bytes": physical_remaining,
+        "quota_remaining_bytes": quota_remaining,
+        "pinned_bytes": pinned_bytes,
+        "reclaimable_bytes": reclaimable_bytes,
+        "untracked_bytes": untracked_bytes,
+        "over_budget": bool(blockers),
+        "blockers": blockers,
+        "scan_errors": scan_errors,
         "instances": sorted(instances, key=lambda i: i["path"]),
     }
+
+
+def hot_budget_admission(
+    hot_root: str | pathlib.Path,
+    required_owned_bytes: int,
+    *,
+    budget_bytes: int | None = None,
+    reserve_bytes: int | None = None,
+    replacing_path: str | pathlib.Path | None = None,
+    runtime_source: str = "sealed-hot",
+    rank: int = 0,
+    node_id: str = "",
+    hostname: str = "",
+    filesystem_total_bytes: int | None = None,
+    filesystem_available_bytes: int | None = None,
+) -> dict[str, Any]:
+    if (
+        isinstance(required_owned_bytes, bool)
+        or not isinstance(required_owned_bytes, int)
+        or required_owned_bytes < 0
+    ):
+        fail("hot admission: required owned bytes must be a non-negative integer")
+    if runtime_source not in {"durable-home", "sealed-hot", "inventory", "pin"}:
+        fail(f"hot admission: unsupported runtime source {runtime_source!r}")
+    if runtime_source == "durable-home" and required_owned_bytes != 0:
+        fail("hot admission: durable-home views must require zero owned model bytes")
+    if rank < 0:
+        fail("hot admission: rank must be non-negative")
+    report = budget_report(
+        hot_root,
+        budget_bytes=budget_bytes,
+        reserve_bytes=reserve_bytes,
+        filesystem_total_bytes=filesystem_total_bytes,
+        filesystem_available_bytes=filesystem_available_bytes,
+    )
+    used = report["used_bytes"]
+    replacing_owned = 0
+    if replacing_path is not None:
+        rep = pathlib.Path(replacing_path)
+        if not rep.is_absolute():
+            fail(f"hot admission: replacing path must be absolute: {rep}")
+        try:
+            rep.resolve(strict=False).relative_to(
+                pathlib.Path(hot_root).resolve(strict=False)
+            )
+        except ValueError:
+            fail(f"hot admission: replacing path escapes hot root: {rep}")
+        if rep.exists():
+            if rep.is_symlink() or not rep.is_dir():
+                fail(f"hot admission: replacing path is not a managed directory: {rep}")
+            replacing_owned = dir_size_bytes(rep)
+
+    projected_used = max(0, used - replacing_owned) + required_owned_bytes
+    filesystem = report["filesystem"]
+    available = int(filesystem["available_bytes"])
+    # Do not credit replacement bytes before deletion. This deliberately
+    # prefers an explicit purge/recheck over optimistic ENOSPC-prone recovery.
+    projected_available = available - required_owned_bytes
+    policy = report["policy"]
+    reserve = int(policy["reserve_bytes"])
+    hard_cap = policy.get("hard_cap_bytes")
+    blockers: list[dict[str, Any]] = []
+    if hard_cap is not None and projected_used > hard_cap:
+        blockers.append(
+            {
+                "code": "hard-cap-exceeded",
+                "detail": (
+                    f"projected owned hot bytes={projected_used} exceed "
+                    f"hard cap={hard_cap}"
+                ),
+            }
+        )
+    if projected_available < reserve:
+        blockers.append(
+            {
+                "code": "filesystem-reserve",
+                "detail": (
+                    f"writing {required_owned_bytes} bytes would leave "
+                    f"{max(0, projected_available)} available; reserve={reserve}"
+                ),
+            }
+        )
+    result = {
+        **report,
+        "rank": rank,
+        "node_id": node_id,
+        "hostname": hostname,
+        "runtime_source": runtime_source,
+        "required_owned_bytes": required_owned_bytes,
+        "replacing_owned_bytes": replacing_owned,
+        "projected_owned_hot_bytes": projected_used,
+        "projected_available_bytes": max(0, projected_available),
+        "state": "eligible" if not blockers else "blocked",
+        "ok": not blockers,
+        "blockers": blockers,
+    }
+    result["filesystem"] = {
+        **filesystem,
+        "projected_available_bytes": max(0, projected_available),
+    }
+    return result
 
 
 def ensure_budget_for_add(
@@ -3085,21 +3405,196 @@ def ensure_budget_for_add(
     add_bytes: int,
     *,
     budget_bytes: int | None = None,
+    reserve_bytes: int | None = None,
     replacing_path: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
-    report = budget_report(hot_root, budget_bytes=budget_bytes)
-    used = report["used_bytes"]
-    if replacing_path is not None:
-        rep = pathlib.Path(replacing_path)
-        if rep.is_dir():
-            used = max(0, used - dir_size_bytes(rep))
-    budget = report["budget_bytes"]
-    if used + add_bytes > budget:
-        fail(
-            f"hot budget exceeded: need {add_bytes} more bytes, "
-            f"used={used}, budget={budget}, hot_root={report['hot_root']}"
+    admission = hot_budget_admission(
+        hot_root,
+        add_bytes,
+        budget_bytes=budget_bytes,
+        reserve_bytes=reserve_bytes,
+        replacing_path=replacing_path,
+    )
+    if not admission["ok"]:
+        detail = "; ".join(
+            str(item.get("detail") or item.get("code"))
+            for item in admission["blockers"]
         )
-    return report
+        fail(f"hot budget exceeded: {detail}")
+    return admission
+
+
+def merge_hot_budget_observations(
+    observations: list[dict[str, Any]],
+    *,
+    expected_ranks: list[int],
+    topology_id: str,
+    mode: str,
+    profile: str = "",
+    model_id: str = "",
+    bytes_logical: int = 0,
+) -> dict[str, Any]:
+    if not topology_id:
+        fail("hot budget plan: topology_id is required")
+    if not mode:
+        fail("hot budget plan: mode is required")
+    if isinstance(bytes_logical, bool) or bytes_logical < 0:
+        fail("hot budget plan: model bytes must be non-negative")
+    expected = sorted(set(expected_ranks))
+    if not expected:
+        fail("hot budget plan: at least one rank is required")
+    if len(expected) != len(expected_ranks) or any(
+        isinstance(rank, bool) or not isinstance(rank, int) or rank < 0
+        for rank in expected
+    ):
+        fail("hot budget plan: expected ranks must be unique and non-negative")
+    by_rank: dict[int, dict[str, Any]] = {}
+    observed_node_ids: set[str] = set()
+    for observation in observations:
+        if not isinstance(observation, dict):
+            fail("hot budget plan: observation is not an object")
+        if observation.get("schema_version") != HOT_BUDGET_SCHEMA_VERSION:
+            fail("hot budget plan: unsupported observation schema")
+        if observation.get("kind") != HOT_BUDGET_OBSERVATION_KIND:
+            fail("hot budget plan: invalid observation kind")
+        rank = observation.get("rank")
+        if isinstance(rank, bool) or not isinstance(rank, int) or rank < 0:
+            fail("hot budget plan: observation rank is invalid")
+        if rank in by_rank:
+            fail(f"hot budget plan: duplicate observation for rank {rank}")
+        if not isinstance(observation.get("node_id"), str) or not observation["node_id"]:
+            fail(f"hot budget plan: rank {rank} node identity is missing")
+        if observation["node_id"] in observed_node_ids:
+            fail(
+                "hot budget plan: duplicate node identity "
+                f"{observation['node_id']!r}"
+            )
+        observed_node_ids.add(observation["node_id"])
+        observation_blockers = observation.get("blockers") or []
+        expected_state = "blocked" if observation_blockers else "eligible"
+        if observation.get("state") != expected_state:
+            fail(f"hot budget plan: rank {rank} state/blocker mismatch")
+        if observation.get("ok") is not (expected_state == "eligible"):
+            fail(f"hot budget plan: rank {rank} ok/state mismatch")
+        by_rank[rank] = observation
+    if sorted(by_rank) != expected:
+        fail(
+            f"hot budget plan: observed ranks {sorted(by_rank)} "
+            f"differ from expected {expected}"
+        )
+
+    blockers: list[dict[str, Any]] = []
+    for rank in expected:
+        observation = by_rank[rank]
+        for blocker in observation.get("blockers") or []:
+            if not isinstance(blocker, dict):
+                fail(f"hot budget plan: rank {rank} blocker is invalid")
+            blockers.append(
+                {
+                    **blocker,
+                    "rank": rank,
+                    "node_id": observation["node_id"],
+                    "hostname": observation.get("hostname") or "",
+                    "runtime_source": observation.get("runtime_source"),
+                }
+            )
+    return {
+        "schema_version": HOT_BUDGET_SCHEMA_VERSION,
+        "kind": HOT_BUDGET_PLAN_KIND,
+        "topology_id": topology_id,
+        "mode": mode,
+        "profile": profile or None,
+        "model_id": model_id or None,
+        "bytes_logical": bytes_logical,
+        "state": "eligible" if not blockers else "blocked",
+        "ok": not blockers,
+        "observed_nodes": [by_rank[rank] for rank in expected],
+        "blockers": blockers,
+    }
+
+
+def _human_bytes(value: int) -> str:
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    amount = float(max(0, value))
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if amount < 1024 or candidate == units[-1]:
+            break
+        amount /= 1024
+    return f"{amount:.0f} {unit}" if unit == "B" else f"{amount:.1f} {unit}"
+
+
+def render_hot_budget_plan(plan: dict[str, Any]) -> None:
+    if TerminalWriter is None:
+        fail("hot budget rendering requires scripts/terminal_format.py")
+    if plan.get("kind") != HOT_BUDGET_PLAN_KIND:
+        fail("hot budget rendering: invalid plan kind")
+    term = TerminalWriter()
+    term.emit(f"hot storage admission  {str(plan.get('state')).upper()}")
+    if plan.get("profile"):
+        term.field("profile", plan["profile"])
+    if plan.get("model_id"):
+        term.field("model", plan["model_id"])
+    if plan.get("bytes_logical"):
+        term.field("model bytes", _human_bytes(int(plan["bytes_logical"])))
+    term.field("nodes", len(plan.get("observed_nodes") or []))
+    term.field("automatic eviction", "disabled")
+    term.blank()
+    for observation in plan.get("observed_nodes") or []:
+        rank = observation["rank"]
+        source = observation.get("runtime_source") or "inventory"
+        term.emit(
+            f"rank {rank} · {source} · {str(observation.get('state')).upper()}",
+            initial_indent="  ",
+            subsequent_indent="    ",
+        )
+        policy = observation["policy"]
+        hard_cap = policy.get("hard_cap_bytes")
+        cap_text = _human_bytes(int(hard_cap)) if hard_cap is not None else "none"
+        term.emit(
+            (
+                f"need {_human_bytes(int(observation.get('required_owned_bytes') or 0))}"
+                f" · used {_human_bytes(int(observation.get('used_bytes') or 0))}"
+                f" · free {_human_bytes(int(observation['filesystem']['available_bytes']))}"
+            ),
+            initial_indent="    ",
+            subsequent_indent="    ",
+        )
+        term.emit(
+            (
+                f"reserve {_human_bytes(int(policy['reserve_bytes']))}"
+                f" · hard cap {cap_text}"
+            ),
+            initial_indent="    ",
+            subsequent_indent="    ",
+        )
+        if observation.get("reclaimable_bytes"):
+            term.emit(
+                f"reclaimable {_human_bytes(int(observation['reclaimable_bytes']))}",
+                initial_indent="    ",
+                subsequent_indent="    ",
+            )
+    blockers = plan.get("blockers") or []
+    if blockers:
+        term.blank()
+        term.emit(f"Blocked by {len(blockers)} condition(s):")
+        for blocker in blockers:
+            term.emit(
+                f"rank {blocker['rank']} · {blocker.get('code') or 'policy'}",
+                initial_indent="  ",
+                subsequent_indent="    ",
+            )
+            term.emit(
+                blocker.get("detail") or "hot admission failed",
+                initial_indent="    ",
+                subsequent_indent="    ",
+            )
+        term.blank()
+        term.emit("No bytes were changed. Purge an unpinned hot instance or free disk, then recheck.")
+    else:
+        term.blank()
+        term.emit("Every selected rank preserves its configured filesystem reserve.")
 
 
 def load_topology_for_plan(topology_file: str | pathlib.Path | None) -> dict[str, Any]:
@@ -3276,6 +3771,12 @@ def plan_activate(
     cid = hot_content_id(resolved["identity_key"], digest, validation)
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     target_ranks = list(range(nodes if nodes is not None else 1))
+    hot_storage_requirements = build_hot_storage_requirements(
+        target_ranks=target_ranks,
+        bytes_logical=bytes_logical,
+        instance_dir=instance,
+        home_rank=int(home["rank"]),
+    )
     existing = None
     if hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
@@ -3305,15 +3806,11 @@ def plan_activate(
                 "transport": transport,
                 "topology_id": topology_id,
                 "target_ranks": target_ranks,
+                "hot_storage_requirements": hot_storage_requirements,
                 "stamp": existing,
                 "transfer": None,
             }
 
-    ensure_budget_for_add(
-        hot_root,
-        bytes_logical,
-        replacing_path=instance if instance.is_dir() else None,
-    )
     stamp = build_hot_stamp(
         profile=profile,
         model_id=resolved["model_id"],
@@ -3394,6 +3891,7 @@ def plan_activate(
         "transport": transport,
         "topology_id": topology_id,
         "target_ranks": target_ranks,
+        "hot_storage_requirements": hot_storage_requirements,
         "stamp": stamp,
         "transfer": transfer,
         "rank_sources": (
@@ -4769,6 +5267,20 @@ def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
         nodes=args.nodes,
     )
     if args.execute and plan.get("action") == "stage-only":
+        admission = hot_budget_admission(
+            plan["hot_root"],
+            int(plan["bytes_logical"]),
+            replacing_path=plan["instance_dir"],
+            runtime_source="sealed-hot",
+            rank=0,
+            node_id="local-direct-execution",
+        )
+        if not admission["ok"]:
+            detail = "; ".join(
+                str(item.get("detail") or item.get("code"))
+                for item in admission["blockers"]
+            )
+            fail(f"cold stage-only: hot admission blocked: {detail}")
         # Publish ready only after a stable full verify creates the local witness.
         materialize_hub_tree(
             plan["source_path"],
@@ -4998,12 +5510,16 @@ def cmd_budget(args: argparse.Namespace) -> int:
     report = budget_report(
         args.hot_root or default_hot_root(),
         budget_bytes=args.budget_bytes,
+        reserve_bytes=args.reserve_bytes,
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(f"hot_root   {report['hot_root']}")
-        print(f"budget     {report['budget_bytes']} bytes")
+        hard_cap = report["policy"].get("hard_cap_bytes")
+        print(f"hard_cap   {hard_cap if hard_cap is not None else 'none'}")
+        print(f"reserve    {report['policy']['reserve_bytes']} bytes")
+        print(f"available  {report['filesystem']['available_bytes']} bytes")
         print(f"used       {report['used_bytes']} bytes")
         print(f"remaining  {report['remaining_bytes']} bytes")
         print(f"instances  {len(report['instances'])}")
@@ -5011,6 +5527,79 @@ def cmd_budget(args: argparse.Namespace) -> int:
             pin = " pinned" if item.get("pinned") else ""
             print(f"  - {item['profile']} {item['bytes']}B{pin}")
             print(f"    {item['path']}")
+    return 0
+
+
+def cmd_budget_admission(args: argparse.Namespace) -> int:
+    observation = hot_budget_admission(
+        args.hot_root or default_hot_root(),
+        args.required_owned_bytes,
+        budget_bytes=args.hard_cap_bytes,
+        reserve_bytes=args.reserve_bytes,
+        replacing_path=args.replacing_path or None,
+        runtime_source=args.runtime_source,
+        rank=args.rank,
+        node_id=args.node_id,
+        hostname=args.hostname or "",
+    )
+    if args.compact:
+        print(json.dumps(observation, sort_keys=True, separators=(",", ":")))
+    else:
+        print(json.dumps(observation, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_merge_budget_admissions(args: argparse.Namespace) -> int:
+    observations: list[dict[str, Any]] = []
+    try:
+        with open(args.observations_file, encoding="utf-8") as handle:
+            for line_number, raw in enumerate(handle, start=1):
+                if not raw.strip():
+                    continue
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    fail(
+                        f"hot budget plan: observation line {line_number}: {exc}"
+                    )
+                if not isinstance(value, dict):
+                    fail(
+                        f"hot budget plan: observation line {line_number} "
+                        "is not an object"
+                    )
+                observations.append(value)
+    except OSError as exc:
+        fail(f"hot budget plan: cannot read observations: {exc}")
+    expected_ranks: list[int] = []
+    for raw in args.expected_ranks.split(","):
+        try:
+            expected_ranks.append(int(raw))
+        except ValueError:
+            fail(f"hot budget plan: invalid expected rank {raw!r}")
+    plan = merge_hot_budget_observations(
+        observations,
+        expected_ranks=expected_ranks,
+        topology_id=args.topology_id,
+        mode=args.mode,
+        profile=args.profile or "",
+        model_id=args.model_id or "",
+        bytes_logical=args.bytes_logical,
+    )
+    print(json.dumps(plan, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_render_budget_plan(args: argparse.Namespace) -> int:
+    if args.plan_json:
+        try:
+            plan = json.loads(args.plan_json)
+        except json.JSONDecodeError as exc:
+            fail(f"hot budget rendering: {exc}")
+    else:
+        plan = load_json(args.plan_file)
+    if not isinstance(plan, dict):
+        fail("hot budget rendering: plan is not an object")
+    render_hot_budget_plan(plan)
     return 0
 
 
@@ -5694,8 +6283,51 @@ def build_parser() -> argparse.ArgumentParser:
     bud = sub.add_parser("budget", help="Report hot staging disk budget")
     bud.add_argument("--hot-root", default="")
     bud.add_argument("--budget-bytes", type=int, default=None)
+    bud.add_argument("--reserve-bytes", type=int, default=None)
     bud.add_argument("--json", action="store_true")
     bud.set_defaults(func=cmd_budget)
+
+    badmit = sub.add_parser(
+        "budget-admission",
+        help="Observe one rank's filesystem-backed hot admission policy",
+    )
+    badmit.add_argument("--hot-root", default="")
+    badmit.add_argument("--rank", type=int, required=True)
+    badmit.add_argument("--node-id", required=True)
+    badmit.add_argument("--hostname", default="")
+    badmit.add_argument(
+        "--runtime-source",
+        required=True,
+        choices=("durable-home", "sealed-hot", "inventory", "pin"),
+    )
+    badmit.add_argument("--required-owned-bytes", type=int, required=True)
+    badmit.add_argument("--replacing-path", default="")
+    badmit.add_argument("--hard-cap-bytes", type=int, default=None)
+    badmit.add_argument("--reserve-bytes", type=int, default=None)
+    badmit.add_argument("--compact", action="store_true")
+    badmit.set_defaults(func=cmd_budget_admission)
+
+    bmerge = sub.add_parser(
+        "merge-budget-admissions",
+        help="Merge exact all-rank hot budget observations",
+    )
+    bmerge.add_argument("--observations-file", required=True)
+    bmerge.add_argument("--expected-ranks", required=True)
+    bmerge.add_argument("--topology-id", required=True)
+    bmerge.add_argument("--mode", required=True)
+    bmerge.add_argument("--profile", default="")
+    bmerge.add_argument("--model-id", default="")
+    bmerge.add_argument("--bytes-logical", type=int, default=0)
+    bmerge.set_defaults(func=cmd_merge_budget_admissions)
+
+    brender = sub.add_parser(
+        "render-budget-plan",
+        help="Render an all-rank hot admission plan",
+    )
+    brender_source = brender.add_mutually_exclusive_group(required=True)
+    brender_source.add_argument("--plan-json")
+    brender_source.add_argument("--plan-file")
+    brender.set_defaults(func=cmd_render_budget_plan)
 
     inv = sub.add_parser("inventory-digest", help="Digest a hub tree")
     inv.add_argument("--hub-path", required=True)

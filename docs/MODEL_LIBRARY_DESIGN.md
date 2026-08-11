@@ -310,9 +310,11 @@ active storage       = 1 durable home + (N - 1) sealed-hot working copies
 after unpinned stop  = 1 × model_size
 ```
 
-The home-rank symlink contributes no owned hot bytes. Target budget accounting
-charges only materialized hot content; the current stamp/budget implementation
-may over-account the symlink until later runtime work aligns it with this rule.
+The home-rank symlink contributes no owned hot model bytes. Admission charges
+the exact sealed manifest size only to ranks whose runtime source is
+`sealed-hot`; a `durable-home` view requires zero additional model bytes.
+Existing files anywhere below the hot root, including untracked or malformed
+managed content, still count toward that rank's current owned-hot total.
 
 ### 4.3 Pins and disk budget
 
@@ -323,10 +325,29 @@ may over-account the symlink until later runtime work aligns it with this rule.
 | **Pinned cold stage-only** | Keep every staged rank | May be self-contained | No warm home exists |
 | Running warm-home | Sealed hot on non-home ranks | N/A | **Required on its rank** |
 
-Pins are bounded by a per-node hot-disk budget, not unlimited growth.
-Activate/pin refuses when owned hot bytes would exceed policy. Pin protects
-non-home hot content from purge; it does not convert the durable home into hot,
-duplicate it, or claim survival after home loss.
+Pins are bounded by a per-rank filesystem-backed hot policy, not unlimited
+growth. By default every selected rank must preserve available space equal to
+the greater of 64 GiB or 5% of that filesystem's total capacity after the
+planned write. There is no arbitrary default hard cap. An operator may set an
+explicit hard cap with `PULSAR_HOT_BUDGET_BYTES` or replace the default reserve
+with `PULSAR_HOT_RESERVE_BYTES`; both values apply independently on every
+selected rank.
+
+Activate, cold stage-only, pin, and budget inventory collect an exact
+observation from every selected physical rank before mutation. A missing,
+duplicate, unreachable, or blocked rank fails the all-rank barrier before
+model bytes change. Accounting uses filesystem space available to the service
+user (`statvfs.f_bavail`), counts the complete hot root without following
+symlinks, and reports pinned, reclaimable, untracked, and malformed state.
+Replacement may credit the old instance against an explicit hard cap, but it
+does not optimistically credit those bytes as free space before deletion.
+
+There is no automatic eviction, transport fallback, or reserve relaxation.
+The operator explicitly purges an unpinned instance or frees disk and then
+rechecks. Supported hot mutations are serialized against one another, while
+launch/readiness paths hold a shared hot-state lock. Pin protects non-home hot
+content from purge; it does not convert the durable home into hot, duplicate
+it, or claim survival after home loss.
 
 ### 4.4 Warm restart and home-loss semantics
 
@@ -546,6 +567,8 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Serving ranks receive read-only exact-snapshot views in physical launch evidence
 [x] Hot purge and force-unpin no-follow behavior passes the physical gate
 [x] Warm-home pin/restart reports its durable-home dependency honestly
+[x] Exact all-rank admission charges durable-home as zero and sealed-hot by manifest bytes
+[ ] Flagship-sized non-home admission preserves the default reserve on every selected rank
 ```
 
 The active-use guard has deterministic coverage for exact target shape,
@@ -558,9 +581,9 @@ was removed. See
 The witness checks above have deterministic control-plane coverage. The
 legacy-unsealed Qwen canary also passed the physical symlink, both-rank witness,
 read-only launch, pin/restart, mismatch, and no-follow purge gate on 2026-08-11.
-Neither artifact issues a real seal or replaces the production budget, strict
-DeepSeek determinism, or sustained soak gates. Failed or incomplete evidence is
-not rewritten because an architectural blocker changed.
+Neither artifact issues a real seal or replaces the flagship-sized budget,
+strict DeepSeek determinism, or sustained soak gates. Failed or incomplete
+evidence is not rewritten because an architectural blocker changed.
 
 ---
 
@@ -571,7 +594,6 @@ not rewritten because an architectural blocker changed.
   validation-bundle documents
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas
-- Numeric production defaults and policy UX for non-home hot/pin budgets
 - Destructive duplicate-home cleanup beyond the current recommendation flow
 - Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete physical promotion matrix, including time-to-healthy, interruption,
@@ -610,3 +632,4 @@ not rewritten because an architectural blocker changed.
 | 2026-08-11 | Qwen 1.7B physically passed durable-home symlink, non-home sealed-hot, both-rank witness fallback, exact-snapshot read-only launch, warm-home pin/restart, mismatch fail-closed, and force-unpin no-follow purge. The artifact is `legacy-unsealed`; release identity and promotion remain open. |
 | 2026-08-11 | Guarded durable-home removal probes every confirmed node, blocks all managed hot/container references, serializes supported lifecycle commands, requires explicit last-home acknowledgement, and deletes only an unchanged exact single-revision repository. |
 | 2026-08-11 | The durable-home removal guard passed deterministic tests and a three-node physical gate using disposable synthetic repositories; the real Qwen home and adjacent repository content were preserved. |
+| 2026-08-11 | Implemented exact all-rank hot admission: sealed-hot ranks charge manifest bytes, durable-home views charge zero, the default preserves max(64 GiB, 5% filesystem capacity), optional hard caps remain explicit, and blocked capacity never auto-evicts or falls back. |

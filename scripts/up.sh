@@ -74,6 +74,9 @@ case "$WEIGHT_SOURCE" in
   replicated|fabric|library-hot) ;;
   *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
 esac
+if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  acquire_model_library_hot_lock shared
+fi
 [ "$WEIGHT_SOURCE" != fabric ] || [ "$NODES" -gt 1 ] \
   || die "fabric weights are only valid for multi-node profiles" 2
 WEIGHT_ARGS=(--weight-source "$WEIGHT_SOURCE")

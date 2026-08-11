@@ -77,6 +77,9 @@ case "$WEIGHT_SOURCE" in
   fabric) die "serve.sh does not support fabric; use multi-node start-cluster" 2 ;;
   *) die "--weight-source must be replicated or library-hot" 2 ;;
 esac
+if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  acquire_model_library_hot_lock shared
+fi
 if [ -n "$PORT_OVERRIDE" ]; then
   case "$PORT_OVERRIDE" in
     *[!0-9]*|"") die "invalid --port '$PORT_OVERRIDE' (expected 1-65535)" 2 ;;

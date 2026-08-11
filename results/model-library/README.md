@@ -23,6 +23,14 @@ three-node physical checks using only disposable synthetic repositories. Its
 artifact closes that lifecycle gate without changing model identity, profile
 status, guided defaults, or the Qwen home's retained state.
 
+The filesystem-backed admission policy is implemented and deterministic tests
+cover default reserve arithmetic, optional hard caps, durable-home zero charge,
+sealed-hot manifest charge, replacement accounting, no-follow inventory,
+malformed/untracked bytes, exact all-rank merge, narrow output, and hot-lock
+contention. A sanitized non-mutating flagship-sized physical artifact is still
+pending; raw `budget --json` output is site-local because it contains node and
+path identity.
+
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
 | `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Current lifecycle gate PASS; no production model was deleted; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |

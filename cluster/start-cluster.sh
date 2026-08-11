@@ -51,6 +51,9 @@ case "$WEIGHT_SOURCE" in
   replicated|fabric|library-hot) ;;
   *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
 esac
+if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  acquire_model_library_hot_lock shared
+fi
 resolve_spec_decode "$SPEC_MODE"
 if status_requires_force && [ "$FORCE" != 1 ]; then
   echo "$MODEL_NAME status=$STATUS — refuse start without --force (allowlist: tested*)" >&2
