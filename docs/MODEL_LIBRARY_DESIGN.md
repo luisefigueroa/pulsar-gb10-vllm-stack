@@ -20,7 +20,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); expected-seal/exact-revision, serve-time witness, and guarded durable-home removal landed; issued release seals pending |
+| Status | Implemented experiment (not promoted); expected-seal/exact-revision, content-addressed validation-bundle verification, serve-time witness, and guarded durable-home removal landed; issued release seals/bundles pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -48,9 +48,11 @@ commit explicitly. Guarded home removal now requires all confirmed nodes'
 managed hot state and Docker state to be observable, blocks retained hot views
 and managed containers, and serializes supported readers/launchers against
 deletion. Removal is limited to an exact single-revision HF repository and
-rechecks its metadata immediately before retirement. The standalone
-machine-readable validation-bundle document
-remains unimplemented.
+rechecks its metadata immediately before retirement. A sealed profile now also
+requires a content-addressed schema-1 validation bundle whose primary model,
+external artifacts, lab provenance/evidence, digest-pinned image, normalized
+runtime contract, and geometry match the reviewed seal and live sourced
+profile. No production profile has an issued seal or bundle yet.
 
 ---
 
@@ -407,9 +409,12 @@ atomically refreshes the witness only on success. Launch then passes the exact
 snapshot path. For `identity_status=match`, that manifest is bound to the
 lab-issued expected seal. A `legacy-unsealed` experiment gets only
 activation-manifest integrity and never becomes validated through the witness.
-The seal carries a lab-provided validation-bundle ID, but a standalone bundle
-document that machine-checks the full profile/image/geometry binding is still
-pending.
+The seal points one-way to a content-addressed schema-1 validation bundle.
+Profile load verifies the bundle ID, exact primary model projection,
+provenance/evidence parity, declared external-artifact identities/digests, and
+normalized live profile/image/geometry binding before catalog, activation, or launch may use
+the sealed claim. The bundle deliberately omits the seal ID to avoid a hash
+cycle. No real profile bundle is issued in the repository yet.
 
 ### 4.6 Activate transfers
 
@@ -557,7 +562,8 @@ The accepted symlink design replaces the former owner-materialization blocker.
 Promotion now requires this identity/lifecycle evidence:
 
 ```text
-[ ] Repo release provides a real lab-issued seal and validation-bundle ID
+[x] Content-addressed validation-bundle schema and live profile binding are enforced
+[ ] Repo release provides a real lab-issued seal and complete validation bundle
 [x] Catalog/activation compare exact model, commit, and manifest
 [x] Launch validates witness (or full-verifies drift) and passes exact snapshot path
 [x] Home-rank activation creates the durable-home symlink/view, not a hot copy
@@ -594,8 +600,7 @@ because an architectural blocker changed.
 ## 8. Remaining deferred work
 
 - Promotion into the wizard or other guided defaults
-- Issue reviewed seals for real profiles and add machine-readable immutable
-  validation-bundle documents
+- Issue a reviewed real-profile seal and complete immutable validation bundle
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas
 - Destructive duplicate-home cleanup beyond the current recommendation flow
@@ -638,3 +643,4 @@ because an architectural blocker changed.
 | 2026-08-11 | The durable-home removal guard passed deterministic tests and a three-node physical gate using disposable synthetic repositories; the real Qwen home and adjacent repository content were preserved. |
 | 2026-08-11 | Implemented exact all-rank hot admission: sealed-hot ranks charge manifest bytes, durable-home views charge zero, the default preserves max(64 GiB, 5% filesystem capacity), optional hard caps remain explicit, and blocked capacity never auto-evicts or falls back. |
 | 2026-08-11 | The non-mutating flagship gate inventoried every confirmed rank, then passed on both DeepSeek-selected ranks: 166,898,661,074 bytes on sealed-hot, zero on durable-home, default reserve preserved, one-byte hard cap blocked, and hot ownership unchanged. |
+| 2026-08-11 | Implemented content-addressed validation-bundle schema 1 and fail-closed profile-load verification across exact model identity, declared external-artifact identities/digests, lab provenance/evidence, digest-pinned image, normalized runtime configuration, memory contract, and geometry. No production seal or bundle was issued. |

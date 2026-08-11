@@ -448,6 +448,18 @@ an unpinned hot instance or free disk, run `budget` again, and retry.
 
 **Current identity behavior:** a tested profile may reference a reviewed seal
 under `models/seals/` with `EXPECTED_MODEL_SEAL="seals/<file>.json"`.
+That seal must name a content-addressed document at
+`models/validation-bundles/<validation_bundle_id>.json`. Profile load verifies
+the bundle's model/seal projection, lab provenance/evidence, declared
+external-artifact identities/digests, digest-pinned image, normalized
+runtime/memory settings, and geometry against the live sourced profile.
+Inspect the release binding with:
+
+```bash
+scripts/model-library.sh validation-bundle verify <profile>
+scripts/model-library.sh validation-bundle verify <profile> --json
+```
+
 Catalog schema 2 selects only its immutable commit. Activation full-hashes every
 rank, compares model/commit/manifest to the expected seal, writes hot schema 3
 with expected and observed provenance, and atomically creates that rank's
@@ -471,14 +483,16 @@ does not refresh. Reactivate if the fallback fails. Do not hand-edit
 `hot.json` or `witness.json`, and do not treat a successful rehash of
 `legacy-unsealed` content as lab validation.
 
-No real profile seal ships yet, so current profiles are `legacy-unsealed` and
+No real profile seal or validation bundle ships yet, so current profiles are
 require `--allow-unvalidated` for this experimental path. Catalog refresh
 enumerates complete `snapshots/<revision>` directories directly. A sealed
 profile therefore finds its reviewed commit even when `refs/main` is absent or
 has moved; only the legacy-unsealed experimental selection consults an
 unambiguous `refs/main`. Follow
-[models/seals/README.md](../models/seals/README.md) for the lab issuance
-contract; never derive expected identity from a user cache.
+[models/seals/README.md](../models/seals/README.md) and
+[models/validation-bundles/README.md](../models/validation-bundles/README.md)
+for the lab issuance contract; never derive expected identity from a user
+cache.
 
 **Upgrade note:** catalog schema 1 and hot schema 2 state are intentionally not
 accepted by this implementation. After upgrading, run `catalog refresh`, then

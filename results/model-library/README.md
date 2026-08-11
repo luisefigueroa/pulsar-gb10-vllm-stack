@@ -9,8 +9,10 @@ it does not override accepted architecture in
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
 measurements and other failed/pending gates remain valid and are not rewritten.
-Catalog schema 2/hot schema 3 expected-seal enforcement and rank-local witness
-schema 1 landed afterward. Deterministic tests cover unchanged metadata, drift
+Catalog schema 2/hot schema 3 expected-seal enforcement, content-addressed
+validation-bundle schema 1, and rank-local witness schema 1 landed afterward.
+No production bundle was issued and no historical artifact was relabeled as
+lab-sealed. Deterministic tests cover unchanged metadata, drift
 fallback, same-size corruption, symlink retargeting, and rank-local filesystem
 identity. The 2026-08-11 Qwen artifact adds physical symlink, witness,
 read-only launch, pin/restart, mismatch, and no-follow purge evidence, but it is
