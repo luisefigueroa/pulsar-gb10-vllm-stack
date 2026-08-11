@@ -35,6 +35,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+acquire_model_library_lifecycle_lock shared
 load_conf "$NAME"
 case "$WEIGHT_SOURCE" in
   replicated|fabric|library-hot) ;;

@@ -47,6 +47,8 @@ run "model library serve-witness contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_witness.py"
 run "model library expected-seal contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_expected_seal.py"
+run "model library durable-home removal contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_home_removal.py"
 run "model library startup-evidence contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_startup_metric.py"
 run "federated model library catalog" "$REPO_DIR/scripts/selftest-model-library.sh"

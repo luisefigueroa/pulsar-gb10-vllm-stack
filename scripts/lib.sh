@@ -109,6 +109,47 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1 (install it and retry)"
 }
 
+# Serialize supported launches/library operations against destructive durable-
+# home removal. Shared holders may read/activate/launch concurrently; removal
+# takes the exclusive form before it probes references and changes a home.
+acquire_model_library_lifecycle_lock() {
+  local mode="${1:-shared}" timeout lock_dir lock_path lock_parent lock_fd
+  case "$mode" in
+    shared|exclusive) ;;
+    *) die "model library lifecycle lock mode must be shared or exclusive" ;;
+  esac
+  if [ -n "${PULSAR_MODEL_LIBRARY_LOCK_FD:-}" ]; then
+    [ "${PULSAR_MODEL_LIBRARY_LOCK_MODE:-}" = "$mode" ] \
+      || die "model library lifecycle lock is already held in another mode"
+    return 0
+  fi
+  command -v flock >/dev/null 2>&1 \
+    || die "flock is required for model library lifecycle safety"
+  timeout="${PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS:-30}"
+  [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    || die "PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS must be numeric"
+  lock_dir="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
+  lock_path="${PULSAR_MODEL_LIBRARY_LOCK_FILE:-$lock_dir/lifecycle.lock}"
+  lock_parent=$(dirname -- "$lock_path")
+  mkdir -p "$lock_parent" \
+    || die "cannot create model library lock directory: $lock_parent"
+  exec {lock_fd}>"$lock_path" \
+    || die "cannot open model library lifecycle lock: $lock_path"
+  if [ "$mode" = exclusive ]; then
+    flock -x -w "$timeout" "$lock_fd" || {
+      exec {lock_fd}>&-
+      die "model library is busy; exclusive home-removal lock timed out"
+    }
+  else
+    flock -s -w "$timeout" "$lock_fd" || {
+      exec {lock_fd}>&-
+      die "durable-home removal is in progress; launch/library lock timed out"
+    }
+  fi
+  PULSAR_MODEL_LIBRARY_LOCK_FD="$lock_fd"
+  PULSAR_MODEL_LIBRARY_LOCK_MODE="$mode"
+}
+
 # Load models/<name>.conf into caller shell. Resets optional fields first.
 load_conf() {
   local name="${1:?load_conf: model name required}"
