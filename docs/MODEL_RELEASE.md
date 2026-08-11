@@ -25,6 +25,28 @@ policy. The service does not acquire model bytes, run validation gates, edit a
 profile, copy documents into `models/seals/` or
 `models/validation-bundles/`, or change `STATUS`.
 
+## First issued profile
+
+The one-node diagnostic `qwen3-1.7b` profile is the first claim issued through
+this workflow. Its reviewed trust roots are:
+
+- expected seal
+  `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`;
+- validation bundle
+  `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`;
+- exact model commit
+  `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`; and
+- complete manifest
+  `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`.
+
+The reviewed evidence is indexed in
+[results/model-library/README.md](../results/model-library/README.md). A fresh
+candidate reproduced byte-for-byte before publication, the trusted bundle
+verifier returned `match`, and a post-issuance physical `library-hot`
+activation/launch used those exact identities. This narrowly establishes the
+one-node diagnostic claim. It does not seal `qwen3-1.7b-2node`, promote the
+model-library path, or content-bind replicated/live-mount launches.
+
 ## Trust boundary
 
 Every generated descriptor says:
@@ -124,10 +146,10 @@ Verification checks the candidate content address, exact manifest, seal/bundle
 cross-links, normalized live profile, evidence presence, file set, and
 unreviewed authority state. Any profile drift or document tampering fails.
 
-## Review and eventual issuance
+## Review and issuance
 
-The repository does not yet automate trusted issuance or publication. A future
-release pull request must still receive maintainer review that confirms:
+The repository does not automate trusted issuance or publication. Every
+release pull request must receive maintainer review that confirms:
 
 - the manifest came from the exact snapshot used by the recorded lab run;
 - the complete candidate is reproducible from the claimed inputs;
@@ -139,7 +161,7 @@ release pull request must still receive maintainer review that confirms:
 - adding `EXPECTED_MODEL_SEAL` and any `STATUS` change is justified by the
   applicable revalidation gates.
 
-Only after that review may a pull request deliberately place the reviewed
+Only after that review may the pull request deliberately place the reviewed
 documents under the trusted model directories and update the profile. The
 candidate tool has no command for that action. After the reviewed files and
 profile reference exist, run:

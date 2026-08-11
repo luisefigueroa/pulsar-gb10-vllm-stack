@@ -1,0 +1,28 @@
+{
+  "kind": "pulsar-expected-model-seal",
+  "manifest": {
+    "manifest_id": "775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1",
+    "scheme": "sha256-snapshot-manifest-v1"
+  },
+  "model_id": "Qwen/Qwen3-1.7B",
+  "profile": "qwen3-1.7b",
+  "provenance": {
+    "evidence": [
+      "results/model-library/qwen3-1.7b-release-validation-20260811.json",
+      "results/model-library/qwen3-1.7b-snapshot-manifest-20260811.json",
+      "results/qwen3-1.7b-release-identity-20260811-runA.json",
+      "results/qwen3-1.7b-release-identity-20260811-runB.json",
+      "results/qwen3-1.7b-release-identity-20260811-bench.json",
+      "results/qwen1.7b-vllm-node2-runA.json",
+      "results/qwen1.7b-hf-ref.json",
+      "results/model-library/qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json"
+    ],
+    "issued_at": "2026-08-11T22:53:17Z",
+    "issuer": "Pulsar GB10 validation lab",
+    "validation_bundle_id": "9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380"
+  },
+  "revision_kind": "huggingface-commit",
+  "schema_version": 1,
+  "seal_id": "ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94",
+  "snapshot_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
+}

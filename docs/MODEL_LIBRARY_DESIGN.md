@@ -22,8 +22,8 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); expected-seal/exact-revision enforcement, content-addressed validation-bundle verification, untrusted release-candidate assembly, serve-time witness, and guarded durable-home removal landed; reviewed issuance pending |
-| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10 |
+| Status | Implemented experiment (not promoted); the one-node diagnostic `qwen3-1.7b` identity is issued and physically enforced on `library-hot`; promotion-scope profile issuance, strict determinism, and soak remain pending |
+| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
@@ -41,8 +41,10 @@ expectation, then uses the witness when canonical view and file metadata are
 unchanged. A missing, invalid, or drifted witness is visible and causes a stable
 full SHA-256 verification; success atomically refreshes it, while a content
 mismatch fails without refresh. Launch still passes the exact
-`snapshots/<revision>` path to vLLM. Existing profiles have no issued seals and
-remain `legacy-unsealed`; they require explicit `--allow-unvalidated` for
+`snapshots/<revision>` path to vLLM. The one-node diagnostic `qwen3-1.7b`
+profile carries the first issued seal/bundle and reaches `identity=match` on
+`library-hot`. Every other tested profile, including `qwen3-1.7b-2node`,
+remains `legacy-unsealed` and requires explicit `--allow-unvalidated` for
 model-library experiments. Catalog refresh discovers complete snapshot commit
 directories independently of mutable `refs/main`; sealed inspection,
 manifest construction, verification, and launch all receive that selected
@@ -54,7 +56,9 @@ rechecks its metadata immediately before retirement. A sealed profile now also
 requires a content-addressed schema-1 validation bundle whose primary model,
 external artifacts, lab provenance/evidence, digest-pinned image, normalized
 runtime contract, and geometry match the reviewed seal and live sourced
-profile. No production profile has an issued seal or bundle yet.
+profile. This enforcement currently belongs to `library-hot`; replicated and
+live-mount launches are not yet content-bound by expected seals. No guided,
+multi-node, or flagship profile has an issued seal/bundle yet.
 
 `scripts/model_identity.py` is the single local owner of the profile-contract,
 validation-bundle, and expected-seal schemas. `scripts/model-release.sh` can
@@ -247,7 +251,8 @@ awareness and advanced/explicit flows only.
 commit and label it `expected-unverified`; activation then computes the observed
 manifest and must reach `match`. `catalog list --validated` includes only
 entries carrying a reviewed expected seal, never legacy repository-ID-only
-claims. No production profile seal is issued in this release.
+claims. The one-node diagnostic `qwen3-1.7b` profile is the first issued seal;
+all other tested profiles remain legacy-unsealed.
 
 ### 3.3 Duplicates
 
@@ -423,7 +428,9 @@ Profile load verifies the bundle ID, exact primary model projection,
 provenance/evidence parity, declared external-artifact identities/digests, and
 normalized live profile/image/geometry binding before catalog, activation, or launch may use
 the sealed claim. The bundle deliberately omits the seal ID to avoid a hash
-cycle. No real profile bundle is issued in the repository yet.
+cycle. The one-node diagnostic `qwen3-1.7b` profile now carries the first
+reviewed bundle. It does not seal the two-node Qwen profile or promote this
+storage path.
 
 The maintainer-only release service now builds the same schema through
 `scripts/model_identity.py`, but its output is explicitly `unreviewed` with
@@ -579,7 +586,9 @@ Promotion now requires this identity/lifecycle evidence:
 ```text
 [x] Content-addressed validation-bundle schema and live profile binding are enforced
 [x] Deterministic candidate tooling refuses trusted roots and cannot claim authority
-[ ] Repo release provides a real lab-issued seal and complete validation bundle
+[x] Repo release provides the first real lab-issued seal and complete validation bundle (`qwen3-1.7b`)
+[x] First sealed one-node profile passes catalog, activation, launch, labels, smoke, and witness evidence
+[ ] A promotion-scope multi-node or flagship profile has an issued seal/bundle and applicable physical identity/lifecycle evidence
 [x] Catalog/activation compare exact model, commit, and manifest
 [x] Launch validates witness (or full-verifies drift) and passes exact snapshot path
 [x] Home-rank activation creates the durable-home symlink/view, not a hot copy
@@ -601,22 +610,29 @@ gate using disposable synthetic repositories on 2026-08-11; no production home
 was removed. See
 `results/model-library/model-library-home-removal-guard-20260811.json`.
 The witness checks above have deterministic control-plane coverage. The
-legacy-unsealed Qwen canary also passed the physical symlink, both-rank witness,
-read-only launch, pin/restart, mismatch, and no-follow purge gate on 2026-08-11.
+legacy-unsealed two-node Qwen canary also passed the physical symlink,
+both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
+gate on 2026-08-11. The separately issued one-node diagnostic Qwen profile then
+passed catalog resolution, full-hash activation without an override,
+exact-snapshot read-only launch, identity labels, smoke, cleanup, and a
+zero-byte unchanged witness using the reviewed seal/bundle.
 The non-mutating DeepSeek admission gate then passed exact home-zero/non-home
 manifest accounting, the default filesystem reserve, an explicit hard-cap
 refusal, and unchanged hot ownership. See
 `results/model-library/model-library-hot-budget-admission-gate-20260811.json`.
-None of these artifacts issues a real seal or replaces strict DeepSeek
-determinism or sustained soak. Failed or incomplete evidence is not rewritten
-because an architectural blocker changed.
+The earlier lifecycle, removal, and admission artifacts do not issue or
+retroactively acquire an identity. The new one-node issuance does not replace
+a promotion-scope sealed profile, strict DeepSeek determinism, or sustained
+soak. Failed or incomplete evidence is not rewritten because an architectural
+blocker changed.
 
 ---
 
 ## 8. Remaining deferred work
 
 - Promotion into the wizard or other guided defaults
-- Review and issue a real-profile seal and complete immutable validation bundle
+- Issue reviewed seals/bundles for a promotion-scope multi-node or flagship
+  profile and, over time, the remaining supported profiles
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas
 - Destructive duplicate-home cleanup beyond the current recommendation flow
@@ -661,3 +677,4 @@ because an architectural blocker changed.
 | 2026-08-11 | The non-mutating flagship gate inventoried every confirmed rank, then passed on both DeepSeek-selected ranks: 166,898,661,074 bytes on sealed-hot, zero on durable-home, default reserve preserved, one-byte hard cap blocked, and hot ownership unchanged. |
 | 2026-08-11 | Implemented content-addressed validation-bundle schema 1 and fail-closed profile-load verification across exact model identity, declared external-artifact identities/digests, lab provenance/evidence, digest-pinned image, normalized runtime configuration, memory contract, and geometry. No production seal or bundle was issued. |
 | 2026-08-11 | Added a maintainer-only release identity service: `model_identity.py` owns the trust schemas, while `model-release` hashes an exact commit and atomically assembles deterministic unreviewed candidates below a protected output boundary. It cannot issue, publish, edit profiles, or change status; no production seal or bundle was issued. |
+| 2026-08-11 | Issued the first reviewed lab identity for the one-node diagnostic `qwen3-1.7b`: exact commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, complete manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, seal `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`, and bundle `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`. Post-issuance `library-hot` activation/launch matched physically; this does not seal the two-node profile or promote the path. |

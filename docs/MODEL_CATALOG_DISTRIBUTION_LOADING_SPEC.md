@@ -48,8 +48,11 @@ all-confirmed-node reference observation and lifecycle serialization. A sealed
 profile now requires a content-addressed schema-1 validation bundle matching
 the seal and live profile contract. Shared Python identity code now owns those
 schemas, and candidate tooling can assemble deterministic unreviewed documents
-without access to the trusted directories. No real profile seal or bundle
-ships yet.
+without access to the trusted directories. The one-node diagnostic
+`qwen3-1.7b` profile now carries the first reviewed seal/bundle and has passed
+post-issuance physical `library-hot` enforcement. Every other tested profile
+remains legacy-unsealed; this does not promote the path or bind
+replicated/live-mount launches.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -938,14 +941,17 @@ hot schema 3 only after full verification. A configured mismatch cannot be
 bypassed with `--allow-unvalidated`.
 
 Profiles without a seal remain `legacy-unsealed`, including every current
-production profile. Their historical `STATUS=tested*` claim does not
-machine-bless arbitrary content and library activation requires explicit
-`--allow-unvalidated`. Replicated mode still has no equivalent content lock.
+guided production profile and `qwen3-1.7b-2node`. Their historical
+`STATUS=tested*` claim does not machine-bless arbitrary content and library
+activation requires explicit `--allow-unvalidated`. The one-node diagnostic
+`qwen3-1.7b` profile is the first issued exception. Replicated mode still has
+no equivalent content lock.
 The seal's reviewed validation-bundle ID resolves to a content-addressed
 schema-1 document. Profile load verifies the bundle's exact primary model,
 declared external-artifact identities/digests, provenance/evidence, normalized
-live runtime/memory contract, digest-pinned image, and geometry. No real
-release bundle exists yet.
+live runtime/memory contract, digest-pinned image, and geometry. The first
+reviewed bundle now binds the exact one-node diagnostic Qwen claim; it does not
+bind any other profile or storage path.
 
 ### 12.2 Fabric integrity level
 
@@ -1004,6 +1010,7 @@ promotes any experimental storage path for general users.
 | Three-node concurrent loading/traffic proof | PENDING | Three ranks pass readiness/full integrity, but concurrent three-node promotion evidence remains required. |
 | Restart loop and sustained fabric soak | PENDING | Required before general promotion. |
 | Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
+| One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash activation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
 | Durable-home active-use removal guard | PASS on three-node physical topology | Disposable synthetic repositories proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. No production home was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
 
@@ -1068,7 +1075,7 @@ explains why that choice matters, shows existing copy/free-space/boot evidence,
 and confirms storage-visible scope. Silently electing an owner would create an
 availability and capacity policy that profiles do not currently express.
 
-### 15.3 Model identity binding: implemented mechanism, no issued release seals
+### 15.3 Model identity binding: first diagnostic identity issued
 
 Profiles may now reference a reviewed schema-1 expected seal with immutable
 commit, complete manifest ID, validation-bundle ID, issuer, issuance time, and
@@ -1095,10 +1102,15 @@ gitignored `experiments/release-candidates/`. Its descriptor is fixed to
 `state=unreviewed`, `authority=none`, privacy review pending, and promotion not
 authorized. It is deliberately absent from `./pulsar` and the wizard.
 
-No real profile seal or bundle is issued in this release, so existing profiles
-remain legacy-unsealed and downloads still default to upstream `main`.
-Replicated and live-mount paths are not yet bound by this mechanism. Rank-local
-witness schema 1 is implemented for `library-hot`: activation full-verifies
+The one-node diagnostic `qwen3-1.7b` profile carries the first issued seal and
+bundle. They bind exact commit
+`70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest
+`775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`,
+the digest-pinned image, normalized one-node contract, and reviewed evidence.
+Every other tested profile remains legacy-unsealed, and ordinary downloads
+still default to upstream `main`. Replicated and live-mount paths are not yet
+bound by this mechanism. Rank-local witness schema 1 is implemented for
+`library-hot`: activation full-verifies
 before atomic creation, and launch validates the live profile/controller
 expectation before using it. A metadata match hashes zero model bytes. Missing,
 malformed, or drifted metadata is reported on stderr, then full-verifies and
@@ -1240,9 +1252,11 @@ pin/restart, mismatch, and no-follow lifecycle evidence. The active-use
 durable-home removal guard is implemented with deterministic exact-target,
 all-rank observation, reference-blocking, lifecycle-lock, drift, and deletion
 coverage. The guard then passed a three-node physical gate using disposable
-synthetic repositories; the real Qwen home was preserved. Remaining promotion
-work is to issue real release seals and repeat the applicable identity gate
-with a sealed release profile. See
+synthetic repositories; the real Qwen home was preserved. The one-node
+diagnostic Qwen identity subsequently passed the applicable sealed enforcement
+gate. Remaining promotion work is to issue a multi-node or flagship
+promotion-scope identity and repeat the applicable physical identity/lifecycle
+gate with that profile. See
 `results/model-library/model-library-home-removal-guard-20260811.json`.
 The production admission policy is implemented: every selected rank reports
 live filesystem capacity and current hot ownership before writes; sealed-hot
@@ -1484,16 +1498,17 @@ showed that 8-stream SSH-over-RoCE activation was 1.898x the control-path
 median; 16 streams did not improve the median. Integrity, interruption/retry,
 catalog-loss restart, real serving, and 447k-context gates also passed.
 
-Those wins are not a promotion. The durable-home symlink, optional
+Those wins are not a promotion. The durable-home symlink,
 expected-seal/exact-revision enforcement, validation-bundle/live-profile
 binding, untrusted deterministic release-candidate assembly, and rank-local
 witness fast path are implemented. Candidate tooling cannot issue or publish a
-claim. A legacy-unsealed
-Qwen canary physically passed the symlink,
-both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
-lifecycle gate. The active-use removal guard also passed deterministic and
-three-node physical checks using disposable synthetic repositories. This does
-not close real release identity. Exact all-rank hot admission is now
+claim. The earlier legacy-unsealed two-node Qwen canary physically passed the
+symlink, both-rank witness, read-only launch, pin/restart, mismatch, and
+no-follow purge lifecycle gate. The separately reviewed one-node Qwen identity
+now closes the first-issuance gate and passed post-issuance physical
+enforcement. The active-use removal guard also passed deterministic and
+three-node physical checks using disposable synthetic repositories. Exact
+all-rank hot admission is now
 implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
 default. The non-mutating flagship capacity artifact passed exact home-zero and
 non-home manifest accounting, default-reserve preservation, explicit hard-cap
@@ -1502,9 +1517,9 @@ soak remain pending. Live NFS/RDMA additionally retains its owner-recovery and
 three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing under the
-> historical profile-validation ledger. Model-library code can enforce reviewed
-> exact seals and their complete validation bundles, and maintainer tooling can
-> assemble unreviewed candidates, but this release issues none, so current
-> profiles remain legacy-unsealed. Sealed local-hot activation over
-> SSH-over-RoCE is a measured promotion candidate, and live NFS/RDMA is a
+> historical profile-validation ledger, but those paths are not yet
+> content-bound by expected seals. Model-library code enforces the first
+> reviewed seal/bundle for the one-node diagnostic `qwen3-1.7b`; every other
+> tested profile remains legacy-unsealed. Sealed local-hot activation over
+> SSH-over-RoCE is still a measured promotion candidate, and live NFS/RDMA is a
 > separate documented experiment; neither is a promoted default.

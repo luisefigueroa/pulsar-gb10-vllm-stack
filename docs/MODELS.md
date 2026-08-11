@@ -1,4 +1,4 @@
-# Model support matrix — currently validated profiles (2026-07-27)
+# Model support matrix — currently validated profiles (2026-08-11)
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
@@ -15,7 +15,7 @@ performance validation.
 
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
 |---|---|---|---|---|---|---|---|
-| `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 3.4 GB | 1 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
+| `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 3.4 GB | 1 | 32K | — | **tested diagnostic canary; lab-sealed exact identity** — hidden from serving wizard |
 | `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 3.4 GB | 2 / TP=2 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
 | `qwen3.6-27b-fp8-2node` | 27B split TP=2 cross-node | FP8 | 29 GB | 2 / TP=2 | — | — | **DO NOT USE** — GDN hybrids hang cross-node (VALIDATION.md) |
 | `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 (hybrid: 16 full-attn + 48 GDN layers) | FP8 block | 29 GB | 1 | 131,072 (needle 3/3 @121K) | ngram **FORBIDDEN** (corrupts) | **tested** |
@@ -33,17 +33,22 @@ performance validation.
 numbers). Nothing gets `tested` from arithmetic.
 
 **Model-content identity transition:** these rows are historical profile
-validation claims. The model-library now supports reviewed expected seals,
-content-addressed validation bundles, exact commit/manifest comparison, and
-exact snapshot launch, but no current profile references an issued seal or
-bundle. All remain `legacy-unsealed`, and normal
-replicated downloads are still mutable. `STATUS=tested*` must not be interpreted
-as validating arbitrary bytes under the same repository ID. Do not generate an
-expected seal from a user cache; recover the lab artifact used for the run or
-revalidate the exact content. Library-hot activation now full-verifies and
-creates a rank-local serve witness; unchanged launch uses its metadata fast
-path, while drift rehashes. That mechanism preserves an established identity
-but cannot turn these legacy rows into lab-sealed claims.
+validation claims except for the one-node diagnostic `qwen3-1.7b` row, which
+now references the first reviewed lab-issued seal and content-addressed
+validation bundle. That claim binds exact commit
+`70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest
+`775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`,
+digest-pinned image, normalized one-node profile, and repository evidence.
+Every other tested profile—including `qwen3-1.7b-2node`—remains
+`legacy-unsealed`. Normal replicated downloads and live-mount launches are
+still mutable and are not content-bound by the expected seal.
+`STATUS=tested*` must not be interpreted as validating arbitrary bytes under
+the same repository ID. Do not generate an expected seal from a user cache;
+recover the lab artifact used for the run or revalidate the exact content.
+`library-hot` activation full-verifies and creates a rank-local serve witness;
+unchanged launch uses its metadata fast path, while drift rehashes. That
+mechanism preserves an established identity but cannot turn legacy rows into
+lab-sealed claims.
 
 Maintainers can now assemble deterministic unreviewed candidates with
 `scripts/model-release.sh`, but candidate generation alone does not change any

@@ -192,7 +192,10 @@ uses a symlink view on that rank, and transfers sealed hot copies only to other
 ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
 create a rank-local witness after full verification, use a metadata fast path
 for unchanged launch, and visibly rehash on drift before launching the exact
-snapshot. This release still issues no real profile seals. See
+snapshot. The diagnostic `qwen3-1.7b` profile now carries the first reviewed
+lab seal and validation bundle; its sealed `library-hot` activation and launch
+reported `identity=match`. Other tested profiles remain legacy-unsealed, and
+this does not promote `library-hot` or bind the replicated/live-mount paths. See
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
 [docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). Maintainers can
 assemble deterministic unreviewed identity candidates through the separate
@@ -337,7 +340,7 @@ no leaks, no thermal throttling anywhere).
 | Path | What |
 |---|---|
 | `models/*.conf` | one validated flag set per model; statuses earned by runs |
-| `models/seals/` | reviewed exact model seal contract and future lab-issued profile seals |
+| `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
 | `models/validation-bundles/` | content-addressed exact model/runtime/image/geometry/evidence claims |
 | `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
