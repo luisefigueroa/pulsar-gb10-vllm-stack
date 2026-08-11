@@ -515,16 +515,19 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Home-rank activation creates the durable-home symlink/view, not a hot copy
 [x] Serve-time metadata witness covers the canonical target and exact file set
 [x] Witness drift visibly full-verifies against the expected seal or fails
-[ ] Active-use removal guard and production read-only lifecycle evidence pass
-[ ] Hot purge and force-unpin no-follow behavior passes the physical gate
+[ ] Active-use durable-home removal guard passes
+[x] Serving ranks receive read-only exact-snapshot views in physical launch evidence
+[x] Hot purge and force-unpin no-follow behavior passes the physical gate
 [x] Warm-home pin/restart reports its durable-home dependency honestly
 ```
 
-The witness checks above are deterministic control-plane contracts; they do
-not issue a real seal or replace the physical lifecycle, start-to-healthy, and
-soak gates. Production hot-budget policy, strict DeepSeek determinism, serving
-gates, and sustained soak remain required. Failed or incomplete evidence is
-not rewritten because an architectural blocker changed.
+The witness checks above have deterministic control-plane coverage. The
+legacy-unsealed Qwen canary also passed the physical symlink, both-rank witness,
+read-only launch, pin/restart, mismatch, and no-follow purge gate on 2026-08-11.
+That artifact does not issue a real seal or replace the active-home-removal,
+production budget, strict DeepSeek determinism, or sustained soak gates. Failed
+or incomplete evidence is not rewritten because an architectural blocker
+changed.
 
 ---
 
@@ -571,3 +574,4 @@ not rewritten because an architectural blocker changed.
 | 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |
 | 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued. |
 | 2026-08-10 | Implemented rank-local serve-witness schema 1: activation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |
+| 2026-08-11 | Qwen 1.7B physically passed durable-home symlink, non-home sealed-hot, both-rank witness fallback, exact-snapshot read-only launch, warm-home pin/restart, mismatch fail-closed, and force-unpin no-follow purge. The artifact is `legacy-unsealed`; release identity and promotion remain open. |

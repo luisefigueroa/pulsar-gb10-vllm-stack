@@ -11,7 +11,7 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-10 |
+| Snapshot date | 2026-08-11 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -936,6 +936,7 @@ promotes any experimental storage path for general users.
 | Owner-reboot fault with display attached | PENDING | Must repeat storage interruption and post-reboot serving gates before the owner-reboot promotion box can pass. |
 | Three-node concurrent loading/traffic proof | PENDING | Three ranks pass readiness/full integrity, but concurrent three-node promotion evidence remains required. |
 | Restart loop and sustained fabric soak | PENDING | Required before general promotion. |
+| Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
 
 The headless boot issue is currently classified as an owner operating-system
@@ -1150,8 +1151,10 @@ startup evidence. The witness binds the canonical hub and snapshot paths,
 directory device/inode identity, exact logical files, and per-file
 device/inode/size/mtime/ctime. Launch checks the current validation identity
 before the fast path; drift visibly rehashes and refreshes only after a stable
-match. Remaining promotion work is to issue real release seals, add active
-home-removal protection, and complete physical no-follow lifecycle evidence.
+match. Qwen 1.7B now has physical symlink, witness, read-only launch,
+pin/restart, mismatch, and no-follow lifecycle evidence. Remaining promotion
+work is to issue real release seals, add active home-removal protection, and
+repeat the applicable identity gate with a sealed release profile.
 Production budget policy, crash recovery, garbage collection, and per-rank
 witness/runtime-source inventory also require promotion-level hardening.
 
@@ -1380,8 +1383,10 @@ catalog-loss restart, real serving, and 447k-context gates also passed.
 
 Those wins are not a promotion. The durable-home symlink, optional
 expected-seal/exact-revision enforcement, and rank-local witness fast path are
-implemented, but no real profile seal is issued and physical lifecycle evidence
-remains pending. The 100 GiB default hot budget cannot
+implemented. A legacy-unsealed Qwen canary physically passed the symlink,
+both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
+lifecycle gate. That does not close real release identity or active-home-removal
+protection. The 100 GiB default hot budget cannot
 admit the 167 GB flagship on a non-home rank, strict DeepSeek determinism failed
 on both library-hot and replicated controls, and the required sustained soak is
 pending. Live NFS/RDMA additionally retains its owner-recovery and three-node
