@@ -1,26 +1,42 @@
-# Model library, activate, and load (agreed direction)
+# Model library, activate, and load
 
-> **Status: agreed direction — not implemented.**  
-> This document freezes the product requirements and definitions settled in
-> design discussion. It is **not** an implementation plan, **not** a change to
-> defaults, and **not** a promotion of experimental fabric. The stack continues
-> to use replicated local caches by default and the live NFS/RDMA path only as
-> documented in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
+> **Authority: canonical model-library architecture.**
+> The storage, identity, dependency, and lifecycle decisions in this document
+> are normative for future implementation. Sections explicitly labeled
+> **current implementation** describe the unpromoted experiment and do not
+> override the accepted target. Replicated local caches remain the guided
+> default until every promotion gate passes. Operator commands and current
+> limitations are documented in [OPERATIONS.md](./OPERATIONS.md); the distinct
+> live NFS/RDMA path remains documented in
+> [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 >
 > Exploratory drafts and rejected-or-deferred option lists are archived under
 > [docs/archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md).
-> A peer-review snapshot of **current** code behavior lives in
+> A descriptive snapshot of **current** code behavior lives in
 > [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md).
+> The durable rationale for the home-view and validation-identity decision is
+> [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 
 | Field | Value |
 |---|---|
-| Status | Agreed direction (future consideration for implementation) |
-| Settled | 2026-08-08 |
+| Authority | Accepted architecture; current implementation remains experimental |
+| Status | Implemented experiment (not promoted); identity/witness enforcement pending |
+| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
+| Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
-| Experimental today | `--weight-source fabric` (live NFSv4.2/RDMA under vLLM) |
+| Experimental today | `scripts/model-library.sh` catalog/cold/activate/hot/pin workflows; `--weight-mode library-hot`; and `--weight-source fabric` live NFSv4.2/RDMA |
+
+**Current implementation integrity boundary:** model-library hot schema 2
+carries a sealed `sha256-snapshot-manifest-v1` manifest over the exact snapshot
+file paths, sizes, and SHA-256 contents. Activation and launch full-verify that
+seal; same-size byte corruption is therefore detected. Older size-only hot
+state is not accepted as ready and must be repaired or reactivated before
+launch. The manifest is currently derived from locally observed content; the
+lab-issued expected seal and fast serve-time witness described below are
+accepted target requirements but are not yet implemented.
 
 ---
 
@@ -63,9 +79,9 @@ sub-metrics: activate transfer time, time to weights resident).
 Levers: bytes per rank, path bandwidth, concurrent multi-rank transfer, warm
 reuse (pins), avoid unnecessary double I/O, non-I/O engine setup.
 
-**Promotion bar for a RoCE/fabric activate path:** it must **beat non-RoCE
-control-path copy** (LAN/SSH-style bulk transfer) on the same model and
-topology. Approaching pure local-replica cold start is desirable but not the
+**Promotion bar for a transfer advertised as a RoCE fast path**
+(`ssh-roce` or one-shot `nfs-rdma`): it must beat `ssh-control` on the same
+model and topology. Approaching pure local-replica cold start is desirable but not the
 must-beat gate; B may yield where needed so A and C remain intact.
 
 ### 1.3 Requirement C — stable and reliable
@@ -81,6 +97,34 @@ must-beat gate; B may yield where needed so A and C remain intact.
 | Evidence-backed promotion | STATUS/docs change only with reproducible artifacts; failures preserved |
 
 C caps unsafe optimization of A and B.
+
+### 1.4 SSH identity binding across network planes
+
+Selecting a confirmed RoCE address changes the **transport endpoint**, not the
+identity of the node being trusted. Every SSH-backed copy or orchestration path
+must keep those concepts separate:
+
+- `HostName` is the exact confirmed control or RoCE address chosen for this
+  connection;
+- `HostKeyAlias` is the node's stable confirmed `ssh_host` lookup label (it is
+  an alias, not a host key); and
+- `StrictHostKeyChecking=yes` verifies the presented key against the enrolled
+  identity instead of creating a second trust identity for each rail IP.
+
+The confirmed topology must bind one immutable node ID to its stable SSH alias,
+accepted host-key fingerprint set, control endpoint, and RoCE endpoints. A
+connection to any of those endpoints is trusted only when the endpoint still
+maps to that node ID and presents an enrolled key. Address reachability alone
+is never proof of node identity, and a changed key is never accepted as an
+automatic topology refresh.
+
+This contract is implemented by topology schema 2 and the generated
+`.cluster-ssh-config`. Ordinary fabric discovery continues to produce schema 1
+and cannot enroll trust implicitly. `scripts/topology-ssh-trust.sh enroll`
+collects host public keys only through normal, already-trusted OpenSSH on the
+exact saved control address, verifies all control and pairwise RoCE endpoints,
+and then writes schema 2. Every topology-aware SSH caller loads the generated
+config; a missing or stale config makes schema 2 unloadable.
 
 ---
 
@@ -101,9 +145,25 @@ Do not conflate these three:
 | Runtime | After ready/healthy, does serving still need library/home/NFS? |
 
 **Product identity:** single-copy (federated) **library** + explicit **activate**
-+ serve from **hot** (or home-local) paths + **purge/pin** policy.  
-**Fabric / NFS/RDMA** is a **transport** for activate, not the long-term product
-name. Live mount under vLLM remains an experiment ([WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md)).
++ rank-local runtime views + **purge/pin** policy.
+**Fabric / NFS/RDMA** is a transport, not the long-term product name. Live
+mount under vLLM remains an experiment ([WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md)).
+
+### 2.1 Terminology and independent axes
+
+- **Home** is the durable storage placement for one exact model revision. It
+  may be any confirmed node and is not necessarily rank 0.
+- **Owner** is reserved for the node running a live export/service, such as the
+  experimental NFS/RDMA path. It is not a synonym for rank 0 or durable home.
+- **Rank 0** is the API/control rank for the exact serving geometry.
+- **Origin** is `huggingface`, `cold-catalog`, or `managed-home`.
+- **Transfer** is `preexisting`, `ssh-control`, `ssh-roce`, or `nfs-rdma`.
+- **Runtime source** is `durable-home`, `sealed-hot`, or `live-mount`.
+- **Retention** is `durable`, `ephemeral`, or `pinned`.
+
+Evidence, labels, and future schemas should record these axes independently.
+In particular, SSH/TCP over a RoCE interface is `ssh-roce`; it is not the live
+NFS/RDMA runtime mode merely because both use the fabric NIC.
 
 ---
 
@@ -148,13 +208,18 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
 
 | Label | Meaning |
 |---|---|
-| **Validated** | Matches a repo profile treated as validated (`STATUS=tested*` / validated list); identity aligns with conf expectations |
+| **Validated** | Target contract: the observed exact revision/manifest matches the lab-issued seal in a tested validation bundle |
 | **Present (unvalidated)** | Complete-looking hub tree on a Spark; Pulsar has **not** validated serving that model |
 | **Partial / invalid** | Incomplete or not sealable — not a usable home |
 
 **Catalog visibility ≠ Pulsar serving guarantee.** Wizard and default serve
 paths remain gated on validated profiles. Unvalidated presence is for disk
 awareness and advanced/explicit flows only.
+
+**Current implementation gap:** catalog labeling matches `STATUS=tested*` by
+model repository ID and does not yet compare an expected revision/manifest.
+Until the validation-bundle work lands, this is a legacy profile label—not
+proof that arbitrary bytes under the same repository ID were validated.
 
 ### 3.3 Duplicates
 
@@ -176,8 +241,15 @@ Two operator options:
 | **Adopt** | Yes — import into a Spark HF home and register | Grows federated library |
 | **Stage-only** | No — cold → hot for this job only | Saves Spark disk; cold remains sole durable copy |
 
-Stage-only unpinned restart needs cold (or re-resolve) again. **Pin** can still
-allow warm restart without cold/home if hot is retained within budget.
+Stage-only hot is fully materialized, so retaining or pinning it can allow a
+restart without cold. Warm-home activation is different by design: its home
+rank uses a zero-copy symlink into the durable HF cache, so retaining that hot
+instance does not make it independent of the durable home.
+
+An atomic same-filesystem move is allowed only as an explicit **adopt** into a
+managed durable root after the observed content matches the expected seal. It
+is never an activation shortcut into purgeable hot storage. Adoption must keep
+home removal and rollback behavior explicit.
 
 Cold may use non-hub layouts (e.g. “Official Models/…”). Import/mapping into
 hub-shaped warm form (or documented absolute-path confs) must be explicit and
@@ -199,87 +271,150 @@ bind-mount cold on every rank for large models.
 
 ```text
 resolve (warm → cold? → HF?)
-    → ensure sealed / verified source
-    → activate (copy | fabric) → hot roots on needed ranks
-    → verify digests / ready stamp (all-or-nothing)
-    → release transfer plane (unmount library connection)
-    → launch from hot (or home-local) binds only
+    → match observed content to the expected lab seal
+    → expose durable-home view + transfer sealed-hot to non-home ranks
+    → full-verify each physical copy / write ready witness (all-or-nothing)
+    → release transfer plane
+    → launch the exact revision from rank-local read-only views
     → serve (weights in unified memory)
-    → stop → purge hot (default) or keep pin (opt-in)
+    → stop → purge non-home hot (default) or keep pin (opt-in)
 ```
 
-### 4.2 Temporary hot disk
+### 4.2 Temporary hot disk and storage accounting
 
-**Allowed.** Clients may hold a full (or later sharded) tree for the job window.
-Hot is a **working set**, not a second full library of every catalog model.
+**Allowed.** Non-home ranks may hold a full (or later sharded) tree for the job
+window. Hot is a working set, not a second full library of every catalog model.
+
+For a warm-home service using `N` ranks:
+
+```text
+idle durable storage = 1 × model_size
+active storage       = 1 durable home + (N - 1) sealed-hot working copies
+after unpinned stop  = 1 × model_size
+```
+
+The home-rank symlink contributes no owned hot bytes. Target budget accounting
+charges only materialized hot content; the current stamp/budget implementation
+may over-account the symlink until later runtime work aligns it with this rule.
 
 ### 4.3 Pins and disk budget
 
-| State | Client disk | Restart without library/home | Catalog A |
+| State | Non-home disk | Restart contract | Durable-home dependency |
 |---|---|---|---|
-| Unpinned stop | Purge hot | No — re-activate (needs source) | Best |
-| **Pinned** | Keep verified hot | **Yes** | Spends client disk until unpin |
-| Running | Hot present | N/A | Temporary |
+| Unpinned stop | Purged | Re-activate before restart | Required as activation source |
+| **Pinned warm-home** | Keep verified hot | No cold, transfer, or catalog refresh | **Still required** |
+| **Pinned cold stage-only** | Keep every staged rank | May be self-contained | No warm home exists |
+| Running warm-home | Sealed hot on non-home ranks | N/A | **Required on its rank** |
 
-**Pins are allowed** and required for the claim: **warm restart without
-owner/home**.
+Pins are bounded by a per-node hot-disk budget, not unlimited growth.
+Activate/pin refuses when owned hot bytes would exceed policy. Pin protects
+non-home hot content from purge; it does not convert the durable home into hot,
+duplicate it, or claim survival after home loss.
 
-Pins are bounded by a **per-node disk budget** (bytes or % of disk for hot+pin),
-not unlimited growth. Activate/pin **refuses** when budget would be exceeded
-(fail closed). Inventory shows used / budget / pinned models.
+### 4.4 Warm restart and home-loss semantics
 
-### 4.4 Warm restart without owner/home
+The accepted warm-home claim is:
 
-**Required product claim** when hot is pinned (or still present and verified):
+- restart without cold storage, a transfer plane, or catalog refresh while the
+  durable home and retained non-home hot copies remain valid;
+- unpinned restart re-activates non-home ranks from the durable home;
+- durable-home loss is service loss for this policy.
 
-- Re-launch from hot only; library/home/cold need not be reachable.
-- Unpinned after purge: re-activate needs resolve source again.
+Home-loss resilience requires an explicit durable replica on another failure
+domain plus supported placement/failover behavior. A second copy on the same
+rank/filesystem is not that policy. In an exact multi-node geometry, losing the
+home node also removes a required compute rank.
 
-### 4.5 Activate backends: copy vs fabric
+### 4.5 Expected identity and verification tiers
 
-Both move bytes from **source home** (or cold stage path) into **hot** on ranks.
-Neither replaces NCCL for inference.
+A validated claim has two distinct identities:
 
-| | **copy** | **fabric** |
-|---|---|---|
-| Meaning | Bulk transfer over **management/control** path (SSH/rsync-style) | Bulk transfer over **confirmed RoCE** (e.g. short-lived NFSv4.2/`proto=rdma`) |
-| Claims RoCE for weights? | **No** | **Yes** (rail-pinned; optional HCA proof) |
-| Setup cost | Low | Higher (export/mount window, sudo) |
-| B role | **Baseline** | Must **beat copy** to claim fast path |
-| A role | Same if only hot is written and purge/pin policy holds | Same |
+- **Expected seal:** lab-issued model ID, exact commit/revision, complete
+  `sha256-snapshot-manifest-v1` manifest ID, and provenance.
+- **Observed seal:** identity computed from a user's or rank's local bytes and
+  compared with the expected seal. Observed content cannot issue or replace the
+  expected seal.
 
-Operator/config choice: `--backend copy|fabric`.  
-**No silent** fabric→copy or fabric→full-replica fallback without visibility.
+A **validation bundle** binds the expected model seal(s), behavior-affecting
+tokenizer/draft/adapter/code artifacts, normalized profile/runtime
+configuration, resolved image digest, geometry/topology class, and evidence.
+Hosting location—including a future mirror—is distribution metadata, not
+identity.
 
-### 4.6 Release timing
+Verification has two tiers:
 
-**Release** = tear down the transfer plane (client unmounts; optional idle
-export) so ranks are not tied to library/home over NFS for ordinary opens.
+1. **Full SHA-256** at lab sealing, adoption/download, each non-home
+   materialization, and whenever metadata drifts.
+2. **Fast serve-time witness** only after full verification. It binds the
+   canonical symlink target, local filesystem identity, exact revision, logical
+   file set, and per-file device, inode, size, `mtime_ns`, and `ctime_ns`.
 
-**Default claim:**
+Launch must resolve the exact validated snapshot, not validate one revision and
+then let the runtime follow mutable `main`. Witness drift causes visible full
+verification against the expected seal or fails closed. A successful full
+verification may atomically refresh the witness; a mismatch never auto-reseals
+the changed content as validated.
+
+**Current implementation gap:** schema-2 hot state full-verifies a manifest
+derived from the local source at activation and full-verifies again at launch.
+It does not yet carry a lab-issued expected seal or use the metadata witness.
+
+### 4.6 Activate transfers
+
+Transfer moves bytes only to ranks whose runtime source is `sealed-hot`.
+The warm-home rank uses its existing `durable-home` view.
+
+| Transfer | Current CLI shape | Network/path claim | Promotion role |
+|---|---|---|---|
+| `ssh-control` | copy backend over confirmed control SSH | Management LAN | Baseline |
+| `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Candidate fast path |
+| `nfs-rdma` | fabric backend, then release | Short-lived NFSv4.2/RDMA transfer plane | Separate candidate |
+| `live-mount` | `--weight-source fabric` | Long-lived NFSv4.2/RDMA runtime dependency | Separate experiment |
+
+Neither transfer replaces NCCL inference traffic. No candidate may silently
+fall back to control transfer, TCP NFS, replicated pulls, or a different
+runtime source.
+
+### 4.7 Release timing
+
+Release tears down a temporary transfer plane after every non-home hot copy is
+fully verified. The service then uses:
 
 ```text
-activate → verify hot complete on all ranks → release transfer plane
-         → launch from hot only → serve
+home rank      → validated durable-home view
+non-home ranks → verified sealed-hot views
 ```
 
-Prefer **release after hot verified and before launch** (or before claiming
-ready-to-serve). That makes load+serve independent of live library mount.
+Release occurs before launch or before claiming ready-to-serve. It does not
+delete hot content; pins retain non-home hot copies. The home dependency is a
+local durable-storage dependency, not a retained network transfer plane.
 
-“Release only after `/health`” is a weaker debug posture, not the default
-independence claim. Release does **not** delete hot; pins retain hot for restart.
+### 4.8 Dependency contract
 
-### 4.7 Dependency contract
-
-| Phase | Needs library / home / cold? |
+| Phase | Required dependency |
 |---|---|
-| Resolve / activate | **Yes** (appropriate source) |
-| Launch after hot ready + release | **No** |
-| Running inference | **No** (weights resident) |
-| Restart with **pin** | **No** |
-| Restart **without** pin | **Yes** (re-activate) |
+| Resolve / activate | Expected seal plus the selected durable/cold source |
+| Launch after ready + release | Durable home on its rank; sealed hot on non-home ranks |
+| Running inference | Rank files may no longer be read once resident, but declared storage dependencies remain honest |
+| Warm-home restart with pin | Durable home plus pinned non-home hot; no transfer/catalog refresh |
+| Warm-home restart without pin | Durable home plus re-activation |
+| Cold stage-only restart with complete pin | Pinned staged trees; cold may be unavailable |
+| Restart after durable-home loss | Unsupported without an explicit durable replica/failover policy |
 
-Inventory/labels should surface mode, home, hot ready, pinned, library released.
+Inventory and labels must surface home identity, per-rank runtime source,
+expected/observed seal status, witness status, pin state, and transfer release.
+
+### 4.9 Symlink and lifecycle safety
+
+The home view must resolve to the expected canonical local durable tree. The
+target is read-only to serving containers where practical. Validation and
+launch operate on the same exact revision/path so a mutable alias cannot change
+between them.
+
+Hot purge must remove only the managed hot instance and never follow the home
+symlink. An active launch/reference blocks durable-home removal. Removing a
+home is a separate confirmation-gated operation that reports dependent running
+or pinned instances.
 
 ---
 
@@ -290,48 +425,105 @@ Inventory/labels should surface mode, home, hot ready, pinned, library released.
 | Replicated `pull-weights` + local launch | **Remains default** until a library+activate path earns promotion |
 | Live `--weight-source fabric` | **Experimental** proof/ops path; long-lived mount under vLLM is **not** the agreed product identity |
 | Site cold path confs | Optional cold tier; keep working |
-| Sealed manifests, topology rails, HCA proof | Reuse for library integrity and fabric **activate** transport |
+| Topology rails and NFS/RDMA helpers | Reused by fabric **activate**; model-library schema-2 hot state now has its own full SHA-256 snapshot seal, while live-fabric configuration identity remains separate |
 | Materialize-as-only-mechanism drafts | Superseded as the top-level story; activate+hot+pin is the product frame |
 
 ---
 
 ## 6. Design principles
 
-1. **Library ≠ runtime path** — durable single-copy is a catalog property.
-2. **Federated warm homes** — aggregate Spark disk; one primary home per revision.
-3. **Cold is optional** — prefer before HF when present; never required for minimum install.
-4. **At most a budgeted hot/pin set on clients** — not a replica farm of the library.
-5. **Activate is first-class** — measured, fail-closed, not only hidden inside `docker run`.
-6. **Dependency modes are explicit.**
-7. **B is end-to-end time-to-healthy**; fabric must beat non-RoCE copy.
-8. **C forbids silent N× disk** and silent transport downgrades.
-9. **Prefer boring recovery** — re-activate + relaunch over clever hard-mount resume when clarity matters.
-10. **Fabric is a transport**, not the product name.
-11. **Validated vs present** labels protect claim hygiene when scanning all hub trees.
-12. **Duplicates recommend cleanup**, never silent multi-home serve.
+1. **Library ≠ runtime path** — durable ownership and the path presented to a
+   rank are different facts.
+2. **One durable home per exact revision by default** — extra replicas are an
+   explicit capacity/resilience policy.
+3. **No home-rank hot materialization** — the home rank uses a validated
+   symlink or equivalent local view; only non-home ranks receive sealed hot.
+4. **Expected identity comes from the lab** — observed user content cannot
+   self-bless or inherit validation from a repository ID.
+5. **Full verification establishes trust; metadata witnesses preserve it** —
+   drift visibly rehashes against the expected seal or fails closed.
+6. **Cold is optional** — prefer it before HF when present; never require it for
+   the minimum installation.
+7. **Hot and pins are budgeted working sets**, not a replica farm.
+8. **Dependency modes are explicit** — warm-home pinning still needs its
+   durable home; home-loss resilience requires another failure domain.
+9. **Activate is first-class and measured** — end-to-end start-to-healthy,
+   integrity, and recovery matter more than peak transport bandwidth.
+10. **Transport is not product identity** — distinguish `ssh-control`,
+    `ssh-roce`, one-shot `nfs-rdma`, and live mount.
+11. **No silent policy changes** — never change transport, runtime source,
+    geometry, or replica count as a fallback.
+12. **Validated vs present labels protect claim hygiene**; duplicates recommend
+    cleanup and never cause silent multi-home serve.
+13. **Prefer boring recovery** — explicit verify, re-activate, and relaunch over
+    hidden mount or replica behavior.
+14. **Raw experiments stay local** under gitignored `/experiments/`; durable
+    decisions belong in reviewed design/ADR/runbook docs and sanitized evidence.
 
 ---
 
-## 7. Intentionally deferred (not required to freeze this package)
+## 7. Promotion gates
 
-- Exact CLI names and JSON schemas  
-- Numeric pin budget defaults  
-- Cleanup tool UX details  
-- Whether unvalidated models are activate-able only with explicit force  
-- Full promotion fault matrix (must-pass list)  
-- Rank-sharded checkpoints (`sharded_state`) as phase-2 B lever  
-- Dedicated storage-node topology for very large N  
-- Implementation phases and PR breakdown  
+The model-library path cannot become a wizard/default distribution policy until
+all of these SSH identity controls are implemented and evidenced:
+
+```text
+[x] Confirmed topology records trusted SSH host-key fingerprints per node
+[x] Every SSH-over-RoCE connection uses HostKeyAlias with strict verification
+[x] Doctor validates the alias, host key, node ID, and selected endpoint binding
+[x] Changed host keys require explicit, operator-confirmed re-enrollment
+[x] Deterministic endpoint-drift, key-rotation, and wrong-node selftests pass
+```
+
+These are blockers, not optional hardening. All five passed deterministic and
+three-node physical checks on 2026-08-10; see
+`results/model-library/topology-ssh-trust-gate-20260810.json`.
+
+The accepted symlink design replaces the former owner-materialization blocker.
+Promotion now requires this identity/lifecycle evidence:
+
+```text
+[ ] Repo release provides a lab-issued expected seal and validation-bundle ID
+[ ] Catalog/launch compare exact model, commit, and manifest—not model ID alone
+[ ] Home view resolves to the expected canonical local durable tree
+[ ] Serve-time witness validates the same exact revision/path used for launch
+[ ] Metadata drift visibly full-verifies against the expected seal or fails
+[ ] Serving view is read-only where practical; active use blocks home removal
+[ ] Hot purge and force-unpin never follow or delete the durable-home target
+[ ] Warm-home pin/restart reports its durable-home dependency honestly
+```
+
+Production hot-budget policy, strict DeepSeek determinism, serving gates, and
+sustained soak remain required. Failed or incomplete evidence is not rewritten
+because an architectural blocker changed.
 
 ---
 
-## 8. Decision log
+## 8. Remaining deferred work
+
+- Promotion into the wizard or other guided defaults
+- Lab-issued expected model seals and immutable validation bundles
+- Serve-time metadata witness with visible full-verify fallback
+- Per-rank runtime-source labels and home deletion/reference guards
+- Stable public guarantees for machine-readable JSON schemas
+- Numeric production defaults and policy UX for non-home hot/pin budgets
+- Destructive duplicate-home cleanup beyond the current recommendation flow
+- Policy for explicitly activating present-but-unvalidated models
+- Complete physical promotion matrix, including time-to-healthy, interruption,
+  dependency loss, restart, determinism, and sustained soak
+- Optional durable-replica and failover policy on distinct failure domains
+- Rank-sharded checkpoints (`sharded_state`) as a later requirement-B lever
+- Dedicated storage-node topology for very large N
+
+---
+
+## 9. Decision log
 
 | Date | Decision |
 |---|---|
 | 2026-08-08 | Requirements **A** (storage), **B** (load time), **C** (reliability) co-equal. |
 | 2026-08-08 | Product shape: federated warm library + optional cold + hot staging + pins + activate (copy\|fabric) + release before independent serve. |
-| 2026-08-08 | Temporary hot disk allowed; warm restart without home required via pins; pins bounded by disk budget. |
+| 2026-08-08 | Temporary hot disk allowed; pins bounded by disk budget. The original generic restart-without-home goal is superseded by ADR 0001 for warm-home activation. |
 | 2026-08-08 | Copy = non-RoCE control-path transfer; fabric = RoCE activate transport; fabric B bar = beat copy. |
 | 2026-08-08 | Cold optional; resolve warm → cold? → HF; cold preferred over HF when configured; adopt and stage-only both allowed. |
 | 2026-08-08 | Implemented optional cold tier: scan Official Models + hub layouts, resolve warm→cold fall-through, cold adopt, cold stage-only (`scripts/model-library.sh cold *`). |
@@ -339,3 +531,12 @@ Inventory/labels should surface mode, home, hot ready, pinned, library released.
 | 2026-08-08 | New download placement: most free space + `--node` override (recommended default). |
 | 2026-08-08 | Release after hot verified, before launch (default independence claim). |
 | 2026-08-08 | Persisted as this document; exploratory option-noise archived to `docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`. |
+| 2026-08-08 | Implemented federated catalog refresh/resolve, copy activate, budgeted hot staging, pin/unpin/purge, and `library-hot` launch/stop hooks. |
+| 2026-08-08 | Implemented short-lived NFS/RDMA fabric activate with explicit release; retained live `--weight-source fabric` as a separate experiment. |
+| 2026-08-09 | Added copy-versus-fabric activation measurement and reduced avoidable setup/home-copy cost; fabric remains ineligible for a fast-path claim unless it beats copy. |
+| 2026-08-10 | Implemented and physically verified topology schema-2 SSH identity binding across three nodes: exact transport address, stable `HostKeyAlias`, strict enrolled-key verification, pairwise-rail checks, and explicit re-enrollment on key change. |
+| 2026-08-10 | Retired raw exploratory transcripts to gitignored `/experiments/`; only distilled decisions and sanitized evidence belong in publishable history. |
+| 2026-08-10 | Upgraded library-hot to schema-2 full SHA-256 snapshot seals; same-size corruption now fails full verification. |
+| 2026-08-10 | Full-model counterbalanced trials passed the performance gate: 8-stream SSH-over-RoCE was 1.898x the control-path median; 16 streams did not improve the median. |
+| 2026-08-10 | **No promotion:** keep replicated guided defaults. SSH identity passed; production hot-budget policy, strict DeepSeek determinism, and sustained soak remain open. |
+| 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |

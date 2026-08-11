@@ -1,0 +1,129 @@
+---
+name: change-pulsar-model-library
+description: Guide reviews, experiments, designs, implementations, and documentation changes affecting Pulsar's model catalog, downloads, durable homes, activation and transfer paths, rank-local runtime views, pin/purge lifecycle, validation identity, or model-library promotion. Use for changes to model-library scripts, library-hot launch behavior, weight-fabric interactions, model distribution policy, seals and witnesses, storage or resilience claims, and their operations, validation, or evidence documents.
+---
+
+# Change Pulsar Model Library
+
+Use this playbook to keep model-library work consistent without suppressing
+useful architectural ideas. Treat it as procedure, not as an architectural
+source of truth; read the repository's live authority instead of copying its
+doctrine into this skill.
+
+## Establish authority
+
+Work from the repository root. Before evaluating or changing behavior:
+
+1. Read the model-library section of `AGENTS.md`.
+2. Read `docs/MODEL_LIBRARY_DESIGN.md` completely.
+3. Read every applicable accepted or superseding record under
+   `docs/decisions/`, especially ADR 0001 for home views and validation identity.
+4. Read `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md` when current code,
+   schemas, states, or implementation gaps matter.
+5. Read the affected runbooks, validation ledger, revalidation instructions,
+   and evidence index when the request touches operations, claims, promotion,
+   or results.
+
+Apply the authority order in `AGENTS.md`. Treat current code and measurements as
+evidence about implementation, not as silent amendments to accepted design.
+
+## Classify the work
+
+Identify the request before acting:
+
+- **Explain or review:** inspect and report; do not mutate merely because a
+  change seems useful.
+- **Experiment:** keep the path explicit and opt-in, define the hypothesis and
+  comparison, and avoid changing promoted defaults or claims.
+- **Implement within accepted design:** state the affected contracts and make
+  the smallest complete change with proportionate verification.
+- **Reconsider accepted design:** follow the proposal and approval protocol
+  below before making a conflicting change.
+
+Separate accepted target architecture, current experimental implementation,
+and immutable historical evidence in every analysis.
+
+## Challenge accepted decisions constructively
+
+Treat accepted decisions as constraints on unapproved action, not limits on
+analysis. Actively surface credible alternatives when requirements,
+technology, evidence, failure modes, or operating assumptions evolve—even
+when an alternative conflicts with the current design.
+
+Label a conflicting idea as a **proposal** and explain:
+
+- which accepted decision or invariant it challenges;
+- what changed or what new information makes it worth reconsidering;
+- its expected benefit, tradeoffs, and failure modes;
+- the evidence and smallest safe experiment needed to evaluate it; and
+- which ADRs, contracts, defaults, and claims would change if adopted.
+
+Do not implement, enable, promote, or document a conflicting proposal as
+accepted—and do not run a state-changing experiment that depends on the
+deviation—without explicit user or maintainer approval that acknowledges the
+conflict. Approval for an adjacent objective is not approval to override the
+decision. Read-only investigation, comparison, and presentation of the idea do
+not require approval.
+
+After approval, add or supersede the governing ADR and update dependent
+architecture, implementation, operations, validation, and evidence surfaces as
+part of the change. Preserve the previous decision and its evidence as history.
+
+## Analyze affected contracts
+
+Map the proposed work across these independent axes before editing:
+
+- durable ownership and placement;
+- origin, transfer, runtime source, and retention;
+- expected identity, observed identity, validation bundle, and witness state;
+- control, inference, and weight-transfer planes;
+- rank geometry, topology identity, and trust boundaries;
+- activation, launch, pin, purge, restart, home loss, and rollback;
+- human CLI behavior and machine-readable schemas; and
+- experimental, candidate, promoted, and historically tested claims.
+
+Call out implementation gaps instead of writing as though accepted target
+behavior already exists. Identify trust-boundary and destructive-lifecycle
+changes explicitly.
+
+## Make the change
+
+Follow the repository's Bash/Python boundary and lifecycle rules. Keep
+fallbacks, alternate transports, replica policies, and geometry changes
+explicit and operator-visible. Preserve fail-closed behavior and avoid
+expanding the request into unrelated promotion or cleanup work.
+
+Update the relevant authority and support surfaces together:
+
+- architecture contract: `docs/MODEL_LIBRARY_DESIGN.md` and an ADR;
+- current behavior or schema: `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md`;
+- operator behavior or dependency: `docs/OPERATIONS.md` and, when applicable,
+  `docs/WEIGHT_FABRIC.md`;
+- tested claim or invalidation rule: `docs/VALIDATION.md`, `docs/REVALIDATE.md`,
+  and `docs/MODELS.md`;
+- durable evidence status: `results/model-library/README.md`; and
+- cross-agent safety contract: `AGENTS.md`.
+
+Update only the surfaces the change actually affects. Never fabricate a seal,
+promotion result, or hardware claim from local state. Preserve failed, partial,
+and superseded evidence.
+
+## Verify and hand off
+
+Run validation in proportion to the change:
+
+1. Run `git diff --check`.
+2. Run the repository's documentation or link checks when present.
+3. Run `scripts/selftest.sh` for script, configuration, or agent-guidance
+   changes.
+4. Search active guidance for contradictory ownership, identity, pin,
+   resilience, and transport claims; allow old language only in immutable
+   historical evidence with a current supersession pointer.
+5. Privacy-scan publishable documentation and results for site-specific paths,
+   hosts, addresses, node IDs, and topology identifiers.
+6. Follow `docs/REVALIDATE.md` for serving, storage, or promotion changes and
+   state plainly which physical gates were or were not run.
+
+In the handoff, distinguish accepted behavior from proposals, identify any
+approved deviation and its ADR, list verification performed, and disclose
+remaining implementation or hardware-evidence gaps.

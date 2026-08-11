@@ -1,6 +1,13 @@
-# Pulsar GB10 model catalog, distribution, and loading architecture
+# Pulsar GB10 model catalog, distribution, and loading implementation
 
-**Peer-review specification and implementation snapshot**
+**Descriptive implementation snapshot — not the architectural authority**
+
+Accepted model-library architecture lives in
+[MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and
+[ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
+This document describes current code, evidence, and known gaps. Where current
+behavior differs from the accepted target, the difference is labeled as an
+implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
@@ -10,36 +17,35 @@
 | Promoted storage path | Replicated local Hugging Face caches |
 | Additional catalog path | Operator-mounted absolute paths, conventionally under `/mnt/Models` |
 | Experimental storage path | Single authoritative Hugging Face repository exported read-only with NFSv4.2/RPC-RDMA |
-| Review status | Design description, not a promotion claim |
+| Document status | Descriptive current-system specification; not a promotion or architecture claim |
 
 This document is intentionally self-contained. It describes what the current
 code does, which claims have physical evidence, where the boundaries are, and
-which questions remain open. It omits site-specific hostnames, addresses, node
-identities, user paths, and credentials so it can be shared externally.
+which implementation questions remain open. It omits site-specific hostnames,
+addresses, node identities, user paths, and credentials so it can be shared
+externally.
 
-## 1. Review request
+## 1. Authority and review scope
 
-We are asking a peer to review four related decisions:
+This snapshot supports review of four implementation areas:
 
-1. Whether the model profile catalog is the right source of truth for exact
-   serving geometry, runtime flags, memory budgets, and validation status.
-2. Whether replicated per-node model repositories should remain the default
-   distribution method.
-3. Whether the experimental live NFS/RDMA single-copy path has acceptable
-   correctness, security, availability, and operational semantics.
-4. Whether we should continue hardening the live-mount design or instead move
-   toward a transfer-then-materialize design in which vLLM opens local files.
+1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
+   and legacy validation status;
+2. the promoted replicated distribution path;
+3. the experimental live NFS/RDMA single-copy path; and
+4. the experimental transfer-then-load model-library path.
 
-The most important current distinction is this:
+The accepted model-library direction is no longer an open peer-review question:
+one durable home per exact revision, a validated durable-home view on the home
+rank, sealed hot only on non-home ranks, and content identity anchored in a
+lab-issued validation bundle. Routine home-rank hot materialization is ruled
+out. Current code has not yet implemented the expected-seal or metadata-witness
+parts of that decision.
 
-> The model catalog selects **what to run and how many ranks it needs**. It does
-> not select a single-copy storage owner. Replicated storage is the guided
-> default. An operator chooses an owner only when explicitly configuring the
-> experimental weight fabric.
-
-Consequently, a normal first-time user is not asked which node owns the model
-cache. In the default path every serving node owns a complete local copy. The
-owner question exists only in the advanced experimental CLI workflow.
+The model catalog still selects **what to run and how many ranks it needs**.
+The guided replicated path has no storage owner. A live NFS/RDMA owner exists
+only in its explicit advanced workflow; a model-library **home** is durable
+placement and is not necessarily rank 0 or a live export owner.
 
 ## 2. Executive summary
 
@@ -110,11 +116,13 @@ scripts or shell commands over SSH. Remote nodes do need the required OS tools,
 Docker image, model bytes or mount, and key-based/attended privileged access as
 appropriate.
 
-## 4. Normative terminology
+## 4. Implementation terminology
 
-The words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** below describe the
-current intended contract. A statement marked **current limitation** describes
-implemented behavior that may not be desirable as a future contract.
+The terms below describe current implementation behavior. Normative
+model-library terminology and future contracts come from the canonical design
+and ADR. A statement marked **current limitation** or **implementation gap**
+must not be promoted into policy merely because the code currently behaves
+that way.
 
 - **Profile**: a trusted shell configuration in `models/`.
 - **Model ID**: the `MODEL` value passed to vLLM. It is either a Hugging Face
@@ -126,8 +134,10 @@ implemented behavior that may not be desirable as a future contract.
   topology for a multi-node profile.
 - **Storage-visible nodes**: the serving nodes plus optional additional
   confirmed readers configured for single-copy verification or benchmarking.
-- **Owner**: the one serving node holding the authoritative model repository in
-  fabric mode.
+- **Home**: model-library durable placement for an exact revision. Current
+  catalog code may also call this node an owner; the canonical term is home.
+- **Owner**: the one serving node running the authoritative live export in
+  experimental NFS/RDMA fabric mode.
 - **Replicated mode**: the default launch mode, in which Pulsar does not use the
   weight-fabric configuration. For HF profiles every serving node is expected
   to have a complete local repository.
@@ -135,6 +145,12 @@ implemented behavior that may not be desirable as a future contract.
   use a live NFS/RDMA view of the owner's repository.
 - **Sealed snapshot**: a resolved Hugging Face revision plus an exact file list,
   sizes, and SHA-256 digests recorded in a manifest.
+- **Expected seal**: target concept, not yet implemented—lab-issued model ID,
+  exact revision, manifest ID, and provenance.
+- **Observed seal**: locally computed identity compared with the expected seal;
+  it cannot establish validation by itself.
+- **Runtime source**: target per-rank classification of `durable-home`,
+  `sealed-hot`, or `live-mount`.
 - **Confirmed topology**: a validated site manifest with stable identity and
   verified connectivity. A missing manifest is not “confirmed one node.”
 
@@ -837,9 +853,17 @@ currently create a cryptographic model lock or publish per-rank digest parity.
 Model repository IDs are present in profiles, but a mutable upstream `main`
 revision is not pinned by the profile or download command.
 
+The model-library catalog has the same trust-root gap even though its transfer
+integrity is stronger: it reads the locally active revision and labels every
+cached revision of a repository as validated when any matching profile has
+`STATUS=tested*`. Activation then seals those observed local bytes. That proves
+the copied bytes match their source; it does not prove they match the lab run.
+
 Image identity is stronger for profiles that use an immutable image digest;
-other profiles inherit a centrally configured tag. The current catalog can
-therefore pin engine bits more tightly than model bits.
+other profiles inherit a centrally configured tag. Until expected model seals
+and validation bundles are implemented, existing tested rows are historical
+profile claims and must not machine-bless arbitrary content under the same
+repository ID.
 
 ### 12.2 Fabric integrity level
 
@@ -877,8 +901,9 @@ bundle is considered shareable.
 ## 13. Current validation status
 
 The following is the implementation/evidence state as of the snapshot date.
-The Qwen 1.7B two-node profile being `STATUS=tested` validates the canary's
-runtime profile; it does **not** promote fabric storage for general users.
+The Qwen 1.7B two-node `STATUS=tested` row is a historical runtime-profile
+claim; it neither machine-binds arbitrary Qwen snapshots to that evidence nor
+promotes any experimental storage path for general users.
 
 | Gate | Current result | Interpretation |
 |---|---|---|
@@ -929,20 +954,19 @@ repair.
 
 ## 15. Known limitations and design tensions
 
-### 15.1 Two overlapping “source” vocabularies
+### 15.1 Origin, transfer, runtime source, and retention are separate
 
-`source=hf|nfs` describes how `MODEL` is written. `--weight-source
-replicated|fabric` selects whether to use the experimental owner-backed view.
-These are not the same axis. A profile can be labeled `nfs` by the catalog while
-its container receives `weight-source=replicated` because it is simply not in
-fabric mode.
+Current `source=hf|nfs` and `--weight-source replicated|fabric` values mix
+several independent facts. The accepted conceptual axes are:
 
-This ambiguity complicates status, inventory, metrics, and future storage
-backends. A clearer conceptual model would separate:
+- **origin**: `huggingface | cold-catalog | managed-home`;
+- **transfer**: `preexisting | ssh-control | ssh-roce | nfs-rdma`;
+- **runtime source**: `durable-home | sealed-hot | live-mount`;
+- **retention**: `durable | ephemeral | pinned`.
 
-- **origin**: `huggingface | catalog | owner`;
-- **distribution**: `preexisting | copy | live-rdma | materialize`;
-- **runtime view**: `local-cache | catalog-mount | live-owner-mount`.
+Current CLIs and JSON do not yet expose this complete vocabulary. In
+particular, SSH/TCP over a confirmed RoCE endpoint is `ssh-roce`, while live
+NFS/RDMA is a distinct runtime dependency.
 
 ### 15.2 Owner choice is outside the catalog and wizard
 
@@ -953,16 +977,26 @@ explains why that choice matters, shows existing copy/free-space/boot evidence,
 and confirms storage-visible scope. Silently electing an owner would create an
 availability and capacity policy that profiles do not currently express.
 
-### 15.3 Model revision pinning differs by mode
+### 15.3 Model identity is not yet release-bound
 
-Fabric sealing records the resolved revision after download, but the profile
-still names only the repository and the download defaults to upstream `main`.
-Replicated mode has no sealed manifest at all. A later preparation may therefore
-use a newer upstream snapshot under the same profile and status.
+Fabric and model-library sealing record the locally resolved revision, but
+profiles still name only a repository and downloads default to upstream
+`main`. Replicated mode has no sealed manifest. A later preparation may
+therefore use newer bytes under the same profile and status.
 
-For a repository whose claim is “validated and documented,” this is the most
-important catalog/integrity gap. Validation status ideally binds profile,
-model revision, image digest, and evidence as one immutable release unit.
+This is the most important catalog/integrity implementation gap. The accepted
+target is a lab-issued validation bundle containing the expected model seal(s),
+normalized profile/runtime configuration, resolved image digest,
+geometry/topology class, and evidence references. Future machine state should
+distinguish, without claiming a final wire schema:
+
+- expected model/revision/manifest and validation-bundle identity;
+- observed revision/manifest;
+- per-rank `durable-home | sealed-hot | live-mount` runtime source;
+- witness verification state; and
+- `legacy-unsealed | missing | match | drift | mismatch` identity status.
+
+A local observed manifest can match the expected seal but cannot issue it.
 
 ### 15.4 Live owner dependency
 
@@ -1007,69 +1041,134 @@ work. It also makes that controller the orchestration source of truth. Remote
 commands depend on compatible packages, paths, Docker state, SSH policy, and
 the confirmed topology rather than a locally checked-out script version.
 
-### 15.10 Confirmed control-endpoint coverage is incomplete
+### 15.10 Confirmed endpoint and SSH identity coverage
 
-Weight-fabric and inventory commands use the shared resolver that pins SSH to a
-confirmed control address while preserving the saved alias for configuration
-and host-key identity. Several normal cluster, image, and replicated-weight
-commands still call the saved alias directly. Resolver or mDNS drift can
-therefore select an unintended interface outside the fault-tested storage path.
-All remote orchestration should converge on the shared helper, with regression
-tests that prove both `HostName` and `HostKeyAlias` behavior.
+Topology schema 2 records each confirmed node's host public keys and derived
+fingerprints. A generated `.cluster-ssh-config` maps every stable alias to the
+exact saved control address and supplies the enrolled key set through
+`KnownHostsCommand`. The shared topology loader validates that config byte for
+byte before adding it to every normal cluster, image, inventory, weight, and
+model-library SSH caller. Missing or stale generated state fails closed.
 
-## 16. Leading alternative: transfer then materialize
+SSH-over-RoCE overrides only `HostName` with a confirmed rail address while
+retaining the topology alias as `HostKeyAlias`. Pair-specific rails in an
+N-node mesh are checked from the confirmed opposite peer with a strictly pinned
+jump connection; the controller is not assumed to route every point-to-point
+subnet directly. Ordinary discovery remains schema 1 and cannot silently
+create enrolled trust.
 
-A separate parked design proposes using NFS/RDMA only as a one-shot transfer
-plane:
+The required topology identity record for each node is:
 
-1. keep one authoritative sealed repository on the owner;
-2. transfer and full-verify it into an isolated local staging root on each
-   serving rank;
-3. optionally unmount/release the transfer plane; and
-4. launch vLLM from the local staged paths.
+- immutable `node_id`;
+- stable `ssh_host` alias used as the host-key lookup identity;
+- one or more accepted public host-key fingerprints, including key algorithm;
+- confirmed control address/interface; and
+- confirmed RoCE addresses/interfaces/HCAs.
 
-This would decouple serving/restart from a live owner export and eliminate hard
-mounts under the runtime. It would retain traffic/integrity proof for the
-distribution step. The tradeoff is that it creates per-rank copies—temporary or
-durable—and therefore gives up the strict “one physical copy” property during
-serving. It also needs disk-space policy, staging lifecycle, pinning, crash
-recovery, and garbage collection.
+Every SSH connection must select the transport address separately from the
+trusted identity, equivalent to `HostName=<selected-address>`,
+`HostKeyAlias=<ssh_host>`, and `StrictHostKeyChecking=yes`. The presented key
+must match the fingerprint set enrolled for the same immutable node ID. This
+contract applies equally to control SSH, rsync subprocesses, probes, and
+SSH-over-RoCE bulk streams; callers must converge on one shared resolver.
 
-The design is documented but not implemented or approved. It should be
-evaluated against continued replicated mode, not assumed to be an automatic
-successor.
+Doctor and preflight must classify drift deterministically and fail closed:
 
-## 17. Recommended near-term posture
+| Observation | Classification | Required operator action |
+|---|---|---|
+| RoCE address changed; node ID and enrolled key unchanged | Stale endpoint | Review discovery and explicitly rewrite confirmed topology |
+| SSH alias changed; node ID and enrolled key unchanged | Rename | Confirm the rename and rewrite topology explicitly |
+| Host key changed; node ID unchanged | Reimage or intentional key rotation until proven otherwise | Verify out of band, then explicitly re-enroll the key |
+| Node ID changed at a known alias/address | Replacement node | Re-qualify membership and confirm a new topology |
+| A RoCE address presents another confirmed node's key | Wrong-node/address collision | Stop immediately and repair addressing/topology |
 
-These recommendations reflect the current evidence, not a final architectural
-decision:
+First-time setup may discover aliases and endpoints, but only
+`scripts/topology-ssh-trust.sh enroll` may create schema 2. Enrollment retrieves
+keys through normal, already-trusted OpenSSH on the exact control address,
+verifies machine identity and every control/RoCE binding, displays the proposed
+fingerprints, and requires confirmation. A changed key is rejected unless the
+operator first verifies it out of band, updates normal OpenSSH trust, and uses
+`--accept-key-change`; neither setup nor doctor can silently accept it.
+
+The deterministic drift/rotation/collision suite and a 15-binding physical
+three-node check passed on 2026-08-10. A Qwen 1.7B two-node canary then activated
+a 4,079,450,110-byte sealed snapshot with eight SSH-over-RoCE streams in nine
+seconds and full-verified both ranks. See
+`results/model-library/topology-ssh-trust-gate-20260810.json`.
+
+## 16. Implemented experiment: transfer then materialize
+
+The model-library experiment implements NFS/RDMA as a one-shot transfer plane
+alongside a control-path copy backend:
+
+1. keep one authoritative complete catalog home with an inventory identity;
+2. seal the exact snapshot paths, sizes, and file contents with SHA-256;
+3. transfer and full-verify it in an isolated local staging root on each
+   non-home serving rank;
+4. optionally unmount/release the transfer plane; and
+5. launch vLLM from the verified hot paths.
+
+This removes hard NFS mounts from the runtime. The implementation includes
+federated warm catalog discovery, an optional cold tier, copy and fabric
+activate backends, schema-2 full-content hot seals, transfer-plane release,
+budget checks, pin/unpin/purge, and `library-hot` launch/stop hooks.
+Remote serving ranks receive temporary or pinned hot copies, giving up the
+strict “one physical copy” property while staged.
+
+Accepted architecture and current behavior both use a warm-home symlink into
+the durable HF cache. This is not a materialization gap: routine home-rank hot
+copying is prohibited. The missing promotion work is to bind that view to the
+lab-issued expected seal, validate a metadata witness at serve time, launch the
+same exact revision that was checked, expose the durable-home dependency, and
+make purge/removal lifecycle-safe. Production budget policy, crash recovery,
+and garbage collection also require promotion-level evidence and hardening.
+
+This path is implemented but experimental and unpromoted. It must continue to
+be evaluated against replicated mode and live fabric rather than being assumed
+to supersede either one. In particular, the one-shot `nfs-rdma` backend cannot claim the fast path
+unless its measured activation wall time beats `ssh-control` on the same model
+and topology.
+
+## 17. Current near-term posture
+
+These points combine current evidence with the accepted architecture:
 
 1. Keep replicated local HF caches as the guided default.
-2. Keep fabric an explicit advanced CLI path until every promotion gate,
-   including owner reboot and three-node concurrent load, passes.
-3. Add immutable model revision/manifest binding to the normal catalog release
-   story before broadening storage modes.
-4. Separate origin, distribution, and runtime-view terminology in future CLI
-   and evidence schemas.
-5. If fabric is added to the wizard, require explicit owner and storage-scope
-   selection; never auto-elect or silently fall back.
-6. Compare live fabric with transfer-then-materialize using operational goals,
-   not only peak throughput: disk use, cold start, restart independence,
-   recoverability, and failure blast radius.
-7. Narrow absolute catalog container mounts to the selected subtree and add
+2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
+   gates pass.
+3. Treat 8-stream SSH-over-RoCE activation into sealed local hot as a separate
+   promotion candidate. Do not guide it until expected-seal binding,
+   serve-time witness and lifecycle gates, budget policy, determinism, and soak
+   pass.
+4. Preserve the durable-home symlink/view on the home rank; do not add routine
+   home-rank hot materialization.
+5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
+   depend on the durable home; home-loss resilience requires an explicit
+   cross-failure-domain replica/failover policy.
+6. Use exact model revision and manifest identity in every release/startup
+   claim. Locally observed content cannot self-bless.
+7. Separate origin, transfer, runtime source, and retention in future CLI and
+   evidence schemas; never auto-elect or silently fall back.
+8. Continue comparing paths using disk use, end-to-end cold start,
+   recoverability, dependencies, and failure blast radius—not peak throughput
+   alone.
+9. Narrow absolute catalog container mounts to the selected subtree and add
    mount identity/integrity policy if catalog profiles remain first-class.
-8. Define the intended boot policy for storage owners. A connected display is a
-   repeatable workaround in current evidence, not a solution for truly headless
-   deployments.
+10. Define the intended boot policy for live storage owners. A connected display
+    is evidence of a workaround, not a headless deployment solution.
 
-## 18. Questions for the peer reviewer
+## 18. Remaining implementation questions
+
+The architectural questions about immutable validation identity, full content
+seals, and home-rank materialization are answered by ADR 0001. The remaining
+questions concern implementation shape and unrelated catalog/live-mount policy.
 
 ### Catalog and release identity
 
 1. Should profiles remain trusted shell, or should the catalog become
    declarative data with a generated/validated runtime layer?
-2. Should `STATUS=tested` be valid without an immutable model revision and
-   image digest, or should status bind a profile lock containing both?
+2. What reviewed repository representation should carry the accepted
+   validation bundle without duplicating complex schema logic in shell profiles?
 3. Is `TP × PP = NODES` sufficient as the catalog geometry invariant, or should
    rank placement and permitted topology subsets be explicit profile data?
 4. Should diagnostic and serving profiles live in the same directory/status
@@ -1077,8 +1176,8 @@ decision:
 
 ### Distribution and integrity
 
-5. Is structural completeness adequate for the promoted replicated path, or
-   should every preparation produce and compare a sealed manifest?
+5. How should legacy replicated caches migrate to expected-seal comparison
+   without deriving trusted identity from arbitrary user-observed content?
 6. Should remote `rsync` use exact mirroring/deletion and revision checks rather
    than preserving possible extra remote files?
 7. Should a remote one-node placement leave a controller-side staging copy, and
@@ -1199,9 +1298,15 @@ The implementation described here is primarily defined by:
 - [`scripts/weight-fabric.sh`](../scripts/weight-fabric.sh) and
   [`scripts/weight_fabric.py`](../scripts/weight_fabric.py) — experimental
   configuration, manifest, NFS/RDMA lifecycle, verification, and measurement;
+- [`scripts/model-library.sh`](../scripts/model-library.sh) and
+  [`scripts/model_library.py`](../scripts/model_library.py) — experimental
+  federated catalog, cold resolution, copy/fabric activation, hot-state,
+  pin/purge, release, and benchmark workflows;
 - [`docs/WEIGHT_FABRIC.md`](./WEIGHT_FABRIC.md) — operator design/runbook;
-- [`docs/MODEL_LIBRARY_DESIGN.md`](./MODEL_LIBRARY_DESIGN.md) — agreed future
-  library + activate direction (not implemented);
+- [`docs/MODEL_LIBRARY_DESIGN.md`](./MODEL_LIBRARY_DESIGN.md) — canonical
+  architecture for the experimental library + activate path;
+- [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md)
+  — accepted durable-home view and validation-identity decision;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and
@@ -1221,12 +1326,23 @@ container labels, traffic evidence, and cleanup behavior. Physical testing has
 demonstrated correct two-node loading, output parity after load, and recovery
 from interruption, link loss, and NFS restart.
 
-The unresolved architectural question is whether eliminating durable client
-copies is worth making the live owner filesystem part of cold-start and restart
-availability. The unresolved validation issue is owner recovery under the
-declared boot policy, followed by three-node concurrent loading and sustained
-soak. Until those are resolved, the accurate product claim is:
+The separate library-hot implementation now provides federated catalog
+discovery, optional cold resolution, schema-2 full-content hot seals, release
+before launch, and pin/purge lifecycle hooks. Counterbalanced DeepSeek trials
+showed that 8-stream SSH-over-RoCE activation was 1.898x the control-path
+median; 16 streams did not improve the median. Integrity, interruption/retry,
+catalog-loss restart, real serving, and 447k-context gates also passed.
 
-> Replicated model caches are validated and user-facing. Single-copy live
-> NFS/RDMA loading is a documented, fail-closed, physically demonstrated
-> experiment—not a promoted default.
+Those wins are not a promotion. The durable-home symlink is the accepted
+architecture, but lab-issued expected-seal binding, serve-time witness and
+lifecycle evidence are not implemented. The 100 GiB default hot budget cannot
+admit the 167 GB flagship on a non-home rank, strict DeepSeek determinism failed
+on both library-hot and replicated controls, and the required sustained soak is
+pending. Live NFS/RDMA additionally retains its owner-recovery and three-node
+validation work. The accurate product claim is:
+
+> Replicated model-cache workflows remain promoted and user-facing under the
+> historical profile-validation ledger, while exact model content is not yet
+> machine-bound to lab-issued seals. Sealed local-hot activation over
+> SSH-over-RoCE is a measured promotion candidate, and live NFS/RDMA is a
+> separate documented experiment; neither is a promoted default.

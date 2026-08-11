@@ -296,6 +296,38 @@ missing required node and repairs digest references that a bare `docker load`
 can omit. NFS/catalog profiles are not copied: mount the same readable path on
 every required node and run `scripts/check-weights.sh`.
 
+### Confirmed SSH identity and endpoint drift
+
+Topology schema 2 binds each selected transport address to the confirmed
+node's stable SSH alias, enrolled host-key set, and immutable node ID. Enroll
+and check it explicitly while the cluster is idle:
+
+```bash
+scripts/topology-ssh-trust.sh enroll
+scripts/topology-ssh-trust.sh check
+scripts/doctor.sh
+```
+
+Enrollment writes the gitignored `.cluster-ssh-config` alongside the topology.
+The shared loader rejects schema 2 if that generated config is missing or
+stale. `doctor` reports the selected endpoint, expected/observed node identity
+and key fingerprints, and drift class. It is read-only: it never rewrites
+topology or OpenSSH trust and never accepts a replacement key. Use this
+remediation policy:
+
+| Doctor finding | Safe response |
+|---|---|
+| Endpoint changed; node ID and key still match | Run `scripts/detect-fabric.sh --json`, review all rails, explicitly write topology, then re-run SSH trust enrollment |
+| Alias changed; node ID and key still match | Confirm the rename, explicitly rewrite topology, then re-run SSH trust enrollment |
+| Host key changed; node ID still matches | Stop. Verify reimage/key rotation out of band, update normal OpenSSH trust deliberately, then run `scripts/topology-ssh-trust.sh enroll --accept-key-change` |
+| Node ID changed at the old alias/address | Treat it as a replacement node; re-qualify and confirm membership |
+| Rail IP presents another node's key | Stop immediately; repair duplicate/stale addressing or the topology mapping |
+
+Do not “fix” a changed-key failure by disabling strict checking or broadly
+deleting `known_hosts` entries. If replacement is legitimate, preserve the old
+and new fingerprints in the incident/change record and enroll only the key
+verified through an independent channel.
+
 ### Experimental single-copy weights
 
 The wizard and ordinary launch remain replicated.
@@ -325,13 +357,38 @@ scripts/model-library.sh catalog refresh
 scripts/model-library.sh activate <profile> --backend copy --yes
 scripts/up.sh <profile> --weight-mode library-hot
 # optional after stop:
-scripts/down.sh <profile> --pin-weights   # keep hot for restart without home
+scripts/down.sh <profile> --pin-weights   # protect retained hot from purge
 scripts/down.sh <profile> --purge-hot     # free hot disk budget
 ```
 
+`pin` marks non-home hot content as purge-protected. Cold stage-only hot may
+be fully self-contained. Warm-home activation is deliberately different: the
+home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
+cache, and only non-home ranks own sealed-hot copies. Home-rank hot
+materialization is ruled out by
+[ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
+
+A warm-home pin permits restart without cold storage, a transfer plane, or
+catalog refresh while the durable home remains. It does **not** claim survival
+after home loss. Do not remove or unmount the home while a running or pinned
+instance depends on it. Home-loss resilience requires an explicit durable
+replica on another failure domain and supported failover.
+
 Hot trees live under `PULSAR_HOT_ROOT` (default `/var/tmp/pulsar-hot`), not as
-durable N copies in every node’s HF cache. Defaults and the wizard stay on
+durable N copies in every node’s HF cache. For a warm-home N-rank service the
+accepted accounting is one durable home plus N−1 hot working copies. Hot purge
+must never follow the home symlink target. Defaults and the wizard stay on
 replicated weights until this path is promoted.
+
+**Accepted serve-time identity contract (not yet implemented):** the home view
+must resolve to the expected canonical local durable tree, and model ID, exact
+commit, and manifest ID must match a lab-issued validation bundle. A fast
+metadata witness may be used only after a full verification and must cover the
+canonical target/filesystem, exact revision/file set, and per-file
+device/inode/size/mtime/ctime. Drift visibly triggers full verification against
+the expected seal or fails closed; it never auto-reseals changed content.
+Current code instead full-verifies a manifest derived from the locally observed
+source and does not yet have the lab-issued trust anchor or fast witness.
 
 **Optional cold archive:** shared/local fill tier (conventionally
 `MODELS_NFS=/mnt/Models`, overridable with `PULSAR_COLD_ROOT`; empty
@@ -364,7 +421,7 @@ configured but unreadable, flows that **need** cold (warm miss, absolute-path
 conf, explicit `cold *`) fail closed; pure warm-catalog hits never require it.
 See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) §3.
 
-**Fabric activate (RoCE transfer into hot):** ephemeral NFSv4.2/`proto=rdma`
+**One-shot NFS/RDMA activate (legacy `--backend fabric` CLI):** ephemeral NFSv4.2/`proto=rdma`
 from the catalog primary home over confirmed RoCE rails into hot staging, then
 **release** of mounts/export (not a long-lived mount under vLLM):
 
@@ -399,37 +456,81 @@ and `fabric_claims_fast_path` (true only if fabric is strictly faster). Prefer a
 fabric is local-only and is not a meaningful B-gate. Default output:
 `results/model-library/<profile>-<tag>.json`.
 
-**Fabric activate performance:** home rank prefers **symlink/reflink** into hot
-(no second full write of the durable home); ranks materialize in **parallel**;
-NFS export/mount is **batched** into fewer sudo sessions and skips
-`nfs-server` restart when RDMA is already listening. Bench JSON may include
-`copy_phases` / `fabric_phases`. Wall-clock is often limited by full-tree
-materialize + setup, not raw RoCE line rate.
+**Activate performance:** the accepted home-rank behavior is a validated
+durable-home symlink/view with no second full write; non-home ranks materialize
+in parallel. Current experimental code prefers a symlink but can fall back to
+reflink/copy if symlink creation fails. That fallback is not accepted promotion
+behavior: the promoted path must fail closed when the durable-home view cannot
+be established. NFS export/mount setup is batched and skips `nfs-server`
+restart when RDMA is already listening. Bench JSON may include `copy_phases`
+and `fabric_phases`; wall-clock is often limited by materialization and setup,
+not raw RoCE line rate.
 
 **SSH-over-RoCE experiment (not product default):** same copy activate
 (rsync + SSH), but SSH targets are topology **RoCE IPs** so bulk TCP rides the
-fabric NIC without NFS/RDMA. Prerequisites: `sshd` reachable on fabric IPs
-(BatchMode keys), routes via the RoCE netdev. Product default remains control
-SSH hosts and optional NFS/RDMA fabric.
+fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
+`sshd` reachable on fabric IPs, and routes via the confirmed RoCE netdev. The
+transport IP is never a separate trust identity: strict checking always uses
+the saved alias and enrolled key. Product default remains replicated caches.
 
 ```bash
-# 1) Prove SSH to fabric IPs (hostname check per rank)
+# 1) Enroll exact control/RoCE identity while idle, then verify it
+scripts/topology-ssh-trust.sh enroll
+scripts/topology-ssh-trust.sh check
+
+# 2) Prove the model-library RoCE map for the profile
 scripts/model-library.sh probe-ssh-roce deepseek-v4-flash
 
-# 2) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between)
+# 3) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between)
 #    Stay for the run; no sudo required for pure copy paths.
 export PULSAR_HOT_BUDGET_BYTES=$((450 * 1024 * 1024 * 1024))  # if auto budget insufficient
 scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
   --tag "ssh-roce-$(date -u +%Y%m%dT%H%M%SZ)"
 
-# Manual one-shot over RoCE IPs only:
-# PULSAR_COPY_SSH_MODE=roce scripts/model-library.sh activate <profile> --backend copy --yes
+# Parallel bulk copy for large, many-blob models (experimental). Repeat both
+# orders before comparing paths; 150 ms staggering avoids an sshd admission
+# burst at 16 streams.
+PULSAR_COPY_STREAM_STAGGER_MS=150 \
+  scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
+    --copy-streams 16 --order roce-first --tag parallel-roce-first
+PULSAR_COPY_STREAM_STAGGER_MS=150 \
+  scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
+    --copy-streams 16 --order control-first --tag parallel-control-first
+
+# Manual one-shot over RoCE TCP with the enrolled alias/key identity:
+scripts/model-library.sh activate <profile> --transport ssh-roce \
+  --backend copy --copy-streams 8 --yes
 ```
+
+`--copy-streams` accepts 1-16 and defaults to 1. Above eight streams, the
+connection stagger must be at least 100 ms (the default is 150 ms); the command
+fails closed otherwise. Parallel copy currently supports a local endpoint on
+one side of the transfer. A remote-home to remote-target relay fails explicitly
+instead of silently reverting to one stream.
+
+An initial two-run test produced a promising but highly variable 16-stream
+result (46.42 s and 79.92 s), without proving physical source reads or
+accounting for destination writeback. A later six-run alternating test
+synchronized both filesystems and applied `POSIX_FADV_DONTNEED` before every
+trial. Block counters then proved a full ~155.45 GiB source read each time:
+
+- 8 streams: 75.60, 83.87, and 88.82 s (83.87 s median).
+- 16 streams: 81.03, 85.09, and 88.61 s (85.09 s median).
+
+The 1.4% median difference is below the observed run-order/storage variance, so
+16 streams has no demonstrated full-model advantage over 8. After the first
+trial, destination block-I/O busy time was 88-95% and source busy time was
+84-93%; aggregate CPU was only 27-32%. Treat 8 streams as the current
+experimental knee, and attribute the earlier 46-80 s spread mainly to
+cache/writeback state rather than RoCE or SSH scaling. The small Qwen profile
+also showed no benefit. Product defaults remain unchanged. See the
+[alternating 8-vs-16 artifact](../results/model-library/deepseek-v4-flash-parallel-rsync-roce-8v16-alternating-20260810.json)
+and the [earlier exploratory artifact](../results/model-library/deepseek-v4-flash-parallel-rsync-roce-16stream-20260810.json).
 
 Report: `results/model-library/<profile>-ssh-roce-<tag>.json` with
 `verdict` (`ssh_roce_faster` | `control_faster` | `tie` | `inconclusive`),
 phase maps, and the RoCE IP map used. Use this before deciding whether to
-rethink NFS/RDMA fabric activate vs “copy over RoCE TCP.”
+rethink one-shot `nfs-rdma` versus `ssh-roce` (copy over RoCE TCP).
 
 ## Expected steady-state numbers (alert if far off)
 
