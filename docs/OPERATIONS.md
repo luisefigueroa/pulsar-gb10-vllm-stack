@@ -378,6 +378,47 @@ after home loss. Do not remove or unmount the home while a running or pinned
 instance depends on it. Home-loss resilience requires an explicit durable
 replica on another failure domain and supported failover.
 
+**Guarded durable-home removal:** inspect first; do not delete the cache path
+manually. Prefer an exact `model_id@revision` query in destructive workflows:
+
+```bash
+# Read-only plan; ordinary blockers are reported and exit nonzero.
+scripts/model-library.sh home check '<model_id>@<revision>' --json
+
+# A single/last home needs an explicit availability-loss acknowledgement.
+scripts/model-library.sh home check '<model_id>@<revision>' --allow-last-home
+
+# Clear managed dependencies before removal.
+scripts/down.sh <profile>
+scripts/model-library.sh purge-hot <profile> --yes --force-unpin
+
+# Re-check, then run the separate destructive command.
+scripts/model-library.sh home check '<model_id>@<revision>' --allow-last-home
+scripts/model-library.sh home remove '<model_id>@<revision>' --allow-last-home --yes
+```
+
+A normal blocked plan exits 1 and, with `--json`, prints the plan. Missing
+topology, an unreachable confirmed node, unavailable Docker, or a contradictory
+observation contract aborts planning because absence of references was not
+proven. Legacy, unreadable, or malformed hot metadata remains a visible blocker
+instead of being treated as absence. Every dependent managed hot state blocks,
+not only `pinned`, and managed containers remain blockers even when stopped
+because Docker can restart them later. The exact repository must contain only
+the selected snapshot revision and no ref may point to another revision.
+
+The removal command holds the exclusive lifecycle lock from observation through
+deletion. Supported catalog, activation, launch, readiness, download, and
+fabric commands take its shared form, so they cannot create a new dependency
+between the check and deletion. Execution repeats the repository inspection,
+compares its metadata fingerprint, atomically retires the exact repository, and
+refreshes the catalog. If recursive deletion fails after retirement, stop and
+inspect the plan-bound `.pulsar-removing-*` path reported by the command; do not
+download or manually rename content over it.
+
+The guard covers Pulsar-managed containers and hot metadata. A manually created
+container, process, bind mount, or open file outside those labels is not
+discoverable by this contract and remains the operator's responsibility.
+
 Hot trees live under `PULSAR_HOT_ROOT` (default `/var/tmp/pulsar-hot`), not as
 durable N copies in every node’s HF cache. For a warm-home N-rank service the
 accepted accounting is one durable home plus N−1 hot working copies. Hot purge

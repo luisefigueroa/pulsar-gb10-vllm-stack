@@ -1,0 +1,105 @@
+{
+  "commands": [
+    "scripts/model-library.sh catalog refresh --json",
+    "scripts/model-library.sh home check '<synthetic-model-id>@<synthetic-revision>' --json",
+    "scripts/model-library.sh home check '<synthetic-model-id>@<synthetic-revision>' --allow-last-home",
+    "scripts/model-library.sh home remove '<synthetic-model-id>@<synthetic-revision>' --allow-last-home --yes"
+  ],
+  "deterministic_tests": {
+    "focused_suite": "scripts/testlib/test_model_library_home_removal.py",
+    "focused_tests": 16,
+    "full_control_plane_selftest": "scripts/selftest.sh",
+    "status": "pass"
+  },
+  "evidence_scope": {
+    "establishes": [
+      "exact single-revision durable-home target validation",
+      "ordinary last-home refusal plus separate availability-loss acknowledgement",
+      "ready, verifying, and pinned managed hot references block removal",
+      "running and stopped Pulsar-managed container references block removal",
+      "legacy or unreadable managed hot metadata blocks rather than proving absence",
+      "shared lifecycle users exclude the removal planner and mutation",
+      "execution revalidates the target metadata fingerprint before mutation",
+      "exact no-follow deletion preserves an adjacent sibling repository",
+      "successful deletion refreshes the federated catalog"
+    ],
+    "does_not_establish": [
+      "lab-issued expected model identity",
+      "a complete machine-readable validation bundle",
+      "unmanaged process, container, bind-mount, or open-file discovery",
+      "durable-home-loss resilience",
+      "production model deletion",
+      "serving correctness, performance, determinism, or soak"
+    ]
+  },
+  "final_state": {
+    "disposable_targets_absent": true,
+    "managed_test_containers_absent": true,
+    "production_qwen_home_preserved": true,
+    "retirement_paths_absent": true,
+    "sibling_repository_preserved": true,
+    "temporary_hot_state_absent_all_nodes": true
+  },
+  "gate": "active-use durable-home removal protection",
+  "kind": "model-library-home-removal-guard-gate",
+  "physical_three_node_check": {
+    "catalog_refresh_after_delete": "pass",
+    "confirmed_nodes": 3,
+    "container_blockers": {
+      "running": "pass",
+      "stopped": "pass"
+    },
+    "deletion_targets": {
+      "count": 2,
+      "kind": "disposable synthetic HF-layout canary",
+      "payload_bytes": [
+        101,
+        98
+      ],
+      "production_model_content_deleted": false
+    },
+    "hot_reference_blockers": {
+      "legacy_schema_observability": "pass",
+      "pinned": "pass",
+      "ready": "pass",
+      "verifying": "pass"
+    },
+    "last_home_refusal": "pass",
+    "lifecycle_lock_contention": "pass",
+    "missing_yes_preserved_target": true,
+    "narrow_terminal_rendering": "pass",
+    "no_follow_exact_delete": "pass",
+    "status": "pass"
+  },
+  "privacy": {
+    "omitted": [
+      "hostnames",
+      "IP addresses",
+      "SSH aliases",
+      "node IDs",
+      "container IDs",
+      "interface names",
+      "absolute paths",
+      "topology ID",
+      "filesystem device and inode values"
+    ],
+    "raw_site_state_published": false,
+    "topology_redacted": true
+  },
+  "promotion": {
+    "default_changed": false,
+    "guided_default": "replicated-local-hf-cache",
+    "home_removal_gate": "pass",
+    "overall_status": "not-promoted",
+    "remaining_blockers": [
+      "real lab-issued profile seal and complete validation bundle",
+      "production non-home hot-budget policy",
+      "strict flagship same-config determinism",
+      "sustained library-hot soak"
+    ]
+  },
+  "recorded_at": "2026-08-11",
+  "repository_commit": "32dd8bf784514c066fc2ac86976194637609ea02",
+  "schema_version": 1,
+  "status": "pass"
+}

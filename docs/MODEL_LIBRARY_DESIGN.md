@@ -20,7 +20,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); expected-seal/exact-revision and serve-time witness enforcement landed, issued release seals pending |
+| Status | Implemented experiment (not promoted); expected-seal/exact-revision, serve-time witness, and guarded durable-home removal landed; issued release seals pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -44,7 +44,12 @@ remain `legacy-unsealed`; they require explicit `--allow-unvalidated` for
 model-library experiments. Catalog refresh discovers complete snapshot commit
 directories independently of mutable `refs/main`; sealed inspection,
 manifest construction, verification, and launch all receive that selected
-commit explicitly. The standalone machine-readable validation-bundle document
+commit explicitly. Guarded home removal now requires all confirmed nodes'
+managed hot state and Docker state to be observable, blocks retained hot views
+and managed containers, and serializes supported readers/launchers against
+deletion. Removal is limited to an exact single-revision HF repository and
+rechecks its metadata immediately before retirement. The standalone
+machine-readable validation-bundle document
 remains unimplemented.
 
 ---
@@ -439,8 +444,30 @@ between them.
 
 Hot purge must remove only the managed hot instance and never follow the home
 symlink. An active launch/reference blocks durable-home removal. Removing a
-home is a separate confirmation-gated operation that reports dependent running
-or pinned instances.
+home is a separate confirmation-gated operation that reports every dependent
+managed container and retained hot instance, whether ready, verifying, or
+pinned.
+
+**Current implementation:** `scripts/model-library.sh home check` builds a
+fail-closed plan from an authoritative home inspection plus hot-state and
+Docker observations on every confirmed node. `home remove ... --yes` executes
+only an eligible plan. A final durable copy requires the additional
+`--allow-last-home` acknowledgement. The target must be the exact catalogued
+HF repository, contain only the selected snapshot revision, use non-symlinked
+`snapshots`/`refs` layout directories, and have no ref pointing elsewhere.
+Before deletion, the home node repeats the shape inspection, compares a
+metadata fingerprint, atomically renames the repository to a plan-bound
+retirement path, removes that path without following managed hot views, and
+then refreshes the catalog.
+
+A repository-local shared/exclusive lifecycle lock closes races among supported
+Pulsar catalog, activation, launch, readiness, download, fabric, and removal
+commands. Missing topology, unreachable nodes, unavailable Docker, or a
+contradictory observation contract aborts planning. Unreadable or legacy hot
+metadata remains a visible blocker instead of proving absence. This guard
+cannot discover an unmanaged process or container created outside Pulsar
+labels; such use remains an operator responsibility and must be stopped before
+removal.
 
 ---
 
@@ -515,19 +542,25 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Home-rank activation creates the durable-home symlink/view, not a hot copy
 [x] Serve-time metadata witness covers the canonical target and exact file set
 [x] Witness drift visibly full-verifies against the expected seal or fails
-[ ] Active-use durable-home removal guard passes
+[x] Active-use durable-home removal guard passes
 [x] Serving ranks receive read-only exact-snapshot views in physical launch evidence
 [x] Hot purge and force-unpin no-follow behavior passes the physical gate
 [x] Warm-home pin/restart reports its durable-home dependency honestly
 ```
 
+The active-use guard has deterministic coverage for exact target shape,
+all-state hot dependencies, stopped/running managed-container references,
+unobservable-node failure, lifecycle locking, metadata drift, last-home
+acknowledgement, and exact no-follow deletion. It passed a three-node physical
+gate using disposable synthetic repositories on 2026-08-11; no production home
+was removed. See
+`results/model-library/model-library-home-removal-guard-20260811.json`.
 The witness checks above have deterministic control-plane coverage. The
 legacy-unsealed Qwen canary also passed the physical symlink, both-rank witness,
 read-only launch, pin/restart, mismatch, and no-follow purge gate on 2026-08-11.
-That artifact does not issue a real seal or replace the active-home-removal,
-production budget, strict DeepSeek determinism, or sustained soak gates. Failed
-or incomplete evidence is not rewritten because an architectural blocker
-changed.
+Neither artifact issues a real seal or replaces the production budget, strict
+DeepSeek determinism, or sustained soak gates. Failed or incomplete evidence is
+not rewritten because an architectural blocker changed.
 
 ---
 
@@ -536,7 +569,7 @@ changed.
 - Promotion into the wizard or other guided defaults
 - Issue reviewed seals for real profiles and add machine-readable immutable
   validation-bundle documents
-- Per-rank runtime-source labels and home deletion/reference guards
+- Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas
 - Numeric production defaults and policy UX for non-home hot/pin budgets
 - Destructive duplicate-home cleanup beyond the current recommendation flow
@@ -575,3 +608,5 @@ changed.
 | 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued. |
 | 2026-08-10 | Implemented rank-local serve-witness schema 1: activation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |
 | 2026-08-11 | Qwen 1.7B physically passed durable-home symlink, non-home sealed-hot, both-rank witness fallback, exact-snapshot read-only launch, warm-home pin/restart, mismatch fail-closed, and force-unpin no-follow purge. The artifact is `legacy-unsealed`; release identity and promotion remain open. |
+| 2026-08-11 | Guarded durable-home removal probes every confirmed node, blocks all managed hot/container references, serializes supported lifecycle commands, requires explicit last-home acknowledgement, and deletes only an unchanged exact single-revision repository. |
+| 2026-08-11 | The durable-home removal guard passed deterministic tests and a three-node physical gate using disposable synthetic repositories; the real Qwen home and adjacent repository content were preserved. |

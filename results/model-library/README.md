@@ -18,8 +18,14 @@ explicitly `legacy-unsealed` and does not claim lab-issued identity. Site-local
 witness documents contain absolute paths and filesystem identifiers and are
 never publishable evidence.
 
+The active-use durable-home removal guard subsequently passed deterministic and
+three-node physical checks using only disposable synthetic repositories. Its
+artifact closes that lifecycle gate without changing model identity, profile
+status, guided defaults, or the Qwen home's retained state.
+
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Current lifecycle gate PASS; no production model was deleted; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
 | `qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json` | Physical durable-home symlink, sealed-hot, witness fallback, exact-snapshot launch, pin/restart, mismatch, and no-follow purge; Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, observed manifest only | Current lifecycle gate PASS; identity remains `legacy-unsealed`; not a promotion | Reviewed; site topology, paths, filesystem identity, and witness IDs omitted |
 | `model-library-promotion-assessment-20260810.json` | Consolidated DeepSeek/Qwen promotion assessment; schema-2 local content digest, not a lab-issued expected seal | Historical assessment; materialization recommendation superseded | Embedded redaction declaration; topology/site fields omitted |
 | `topology-ssh-trust-gate-20260810.json` | Topology-bound SSH alias/key/endpoint gate and Qwen sealed activation | Current gate evidence | Embedded redaction declaration |
