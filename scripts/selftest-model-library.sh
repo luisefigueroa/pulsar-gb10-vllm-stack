@@ -357,8 +357,12 @@ assert_true "up.sh help lists library-hot" \
   grep -q library-hot "$REPO_DIR/scripts/up.sh"
 assert_true "start-cluster accepts library-hot" \
   grep -q library-hot "$REPO_DIR/scripts/../cluster/start-cluster.sh"
-assert_true "cluster launch full-verifies remote seal identity" \
+assert_true "cluster launch validates remote expected identity" \
   grep -q -- --expected-validation-json "$REPO_DIR/cluster/start-cluster.sh"
+assert_true "cluster launch uses serve-time witness with full-verify fallback" \
+  grep -q -- --serve-time-witness "$REPO_DIR/cluster/start-cluster.sh"
+assert_true "activation full-verifies and refreshes rank-local witnesses" \
+  grep -q -- --refresh-witness "$REPO_DIR/scripts/model-library.sh"
 out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)
 assert_true "check-weights library-hot fails closed without hot" \
   bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|activate|topology|hot'"

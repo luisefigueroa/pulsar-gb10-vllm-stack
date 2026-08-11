@@ -113,8 +113,9 @@ elif [ "$WEIGHT_SOURCE" = library-hot ]; then
       --profile "$MODEL_NAME" \
       --topology-id "$CLUSTER_TOPOLOGY_ID" \
       --expected-validation-json "$LIBRARY_HOT_VALIDATION_JSON" \
-      --workers "${PULSAR_INTEGRITY_WORKERS:-8}")
-    echo "[cluster] full SHA-256 + expected identity verify: rank $rank"
+      --workers "${PULSAR_INTEGRITY_WORKERS:-8}" \
+      --serve-time-witness)
+    echo "[cluster] serve witness + fail-closed identity verify: rank $rank"
     ssh_node "$rank" "$library_verify_command" \
       <"$REPO_DIR/scripts/model_library.py" >/dev/null \
       || die "library-hot: rank $rank failed exact identity verification"

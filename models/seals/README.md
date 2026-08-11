@@ -62,12 +62,17 @@ Catalog schema 2 validates the reviewed seal and selects only its exact
 revision. Catalog refresh discovers complete snapshot commit directories
 without depending on `refs/main`, so a direct commit-pinned download remains
 usable and later upstream ref movement cannot retarget the profile. Hot schema
-3 records expected and observed identity, and launch full-verifies the hot
-manifest before passing the exact `snapshots/<revision>` path to vLLM.
-Container labels and multi-node startup evidence carry revision, identity
+3 records expected and observed identity. Activation full-verifies every rank
+and atomically creates a rank-local serve witness before publishing ready.
+Launch validates the live profile/controller expectation, uses that witness
+when canonical view and file metadata are unchanged, and visibly falls back to
+full SHA-256 on missing/invalid/drifted metadata. Only a stable content match
+refreshes the witness. The exact `snapshots/<revision>` path is then passed to
+vLLM. Container labels and multi-node startup evidence carry revision, identity
 status, seal ID, and validation-bundle ID.
 
-The fast metadata witness is not implemented yet, so launch still performs a
-full SHA-256 verification. A standalone machine-readable validation-bundle
-document and lab issuance automation are also pending; the current seal carries
-the lab-provided bundle ID without reconstructing that bundle from user state.
+A standalone machine-readable validation-bundle document and lab issuance
+automation are still pending; the current seal carries the lab-provided bundle
+ID without reconstructing that bundle from user state. The witness is only an
+accelerator for identity previously established by a full verification. It is
+never a seal issuer.

@@ -16,8 +16,10 @@ seal from arbitrary user-observed cache contents. Recover the exact lab
 artifact used for the historical run or revalidate the intended revision, then
 follow [models/seals/README.md](../models/seals/README.md) in the evidence pull
 request. A future mirror may distribute the bytes, but hosting location is not
-validation identity. The standalone full validation-bundle document and fast
-serve-time witness remain pending.
+validation identity. The rank-local serve witness is implemented: activation
+creates it only after full verification, while unchanged launch uses metadata
+and drift visibly rehashes before refresh. The standalone full
+validation-bundle document remains pending.
 
 ## 0. Prep (5 min)
 
@@ -165,8 +167,9 @@ Do not inherit replicated-cache validation for `--weight-source fabric` or
    soak recovery;
 5. exact expected-versus-observed model seal and revision binding;
 6. proof that non-home clients retain no complete durable model cache;
-7. for library-hot, validated home-view target/witness, no-follow purge, and
-   honest durable-home pin/restart dependency.
+7. for library-hot, activation-created witness plus unchanged-launch fast-path,
+   metadata-drift full-verify/fail-closed behavior on every rank, no-follow
+   purge, and honest durable-home pin/restart dependency.
 
 The path remains experimental if any artifact is absent, even when the same
 model/profile/image is already `tested` with replicated weights.

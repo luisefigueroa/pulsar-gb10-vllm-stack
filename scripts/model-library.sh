@@ -72,6 +72,8 @@ Notes:
     --copy-streams N size-balances HF blobs over independent SSH connections
     (1..16). The current default remains ssh-control with one stream while the
     ssh-roce/8-stream promotion gates are completed.
+  • activate full-verifies every rank and creates a rank-local serve witness.
+    Unchanged launch checks metadata; drift visibly rehashes or fails closed.
   • activate --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
     to fill hot, then releases mounts/export. No silent fallback to copy.
   • bench-activate runs copy then fabric (purge between), writes a JSON report;
@@ -583,13 +585,20 @@ cmd_cold_stage_only() {
   python3 "$PY_TOOL" "${plan_args[@]}" --execute >/dev/null
 
   if [ "$nodes" -gt 1 ]; then
+    local stamp_json verifying_stamp_json
+    stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
+    verifying_stamp_json=$(printf '%s' "$stamp_json" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+d["state"]="verifying"
+print(json.dumps(d))
+')
     for ((rank = 1; rank < nodes; rank++)); do
       copy_hub_to_rank "$rank" "$hub_dest" "$hub_dest" 0
-      local stamp_json
-      stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
-      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
+      write_stamp_on_rank "$rank" "$instance" "$verifying_stamp_json"
       verify_hot_on_rank "$rank" "$instance" "$profile" \
-        "${CLUSTER_TOPOLOGY_ID}" 0 "$expected_validation_json"
+        "${CLUSTER_TOPOLOGY_ID}" 1 "$expected_validation_json"
+      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
     done
   fi
   log "stage-only ready: $instance"
@@ -935,6 +944,7 @@ verify_hot_on_rank() {
     --profile "$profile"
     --topology-id "$topology_id"
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
+    --refresh-witness
   )
   [ "$allow_verifying" = 1 ] && verify_args+=(--allow-verifying)
   [ -n "$expected_validation_json" ] \

@@ -43,6 +43,8 @@ run "model library transport contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_transport.py"
 run "model library integrity contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_integrity.py"
+run "model library serve-witness contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_witness.py"
 run "model library expected-seal contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_expected_seal.py"
 run "model library startup-evidence contracts" \

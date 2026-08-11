@@ -98,7 +98,8 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
       --instance-dir "$instance" \
       --profile "$NAME" \
       --topology-id "$CLUSTER_TOPOLOGY_ID" \
-      --models-dir "$REPO_DIR/models" >/dev/null; then
+      --models-dir "$REPO_DIR/models" \
+      --serve-time-witness >/dev/null; then
     if [ "$JSON" = 1 ]; then
       printf '%s\n' '{"state":"invalid","source":"library-hot","ok":false}'
     elif [ "${QUIET:-0}" = 1 ]; then

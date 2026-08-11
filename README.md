@@ -189,9 +189,10 @@ seal it with SHA-256 manifests, and benchmark two or three storage consumers.
 It requires explicit `--weight-source fabric`; the wizard never selects it or
 falls back to it. A distinct `library-hot` candidate keeps one durable home,
 uses a symlink view on that rank, and transfers sealed hot copies only to other
-ranks. Its control plane can now enforce reviewed exact commit/manifest seals
-and launch the exact snapshot, but this release issues no real profile seals
-and the fast metadata witness remains pending. See
+ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
+create a rank-local witness after full verification, use a metadata fast path
+for unchanged launch, and visibly rehash on drift before launching the exact
+snapshot. This release still issues no real profile seals. See
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
 [docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md).
 
