@@ -20,7 +20,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); identity/witness enforcement pending |
+| Status | Implemented experiment (not promoted); expected-seal/exact-revision enforcement landed, issued release seals and fast witness pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -29,14 +29,19 @@
 | Default today | Replicated local Hugging Face caches |
 | Experimental today | `scripts/model-library.sh` catalog/cold/activate/hot/pin workflows; `--weight-mode library-hot`; and `--weight-source fabric` live NFSv4.2/RDMA |
 
-**Current implementation integrity boundary:** model-library hot schema 2
-carries a sealed `sha256-snapshot-manifest-v1` manifest over the exact snapshot
-file paths, sizes, and SHA-256 contents. Activation and launch full-verify that
-seal; same-size byte corruption is therefore detected. Older size-only hot
-state is not accepted as ready and must be repaired or reactivated before
-launch. The manifest is currently derived from locally observed content; the
-lab-issued expected seal and fast serve-time witness described below are
-accepted target requirements but are not yet implemented.
+**Current implementation integrity boundary:** catalog schema 2 accepts an
+optional reviewed `models/seals/*.json` trust root and binds a tested profile to
+its exact Hugging Face commit. Hot schema 3 records the expected seal,
+validation-bundle ID, and locally observed revision/manifest. Activation
+full-hashes before publishing ready state, a configured mismatch cannot be
+bypassed, and launch full-verifies again before passing the exact
+`snapshots/<revision>` path to vLLM. Existing profiles have no issued seals and
+remain `legacy-unsealed`; they require explicit `--allow-unvalidated` for
+model-library experiments. Catalog refresh discovers complete snapshot
+commit directories independently of mutable `refs/main`; sealed inspection,
+manifest construction, verification, and launch all receive that selected
+commit explicitly. The fast serve-time metadata witness and standalone
+machine-readable validation-bundle document remain unimplemented.
 
 ---
 
@@ -216,10 +221,13 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
 paths remain gated on validated profiles. Unvalidated presence is for disk
 awareness and advanced/explicit flows only.
 
-**Current implementation gap:** catalog labeling matches `STATUS=tested*` by
-model repository ID and does not yet compare an expected revision/manifest.
-Until the validation-bundle work lands, this is a legacy profile label—not
-proof that arbitrary bytes under the same repository ID were validated.
+**Current implementation:** a tested profile without
+`EXPECTED_MODEL_SEAL` is labeled `legacy-unsealed`. A reviewed seal under
+`models/seals/` makes catalog schema 2 select only the declared immutable
+commit and label it `expected-unverified`; activation then computes the observed
+manifest and must reach `match`. `catalog list --validated` includes only
+entries carrying a reviewed expected seal, never legacy repository-ID-only
+claims. No production profile seal is issued in this release.
 
 ### 3.3 Duplicates
 
@@ -355,9 +363,14 @@ verification against the expected seal or fails closed. A successful full
 verification may atomically refresh the witness; a mismatch never auto-reseals
 the changed content as validated.
 
-**Current implementation gap:** schema-2 hot state full-verifies a manifest
-derived from the local source at activation and full-verifies again at launch.
-It does not yet carry a lab-issued expected seal or use the metadata witness.
+**Current implementation:** hot schema 3 carries both the reviewed expected
+seal projection and the observed seal. Activation compares model ID, immutable
+commit, and manifest ID, then full-verifies every rank before publishing ready
+state. Launch revalidates the current profile/seal, full-verifies the manifest,
+and passes the exact snapshot path. The fast metadata witness is still a gap,
+so unchanged launches pay the full-hash cost. The seal carries a lab-provided
+validation-bundle ID, but a standalone bundle document that machine-checks the
+full profile/image/geometry binding is still pending.
 
 ### 4.6 Activate transfers
 
@@ -425,7 +438,7 @@ or pinned instances.
 | Replicated `pull-weights` + local launch | **Remains default** until a library+activate path earns promotion |
 | Live `--weight-source fabric` | **Experimental** proof/ops path; long-lived mount under vLLM is **not** the agreed product identity |
 | Site cold path confs | Optional cold tier; keep working |
-| Topology rails and NFS/RDMA helpers | Reused by fabric **activate**; model-library schema-2 hot state now has its own full SHA-256 snapshot seal, while live-fabric configuration identity remains separate |
+| Topology rails and NFS/RDMA helpers | Reused by fabric **activate**; model-library schema-3 hot state carries full SHA-256 observed content plus optional expected-seal provenance, while live-fabric configuration identity remains separate |
 | Materialize-as-only-mechanism drafts | Superseded as the top-level story; activate+hot+pin is the product frame |
 
 ---
@@ -483,14 +496,15 @@ The accepted symlink design replaces the former owner-materialization blocker.
 Promotion now requires this identity/lifecycle evidence:
 
 ```text
-[ ] Repo release provides a lab-issued expected seal and validation-bundle ID
-[ ] Catalog/launch compare exact model, commit, and manifest—not model ID alone
-[ ] Home view resolves to the expected canonical local durable tree
-[ ] Serve-time witness validates the same exact revision/path used for launch
-[ ] Metadata drift visibly full-verifies against the expected seal or fails
-[ ] Serving view is read-only where practical; active use blocks home removal
-[ ] Hot purge and force-unpin never follow or delete the durable-home target
-[ ] Warm-home pin/restart reports its durable-home dependency honestly
+[ ] Repo release provides a real lab-issued seal and validation-bundle ID
+[x] Catalog/activation compare exact model, commit, and manifest
+[x] Launch full-verifies and passes the same exact snapshot path to vLLM
+[x] Home-rank activation creates the durable-home symlink/view, not a hot copy
+[ ] Serve-time metadata witness covers the canonical target and exact file set
+[ ] Witness drift visibly full-verifies against the expected seal or fails
+[ ] Active-use removal guard and production read-only lifecycle evidence pass
+[ ] Hot purge and force-unpin no-follow behavior passes the physical gate
+[x] Warm-home pin/restart reports its durable-home dependency honestly
 ```
 
 Production hot-budget policy, strict DeepSeek determinism, serving gates, and
@@ -502,13 +516,14 @@ because an architectural blocker changed.
 ## 8. Remaining deferred work
 
 - Promotion into the wizard or other guided defaults
-- Lab-issued expected model seals and immutable validation bundles
+- Issue reviewed seals for real profiles and add machine-readable immutable
+  validation-bundle documents
 - Serve-time metadata witness with visible full-verify fallback
 - Per-rank runtime-source labels and home deletion/reference guards
 - Stable public guarantees for machine-readable JSON schemas
 - Numeric production defaults and policy UX for non-home hot/pin budgets
 - Destructive duplicate-home cleanup beyond the current recommendation flow
-- Policy for explicitly activating present-but-unvalidated models
+- Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete physical promotion matrix, including time-to-healthy, interruption,
   dependency loss, restart, determinism, and sustained soak
 - Optional durable-replica and failover policy on distinct failure domains
@@ -540,3 +555,4 @@ because an architectural blocker changed.
 | 2026-08-10 | Full-model counterbalanced trials passed the performance gate: 8-stream SSH-over-RoCE was 1.898x the control-path median; 16 streams did not improve the median. |
 | 2026-08-10 | **No promotion:** keep replicated guided defaults. SSH identity passed; production hot-budget policy, strict DeepSeek determinism, and sustained soak remain open. |
 | 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |
+| 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued and the fast witness remains pending. |

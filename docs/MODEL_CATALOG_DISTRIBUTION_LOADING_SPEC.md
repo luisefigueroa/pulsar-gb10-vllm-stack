@@ -11,12 +11,12 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-08 |
+| Snapshot date | 2026-08-10 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
 | Additional catalog path | Operator-mounted absolute paths, conventionally under `/mnt/Models` |
-| Experimental storage path | Single authoritative Hugging Face repository exported read-only with NFSv4.2/RPC-RDMA |
+| Experimental storage paths | Federated durable home plus sealed local hot, and a distinct live NFSv4.2/RPC-RDMA owner path |
 | Document status | Descriptive current-system specification; not a promotion or architecture claim |
 
 This document is intentionally self-contained. It describes what the current
@@ -39,8 +39,10 @@ The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
 rank, sealed hot only on non-home ranks, and content identity anchored in a
 lab-issued validation bundle. Routine home-rank hot materialization is ruled
-out. Current code has not yet implemented the expected-seal or metadata-witness
-parts of that decision.
+out. Current code implements the reviewed expected-seal reference, exact commit
+selection/comparison, seal-bound hot state, and exact snapshot launch. It does
+not yet implement the fast metadata witness or a standalone validation-bundle
+document, and no real profile seal ships yet.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -57,6 +59,7 @@ Pulsar separates five kinds of state:
 | Cluster topology | Confirmed topology manifest | No; site-local | Stable node identities, ranks, control endpoints, RDMA interfaces, rails, and topology identity |
 | Weight-fabric configuration | `.weight-fabric/<profile>.json` | No; site-local | Owner, storage-visible nodes, selected RoCE rail, export/mount paths, and configuration identity |
 | Model bytes | Local cache, site catalog, or owner cache | No | Hugging Face repository or absolute-path model tree consumed by vLLM |
+| Expected model seal | Optional `models/seals/*.json` referenced by a tested profile | Yes | Reviewed exact commit/manifest expectation plus lab provenance and validation-bundle ID |
 | Validation evidence | `results/` plus `docs/VALIDATION.md` | Yes when publishable | Reproducible support for status and promotion claims |
 
 The current system supports three practical storage origins:
@@ -145,8 +148,7 @@ that way.
   use a live NFS/RDMA view of the owner's repository.
 - **Sealed snapshot**: a resolved Hugging Face revision plus an exact file list,
   sizes, and SHA-256 digests recorded in a manifest.
-- **Expected seal**: target concept, not yet implemented—lab-issued model ID,
-  exact revision, manifest ID, and provenance.
+- **Expected seal**: optional reviewed schema-1 document under `models/seals/` containing model ID, immutable commit, manifest ID, lab provenance, and validation-bundle ID.
 - **Observed seal**: locally computed identity compared with the expected seal;
   it cannot establish validation by itself.
 - **Runtime source**: target per-rank classification of `durable-home`,
@@ -172,8 +174,9 @@ and reviewed profile changes are trusted.
 
 | Field | Meaning and current rule |
 |---|---|
-| `MODEL` | Required. Passed to vLLM as `--model`. A leading `/` classifies it as an absolute-path catalog model; otherwise it is classified as a Hugging Face repository. |
+| `MODEL` | Required. Normally passed to vLLM as `--model`. A leading `/` classifies an absolute-path catalog model; otherwise it is a Hugging Face repository. `library-hot` launch instead passes the sealed local `snapshots/<revision>` path. |
 | `SERVED_NAME` | API model name. Defaults to the profile ID and may intentionally differ from the repository ID. |
+| `EXPECTED_MODEL_SEAL` | Optional path relative to `models/`, constrained under `models/seals/`. Only `STATUS=tested*` may reference one. The strict seal and every repository-relative evidence path must exist. |
 | Profile filename | Operator-facing launch ID, for example `scripts/up.sh <profile>`. |
 | `PROFILE_FAMILY` | Groups related one-node/two-node or serving/diagnostic variants. Defaults to `SERVED_NAME`. |
 | `VARIANT_LABEL` | Human label for a variant. Defaults to `<NODES>-node`. |
@@ -811,7 +814,10 @@ After health:
 
 Optional startup evidence records profile, model, storage mode, node count,
 topology ID, cache-state label, start/healthy timestamps, and time to first
-health. Fabric evidence additionally requires configuration and owner identity.
+health. Live-fabric evidence additionally requires configuration and owner
+identity. `library-hot` evidence requires home/content identity, transfer and
+integrity scheme, exact model revision, identity status, and the exact runtime
+snapshot path; `match` also requires model-seal and validation-bundle IDs.
 
 Once all model weights are resident, ordinary inference has been observed to
 continue without rereading the checkpoint. That is not a guarantee that every
@@ -853,17 +859,22 @@ currently create a cryptographic model lock or publish per-rank digest parity.
 Model repository IDs are present in profiles, but a mutable upstream `main`
 revision is not pinned by the profile or download command.
 
-The model-library catalog has the same trust-root gap even though its transfer
-integrity is stronger: it reads the locally active revision and labels every
-cached revision of a repository as validated when any matching profile has
-`STATUS=tested*`. Activation then seals those observed local bytes. That proves
-the copied bytes match their source; it does not prove they match the lab run.
+Model-library catalog schema 2 closes the repository-ID-only trust gap when a
+profile references a reviewed seal: refresh enumerates complete snapshot
+commit directories without using mutable `refs/main`, selects only the
+immutable expected commit, and labels the local home `expected-unverified`.
+Activation inspects that same revision explicitly, computes the observed
+complete manifest, requires model/revision/manifest equality, and publishes
+hot schema 3 only after full verification. A configured mismatch cannot be
+bypassed with `--allow-unvalidated`.
 
-Image identity is stronger for profiles that use an immutable image digest;
-other profiles inherit a centrally configured tag. Until expected model seals
-and validation bundles are implemented, existing tested rows are historical
-profile claims and must not machine-bless arbitrary content under the same
-repository ID.
+Profiles without a seal remain `legacy-unsealed`, including every current
+production profile. Their historical `STATUS=tested*` claim does not
+machine-bless arbitrary content and library activation requires explicit
+`--allow-unvalidated`. Replicated mode still has no equivalent content lock.
+The seal carries an opaque reviewed validation-bundle ID; current code does not
+yet validate a standalone bundle document containing normalized profile,
+resolved image digest, and geometry.
 
 ### 12.2 Fabric integrity level
 
@@ -977,26 +988,23 @@ explains why that choice matters, shows existing copy/free-space/boot evidence,
 and confirms storage-visible scope. Silently electing an owner would create an
 availability and capacity policy that profiles do not currently express.
 
-### 15.3 Model identity is not yet release-bound
+### 15.3 Model identity binding: implemented mechanism, no issued release seals
 
-Fabric and model-library sealing record the locally resolved revision, but
-profiles still name only a repository and downloads default to upstream
-`main`. Replicated mode has no sealed manifest. A later preparation may
-therefore use newer bytes under the same profile and status.
+Profiles may now reference a reviewed schema-1 expected seal with immutable
+commit, complete manifest ID, validation-bundle ID, issuer, issuance time, and
+repository-relative evidence. Catalog schema 2 stores expected identity and
+observed availability separately. Hot schema 3 stores expected and observed
+seal projections with `match | legacy-unsealed | unvalidated`; file or profile
+seal drift fails activation/launch, and launch passes the exact snapshot path.
+Container labels and multi-node startup evidence carry the same identities.
 
-This is the most important catalog/integrity implementation gap. The accepted
-target is a lab-issued validation bundle containing the expected model seal(s),
-normalized profile/runtime configuration, resolved image digest,
-geometry/topology class, and evidence references. Future machine state should
-distinguish, without claiming a final wire schema:
-
-- expected model/revision/manifest and validation-bundle identity;
-- observed revision/manifest;
-- per-rank `durable-home | sealed-hot | live-mount` runtime source;
-- witness verification state; and
-- `legacy-unsealed | missing | match | drift | mismatch` identity status.
-
-A local observed manifest can match the expected seal but cannot issue it.
+No real profile seal is issued in this release, so existing profiles remain
+legacy-unsealed and downloads still default to upstream `main`. Replicated and
+live-mount paths are not yet bound by this mechanism. The fast witness,
+`drift | mismatch` persisted states, per-rank runtime-source inventory, and a
+standalone machine-validated bundle for normalized runtime configuration,
+resolved image digest, topology class, and evidence remain gaps. A local
+observed manifest may match an expected seal but cannot issue it.
 
 ### 15.4 Live owner dependency
 
@@ -1110,18 +1118,21 @@ alongside a control-path copy backend:
 
 This removes hard NFS mounts from the runtime. The implementation includes
 federated warm catalog discovery, an optional cold tier, copy and fabric
-activate backends, schema-2 full-content hot seals, transfer-plane release,
+activate backends, schema-3 expected/observed full-content hot seals,
+transfer-plane release,
 budget checks, pin/unpin/purge, and `library-hot` launch/stop hooks.
 Remote serving ranks receive temporary or pinned hot copies, giving up the
 strict “one physical copy” property while staged.
 
 Accepted architecture and current behavior both use a warm-home symlink into
 the durable HF cache. This is not a materialization gap: routine home-rank hot
-copying is prohibited. The missing promotion work is to bind that view to the
-lab-issued expected seal, validate a metadata witness at serve time, launch the
-same exact revision that was checked, expose the durable-home dependency, and
-make purge/removal lifecycle-safe. Production budget policy, crash recovery,
-and garbage collection also require promotion-level evidence and hardening.
+copying is prohibited. The control plane now binds that view to an optional reviewed expected seal,
+full-verifies it, launches the same exact revision, and exposes seal/bundle
+identity in labels and startup evidence. Remaining promotion work is to issue
+real release seals, validate a fast metadata witness at serve time, add active
+home-removal protection, and complete physical no-follow lifecycle evidence.
+Production budget policy, crash recovery, and garbage collection also require
+promotion-level evidence and hardening.
 
 This path is implemented but experimental and unpromoted. It must continue to
 be evaluated against replicated mode and live fabric rather than being assumed
@@ -1137,7 +1148,7 @@ These points combine current evidence with the accepted architecture:
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
 3. Treat 8-stream SSH-over-RoCE activation into sealed local hot as a separate
-   promotion candidate. Do not guide it until expected-seal binding,
+   promotion candidate. Do not guide it until real release seals, the fast
    serve-time witness and lifecycle gates, budget policy, determinism, and soak
    pass.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
@@ -1167,8 +1178,7 @@ questions concern implementation shape and unrelated catalog/live-mount policy.
 
 1. Should profiles remain trusted shell, or should the catalog become
    declarative data with a generated/validated runtime layer?
-2. What reviewed repository representation should carry the accepted
-   validation bundle without duplicating complex schema logic in shell profiles?
+2. What standalone reviewed representation should carry the complete validation bundle now that `models/seals/` carries only its expected-model projection and bundle ID?
 3. Is `TP × PP = NODES` sufficient as the catalog geometry invariant, or should
    rank placement and permitted topology subsets be explicit profile data?
 4. Should diagnostic and serving profiles live in the same directory/status
@@ -1327,22 +1337,24 @@ demonstrated correct two-node loading, output parity after load, and recovery
 from interruption, link loss, and NFS restart.
 
 The separate library-hot implementation now provides federated catalog
-discovery, optional cold resolution, schema-2 full-content hot seals, release
+discovery, optional cold resolution, schema-3 expected/observed hot seals, release
 before launch, and pin/purge lifecycle hooks. Counterbalanced DeepSeek trials
 showed that 8-stream SSH-over-RoCE activation was 1.898x the control-path
 median; 16 streams did not improve the median. Integrity, interruption/retry,
 catalog-loss restart, real serving, and 447k-context gates also passed.
 
-Those wins are not a promotion. The durable-home symlink is the accepted
-architecture, but lab-issued expected-seal binding, serve-time witness and
-lifecycle evidence are not implemented. The 100 GiB default hot budget cannot
+Those wins are not a promotion. The durable-home symlink and optional
+expected-seal/exact-revision enforcement are implemented, but no real profile
+seal is issued and the fast witness/lifecycle evidence remain pending. The
+100 GiB default hot budget cannot
 admit the 167 GB flagship on a non-home rank, strict DeepSeek determinism failed
 on both library-hot and replicated controls, and the required sustained soak is
 pending. Live NFS/RDMA additionally retains its owner-recovery and three-node
 validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing under the
-> historical profile-validation ledger, while exact model content is not yet
-> machine-bound to lab-issued seals. Sealed local-hot activation over
+> historical profile-validation ledger. Model-library code can enforce reviewed
+> exact seals, but this release issues none, so current profiles remain
+> legacy-unsealed. Sealed local-hot activation over
 > SSH-over-RoCE is a measured promotion candidate, and live NFS/RDMA is a
 > separate documented experiment; neither is a promoted default.

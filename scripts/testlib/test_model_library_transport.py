@@ -84,11 +84,18 @@ class ActivateTransportContracts(unittest.TestCase):
             content_id="content",
             content_digest=manifest["manifest_id"],
             integrity_manifest=manifest,
+            validation={
+                "identity_status": "legacy-unsealed",
+                "expected_seal": None,
+                "observed_seal": model_library.observed_model_seal_projection(
+                    manifest
+                ),
+            },
             backend="copy",
             bytes_logical=123,
             transport="ssh-roce",
         )
-        self.assertEqual(stamp["schema_version"], 2)
+        self.assertEqual(stamp["schema_version"], 3)
         self.assertEqual(stamp["backend"], "copy")
         self.assertEqual(stamp["transport"], "ssh-roce")
         self.assertEqual(

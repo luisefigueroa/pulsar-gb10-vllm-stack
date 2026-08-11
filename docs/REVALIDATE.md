@@ -8,13 +8,16 @@ class change invalidates the applicable validation bundle. Nothing keeps its
 `tested` status across such a change without new evidence. This is the public,
 repository-relative sequence; expect roughly half a day, mostly machine time.
 
-The accepted target binds a lab-issued expected model seal to the runtime
-profile, resolved image, geometry, and evidence. Existing rows predate that
-machine binding and are legacy-unsealed claims during migration. Never create
-the expected seal from arbitrary user-observed cache contents; recover the
-exact lab artifact used for the historical run or revalidate the intended exact
-revision. A future mirror may distribute the bytes, but hosting location is not
-their validation identity.
+Model-library catalog schema 2 and hot schema 3 now enforce a reviewed
+lab-issued expected model seal, exact commit/manifest comparison, and exact
+snapshot launch. Existing rows predate that binding and remain
+`legacy-unsealed`; no real profile seal ships yet. Never create an expected
+seal from arbitrary user-observed cache contents. Recover the exact lab
+artifact used for the historical run or revalidate the intended revision, then
+follow [models/seals/README.md](../models/seals/README.md) in the evidence pull
+request. A future mirror may distribute the bytes, but hosting location is not
+validation identity. The standalone full validation-bundle document and fast
+serve-time witness remain pending.
 
 ## 0. Prep (5 min)
 
@@ -173,8 +176,9 @@ model/profile/image is already `tested` with replicated weights.
 - Update conf `STATUS`/`NOTES` and `docs/VALIDATION.md` with the measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
-- When validation-bundle support exists, publish its reviewed ID from the lab
-  evidence. Never promote a locally observed seal into the expected seal.
+- Publish the lab-reviewed expected seal and validation-bundle ID in the same
+  evidence pull request, then add the profile `EXPECTED_MODEL_SEAL` reference.
+  Never promote a locally observed user seal into expected identity.
 - Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
 - Archive the new raw results under `results/` using a unique bump tag.
 - Run a current-tree secret/path scan and inspect `git diff` before merge.

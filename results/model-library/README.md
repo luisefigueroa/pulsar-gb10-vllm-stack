@@ -9,6 +9,9 @@ it does not override accepted architecture in
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
 measurements and other failed/pending gates remain valid and are not rewritten.
+Catalog schema 2/hot schema 3 expected-seal enforcement landed afterward as a
+control-plane change; no new hardware artifact or real lab-issued profile seal
+is claimed here, so every artifact below still predates release seal binding.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|

@@ -121,6 +121,7 @@ load_conf() {
   [ -f "$conf" ] || die "no such config: $conf (try scripts/list-models.sh)"
 
   MODEL="" SERVED_NAME="" IMAGE="" NOTES="" STATUS="?"
+  EXPECTED_MODEL_SEAL=""
   NODES=1 PORT=8000 GPU_MEM_UTIL=0.80
   ENGINE_ARGS=() CONTAINER_ENV=() SPEC_DECODE_ARGS=()
   WEIGHTS_GIB="" WEIGHTS_RAM_GIB="" KV_GIB="" OVERHEAD_GIB="" MEM_MIN_FREE_GIB=""
@@ -784,11 +785,18 @@ PULSAR_NODE_ID_LABEL="io.pulsar.gb10.node-id"
 PULSAR_WEIGHT_SOURCE_LABEL="io.pulsar.gb10.weight-source"
 PULSAR_WEIGHT_OWNER_LABEL="io.pulsar.gb10.weight-owner"
 PULSAR_WEIGHT_CONFIG_LABEL="io.pulsar.gb10.weight-config"
+PULSAR_MODEL_REVISION_LABEL="io.pulsar.gb10.model-revision"
+PULSAR_MODEL_SEAL_LABEL="io.pulsar.gb10.model-seal"
+PULSAR_VALIDATION_BUNDLE_LABEL="io.pulsar.gb10.validation-bundle"
+PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 
 # Resolve a ready hot-staging instance for library-hot launch.
 # Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
 # LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
-# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_PINNED.
+# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
+# LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
+# LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
+# LIBRARY_HOT_VALIDATION_JSON, and pinned state.
 # Requires load_conf + load_cluster_topology (or single-node topology id).
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
@@ -800,7 +808,8 @@ resolve_library_hot_for_profile() {
     python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
       --profile "$profile" \
       --topology-id "$topology_id" \
-      --hot-root "$PULSAR_HOT_ROOT"
+      --hot-root "$PULSAR_HOT_ROOT" \
+      --models-dir "$REPO_DIR/models"
   ) || die "library-hot: no ready hot instance for $profile — run: scripts/model-library.sh activate $profile --yes"
   LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
@@ -818,18 +827,41 @@ resolve_library_hot_for_profile() {
     'import json,sys; print((json.load(sys.stdin)["stamp"].get("integrity") or {}).get("scheme") or "")')
   LIBRARY_HOT_MODEL_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("model_id") or "")')
+  LIBRARY_HOT_REVISION=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["stamp"].get("revision") or "")')
+  LIBRARY_HOT_CONTAINER_MODEL_PATH=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("container_model_path") or "")')
+  LIBRARY_HOT_IDENTITY_STATUS=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "")')
+  LIBRARY_HOT_MODEL_SEAL_ID=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print((((json.load(sys.stdin)["stamp"].get("validation") or {}).get("expected_seal") or {}).get("seal_id") or ""))')
+  LIBRARY_HOT_VALIDATION_BUNDLE_ID=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print((((json.load(sys.stdin)["stamp"].get("validation") or {}).get("expected_seal") or {}).get("validation_bundle_id") or ""))')
+  LIBRARY_HOT_VALIDATION_JSON=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
   LIBRARY_HOT_PINNED=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print("1" if json.load(sys.stdin)["stamp"].get("pinned") else "0")')
   python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
     --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
     --profile "$profile" \
-    --topology-id "$topology_id" >/dev/null \
+    --topology-id "$topology_id" \
+    --models-dir "$REPO_DIR/models" >/dev/null \
     || die "library-hot: hot instance failed verify for $profile"
   [ -n "$LIBRARY_HOT_CONTENT_ID" ] \
     && [ -n "$LIBRARY_HOT_CONTENT_DIGEST" ] \
     && [ -n "$LIBRARY_HOT_TRANSPORT" ] \
     && [ -n "$LIBRARY_HOT_INTEGRITY_SCHEME" ] \
+    && [ -n "$LIBRARY_HOT_MODEL_ID" ] \
+    && [ -n "$LIBRARY_HOT_REVISION" ] \
+    && [ -n "$LIBRARY_HOT_CONTAINER_MODEL_PATH" ] \
+    && [ -n "$LIBRARY_HOT_IDENTITY_STATUS" ] \
+    && [ -n "$LIBRARY_HOT_VALIDATION_JSON" ] \
     || die "library-hot: sealed hot provenance is incomplete for $profile"
+  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
+    [ -n "$LIBRARY_HOT_MODEL_SEAL_ID" ] \
+      && [ -n "$LIBRARY_HOT_VALIDATION_BUNDLE_ID" ] \
+      || die "library-hot: validated identity lacks seal/bundle provenance"
+  fi
 }
 
 require_topology_rewrite_idle() {

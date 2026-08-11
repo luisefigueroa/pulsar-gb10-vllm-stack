@@ -41,6 +41,9 @@ language for new features without an explicit decision.
   confirmed-endpoint selection in a one-off Python script.
 - Profile confs remain shell-style under `models/`; Bash may `load_conf` and
   pass `MODEL` / `NODES` / `STATUS` into Python as args or a small JSON dump.
+  `EXPECTED_MODEL_SEAL` is only a reviewed repository-relative reference under
+  `models/seals/`; Python owns its strict schema and identity validation. Bash
+  and operator-local state must never manufacture or rewrite expected seals.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.

@@ -61,7 +61,11 @@ Notes:
     org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
   • cold adopt imports into a durable warm HF home; cold stage-only fills hot
     only (cold remains sole durable copy; pin still allows warm restart).
-  • Labels entries validated vs unvalidated using models/*.conf STATUS.
+  • Catalog identity labels distinguish reviewed expected seals from
+    legacy-unsealed STATUS claims; local bytes never create expected identity.
+    catalog list --validated shows present entries with reviewed expected seals.
+    activate refuses legacy-unsealed profiles unless --allow-unvalidated marks
+    an explicit experiment; that flag never bypasses a configured seal mismatch.
   • Duplicate complete homes refuse resolve until a primary is chosen.
   • activate --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
@@ -72,6 +76,8 @@ Notes:
     to fill hot, then releases mounts/export. No silent fallback to copy.
   • bench-activate runs copy then fabric (purge between), writes a JSON report;
     fabric_claims_fast_path only if fabric wall time is strictly less than copy.
+    Benchmark/probe commands are explicit experiments and permit legacy-unsealed
+    profiles, but a configured expected-seal mismatch still fails closed.
   • probe-ssh-roce / bench-ssh-roce: experimental control SSH vs SSH-over-RoCE
     A/B (no product default change). Requires topology schema-2 SSH enrollment
     and sshd on fabric IPs. Each report is one ordered pair; repeat both
@@ -134,7 +140,7 @@ ensure_catalog() {
 
 inspect_catalog_home() {
   local profile="${1:?profile required}" resolved home_rank hub_path node_id
-  local expected_node command out model_id
+  local expected_node command out model_id revision
   resolved=$(
     python3 "$PY_TOOL" resolve \
       --catalog "$CATALOG_FILE" \
@@ -147,6 +153,9 @@ inspect_catalog_home() {
   hub_path=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["hub_path"])')
   node_id=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["node_id"])')
   model_id=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  revision=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  [ -n "$revision" ] \
+    || die "activate: catalog entry lacks an exact snapshot revision"
   if ! [[ "$home_rank" =~ ^[0-9]+$ ]] \
       || [ "$home_rank" -ge "${CLUSTER_TOPOLOGY_COUNT:-0}" ]; then
     die "activate: catalog home rank is outside confirmed topology"
@@ -160,7 +169,8 @@ inspect_catalog_home() {
       --hub-path "$hub_path" \
       --rank "$home_rank" \
       --node-id "$node_id" \
-      --model-id "$model_id"
+      --model-id "$model_id" \
+      --revision "$revision"
     return
   fi
   command=$(
@@ -168,7 +178,8 @@ inspect_catalog_home() {
       --hub-path "$hub_path" \
       --rank "$home_rank" \
       --node-id "$node_id" \
-      --model-id "$model_id"
+      --model-id "$model_id" \
+      --revision "$revision"
   )
   if ! out=$(
     ssh_node "$home_rank" "$command" <"$PY_TOOL"
@@ -186,6 +197,7 @@ library_plan_activate() {
   python3 "$PY_TOOL" plan-activate \
     --catalog "$CATALOG_FILE" \
     --profile "$profile" \
+    --models-dir "$REPO_DIR/models" \
     --home-inventory-json "$home_inventory" \
     "$@"
 }
@@ -534,11 +546,18 @@ cmd_cold_stage_only() {
   fi
   [ "$allow_unval" = 1 ] && plan_args+=(--allow-unvalidated)
 
-  local plan action
+  local plan action expected_validation_json rank
   plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
   action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+  expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
   if [ "$action" = "skip" ]; then
-    log "hot already ready for $profile (stage-only skip)"
+    log "hot already ready for $profile (stage-only skip) — verifying ranks"
+    for ((rank = 0; rank < nodes; rank++)); do
+      verify_hot_on_rank "$rank" \
+        "$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')" \
+        "$profile" "${CLUSTER_TOPOLOGY_ID}" 0 "$expected_validation_json" \
+        || die "rank $rank: stage-only hot verify failed"
+    done
     printf '%s\n' "$plan"
     return 0
   fi
@@ -564,13 +583,13 @@ cmd_cold_stage_only() {
   python3 "$PY_TOOL" "${plan_args[@]}" --execute >/dev/null
 
   if [ "$nodes" -gt 1 ]; then
-    local rank
     for ((rank = 1; rank < nodes; rank++)); do
       copy_hub_to_rank "$rank" "$hub_dest" "$hub_dest" 0
       local stamp_json
       stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
       write_stamp_on_rank "$rank" "$instance" "$stamp_json"
-      verify_hot_on_rank "$rank" "$instance" "$profile" "${CLUSTER_TOPOLOGY_ID}"
+      verify_hot_on_rank "$rank" "$instance" "$profile" \
+        "${CLUSTER_TOPOLOGY_ID}" 0 "$expected_validation_json"
     done
   fi
   log "stage-only ready: $instance"
@@ -909,7 +928,7 @@ write_stamp_on_rank() {
 
 verify_hot_on_rank() {
   local rank="${1:?}" instance_dir="${2:?}" profile="${3:?}" topology_id="${4:?}"
-  local allow_verifying="${5:-0}" command
+  local allow_verifying="${5:-0}" expected_validation_json="${6:-}" command
   local -a verify_args=(
     verify-hot
     --instance-dir "$instance_dir"
@@ -918,7 +937,10 @@ verify_hot_on_rank() {
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
   )
   [ "$allow_verifying" = 1 ] && verify_args+=(--allow-verifying)
+  [ -n "$expected_validation_json" ] \
+    && verify_args+=(--expected-validation-json "$expected_validation_json")
   if [ "$rank" = 0 ]; then
+    verify_args+=(--models-dir "$REPO_DIR/models")
     python3 "$PY_TOOL" "${verify_args[@]}" >/dev/null
     return 0
   fi
@@ -1281,6 +1303,7 @@ cmd_release_transfer() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend fabric \
+    --allow-unvalidated \
     --nodes "$NODES")
   local action
   action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -1295,7 +1318,8 @@ cmd_release_transfer() {
 cmd_activate() {
   local profile="" backend=copy backend_explicit=0 transport=""
   local allow_unvalidated=0 yes=0 time_it=0
-  local plan stamp_json verifying_stamp_json instance hub_source hub_dest home_rank rank source
+  local plan stamp_json verifying_stamp_json expected_validation_json
+  local instance hub_source hub_dest home_rank rank source
   local expected_backend requested_mode
   local start_ts end_ts elapsed
   local -a target_ranks=()
@@ -1383,6 +1407,7 @@ cmd_activate() {
   hub_dest=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_dest"])')
   home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
   stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
+  expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
 
   if [ "$backend" = copy ]; then
@@ -1394,7 +1419,8 @@ cmd_activate() {
   if [ "$action" = skip ]; then
     log "hot already ready — verifying ranks"
     for rank in "${target_ranks[@]}"; do
-      verify_hot_on_rank "$rank" "$instance" "$profile" "$CLUSTER_TOPOLOGY_ID" \
+      verify_hot_on_rank "$rank" "$instance" "$profile" \
+        "$CLUSTER_TOPOLOGY_ID" 0 "$expected_validation_json" \
         || die "rank $rank: hot verify failed"
     done
     log "activate complete (reused hot)"
@@ -1521,7 +1547,7 @@ print("re-run with --yes to execute (no silent fallback to copy)")
         set -euo pipefail
         log "full SHA-256 verify → rank $verify_rank"
         verify_hot_on_rank "$verify_rank" "$instance" "$profile" \
-          "$CLUSTER_TOPOLOGY_ID" 1
+          "$CLUSTER_TOPOLOGY_ID" 1 "$expected_validation_json"
       ) &
       pids+=("$!")
     done
@@ -1648,7 +1674,8 @@ hot_instance_for_profile() {
   python3 "$PY_TOOL" find-hot \
     --profile "$profile" \
     --topology-id "${CLUSTER_TOPOLOGY_ID}" \
-    --hot-root "$HOT_ROOT"
+    --hot-root "$HOT_ROOT" \
+    --models-dir "$REPO_DIR/models"
 }
 
 cmd_pin() {
@@ -1777,13 +1804,13 @@ timed_activate_backend() {
   start_ts=$(date +%s.%N 2>/dev/null || date +%s)
   if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
     if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
-      "$0" activate "$profile" --backend "$backend" --yes --interactive-sudo 1>&2; then
+      "$0" activate "$profile" --backend "$backend" --allow-unvalidated --yes --interactive-sudo 1>&2; then
       rm -f "$phase_tmp"
       die "timed activate --backend $backend failed"
     fi
   else
     if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
-      "$0" activate "$profile" --backend "$backend" --yes 1>&2; then
+      "$0" activate "$profile" --backend "$backend" --allow-unvalidated --yes 1>&2; then
       rm -f "$phase_tmp"
       die "timed activate --backend $backend failed"
     fi
@@ -1879,6 +1906,7 @@ cmd_bench_activate() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend copy \
+    --allow-unvalidated \
     --nodes "$nodes") \
     || die "bench-activate: plan-activate failed (catalog primary? hot budget? set PULSAR_HOT_BUDGET_BYTES large enough for the model)"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
@@ -1974,6 +2002,7 @@ cmd_probe_ssh_roce() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend copy \
+    --allow-unvalidated \
     --nodes "$nodes") \
     || die "probe-ssh-roce: plan-activate failed"
   home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
@@ -2117,6 +2146,7 @@ cmd_bench_ssh_roce() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend copy \
+    --allow-unvalidated \
     --nodes "$nodes") \
     || die "bench-ssh-roce: plan-activate failed"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')

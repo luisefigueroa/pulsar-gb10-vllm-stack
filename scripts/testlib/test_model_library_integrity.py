@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed integrity contracts for model-library hot schema v2."""
+"""Fail-closed integrity contracts for model-library hot schema v3."""
 
 from __future__ import annotations
 
@@ -65,6 +65,13 @@ class ModelLibraryIntegrityContracts(unittest.TestCase):
             content_id="content",
             content_digest=self.manifest["manifest_id"],
             integrity_manifest=self.manifest,
+            validation={
+                "identity_status": "legacy-unsealed",
+                "expected_seal": None,
+                "observed_seal": model_library.observed_model_seal_projection(
+                    self.manifest
+                ),
+            },
             backend="copy",
             bytes_logical=self.manifest["total_bytes"],
             transport="ssh-roce",

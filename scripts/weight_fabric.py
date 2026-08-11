@@ -1919,6 +1919,11 @@ def command_startup_metric(args: argparse.Namespace) -> None:
     content_digest = args.content_digest or None
     transport = args.transport or None
     integrity_scheme = args.integrity_scheme or None
+    model_revision = args.model_revision or None
+    identity_status = args.identity_status or None
+    model_seal_id = args.model_seal_id or None
+    validation_bundle_id = args.validation_bundle_id or None
+    runtime_model_path = args.runtime_model_path or None
     owner_node_id = args.owner_node_id or None
     if owner_node_id is not None:
         owner_node_id = clean_text(owner_node_id, "owner_node_id")
@@ -1931,6 +1936,13 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         for value in (content_id, content_digest, transport, integrity_scheme)
     ):
         fail("startup metric: fabric evidence cannot claim hot content")
+    identity_fields = (
+        model_revision,
+        identity_status,
+        model_seal_id,
+        validation_bundle_id,
+        runtime_model_path,
+    )
     if args.weight_source == "replicated":
         if any(
             value is not None
@@ -1941,6 +1953,7 @@ def command_startup_metric(args: argparse.Namespace) -> None:
                 content_digest,
                 transport,
                 integrity_scheme,
+                *identity_fields,
             )
         ):
             fail(
@@ -1964,8 +1977,32 @@ def command_startup_metric(args: argparse.Namespace) -> None:
             fail("startup metric: invalid library-hot integrity scheme")
         if args.cache_state != "sealed-hot":
             fail("startup metric: library-hot cache state must be sealed-hot")
-    elif args.cache_state == "sealed-hot":
-        fail("startup metric: sealed-hot cache state requires library-hot")
+        if model_revision is None or not re.fullmatch(
+            r"[A-Za-z0-9._-]+", model_revision
+        ):
+            fail("startup metric: invalid library-hot model revision")
+        if identity_status not in ("match", "legacy-unsealed", "unvalidated"):
+            fail("startup metric: invalid library-hot identity status")
+        if runtime_model_path is None or not runtime_model_path.endswith(
+            f"/snapshots/{model_revision}"
+        ):
+            fail("startup metric: runtime model path is not the exact revision")
+        if identity_status == "match":
+            if not re.fullmatch(r"[0-9a-f]{40,64}", model_revision):
+                fail("startup metric: matched revision is not an immutable commit")
+            for name, value in (
+                ("model seal", model_seal_id),
+                ("validation bundle", validation_bundle_id),
+            ):
+                if value is None or not re.fullmatch(r"[0-9a-f]{64}", value):
+                    fail(f"startup metric: invalid {name} identity")
+        elif model_seal_id is not None or validation_bundle_id is not None:
+            fail("startup metric: unsealed identity cannot claim seal provenance")
+    else:
+        if args.cache_state == "sealed-hot":
+            fail("startup metric: sealed-hot cache state requires library-hot")
+        if any(value is not None for value in identity_fields):
+            fail("startup metric: model seal identity requires library-hot")
     destination = pathlib.Path(args.output)
     if destination == pathlib.Path("/") or destination.exists():
         fail("startup metric: output must be a new bounded path")
@@ -1983,6 +2020,11 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         "content_digest": content_digest,
         "transport": transport,
         "integrity_scheme": integrity_scheme,
+        "model_revision": model_revision,
+        "identity_status": identity_status,
+        "model_seal_id": model_seal_id,
+        "validation_bundle_id": validation_bundle_id,
+        "runtime_model_path": runtime_model_path,
         "owner_node_fingerprint": (
             fingerprint(owner_node_id) if owner_node_id else None
         ),
@@ -2217,6 +2259,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("ssh-control", "ssh-roce", "nfs-rdma"),
     )
     startup_metric.add_argument("--integrity-scheme")
+    startup_metric.add_argument("--model-revision")
+    startup_metric.add_argument(
+        "--identity-status",
+        choices=("match", "legacy-unsealed", "unvalidated"),
+    )
+    startup_metric.add_argument("--model-seal-id")
+    startup_metric.add_argument("--validation-bundle-id")
+    startup_metric.add_argument("--runtime-model-path")
     startup_metric.add_argument("--tag")
     startup_metric.add_argument(
         "--cache-state",

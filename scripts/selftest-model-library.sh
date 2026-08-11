@@ -103,11 +103,11 @@ if STATE="$STATE" python3 - <<'PY'
 import json, os
 from pathlib import Path
 cat = json.loads(Path(os.environ["STATE"], "catalog.json").read_text())
-assert cat["schema_version"] == 1
+assert cat["schema_version"] == 2
 assert cat["topology_id"] == "topo-test-001"
 models = {m["model_id"]: m for m in cat["models"]}
 q = models["Qwen/Qwen3-1.7B"]
-assert q["validation"] == "validated", q
+assert q["validation"] == "legacy-unsealed", q
 assert q["duplicate"] is True
 assert q["has_primary"] is False
 assert "qwen3-1.7b-2node" in q["profiles"]
@@ -166,6 +166,8 @@ plan=$(python3 "$PY" plan-activate \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --backend copy \
   --nodes 1)
 action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -181,7 +183,7 @@ mkdir -p "$hub_dst"
 rsync -a "$hub_src"/ "$hub_dst"/
 stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
 python3 "$PY" write-hot-stamp --instance-dir "$instance" --stamp-json "$stamp_json" >/dev/null
-python3 "$PY" verify-hot --instance-dir "$instance" --profile qwen3-1.7b-2node --topology-id topo-test-001 >/dev/null \
+python3 "$PY" verify-hot --instance-dir "$instance" --profile qwen3-1.7b-2node --topology-id topo-test-001 --models-dir "$STATE/models" >/dev/null \
   && ok "verify-hot after local copy" || not_ok "verify-hot after local copy"
 
 plan2=$(python3 "$PY" plan-activate \
@@ -189,6 +191,8 @@ plan2=$(python3 "$PY" plan-activate \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --backend copy \
   --nodes 1)
 action2=$(printf '%s' "$plan2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -217,6 +221,8 @@ python3 "$PY" plan-activate \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --backend copy \
   --nodes 1 >/dev/null 2>"$STATE/budget.err"
 brc=$?
@@ -300,6 +306,8 @@ fplan=$(python3 "$PY" plan-activate \
   --topology-id "$TOPO_ID" \
   --topology-file "$STATE/topology.json" \
   --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --backend fabric \
   --nodes 2)
 faction=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -317,6 +325,8 @@ python3 "$PY" plan-activate \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --backend nfs >/dev/null 2>&1
 bad_rc=$?
 set -e
@@ -333,6 +343,8 @@ splan=$(python3 "$PY" plan-activate \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --backend fabric \
   --nodes 1)
 saction=$(printf '%s' "$splan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -345,6 +357,8 @@ assert_true "up.sh help lists library-hot" \
   grep -q library-hot "$REPO_DIR/scripts/up.sh"
 assert_true "start-cluster accepts library-hot" \
   grep -q library-hot "$REPO_DIR/scripts/../cluster/start-cluster.sh"
+assert_true "cluster launch full-verifies remote seal identity" \
+  grep -q -- --expected-validation-json "$REPO_DIR/cluster/start-cluster.sh"
 out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)
 assert_true "check-weights library-hot fails closed without hot" \
   bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|activate|topology|hot'"
@@ -499,11 +513,12 @@ stage=$(python3 "$PY" plan-cold-stage \
   --hot-root "$HOT" \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --execute)
 stage_action=$(printf '%s' "$stage" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "stage-only action" "$stage_action" "stage-only"
 stage_inst=$(printf '%s' "$stage" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-python3 "$PY" verify-hot --instance-dir "$stage_inst" --profile demo-cold-only --topology-id topo-cold-001 >/dev/null \
+python3 "$PY" verify-hot --instance-dir "$stage_inst" --profile demo-cold-only --topology-id topo-cold-001 --models-dir "$STATE/models" >/dev/null \
   && ok "verify-hot after cold stage-only" || not_ok "verify-hot after cold stage-only"
 
 stage2=$(python3 "$PY" plan-cold-stage \
@@ -512,7 +527,8 @@ stage2=$(python3 "$PY" plan-cold-stage \
   --topology-id topo-cold-001 \
   --hot-root "$HOT" \
   --catalog "$STATE/catalog-cold.json" \
-  --models-dir "$STATE/models")
+  --models-dir "$STATE/models" \
+  --allow-unvalidated)
 stage2_action=$(printf '%s' "$stage2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "stage-only skip when hot ready" "$stage2_action" "skip"
 
@@ -523,6 +539,8 @@ python3 "$PY" plan-activate \
   --profile demo-cold-only \
   --topology-id topo-cold-001 \
   --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --allow-unvalidated \
   --backend copy \
   --nodes 1 >/dev/null 2>"$STATE/activate-cold.err"
 ac_rc=$?

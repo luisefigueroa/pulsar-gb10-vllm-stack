@@ -71,6 +71,7 @@ for ((rank = 0; rank < NODES; rank++)); do
 done
 WEIGHT_OWNER_ID=""
 WEIGHT_CONFIG_ID=""
+runtime_model="$MODEL"
 LIBRARY_HOT_HUB_PATH=""
 LIBRARY_HOT_CONTENT_DIGEST=""
 LIBRARY_HOT_TRANSPORT=""
@@ -101,14 +102,29 @@ if [ "$WEIGHT_SOURCE" = fabric ]; then
     || die "single-copy fabric is not launch-ready"
 elif [ "$WEIGHT_SOURCE" = library-hot ]; then
   resolve_library_hot_for_profile "$MODEL_NAME"
+  model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
   WEIGHT_OWNER_ID="${LIBRARY_HOT_HOME_NODE_ID}"
   WEIGHT_CONFIG_ID="${LIBRARY_HOT_CONTENT_ID}"
+  runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
+  for ((rank = 1; rank < NODES; rank++)); do
+    library_verify_command=$(shell_join_q \
+      python3 - verify-hot \
+      --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
+      --profile "$MODEL_NAME" \
+      --topology-id "$CLUSTER_TOPOLOGY_ID" \
+      --expected-validation-json "$LIBRARY_HOT_VALIDATION_JSON" \
+      --workers "${PULSAR_INTEGRITY_WORKERS:-8}")
+    echo "[cluster] full SHA-256 + expected identity verify: rank $rank"
+    ssh_node "$rank" "$library_verify_command" \
+      <"$REPO_DIR/scripts/model_library.py" >/dev/null \
+      || die "library-hot: rank $rank failed exact identity verification"
+  done
 fi
 
 echo "[cluster] exact profile: $MODEL_NAME · $NODES ranks · topology ${CLUSTER_TOPOLOGY_ID:0:12}"
 case "$WEIGHT_SOURCE" in
   fabric) echo "[cluster] weights: fabric · NFS/RDMA · cold reads cross the fabric" ;;
-  library-hot) echo "[cluster] weights: library-hot · local hot staging · home=${WEIGHT_OWNER_ID:0:12}" ;;
+  library-hot) echo "[cluster] weights: library-hot · local hot staging · home=${WEIGHT_OWNER_ID:0:12} · identity=$LIBRARY_HOT_IDENTITY_STATUS · revision=${LIBRARY_HOT_REVISION:0:12}" ;;
   *) echo "[cluster] weights: $WEIGHT_SOURCE" ;;
 esac
 echo "[cluster] spec-decode=$([ "$SPEC_DECODE_ENABLED" = 1 ] && echo ON || echo off) ($SPEC_DECODE_SOURCE)"
@@ -183,6 +199,18 @@ build_docker_cmd() {
       --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${WEIGHT_CONFIG_ID}"
     )
   fi
+  if [ "$WEIGHT_SOURCE" = library-hot ]; then
+    cmd+=(
+      --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
+      --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
+    )
+    if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
+      cmd+=(
+        --label "${PULSAR_MODEL_SEAL_LABEL}=${LIBRARY_HOT_MODEL_SEAL_ID}"
+        --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
+      )
+    fi
+  fi
   local env_item
   for env_item in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do
     cmd+=(-e "$env_item")
@@ -192,7 +220,7 @@ build_docker_cmd() {
   done
   cmd+=(
     "$IMAGE"
-    --model "$MODEL"
+    --model "$runtime_model"
     --served-model-name "$SERVED_NAME"
     --host 0.0.0.0
     --port "$PORT"
@@ -281,7 +309,16 @@ record_startup_metric() {
         --content-digest "$LIBRARY_HOT_CONTENT_DIGEST"
         --transport "$LIBRARY_HOT_TRANSPORT"
         --integrity-scheme "$LIBRARY_HOT_INTEGRITY_SCHEME"
+        --model-revision "$LIBRARY_HOT_REVISION"
+        --identity-status "$LIBRARY_HOT_IDENTITY_STATUS"
+        --runtime-model-path "$LIBRARY_HOT_CONTAINER_MODEL_PATH"
       )
+      if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
+        metric_args+=(
+          --model-seal-id "$LIBRARY_HOT_MODEL_SEAL_ID"
+          --validation-bundle-id "$LIBRARY_HOT_VALIDATION_BUNDLE_ID"
+        )
+      fi
       ;;
   esac
   [ -n "$WEIGHT_OWNER_ID" ] \
