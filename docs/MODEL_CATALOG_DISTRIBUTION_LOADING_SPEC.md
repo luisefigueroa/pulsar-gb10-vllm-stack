@@ -275,6 +275,17 @@ loaded service. Its stable result contract is pass/warn/fail with exit codes
 a hard failure has no continue-anyway path. This matters on GB10 because model,
 KV cache, runtime, filesystem cache, and OS share unified memory.
 
+Library-hot storage admission is separate from the profile estimate. Before a
+supported hot mutation, the controller observes every selected rank and uses
+the sealed manifest's exact logical bytes for `sealed-hot`; `durable-home`
+requires zero new model bytes. The default has no fixed hard cap and preserves
+`max(64 GiB, 5% of filesystem capacity)` as user-available space on each rank.
+`PULSAR_HOT_BUDGET_BYTES` optionally adds a hard cap, while
+`PULSAR_HOT_RESERVE_BYTES` explicitly overrides the reserve. Existing tracked,
+untracked, and malformed bytes below the hot root remain accounted. Any missing
+or blocked rank refuses the barrier before writes; there is no automatic
+eviction, policy relaxation, or transfer fallback.
+
 ### 5.7 Machine-readable catalog contract
 
 `scripts/list-models.sh --json` returns each profile's:
@@ -1187,8 +1198,8 @@ alongside a control-path copy backend:
 This removes hard NFS mounts from the runtime. The implementation includes
 federated warm catalog discovery, an optional cold tier, copy and fabric
 activate backends, schema-3 expected/observed full-content hot seals,
-transfer-plane release,
-budget checks, pin/unpin/purge, and `library-hot` launch/stop hooks.
+transfer-plane release, exact all-rank filesystem admission,
+pin/unpin/purge, and `library-hot` launch/stop hooks.
 Remote serving ranks receive temporary or pinned hot copies, giving up the
 strict “one physical copy” property while staged.
 
@@ -1210,8 +1221,13 @@ synthetic repositories; the real Qwen home was preserved. Remaining promotion
 work is to issue real release seals and repeat the applicable identity gate
 with a sealed release profile. See
 `results/model-library/model-library-home-removal-guard-20260811.json`.
-Production budget policy, crash recovery, garbage collection, and per-rank
-witness/runtime-source inventory also require promotion-level hardening.
+The production admission policy is implemented: every selected rank reports
+live filesystem capacity and current hot ownership before writes; sealed-hot
+charges exact manifest bytes, durable-home charges zero, and the default
+preserves max(64 GiB, 5% capacity) without auto-eviction. An explicit hard cap
+and reserve override remain operator policy. Crash recovery, broader garbage
+collection, and per-rank witness/runtime-source inventory still require
+promotion-level hardening.
 
 The witness is a separate site-local
 `<instance>/.pulsar/witness.json`; hot schema 3 is unchanged because one
@@ -1242,8 +1258,8 @@ These points combine current evidence with the accepted architecture:
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
 3. Treat 8-stream SSH-over-RoCE activation into sealed local hot as a separate
-   promotion candidate. Do not guide it until real release seals, budget
-   policy, determinism, and soak pass.
+   promotion candidate. Do not guide it until real release seals, determinism,
+   and soak pass.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
@@ -1442,11 +1458,13 @@ implemented. A legacy-unsealed Qwen canary physically passed the symlink,
 both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
 lifecycle gate. The active-use removal guard also passed deterministic and
 three-node physical checks using disposable synthetic repositories. This does
-not close real release identity. The 100 GiB default hot budget cannot
-admit the 167 GB flagship on a non-home rank, strict DeepSeek determinism failed
-on both library-hot and replicated controls, and the required sustained soak is
-pending. Live NFS/RDMA additionally retains its owner-recovery and three-node
-validation work. The accurate product claim is:
+not close real release identity. Exact all-rank hot admission is now
+implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
+default. The non-mutating flagship capacity artifact passed exact home-zero and
+non-home manifest accounting, default-reserve preservation, explicit hard-cap
+refusal, and unchanged hot ownership. Strict DeepSeek determinism and sustained
+soak remain pending. Live NFS/RDMA additionally retains its owner-recovery and
+three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing under the
 > historical profile-validation ledger. Model-library code can enforce reviewed

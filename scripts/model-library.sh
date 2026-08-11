@@ -95,6 +95,11 @@ Notes:
     --order values before any fast-path decision.
   • pin prevents purge. Cold stage-only hot is self-contained; warm-home
     activation currently keeps a home-rank symlink and still needs that home.
+  • activate, cold stage-only, pin, and budget observe every selected rank.
+    The default preserves max(64 GiB, 5% of filesystem capacity) as available
+    space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
+    PULSAR_HOT_RESERVE_BYTES explicitly overrides the reserve. No auto-eviction
+    or capacity fallback occurs.
   • Does not change wizard defaults or --weight-source fabric.
 EOF
 }
@@ -211,6 +216,140 @@ library_plan_activate() {
     --models-dir "$REPO_DIR/models" \
     --home-inventory-json "$home_inventory" \
     "$@"
+}
+
+hot_budget_policy_args() {
+  HOT_BUDGET_POLICY_ARGS=()
+  if [ -n "${PULSAR_HOT_BUDGET_BYTES:-}" ]; then
+    HOT_BUDGET_POLICY_ARGS+=(--hard-cap-bytes "$PULSAR_HOT_BUDGET_BYTES")
+  fi
+  if [ -n "${PULSAR_HOT_RESERVE_BYTES:-}" ]; then
+    HOT_BUDGET_POLICY_ARGS+=(--reserve-bytes "$PULSAR_HOT_RESERVE_BYTES")
+  fi
+}
+
+hot_budget_observation_on_rank() {
+  local rank="${1:?}" runtime_source="${2:?}" required_owned_bytes="${3:?}"
+  local replacing_path="${4:-}" node_id hostname command out
+  local -a args=(
+    budget-admission
+    --hot-root "$HOT_ROOT"
+    --rank "$rank"
+    --node-id "${CLUSTER_NODE_IDS[$rank]:-}"
+    --hostname "${CLUSTER_NODE_HOSTNAMES[$rank]:-}"
+    --runtime-source "$runtime_source"
+    --required-owned-bytes "$required_owned_bytes"
+    --compact
+  )
+  node_id="${CLUSTER_NODE_IDS[$rank]:-}"
+  hostname="${CLUSTER_NODE_HOSTNAMES[$rank]:-}"
+  [ -n "$node_id" ] || die "rank $rank: hot budget node identity is missing"
+  [ -n "$hostname" ] || die "rank $rank: hot budget hostname is missing"
+  [ -z "$replacing_path" ] || args+=(--replacing-path "$replacing_path")
+  hot_budget_policy_args
+  args+=("${HOT_BUDGET_POLICY_ARGS[@]}")
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" "${args[@]}"
+    return
+  fi
+  command=$(shell_join_q python3 - "${args[@]}")
+  if ! out=$(ssh_node "$rank" "$command" <"$PY_TOOL"); then
+    die "rank $rank: hot budget observation failed"
+  fi
+  printf '%s\n' "$out"
+}
+
+merge_hot_budget_observation_file() {
+  local observations_file="${1:?}" expected_ranks="${2:?}" mode="${3:?}"
+  local profile="${4:-}" model_id="${5:-}" bytes_logical="${6:-0}"
+  local -a args=(
+    merge-budget-admissions
+    --observations-file "$observations_file"
+    --expected-ranks "$expected_ranks"
+    --topology-id "$CLUSTER_TOPOLOGY_ID"
+    --mode "$mode"
+    --bytes-logical "$bytes_logical"
+  )
+  [ -z "$profile" ] || args+=(--profile "$profile")
+  [ -z "$model_id" ] || args+=(--model-id "$model_id")
+  python3 "$PY_TOOL" "${args[@]}"
+}
+
+build_hot_budget_plan_from_activation() {
+  local activation_plan="${1:?}" mode="${2:-activate}"
+  local metadata profile model_id bytes_logical
+  local rank runtime_source required_owned_bytes replacing_path observation
+  local observations_file expected_ranks="" rc=0
+  metadata=$(printf '%s' "$activation_plan" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+print("%s\t%s\t%s" % (
+    d.get("profile") or "",
+    d.get("model_id") or "",
+    d.get("bytes_logical") or 0,
+))
+')
+  IFS=$'\t' read -r profile model_id bytes_logical <<<"$metadata"
+  observations_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-hot-budget.XXXXXX")
+  while IFS=$'\t' read -r rank runtime_source required_owned_bytes replacing_path; do
+    [ -n "$rank" ] || continue
+    if ! observation=$(hot_budget_observation_on_rank "$rank" "$runtime_source" "$required_owned_bytes" "$replacing_path"); then
+      rm -f "$observations_file"
+      return 1
+    fi
+    printf '%s\n' "$observation" >>"$observations_file"
+    if [ -n "$expected_ranks" ]; then
+      expected_ranks+=","
+    fi
+    expected_ranks+="$rank"
+  done < <(printf '%s' "$activation_plan" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+for item in d.get("hot_storage_requirements") or []:
+    print("%s\t%s\t%s\t%s" % (
+        item["rank"],
+        item["runtime_source"],
+        item["required_owned_bytes"],
+        item.get("replacing_path") or "",
+    ))
+')
+  [ -n "$expected_ranks" ] || {
+    rm -f "$observations_file"
+    die "hot admission plan has no target ranks"
+  }
+  merge_hot_budget_observation_file "$observations_file" "$expected_ranks" "$mode" "$profile" "$model_id" "$bytes_logical" || rc=$?
+  rm -f "$observations_file"
+  return "$rc"
+}
+
+build_zero_hot_budget_plan() {
+  local mode="${1:?}" profile="${2:-}" rank_count="${3:?}"
+  local observations_file expected_ranks="" observation rank rc=0
+  observations_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-hot-budget.XXXXXX")
+  for ((rank = 0; rank < rank_count; rank++)); do
+    if ! observation=$(hot_budget_observation_on_rank "$rank" "$mode" 0 ""); then
+      rm -f "$observations_file"
+      return 1
+    fi
+    printf '%s\n' "$observation" >>"$observations_file"
+    if [ -n "$expected_ranks" ]; then
+      expected_ranks+=","
+    fi
+    expected_ranks+="$rank"
+  done
+  merge_hot_budget_observation_file "$observations_file" "$expected_ranks" "$mode" "$profile" "" 0 || rc=$?
+  rm -f "$observations_file"
+  return "$rc"
+}
+
+render_hot_budget_plan_json() {
+  local plan="${1:?}"
+  printf '%s' "$plan" | python3 "$PY_TOOL" render-budget-plan --plan-file /dev/stdin
+}
+
+hot_budget_plan_is_eligible() {
+  local plan="${1:?}"
+  [ "$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')" = eligible ]
 }
 
 scan_rank_homes() {
@@ -557,10 +696,15 @@ cmd_cold_stage_only() {
   fi
   [ "$allow_unval" = 1 ] && plan_args+=(--allow-unvalidated)
 
-  local plan action expected_validation_json rank
+  local plan action expected_validation_json rank budget_plan
   plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
   action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
   expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
+  budget_plan=$(build_hot_budget_plan_from_activation "$plan" cold-stage-only) \
+    || die "cold stage-only: all-rank hot admission failed"
+  render_hot_budget_plan_json "$budget_plan"
+  hot_budget_plan_is_eligible "$budget_plan" \
+    || die "cold stage-only: hot admission is blocked; no bytes were changed"
   if [ "$action" = "skip" ]; then
     log "hot already ready for $profile (stage-only skip) — verifying ranks"
     for ((rank = 0; rank < nodes; rank++)); do
@@ -1567,7 +1711,7 @@ cmd_release_transfer() {
 cmd_activate() {
   local profile="" backend=copy backend_explicit=0 transport=""
   local allow_unvalidated=0 yes=0 time_it=0
-  local plan stamp_json verifying_stamp_json expected_validation_json
+  local plan stamp_json verifying_stamp_json expected_validation_json budget_plan
   local instance hub_source hub_dest home_rank rank source
   local expected_backend requested_mode
   local start_ts end_ts elapsed
@@ -1658,6 +1802,12 @@ cmd_activate() {
   stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
   expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
+
+  budget_plan=$(build_hot_budget_plan_from_activation "$plan" activate) \
+    || die "activate: all-rank hot admission failed"
+  render_hot_budget_plan_json "$budget_plan"
+  hot_budget_plan_is_eligible "$budget_plan" \
+    || die "activate: hot admission is blocked; no bytes were changed"
 
   if [ "$backend" = copy ]; then
     log "activate $profile action=$action transport=$transport copy_streams=$COPY_STREAMS hot=$instance"
@@ -1940,9 +2090,14 @@ cmd_pin() {
   require_py
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
-  local info instance rank
+  local info instance rank budget_plan
   info=$(hot_instance_for_profile "$profile")
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$NODES") \
+    || die "pin: all-rank hot budget observation failed"
+  render_hot_budget_plan_json "$budget_plan"
+  hot_budget_plan_is_eligible "$budget_plan" \
+    || die "pin: current hot state exceeds policy; nothing was pinned"
   for ((rank = 0; rank < NODES; rank++)); do
     if [ "$rank" = 0 ]; then
       python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --pinned >/dev/null
@@ -2023,7 +2178,7 @@ cmd_purge_hot() {
 }
 
 cmd_budget() {
-  local json=0
+  local json=0 plan
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json=1 ;;
@@ -2033,11 +2188,15 @@ cmd_budget() {
     shift
   done
   require_py
+  load_cluster_topology >/dev/null || die "confirmed topology required"
+  plan=$(build_zero_hot_budget_plan inventory "" "$CLUSTER_TOPOLOGY_COUNT") \
+    || die "hot budget: all-rank observation failed"
   if [ "$json" = 1 ]; then
-    python3 "$PY_TOOL" budget --hot-root "$HOT_ROOT" --json
+    printf '%s\n' "$plan"
   else
-    python3 "$PY_TOOL" budget --hot-root "$HOT_ROOT"
+    render_hot_budget_plan_json "$plan"
   fi
+  hot_budget_plan_is_eligible "$plan"
 }
 
 # Fair cold-ish activate timing: purge hot, run backend.
@@ -2141,14 +2300,6 @@ cmd_bench_activate() {
   [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-${tag}.json"
   mkdir -p "$(dirname "$output")"
 
-  # Plan checks hot budget; raise before plan when unset (100GiB default is too
-  # small for flagship). Provisional 1TiB, then tighten to 1.25× model bytes.
-  local auto_budget=0
-  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ]; then
-    export PULSAR_HOT_BUDGET_BYTES=$((1024 * 1024 * 1024 * 1024))
-    auto_budget=1
-    log "bench-activate: provisional PULSAR_HOT_BUDGET_BYTES=$PULSAR_HOT_BUDGET_BYTES"
-  fi
   local plan
   plan=$(library_plan_activate "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
@@ -2157,20 +2308,10 @@ cmd_bench_activate() {
     --backend copy \
     --allow-unvalidated \
     --nodes "$nodes") \
-    || die "bench-activate: plan-activate failed (catalog primary? hot budget? set PULSAR_HOT_BUDGET_BYTES large enough for the model)"
+    || die "bench-activate: plan-activate failed (catalog primary or model identity?)"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
   bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
   topo_id="$CLUSTER_TOPOLOGY_ID"
-  if [ "$auto_budget" = 1 ] && [ "${bytes_logical:-0}" -gt 0 ]; then
-    local need=$((bytes_logical + bytes_logical / 4))
-    local default_budget=$((100 * 1024 * 1024 * 1024))
-    if [ "$need" -lt "$default_budget" ]; then
-      need=$default_budget
-    fi
-    export PULSAR_HOT_BUDGET_BYTES="$need"
-    log "bench-activate: PULSAR_HOT_BUDGET_BYTES=$need (from model size)"
-  fi
-
   log "bench-activate $profile tag=$tag"
   local copy_phases_file fabric_phases_file copy_phases_json fabric_phases_json
   copy_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-copy-phases.XXXXXX")
@@ -2242,10 +2383,6 @@ cmd_probe_ssh_roce() {
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
   nodes="${nodes_override:-$NODES}"
-  # plan-activate enforces hot budget even for probe (home lookup only)
-  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ]; then
-    export PULSAR_HOT_BUDGET_BYTES=$((1024 * 1024 * 1024 * 1024))
-  fi
   plan=$(library_plan_activate "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
@@ -2384,12 +2521,6 @@ cmd_bench_ssh_roce() {
   [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-ssh-roce-${tag}.json"
   mkdir -p "$(dirname "$output")"
 
-  local auto_budget=0
-  if [ -z "${PULSAR_HOT_BUDGET_BYTES:-}" ]; then
-    export PULSAR_HOT_BUDGET_BYTES=$((1024 * 1024 * 1024 * 1024))
-    auto_budget=1
-    log "bench-ssh-roce: provisional PULSAR_HOT_BUDGET_BYTES=$PULSAR_HOT_BUDGET_BYTES"
-  fi
   plan=$(library_plan_activate "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
@@ -2402,16 +2533,6 @@ cmd_bench_ssh_roce() {
   bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
   home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
   topo_id="$CLUSTER_TOPOLOGY_ID"
-  if [ "$auto_budget" = 1 ] && [ "${bytes_logical:-0}" -gt 0 ]; then
-    local need=$((bytes_logical + bytes_logical / 4))
-    local default_budget=$((100 * 1024 * 1024 * 1024))
-    if [ "$need" -lt "$default_budget" ]; then
-      need=$default_budget
-    fi
-    export PULSAR_HOT_BUDGET_BYTES="$need"
-    log "bench-ssh-roce: PULSAR_HOT_BUDGET_BYTES=$need"
-  fi
-
   # Fail closed before long copies if fabric SSH is broken.
   cmd_probe_ssh_roce "$profile" --nodes "$nodes" --rail-index "$rail_index"
 
@@ -2491,6 +2612,19 @@ main() {
       ;;
     *)
       acquire_model_library_lifecycle_lock shared
+      ;;
+  esac
+  case "$cmd" in
+    activate|pin|unpin|purge-hot)
+      acquire_model_library_hot_lock exclusive
+      ;;
+    cold)
+      if [ "${1:-}" = stage-only ]; then
+        acquire_model_library_hot_lock exclusive
+      fi
+      ;;
+    budget)
+      acquire_model_library_hot_lock shared
       ;;
   esac
   case "$cmd" in

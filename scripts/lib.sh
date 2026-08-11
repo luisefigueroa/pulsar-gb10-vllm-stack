@@ -150,6 +150,47 @@ acquire_model_library_lifecycle_lock() {
   PULSAR_MODEL_LIBRARY_LOCK_MODE="$mode"
 }
 
+# Serialize supported hot-tree mutations so each all-rank capacity observation
+# remains valid until the matching activate/pin/purge operation finishes.
+# Launch/readiness paths take the shared form; hot writers take exclusive.
+acquire_model_library_hot_lock() {
+  local mode="${1:-shared}" timeout lock_dir lock_path lock_parent lock_fd
+  case "$mode" in
+    shared|exclusive) ;;
+    *) die "model library hot lock mode must be shared or exclusive" ;;
+  esac
+  if [ -n "${PULSAR_MODEL_LIBRARY_HOT_LOCK_FD:-}" ]; then
+    [ "${PULSAR_MODEL_LIBRARY_HOT_LOCK_MODE:-}" = "$mode" ] \
+      || die "model library hot lock is already held in another mode"
+    return 0
+  fi
+  command -v flock >/dev/null 2>&1 \
+    || die "flock is required for model library hot-state safety"
+  timeout="${PULSAR_MODEL_LIBRARY_HOT_LOCK_TIMEOUT_SECONDS:-${PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS:-30}}"
+  [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    || die "PULSAR_MODEL_LIBRARY_HOT_LOCK_TIMEOUT_SECONDS must be numeric"
+  lock_dir="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
+  lock_path="${PULSAR_MODEL_LIBRARY_HOT_LOCK_FILE:-$lock_dir/hot.lock}"
+  lock_parent=$(dirname -- "$lock_path")
+  mkdir -p "$lock_parent" \
+    || die "cannot create model library hot lock directory: $lock_parent"
+  exec {lock_fd}>"$lock_path" \
+    || die "cannot open model library hot lock: $lock_path"
+  if [ "$mode" = exclusive ]; then
+    flock -x -w "$timeout" "$lock_fd" || {
+      exec {lock_fd}>&-
+      die "another hot mutation is in progress; hot lock timed out"
+    }
+  else
+    flock -s -w "$timeout" "$lock_fd" || {
+      exec {lock_fd}>&-
+      die "hot activation/pin/purge is in progress; hot read lock timed out"
+    }
+  fi
+  PULSAR_MODEL_LIBRARY_HOT_LOCK_FD="$lock_fd"
+  PULSAR_MODEL_LIBRARY_HOT_LOCK_MODE="$mode"
+}
+
 # Load models/<name>.conf into caller shell. Resets optional fields first.
 load_conf() {
   local name="${1:?load_conf: model name required}"

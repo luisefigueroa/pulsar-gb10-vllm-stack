@@ -160,6 +160,7 @@ assert_true "node0 hub untouched by build" test -f "$NODE0/hub/models--Qwen--Qwe
 HOT="$STATE/hot"
 export PULSAR_HOT_ROOT="$HOT"
 export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))
+export PULSAR_HOT_RESERVE_BYTES=0
 
 plan=$(python3 "$PY" plan-activate \
   --catalog "$STATE/catalog2.json" \
@@ -213,22 +214,17 @@ python3 "$PY" budget --hot-root "$HOT" --json >"$STATE/budget.json"
 python3 -c 'import json; d=json.load(open("'"$STATE/budget.json"'")); assert d["budget_bytes"]==50*1024*1024; assert d["used_bytes"]==0' \
   && ok "budget empty after purge" || not_ok "budget empty after purge"
 
-# budget refuse (hub fixture is tiny but still > 1 byte)
+# Per-rank admission reports an explicit hard-cap refusal without writing.
 export PULSAR_HOT_BUDGET_BYTES=1
-set +e
-python3 "$PY" plan-activate \
-  --catalog "$STATE/catalog2.json" \
-  --profile qwen3-1.7b-2node \
-  --topology-id topo-test-001 \
+python3 "$PY" budget-admission \
   --hot-root "$HOT" \
-  --models-dir "$STATE/models" \
-  --allow-unvalidated \
-  --backend copy \
-  --nodes 1 >/dev/null 2>"$STATE/budget.err"
-brc=$?
-set -e
-assert_eq "plan-activate fails over budget" "$brc" "1"
-assert_true "budget error text" grep -q "budget exceeded" "$STATE/budget.err"
+  --rank 0 \
+  --node-id node-a \
+  --runtime-source sealed-hot \
+  --required-owned-bytes 2 \
+  --compact >"$STATE/budget-blocked.json"
+python3 -c 'import json; d=json.load(open("'"$STATE/budget-blocked.json"'")); assert d["state"]=="blocked"; assert d["blockers"][0]["code"]=="hard-cap-exceeded"' \
+  && ok "budget admission refuses hard cap" || not_ok "budget admission refuses hard cap"
 
 # --- fabric plan (rails) without privileged NFS ---
 export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))

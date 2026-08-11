@@ -425,6 +425,27 @@ accepted accounting is one durable home plus N−1 hot working copies. Hot purge
 must never follow the home symlink target. Defaults and the wizard stay on
 replicated weights until this path is promoted.
 
+Inspect live admission on every confirmed rank before a large activation:
+
+```bash
+scripts/model-library.sh budget
+scripts/model-library.sh budget --json  # site-local automation; contains node/path data
+```
+
+The default preserves user-available filesystem space equal to
+`max(64 GiB, 5% of total capacity)` on each selected rank and has no arbitrary
+hard cap. A warm-home activation charges zero new model bytes on the home rank
+and the exact manifest size on each non-home rank; cold stage-only charges every
+selected rank. Existing tracked, untracked, or malformed content below the hot
+root is counted. Activation, pin, and cold stage-only display the all-rank plan
+and refuse before writes when any observation is missing or blocked.
+
+`PULSAR_HOT_BUDGET_BYTES` adds an optional per-rank hard cap.
+`PULSAR_HOT_RESERVE_BYTES` explicitly replaces the default reserve (including
+`0` for controlled tests). These are policy overrides, not retry suggestions.
+Pulsar never auto-evicts, silently relaxes capacity, or changes transport; purge
+an unpinned hot instance or free disk, run `budget` again, and retry.
+
 **Current identity behavior:** a tested profile may reference a reviewed seal
 under `models/seals/` with `EXPECTED_MODEL_SEAL="seals/<file>.json"`.
 Catalog schema 2 selects only its immutable commit. Activation full-hashes every
@@ -523,7 +544,7 @@ model/topology (see [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md)).
 ```bash
 # multi-rank models need a warm primary + confirmed topology; fabric often needs sudo
 scripts/model-library.sh catalog refresh
-# large models: ensure hot budget (bench auto-raises if PULSAR_HOT_BUDGET_BYTES unset)
+scripts/model-library.sh budget  # live all-rank capacity; benchmark uses the same policy
 scripts/model-library.sh bench-activate <profile> --yes [--interactive-sudo] \
   [--tag my-run] [--nodes N] [--output results/model-library/<file>.json]
 ```
@@ -560,9 +581,10 @@ scripts/topology-ssh-trust.sh check
 # 2) Prove the model-library RoCE map for the profile
 scripts/model-library.sh probe-ssh-roce deepseek-v4-flash
 
-# 3) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between)
-#    Stay for the run; no sudo required for pure copy paths.
-export PULSAR_HOT_BUDGET_BYTES=$((450 * 1024 * 1024 * 1024))  # if auto budget insufficient
+# 3) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between).
+#    Stay for the run; no sudo required for pure copy paths. Admission uses the
+#    same all-rank filesystem reserve as normal activation.
+scripts/model-library.sh budget
 scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
   --tag "ssh-roce-$(date -u +%Y%m%dT%H%M%SZ)"
 

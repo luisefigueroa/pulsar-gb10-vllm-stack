@@ -1,0 +1,135 @@
+{
+  "commands": [
+    "scripts/model-library.sh budget --json",
+    "MODEL_LIBRARY_CATALOG=<temporary-primary-selected-catalog> scripts/model-library.sh activate deepseek-v4-flash --transport ssh-roce --copy-streams 8 --allow-unvalidated",
+    "MODEL_LIBRARY_CATALOG=<temporary-primary-selected-catalog> PULSAR_HOT_BUDGET_BYTES=1 scripts/model-library.sh activate deepseek-v4-flash --transport ssh-roce --copy-streams 8 --allow-unvalidated"
+  ],
+  "deterministic_tests": {
+    "focused_suite": "scripts/testlib/test_model_library_hot_budget.py",
+    "focused_tests": 11,
+    "full_control_plane_selftest": "scripts/selftest.sh",
+    "status": "pass"
+  },
+  "evidence_scope": {
+    "does_not_establish": [
+      "lab-issued expected model identity",
+      "a complete machine-readable validation bundle",
+      "serving correctness or performance",
+      "strict flagship same-configuration determinism",
+      "sustained library-hot soak",
+      "durable-home-loss resilience",
+      "automatic garbage collection"
+    ],
+    "establishes": [
+      "live filesystem inventory on every confirmed rank",
+      "flagship-sized sealed-hot admission on the selected non-home rank",
+      "zero additional model-byte charge for the selected durable-home rank",
+      "default max(64 GiB, 5% filesystem capacity) reserve preservation",
+      "no arbitrary default hard cap",
+      "explicit undersized hard-cap refusal before writes",
+      "no automatic eviction, reserve relaxation, or transport fallback",
+      "unchanged owned-hot bytes and instance counts after both dry runs"
+    ]
+  },
+  "gate": "production non-home hot-storage admission",
+  "implementation_commit": "b27aba2660b7c4ce8c4cecc447cfc5a411374e98",
+  "kind": "model-library-hot-budget-admission-gate",
+  "physical_check": {
+    "confirmed_rank_count": 3,
+    "default_inventory": {
+      "automatic_eviction": false,
+      "filesystem_total_bytes_each_rank": 4031871553536,
+      "hard_cap_bytes": null,
+      "observed_rank_count": 3,
+      "reserve_bytes_each_rank": 201593577677,
+      "scan_error_count": 0,
+      "state": "eligible",
+      "untracked_bytes": 0
+    },
+    "explicit_hard_cap_refusal": {
+      "blocker": "hard-cap-exceeded",
+      "hard_cap_bytes": 1,
+      "no_bytes_changed_message": true,
+      "selected_rank_count": 2,
+      "state": "blocked"
+    },
+    "flagship_admission": {
+      "automatic_eviction": false,
+      "hard_cap_bytes": null,
+      "model_bytes": 166898661074,
+      "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "profile": "deepseek-v4-flash",
+      "revision": "7872f01b1d1fe23eabc4c98b48bffcef5a386062",
+      "selected_rank_count": 2,
+      "state": "eligible",
+      "transport": "ssh-roce",
+      "copy_streams": 8,
+      "ranks": [
+        {
+          "available_bytes_before": 3380320591872,
+          "owned_hot_bytes_before": 179137064057,
+          "projected_available_bytes": 3213421930798,
+          "projected_reserve_margin_bytes": 3011828353121,
+          "rank": 0,
+          "required_owned_bytes": 166898661074,
+          "reserve_bytes": 201593577677,
+          "runtime_source": "sealed-hot",
+          "state": "eligible"
+        },
+        {
+          "available_bytes_before": 3557524836352,
+          "owned_hot_bytes_before": 39130,
+          "projected_available_bytes": 3557524836352,
+          "projected_reserve_margin_bytes": 3355931258675,
+          "rank": 1,
+          "required_owned_bytes": 0,
+          "reserve_bytes": 201593577677,
+          "runtime_source": "durable-home",
+          "state": "eligible"
+        }
+      ]
+    },
+    "non_mutation": {
+      "instance_counts_after": [4, 4, 0],
+      "instance_counts_before": [4, 4, 0],
+      "owned_hot_bytes_after": [179137064057, 39130, 0],
+      "owned_hot_bytes_before": [179137064057, 39130, 0],
+      "unchanged": true
+    },
+    "site_catalog_condition": {
+      "durable_home_removed_or_moved": false,
+      "real_catalog_changed": false,
+      "state": "duplicate-identical-homes-without-primary",
+      "temporary_catalog_selected_existing_rank": 1
+    },
+    "status": "pass"
+  },
+  "privacy": {
+    "omitted": [
+      "hostnames",
+      "IP addresses",
+      "SSH aliases",
+      "node IDs",
+      "interface names",
+      "absolute paths",
+      "topology ID",
+      "filesystem device and inode values"
+    ],
+    "raw_site_state_published": false,
+    "topology_redacted": true
+  },
+  "promotion": {
+    "default_changed": false,
+    "guided_default": "replicated-local-hf-cache",
+    "hot_budget_gate": "pass",
+    "overall_status": "not-promoted",
+    "remaining_blockers": [
+      "real lab-issued profile seal and complete validation bundle",
+      "strict flagship same-configuration determinism",
+      "sustained library-hot soak"
+    ]
+  },
+  "recorded_at": "2026-08-11",
+  "schema_version": 1,
+  "status": "pass"
+}

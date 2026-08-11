@@ -41,6 +41,9 @@ case "$WEIGHT_SOURCE" in
   replicated|fabric|library-hot) ;;
   *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
 esac
+if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  acquire_model_library_hot_lock shared
+fi
 if [ "$NODES" -eq 1 ]; then
   resolve_single_node_placement "$NODE_SELECTOR" \
     || die "cannot resolve physical node placement '$NODE_SELECTOR'"
