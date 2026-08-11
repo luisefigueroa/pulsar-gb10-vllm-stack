@@ -133,6 +133,25 @@ def rdma_links(addresses: dict[str, list[str]]) -> list[dict[str, Any]]:
     return [unique[key] for key in sorted(unique)]
 
 
+def ssh_host_public_keys() -> list[dict[str, str]]:
+    keys: list[dict[str, str]] = []
+    for path in sorted(pathlib.Path("/etc/ssh").glob("ssh_host_*_key.pub")):
+        try:
+            fields = path.read_text(encoding="utf-8").strip().split()
+        except OSError:
+            continue
+        if len(fields) < 2:
+            continue
+        algorithm, public_key = fields[:2]
+        keys.append(
+            {
+                "algorithm": algorithm,
+                "public_key": public_key,
+            }
+        )
+    return keys
+
+
 def node_identifier(hostname: str, control_ip: str) -> str:
     seed = ""
     for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
@@ -151,9 +170,24 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ssh-host", default="local")
     parser.add_argument("--local", action="store_true")
+    parser.add_argument("--include-ssh-host-keys", action="store_true")
+    parser.add_argument("--identity-only", action="store_true")
     args = parser.parse_args()
 
     hostname = socket.gethostname().split(".", 1)[0]
+    if args.identity_only:
+        result = {
+            "probe_schema_version": 2 if args.include_ssh_host_keys else 1,
+            "local": bool(args.local),
+            "ssh_host": args.ssh_host,
+            "node_id": node_identifier(hostname, ""),
+            "hostname": hostname,
+        }
+        if args.include_ssh_host_keys:
+            result["ssh_host_keys"] = ssh_host_public_keys()
+        print(json.dumps(result, sort_keys=True))
+        return 0
+
     arch = run(["uname", "-m"])[1]
     gpu = run(
         ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
@@ -198,7 +232,7 @@ def main() -> int:
         reasons.append("active RDMA links have no IPv4 addresses")
 
     result = {
-        "probe_schema_version": 1,
+        "probe_schema_version": 2 if args.include_ssh_host_keys else 1,
         "local": bool(args.local),
         "ssh_host": args.ssh_host,
         "node_id": node_identifier(hostname, control_ip),
@@ -213,6 +247,8 @@ def main() -> int:
         "qualified": not reasons,
         "reject_reasons": reasons,
     }
+    if args.include_ssh_host_keys:
+        result["ssh_host_keys"] = ssh_host_public_keys()
     print(json.dumps(result, sort_keys=True))
     return 0
 

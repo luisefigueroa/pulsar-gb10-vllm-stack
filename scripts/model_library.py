@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import pathlib
@@ -22,7 +23,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 SCHEMA_VERSION = 1
-HOT_SCHEMA_VERSION = 1
+HOT_SCHEMA_VERSION = 2
+SNAPSHOT_MANIFEST_SCHEMA_VERSION = 1
+SNAPSHOT_MANIFEST_KIND = "model-library-snapshot-manifest"
+SNAPSHOT_INTEGRITY_SCHEME = "sha256-snapshot-manifest-v1"
+SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
 STATUS_TESTED = re.compile(r"^tested")
@@ -33,6 +38,11 @@ DEFAULT_FABRIC_RAIL_INDEX = 0
 TRANSFER_MOUNT_OPTIONS = (
     "ro,vers=4.2,proto=rdma,port=20049,hard,timeo=600,retrans=2"
 )
+ACTIVATE_TRANSPORT_BACKENDS = {
+    "ssh-control": "copy",
+    "ssh-roce": "copy",
+    "nfs-rdma": "fabric",
+}
 # Site cold archive category dirs (org/name trees under each).
 COLD_CATEGORY_DIRS = ("Official Models", "Community Models")
 # Hub cache roots relative to cold root (in addition to cold_root/hub).
@@ -131,6 +141,58 @@ def tree_bytes(path: pathlib.Path) -> int:
     except OSError:
         return 0
     return total
+
+
+def partition_blob_files(
+    hub_path: str | pathlib.Path,
+    *,
+    streams: int,
+) -> dict[str, Any]:
+    """Greedily balance HF blob files across deterministic copy streams."""
+    if streams < 1 or streams > 16:
+        fail("copy streams must be between 1 and 16")
+    hub = pathlib.Path(hub_path)
+    blobs = hub / "blobs"
+    if not blobs.is_dir():
+        fail(f"hub blob directory is missing: {blobs}")
+
+    files: list[tuple[int, str]] = []
+    for path in sorted(blobs.rglob("*"), key=lambda item: item.as_posix()):
+        try:
+            st = path.lstat()
+        except OSError as exc:
+            fail(f"cannot inspect blob path {path}: {exc}")
+        if stat.S_ISDIR(st.st_mode):
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            fail(f"blob tree contains a symlink: {path}")
+        if not stat.S_ISREG(st.st_mode):
+            fail(f"blob tree contains a non-regular file: {path}")
+        relative = path.relative_to(hub).as_posix()
+        if "\n" in relative or "\r" in relative:
+            fail("blob path contains a line break")
+        files.append((st.st_size, relative))
+    if not files:
+        fail(f"hub blob directory has no regular files: {blobs}")
+
+    effective = min(streams, len(files))
+    groups: list[dict[str, Any]] = [
+        {"stream": index, "bytes": 0, "files": []}
+        for index in range(effective)
+    ]
+    for size, relative in sorted(files, key=lambda item: (-item[0], item[1])):
+        group = min(groups, key=lambda item: (item["bytes"], item["stream"]))
+        group["files"].append(relative)
+        group["bytes"] += size
+
+    return {
+        "schema_version": 1,
+        "kind": "model-library-blob-stream-plan",
+        "requested_streams": streams,
+        "effective_streams": effective,
+        "total_bytes": sum(size for size, _relative in files),
+        "groups": groups,
+    }
 
 
 def _has_incomplete_marker(root: pathlib.Path) -> bool:
@@ -1230,10 +1292,24 @@ def plan_cold_stage(
     else:
         if flat_tree_state(source) != "complete":
             fail(f"cold stage-only: source flat incomplete: {source}")
-    source_digest = inventory_digest(source)
-    # Instance path is keyed by source identity so flat→hub rewrite stays stable.
+    if layout == "hub":
+        integrity_manifest = build_snapshot_manifest(
+            source,
+            model_id=entry["model_id"],
+        )
+    else:
+        revision = entry.get("revision")
+        if not revision:
+            fail("cold stage-only: flat source has no stable revision")
+        integrity_manifest = build_flat_snapshot_manifest(
+            source,
+            model_id=entry["model_id"],
+            revision=revision,
+        )
+    source_digest = integrity_manifest["manifest_id"]
+    # Instance path is keyed by the exact sealed snapshot identity.
     cid = content_id_for(entry["identity_key"], source_digest)
-    bytes_logical = dir_size_bytes(source)
+    bytes_logical = integrity_manifest["total_bytes"]
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     hub_dest = hot_hub_path(instance, entry["model_id"])
     target_ranks = list(range(nodes if nodes is not None else 1))
@@ -1269,6 +1345,7 @@ def plan_cold_stage(
                 "content_id": cid,
                 "content_digest": existing.get("content_digest") or source_digest,
                 "source_content_digest": source_digest,
+                "integrity_manifest": integrity_manifest,
                 "bytes_logical": bytes_logical,
                 "backend": "copy",
                 "stamp": existing,
@@ -1287,6 +1364,7 @@ def plan_cold_stage(
         home_node_id="cold",
         content_id=cid,
         content_digest=provisional_digest,
+        integrity_manifest=integrity_manifest,
         backend="copy",
         bytes_logical=bytes_logical,
     )
@@ -1320,6 +1398,7 @@ def plan_cold_stage(
         "content_id": cid,
         "content_digest": provisional_digest,
         "source_content_digest": source_digest,
+        "integrity_manifest": integrity_manifest,
         "bytes_logical": bytes_logical,
         "backend": "copy",
         "target_ranks": target_ranks,
@@ -1371,6 +1450,309 @@ def inventory_digest(hub_path: str | pathlib.Path) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+
+def sha256_file(
+    path: pathlib.Path,
+    *,
+    expected_size: int | None = None,
+) -> str:
+    """Hash one stable regular file and fail if it changes during the read."""
+    hasher = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            before = os.fstat(handle.fileno())
+            if expected_size is not None and before.st_size != expected_size:
+                fail(
+                    f"integrity: size changed for {path} "
+                    f"({before.st_size} != {expected_size})"
+                )
+            while chunk := handle.read(8 * 1024 * 1024):
+                hasher.update(chunk)
+            after = os.fstat(handle.fileno())
+    except OSError as exc:
+        fail(f"integrity: cannot hash {path}: {exc}")
+    stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(getattr(before, name) != getattr(after, name) for name in stable_fields):
+        fail(f"integrity: file changed while hashing: {path}")
+    return hasher.hexdigest()
+
+
+def snapshot_manifest_identity(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in manifest.items() if key != "manifest_id"}
+
+
+def snapshot_manifest_id(manifest: dict[str, Any]) -> str:
+    payload = json.dumps(
+        snapshot_manifest_identity(manifest),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _resolved_inside_file(path: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(resolved_root)
+    except (OSError, ValueError) as exc:
+        fail(f"integrity: path escapes or is unavailable: {path}: {exc}")
+    if not resolved.is_file():
+        fail(f"integrity: snapshot entry is not a regular file: {path}")
+    return resolved
+
+
+def iter_snapshot_files(
+    hub_path: str | pathlib.Path,
+) -> tuple[str, list[tuple[str, pathlib.Path]]]:
+    """Return the active snapshot revision and its exact logical file set."""
+    hub = pathlib.Path(hub_path)
+    revision = read_revision(hub)
+    if revision is None:
+        fail(f"integrity: hub has no complete active revision: {hub}")
+    snapshot = hub / "snapshots" / revision
+    files: list[tuple[str, pathlib.Path]] = []
+    try:
+        candidates = sorted(snapshot.rglob("*"))
+    except OSError as exc:
+        fail(f"integrity: cannot walk snapshot {snapshot}: {exc}")
+    for candidate in candidates:
+        try:
+            mode = candidate.lstat().st_mode
+        except OSError as exc:
+            fail(f"integrity: cannot inspect {candidate}: {exc}")
+        if stat.S_ISDIR(mode):
+            continue
+        if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+            fail(f"integrity: unsupported snapshot entry type: {candidate}")
+        relative = candidate.relative_to(snapshot).as_posix()
+        files.append((relative, _resolved_inside_file(candidate, hub)))
+    if not files:
+        fail(f"integrity: active snapshot has no files: {snapshot}")
+    return revision, files
+
+
+def _build_manifest_from_files(
+    *,
+    model_id: str,
+    revision: str,
+    files: list[tuple[str, pathlib.Path]],
+    lfs_blob_root: pathlib.Path | None,
+) -> dict[str, Any]:
+    if not model_id:
+        fail("integrity: model_id is required")
+    if not revision or SAFE_REV.fullmatch(revision) is None:
+        fail(f"integrity: unsafe snapshot revision {revision!r}")
+    resolved_lfs_root = (
+        lfs_blob_root.resolve(strict=True)
+        if lfs_blob_root is not None and lfs_blob_root.is_dir()
+        else None
+    )
+    hash_cache: dict[pathlib.Path, str] = {}
+    entries: list[dict[str, Any]] = []
+    for relative, resolved in files:
+        try:
+            size = resolved.stat().st_size
+        except OSError as exc:
+            fail(f"integrity: cannot stat {resolved}: {exc}")
+        if size <= 0:
+            fail(f"integrity: empty snapshot file: {relative}")
+        if (
+            resolved_lfs_root is not None
+            and resolved.parent == resolved_lfs_root
+            and SHA256_HEX_RE.fullmatch(resolved.name) is not None
+        ):
+            checksum = resolved.name
+        else:
+            checksum = hash_cache.get(resolved, "")
+            if not checksum:
+                checksum = sha256_file(resolved, expected_size=size)
+                hash_cache[resolved] = checksum
+        entries.append({"path": relative, "size": size, "sha256": checksum})
+    manifest: dict[str, Any] = {
+        "schema_version": SNAPSHOT_MANIFEST_SCHEMA_VERSION,
+        "kind": SNAPSHOT_MANIFEST_KIND,
+        "model_id": model_id,
+        "snapshot_revision": revision,
+        "files": entries,
+        "file_count": len(entries),
+        "total_bytes": sum(item["size"] for item in entries),
+    }
+    manifest["manifest_id"] = snapshot_manifest_id(manifest)
+    return manifest
+
+
+def build_snapshot_manifest(
+    hub_path: str | pathlib.Path,
+    *,
+    model_id: str,
+) -> dict[str, Any]:
+    hub = pathlib.Path(hub_path)
+    revision, files = iter_snapshot_files(hub)
+    return _build_manifest_from_files(
+        model_id=model_id,
+        revision=revision,
+        files=files,
+        lfs_blob_root=hub / "blobs",
+    )
+
+
+def build_flat_snapshot_manifest(
+    source_path: str | pathlib.Path,
+    *,
+    model_id: str,
+    revision: str,
+) -> dict[str, Any]:
+    source = pathlib.Path(source_path)
+    if not source.is_dir():
+        fail(f"integrity: flat source is not a directory: {source}")
+    files: list[tuple[str, pathlib.Path]] = []
+    try:
+        candidates = sorted(source.rglob("*"))
+    except OSError as exc:
+        fail(f"integrity: cannot walk flat source {source}: {exc}")
+    for candidate in candidates:
+        try:
+            mode = candidate.lstat().st_mode
+        except OSError as exc:
+            fail(f"integrity: cannot inspect {candidate}: {exc}")
+        if stat.S_ISDIR(mode):
+            continue
+        if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+            fail(f"integrity: unsupported flat entry type: {candidate}")
+        relative = candidate.relative_to(source).as_posix()
+        files.append((relative, _resolved_inside_file(candidate, source)))
+    return _build_manifest_from_files(
+        model_id=model_id,
+        revision=revision,
+        files=files,
+        lfs_blob_root=None,
+    )
+
+
+def validate_snapshot_manifest(manifest: Any) -> dict[str, Any]:
+    if not isinstance(manifest, dict):
+        fail("integrity: snapshot manifest must be an object")
+    if manifest.get("schema_version") != SNAPSHOT_MANIFEST_SCHEMA_VERSION:
+        fail("integrity: unsupported snapshot manifest schema")
+    if manifest.get("kind") != SNAPSHOT_MANIFEST_KIND:
+        fail("integrity: snapshot manifest kind is invalid")
+    model_id = manifest.get("model_id")
+    if not isinstance(model_id, str) or not model_id:
+        fail("integrity: snapshot manifest model_id is invalid")
+    revision = manifest.get("snapshot_revision")
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        fail("integrity: snapshot manifest revision is invalid")
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        fail("integrity: snapshot manifest files must be non-empty")
+    observed: set[str] = set()
+    total = 0
+    for index, item in enumerate(files):
+        if not isinstance(item, dict):
+            fail(f"integrity: manifest.files[{index}] must be an object")
+        relative = item.get("path")
+        if not isinstance(relative, str) or not relative:
+            fail(f"integrity: manifest.files[{index}].path is invalid")
+        pure = pathlib.PurePosixPath(relative)
+        if pure.is_absolute() or ".." in pure.parts or relative in observed:
+            fail(f"integrity: unsafe or duplicate manifest path: {relative}")
+        observed.add(relative)
+        size = item.get("size")
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+            fail(f"integrity: invalid manifest size for {relative}")
+        checksum = item.get("sha256")
+        if not isinstance(checksum, str) or SHA256_HEX_RE.fullmatch(checksum) is None:
+            fail(f"integrity: invalid SHA-256 for {relative}")
+        total += size
+    if manifest.get("file_count") != len(files):
+        fail("integrity: snapshot manifest file_count mismatch")
+    if manifest.get("total_bytes") != total:
+        fail("integrity: snapshot manifest total_bytes mismatch")
+    if manifest.get("manifest_id") != snapshot_manifest_id(manifest):
+        fail("integrity: snapshot manifest identity mismatch")
+    return manifest
+
+
+def default_integrity_workers() -> int:
+    raw = os.environ.get("PULSAR_INTEGRITY_WORKERS", "8")
+    try:
+        workers = int(raw)
+    except ValueError:
+        fail(f"PULSAR_INTEGRITY_WORKERS must be an integer (got {raw!r})")
+    if workers < 1 or workers > 16:
+        fail("PULSAR_INTEGRITY_WORKERS must be between 1 and 16")
+    return workers
+
+
+def verify_snapshot_manifest(
+    hub_path: str | pathlib.Path,
+    manifest: dict[str, Any],
+    *,
+    metadata_only: bool = False,
+    workers: int | None = None,
+) -> dict[str, Any]:
+    manifest = validate_snapshot_manifest(manifest)
+    hub = pathlib.Path(hub_path)
+    revision, actual_files = iter_snapshot_files(hub)
+    if revision != manifest["snapshot_revision"]:
+        fail(
+            f"integrity: snapshot is {revision}, expected "
+            f"{manifest['snapshot_revision']}"
+        )
+    actual = {relative: resolved for relative, resolved in actual_files}
+    expected = {item["path"]: item for item in manifest["files"]}
+    if set(actual) != set(expected):
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        fail(
+            "integrity: snapshot file set changed "
+            f"(missing={missing[:1]} extra={extra[:1]})"
+        )
+    unique_paths: dict[pathlib.Path, int] = {}
+    for relative, item in expected.items():
+        resolved = actual[relative]
+        try:
+            size = resolved.stat().st_size
+        except OSError as exc:
+            fail(f"integrity: cannot stat {relative}: {exc}")
+        if size != item["size"]:
+            fail(
+                f"integrity: size changed for {relative} "
+                f"({size} != {item['size']})"
+            )
+        unique_paths.setdefault(resolved, size)
+    bytes_hashed = 0
+    worker_count = 0
+    if not metadata_only:
+        worker_count = default_integrity_workers() if workers is None else workers
+        if isinstance(worker_count, bool) or worker_count < 1 or worker_count > 16:
+            fail("integrity workers must be between 1 and 16")
+        items = sorted(unique_paths.items(), key=lambda item: str(item[0]))
+
+        def hash_one(item: tuple[pathlib.Path, int]) -> tuple[pathlib.Path, str]:
+            candidate, size = item
+            return candidate, sha256_file(candidate, expected_size=size)
+
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            checksums = dict(pool.map(hash_one, items))
+        for relative, item in expected.items():
+            if checksums[actual[relative]] != item["sha256"]:
+                fail(f"integrity: SHA-256 mismatch for {relative}")
+        bytes_hashed = sum(unique_paths.values())
+    return {
+        "state": "ok",
+        "mode": "metadata" if metadata_only else "full",
+        "scheme": SNAPSHOT_INTEGRITY_SCHEME,
+        "manifest_id": manifest["manifest_id"],
+        "snapshot_revision": revision,
+        "file_count": manifest["file_count"],
+        "total_bytes": manifest["total_bytes"],
+        "bytes_hashed": bytes_hashed,
+        "workers": worker_count,
+    }
+
+
 def content_id_for(identity_key: str, digest: str) -> str:
     raw = f"{identity_key}|{digest}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:12]
@@ -1394,6 +1776,33 @@ def hot_stamp_path(instance_dir: pathlib.Path) -> pathlib.Path:
     return instance_dir / ".pulsar" / "hot.json"
 
 
+def resolve_activate_transport(
+    backend: str | None,
+    transport: str | None,
+) -> tuple[str, str]:
+    """Resolve the compatibility backend and explicit transfer transport."""
+    backend = backend or ""
+    transport = transport or ""
+    if backend and backend not in {"copy", "fabric"}:
+        fail(f"activate: backend {backend!r} not supported (use copy or fabric)")
+    if transport:
+        expected_backend = ACTIVATE_TRANSPORT_BACKENDS.get(transport)
+        if expected_backend is None:
+            choices = ", ".join(ACTIVATE_TRANSPORT_BACKENDS)
+            fail(f"activate: transport {transport!r} not supported (use {choices})")
+        if backend and backend != expected_backend:
+            fail(
+                f"activate: transport {transport} requires backend "
+                f"{expected_backend}, not {backend}"
+            )
+        return expected_backend, transport
+    resolved_backend = backend or "copy"
+    resolved_transport = (
+        "nfs-rdma" if resolved_backend == "fabric" else "ssh-control"
+    )
+    return resolved_backend, resolved_transport
+
+
 def build_hot_stamp(
     *,
     profile: str,
@@ -1404,12 +1813,23 @@ def build_hot_stamp(
     home_node_id: str,
     content_id: str,
     content_digest: str,
+    integrity_manifest: dict[str, Any],
     backend: str,
     bytes_logical: int,
+    transport: str | None = None,
     pinned: bool = False,
     state: str = "ready",
 ) -> dict[str, Any]:
-    return {
+    manifest = validate_snapshot_manifest(integrity_manifest)
+    if manifest.get("manifest_id") != content_digest:
+        fail("hot stamp content_digest differs from integrity manifest")
+    if manifest.get("model_id") != model_id:
+        fail("hot stamp model_id differs from integrity manifest")
+    if revision and manifest.get("snapshot_revision") != revision:
+        fail("hot stamp revision differs from integrity manifest")
+    if manifest.get("total_bytes") != bytes_logical:
+        fail("hot stamp bytes_logical differs from integrity manifest")
+    stamp = {
         "schema_version": HOT_SCHEMA_VERSION,
         "state": state,
         "profile": profile,
@@ -1420,12 +1840,19 @@ def build_hot_stamp(
         "topology_id": topology_id,
         "content_id": content_id,
         "content_digest": content_digest,
+        "integrity": {
+            "scheme": SNAPSHOT_INTEGRITY_SCHEME,
+            "manifest": manifest,
+        },
         "backend": backend,
         "bytes_logical": bytes_logical,
         "activated_at": utc_now(),
         "pinned": pinned,
         "budget_bytes_accounted": bytes_logical,
     }
+    if transport:
+        stamp["transport"] = transport
+    return stamp
 
 
 def write_hot_stamp(instance_dir: pathlib.Path, stamp: dict[str, Any]) -> pathlib.Path:
@@ -1471,6 +1898,13 @@ def find_hot_instance_for_profile(
                 continue
             if not isinstance(stamp, dict):
                 continue
+            if stamp.get("schema_version") != HOT_SCHEMA_VERSION:
+                continue
+            integrity = stamp.get("integrity")
+            if not isinstance(integrity, dict) or (
+                integrity.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME
+            ):
+                continue
             if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
                 if stamp.get("state") != "ready":
                     continue
@@ -1486,6 +1920,124 @@ def find_hot_instance_for_profile(
 
 def dir_size_bytes(path: pathlib.Path) -> int:
     return tree_bytes(path)
+
+
+def inspect_hub_inventory(
+    hub_path: str | pathlib.Path,
+    *,
+    rank: int,
+    node_id: str,
+    model_id: str | None = None,
+) -> dict[str, Any]:
+    """Inspect and seal one catalog home on the node that owns its path."""
+    path = pathlib.Path(hub_path)
+    if not path.is_absolute():
+        fail(f"inspect-hub: hub path must be absolute: {path}")
+    if rank < 0:
+        fail("inspect-hub: rank must be non-negative")
+    node_id = str(node_id).strip()
+    if not node_id:
+        fail("inspect-hub: node_id is required")
+    resolved_model_id = model_id or hub_dirname_to_model_id(path.name)
+    if not resolved_model_id:
+        fail("inspect-hub: model_id is required for a non-standard hub path")
+    state = hub_tree_state(path)
+    result: dict[str, Any] = {
+        "schema_version": 2,
+        "kind": "model-library-home-inventory",
+        "rank": rank,
+        "node_id": node_id,
+        "hub_path": str(path),
+        "model_id": resolved_model_id,
+        "state": state,
+        "revision": read_revision(path),
+        "content_digest": None,
+        "bytes_logical": 0,
+        "integrity_manifest": None,
+    }
+    if state == "complete":
+        manifest = build_snapshot_manifest(path, model_id=resolved_model_id)
+        result["content_digest"] = manifest["manifest_id"]
+        result["bytes_logical"] = manifest["total_bytes"]
+        result["integrity_manifest"] = manifest
+    return result
+
+
+def validate_activation_home_inventory(
+    home: dict[str, Any],
+    catalog_revision: str | None,
+    inventory: dict[str, Any],
+    *,
+    model_id: str,
+) -> tuple[str, int, dict[str, Any]]:
+    """Bind a sealed remote-home manifest to the resolved catalog identity."""
+    if inventory.get("schema_version") != 2:
+        fail("activate: home inventory schema_version must be 2")
+    if inventory.get("kind") != "model-library-home-inventory":
+        fail("activate: home inventory kind is invalid")
+    try:
+        expected_rank = int(home["rank"])
+    except (KeyError, TypeError, ValueError):
+        fail("activate: catalog home rank is invalid")
+    actual_rank = inventory.get("rank")
+    if isinstance(actual_rank, bool) or actual_rank != expected_rank:
+        fail("activate: home inventory rank differs from catalog home")
+    expected_node_id = str(home.get("node_id") or "")
+    if inventory.get("node_id") != expected_node_id:
+        fail("activate: home inventory node_id differs from catalog home")
+    expected_path = str(pathlib.Path(str(home.get("hub_path") or "")))
+    if not pathlib.Path(expected_path).is_absolute():
+        fail("activate: catalog home hub_path must be absolute")
+    if inventory.get("hub_path") != expected_path:
+        fail("activate: home inventory path differs from catalog home")
+    if inventory.get("model_id") != model_id:
+        fail("activate: home inventory model_id differs from catalog")
+    state = inventory.get("state")
+    if state != "complete":
+        fail(f"activate: home hub is {state or 'invalid'}: {expected_path}")
+    revision = inventory.get("revision")
+    if catalog_revision and revision != catalog_revision:
+        fail("activate: home revision differs from catalog; run catalog refresh")
+    manifest = validate_snapshot_manifest(inventory.get("integrity_manifest"))
+    if manifest.get("model_id") != model_id:
+        fail("activate: home manifest model_id differs from catalog")
+    if manifest.get("snapshot_revision") != revision:
+        fail("activate: home manifest revision differs from inventory")
+    digest = inventory.get("content_digest")
+    if digest != manifest.get("manifest_id"):
+        fail("activate: home inventory content_digest differs from manifest")
+    bytes_logical = inventory.get("bytes_logical")
+    if (
+        isinstance(bytes_logical, bool)
+        or not isinstance(bytes_logical, int)
+        or bytes_logical < 1
+        or bytes_logical != manifest.get("total_bytes")
+    ):
+        fail("activate: home inventory bytes_logical differs from manifest")
+    return digest, bytes_logical, manifest
+
+
+def activation_home_inventory(
+    home: dict[str, Any],
+    catalog_revision: str | None,
+    supplied: dict[str, Any] | None,
+    *,
+    model_id: str,
+) -> tuple[str, int, dict[str, Any]]:
+    inventory = supplied
+    if inventory is None:
+        inventory = inspect_hub_inventory(
+            home["hub_path"],
+            rank=int(home["rank"]),
+            node_id=str(home["node_id"]),
+            model_id=model_id,
+        )
+    return validate_activation_home_inventory(
+        home,
+        catalog_revision,
+        inventory,
+        model_id=model_id,
+    )
 
 
 def budget_report(
@@ -1673,16 +2225,17 @@ def plan_activate(
     profile: str,
     topology_id: str,
     hot_root: str,
-    backend: str = "copy",
+    backend: str | None = None,
+    transport: str | None = None,
     allow_unvalidated: bool = False,
     nodes: int | None = None,
     topology_file: str | None = None,
     rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
     fabric_port: int = DEFAULT_FABRIC_PORT,
+    home_inventory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return activate plan JSON for bash to execute (copy/fabric + stamp)."""
-    if backend not in {"copy", "fabric"}:
-        fail(f"activate: backend {backend!r} not supported (use copy or fabric)")
+    backend, transport = resolve_activate_transport(backend, transport)
     catalog = load_catalog(catalog_path)
     if catalog.get("topology_id") and topology_id and catalog["topology_id"] != topology_id:
         fail(
@@ -1704,12 +2257,13 @@ def plan_activate(
         )
     home = resolved["home"]
     hub_path = home["hub_path"]
-    state = hub_tree_state(pathlib.Path(hub_path))
-    if state != "complete":
-        fail(f"activate: home hub is {state}: {hub_path}")
-    digest = inventory_digest(hub_path)
+    digest, bytes_logical, integrity_manifest = activation_home_inventory(
+        home,
+        resolved.get("revision"),
+        home_inventory,
+        model_id=resolved["model_id"],
+    )
     cid = content_id_for(resolved["identity_key"], digest)
-    bytes_logical = dir_size_bytes(pathlib.Path(hub_path))
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     target_ranks = list(range(nodes if nodes is not None else 1))
     existing = None
@@ -1733,8 +2287,10 @@ def plan_activate(
                 "hub_dest": str(hot_hub_path(instance, resolved["model_id"])),
                 "content_id": cid,
                 "content_digest": digest,
+                "integrity_manifest": integrity_manifest,
                 "bytes_logical": bytes_logical,
                 "backend": backend,
+                "transport": transport,
                 "topology_id": topology_id,
                 "target_ranks": target_ranks,
                 "stamp": existing,
@@ -1755,8 +2311,10 @@ def plan_activate(
         home_node_id=home["node_id"],
         content_id=cid,
         content_digest=digest,
+        integrity_manifest=integrity_manifest,
         backend=backend,
         bytes_logical=bytes_logical,
+        transport=transport,
         pinned=False,
         state="ready",
     )
@@ -1816,8 +2374,10 @@ def plan_activate(
         "hub_dest": str(hot_hub_path(instance, resolved["model_id"])),
         "content_id": cid,
         "content_digest": digest,
+        "integrity_manifest": integrity_manifest,
         "bytes_logical": bytes_logical,
         "backend": backend,
+        "transport": transport,
         "topology_id": topology_id,
         "target_ranks": target_ranks,
         "stamp": stamp,
@@ -1836,10 +2396,15 @@ def verify_hot_ready(
     profile: str | None = None,
     topology_id: str | None = None,
     require_digest: bool = True,
+    allow_verifying: bool = False,
+    workers: int | None = None,
 ) -> dict[str, Any]:
     instance_dir = pathlib.Path(instance_dir)
     stamp = load_hot_stamp(instance_dir)
-    if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
+    allowed_states = {"ready", "pinned"}
+    if allow_verifying:
+        allowed_states.add("verifying")
+    if stamp.get("state") not in allowed_states and not stamp.get("pinned"):
         fail(f"hot not ready: state={stamp.get('state')!r} at {instance_dir}")
     if profile and stamp.get("profile") != profile:
         fail(f"hot profile mismatch: stamp={stamp.get('profile')} want={profile}")
@@ -1848,11 +2413,32 @@ def verify_hot_ready(
     hub = hot_hub_path(instance_dir, stamp["model_id"])
     if hub_tree_state(hub) != "complete":
         fail(f"hot hub incomplete: {hub}")
-    if require_digest:
-        digest = inventory_digest(hub)
-        if digest != stamp.get("content_digest"):
-            fail("hot content_digest mismatch after copy")
-    return {"stamp": stamp, "hub_path": str(hub), "instance_dir": str(instance_dir)}
+    integrity = stamp.get("integrity")
+    if not isinstance(integrity, dict):
+        fail("hot integrity seal missing")
+    if integrity.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME:
+        fail("hot integrity scheme is unsupported")
+    manifest = validate_snapshot_manifest(integrity.get("manifest"))
+    if manifest.get("manifest_id") != stamp.get("content_digest"):
+        fail("hot content_digest differs from sealed manifest")
+    if manifest.get("model_id") != stamp.get("model_id"):
+        fail("hot model_id differs from sealed manifest")
+    if stamp.get("revision") and (
+        manifest.get("snapshot_revision") != stamp.get("revision")
+    ):
+        fail("hot revision differs from sealed manifest")
+    verification = verify_snapshot_manifest(
+        hub,
+        manifest,
+        metadata_only=not require_digest,
+        workers=workers,
+    )
+    return {
+        "stamp": stamp,
+        "hub_path": str(hub),
+        "instance_dir": str(instance_dir),
+        "integrity": verification,
+    }
 
 
 def set_hot_pinned(instance_dir: str | pathlib.Path, pinned: bool) -> dict[str, Any]:
@@ -2117,10 +2703,12 @@ def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
             layout=plan.get("layout"),
             revision=plan.get("revision"),
         )
-        # Flat→hub rewrites paths; verify digest is always of the final hub tree.
-        hub_digest = inventory_digest(plan["hub_dest"])
+        integrity = verify_snapshot_manifest(
+            plan["hub_dest"],
+            plan["integrity_manifest"],
+            metadata_only=False,
+        )
         stamp = dict(plan["stamp"])
-        stamp["content_digest"] = hub_digest
         stamp["source_content_digest"] = plan.get("source_content_digest") or stamp.get(
             "source_content_digest"
         )
@@ -2129,12 +2717,12 @@ def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
             plan["instance_dir"],
             profile=args.profile,
             topology_id=args.topology_id,
-            require_digest=True,
+            require_digest=False,
         )
+        verify["integrity"] = integrity
         plan = {
             **plan,
             "executed": True,
-            "content_digest": hub_digest,
             "stamp": stamp,
             "verify": verify,
         }
@@ -2165,18 +2753,40 @@ def cmd_cleanup_recommend(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_inspect_hub(args: argparse.Namespace) -> int:
+    result = inspect_hub_inventory(
+        args.hub_path,
+        rank=args.rank,
+        node_id=args.node_id,
+        model_id=args.model_id or None,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+
 def cmd_plan_activate(args: argparse.Namespace) -> int:
+    home_inventory = None
+    if args.home_inventory_json:
+        try:
+            home_inventory = json.loads(args.home_inventory_json)
+        except json.JSONDecodeError as exc:
+            fail(f"home-inventory-json: {exc}")
+        if not isinstance(home_inventory, dict):
+            fail("home-inventory-json must be an object")
     plan = plan_activate(
         catalog_path=args.catalog,
         profile=args.profile,
         topology_id=args.topology_id,
         hot_root=args.hot_root or default_hot_root(),
-        backend=args.backend,
+        backend=args.backend or None,
+        transport=args.transport or None,
         allow_unvalidated=args.allow_unvalidated,
         nodes=args.nodes,
         topology_file=args.topology_file or None,
         rail_index=args.rail_index,
         fabric_port=args.fabric_port,
+        home_inventory=home_inventory,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -2208,6 +2818,8 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
         profile=args.profile,
         topology_id=args.topology_id,
         require_digest=not args.skip_digest,
+        allow_verifying=args.allow_verifying,
+        workers=args.workers,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -2268,6 +2880,12 @@ def cmd_budget(args: argparse.Namespace) -> int:
 
 def cmd_inventory_digest(args: argparse.Namespace) -> int:
     print(inventory_digest(args.hub_path))
+    return 0
+
+
+def cmd_partition_blobs(args: argparse.Namespace) -> int:
+    report = partition_blob_files(args.hub_path, streams=args.streams)
+    print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 
 
@@ -2428,6 +3046,45 @@ def build_ssh_roce_map(
     }
 
 
+def validate_ssh_roce_route(
+    route_data: Any,
+    *,
+    remote_ip: str,
+    expected_netdev: str,
+    expected_source_ip: str,
+) -> dict[str, Any]:
+    """Fail closed unless Linux routes a RoCE peer over the confirmed rail."""
+    if not remote_ip or not expected_netdev or not expected_source_ip:
+        fail("ssh-roce-route: remote IP, netdev, and source IP are required")
+    if not isinstance(route_data, list) or not route_data:
+        fail("ssh-roce-route: `ip -j route get` returned no routes")
+    route = route_data[0]
+    if not isinstance(route, dict):
+        fail("ssh-roce-route: first route is not an object")
+    actual_netdev = str(route.get("dev") or "")
+    actual_source_ip = str(route.get("prefsrc") or route.get("src") or "")
+    if actual_netdev != expected_netdev:
+        fail(
+            f"ssh-roce-route: {remote_ip} uses dev "
+            f"{actual_netdev or '<none>'}; expected confirmed "
+            f"{expected_netdev}"
+        )
+    if actual_source_ip != expected_source_ip:
+        fail(
+            f"ssh-roce-route: {remote_ip} uses source "
+            f"{actual_source_ip or '<none>'}; expected confirmed "
+            f"{expected_source_ip}"
+        )
+    return {
+        "schema_version": 1,
+        "kind": "model-library-ssh-roce-route",
+        "state": "ready",
+        "remote_ip": remote_ip,
+        "netdev": actual_netdev,
+        "source_ip": actual_source_ip,
+    }
+
+
 def compare_ssh_roce_bench(
     *,
     profile: str,
@@ -2439,6 +3096,8 @@ def compare_ssh_roce_bench(
     tag: str,
     nodes: int,
     home_rank: int,
+    run_order: str = "control-first",
+    copy_streams: int = 1,
     ssh_roce_map: dict[str, Any] | None = None,
     control_phases: dict[str, Any] | None = None,
     ssh_roce_phases: dict[str, Any] | None = None,
@@ -2447,6 +3106,10 @@ def compare_ssh_roce_bench(
     """Compare control-path SSH copy vs SSH-over-RoCE-IP copy (experiment)."""
     if control_seconds < 0 or ssh_roce_seconds < 0:
         fail("bench times must be non-negative")
+    if run_order not in {"control-first", "roce-first"}:
+        fail("run_order must be control-first or roce-first")
+    if copy_streams < 1 or copy_streams > 16:
+        fail("copy_streams must be between 1 and 16")
     if control_seconds == 0:
         ratio = None
         verdict = "inconclusive"
@@ -2471,6 +3134,8 @@ def compare_ssh_roce_bench(
         "topology_id": topology_id,
         "nodes": nodes,
         "home_rank": home_rank,
+        "run_order": run_order,
+        "copy_streams": copy_streams,
         "bytes_logical": bytes_logical,
         "control_seconds": control_seconds,
         "ssh_roce_seconds": ssh_roce_seconds,
@@ -2507,6 +3172,21 @@ def cmd_ssh_roce_map(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate_ssh_roce_route(args: argparse.Namespace) -> int:
+    try:
+        route_data = json.loads(args.route_json)
+    except json.JSONDecodeError as exc:
+        fail(f"route-json: {exc}")
+    report = validate_ssh_roce_route(
+        route_data,
+        remote_ip=args.remote_ip,
+        expected_netdev=args.expected_netdev,
+        expected_source_ip=args.expected_source_ip,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_compare_ssh_roce_bench(args: argparse.Namespace) -> int:
     control_phases = None
     ssh_roce_phases = None
@@ -2536,6 +3216,8 @@ def cmd_compare_ssh_roce_bench(args: argparse.Namespace) -> int:
         tag=args.tag,
         nodes=args.nodes,
         home_rank=args.home_rank,
+        run_order=args.run_order,
+        copy_streams=args.copy_streams,
         ssh_roce_map=ssh_map if isinstance(ssh_map, dict) else None,
         control_phases=control_phases if isinstance(control_phases, dict) else None,
         ssh_roce_phases=ssh_roce_phases if isinstance(ssh_roce_phases, dict) else None,
@@ -2599,6 +3281,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--hostname", default="")
     scan.add_argument("--ssh-host", default="")
     scan.set_defaults(func=cmd_scan_hub)
+    inspect = sub.add_parser("inspect-hub", help="Inspect one catalog hub home")
+    inspect.add_argument("--hub-path", required=True)
+    inspect.add_argument("--rank", type=int, required=True)
+    inspect.add_argument("--node-id", required=True)
+    inspect.add_argument("--model-id", default="")
+    inspect.set_defaults(func=cmd_inspect_hub)
 
     build = sub.add_parser("build", help="Build catalog from homes JSON + profiles")
     build.add_argument("--topology-id", required=True)
@@ -2719,7 +3407,13 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--profile", required=True)
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
-    plan.add_argument("--backend", default="copy", choices=("copy", "fabric"))
+    plan.add_argument("--backend", default="", choices=("copy", "fabric"))
+    plan.add_argument(
+        "--transport",
+        default="",
+        choices=tuple(ACTIVATE_TRANSPORT_BACKENDS),
+        help="Transfer path: ssh-control, ssh-roce, or nfs-rdma",
+    )
     plan.add_argument("--nodes", type=int, default=1)
     plan.add_argument("--allow-unvalidated", action="store_true")
     plan.add_argument(
@@ -2729,6 +3423,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan.add_argument("--rail-index", type=int, default=DEFAULT_FABRIC_RAIL_INDEX)
     plan.add_argument("--fabric-port", type=int, default=DEFAULT_FABRIC_PORT)
+    plan.add_argument(
+        "--home-inventory-json",
+        default="",
+        help=argparse.SUPPRESS,
+    )
     plan.set_defaults(func=cmd_plan_activate)
 
     whs = sub.add_parser("write-hot-stamp", help="Write hot.json for an instance dir")
@@ -2743,6 +3442,10 @@ def build_parser() -> argparse.ArgumentParser:
     vh.add_argument("--profile")
     vh.add_argument("--topology-id")
     vh.add_argument("--skip-digest", action="store_true")
+    vh.add_argument("--workers", type=int)
+    vh.add_argument(
+        "--allow-verifying", action="store_true", help=argparse.SUPPRESS
+    )
     vh.set_defaults(func=cmd_verify_hot)
 
     fh = sub.add_parser("find-hot", help="Find ready hot instance for profile")
@@ -2772,6 +3475,13 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--hub-path", required=True)
     inv.set_defaults(func=cmd_inventory_digest)
 
+    partition = sub.add_parser(
+        "partition-blobs", help="Balance HF blobs across parallel copy streams"
+    )
+    partition.add_argument("--hub-path", required=True)
+    partition.add_argument("--streams", type=int, required=True)
+    partition.set_defaults(func=cmd_partition_blobs)
+
     srm = sub.add_parser(
         "ssh-roce-map",
         help="Map ranks to RoCE IPs for experimental SSH-over-RoCE rsync",
@@ -2792,6 +3502,16 @@ def build_parser() -> argparse.ArgumentParser:
     srm.add_argument("--rail-index", type=int, default=DEFAULT_FABRIC_RAIL_INDEX)
     srm.set_defaults(func=cmd_ssh_roce_map)
 
+    route = sub.add_parser(
+        "validate-ssh-roce-route",
+        help="Validate a live route against the confirmed RoCE endpoint",
+    )
+    route.add_argument("--route-json", required=True)
+    route.add_argument("--remote-ip", required=True)
+    route.add_argument("--expected-netdev", required=True)
+    route.add_argument("--expected-source-ip", required=True)
+    route.set_defaults(func=cmd_validate_ssh_roce_route)
+
     csrb = sub.add_parser(
         "compare-ssh-roce-bench",
         help="Compare control SSH copy vs SSH-over-RoCE copy (experiment)",
@@ -2805,6 +3525,12 @@ def build_parser() -> argparse.ArgumentParser:
     csrb.add_argument("--tag", required=True)
     csrb.add_argument("--nodes", type=int, required=True)
     csrb.add_argument("--home-rank", type=int, required=True)
+    csrb.add_argument("--copy-streams", type=int, default=1)
+    csrb.add_argument(
+        "--run-order",
+        choices=("control-first", "roce-first"),
+        default="control-first",
+    )
     csrb.add_argument("--control-phases-json", default="")
     csrb.add_argument("--ssh-roce-phases-json", default="")
     csrb.add_argument("--ssh-roce-map-json", default="")

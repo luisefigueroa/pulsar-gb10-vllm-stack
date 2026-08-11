@@ -592,6 +592,28 @@ PULSAR_SSH_OPTS=(
   -o ServerAliveInterval=5
   -o ServerAliveCountMax=2
 )
+PULSAR_TOPOLOGY_SSH_CONFIGURED=0
+
+# Called by load_cluster_topology after schema/config validation. Schema 1 keeps
+# the existing OpenSSH trust path; enrolled schema 2 pins aliases to exact
+# control endpoints and keys for every shared SSH caller.
+_pulsar_configure_topology_ssh() {
+  [ "${CLUSTER_TOPOLOGY_SOURCE:-}" = manifest ] || return 0
+  [ "${CLUSTER_TOPOLOGY_SSH_TRUSTED:-0}" = 1 ] || return 0
+  [ "$PULSAR_TOPOLOGY_SSH_CONFIGURED" = 0 ] || return 0
+  PULSAR_SSH_OPTS+=(
+    -F "$CLUSTER_SSH_CONFIG_FILE"
+    -o AddressFamily=inet
+    -o CanonicalizeHostname=no
+    -o CheckHostIP=no
+    -o ProxyCommand=none
+    -o ProxyJump=none
+    -o StrictHostKeyChecking=yes
+    -o UpdateHostKeys=no
+    -o VerifyHostKeyDNS=no
+  )
+  PULSAR_TOPOLOGY_SSH_CONFIGURED=1
+}
 
 ssh_node() {
   local rank="${1:?rank required}"
@@ -765,7 +787,8 @@ PULSAR_WEIGHT_CONFIG_LABEL="io.pulsar.gb10.weight-config"
 
 # Resolve a ready hot-staging instance for library-hot launch.
 # Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
-# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_PINNED.
+# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
+# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_PINNED.
 # Requires load_conf + load_cluster_topology (or single-node topology id).
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
@@ -787,6 +810,12 @@ resolve_library_hot_for_profile() {
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")')
   LIBRARY_HOT_CONTENT_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
+  LIBRARY_HOT_CONTENT_DIGEST=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_digest") or "")')
+  LIBRARY_HOT_TRANSPORT=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["stamp"].get("transport") or "")')
+  LIBRARY_HOT_INTEGRITY_SCHEME=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print((json.load(sys.stdin)["stamp"].get("integrity") or {}).get("scheme") or "")')
   LIBRARY_HOT_MODEL_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("model_id") or "")')
   LIBRARY_HOT_PINNED=$(printf '%s' "$info" | python3 -c \
@@ -796,6 +825,11 @@ resolve_library_hot_for_profile() {
     --profile "$profile" \
     --topology-id "$topology_id" >/dev/null \
     || die "library-hot: hot instance failed verify for $profile"
+  [ -n "$LIBRARY_HOT_CONTENT_ID" ] \
+    && [ -n "$LIBRARY_HOT_CONTENT_DIGEST" ] \
+    && [ -n "$LIBRARY_HOT_TRANSPORT" ] \
+    && [ -n "$LIBRARY_HOT_INTEGRITY_SCHEME" ] \
+    || die "library-hot: sealed hot provenance is incomplete for $profile"
 }
 
 require_topology_rewrite_idle() {

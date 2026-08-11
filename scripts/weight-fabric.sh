@@ -97,8 +97,9 @@ declare -ag WF_SERVER_NETDEVS=()
 declare -ag WF_SERVER_HCAS=()
 
 load_fabric() {
-  local profile="${1:?profile required}" rows kind
+  local profile="${1:?profile required}" allow_legacy="${2:-0}" rows kind
   local a b c d e f g h i j k l m n o p
+  local -a row_args=()
   load_conf "$profile"
   [ "$NODES" -gt 1 ] \
     || die "$profile is not a multi-node profile"
@@ -110,9 +111,11 @@ load_fabric() {
   WF_CONFIG_PATH=$(fabric_config_path "$profile")
   [ -f "$WF_CONFIG_PATH" ] \
     || die "no fabric config for $profile; run: $0 configure $profile --owner NODE_ID"
+  [ "$allow_legacy" = 1 ] && row_args+=(--allow-legacy-teardown)
   rows=$(
     "$PY_TOOL" rows "$WF_CONFIG_PATH" "$CLUSTER_TOPOLOGY_FILE" \
-      --profile "$profile" --model "$MODEL" --nodes "$NODES"
+      --profile "$profile" --model "$MODEL" --nodes "$NODES" \
+      "${row_args[@]}"
   ) || die "fabric config is invalid or stale: $WF_CONFIG_PATH"
 
   WF_RANK_NODE_IDS=()
@@ -258,6 +261,7 @@ node_interactive_root_script() {
     "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -tt -- "$host" "$command"
   fi
 }
+
 
 confirm_system_change() {
   local yes="${1:-0}" message="${2:?}"
@@ -792,6 +796,107 @@ owner_rdma_ready() {
   node_exec "$WF_OWNER_RANK" "$command" >/dev/null 2>&1
 }
 
+fabric_export_file() {
+  printf '/etc/exports.d/pulsar-weight-fabric-%s.exports\n' \
+    "${WF_CONFIG_ID:0:12}"
+}
+
+fabric_nfs_file() {
+  printf '/etc/nfs.conf.d/pulsar-weight-fabric-%s.conf\n' \
+    "${WF_CONFIG_ID:0:12}"
+}
+
+owner_config_files_consistent() {
+  local export_file nfs_file command export_exists=0 nfs_exists=0
+  export_file=$(fabric_export_file)
+  nfs_file=$(fabric_nfs_file)
+  command=$(shell_join_q test -e "$export_file")
+  node_exec "$WF_OWNER_RANK" "$command" >/dev/null 2>&1 \
+    && export_exists=1
+  command=$(shell_join_q test -e "$nfs_file")
+  node_exec "$WF_OWNER_RANK" "$command" >/dev/null 2>&1 \
+    && nfs_exists=1
+  [ "$export_exists" = "$nfs_exists" ]
+}
+
+owner_config_files_absent() {
+  local export_file nfs_file command
+  export_file=$(fabric_export_file)
+  nfs_file=$(fabric_nfs_file)
+  command=$(shell_join_q test ! -e "$export_file")
+  command+=" && $(shell_join_q test ! -e "$nfs_file")"
+  node_exec "$WF_OWNER_RANK" "$command" >/dev/null 2>&1
+}
+
+owner_repository_access() {
+  local output identity
+  if ! output=$(node_python "$WF_OWNER_RANK" repository-access \
+      --repository "$WF_EXPORT_PATH"); then
+    return 1
+  fi
+  if ! identity=$(printf '%s' "$output" | python3 -c \
+      'import json,sys
+value=json.load(sys.stdin)
+print(value["uid"], value["gid"])'); then
+    return 1
+  fi
+  read -r WF_REPOSITORY_UID WF_REPOSITORY_GID <<<"$identity"
+  [[ "$WF_REPOSITORY_UID" =~ ^[1-9][0-9]*$ ]] \
+    && [[ "$WF_REPOSITORY_GID" =~ ^[0-9]+$ ]]
+}
+
+validate_owner_export_scope() {
+  local state="${1:-allowed}" active_file export_files_file command rc=0 rank
+  local export_file
+  local -a args=()
+  export_file=$(fabric_export_file)
+  active_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-active-exports.XXXXXX")
+  export_files_file=$(mktemp \
+    "${TMPDIR:-/tmp}/pulsar-export-files.XXXXXX")
+  command="if $(shell_join_q test -r /proc/fs/nfsd/exports); then "
+  command+="$(shell_join_q cat /proc/fs/nfsd/exports)"
+  command+="; else $(shell_join_q cat /var/lib/nfs/etab); fi"
+  if ! node_exec "$WF_OWNER_RANK" "$command" >"$active_file"; then
+    rm -f "$active_file" "$export_files_file"
+    return 1
+  fi
+  command=$(shell_join_q find /etc/exports.d -maxdepth 1 \
+    -name 'pulsar-weight-fabric-*.exports' -print)
+  if ! node_exec "$WF_OWNER_RANK" "$command" >"$export_files_file"; then
+    rm -f "$active_file" "$export_files_file"
+    return 1
+  fi
+  args=(
+    export-scope
+    --active-exports "$active_file"
+    --pulsar-export-files "$export_files_file"
+    --expected-export-file "$export_file"
+    --export-path "$WF_EXPORT_PATH"
+    --anonuid "$WF_REPOSITORY_UID"
+    --anongid "$WF_REPOSITORY_GID"
+  )
+  for ((rank = 0; rank < WF_STORAGE_NODES; rank++)); do
+    [ "${WF_RANK_ROLES[$rank]}" = client ] || continue
+    args+=(--client "${WF_CLIENT_IPS[$rank]}")
+  done
+  case "$state" in
+    allowed) ;;
+    required) args+=(--require-active --require-export-file) ;;
+    absent) args+=(--forbid-active --forbid-export-file) ;;
+    *)
+      rm -f "$active_file" "$export_files_file"
+      die "internal error: unknown export scope state $state"
+      ;;
+  esac
+  if "$PY_TOOL" "${args[@]}" >/dev/null; then
+    rc=0
+  else
+    rc=$?
+  fi
+  rm -f "$active_file" "$export_files_file"
+  return "$rc"
+}
+
 model_replica_absent() {
   local rank="${1:?}" command
   [ "$rank" -eq "$WF_OWNER_RANK" ] && return 0
@@ -869,8 +974,15 @@ check_fabric() {
   state_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-weight-fabric.XXXXXX")
   trap 'rm -f "${state_file:-}"' RETURN
 
+  if ! owner_config_files_consistent; then
+    overall="owner-unready"
+  elif ! owner_repository_access; then
+    overall="owner-unready"
+  elif ! validate_owner_export_scope required; then
+    overall="owner-unready"
+  fi
   if ! owner_rdma_ready; then
-    overall=owner-unready
+    overall="owner-unready"
   fi
   for ((rank = 0; rank < rank_limit; rank++)); do
     route_state=ok
@@ -933,18 +1045,78 @@ check_fabric() {
   [ "$overall" = ok ]
 }
 
+WF_APPLY_ROLLBACK_ARMED=0
+WF_APPLY_CREATED_EXPORT_FILE=0
+WF_APPLY_CREATED_NFS_FILE=0
+WF_APPLY_EXPORT_FILE=""
+WF_APPLY_NFS_FILE=""
+declare -ag WF_APPLY_MOUNTED_RANKS=()
+
+rollback_fabric_apply() {
+  local original_status=$? index rank command failed=0 refresh=0
+  trap - EXIT
+  [ "$WF_APPLY_ROLLBACK_ARMED" = 1 ] || return "$original_status"
+  [ "$original_status" -ne 0 ] || original_status=1
+  set +e
+  warn "apply failed; rolling back this configuration's exact mounts and files"
+  for ((index = ${#WF_APPLY_MOUNTED_RANKS[@]} - 1; index >= 0; index--)); do
+    rank="${WF_APPLY_MOUNTED_RANKS[$index]}"
+    if mount_matches "$rank" "$WF_MOUNT_PATH" \
+        "${WF_SERVER_IPS[$rank]}" "$WF_EXPORT_PATH"; then
+      if ! node_privileged "$rank" umount "$WF_MOUNT_PATH"; then
+        failed=1
+      fi
+    else
+      command=$(shell_join_q findmnt -rn -M "$WF_MOUNT_PATH")
+      if node_exec "$rank" "$command" >/dev/null 2>&1; then
+        warn "rollback left an unexpected mount on rank $rank"
+        failed=1
+      fi
+    fi
+  done
+  if [ "$WF_APPLY_CREATED_EXPORT_FILE" = 1 ]; then
+    node_privileged "$WF_OWNER_RANK" rm -f "$WF_APPLY_EXPORT_FILE" \
+      || failed=1
+    refresh=1
+  fi
+  if [ "$WF_APPLY_CREATED_NFS_FILE" = 1 ]; then
+    node_privileged "$WF_OWNER_RANK" rm -f "$WF_APPLY_NFS_FILE" \
+      || failed=1
+    refresh=1
+  fi
+  if [ "$refresh" = 1 ]; then
+    node_privileged "$WF_OWNER_RANK" exportfs -ra || failed=1
+    node_privileged "$WF_OWNER_RANK" systemctl restart nfs-server \
+      || failed=1
+  fi
+  if [ "$failed" = 1 ]; then
+    warn "rollback is incomplete; run weight-fabric teardown before launch"
+  else
+    warn "rolled back the partial weight-fabric apply"
+  fi
+  return "$original_status"
+}
+
 apply_fabric() {
   local profile="${1:?}" yes="${2:-0}" rank
   local export_line nfs_conf export_file nfs_file command mount_options
-  local export_encoded nfs_encoded owner_script client_script
+  local export_encoded nfs_encoded owner_script client_script guidance
   load_fabric "$profile"
   require_prerequisites_ready
   command=$(shell_join_q test -s "$WF_MANIFEST_PATH")
   node_exec "$WF_OWNER_RANK" "$command" \
     || die "seal the authoritative snapshot before apply: $0 seal $profile"
   if ! node_exec "$WF_OWNER_RANK" "command -v exportfs >/dev/null 2>&1"; then
-    die "nfs-kernel-server is not installed on $WF_OWNER_HOSTNAME; run: $0 setup-prerequisites $profile"
+    guidance="nfs-kernel-server is not installed on $WF_OWNER_HOSTNAME; "
+    guidance+="run: $0 setup-prerequisites $profile"
+    die "$guidance"
   fi
+  owner_repository_access \
+    || die "owner repository identity/access check failed"
+  owner_config_files_consistent \
+    || die "owner has incomplete files from an earlier apply; run teardown"
+  validate_owner_export_scope allowed \
+    || die "owner has a broader or conflicting export"
   for ((rank = 0; rank < WF_STORAGE_NODES; rank++)); do
     [ "${WF_RANK_ROLES[$rank]}" = client ] || continue
     route_matches "$rank" "${WF_SERVER_IPS[$rank]}" \
@@ -972,13 +1144,32 @@ apply_fabric() {
   export_line="\"$WF_EXPORT_PATH\""
   for ((rank = 0; rank < WF_STORAGE_NODES; rank++)); do
     [ "${WF_RANK_ROLES[$rank]}" = client ] || continue
-    export_line+=" ${WF_CLIENT_IPS[$rank]}(ro,sync,insecure,root_squash,no_subtree_check)"
+    export_line+=" ${WF_CLIENT_IPS[$rank]}(ro,sync,insecure,root_squash,"
+    export_line+="anonuid=$WF_REPOSITORY_UID,anongid=$WF_REPOSITORY_GID,no_subtree_check)"
   done
   export_line+=$'\n'
   nfs_conf=$'[nfsd]\n'
   nfs_conf+="rdma = $WF_PORT"$'\n'
-  export_file="/etc/exports.d/pulsar-weight-fabric-${WF_CONFIG_ID:0:12}.exports"
-  nfs_file="/etc/nfs.conf.d/pulsar-weight-fabric-${WF_CONFIG_ID:0:12}.conf"
+  export_file=$(fabric_export_file)
+  nfs_file=$(fabric_nfs_file)
+
+  WF_APPLY_EXPORT_FILE="$export_file"
+  WF_APPLY_NFS_FILE="$nfs_file"
+  WF_APPLY_MOUNTED_RANKS=()
+  command=$(shell_join_q test -e "$export_file")
+  if node_exec "$WF_OWNER_RANK" "$command" >/dev/null 2>&1; then
+    WF_APPLY_CREATED_EXPORT_FILE=0
+  else
+    WF_APPLY_CREATED_EXPORT_FILE=1
+  fi
+  command=$(shell_join_q test -e "$nfs_file")
+  if node_exec "$WF_OWNER_RANK" "$command" >/dev/null 2>&1; then
+    WF_APPLY_CREATED_NFS_FILE=0
+  else
+    WF_APPLY_CREATED_NFS_FILE=1
+  fi
+  WF_APPLY_ROLLBACK_ARMED=1
+  trap rollback_fabric_apply EXIT
 
   if [ "$WEIGHT_FABRIC_SUDO_MODE" = interactive ]; then
     export_encoded=$(printf '%s' "$export_line" | base64 -w 0)
@@ -1007,6 +1198,8 @@ apply_fabric() {
   fi
   owner_rdma_ready \
     || die "NFS server did not expose RDMA port $WF_PORT"
+  validate_owner_export_scope required \
+    || die "NFS active export does not match the exact repository policy"
 
   mount_options="ro,vers=4.2,proto=rdma,port=$WF_PORT,hard,timeo=600,retrans=2"
   for ((rank = 0; rank < WF_STORAGE_NODES; rank++)); do
@@ -1030,13 +1223,16 @@ apply_fabric() {
       node_privileged "$rank" mount -t nfs4 -o "$mount_options" \
         "${WF_SERVER_IPS[$rank]}:$WF_EXPORT_PATH" "$WF_MOUNT_PATH"
     fi
+    WF_APPLY_MOUNTED_RANKS+=("$rank")
   done
   check_fabric "$profile" metadata 0
+  WF_APPLY_ROLLBACK_ARMED=0
+  trap - EXIT
 }
 
 unmount_clients() {
   local profile="${1:?}" yes="${2:-0}" rank command in_use
-  load_fabric "$profile"
+  load_fabric "$profile" 1
   confirm_system_change "$yes" \
     "Unmount the single-copy weight view from every configured client?"
   for ((rank = 0; rank < WF_STORAGE_NODES; rank++)); do
@@ -1058,12 +1254,12 @@ unmount_clients() {
 
 teardown_fabric() {
   local profile="${1:?}" yes="${2:-0}" export_file nfs_file root_script
-  load_fabric "$profile"
+  load_fabric "$profile" 1
   confirm_system_change "$yes" \
     "Unmount clients and remove this config's owner export?"
   unmount_clients "$profile" 1
-  export_file="/etc/exports.d/pulsar-weight-fabric-${WF_CONFIG_ID:0:12}.exports"
-  nfs_file="/etc/nfs.conf.d/pulsar-weight-fabric-${WF_CONFIG_ID:0:12}.conf"
+  export_file=$(fabric_export_file)
+  nfs_file=$(fabric_nfs_file)
   if [ "$WEIGHT_FABRIC_SUDO_MODE" = interactive ]; then
     root_script=$'set -euo pipefail\n'
     root_script+="$(shell_join_q rm -f "$export_file" "$nfs_file")"$'\n'
@@ -1075,6 +1271,12 @@ teardown_fabric() {
     node_privileged "$WF_OWNER_RANK" exportfs -ra
     node_privileged "$WF_OWNER_RANK" systemctl restart nfs-server
   fi
+  WF_REPOSITORY_UID="${WF_REPOSITORY_UID:-1}"
+  WF_REPOSITORY_GID="${WF_REPOSITORY_GID:-1}"
+  owner_config_files_absent \
+    || die "teardown is incomplete: configuration files remain; retry teardown"
+  validate_owner_export_scope absent \
+    || die "teardown is incomplete: export state remains; retry teardown"
   log "removed export and mounts; model files and site config were preserved"
 }
 

@@ -10,7 +10,9 @@ import os
 import pathlib
 import re
 import resource
+import shlex
 import socket
+import stat
 import sys
 import tempfile
 import time
@@ -28,7 +30,8 @@ except ModuleNotFoundError:
         TerminalWriter = None  # type: ignore[assignment,misc]
 
 
-CONFIG_SCHEMA_VERSION = 1
+CONFIG_SCHEMA_VERSION = 2
+LEGACY_CONFIG_SCHEMA_VERSION = 1
 MODEL_MANIFEST_SCHEMA_VERSION = 1
 SAFE_PROFILE = re.compile(r"^[A-Za-z0-9._-]+$")
 SAFE_REVISION = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -257,10 +260,18 @@ def build_configuration(
     port = bounded_int(port, "port", 1, 65535)
     rail_index = bounded_int(rail_index, "rail_index", 0, 15)
 
-    mount_path = str(
+    model_relative_path = str(
+        pathlib.PurePosixPath("hub")
+        / f"models--{model.replace('/', '--')}"
+    )
+    synthetic_cache_root = str(
         pathlib.PurePosixPath(mount_root)
         / f"{profile}-{topology['topology_id'][:12]}"
     )
+    mount_path = str(
+        pathlib.PurePosixPath(synthetic_cache_root) / model_relative_path
+    )
+    export_path = str(pathlib.PurePosixPath(cache_root) / model_relative_path)
     clients = []
     ranks = []
     for rank in range(storage_node_count):
@@ -302,7 +313,7 @@ def build_configuration(
                 "hostname": node["hostname"],
                 "ssh_host": node["ssh_host"],
                 "role": "client",
-                "cache_root": mount_path,
+                "cache_root": synthetic_cache_root,
             }
         )
 
@@ -324,7 +335,8 @@ def build_configuration(
             "kind": "nfs-rdma",
             "port": port,
             "rail_index": rail_index,
-            "export_path": cache_root,
+            "export_scope": "model-repository",
+            "export_path": export_path,
             "mount_root": mount_root,
             "mount_path": mount_path,
             "mount_options": [
@@ -340,7 +352,8 @@ def build_configuration(
         },
         "integrity": {
             "manifest_relative_path": (
-                f".pulsar/manifests/{profile}.manifest.json"
+                f"{model_relative_path}/.pulsar/manifests/"
+                f"{profile}.manifest.json"
             )
         },
         "ranks": ranks,
@@ -351,14 +364,65 @@ def build_configuration(
     return config
 
 
+def build_legacy_configuration(
+    topology: dict[str, Any],
+    profile: str,
+    model: str,
+    nodes: int,
+    storage_nodes: int | None,
+    owner_selector: str,
+    cache_root: str,
+    mount_root: str,
+    port: int,
+    rail_index: int,
+) -> dict[str, Any]:
+    """Reconstruct schema 1 exactly, only so its resources can be removed."""
+    config = build_configuration(
+        topology=topology,
+        profile=profile,
+        model=model,
+        nodes=nodes,
+        storage_nodes=storage_nodes,
+        owner_selector=owner_selector,
+        cache_root=cache_root,
+        mount_root=mount_root,
+        port=port,
+        rail_index=rail_index,
+    )
+    transport = config["transport"]
+    legacy_mount_path = str(
+        pathlib.PurePosixPath(transport["mount_root"])
+        / f"{config['profile']}-{config['topology_id'][:12]}"
+    )
+    config["schema_version"] = LEGACY_CONFIG_SCHEMA_VERSION
+    transport.pop("export_scope")
+    transport["export_path"] = config["owner"]["cache_root"]
+    transport["mount_path"] = legacy_mount_path
+    for client in transport["clients"]:
+        client["mount_path"] = legacy_mount_path
+    config["integrity"]["manifest_relative_path"] = (
+        f".pulsar/manifests/{config['profile']}.manifest.json"
+    )
+    config["configuration_id"] = digest(configuration_identity(config))
+    return config
+
+
 def validate_configuration(
     config: dict[str, Any],
     topology: dict[str, Any],
     expected_profile: str | None = None,
     expected_model: str | None = None,
     expected_nodes: int | None = None,
+    allow_legacy_teardown: bool = False,
 ) -> None:
-    if config.get("schema_version") != CONFIG_SCHEMA_VERSION:
+    schema_version = config.get("schema_version")
+    if schema_version == LEGACY_CONFIG_SCHEMA_VERSION:
+        if not allow_legacy_teardown:
+            fail(
+                "configuration: schema 1 exported the full cache and is "
+                "teardown-only"
+            )
+    elif schema_version != CONFIG_SCHEMA_VERSION:
         fail("configuration: unsupported schema version")
     profile = profile_name(config.get("profile"))
     model = model_name(config.get("model"))
@@ -384,7 +448,12 @@ def validate_configuration(
 
     owner = config.get("owner") or {}
     transport = config.get("transport") or {}
-    expected = build_configuration(
+    builder = (
+        build_legacy_configuration
+        if schema_version == LEGACY_CONFIG_SCHEMA_VERSION
+        else build_configuration
+    )
+    expected = builder(
         topology=topology,
         profile=profile,
         model=model,
@@ -459,7 +528,7 @@ def render_configuration(config: dict[str, Any]) -> None:
     term.field("Topology", config["topology_id"][:12])
     term.field("Config", config["configuration_id"][:12])
     term.blank()
-    term.emit("SERVING NODES")
+    term.emit("STORAGE-VISIBLE NODES")
     for rank in config["ranks"]:
         if rank["role"] == "owner":
             detail = f"{rank['hostname']} · authoritative local cache"
@@ -476,7 +545,10 @@ def render_configuration(config: dict[str, Any]) -> None:
         term.field("Node", detail)
     term.blank()
     term.emit("SAFETY")
-    term.field("Export", "read-only · exact client rail addresses")
+    term.field(
+        "Export",
+        "read-only · exact model repository · exact client rail addresses",
+    )
     term.field("Fallback", "replicated caches require explicit selection")
     term.field("Launch", "fails if config, route, mount, or manifest differs")
 
@@ -604,6 +676,7 @@ def public_provenance(
             },
             "transport": {
                 "kind": config["transport"]["kind"],
+                "export_scope": config["transport"]["export_scope"],
                 "port": config["transport"]["port"],
                 "rail_index": config["transport"]["rail_index"],
                 "mount_options": config["transport"]["mount_options"],
@@ -761,6 +834,249 @@ def audit_public_artifact_directory(
 
 def hf_model_root(cache_root: str, model: str) -> pathlib.Path:
     return pathlib.Path(cache_root) / "hub" / f"models--{model.replace('/', '--')}"
+
+
+def identity_has_access(
+    item: os.stat_result, uid: int, gid: int, required: int
+) -> bool:
+    mode = stat.S_IMODE(item.st_mode)
+    if item.st_uid == uid:
+        granted = (mode >> 6) & 0b111
+    elif item.st_gid == gid:
+        granted = (mode >> 3) & 0b111
+    else:
+        granted = mode & 0b111
+    return granted & required == required
+
+
+def validate_repository_access(repository_path: str) -> dict[str, Any]:
+    """Prove the export's mapped non-root identity can read the repository."""
+    repository = pathlib.Path(
+        absolute_path(repository_path, "repository_path")
+    )
+    try:
+        root_lstat = repository.lstat()
+        resolved_root = repository.resolve(strict=True)
+    except OSError as exc:
+        fail(f"repository access: cannot inspect {repository}: {exc}")
+    if stat.S_ISLNK(root_lstat.st_mode) or not stat.S_ISDIR(
+        root_lstat.st_mode
+    ):
+        fail("repository access: export path must be a real directory")
+    uid = root_lstat.st_uid
+    gid = root_lstat.st_gid
+    if uid == 0:
+        fail("repository access: refusing a root-owned repository")
+
+    checked_directories = 0
+    checked_files = 0
+    checked_symlinks = 0
+
+    def walk_error(exc: OSError) -> None:
+        fail(f"repository access: cannot walk repository: {exc}")
+
+    for current, directories, files in os.walk(
+        repository, topdown=True, followlinks=False, onerror=walk_error
+    ):
+        current_path = pathlib.Path(current)
+        try:
+            current_stat = current_path.stat()
+        except OSError as exc:
+            fail(f"repository access: cannot inspect {current_path}: {exc}")
+        if not identity_has_access(current_stat, uid, gid, 0b101):
+            fail(
+                "repository access: mapped identity cannot list/traverse "
+                f"{current_path}"
+            )
+        checked_directories += 1
+
+        for name in tuple(directories) + tuple(files):
+            path = current_path / name
+            try:
+                item = path.lstat()
+            except OSError as exc:
+                fail(f"repository access: cannot inspect {path}: {exc}")
+            if stat.S_ISLNK(item.st_mode):
+                if name in directories:
+                    directories.remove(name)
+                try:
+                    target = path.resolve(strict=True)
+                    target.relative_to(resolved_root)
+                    target_stat = target.stat()
+                except ValueError:
+                    fail(f"repository access: link escapes repository: {path}")
+                except OSError as exc:
+                    fail(f"repository access: cannot resolve {path}: {exc}")
+                if stat.S_ISDIR(target_stat.st_mode):
+                    required = 0b101
+                elif stat.S_ISREG(target_stat.st_mode):
+                    required = 0b100
+                else:
+                    fail(
+                        "repository access: link target is not a regular "
+                        f"file or directory: {path}"
+                    )
+                if not identity_has_access(target_stat, uid, gid, required):
+                    fail(
+                        "repository access: mapped identity cannot access "
+                        f"link target {path}"
+                    )
+                checked_symlinks += 1
+            elif stat.S_ISDIR(item.st_mode):
+                if not identity_has_access(item, uid, gid, 0b101):
+                    fail(
+                        "repository access: mapped identity cannot "
+                        f"list/traverse {path}"
+                    )
+            elif stat.S_ISREG(item.st_mode):
+                if not identity_has_access(item, uid, gid, 0b100):
+                    fail(
+                        "repository access: mapped identity cannot read "
+                        f"{path}"
+                    )
+                checked_files += 1
+            else:
+                fail(f"repository access: unsupported special file: {path}")
+
+    return {
+        "state": "ok",
+        "repository_path": str(repository),
+        "uid": uid,
+        "gid": gid,
+        "directories_checked": checked_directories,
+        "files_checked": checked_files,
+        "symlinks_checked": checked_symlinks,
+    }
+
+
+def parse_active_exports(document: str) -> dict[str, dict[str, set[str]]]:
+    exports: dict[str, dict[str, set[str]]] = {}
+    for line_number, raw_line in enumerate(document.splitlines(), start=1):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            fields = shlex.split(stripped)
+        except ValueError as exc:
+            fail(f"export scope: malformed active-export line {line_number}: {exc}")
+        if len(fields) < 2:
+            fail(f"export scope: incomplete active-export line {line_number}")
+        export_path = absolute_path(
+            fields[0], f"export scope line {line_number} path"
+        )
+        entries = exports.setdefault(export_path, {})
+        for field in fields[1:]:
+            match = re.fullmatch(r"([^()\s]+)\(([^()]*)\)", field)
+            if match is None:
+                fail(
+                    f"export scope: malformed client on line {line_number}"
+                )
+            client, option_text = match.groups()
+            if client in entries:
+                fail(
+                    f"export scope: duplicate {client} entry for {export_path}"
+                )
+            entries[client] = {
+                option for option in option_text.split(",") if option
+            }
+    return exports
+
+
+def path_is_strict_parent(parent: str, child: str) -> bool:
+    parent_path = pathlib.PurePosixPath(parent)
+    child_path = pathlib.PurePosixPath(child)
+    if parent_path == child_path:
+        return False
+    try:
+        child_path.relative_to(parent_path)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_export_scope(
+    active_document: str,
+    pulsar_export_files: Iterable[str],
+    *,
+    expected_export_file: str,
+    export_path: str,
+    clients: Iterable[str],
+    anonuid: int,
+    anongid: int,
+    require_active: bool,
+    forbid_active: bool = False,
+    require_export_file: bool = False,
+    forbid_export_file: bool = False,
+) -> dict[str, Any]:
+    if require_active and forbid_active:
+        fail("export scope: active export cannot be required and forbidden")
+    if require_export_file and forbid_export_file:
+        fail("export scope: export file cannot be required and forbidden")
+    expected_export_file = absolute_path(
+        expected_export_file, "expected_export_file"
+    )
+    export_path = absolute_path(export_path, "export_path")
+    expected_clients = {clean_text(item, "client") for item in clients}
+    if not expected_clients:
+        fail("export scope: at least one exact client is required")
+    listed_files = {
+        absolute_path(item, "pulsar_export_file")
+        for item in pulsar_export_files
+        if item
+    }
+    other_files = sorted(
+        item for item in listed_files if item != expected_export_file
+    )
+    if other_files:
+        fail(f"export scope: another Pulsar export file exists: {other_files[0]}")
+    if require_export_file and expected_export_file not in listed_files:
+        fail("export scope: configuration export file is missing")
+    if forbid_export_file and expected_export_file in listed_files:
+        fail("export scope: configuration export file still exists")
+
+    active = parse_active_exports(active_document)
+    broader = sorted(
+        path for path in active if path_is_strict_parent(path, export_path)
+    )
+    if broader:
+        fail(f"export scope: broader active export exists: {broader[0]}")
+    exact = active.get(export_path)
+    if exact is None:
+        if require_active:
+            fail("export scope: exact repository export is not active")
+        if expected_export_file in listed_files:
+            fail(
+                "export scope: configuration export file exists but is inactive"
+            )
+        return {"state": "ok", "active": False}
+    if forbid_active:
+        fail("export scope: exact repository export is still active")
+    if expected_export_file not in listed_files:
+        fail(
+            "export scope: exact active export is not owned by this configuration"
+        )
+    if set(exact) != expected_clients:
+        fail("export scope: active export clients differ from configuration")
+
+    required_options = {
+        "ro",
+        "sync",
+        "insecure",
+        "root_squash",
+        "no_subtree_check",
+        f"anonuid={anonuid}",
+        f"anongid={anongid}",
+    }
+    forbidden_options = {"rw", "secure", "no_root_squash"}
+    for client, options in exact.items():
+        missing = sorted(required_options - options)
+        forbidden = sorted(forbidden_options & options)
+        if missing or forbidden:
+            fail(
+                f"export scope: active policy differs for {client} "
+                f"(missing={missing}, forbidden={forbidden})"
+            )
+    return {"state": "ok", "active": True}
 
 
 def resolve_snapshot(
@@ -1532,6 +1848,7 @@ def validated_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
         expected_profile=args.profile,
         expected_model=args.model,
         expected_nodes=args.nodes,
+        allow_legacy_teardown=getattr(args, "allow_legacy_teardown", False),
     )
     return config
 
@@ -1598,6 +1915,10 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         r"[0-9a-f]{64}", configuration_id
     ):
         fail("startup metric: invalid configuration identity")
+    content_id = args.content_id or None
+    content_digest = args.content_digest or None
+    transport = args.transport or None
+    integrity_scheme = args.integrity_scheme or None
     owner_node_id = args.owner_node_id or None
     if owner_node_id is not None:
         owner_node_id = clean_text(owner_node_id, "owner_node_id")
@@ -1605,16 +1926,52 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         configuration_id is None or owner_node_id is None
     ):
         fail("startup metric: fabric evidence requires config and owner")
-    if args.weight_source == "replicated" and (
-        configuration_id is not None or owner_node_id is not None
+    if args.weight_source == "fabric" and any(
+        value is not None
+        for value in (content_id, content_digest, transport, integrity_scheme)
     ):
-        fail("startup metric: replicated evidence cannot claim a fabric owner")
+        fail("startup metric: fabric evidence cannot claim hot content")
+    if args.weight_source == "replicated":
+        if any(
+            value is not None
+            for value in (
+                configuration_id,
+                owner_node_id,
+                content_id,
+                content_digest,
+                transport,
+                integrity_scheme,
+            )
+        ):
+            fail(
+                "startup metric: replicated evidence cannot claim an owner "
+                "or shared content"
+            )
+    if args.weight_source == "library-hot":
+        if configuration_id is not None:
+            fail("startup metric: library-hot content is not a fabric config")
+        if owner_node_id is None:
+            fail("startup metric: library-hot evidence requires a home owner")
+        if content_id is None or not re.fullmatch(r"[0-9a-f]{12}", content_id):
+            fail("startup metric: invalid library-hot content identity")
+        if content_digest is None or not re.fullmatch(
+            r"[0-9a-f]{64}", content_digest
+        ):
+            fail("startup metric: invalid library-hot content digest")
+        if transport not in ("ssh-control", "ssh-roce", "nfs-rdma"):
+            fail("startup metric: invalid library-hot transport")
+        if integrity_scheme != "sha256-snapshot-manifest-v1":
+            fail("startup metric: invalid library-hot integrity scheme")
+        if args.cache_state != "sealed-hot":
+            fail("startup metric: library-hot cache state must be sealed-hot")
+    elif args.cache_state == "sealed-hot":
+        fail("startup metric: sealed-hot cache state requires library-hot")
     destination = pathlib.Path(args.output)
     if destination == pathlib.Path("/") or destination.exists():
         fail("startup metric: output must be a new bounded path")
     tag = profile_name(args.tag) if args.tag else None
     record = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "container-launch-to-first-health",
         "profile": profile_name(args.profile),
         "model": clean_text(args.model, "model"),
@@ -1622,6 +1979,10 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         "nodes": bounded_int(args.nodes, "nodes", 2, 255),
         "topology_id": topology_id,
         "configuration_id": configuration_id,
+        "content_id": content_id,
+        "content_digest": content_digest,
+        "transport": transport,
+        "integrity_scheme": integrity_scheme,
         "owner_node_fingerprint": (
             fingerprint(owner_node_id) if owner_node_id else None
         ),
@@ -1636,6 +1997,46 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         ),
     }
     atomic_write_json(record, args.output, 0o644)
+
+
+def command_repository_access(args: argparse.Namespace) -> None:
+    print(
+        json.dumps(
+            validate_repository_access(args.repository),
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+def command_export_scope(args: argparse.Namespace) -> None:
+    try:
+        active_document = pathlib.Path(args.active_exports).read_text(
+            encoding="utf-8"
+        )
+        pulsar_export_files = pathlib.Path(args.pulsar_export_files).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    except OSError as exc:
+        fail(f"export scope: cannot read captured owner state: {exc}")
+    result = validate_export_scope(
+        active_document,
+        pulsar_export_files,
+        expected_export_file=args.expected_export_file,
+        export_path=args.export_path,
+        clients=args.client,
+        anonuid=bounded_int(
+            args.anonuid, "anonuid", 1, 2**32 - 2
+        ),
+        anongid=bounded_int(
+            args.anongid, "anongid", 0, 2**32 - 2
+        ),
+        require_active=args.require_active,
+        forbid_active=args.forbid_active,
+        require_export_file=args.require_export_file,
+        forbid_export_file=args.forbid_export_file,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
 
 
 def command_manifest_create(args: argparse.Namespace) -> None:
@@ -1764,6 +2165,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     row_parser = subparsers.add_parser("rows")
     add_config_validation_args(row_parser)
+    row_parser.add_argument(
+        "--allow-legacy-teardown",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     row_parser.set_defaults(func=command_rows)
 
     json_parser = subparsers.add_parser("json")
@@ -1797,17 +2203,24 @@ def build_parser() -> argparse.ArgumentParser:
     startup_metric.add_argument("--model", required=True)
     startup_metric.add_argument(
         "--weight-source",
-        choices=("fabric", "replicated"),
+        choices=("fabric", "replicated", "library-hot"),
         required=True,
     )
     startup_metric.add_argument("--nodes", type=int, required=True)
     startup_metric.add_argument("--topology-id", required=True)
     startup_metric.add_argument("--configuration-id")
     startup_metric.add_argument("--owner-node-id")
+    startup_metric.add_argument("--content-id")
+    startup_metric.add_argument("--content-digest")
+    startup_metric.add_argument(
+        "--transport",
+        choices=("ssh-control", "ssh-roce", "nfs-rdma"),
+    )
+    startup_metric.add_argument("--integrity-scheme")
     startup_metric.add_argument("--tag")
     startup_metric.add_argument(
         "--cache-state",
-        choices=("cold", "warm", "unspecified"),
+        choices=("cold", "warm", "sealed-hot", "unspecified"),
         default="unspecified",
     )
     startup_metric.add_argument("--started-at", required=True)
@@ -1816,6 +2229,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--elapsed-seconds", type=float, required=True
     )
     startup_metric.set_defaults(func=command_startup_metric)
+
+    repository_access = subparsers.add_parser(
+        "repository-access",
+        help="verify the mapped export identity can read one repository",
+    )
+    repository_access.add_argument("--repository", required=True)
+    repository_access.set_defaults(func=command_repository_access)
+
+    export_scope = subparsers.add_parser(
+        "export-scope",
+        help="verify exact repository export scope and policy",
+    )
+    export_scope.add_argument("--active-exports", required=True)
+    export_scope.add_argument("--pulsar-export-files", required=True)
+    export_scope.add_argument("--expected-export-file", required=True)
+    export_scope.add_argument("--export-path", required=True)
+    export_scope.add_argument(
+        "--client",
+        action="append",
+        required=True,
+        help="exact configured client RoCE address",
+    )
+    export_scope.add_argument("--anonuid", type=int, required=True)
+    export_scope.add_argument("--anongid", type=int, required=True)
+    export_scope.add_argument("--require-active", action="store_true")
+    export_scope.add_argument("--forbid-active", action="store_true")
+    export_scope.add_argument("--require-export-file", action="store_true")
+    export_scope.add_argument("--forbid-export-file", action="store_true")
+    export_scope.set_defaults(func=command_export_scope)
 
     create = subparsers.add_parser(
         "manifest-create", help="hash an authoritative HF snapshot"

@@ -282,7 +282,8 @@ if [ "${FAKE_SSH_STATUS:-ok}" = "down" ]; then
 fi
 while [ $# -gt 0 ]; do
   case "$1" in
-    -o) shift 2 ;;
+    -o|-F|-J|-i|-l|-p) shift 2 ;;
+    --) shift; break ;;
     -*) shift ;;
     *) break ;;
   esac

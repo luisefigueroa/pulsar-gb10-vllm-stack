@@ -11,12 +11,15 @@ _topology_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _topology_repo="$(cd "$_topology_dir/.." && pwd)"
 
 CLUSTER_TOPOLOGY_FILE="${CLUSTER_TOPOLOGY_FILE:-$_topology_repo/.cluster-topology.json}"
+CLUSTER_SSH_CONFIG_FILE="${CLUSTER_SSH_CONFIG_FILE:-$_topology_repo/.cluster-ssh-config}"
 CLUSTER_TOPOLOGY_LOADED=0
 CLUSTER_TOPOLOGY_SOURCE=""
 CLUSTER_TOPOLOGY_ID=""
 CLUSTER_TOPOLOGY_COUNT=0
 CLUSTER_TOPOLOGY_FULL_MESH=0
 CLUSTER_TOPOLOGY_MIN_RAILS=0
+CLUSTER_TOPOLOGY_SCHEMA=0
+CLUSTER_TOPOLOGY_SSH_TRUSTED=0
 CLUSTER_PROFILE_NODE_COUNT=0
 
 declare -ag CLUSTER_NODE_IDS=()
@@ -26,6 +29,8 @@ declare -ag CLUSTER_NODE_CONTROL_IPS=()
 declare -ag CLUSTER_NODE_CONTROL_IFS=()
 declare -ag CLUSTER_NODE_HCAS=()
 declare -ag CLUSTER_NODE_RDMA_IFS=()
+declare -ag CLUSTER_NODE_SSH_ALIASES=()
+declare -ag CLUSTER_NODE_SSH_FINGERPRINTS=()
 declare -ag CLUSTER_PROFILE_HCAS=()
 declare -ag CLUSTER_PROFILE_RDMA_IFS=()
 declare -Ag CLUSTER_PAIR_RAILS=()
@@ -36,6 +41,8 @@ _cluster_topology_reset() {
   CLUSTER_TOPOLOGY_COUNT=0
   CLUSTER_TOPOLOGY_FULL_MESH=0
   CLUSTER_TOPOLOGY_MIN_RAILS=0
+  CLUSTER_TOPOLOGY_SCHEMA=0
+  CLUSTER_TOPOLOGY_SSH_TRUSTED=0
   CLUSTER_PROFILE_NODE_COUNT=0
   CLUSTER_NODE_IDS=()
   CLUSTER_NODE_HOSTNAMES=()
@@ -44,6 +51,8 @@ _cluster_topology_reset() {
   CLUSTER_NODE_CONTROL_IFS=()
   CLUSTER_NODE_HCAS=()
   CLUSTER_NODE_RDMA_IFS=()
+  CLUSTER_NODE_SSH_ALIASES=()
+  CLUSTER_NODE_SSH_FINGERPRINTS=()
   CLUSTER_PROFILE_HCAS=()
   CLUSTER_PROFILE_RDMA_IFS=()
   CLUSTER_PAIR_RAILS=()
@@ -132,6 +141,8 @@ load_cluster_topology() {
         CLUSTER_TOPOLOGY_ID="$b"
         CLUSTER_TOPOLOGY_FULL_MESH="$c"
         CLUSTER_TOPOLOGY_MIN_RAILS="$d"
+        CLUSTER_TOPOLOGY_SCHEMA="${e:-1}"
+        CLUSTER_TOPOLOGY_SSH_TRUSTED="${f:-0}"
         CLUSTER_TOPOLOGY_SOURCE=manifest
         ;;
       NODE)
@@ -142,6 +153,10 @@ load_cluster_topology() {
         CLUSTER_NODE_CONTROL_IFS["$a"]="$f"
         CLUSTER_NODE_HCAS["$a"]="$g"
         CLUSTER_NODE_RDMA_IFS["$a"]="$h"
+        ;;
+      TRUST)
+        CLUSTER_NODE_SSH_ALIASES["$a"]="$b"
+        CLUSTER_NODE_SSH_FINGERPRINTS["$a"]="$c"
         ;;
       LINK)
         CLUSTER_PAIR_RAILS["$a:$b"]="$c"
@@ -154,6 +169,15 @@ load_cluster_topology() {
     return 1
   fi
 
+  if [ "$CLUSTER_TOPOLOGY_SSH_TRUSTED" = 1 ]; then
+    if ! python3 "$_topology_repo/scripts/topology_manifest.py" \
+        validate-ssh-config "$CLUSTER_TOPOLOGY_FILE" \
+        "$CLUSTER_SSH_CONFIG_FILE"; then
+      echo "topology: trusted SSH configuration is unavailable or stale" >&2
+      return 1
+    fi
+  fi
+
   # Compatibility aliases for existing two-node scripts and user .env tooling.
   HEAD_IP="${CLUSTER_NODE_CONTROL_IPS[0]:-${HEAD_IP:-}}"
   if [ "$CLUSTER_TOPOLOGY_COUNT" -ge 2 ]; then
@@ -161,6 +185,23 @@ load_cluster_topology() {
   fi
   export HEAD_IP WORKER_IP
   CLUSTER_TOPOLOGY_LOADED=1
+  if declare -F _pulsar_configure_topology_ssh >/dev/null 2>&1; then
+    if ! _pulsar_configure_topology_ssh; then
+      CLUSTER_TOPOLOGY_LOADED=0
+      return 1
+    fi
+  fi
+}
+
+require_topology_ssh_trust() {
+  load_cluster_topology || return 1
+  if [ "$CLUSTER_TOPOLOGY_SOURCE" != manifest ] \
+      || [ "$CLUSTER_TOPOLOGY_SCHEMA" != 2 ] \
+      || [ "$CLUSTER_TOPOLOGY_SSH_TRUSTED" != 1 ]; then
+    echo "topology: SSH identity is not enrolled" >&2
+    echo "  Run scripts/topology-ssh-trust.sh enroll before using SSH-over-RoCE." >&2
+    return 1
+  fi
 }
 
 cluster_node_ssh_host() {

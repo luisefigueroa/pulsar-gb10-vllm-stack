@@ -1,11 +1,16 @@
 .env
 .cluster-topology.json
+.cluster-ssh-config
 .weight-fabric/
 .model-library/
 *.log.tmp
 __pycache__/
 .venv/
 results/**/raw/
+
+# Local exploratory transcripts and scratch artifacts. Distill durable findings
+# into reviewed docs or publishable results before sharing them.
+/experiments/
 
 # AI agent instruction / local config files
 CLAUDE.md

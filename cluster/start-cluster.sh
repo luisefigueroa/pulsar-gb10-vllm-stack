@@ -63,12 +63,18 @@ require_profile_topology "$NODES" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
   || exit 1
 
 declare -a WEIGHT_CACHE_ROOTS=()
+declare -a WEIGHT_REPOSITORY_PATHS=()
+model_cache_name=$(hf_hub_dirname "$MODEL")
 for ((rank = 0; rank < NODES; rank++)); do
   WEIGHT_CACHE_ROOTS["$rank"]="$HF_CACHE"
+  WEIGHT_REPOSITORY_PATHS["$rank"]="$HF_CACHE/hub/$model_cache_name"
 done
 WEIGHT_OWNER_ID=""
 WEIGHT_CONFIG_ID=""
 LIBRARY_HOT_HUB_PATH=""
+LIBRARY_HOT_CONTENT_DIGEST=""
+LIBRARY_HOT_TRANSPORT=""
+LIBRARY_HOT_INTEGRITY_SCHEME=""
 if [ "$WEIGHT_SOURCE" = fabric ]; then
   fabric_dir="${WEIGHT_FABRIC_DIR:-$REPO_DIR/.weight-fabric}"
   fabric_config="${WEIGHT_FABRIC_CONFIG:-$fabric_dir/$MODEL_NAME.json}"
@@ -85,6 +91,7 @@ if [ "$WEIGHT_SOURCE" = fabric ]; then
         ;;
       RANK)
         WEIGHT_CACHE_ROOTS["$a"]="$f"
+        WEIGHT_REPOSITORY_PATHS["$a"]="$f/hub/$model_cache_name"
         ;;
     esac
   done <<<"$fabric_rows"
@@ -96,7 +103,6 @@ elif [ "$WEIGHT_SOURCE" = library-hot ]; then
   resolve_library_hot_for_profile "$MODEL_NAME"
   WEIGHT_OWNER_ID="${LIBRARY_HOT_HOME_NODE_ID}"
   WEIGHT_CONFIG_ID="${LIBRARY_HOT_CONTENT_ID}"
-  LIBRARY_HOT_HUB_PATH="${LIBRARY_HOT_HUB_PATH}"
 fi
 
 echo "[cluster] exact profile: $MODEL_NAME · $NODES ranks · topology ${CLUSTER_TOPOLOGY_ID:0:12}"
@@ -128,11 +134,11 @@ build_docker_cmd() {
   local node_id="${CLUSTER_NODE_IDS[$role_rank]}"
   local weight_cache="${WEIGHT_CACHE_ROOTS[$role_rank]}"
   local weight_volume="${weight_cache}:/root/.cache/huggingface"
-  local model_cache_name model_cache_target
+  local model_cache_target
   if [ "$WEIGHT_SOURCE" = fabric ]; then
-    weight_volume+=":ro"
+    model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
+    weight_volume="${WEIGHT_REPOSITORY_PATHS[$role_rank]}:${model_cache_target}:ro"
   elif [ "$WEIGHT_SOURCE" = library-hot ]; then
-    model_cache_name=$(hf_hub_dirname "$MODEL")
     model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
     weight_volume="${LIBRARY_HOT_HUB_PATH}:${model_cache_target}:ro"
   fi
@@ -265,8 +271,19 @@ record_startup_metric() {
     --first-healthy-at "$healthy_at"
     --elapsed-seconds "$elapsed"
   )
-  [ -n "$WEIGHT_CONFIG_ID" ] \
-    && metric_args+=(--configuration-id "$WEIGHT_CONFIG_ID")
+  case "$WEIGHT_SOURCE" in
+    fabric)
+      metric_args+=(--configuration-id "$WEIGHT_CONFIG_ID")
+      ;;
+    library-hot)
+      metric_args+=(
+        --content-id "$WEIGHT_CONFIG_ID"
+        --content-digest "$LIBRARY_HOT_CONTENT_DIGEST"
+        --transport "$LIBRARY_HOT_TRANSPORT"
+        --integrity-scheme "$LIBRARY_HOT_INTEGRITY_SCHEME"
+      )
+      ;;
+  esac
   [ -n "$WEIGHT_OWNER_ID" ] \
     && metric_args+=(--owner-node-id "$WEIGHT_OWNER_ID")
   [ -n "${PULSAR_STARTUP_TAG:-}" ] \

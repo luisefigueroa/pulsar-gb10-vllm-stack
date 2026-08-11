@@ -435,7 +435,7 @@ assert_eq "resolve prefers warm when present" "$tier_w" "warm"
 
 # cold disabled → warm miss fails without cold
 set +e
-PULSAR_COLD_ROOT= python3 "$PY" resolve \
+PULSAR_COLD_ROOT='' python3 "$PY" resolve \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
   --no-cold \
@@ -569,6 +569,28 @@ assert_true "bench-ssh-roce documented in CLI" \
   grep -q bench-ssh-roce "$REPO_DIR/scripts/model-library.sh"
 assert_true "probe-ssh-roce documented in CLI" \
   grep -q probe-ssh-roce "$REPO_DIR/scripts/model-library.sh"
+assert_true "parallel copy streams documented in CLI" \
+  grep -q -- --copy-streams "$REPO_DIR/scripts/model-library.sh"
+
+if PULSAR_COPY_STREAMS=17 \
+    "$REPO_DIR/scripts/model-library.sh" help \
+    >"$STATE/copy-stream-invalid.err" 2>&1; then
+  not_ok "copy streams above cap fail closed"
+else
+  assert_true "copy streams above cap explain range" \
+    grep -q 'between 1 and 16' "$STATE/copy-stream-invalid.err"
+fi
+if PULSAR_COPY_STREAMS=16 PULSAR_COPY_STREAM_STAGGER_MS=0 \
+    "$REPO_DIR/scripts/model-library.sh" help \
+    >"$STATE/copy-stagger-invalid.err" 2>&1; then
+  not_ok "high stream count without stagger fails closed"
+else
+  assert_true "high stream count explains stagger floor" \
+    grep -q 'at least 100ms' "$STATE/copy-stagger-invalid.err"
+fi
+assert_true "validated 16-stream settings reach help" \
+  env PULSAR_COPY_STREAMS=16 PULSAR_COPY_STREAM_STAGGER_MS=150 \
+    "$REPO_DIR/scripts/model-library.sh" help
 
 python3 "$PY" compare-ssh-roce-bench \
   --profile qwen3-1.7b-2node \
@@ -587,6 +609,23 @@ fp=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-win.json"'
 assert_eq "ssh_roce_claims_faster true" "$fp" "True"
 pd=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-win.json"'"))["product_default_unchanged"])')
 assert_eq "ssh-roce product_default_unchanged" "$pd" "True"
+order=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-win.json"'"))["run_order"])')
+assert_eq "ssh-roce report records default run order" "$order" "control-first"
+
+python3 "$PY" compare-ssh-roce-bench \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --model-id Qwen/Qwen3-1.7B \
+  --bytes-logical 1000 \
+  --control-seconds 100 \
+  --ssh-roce-seconds 70 \
+  --tag unit-ssh-roce-reversed \
+  --nodes 2 \
+  --home-rank 1 \
+  --run-order roce-first \
+  --output "$STATE/ssh-roce-reversed.json" >/dev/null
+order=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-reversed.json"'"))["run_order"])')
+assert_eq "ssh-roce report records reversed run order" "$order" "roce-first"
 
 python3 "$PY" compare-ssh-roce-bench \
   --profile qwen3-1.7b-2node \
@@ -633,6 +672,10 @@ fi
 
 assert_true "fabric setup batches root script" \
   grep -q library_node_root_script "$REPO_DIR/scripts/model-library.sh"
+assert_true "parallel copy uses size-balanced blob planner" \
+  grep -q partition_hub_blobs_on_rank "$REPO_DIR/scripts/model-library.sh"
+assert_true "parallel relay geometry fails closed" \
+  grep -q 'does not support remote-home to remote-target relay' "$REPO_DIR/scripts/model-library.sh"
 assert_true "home materialize prefers symlink" \
   grep -q symlink_home "$REPO_DIR/scripts/model-library.sh"
 assert_true "activate materializes ranks in parallel" \
