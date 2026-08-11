@@ -1,0 +1,519 @@
+{
+  "by_stream_count": {
+    "16": {
+      "client_cpu_busy_percent": [
+        31.554086568903074,
+        29.86478791329949,
+        28.528192036226276
+      ],
+      "coefficient_of_variation": 0.044686485564239126,
+      "destination_physical_write_gib": [
+        155.47567749023438,
+        155.47406387329102,
+        155.4726905822754
+      ],
+      "home_cpu_busy_percent": [
+        30.164462014089505,
+        29.132661370586852,
+        27.03211966604824
+      ],
+      "maximum_seconds": 88.61186242103577,
+      "mean_seconds": 84.9104061126709,
+      "median_logical_throughput_gib_per_second": 1.826734406616393,
+      "median_seconds": 85.0898232460022,
+      "minimum_seconds": 81.02953267097473,
+      "post_activate_sync_seconds": [
+        7.892041921615601,
+        7.753372430801392,
+        7.49358868598938
+      ],
+      "sample_stdev_seconds": 3.7943476370075495,
+      "seconds": [
+        81.02953267097473,
+        85.0898232460022,
+        88.61186242103577
+      ],
+      "source_physical_read_gib": [
+        155.44927215576172,
+        155.44903182983398,
+        155.45570373535156
+      ],
+      "trials": 3
+    },
+    "8": {
+      "client_cpu_busy_percent": [
+        32.048805702160074,
+        30.147095271141072,
+        28.455069239687614
+      ],
+      "coefficient_of_variation": 0.08075695021555031,
+      "destination_physical_write_gib": [
+        155.46482467651367,
+        155.4735870361328,
+        155.4748420715332
+      ],
+      "home_cpu_busy_percent": [
+        32.27606221005089,
+        28.90841728160691,
+        27.732957303682472
+      ],
+      "maximum_seconds": 88.82465147972107,
+      "mean_seconds": 82.76281690597534,
+      "median_logical_throughput_gib_per_second": 1.8533342628200609,
+      "median_seconds": 83.86857724189758,
+      "minimum_seconds": 75.59522199630737,
+      "post_activate_sync_seconds": [
+        6.056786775588989,
+        7.811102628707886,
+        8.016999959945679
+      ],
+      "sample_stdev_seconds": 6.683672684574556,
+      "seconds": [
+        75.59522199630737,
+        83.86857724189758,
+        88.82465147972107
+      ],
+      "source_physical_read_gib": [
+        155.44904708862305,
+        155.44903182983398,
+        155.44913864135742
+      ],
+      "trials": 3
+    }
+  },
+  "bytes_logical": 166898679376,
+  "kind": "model-library-parallel-rsync-roce-alternating-stream-bench",
+  "launch_stagger_ms": 150,
+  "limitations": [
+    "POSIX_FADV_DONTNEED is advisory and physical block-read deltas are included to show how much source data was actually reread.",
+    "The fixed 8-then-16 pair order is alternating but not order-counterbalanced.",
+    "Three trials per stream count characterize gross variance but are not a long-run performance distribution."
+  ],
+  "methodology": {
+    "destination_state": "unpinned hot instance purged before every trial",
+    "instrumentation": [
+      "activation phases",
+      "RoCE and control-netdev traffic",
+      "source and destination block I/O",
+      "aggregate CPU busy percentage"
+    ],
+    "post_activate_sync": "measured separately and excluded from activation wall time",
+    "pre_trial_sync": "local destination and remote source filesystems synchronized before cache hint",
+    "source_cache_hint": "POSIX_FADV_DONTNEED applied to all 74 regular non-symlink blob files before every trial",
+    "trials_per_stream_count": 3,
+    "verification": "both ranks passed hot stamp and inventory verification before activation timing stopped"
+  },
+  "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+  "nodes": 2,
+  "paired_comparisons": [
+    {
+      "eight_over_sixteen_speedup": 0.9329341970077293,
+      "eight_stream_seconds": 75.59522199630737,
+      "pair": 1,
+      "sixteen_stream_seconds": 81.02953267097473
+    },
+    {
+      "eight_over_sixteen_speedup": 0.985647566800393,
+      "eight_stream_seconds": 83.86857724189758,
+      "pair": 2,
+      "sixteen_stream_seconds": 85.0898232460022
+    },
+    {
+      "eight_over_sixteen_speedup": 1.0024013608660458,
+      "eight_stream_seconds": 88.82465147972107,
+      "pair": 3,
+      "sixteen_stream_seconds": 88.61186242103577
+    }
+  ],
+  "privacy": {
+    "omitted": [
+      "hostnames",
+      "IP addresses",
+      "node IDs",
+      "interface names",
+      "absolute paths"
+    ],
+    "topology_redacted": true
+  },
+  "profile": "deepseek-v4-flash",
+  "recorded_at": "2026-08-10T14:43:18.072Z",
+  "schema_version": 1,
+  "sequence": [
+    8,
+    16,
+    8,
+    16,
+    8,
+    16
+  ],
+  "summary": {
+    "eight_stream_lower_variance": false,
+    "product_default_unchanged": true,
+    "promotion_status": "experimental",
+    "sixteen_stream_median_faster": false,
+    "sixteen_vs_eight_median_speedup": 0.985647566800393
+  },
+  "transport": "rsync-over-ssh-tcp-over-roce",
+  "trials": [
+    {
+      "cpu_busy_percent": {
+        "client": 32.048805702160074,
+        "home": 32.27606221005089
+      },
+      "destination_block_activate_plus_sync": {
+        "io_time_ms": 23112,
+        "read_bytes": 430080,
+        "read_ios": 105,
+        "read_time_ms": 128,
+        "write_bytes": 166929084416,
+        "write_ios": 1274414,
+        "write_time_ms": 4733227
+      },
+      "destination_block_during_activate": {
+        "io_time_ms": 17061,
+        "read_bytes": 389120,
+        "read_ios": 95,
+        "read_time_ms": 118,
+        "write_bytes": 155790618624,
+        "write_ios": 1189242,
+        "write_time_ms": 3602232
+      },
+      "destination_block_during_sync": {
+        "io_time_ms": 6051,
+        "read_bytes": 40960,
+        "read_ios": 10,
+        "read_time_ms": 10,
+        "write_bytes": 11138465792,
+        "write_ios": 85172,
+        "write_time_ms": 1130995
+      },
+      "logical_throughput_gib_per_second": 2.056168414770609,
+      "phases_seconds": {
+        "transfer_all": 73,
+        "transfer_rank_0": 73,
+        "transfer_rank_1": 1,
+        "verify": 0
+      },
+      "post_activate_sync_seconds": 6.056786775588989,
+      "recorded_at": "2026-08-10T14:34:36.400Z",
+      "seconds": 75.59522199630737,
+      "source_block_during_activate": {
+        "io_time_ms": 70158,
+        "read_bytes": 166912143360,
+        "read_ios": 1273865,
+        "read_time_ms": 379743,
+        "write_bytes": 8101888,
+        "write_ios": 388,
+        "write_time_ms": 137
+      },
+      "streams": 8,
+      "traffic_bytes": {
+        "client_control_rx_delta": 1385921,
+        "client_roce_rx_delta": 174893657365,
+        "home_control_tx_delta": 4446,
+        "home_roce_tx_delta": 174893655615
+      },
+      "trial": 1
+    },
+    {
+      "cpu_busy_percent": {
+        "client": 31.554086568903074,
+        "home": 30.164462014089505
+      },
+      "destination_block_activate_plus_sync": {
+        "io_time_ms": 84963,
+        "read_bytes": 1495040,
+        "read_ios": 136,
+        "read_time_ms": 951,
+        "write_bytes": 166940737536,
+        "write_ios": 1275414,
+        "write_time_ms": 29919273
+      },
+      "destination_block_during_activate": {
+        "io_time_ms": 76677,
+        "read_bytes": 1437696,
+        "read_ios": 122,
+        "read_time_ms": 932,
+        "write_bytes": 151595106304,
+        "write_ios": 1157832,
+        "write_time_ms": 28374566
+      },
+      "destination_block_during_sync": {
+        "io_time_ms": 8286,
+        "read_bytes": 57344,
+        "read_ios": 14,
+        "read_time_ms": 19,
+        "write_bytes": 15345631232,
+        "write_ios": 117582,
+        "write_time_ms": 1544707
+      },
+      "logical_throughput_gib_per_second": 1.9182698289466735,
+      "phases_seconds": {
+        "transfer_all": 79,
+        "transfer_rank_0": 79,
+        "transfer_rank_1": 1,
+        "verify": 1
+      },
+      "post_activate_sync_seconds": 7.892041921615601,
+      "recorded_at": "2026-08-10T14:36:15.851Z",
+      "seconds": 81.02953267097473,
+      "source_block_during_activate": {
+        "io_time_ms": 68409,
+        "read_bytes": 166912385024,
+        "read_ios": 1273872,
+        "read_time_ms": 371793,
+        "write_bytes": 10760192,
+        "write_ios": 533,
+        "write_time_ms": 135
+      },
+      "streams": 16,
+      "traffic_bytes": {
+        "client_control_rx_delta": 2603181,
+        "client_roce_rx_delta": 174892530325,
+        "home_control_tx_delta": 8594,
+        "home_roce_tx_delta": 174892523041
+      },
+      "trial": 2
+    },
+    {
+      "cpu_busy_percent": {
+        "client": 30.147095271141072,
+        "home": 28.90841728160691
+      },
+      "destination_block_activate_plus_sync": {
+        "io_time_ms": 82071,
+        "read_bytes": 274432,
+        "read_ios": 67,
+        "read_time_ms": 527,
+        "write_bytes": 166938492928,
+        "write_ios": 1275243,
+        "write_time_ms": 23823960
+      },
+      "destination_block_during_activate": {
+        "io_time_ms": 73854,
+        "read_bytes": 245760,
+        "read_ios": 60,
+        "read_time_ms": 512,
+        "write_bytes": 151846641664,
+        "write_ios": 1160010,
+        "write_time_ms": 22318052
+      },
+      "destination_block_during_sync": {
+        "io_time_ms": 8217,
+        "read_bytes": 28672,
+        "read_ios": 7,
+        "read_time_ms": 15,
+        "write_bytes": 15091851264,
+        "write_ios": 115233,
+        "write_time_ms": 1505908
+      },
+      "logical_throughput_gib_per_second": 1.8533342628200609,
+      "phases_seconds": {
+        "transfer_all": 82,
+        "transfer_rank_0": 82,
+        "transfer_rank_1": 1,
+        "verify": 1
+      },
+      "post_activate_sync_seconds": 7.811102628707886,
+      "recorded_at": "2026-08-10T14:37:58.906Z",
+      "seconds": 83.86857724189758,
+      "source_block_during_activate": {
+        "io_time_ms": 76400,
+        "read_bytes": 166912126976,
+        "read_ios": 1273863,
+        "read_time_ms": 383379,
+        "write_bytes": 10305536,
+        "write_ios": 496,
+        "write_time_ms": 149
+      },
+      "streams": 8,
+      "traffic_bytes": {
+        "client_control_rx_delta": 2868180,
+        "client_roce_rx_delta": 174891903937,
+        "home_control_tx_delta": 4369,
+        "home_roce_tx_delta": 174891902612
+      },
+      "trial": 3
+    },
+    {
+      "cpu_busy_percent": {
+        "client": 29.86478791329949,
+        "home": 29.132661370586852
+      },
+      "destination_block_activate_plus_sync": {
+        "io_time_ms": 88692,
+        "read_bytes": 315392,
+        "read_ios": 77,
+        "read_time_ms": 883,
+        "write_bytes": 166939004928,
+        "write_ios": 1275504,
+        "write_time_ms": 31103996
+      },
+      "destination_block_during_activate": {
+        "io_time_ms": 80606,
+        "read_bytes": 286720,
+        "read_ios": 70,
+        "read_time_ms": 873,
+        "write_bytes": 152039530496,
+        "write_ios": 1161729,
+        "write_time_ms": 29526863
+      },
+      "destination_block_during_sync": {
+        "io_time_ms": 8086,
+        "read_bytes": 28672,
+        "read_ios": 7,
+        "read_time_ms": 10,
+        "write_bytes": 14899474432,
+        "write_ios": 113775,
+        "write_time_ms": 1577133
+      },
+      "logical_throughput_gib_per_second": 1.826734406616393,
+      "phases_seconds": {
+        "transfer_all": 84,
+        "transfer_rank_0": 84,
+        "transfer_rank_1": 2,
+        "verify": 0
+      },
+      "post_activate_sync_seconds": 7.753372430801392,
+      "recorded_at": "2026-08-10T14:39:41.932Z",
+      "seconds": 85.0898232460022,
+      "source_block_during_activate": {
+        "io_time_ms": 72218,
+        "read_bytes": 166912126976,
+        "read_ios": 1273867,
+        "read_time_ms": 370146,
+        "write_bytes": 8536064,
+        "write_ios": 423,
+        "write_time_ms": 116
+      },
+      "streams": 16,
+      "traffic_bytes": {
+        "client_control_rx_delta": 4431714,
+        "client_roce_rx_delta": 174893555460,
+        "home_control_tx_delta": 15787,
+        "home_roce_tx_delta": 174893558976
+      },
+      "trial": 4
+    },
+    {
+      "cpu_busy_percent": {
+        "client": 28.455069239687614,
+        "home": 27.732957303682472
+      },
+      "destination_block_activate_plus_sync": {
+        "io_time_ms": 88836,
+        "read_bytes": 368640,
+        "read_ios": 80,
+        "read_time_ms": 1201,
+        "write_bytes": 166939840512,
+        "write_ios": 1275388,
+        "write_time_ms": 23737108
+      },
+      "destination_block_during_activate": {
+        "io_time_ms": 80465,
+        "read_bytes": 311296,
+        "read_ios": 66,
+        "read_time_ms": 1169,
+        "write_bytes": 151630540800,
+        "write_ios": 1158024,
+        "write_time_ms": 22420002
+      },
+      "destination_block_during_sync": {
+        "io_time_ms": 8371,
+        "read_bytes": 57344,
+        "read_ios": 14,
+        "read_time_ms": 32,
+        "write_bytes": 15309299712,
+        "write_ios": 117364,
+        "write_time_ms": 1317106
+      },
+      "logical_throughput_gib_per_second": 1.7499253325172484,
+      "phases_seconds": {
+        "transfer_all": 87,
+        "transfer_rank_0": 87,
+        "transfer_rank_1": 2,
+        "verify": 1
+      },
+      "post_activate_sync_seconds": 8.016999959945679,
+      "recorded_at": "2026-08-10T14:41:29.295Z",
+      "seconds": 88.82465147972107,
+      "source_block_during_activate": {
+        "io_time_ms": 78724,
+        "read_bytes": 166912241664,
+        "read_ios": 1273888,
+        "read_time_ms": 378346,
+        "write_bytes": 8871936,
+        "write_ios": 469,
+        "write_time_ms": 175
+      },
+      "streams": 8,
+      "traffic_bytes": {
+        "client_control_rx_delta": 3198063,
+        "client_roce_rx_delta": 174892320193,
+        "home_control_tx_delta": 7063,
+        "home_roce_tx_delta": 174892312909
+      },
+      "trial": 5
+    },
+    {
+      "cpu_busy_percent": {
+        "client": 28.528192036226276,
+        "home": 27.03211966604824
+      },
+      "destination_block_activate_plus_sync": {
+        "io_time_ms": 92120,
+        "read_bytes": 290816,
+        "read_ios": 71,
+        "read_time_ms": 1439,
+        "write_bytes": 166937530368,
+        "write_ios": 1275366,
+        "write_time_ms": 32911267
+      },
+      "destination_block_during_activate": {
+        "io_time_ms": 84242,
+        "read_bytes": 262144,
+        "read_ios": 64,
+        "read_time_ms": 1425,
+        "write_bytes": 152551870464,
+        "write_ios": 1165452,
+        "write_time_ms": 31418491
+      },
+      "destination_block_during_sync": {
+        "io_time_ms": 7878,
+        "read_bytes": 28672,
+        "read_ios": 7,
+        "read_time_ms": 14,
+        "write_bytes": 14385659904,
+        "write_ios": 109914,
+        "write_time_ms": 1492776
+      },
+      "logical_throughput_gib_per_second": 1.7541275347292573,
+      "phases_seconds": {
+        "transfer_all": 87,
+        "transfer_rank_0": 87,
+        "transfer_rank_1": 1,
+        "verify": 1
+      },
+      "post_activate_sync_seconds": 7.49358868598938,
+      "recorded_at": "2026-08-10T14:43:16.029Z",
+      "seconds": 88.61186242103577,
+      "source_block_during_activate": {
+        "io_time_ms": 74604,
+        "read_bytes": 166919290880,
+        "read_ios": 1274347,
+        "read_time_ms": 371216,
+        "write_bytes": 10878976,
+        "write_ios": 564,
+        "write_time_ms": 168
+      },
+      "streams": 16,
+      "traffic_bytes": {
+        "client_control_rx_delta": 1751014,
+        "client_roce_rx_delta": 174892861968,
+        "home_control_tx_delta": 6272,
+        "home_roce_tx_delta": 174892860472
+      },
+      "trial": 6
+    }
+  ]
+}
