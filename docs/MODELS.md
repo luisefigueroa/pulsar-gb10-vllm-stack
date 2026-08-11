@@ -1,4 +1,4 @@
-# Model support matrix — 2x DGX Spark GB10 (2026-07-27)
+# Model support matrix — currently validated profiles (2026-07-27)
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
@@ -32,7 +32,17 @@ performance validation.
 "Status" is updated by validation runs only (docs/VALIDATION.md holds the
 numbers). Nothing gets `tested` from arithmetic.
 
-## Does not fit the validated one/two-node serving budget
+**Model-content identity transition:** these rows are historical profile
+validation claims, but current profiles and downloads are not yet
+machine-bound to a lab-issued exact revision/manifest. Until validation bundles
+are implemented, `STATUS=tested*` must not be interpreted as validating any
+arbitrary snapshot under the same repository ID. Do not generate an expected
+seal from a user's current cache; recover the lab artifact used for the run or
+revalidate the exact content. See
+[MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and
+[ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
+
+## Does not fit any currently validated serving profile
 
 Weights alone vs ~210 GiB total budget — these are not close, and no
 quantized variants exist in the catalog:

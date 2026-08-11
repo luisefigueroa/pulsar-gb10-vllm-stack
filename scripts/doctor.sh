@@ -224,8 +224,34 @@ trap - RETURN
 topology_load_ok=1
 load_cluster_topology || topology_load_ok=0
 if [ "$topology_load_ok" = 0 ]; then
-  record warn topology "confirmed topology manifest is invalid"
+  record fail topology "confirmed topology or generated SSH trust config is invalid"
 elif [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
+  if [ "$CLUSTER_TOPOLOGY_SSH_TRUSTED" = 1 ]; then
+    trust_report=$(mktemp "${TMPDIR:-/tmp}/pulsar-doctor-ssh-trust.XXXXXX")
+    trust_error="${trust_report}.err"
+    trust_rc=0
+    python3 "$REPO_DIR/scripts/topology_ssh_trust.py" check \
+      --topology "$CLUSTER_TOPOLOGY_FILE" \
+      --ssh-config "$CLUSTER_SSH_CONFIG_FILE" \
+      --probe "$REPO_DIR/scripts/probe-node.py" \
+      --ssh-bin "$PULSAR_SSH" --json >"$trust_report" 2>"$trust_error" \
+      || trust_rc=$?
+    if python3 "$REPO_DIR/scripts/topology_ssh_trust.py" doctor-rows \
+        "$trust_report" >"${trust_report}.rows" 2>/dev/null; then
+      while IFS=$'\t' read -r trust_level trust_id trust_message; do
+        [ -n "$trust_level" ] || continue
+        record "$trust_level" "$trust_id" "$trust_message"
+      done <"${trust_report}.rows"
+    else
+      trust_detail=$(tail -n 1 "$trust_error" 2>/dev/null || true)
+      [ -n "$trust_detail" ] || trust_detail="identity check returned unreadable output"
+      record fail ssh_trust "topology-bound SSH identity check failed (rc=$trust_rc) · $trust_detail"
+    fi
+    rm -f "$trust_report" "$trust_error" "${trust_report}.rows"
+  else
+    record warn ssh_trust \
+      "SSH identity fingerprints are not enrolled · SSH-over-RoCE is blocked; run scripts/topology-ssh-trust.sh enroll"
+  fi
   [ "$JSON" = 1 ] || echo "[doctor] other confirmed cluster nodes"
   for ((rank = 1; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
     host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"

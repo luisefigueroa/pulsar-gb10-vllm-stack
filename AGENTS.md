@@ -148,6 +148,36 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
 - Document dependency honesty: if a mode needs owner/home/library after start, inventory and docs say so; if independence is claimed, tests must cover home-down restart.
 
+### Model-library authority and invariants
+
+For catalog, download, activate, launch, pin, purge, or model-validation work,
+read `docs/MODEL_LIBRARY_DESIGN.md` and the applicable record under
+`docs/decisions/` before changing behavior. Authority descends from this file,
+to the accepted design and decision records, to current implementation specs,
+operator runbooks, and finally validation ledgers/evidence. Current code or a
+new result does not silently override an accepted architectural decision.
+Use `skills/change-pulsar-model-library/SKILL.md` as the repeatable workflow for
+this work; the skill is procedural and does not outrank these sources.
+
+- `STATUS=tested` ultimately binds an immutable validation bundle, not a model
+  repository ID alone. Expected identity comes from lab validation; locally
+  observed content can match that identity but cannot create or replace it.
+- The default library policy is one durable home per exact model revision.
+  The home rank uses that durable tree through a validated symlink or equivalent
+  rank-local view; **do not materialize a second hot copy on the home rank**.
+- Only non-home ranks receive temporary or pinned sealed-hot copies. Symlinks
+  and bind mounts are runtime views, not extra ownership or resilience.
+- Full content verification happens at trust boundaries. A serve-time metadata
+  witness may accelerate an unchanged launch only after full verification;
+  drift causes visible full verification against the expected seal or fails
+  closed. Never auto-reseal drift as validated content.
+- Warm-home pinning retains non-home hot copies but still requires the durable
+  home. Home-loss resilience and extra durable replicas are separate, explicit
+  policies on distinct failure domains.
+- Preserve historical evidence and mark it superseded rather than rewriting it.
+  A contract change must update the canonical design, implementation spec,
+  operations, validation ledger, and evidence index together.
+
 ### Operational hygiene
 
 - Prefer atomic writes for site-local JSON/state (write temp + rename).

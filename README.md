@@ -5,16 +5,18 @@
 [![vLLM](https://img.shields.io/badge/vLLM-0.26%20%2B%20PR%2041834-orange)](docs/BUILD.md)
 [![Validation](https://img.shields.io/badge/validation-measured%20on%20box-success)](docs/VALIDATION.md)
 
-*Validated vLLM serving on one or two NVIDIA DGX Spark systems: nothing
-ships here until it has earned its status on GB10 hardware.*
+*Topology-aware vLLM operations for one or more NVIDIA DGX Spark systems:
+every exact serving geometry must earn its status on GB10 hardware.*
 
-Upstream-oriented control plane for Grace-Blackwell GB10 clusters. It can
-discover and operate any number of differently named nodes, while serving
-remains evidence-gated by exact profiles. The published serving matrix is
-currently validated on one or two nodes (dgx-spark-1 / dgx-spark-2 are example
-names; each has 121 GiB unified LPDDR5X and dual-rail 200GbE RoCE). Built and
-validated 2026-07-27..31; every serving claim below traces to a measured run in
-`docs/VALIDATION.md` with raw evidence in `results/`.
+Upstream-oriented control plane for Grace-Blackwell GB10 clusters. It
+automatically discovers cluster membership and its node count, and can operate
+any number of differently named confirmed nodes. Serving remains evidence-gated
+by exact profiles: the
+published matrix currently validates one- and two-node geometries, but that is
+an evidence boundary, not a control-plane limit (each validated node has
+121 GiB unified LPDDR5X and dual-rail 200GbE RoCE).
+Built and validated 2026-07-27..31; every serving claim below traces to a
+measured run in `docs/VALIDATION.md` with raw evidence in `results/`.
 
 Priority order everywhere: **stability > accuracy > throughput > latency.**
 
@@ -330,7 +332,7 @@ no leaks, no thermal throttling anywhere).
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
 | `patches/pr41834-dspark-opt/` | **DEPRECATED** DSpark draft-path A/B (perf-neutral; obsolete after vllm #49731). Not on default build path — see that dir’s README |
-| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **RECIPES** (flag-exact), MULTINODE, BUILD, TUNING, VALIDATION, **REVALIDATE** (pin-bump runbook), **OPERATIONS** (on-call runbook), TROUBLESHOOTING |
+| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity doctrine), **decisions/** (accepted rationale), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.

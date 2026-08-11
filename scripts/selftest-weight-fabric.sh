@@ -181,14 +181,34 @@ config_json=$(
   "$TOOL" json "$CONFIG_A" "$TOPOLOGY" \
     --profile "$PROFILE" --model "$MODEL" --nodes 2
 )
-CONFIG_JSON="$config_json" python3 - <<'PY'
+CONFIG_JSON="$config_json" HF_ROOT_V="$HF_ROOT" \
+MOUNT_ROOT_V="$MOUNT_ROOT" python3 - <<'PY'
 import json
 import os
+import pathlib
 
 config = json.loads(os.environ["CONFIG_JSON"])
+model_path = pathlib.Path("hub/models--Qwen--Qwen3-1.7B")
+synthetic_root = (
+    pathlib.Path(os.environ["MOUNT_ROOT_V"])
+    / f"{config['profile']}-{config['topology_id'][:12]}"
+)
+assert config["schema_version"] == 2
 assert config["nodes"] == 2
 assert config["storage_nodes"] == 3
 assert len(config["ranks"]) == 3
+assert config["transport"]["export_scope"] == "model-repository"
+assert pathlib.Path(config["transport"]["export_path"]) == (
+    pathlib.Path(os.environ["HF_ROOT_V"]) / model_path
+)
+assert pathlib.Path(config["transport"]["mount_path"]) == (
+    synthetic_root / model_path
+)
+assert config["ranks"][0]["cache_root"] == os.environ["HF_ROOT_V"]
+assert all(
+    item["cache_root"] == str(synthetic_root)
+    for item in config["ranks"][1:]
+)
 PY
 provenance_json=$(
   "$TOOL" provenance "$CONFIG_A" "$TOPOLOGY" \
@@ -202,6 +222,10 @@ import os
 document = os.environ["PROVENANCE_JSON"]
 provenance = json.loads(document)
 assert provenance["kind"] == "weight-fabric-provenance"
+assert (
+    provenance["configuration"]["transport"]["export_scope"]
+    == "model-repository"
+)
 assert provenance["configuration"]["serving_nodes"] == 2
 assert provenance["configuration"]["storage_nodes"] == 3
 for private in (
@@ -398,7 +422,8 @@ print(
 PY
   )
 mkdir -p "$LIFECYCLE_MOUNT_PATH"
-cp -a "$HF_ROOT/." "$LIFECYCLE_MOUNT_PATH/"
+cp -a "$HF_ROOT/hub/models--Qwen--Qwen3-1.7B/." \
+  "$LIFECYCLE_MOUNT_PATH/"
 mkdir -p "$LIFECYCLE_MOUNT_PATH/.pulsar/manifests"
 cp "$MANIFEST_A" \
   "$LIFECYCLE_MOUNT_PATH/.pulsar/manifests/$PROFILE.manifest.json"
@@ -412,6 +437,8 @@ LIFECYCLE_SUDO_LOG="$STATE_DIR/lifecycle-sudo.log"
 LIFECYCLE_DOCKER_LOG="$STATE_DIR/lifecycle-docker.log"
 LIFECYCLE_EXPORT_CAPTURE="$STATE_DIR/generated.exports"
 LIFECYCLE_NFS_CAPTURE="$STATE_DIR/generated-nfs.conf"
+LIFECYCLE_EXPORT_FILE="/etc/exports.d/pulsar-weight-fabric-${LIFECYCLE_CONFIG_ID:0:12}.exports"
+LIFECYCLE_NFS_FILE="/etc/nfs.conf.d/pulsar-weight-fabric-${LIFECYCLE_CONFIG_ID:0:12}.conf"
 LIFECYCLE_COUNTER_DIR="$STATE_DIR/lifecycle-counters"
 LIFECYCLE_PREREQ_DIR="$STATE_DIR/lifecycle-prereqs"
 LIFECYCLE_ROOT_LOG="$STATE_DIR/lifecycle-root-scripts.log"
@@ -528,6 +555,37 @@ fi
 if [[ "$command" == *"command -v hf"* ]] \
     && [[ "$command" == *".hf-cli/venv/bin/hf"* ]]; then
   printf '%s\n' '/mock-owner/.hf-cli/venv/bin/hf'
+  exit 0
+fi
+if [[ "$command" == *"python3 - repository-access"* ]]; then
+  cat >/dev/null
+  printf '%s\n' '{"state":"ok","uid":1000,"gid":1000}'
+  exit 0
+fi
+if [[ "$command" == *"/proc/fs/nfsd/exports"* ]] \
+    && [[ "$command" == *"/var/lib/nfs/etab"* ]]; then
+  [ ! -e "${MOCK_LIFE_EXPORT_CAPTURE:?}" ] \
+    || cat "${MOCK_LIFE_EXPORT_CAPTURE:?}"
+  exit 0
+fi
+if [[ "$command" == find\ /etc/exports.d* ]] \
+    && [[ "$command" == *"pulsar-weight-fabric-"* ]]; then
+  [ ! -e "${MOCK_LIFE_EXPORT_CAPTURE:?}" ] \
+    || printf '%s\n' "${MOCK_LIFE_EXPORT_FILE:?}"
+  exit 0
+fi
+if [[ "$command" == test\ -e\ /etc/exports.d/* ]]; then
+  [ -e "${MOCK_LIFE_EXPORT_CAPTURE:?}" ]
+  exit
+fi
+if [[ "$command" == test\ -e\ /etc/nfs.conf.d/* ]]; then
+  [ -e "${MOCK_LIFE_NFS_CAPTURE:?}" ]
+  exit
+fi
+if [[ "$command" == *"sudo -n rm -f"* ]] \
+    && [[ "$command" == *"pulsar-weight-fabric-"* ]]; then
+  rm -f -- \
+    "${MOCK_LIFE_EXPORT_CAPTURE:?}" "${MOCK_LIFE_NFS_CAPTURE:?}"
   exit 0
 fi
 if [[ "$command" == *"install -D"* ]] \
@@ -647,6 +705,9 @@ if [[ "$command" == *"findmnt -rn -M"* ]]; then
   exit 1
 fi
 if [[ "$command" == *" mount -t nfs4 "* ]]; then
+  if [ "${MOCK_LIFE_MOUNT_FAIL:-0}" = 1 ]; then
+    exit 1
+  fi
   : >"${MOCK_LIFE_REMOTE_MOUNTED:?}"
   exit 0
 fi
@@ -801,6 +862,8 @@ lifecycle_cmd() {
     "MOCK_LIFE_DOCKER_LOG=$LIFECYCLE_DOCKER_LOG" \
     "MOCK_LIFE_EXPORT_CAPTURE=$LIFECYCLE_EXPORT_CAPTURE" \
     "MOCK_LIFE_NFS_CAPTURE=$LIFECYCLE_NFS_CAPTURE" \
+    "MOCK_LIFE_EXPORT_FILE=$LIFECYCLE_EXPORT_FILE" \
+    "MOCK_LIFE_NFS_FILE=$LIFECYCLE_NFS_FILE" \
     "MOCK_LIFE_COUNTER_DIR=$LIFECYCLE_COUNTER_DIR" \
     "MOCK_LIFE_PREREQ_DIR=$LIFECYCLE_PREREQ_DIR" \
     "MOCK_LIFE_ROOT_LOG=$LIFECYCLE_ROOT_LOG" \
@@ -826,6 +889,7 @@ lifecycle_cmd() {
     "MOCK_LIFE_MOUNT_OPTIONS=${LIFECYCLE_MOCK_MOUNT_OPTIONS:-ro,vers=4.2,proto=rdma,port=20049,hard,timeo=600,retrans=2}" \
     "MOCK_LIFE_OWNER_RDMA=${LIFECYCLE_MOCK_OWNER_RDMA:-up}" \
     "MOCK_LIFE_PREREQ_MODE=${LIFECYCLE_MOCK_PREREQ_MODE:-ready}" \
+    "MOCK_LIFE_MOUNT_FAIL=${LIFECYCLE_MOCK_MOUNT_FAIL:-0}" \
     "$REPO_DIR/scripts/weight-fabric.sh" "$@"
 }
 
@@ -979,15 +1043,28 @@ if LIFECYCLE_MOCK_R0_NETDEV=wrong0 \
 fi
 [ ! -e "$LIFECYCLE_EXPORT_CAPTURE" ]
 [ ! -e "$LIFECYCLE_NFS_CAPTURE" ]
+if LIFECYCLE_MOCK_MOUNT_FAIL=1 \
+    lifecycle_cmd apply "$PROFILE" --yes \
+      >"$STATE_DIR/apply-rollback.out" 2>&1; then
+  echo "FAIL apply reported success after a client mount failure" >&2
+  exit 1
+fi
+[ ! -e "$LIFECYCLE_LOCAL_MOUNTED" ]
+[ ! -e "$LIFECYCLE_REMOTE_MOUNTED" ]
+[ ! -e "$LIFECYCLE_EXPORT_CAPTURE" ]
+[ ! -e "$LIFECYCLE_NFS_CAPTURE" ]
+grep -Fq 'rolled back the partial weight-fabric apply' \
+  "$STATE_DIR/apply-rollback.out"
+echo "OK   post-write apply failure rolls back exact files and mounts"
 lifecycle_cmd apply "$PROFILE" --yes >/dev/null
 [ -e "$LIFECYCLE_LOCAL_MOUNTED" ]
 [ -e "$LIFECYCLE_REMOTE_MOUNTED" ]
 grep -Fq "\"$LIFECYCLE_EXPORT_PATH\"" "$LIFECYCLE_EXPORT_CAPTURE"
 grep -Fq \
-  "$LIFECYCLE_R0_CLIENT(ro,sync,insecure,root_squash,no_subtree_check)" \
+  "$LIFECYCLE_R0_CLIENT(ro,sync,insecure,root_squash,anonuid=1000,anongid=1000,no_subtree_check)" \
   "$LIFECYCLE_EXPORT_CAPTURE"
 grep -Fq \
-  "$LIFECYCLE_R2_CLIENT(ro,sync,insecure,root_squash,no_subtree_check)" \
+  "$LIFECYCLE_R2_CLIENT(ro,sync,insecure,root_squash,anonuid=1000,anongid=1000,no_subtree_check)" \
   "$LIFECYCLE_EXPORT_CAPTURE"
 if grep -Fq '192.0.2.' "$LIFECYCLE_EXPORT_CAPTURE"; then
   echo "FAIL export ACL used a control-LAN address" >&2
@@ -1487,9 +1564,16 @@ dry=$(
 )
 printf '%s\n' "$dry" | grep -Fq '[cluster] weights: fabric · NFS/RDMA'
 printf '%s\n' "$dry" | grep -Fq -- \
-  "-v $HF_ROOT:/root/.cache/huggingface:ro"
-printf '%s\n' "$dry" | grep -Fq -- \
-  "-v $MOUNT_ROOT/$PROFILE-"
+  "-v $HF_ROOT/hub/models--Qwen--Qwen3-1.7B:/root/.cache/huggingface/hub/models--Qwen--Qwen3-1.7B:ro"
+printf '%s\n' "$dry" \
+  | grep -F -- "-v $MOUNT_ROOT/$PROFILE-" \
+  | grep -Fq -- \
+      '/hub/models--Qwen--Qwen3-1.7B:/root/.cache/huggingface/hub/models--Qwen--Qwen3-1.7B:ro'
+if printf '%s\n' "$dry" | grep -Fq -- \
+    "-v $HF_ROOT:/root/.cache/huggingface"; then
+  echo "FAIL fabric launch exposed the owner's full Hugging Face home" >&2
+  exit 1
+fi
 printf '%s\n' "$dry" | grep -Fq -- \
   '--label io.pulsar.gb10.weight-source=fabric'
 printf '%s\n' "$dry" | grep -Fq -- \
@@ -1500,7 +1584,7 @@ config_id=$(python3 -c \
 printf '%s\n' "$dry" | grep -Fq -- \
   "--label io.pulsar.gb10.weight-config=$config_id"
 grep -Fxq "check $PROFILE --serving-only" "$STATE_DIR/fabric.log"
-echo "OK   dry launch uses read-only per-rank roots and provenance labels"
+echo "OK   dry launch exposes only the exact repository with provenance labels"
 
 : >"$STATE_DIR/fabric.log"
 PULSAR_WEIGHT_FABRIC_TOOL="$FABRIC_SHIM" FABRIC_LOG="$STATE_DIR/fabric.log" \

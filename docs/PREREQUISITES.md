@@ -142,6 +142,20 @@ timeouts, liveness bounds, and existing `known_hosts`. Enroll keys normally;
 `--accept-new-host-keys` is an explicit one-time TOFU option. mDNS is candidate
 discovery, not a trust or membership decision.
 
+**SSH identity enrollment policy (promotion requirement):** first-time setup
+may automatically discover a node's alias, control/RoCE endpoints, and
+presented public host keys, but trust must still be confirmed by the operator
+or normal OpenSSH enrollment. The intended topology contract records the
+confirmed `ssh_host` alias and accepted key fingerprints beside the immutable
+node ID. SSH to a control or RoCE IP then uses that alias as `HostKeyAlias` with
+strict checking, so every plane proves the same node identity.
+
+This fingerprint binding and doctor drift classification are not yet complete
+across all command paths. Until they are, treat SSH-over-RoCE copy as
+experimental. A changed key must stop setup/preflight and trigger out-of-band
+verification plus explicit re-enrollment; neither `doctor` nor discovery may
+auto-accept it as an address refresh.
+
 The confirmed `.cluster-topology.json` is written atomically, mode 0600, and is
 gitignored. It records per-rank SSH target, control IP/interface, node identity,
 HCAs, and pairwise rails. An unverified manifest cannot load. Topology cannot be
@@ -274,7 +288,9 @@ not permission to serve an unmeasured geometry.
 | [HARDWARE.md](./HARDWARE.md) | Measured bandwidth, RoCE map, storage |
 | [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
 | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Experimental one-copy NFS/RDMA design, operations, faults, and gates |
-| [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Agreed future direction** — federated library, activate, hot/pin (not implemented) |
+| [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, activate/hot/pin policy; experiment not promoted |
+| [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: validated home symlink, non-home hot only, expected seal and serve-time witness |
+| [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) | Descriptive current implementation, evidence boundaries, and known gaps |
 | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) | Archived exploration / option history only |
 | [BUILD.md](./BUILD.md) | Published PR #41834 image, provenance, and source-build fallback |
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |

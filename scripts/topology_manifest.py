@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import ipaddress
 import itertools
@@ -11,6 +13,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -22,9 +25,14 @@ except ModuleNotFoundError:
     from terminal_format import TerminalWriter
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
+SUPPORTED_SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
+PROBE_SCHEMA_VERSION = 2
 SAFE_ENDPOINT = re.compile(r"^[A-Za-z0-9._:@%+-]+$")
 SAFE_IFACE = re.compile(r"^[A-Za-z0-9_.:@+-]+$")
+SAFE_SSH_ALIAS = re.compile(r"^[A-Za-z0-9._+-]+$")
+SAFE_KEY_ALGORITHM = re.compile(r"^[A-Za-z0-9@._+-]+$")
 
 
 class TopologyError(ValueError):
@@ -83,8 +91,112 @@ def valid_cidr(value: Any, field: str) -> str:
         fail(f"{field}: {exc}")
 
 
+def decode_host_public_key(public_key: str, field: str) -> tuple[bytes, str]:
+    if len(public_key) % 4 == 1:
+        fail(f"{field}: SSH host public key is not valid base64")
+    padded = public_key + "=" * (-len(public_key) % 4)
+    try:
+        raw = base64.b64decode(padded, validate=True)
+    except (ValueError, binascii.Error):
+        fail(f"{field}: SSH host public key is not valid base64")
+    if len(raw) < 5:
+        fail(f"{field}: SSH host public key is malformed")
+    algorithm_size = int.from_bytes(raw[:4], byteorder="big")
+    algorithm_raw = raw[4 : 4 + algorithm_size]
+    if len(algorithm_raw) != algorithm_size:
+        fail(f"{field}: SSH host public key is malformed")
+    try:
+        embedded_algorithm = algorithm_raw.decode("ascii")
+    except UnicodeDecodeError:
+        fail(f"{field}: SSH host public key algorithm is not ASCII")
+    return raw, embedded_algorithm
+
+
+def host_key_fingerprint(public_key: str, field: str = "public_key") -> str:
+    raw, _ = decode_host_public_key(public_key, field)
+    digest = hashlib.sha256(raw).digest()
+    encoded = base64.b64encode(digest).decode("ascii").rstrip("=")
+    return f"SHA256:{encoded}"
+
+
+def normalize_host_keys(
+    raw_keys: Any,
+    field: str,
+    *,
+    required: bool = True,
+) -> list[dict[str, str]]:
+    if not isinstance(raw_keys, list):
+        fail(f"{field}: expected an array")
+    result: list[dict[str, str]] = []
+    seen_algorithms: set[str] = set()
+    seen_fingerprints: set[str] = set()
+    for index, raw in enumerate(raw_keys):
+        if not isinstance(raw, dict):
+            fail(f"{field}[{index}]: expected an object")
+        algorithm = clean_text(
+            raw.get("algorithm"), f"{field}[{index}].algorithm"
+        )
+        if not SAFE_KEY_ALGORITHM.fullmatch(algorithm):
+            fail(f"{field}[{index}].algorithm: unsafe value")
+        public_key = clean_text(
+            raw.get("public_key"), f"{field}[{index}].public_key"
+        )
+        key_blob, embedded_algorithm = decode_host_public_key(
+            public_key, f"{field}[{index}].public_key"
+        )
+        if embedded_algorithm != algorithm:
+            fail(
+                f"{field}[{index}].algorithm: does not match public key blob"
+            )
+        digest = hashlib.sha256(key_blob).digest()
+        fingerprint = "SHA256:" + base64.b64encode(digest).decode(
+            "ascii"
+        ).rstrip("=")
+        supplied = raw.get("fingerprint")
+        if supplied is not None and str(supplied) != fingerprint:
+            fail(f"{field}[{index}].fingerprint: does not match public key")
+        if algorithm in seen_algorithms:
+            fail(f"{field}: duplicate algorithm {algorithm}")
+        if fingerprint in seen_fingerprints:
+            fail(f"{field}: duplicate fingerprint")
+        seen_algorithms.add(algorithm)
+        seen_fingerprints.add(fingerprint)
+        result.append(
+            {
+                "algorithm": algorithm,
+                "fingerprint": fingerprint,
+                "public_key": public_key,
+            }
+        )
+    result.sort(key=lambda item: (item["algorithm"], item["fingerprint"]))
+    if required and not result:
+        fail(f"{field}: at least one SSH host key is required")
+    return result
+
+
+def ssh_host_alias(ssh_host: Any, field: str = "ssh_host") -> str:
+    value = safe_endpoint(ssh_host, field)
+    if value == "local":
+        return value
+    if "@" in value or ":" in value or not SAFE_SSH_ALIAS.fullmatch(value):
+        fail(
+            f"{field}: trusted SSH aliases must be plain host aliases "
+            "(no user, port, or address syntax)"
+        )
+    return value
+
+
+def topology_has_ssh_trust(topology: dict[str, Any]) -> bool:
+    return (
+        topology.get("schema_version") == SCHEMA_VERSION
+        and (topology.get("validation") or {}).get("ssh_identity_enrolled")
+        is True
+    )
+
+
 def normalize_probe(raw: dict[str, Any], path: str) -> dict[str, Any]:
-    if raw.get("probe_schema_version") != 1:
+    probe_schema = raw.get("probe_schema_version")
+    if probe_schema not in (1, PROBE_SCHEMA_VERSION):
         fail(f"{path}: unsupported probe schema")
     node = {
         "node_id": clean_text(raw.get("node_id"), f"{path}.node_id"),
@@ -123,6 +235,11 @@ def normalize_probe(raw: dict[str, Any], path: str) -> dict[str, Any]:
         ]
         rdma.append({"hca": hca, "netdev": netdev, "cidrs": sorted(set(cidrs))})
     node["rdma"] = rdma
+    node["ssh_host_keys"] = normalize_host_keys(
+        raw.get("ssh_host_keys") or [],
+        f"{path}.ssh_host_keys",
+        required=probe_schema >= PROBE_SCHEMA_VERSION,
+    )
     return node
 
 
@@ -213,7 +330,7 @@ def assemble(paths: list[str], existing_path: str | None) -> dict[str, Any]:
     rejected: list[dict[str, Any]] = []
     if not local["qualified"]:
         return {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": LEGACY_SCHEMA_VERSION,
             "result": "incomplete",
             "topology": None,
             "rejected": [
@@ -303,6 +420,9 @@ def assemble(paths: list[str], existing_path: str | None) -> dict[str, Any]:
                 }
             )
 
+    # Discovery proves membership and RoCE geometry, but it never promotes
+    # SSH identity. Only the explicit enrollment ceremony may create schema 2.
+    topology_schema = LEGACY_SCHEMA_VERSION
     nodes: list[dict[str, Any]] = []
     for rank, probe in enumerate(selected):
         nodes.append(
@@ -325,7 +445,7 @@ def assemble(paths: list[str], existing_path: str | None) -> dict[str, Any]:
 
     rail_counts = [len(link["rails"]) for link in links]
     topology = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": topology_schema,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "nodes": nodes,
         "links": links,
@@ -339,15 +459,20 @@ def assemble(paths: list[str], existing_path: str | None) -> dict[str, Any]:
     topology["topology_id"] = topology_digest(topology)
     validate_manifest(topology)
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": topology_schema,
         "result": "ok",
         "topology": topology,
         "rejected": rejected,
     }
 
 
-def validate_manifest(topology: dict[str, Any], require_verified: bool = False) -> None:
-    if topology.get("schema_version") != SCHEMA_VERSION:
+def validate_manifest(
+    topology: dict[str, Any],
+    require_verified: bool = False,
+    require_ssh_trust: bool = False,
+) -> None:
+    schema_version = topology.get("schema_version")
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         fail("unsupported topology schema")
     nodes = topology.get("nodes")
     links = topology.get("links")
@@ -361,13 +486,33 @@ def validate_manifest(topology: dict[str, Any], require_verified: bool = False) 
 
     node_ids: set[str] = set()
     control_ips: set[str] = set()
+    host_key_owners: dict[str, int] = {}
     for rank, node in enumerate(nodes):
         node_id = clean_text(node.get("node_id"), f"nodes[{rank}].node_id")
         if node_id in node_ids:
             fail("duplicate node_id")
         node_ids.add(node_id)
         clean_text(node.get("hostname"), f"nodes[{rank}].hostname")
-        safe_endpoint(node.get("ssh_host"), f"nodes[{rank}].ssh_host")
+        ssh_host = safe_endpoint(
+            node.get("ssh_host"), f"nodes[{rank}].ssh_host"
+        )
+        if schema_version == SCHEMA_VERSION:
+            ssh_host_alias(ssh_host, f"nodes[{rank}].ssh_host")
+            keys = normalize_host_keys(
+                node.get("ssh_host_keys"),
+                f"nodes[{rank}].ssh_host_keys",
+            )
+            if keys != node.get("ssh_host_keys"):
+                fail(f"nodes[{rank}].ssh_host_keys: not canonical")
+            for key in keys:
+                owner = host_key_owners.get(key["fingerprint"])
+                if owner is not None and owner != rank:
+                    fail(
+                        "SSH host-key fingerprint is shared by multiple nodes"
+                    )
+                host_key_owners[key["fingerprint"]] = rank
+        elif node.get("ssh_host_keys") is not None:
+            fail("legacy topology cannot carry SSH host keys")
         control = node.get("control") or {}
         control_ip = valid_ip(control.get("ip"), f"nodes[{rank}].control.ip")
         safe_interface(
@@ -436,6 +581,16 @@ def validate_manifest(topology: dict[str, Any], require_verified: bool = False) 
         fail("min_rails_per_pair does not match links")
     if require_verified and validation.get("connectivity_verified") is not True:
         fail("pairwise RoCE connectivity has not been verified")
+    if schema_version == SCHEMA_VERSION:
+        if validation.get("ssh_identity_enrolled") is not True:
+            fail("topology SSH identity is not enrolled")
+    elif validation.get("ssh_identity_enrolled") not in (None, False):
+        fail("legacy topology cannot claim SSH identity enrollment")
+    if require_ssh_trust and not topology_has_ssh_trust(topology):
+        fail(
+            "topology SSH identity is not enrolled; run "
+            "scripts/topology-ssh-trust.sh enroll"
+        )
 
     topology_id = clean_text(topology.get("topology_id"), "topology_id")
     if topology_id != topology_digest(topology):
@@ -503,6 +658,18 @@ def render(document: dict[str, Any], skipped_ssh: int = 0) -> None:
             subsequent_indent="    ",
         )
         field("SSH", node["ssh_host"], indent=4)
+        if topology_has_ssh_trust(topology):
+            fingerprints = [
+                key["fingerprint"] for key in node["ssh_host_keys"]
+            ]
+            field(
+                "SSH trust",
+                f"enrolled · {len(fingerprints)} host "
+                f"{'key' if len(fingerprints) == 1 else 'keys'}",
+                indent=4,
+            )
+        else:
+            field("SSH trust", "legacy · fingerprints not enrolled", indent=4)
         field(
             "Cluster IP",
             f"{node['control']['ip']} · interface "
@@ -580,6 +747,8 @@ def rows(topology: dict[str, Any]) -> None:
                 topology["topology_id"],
                 "1" if validation["full_mesh"] else "0",
                 str(validation["min_rails_per_pair"]),
+                str(topology["schema_version"]),
+                "1" if topology_has_ssh_trust(topology) else "0",
             ]
         )
     )
@@ -603,6 +772,22 @@ def rows(topology: dict[str, Any]) -> None:
                 ]
             )
         )
+    if topology_has_ssh_trust(topology):
+        for node in topology["nodes"]:
+            alias = ssh_host_alias(node["ssh_host"])
+            fingerprints = ",".join(
+                key["fingerprint"] for key in node["ssh_host_keys"]
+            )
+            print(
+                "\t".join(
+                    [
+                        "TRUST",
+                        str(node["rank"]),
+                        alias,
+                        fingerprints,
+                    ]
+                )
+            )
     for link in topology["links"]:
         print(
             "\t".join(
@@ -720,6 +905,291 @@ def atomic_write(topology: dict[str, Any], destination: str) -> None:
             pass
 
 
+def enroll_ssh_trust(
+    topology: dict[str, Any],
+    probes: list[dict[str, Any]],
+    *,
+    allow_key_change: bool = False,
+) -> dict[str, Any]:
+    validate_manifest(topology, require_verified=True)
+    normalized = [
+        normalize_probe(probe, f"probe[{index}]")
+        for index, probe in enumerate(probes)
+    ]
+    by_id: dict[str, dict[str, Any]] = {}
+    for probe in normalized:
+        node_id = probe["node_id"]
+        if node_id in by_id:
+            fail(f"duplicate trust probe for node_id {node_id}")
+        by_id[node_id] = probe
+
+    updated = json.loads(json.dumps(topology))
+    expected_ids = {node["node_id"] for node in updated["nodes"]}
+    if set(by_id) != expected_ids:
+        missing = sorted(expected_ids - set(by_id))
+        extra = sorted(set(by_id) - expected_ids)
+        fail(
+            "trust probes do not exactly match topology nodes "
+            f"(missing={missing}, extra={extra})"
+        )
+
+    changed: list[int] = []
+    for node in updated["nodes"]:
+        rank = node["rank"]
+        probe = by_id[node["node_id"]]
+        if probe["hostname"] != node["hostname"]:
+            fail(f"rank {rank}: probe hostname differs from topology")
+        expected_ssh_host = "local" if rank == 0 else node["ssh_host"]
+        if probe["ssh_host"] != expected_ssh_host:
+            fail(f"rank {rank}: probe SSH alias differs from topology")
+        if probe["control"]["ip"] != node["control"]["ip"]:
+            fail(f"rank {rank}: probe control IP differs from topology")
+        new_keys = probe["ssh_host_keys"]
+        old_keys = node.get("ssh_host_keys") or []
+        old_fingerprints = {
+            str(item.get("fingerprint") or "") for item in old_keys
+        }
+        new_fingerprints = {item["fingerprint"] for item in new_keys}
+        if old_fingerprints and old_fingerprints != new_fingerprints:
+            changed.append(rank)
+        node["ssh_host_keys"] = new_keys
+
+    if changed and not allow_key_change:
+        ranks = ",".join(str(rank) for rank in changed)
+        fail(
+            "SSH host keys changed for rank(s) "
+            f"{ranks}; verify out of band, update normal OpenSSH trust, then "
+            "rerun with --accept-key-change"
+        )
+
+    updated["schema_version"] = SCHEMA_VERSION
+    updated["validation"]["ssh_identity_enrolled"] = True
+    updated["ssh_trust_enrolled_at"] = datetime.now(timezone.utc).isoformat()
+    updated["topology_id"] = topology_digest(updated)
+    validate_manifest(
+        updated, require_verified=True, require_ssh_trust=True
+    )
+    return updated
+
+
+def known_hosts(topology: dict[str, Any], alias: str) -> None:
+    validate_manifest(
+        topology, require_verified=True, require_ssh_trust=True
+    )
+    matches = [
+        node
+        for node in topology["nodes"]
+        if ssh_host_alias(node["ssh_host"]) == alias
+    ]
+    if len(matches) != 1:
+        fail(f"SSH alias {alias!r} is not uniquely enrolled")
+    for key in matches[0]["ssh_host_keys"]:
+        print(f"{alias} {key['algorithm']} {key['public_key']}")
+
+
+def render_ssh_config_text(
+    topology: dict[str, Any],
+    *,
+    topology_path: str,
+    tool_path: str | None = None,
+) -> str:
+    validate_manifest(
+        topology, require_verified=True, require_ssh_trust=True
+    )
+    manifest_path = str(pathlib.Path(topology_path).resolve())
+    helper_path = str(
+        pathlib.Path(tool_path or __file__).resolve()
+    )
+    command = " ".join(
+        [
+            shlex.quote(helper_path),
+            "known-hosts",
+            shlex.quote(manifest_path),
+            "%H",
+        ]
+    )
+    lines = [
+        "# Generated by Pulsar; edit topology through the enrollment CLI.",
+        f"# topology_id={topology['topology_id']}",
+    ]
+    for node in topology["nodes"]:
+        if node["rank"] == 0:
+            continue
+        alias = ssh_host_alias(node["ssh_host"])
+        lines.extend(
+            [
+                f"Host {alias}",
+                f"    HostName {node['control']['ip']}",
+                f"    HostKeyAlias {alias}",
+            ]
+        )
+    lines.extend(
+        [
+            "Host *",
+            "    AddressFamily inet",
+            "    CanonicalizeHostname no",
+            "    CheckHostIP no",
+            "    ProxyCommand none",
+            "    ProxyJump none",
+            "    StrictHostKeyChecking yes",
+            "    UpdateHostKeys no",
+            "    VerifyHostKeyDNS no",
+            "    UserKnownHostsFile none",
+            "    GlobalKnownHostsFile none",
+            f"    KnownHostsCommand {command}",
+            "    Include ~/.ssh/config",
+            "    Include /etc/ssh/ssh_config",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def validate_ssh_config_file(
+    topology: dict[str, Any],
+    config_path: str,
+    *,
+    topology_path: str,
+) -> None:
+    expected = render_ssh_config_text(
+        topology, topology_path=topology_path
+    )
+    try:
+        actual = pathlib.Path(config_path).read_text(encoding="utf-8")
+    except OSError as exc:
+        fail(f"{config_path}: {exc}")
+    if actual != expected:
+        fail(
+            "generated SSH config is missing or stale; run "
+            "scripts/topology-ssh-trust.sh enroll"
+        )
+
+
+def trust_diff(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    validate_manifest(old, require_verified=True)
+    validate_manifest(
+        new, require_verified=True, require_ssh_trust=True
+    )
+    old_by_id = {node["node_id"]: node for node in old["nodes"]}
+    nodes = []
+    for node in new["nodes"]:
+        previous = old_by_id.get(node["node_id"]) or {}
+        before = sorted(
+            str(key.get("fingerprint") or "")
+            for key in previous.get("ssh_host_keys") or []
+        )
+        after = sorted(
+            key["fingerprint"] for key in node["ssh_host_keys"]
+        )
+        if not before:
+            state = "new"
+        elif before == after:
+            state = "unchanged"
+        else:
+            state = "changed"
+        nodes.append(
+            {
+                "rank": node["rank"],
+                "node_id": node["node_id"],
+                "hostname": node["hostname"],
+                "ssh_host": node["ssh_host"],
+                "state": state,
+                "before": before,
+                "after": after,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "kind": "topology-ssh-trust-diff",
+        "old_topology_id": old["topology_id"],
+        "new_topology_id": new["topology_id"],
+        "nodes": nodes,
+    }
+
+
+def _prepared_json_file(
+    topology: dict[str, Any], destination: pathlib.Path
+) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=str(destination.parent),
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(topology, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp_name, 0o600)
+    return tmp_name
+
+
+def _prepared_text_file(content: str, destination: pathlib.Path) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=str(destination.parent),
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp_name, 0o600)
+    return tmp_name
+
+
+def write_trust_bundle(
+    topology: dict[str, Any],
+    topology_destination: str,
+    config_destination: str,
+) -> None:
+    validate_manifest(
+        topology, require_verified=True, require_ssh_trust=True
+    )
+    topology_path = pathlib.Path(topology_destination)
+    config_path = pathlib.Path(config_destination)
+    config = render_ssh_config_text(
+        topology, topology_path=str(topology_path)
+    )
+    topology_tmp = _prepared_json_file(topology, topology_path)
+    config_tmp = _prepared_text_file(config, config_path)
+    try:
+        os.replace(config_tmp, config_path)
+        config_tmp = ""
+        os.replace(topology_tmp, topology_path)
+        topology_tmp = ""
+    finally:
+        for tmp_name in (topology_tmp, config_tmp):
+            if tmp_name:
+                try:
+                    os.unlink(tmp_name)
+                except FileNotFoundError:
+                    pass
+
+
+def render_trust_diff(report: dict[str, Any]) -> None:
+    term = TerminalWriter()
+    term.emit("SSH TRUST ENROLLMENT")
+    term.field("Old cluster", report["old_topology_id"][:12])
+    term.field("New cluster", report["new_topology_id"][:12])
+    for node in report["nodes"]:
+        term.blank()
+        term.emit(
+            f"cluster node {node['rank'] + 1} · {node['hostname']}",
+            initial_indent="  ",
+            subsequent_indent="    ",
+        )
+        term.field("Alias", node["ssh_host"], indent=4)
+        term.field("State", node["state"], indent=4)
+        term.field(
+            "Keys",
+            ", ".join(item[:24] for item in node["after"]),
+            indent=4,
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -739,6 +1209,33 @@ def parse_args() -> argparse.Namespace:
     for name in ("rows", "ping-plan", "mark-verified", "validate"):
         command = sub.add_parser(name)
         command.add_argument("document")
+
+    enroll_parser = sub.add_parser("enroll-ssh-trust")
+    enroll_parser.add_argument("document")
+    enroll_parser.add_argument("probes", nargs="+")
+    enroll_parser.add_argument("--accept-key-change", action="store_true")
+
+    known_hosts_parser = sub.add_parser("known-hosts")
+    known_hosts_parser.add_argument("document")
+    known_hosts_parser.add_argument("alias")
+
+    render_ssh_parser = sub.add_parser("render-ssh-config")
+    render_ssh_parser.add_argument("document")
+    render_ssh_parser.add_argument("--topology-path", required=True)
+
+    validate_ssh_parser = sub.add_parser("validate-ssh-config")
+    validate_ssh_parser.add_argument("document")
+    validate_ssh_parser.add_argument("config")
+
+    trust_diff_parser = sub.add_parser("trust-diff")
+    trust_diff_parser.add_argument("old")
+    trust_diff_parser.add_argument("new")
+    trust_diff_parser.add_argument("--json", action="store_true")
+
+    trust_write_parser = sub.add_parser("write-trust-bundle")
+    trust_write_parser.add_argument("document")
+    trust_write_parser.add_argument("topology_destination")
+    trust_write_parser.add_argument("config_destination")
     profile_parser = sub.add_parser("profile-fabric")
     profile_parser.add_argument("document")
     profile_parser.add_argument("nodes", type=int)
@@ -775,6 +1272,53 @@ def main() -> int:
             )
         elif args.command == "validate":
             validate_manifest(extract_topology(load_json(args.document)))
+        elif args.command == "enroll-ssh-trust":
+            topology = extract_topology(load_json(args.document))
+            probes = [load_json(path) for path in args.probes]
+            print(
+                json.dumps(
+                    enroll_ssh_trust(
+                        topology,
+                        probes,
+                        allow_key_change=args.accept_key_change,
+                    ),
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        elif args.command == "known-hosts":
+            known_hosts(
+                extract_topology(load_json(args.document)), args.alias
+            )
+        elif args.command == "render-ssh-config":
+            print(
+                render_ssh_config_text(
+                    extract_topology(load_json(args.document)),
+                    topology_path=args.topology_path,
+                ),
+                end="",
+            )
+        elif args.command == "validate-ssh-config":
+            validate_ssh_config_file(
+                extract_topology(load_json(args.document)),
+                args.config,
+                topology_path=args.document,
+            )
+        elif args.command == "trust-diff":
+            report = trust_diff(
+                extract_topology(load_json(args.old)),
+                extract_topology(load_json(args.new)),
+            )
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                render_trust_diff(report)
+        elif args.command == "write-trust-bundle":
+            write_trust_bundle(
+                extract_topology(load_json(args.document)),
+                args.topology_destination,
+                args.config_destination,
+            )
         elif args.command == "write":
             atomic_write(extract_topology(load_json(args.document)), args.destination)
         return 0

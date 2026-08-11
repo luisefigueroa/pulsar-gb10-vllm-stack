@@ -21,6 +21,7 @@ run() {
 run "status gate" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
 run "N-node topology + exact profile subset" "$REPO_DIR/scripts/selftest-topology.sh"
+run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust.sh"
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
@@ -31,7 +32,19 @@ run "API auth and secret redaction" "$REPO_DIR/scripts/selftest-api-auth.sh"
 run "validation verdicts" "$REPO_DIR/scripts/selftest-validation.sh"
 run "fail-closed probes" "$REPO_DIR/scripts/selftest-preflight-probes.sh"
 run "weight staging + cache layout" "$REPO_DIR/scripts/selftest-pull-weights.sh"
+run "weight fabric schema-2 contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_weight_fabric_schema2.py"
 run "single-copy weight fabric" "$REPO_DIR/scripts/selftest-weight-fabric.sh"
+run "model library remote-home contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_remote_home.py"
+run "model library parallel-copy contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_parallel_copy.py"
+run "model library transport contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_transport.py"
+run "model library integrity contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_integrity.py"
+run "model library startup-evidence contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_startup_metric.py"
 run "federated model library catalog" "$REPO_DIR/scripts/selftest-model-library.sh"
 run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
 run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"

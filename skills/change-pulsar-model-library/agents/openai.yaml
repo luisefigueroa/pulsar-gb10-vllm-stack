@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Pulsar Model Library"
+  short_description: "Guide safe model-library changes and reviews"
+  default_prompt: "Use $change-pulsar-model-library to review this proposed model-library change against accepted architecture and required validation."

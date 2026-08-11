@@ -1,9 +1,20 @@
-# Revalidation runbook — after any image pin bump
+# Revalidation runbook — after any validation-bundle input changes
 
-The pin bump is the recurring event on this stack (upstream release or PR
-#41834 rebase/merge). Nothing keeps its `tested` status across a bump. This
-is the public, repository-relative sequence; expect roughly half a day,
-mostly machine time.
+An image pin bump is the recurring event on this stack (upstream release or PR
+#41834 rebase/merge), but it is not the only invalidation trigger. A model
+revision/manifest, tokenizer or model code, draft/adapter, normalized profile
+runtime configuration, resolved image digest, or serving geometry/topology
+class change invalidates the applicable validation bundle. Nothing keeps its
+`tested` status across such a change without new evidence. This is the public,
+repository-relative sequence; expect roughly half a day, mostly machine time.
+
+The accepted target binds a lab-issued expected model seal to the runtime
+profile, resolved image, geometry, and evidence. Existing rows predate that
+machine binding and are legacy-unsealed claims during migration. Never create
+the expected seal from arbitrary user-observed cache contents; recover the
+exact lab artifact used for the historical run or revalidate the intended exact
+revision. A future mirror may distribute the bytes, but hosting location is not
+their validation identity.
 
 ## 0. Prep (5 min)
 
@@ -140,15 +151,19 @@ No three-node serving profile is promoted by the current ledger.
 
 ## 7. Experimental single-copy storage (conditional)
 
-Do not inherit replicated-cache validation for `--weight-source fabric`.
-Follow `WEIGHT_FABRIC.md` and preserve unique result bundles for:
+Do not inherit replicated-cache validation for `--weight-source fabric` or
+`library-hot`. Follow `WEIGHT_FABRIC.md` and
+`MODEL_LIBRARY_DESIGN.md`, and preserve unique result bundles for:
 
 1. two-node replicated-local and fabric cold I/O/startup A/B;
 2. three-node concurrent loading and interface-counter proof;
 3. deterministic/correctness/long-context gates on the healthy fabric service;
 4. interrupted load, link loss, NFS restart, owner reboot, restart loop, and
    soak recovery;
-5. final proof that clients retain no complete durable model cache.
+5. exact expected-versus-observed model seal and revision binding;
+6. proof that non-home clients retain no complete durable model cache;
+7. for library-hot, validated home-view target/witness, no-follow purge, and
+   honest durable-home pin/restart dependency.
 
 The path remains experimental if any artifact is absent, even when the same
 model/profile/image is already `tested` with replicated weights.
@@ -156,7 +171,10 @@ model/profile/image is already `tested` with replicated weights.
 ## 8. Close out
 
 - Update conf `STATUS`/`NOTES` and `docs/VALIDATION.md` with the measured
-  numbers, exact image identity, selected backends, and artifact paths.
+  numbers, exact model commit/manifest identity, resolved image digest,
+  normalized runtime profile/geometry, selected backends, and artifact paths.
+- When validation-bundle support exists, publish its reviewed ID from the lab
+  evidence. Never promote a locally observed seal into the expected seal.
 - Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
 - Archive the new raw results under `results/` using a unique bump tag.
 - Run a current-tree secret/path scan and inspect `git diff` before merge.

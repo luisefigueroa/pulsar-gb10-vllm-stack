@@ -1,8 +1,11 @@
 # Multi-node serving on confirmed GB10 topologies
 
-The control plane can discover and operate an arbitrary number of NVIDIA GB10
-nodes. That is deliberately separate from the serving claim: a discovered
-node is capacity, not a validated model geometry.
+The control plane automatically discovers cluster membership and its node
+count, and can operate an arbitrary number of NVIDIA GB10 nodes. The
+confirmed manifest, not a built-in
+one- or two-node limit, defines available capacity. That is deliberately
+separate from the serving claim: a discovered node is capacity, not a
+validated model geometry.
 
 The validation ledger currently promotes only the exact one- and two-node
 profiles marked `STATUS=tested*` in `models/`. There is no promoted three-node
@@ -78,14 +81,21 @@ The assembler selects the largest RoCE full mesh containing local rank 0. It
 then pings every shared rail in both directions for every rank pair. An
 unverified or partial document cannot be loaded as active topology.
 
-SSH is `BatchMode=yes` with finite connection and liveness bounds. Existing
-`known_hosts` is the default trust policy. Enroll host keys beforehand, or use
-`--accept-new-host-keys` for an explicit one-time TOFU decision. A duplicate
-machine reached through several names or IPs is de-duplicated by machine
-identity, preferring its hostname/control endpoint over a RoCE address for SSH.
+Discovery is `BatchMode=yes` with finite connection and liveness bounds.
+Existing `known_hosts` is its default trust policy;
+`--accept-new-host-keys` is an explicit one-time TOFU choice for discovery only.
+It does not create topology-enrolled trust. A duplicate machine reached through
+several names or IPs is de-duplicated by machine identity, preferring its
+hostname/control endpoint over a RoCE address for SSH.
 
-On confirmation, the tool atomically writes `.cluster-topology.json` mode 0600.
-The file is gitignored because it contains site-local addresses and membership.
+On confirmation, discovery atomically writes schema-1
+`.cluster-topology.json` mode 0600. With the cluster idle, run
+`scripts/topology-ssh-trust.sh enroll` to authenticate the exact saved control
+endpoints through normal OpenSSH trust, verify every pairwise rail, and upgrade
+to schema 2. This also writes `.cluster-ssh-config`; both files are gitignored
+because they contain site-local membership and trust material. A schema-2
+manifest with a missing or stale generated config cannot load.
+
 Before replacement it proves that every rank in both the prior and proposed
 membership has no running stack-managed container; an unreachable Docker query
 fails closed.
@@ -103,6 +113,11 @@ The launcher uses:
   payload traffic (idle-capacity links are excluded);
 - `NCCL_NET=IB`, `NCCL_IB_DISABLE=0`, and `/dev/infiniband` to prevent a silent
   shared-LAN payload fallback.
+
+For schema 2, every shared SSH caller uses the generated config: the stable
+alias remains the host-key identity while `HostName` is the exact confirmed
+control address. SSH-over-RoCE changes only that transport address and retains
+strict verification against the same enrolled alias/key set.
 
 Using the administration network for bootstrap has real downsides: the launch
 now depends on that network's routing, firewall, DNS/SSH reachability, and
