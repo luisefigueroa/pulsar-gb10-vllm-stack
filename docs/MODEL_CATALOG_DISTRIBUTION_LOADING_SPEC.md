@@ -43,9 +43,9 @@ out. Current code implements the reviewed expected-seal reference, exact commit
 selection/comparison, seal-bound hot state, exact snapshot launch, and the
 rank-local fast metadata witness with visible full-verification fallback. It
 also implements confirmation-gated exact-repository home removal with
-all-confirmed-node reference observation and lifecycle serialization. It
-does not yet implement a standalone validation-bundle document, and no real
-profile seal ships yet.
+all-confirmed-node reference observation and lifecycle serialization. A sealed
+profile now requires a content-addressed schema-1 validation bundle matching
+the seal and live profile contract. No real profile seal or bundle ships yet.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -63,6 +63,7 @@ Pulsar separates five kinds of state:
 | Weight-fabric configuration | `.weight-fabric/<profile>.json` | No; site-local | Owner, storage-visible nodes, selected RoCE rail, export/mount paths, and configuration identity |
 | Model bytes | Local cache, site catalog, or owner cache | No | Hugging Face repository or absolute-path model tree consumed by vLLM |
 | Expected model seal | Optional `models/seals/*.json` referenced by a tested profile | Yes | Reviewed exact commit/manifest expectation plus lab provenance and validation-bundle ID |
+| Validation bundle | `models/validation-bundles/<bundle_id>.json` required by a sealed profile | Yes | Content-addressed binding of exact models/artifacts, normalized live profile, digest-pinned image, geometry, and evidence |
 | Validation evidence | `results/` plus `docs/VALIDATION.md` | Yes when publishable | Reproducible support for status and promotion claims |
 
 The current system supports three practical storage origins:
@@ -936,9 +937,11 @@ Profiles without a seal remain `legacy-unsealed`, including every current
 production profile. Their historical `STATUS=tested*` claim does not
 machine-bless arbitrary content and library activation requires explicit
 `--allow-unvalidated`. Replicated mode still has no equivalent content lock.
-The seal carries an opaque reviewed validation-bundle ID; current code does not
-yet validate a standalone bundle document containing normalized profile,
-resolved image digest, and geometry.
+The seal's reviewed validation-bundle ID resolves to a content-addressed
+schema-1 document. Profile load verifies the bundle's exact primary model,
+declared external-artifact identities/digests, provenance/evidence, normalized
+live runtime/memory contract, digest-pinned image, and geometry. No real
+release bundle exists yet.
 
 ### 12.2 Fabric integrity level
 
@@ -1071,18 +1074,25 @@ seal projections with `match | legacy-unsealed | unvalidated`; file or profile
 seal drift fails activation/launch, and launch passes the exact snapshot path.
 Container labels and multi-node startup evidence carry the same identities.
 
-No real profile seal is issued in this release, so existing profiles remain
-legacy-unsealed and downloads still default to upstream `main`. Replicated and
-live-mount paths are not yet bound by this mechanism. Rank-local witness schema
-1 is implemented for `library-hot`: activation full-verifies before atomic
-creation, and launch validates the live profile/controller expectation before
-using it. A metadata match hashes zero model bytes. Missing, malformed, or
-drifted metadata is reported on stderr, then full-verifies and atomically
-refreshes only on success; content mismatch fails without refresh. Persisted
-`drift | mismatch` inventory states, per-rank runtime-source/witness labels,
-and a standalone machine-validated bundle for normalized runtime
-configuration, resolved image digest, topology class, and evidence remain
-gaps. A local observed manifest may match an expected seal but cannot issue it.
+The schema-1 bundle is stored at
+`models/validation-bundles/<validation_bundle_id>.json`. Profile loading checks
+its content address, primary-model/seal equality, provenance/evidence parity,
+declared external-artifact identities/digests, and exact normalized live
+profile contract. The resolved image must be digest-pinned.
+`scripts/model-library.sh validation-bundle verify
+<profile>` exposes that check for release and operator review.
+
+No real profile seal or bundle is issued in this release, so existing profiles
+remain legacy-unsealed and downloads still default to upstream `main`.
+Replicated and live-mount paths are not yet bound by this mechanism. Rank-local
+witness schema 1 is implemented for `library-hot`: activation full-verifies
+before atomic creation, and launch validates the live profile/controller
+expectation before using it. A metadata match hashes zero model bytes. Missing,
+malformed, or drifted metadata is reported on stderr, then full-verifies and
+atomically refreshes only on success; content mismatch fails without refresh.
+Persisted `drift | mismatch` inventory states and per-rank
+runtime-source/witness labels remain gaps. A local observed manifest may match
+an expected seal but cannot issue it.
 
 ### 15.4 Live owner dependency
 
@@ -1280,62 +1290,63 @@ These points combine current evidence with the accepted architecture:
 ## 18. Remaining implementation questions
 
 The architectural questions about immutable validation identity, full content
-seals, and home-rank materialization are answered by ADR 0001. The remaining
-questions concern implementation shape and unrelated catalog/live-mount policy.
+seals, home-rank materialization, and the standalone validation-bundle
+representation are answered by ADR 0001 and the content-addressed schema-1
+contract under `models/validation-bundles/`. The remaining questions concern
+implementation shape and unrelated catalog/live-mount policy.
 
 ### Catalog and release identity
 
 1. Should profiles remain trusted shell, or should the catalog become
    declarative data with a generated/validated runtime layer?
-2. What standalone reviewed representation should carry the complete validation bundle now that `models/seals/` carries only its expected-model projection and bundle ID?
-3. Is `TP × PP = NODES` sufficient as the catalog geometry invariant, or should
+2. Is `TP × PP = NODES` sufficient as the catalog geometry invariant, or should
    rank placement and permitted topology subsets be explicit profile data?
-4. Should diagnostic and serving profiles live in the same directory/status
+3. Should diagnostic and serving profiles live in the same directory/status
    namespace?
 
 ### Distribution and integrity
 
-5. How should legacy replicated caches migrate to expected-seal comparison
+4. How should legacy replicated caches migrate to expected-seal comparison
    without deriving trusted identity from arbitrary user-observed content?
-6. Should remote `rsync` use exact mirroring/deletion and revision checks rather
+5. Should remote `rsync` use exact mirroring/deletion and revision checks rather
    than preserving possible extra remote files?
-7. Should a remote one-node placement leave a controller-side staging copy, and
+6. Should a remote one-node placement leave a controller-side staging copy, and
    if so, what retention/garbage-collection policy should govern it?
-8. Is an operator-mounted absolute catalog sufficiently specified, or should
+7. Is an operator-mounted absolute catalog sufficiently specified, or should
    Pulsar validate server/mount identity, options, and exact subtree exposure?
 
 ### Live fabric
 
-9. Is NFSv4.2/RPC-RDMA with hard read-only mounts an acceptable live runtime
+8. Is NFSv4.2/RPC-RDMA with hard read-only mounts an acceptable live runtime
    dependency, or should it be limited to transfer/materialization?
-10. Is requiring the owner to be a serving rank correct, or should a dedicated
+9. Is requiring the owner to be a serving rank correct, or should a dedicated
     storage-only node be allowed despite adding another role/failure domain?
-11. Are exact client addresses plus `root_squash`/anonymous UID mapping adequate
+10. Are exact client addresses plus `root_squash`/anonymous UID mapping adequate
     for the target trusted lab, or is authenticated/encrypted storage required?
-12. Is restarting/enabling the host NFS service during apply too broad a side
+11. Is restarting/enabling the host NFS service during apply too broad a side
     effect for a profile-scoped tool?
-13. Is forbidding all complete client replicas the right single-copy invariant,
+12. Is forbidding all complete client replicas the right single-copy invariant,
     or should a managed emergency cache be allowed with explicit state?
-14. Does the lack of automatic fallback correctly preserve claim clarity, or
+13. Does the lack of automatic fallback correctly preserve claim clarity, or
     is an explicit preapproved failover policy preferable?
 
 ### Product workflow and operations
 
-15. If exposed in the wizard, what evidence should drive owner recommendation:
+14. If exposed in the wizard, what evidence should drive owner recommendation:
     existing complete copy, free disk, boot reliability, thermal role, or
     operator preference?
-16. Should a three-node topology let the user select any two-node serving pair
+15. Should a three-node topology let the user select any two-node serving pair
     and a separate storage owner, or is deterministic first-N placement safer?
-17. Is connected-display-at-boot an acceptable declared owner policy, or must
+16. Is connected-display-at-boot an acceptable declared owner policy, or must
     fabric promotion require a validated headless boot configuration?
-18. Which promotion gates are essential for a feature preview versus general
+17. Which promotion gates are essential for a feature preview versus general
     availability?
 
 ### Alternative architecture
 
-19. Does transfer-then-materialize offer a materially better resilience model,
+18. Does transfer-then-materialize offer a materially better resilience model,
     or does it merely reproduce replication with more machinery?
-20. Are checkpoint-native per-rank shards, object storage, NVMe-oF, or another
+19. Are checkpoint-native per-rank shards, object storage, NVMe-oF, or another
     mechanism a better long-term fit than either current mode?
 
 ## 19. Formal acceptance criteria
@@ -1446,15 +1457,17 @@ demonstrated correct two-node loading, output parity after load, and recovery
 from interruption, link loss, and NFS restart.
 
 The separate library-hot implementation now provides federated catalog
-discovery, optional cold resolution, schema-3 expected/observed hot seals, release
-before launch, and pin/purge lifecycle hooks. Counterbalanced DeepSeek trials
+discovery, optional cold resolution, schema-3 expected/observed hot seals,
+content-addressed schema-1 validation-bundle verification, release before
+launch, and pin/purge lifecycle hooks. Counterbalanced DeepSeek trials
 showed that 8-stream SSH-over-RoCE activation was 1.898x the control-path
 median; 16 streams did not improve the median. Integrity, interruption/retry,
 catalog-loss restart, real serving, and 447k-context gates also passed.
 
 Those wins are not a promotion. The durable-home symlink, optional
-expected-seal/exact-revision enforcement, and rank-local witness fast path are
-implemented. A legacy-unsealed Qwen canary physically passed the symlink,
+expected-seal/exact-revision enforcement, validation-bundle/live-profile
+binding, and rank-local witness fast path are implemented. A legacy-unsealed
+Qwen canary physically passed the symlink,
 both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
 lifecycle gate. The active-use removal guard also passed deterministic and
 three-node physical checks using disposable synthetic repositories. This does
@@ -1468,7 +1481,7 @@ three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing under the
 > historical profile-validation ledger. Model-library code can enforce reviewed
-> exact seals, but this release issues none, so current profiles remain
-> legacy-unsealed. Sealed local-hot activation over
+> exact seals and their complete validation bundles, but this release issues
+> none, so current profiles remain legacy-unsealed. Sealed local-hot activation over
 > SSH-over-RoCE is a measured promotion candidate, and live NFS/RDMA is a
 > separate documented experiment; neither is a promoted default.

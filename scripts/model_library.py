@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal, InvalidOperation
 import json
 import os
 import pathlib
@@ -41,6 +42,8 @@ SNAPSHOT_MANIFEST_KIND = "model-library-snapshot-manifest"
 SNAPSHOT_INTEGRITY_SCHEME = "sha256-snapshot-manifest-v1"
 EXPECTED_MODEL_SEAL_SCHEMA_VERSION = 1
 EXPECTED_MODEL_SEAL_KIND = "pulsar-expected-model-seal"
+VALIDATION_BUNDLE_SCHEMA_VERSION = 1
+VALIDATION_BUNDLE_KIND = "pulsar-validation-bundle"
 HOME_REMOVAL_PLAN_SCHEMA_VERSION = 1
 HOME_REMOVAL_PLAN_KIND = "pulsar-model-library-home-removal-plan"
 HOME_REMOVAL_RESULT_KIND = "pulsar-model-library-home-removal-result"
@@ -50,6 +53,7 @@ HOT_BUDGET_PLAN_KIND = "pulsar-model-library-hot-budget-plan"
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 HF_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
 HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
+IMAGE_DIGEST_RE = re.compile(r"@sha256:([0-9a-f]{64})$")
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
 STATUS_TESTED = re.compile(r"^tested")
@@ -138,13 +142,478 @@ def expected_model_seal_id(seal: dict[str, Any]) -> str:
     return canonical_json_digest(expected_model_seal_identity(seal))
 
 
-def _validate_evidence_path(value: Any) -> str:
+def validation_bundle_identity(bundle: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in bundle.items() if key != "bundle_id"}
+
+
+def validation_bundle_id(bundle: dict[str, Any]) -> str:
+    return canonical_json_digest(validation_bundle_identity(bundle))
+
+
+def _validate_rfc3339_utc(value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        fail(f"{label} must be an RFC3339 UTC timestamp")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        fail(f"{label} must be an RFC3339 UTC timestamp")
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        fail(f"{label} must include UTC")
+    return value
+
+
+def _normalize_decimal(
+    value: Any,
+    *,
+    label: str,
+    allow_empty: bool = False,
+) -> str | None:
+    if allow_empty and (value is None or value == ""):
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        fail(f"{label} must be numeric")
+    try:
+        parsed = Decimal(str(value))
+    except InvalidOperation:
+        fail(f"{label} must be numeric")
+    if not parsed.is_finite() or parsed < 0:
+        fail(f"{label} must be a non-negative finite number")
+    normalized = format(parsed, "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    if normalized in {"", "-0"}:
+        normalized = "0"
+    return normalized
+
+
+def _validate_string_list(value: Any, *, label: str) -> list[str]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or "\x00" in item for item in value
+    ):
+        fail(f"{label} must be a list of strings")
+    return list(value)
+
+
+def _engine_arg_value(args: list[str], flag: str, default: str) -> str:
+    for index, item in enumerate(args):
+        if item == flag:
+            if index + 1 >= len(args):
+                fail(f"profile contract {flag} requires a value")
+            return args[index + 1]
+        if item.startswith(flag + "="):
+            return item.split("=", 1)[1]
+    return default
+
+
+def build_profile_contract(
+    *,
+    model_id: str,
+    served_name: str,
+    image: str,
+    nodes: int,
+    port: int,
+    gpu_mem_util: str,
+    engine_args: list[str],
+    container_env: list[str],
+    spec_decode_args: list[str],
+    recommended_spec: bool,
+    profile_purpose: str,
+    topology_class: str,
+    min_rails_per_pair: int,
+    weights_gib: str | None = None,
+    weights_ram_gib: str | None = None,
+    kv_gib: str | None = None,
+    overhead_gib: str | None = None,
+    mem_min_free_gib: str | None = None,
+) -> dict[str, Any]:
+    """Build the canonical behavior/safety contract for one sourced profile."""
+    if HF_MODEL_ID_RE.fullmatch(model_id or "") is None:
+        fail("profile contract model_id must be an exact Hugging Face repository ID")
+    if not isinstance(served_name, str) or not served_name:
+        fail("profile contract served_name is invalid")
+    image_match = IMAGE_DIGEST_RE.search(image or "")
+    if image_match is None:
+        fail("profile contract image must be pinned by @sha256 digest")
+    if not isinstance(nodes, int) or isinstance(nodes, bool) or nodes < 1:
+        fail("profile contract nodes must be positive")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        fail("profile contract port is invalid")
+    engine_args = _validate_string_list(engine_args, label="profile contract engine_args")
+    container_env = _validate_string_list(
+        container_env, label="profile contract container_env"
+    )
+    spec_decode_args = _validate_string_list(
+        spec_decode_args, label="profile contract spec_decode_args"
+    )
+    if not isinstance(recommended_spec, bool):
+        fail("profile contract recommended_spec must be boolean")
+    if recommended_spec and not spec_decode_args:
+        fail("profile contract recommended_spec requires spec_decode_args")
+    if profile_purpose not in {"serving", "diagnostic"}:
+        fail("profile contract profile_purpose is invalid")
+
+    try:
+        tp = int(_engine_arg_value(engine_args, "--tensor-parallel-size", "1"))
+        pp = int(_engine_arg_value(engine_args, "--pipeline-parallel-size", "1"))
+    except ValueError:
+        fail("profile contract tensor/pipeline parallel size must be integer")
+    if tp < 1 or pp < 1 or tp * pp != nodes:
+        fail("profile contract TP x PP must equal nodes")
+    if nodes == 1:
+        if topology_class != "single" or min_rails_per_pair != 0:
+            fail("single-node profile contract requires single topology and zero rails")
+    else:
+        if topology_class != "roce-full-mesh" or min_rails_per_pair < 1:
+            fail("multi-node profile contract requires roce-full-mesh and positive rails")
+        if _engine_arg_value(engine_args, "--distributed-executor-backend", "") != "mp":
+            fail("multi-node profile contract requires distributed backend mp")
+
+    normalized_gpu = _normalize_decimal(
+        gpu_mem_util, label="profile contract gpu_mem_util"
+    )
+    assert normalized_gpu is not None
+    if Decimal(normalized_gpu) <= 0 or Decimal(normalized_gpu) > 1:
+        fail("profile contract gpu_mem_util must be greater than zero and at most one")
+    memory_values = {
+        "weights_gib": weights_gib,
+        "weights_ram_gib": weights_ram_gib,
+        "kv_gib": kv_gib,
+        "overhead_gib": overhead_gib,
+        "mem_min_free_gib": mem_min_free_gib,
+    }
+    memory_policy = {
+        key: _normalize_decimal(
+            value,
+            label=f"profile contract {key}",
+            allow_empty=True,
+        )
+        for key, value in memory_values.items()
+    }
+    return {
+        "model_id": model_id,
+        "served_name": served_name,
+        "image": {
+            "reference": image,
+            "digest": "sha256:" + image_match.group(1),
+        },
+        "runtime": {
+            "port": port,
+            "gpu_mem_util": normalized_gpu,
+            "engine_args": engine_args,
+            "container_env": container_env,
+            "spec_decode_args": spec_decode_args,
+            "recommended_spec": recommended_spec,
+        },
+        "geometry": {
+            "nodes": nodes,
+            "tensor_parallel_size": tp,
+            "pipeline_parallel_size": pp,
+            "topology_class": topology_class,
+            "min_rails_per_pair": min_rails_per_pair,
+        },
+        "profile_purpose": profile_purpose,
+        "memory_policy": memory_policy,
+    }
+
+
+def validate_profile_contract_document(contract: Any) -> dict[str, Any]:
+    if not isinstance(contract, dict) or set(contract) != {
+        "model_id",
+        "served_name",
+        "image",
+        "runtime",
+        "geometry",
+        "profile_purpose",
+        "memory_policy",
+    }:
+        fail("validation bundle profile_contract fields are invalid")
+    image = contract.get("image")
+    runtime = contract.get("runtime")
+    geometry = contract.get("geometry")
+    memory = contract.get("memory_policy")
+    if not isinstance(image, dict) or set(image) != {"reference", "digest"}:
+        fail("validation bundle profile_contract image is invalid")
+    if not isinstance(runtime, dict) or set(runtime) != {
+        "port",
+        "gpu_mem_util",
+        "engine_args",
+        "container_env",
+        "spec_decode_args",
+        "recommended_spec",
+    }:
+        fail("validation bundle profile_contract runtime is invalid")
+    if not isinstance(geometry, dict) or set(geometry) != {
+        "nodes",
+        "tensor_parallel_size",
+        "pipeline_parallel_size",
+        "topology_class",
+        "min_rails_per_pair",
+    }:
+        fail("validation bundle profile_contract geometry is invalid")
+    if not isinstance(memory, dict) or set(memory) != {
+        "weights_gib",
+        "weights_ram_gib",
+        "kv_gib",
+        "overhead_gib",
+        "mem_min_free_gib",
+    }:
+        fail("validation bundle profile_contract memory_policy is invalid")
+    rebuilt = build_profile_contract(
+        model_id=contract.get("model_id"),
+        served_name=contract.get("served_name"),
+        image=image.get("reference"),
+        nodes=geometry.get("nodes"),
+        port=runtime.get("port"),
+        gpu_mem_util=runtime.get("gpu_mem_util"),
+        engine_args=runtime.get("engine_args"),
+        container_env=runtime.get("container_env"),
+        spec_decode_args=runtime.get("spec_decode_args"),
+        recommended_spec=runtime.get("recommended_spec"),
+        profile_purpose=contract.get("profile_purpose"),
+        topology_class=geometry.get("topology_class"),
+        min_rails_per_pair=geometry.get("min_rails_per_pair"),
+        weights_gib=memory.get("weights_gib"),
+        weights_ram_gib=memory.get("weights_ram_gib"),
+        kv_gib=memory.get("kv_gib"),
+        overhead_gib=memory.get("overhead_gib"),
+        mem_min_free_gib=memory.get("mem_min_free_gib"),
+    )
+    if rebuilt != contract:
+        fail("validation bundle profile_contract is not canonical")
+    if image.get("digest") != rebuilt["image"]["digest"]:
+        fail("validation bundle profile_contract image digest differs from reference")
+    return contract
+
+
+def _validate_evidence_path(
+    value: Any,
+    *,
+    label: str = "expected seal evidence",
+) -> str:
     if not isinstance(value, str) or not value.strip():
-        fail("expected seal evidence path must be a non-empty string")
+        fail(f"{label} path must be a non-empty string")
     path = pathlib.PurePosixPath(value)
     if path.is_absolute() or ".." in path.parts or "\\" in value:
-        fail(f"expected seal evidence path must be repository-relative: {value!r}")
+        fail(f"{label} path must be repository-relative: {value!r}")
     return value
+
+
+def _validate_validation_bundle_model(item: Any, *, index: int) -> dict[str, Any]:
+    required = {
+        "role",
+        "model_id",
+        "revision_kind",
+        "snapshot_revision",
+        "manifest",
+    }
+    if not isinstance(item, dict) or set(item) != required:
+        fail(f"validation bundle models[{index}] fields are invalid")
+    role = item.get("role")
+    if not isinstance(role, str) or SAFE_REV.fullmatch(role) is None:
+        fail(f"validation bundle models[{index}].role is invalid")
+    model_id = item.get("model_id")
+    if not isinstance(model_id, str) or HF_MODEL_ID_RE.fullmatch(model_id) is None:
+        fail(f"validation bundle models[{index}].model_id is invalid")
+    if item.get("revision_kind") != "huggingface-commit":
+        fail(
+            f"validation bundle models[{index}].revision_kind "
+            "must be huggingface-commit"
+        )
+    revision = item.get("snapshot_revision")
+    if not isinstance(revision, str) or HF_COMMIT_RE.fullmatch(revision) is None:
+        fail(f"validation bundle models[{index}].snapshot_revision is invalid")
+    manifest = item.get("manifest")
+    if not isinstance(manifest, dict) or set(manifest) != {"scheme", "manifest_id"}:
+        fail(f"validation bundle models[{index}].manifest is invalid")
+    if manifest.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME:
+        fail(f"validation bundle models[{index}].manifest scheme is unsupported")
+    digest = manifest.get("manifest_id")
+    if not isinstance(digest, str) or SHA256_HEX_RE.fullmatch(digest) is None:
+        fail(f"validation bundle models[{index}].manifest_id is invalid")
+    return item
+
+
+def _validate_external_artifact(item: Any, *, index: int) -> dict[str, Any]:
+    required = {"role", "artifact_id", "revision", "digest"}
+    if not isinstance(item, dict) or set(item) != required:
+        fail(f"validation bundle external_artifacts[{index}] fields are invalid")
+    role = item.get("role")
+    if role not in {"tokenizer", "draft-model", "adapter", "model-code", "other"}:
+        fail(f"validation bundle external_artifacts[{index}].role is invalid")
+    for field in ("artifact_id", "revision"):
+        value = item.get(field)
+        if not isinstance(value, str) or not value.strip():
+            fail(
+                f"validation bundle external_artifacts[{index}].{field} is invalid"
+            )
+    digest = item.get("digest")
+    if not isinstance(digest, dict) or set(digest) != {"scheme", "value"}:
+        fail(f"validation bundle external_artifacts[{index}].digest is invalid")
+    if digest.get("scheme") != "sha256":
+        fail(
+            f"validation bundle external_artifacts[{index}].digest scheme "
+            "is unsupported"
+        )
+    value = digest.get("value")
+    if not isinstance(value, str) or SHA256_HEX_RE.fullmatch(value) is None:
+        fail(
+            f"validation bundle external_artifacts[{index}].digest value is invalid"
+        )
+    return item
+
+
+def validate_validation_bundle(
+    bundle: Any,
+    *,
+    profile: str | None = None,
+    expected_seal: dict[str, Any] | None = None,
+    expected_profile_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate one repository-reviewed immutable validation bundle."""
+    required = {
+        "schema_version",
+        "kind",
+        "profile",
+        "models",
+        "external_artifacts",
+        "profile_contract",
+        "evidence",
+        "provenance",
+        "bundle_id",
+    }
+    if not isinstance(bundle, dict) or set(bundle) != required:
+        missing = sorted(required - set(bundle)) if isinstance(bundle, dict) else []
+        extra = sorted(set(bundle) - required) if isinstance(bundle, dict) else []
+        fail(f"validation bundle fields differ (missing={missing}, extra={extra})")
+    if bundle.get("schema_version") != VALIDATION_BUNDLE_SCHEMA_VERSION:
+        fail("validation bundle schema_version is unsupported")
+    if bundle.get("kind") != VALIDATION_BUNDLE_KIND:
+        fail("validation bundle kind is invalid")
+    bundle_profile = bundle.get("profile")
+    if (
+        not isinstance(bundle_profile, str)
+        or SAFE_REV.fullmatch(bundle_profile) is None
+    ):
+        fail("validation bundle profile is invalid")
+    if profile and bundle_profile != profile:
+        fail(
+            f"validation bundle profile differs: "
+            f"bundle={bundle_profile} profile={profile}"
+        )
+
+    models = bundle.get("models")
+    if not isinstance(models, list) or not models:
+        fail("validation bundle models must be a non-empty list")
+    roles: set[str] = set()
+    model_identities: set[tuple[str, str]] = set()
+    for index, item in enumerate(models):
+        _validate_validation_bundle_model(item, index=index)
+        role = item["role"]
+        identity = (item["model_id"], item["snapshot_revision"])
+        if role in roles:
+            fail(f"validation bundle model role is duplicated: {role}")
+        if identity in model_identities:
+            fail("validation bundle model identity is duplicated")
+        roles.add(role)
+        model_identities.add(identity)
+    primary_models = [item for item in models if item["role"] == "primary"]
+    if len(primary_models) != 1:
+        fail("validation bundle must contain exactly one primary model")
+
+    external = bundle.get("external_artifacts")
+    if not isinstance(external, list):
+        fail("validation bundle external_artifacts must be a list")
+    external_keys: set[tuple[str, str, str]] = set()
+    for index, item in enumerate(external):
+        _validate_external_artifact(item, index=index)
+        key = (item["role"], item["artifact_id"], item["revision"])
+        if key in external_keys:
+            fail("validation bundle external artifact is duplicated")
+        external_keys.add(key)
+
+    contract = validate_profile_contract_document(bundle.get("profile_contract"))
+    primary = primary_models[0]
+    if primary["model_id"] != contract["model_id"]:
+        fail("validation bundle primary model differs from profile_contract")
+
+    evidence = bundle.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        fail("validation bundle must include evidence")
+    checked_evidence = [
+        _validate_evidence_path(item, label="validation bundle evidence")
+        for item in evidence
+    ]
+    if len(set(checked_evidence)) != len(checked_evidence):
+        fail("validation bundle evidence contains duplicates")
+
+    provenance = bundle.get("provenance")
+    if not isinstance(provenance, dict) or set(provenance) != {
+        "issuer",
+        "issued_at",
+    }:
+        fail("validation bundle provenance fields are invalid")
+    issuer = provenance.get("issuer")
+    if not isinstance(issuer, str) or not issuer.strip():
+        fail("validation bundle issuer is invalid")
+    _validate_rfc3339_utc(
+        provenance.get("issued_at"),
+        label="validation bundle issued_at",
+    )
+
+    bundle_digest = bundle.get("bundle_id")
+    if (
+        not isinstance(bundle_digest, str)
+        or SHA256_HEX_RE.fullmatch(bundle_digest) is None
+        or bundle_digest != validation_bundle_id(bundle)
+    ):
+        fail("validation bundle identity mismatch")
+
+    if expected_profile_contract is not None:
+        expected_profile_contract = validate_profile_contract_document(
+            expected_profile_contract
+        )
+        if contract != expected_profile_contract:
+            fail("validation bundle profile contract differs from live profile")
+
+    if expected_seal is not None:
+        expected_seal = validate_expected_model_seal(
+            expected_seal,
+            profile=bundle_profile,
+            model_id=primary["model_id"],
+        )
+        seal_model = {
+            "model_id": expected_seal["model_id"],
+            "revision_kind": expected_seal["revision_kind"],
+            "snapshot_revision": expected_seal["snapshot_revision"],
+            "manifest": expected_seal["manifest"],
+        }
+        bundle_model = {
+            key: value for key, value in primary.items() if key != "role"
+        }
+        if seal_model != bundle_model:
+            fail("validation bundle primary model differs from expected seal")
+        seal_provenance = expected_seal["provenance"]
+        if seal_provenance["validation_bundle_id"] != bundle_digest:
+            fail("expected seal validation_bundle_id differs from bundle")
+        if seal_provenance["issuer"] != provenance["issuer"]:
+            fail("expected seal issuer differs from validation bundle")
+        if seal_provenance["issued_at"] != provenance["issued_at"]:
+            fail("expected seal issued_at differs from validation bundle")
+        if seal_provenance["evidence"] != evidence:
+            fail("expected seal evidence differs from validation bundle")
+    return bundle
+
+
+def validation_bundle_projection(bundle: dict[str, Any]) -> dict[str, Any]:
+    bundle = validate_validation_bundle(bundle)
+    contract = bundle["profile_contract"]
+    return {
+        "bundle_id": bundle["bundle_id"],
+        "profile": bundle["profile"],
+        "image_digest": contract["image"]["digest"],
+        "nodes": contract["geometry"]["nodes"],
+        "topology_class": contract["geometry"]["topology_class"],
+    }
 
 
 def validate_expected_model_seal(
@@ -294,6 +763,73 @@ def load_profile_expected_model_seal(
                 f"{profile}: expected seal evidence is missing: {evidence_ref}"
             )
     return seal
+
+
+def load_profile_validation_bundle(
+    profile_path: pathlib.Path,
+    seal: dict[str, Any] | None,
+    *,
+    profile: str,
+    model_id: str,
+) -> dict[str, Any] | None:
+    if seal is None:
+        return None
+    seal = validate_expected_model_seal(
+        seal,
+        profile=profile,
+        model_id=model_id,
+    )
+    bundle_digest = seal["provenance"]["validation_bundle_id"]
+    bundle_root = (profile_path.parent / "validation-bundles").resolve()
+    candidate = (bundle_root / f"{bundle_digest}.json").resolve()
+    try:
+        candidate.relative_to(bundle_root)
+    except ValueError:
+        fail(f"{profile}: validation bundle escapes models/validation-bundles/")
+    if not candidate.is_file():
+        fail(
+            f"{profile}: validation bundle is missing: "
+            f"validation-bundles/{bundle_digest}.json"
+        )
+    bundle = validate_validation_bundle(
+        load_json(candidate),
+        profile=profile,
+        expected_seal=seal,
+    )
+    repository_root = profile_path.parent.parent.resolve()
+    for evidence_ref in bundle["evidence"]:
+        evidence_path = (repository_root / evidence_ref).resolve()
+        try:
+            evidence_path.relative_to(repository_root)
+        except ValueError:
+            fail(f"{profile}: validation bundle evidence escapes the repository")
+        if not evidence_path.is_file():
+            fail(
+                f"{profile}: validation bundle evidence is missing: {evidence_ref}"
+            )
+    return bundle
+
+
+def load_profile_validation_identity(
+    profile_path: pathlib.Path,
+    reference: str | None,
+    *,
+    profile: str,
+    model_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    seal = load_profile_expected_model_seal(
+        profile_path,
+        reference,
+        profile=profile,
+        model_id=model_id,
+    )
+    bundle = load_profile_validation_bundle(
+        profile_path,
+        seal,
+        profile=profile,
+        model_id=model_id,
+    )
+    return seal, bundle
 
 
 def hub_dirname_to_model_id(dirname: str) -> str | None:
@@ -995,7 +1531,7 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
             model_id = f"{parts[-2]}/{parts[-1]}"
     else:
         model_id = model
-    expected_seal = load_profile_expected_model_seal(
+    expected_seal, validation_bundle = load_profile_validation_identity(
         path,
         expected_seal_ref,
         profile=path.stem,
@@ -1013,6 +1549,7 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
         "validated": tested,
         "expected_model_seal_ref": expected_seal_ref,
         "expected_model_seal": expected_seal,
+        "validation_bundle": validation_bundle,
     }
 
 
@@ -1044,7 +1581,7 @@ def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
             expected_seal_ref = line.split("=", 1)[1].strip().strip("\"'") or None
     if not model or model.startswith("/"):
         return None
-    expected_seal = load_profile_expected_model_seal(
+    expected_seal, validation_bundle = load_profile_validation_identity(
         path,
         expected_seal_ref,
         profile=path.stem,
@@ -1061,6 +1598,7 @@ def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
         "validated": tested,
         "expected_model_seal_ref": expected_seal_ref,
         "expected_model_seal": expected_seal,
+        "validation_bundle": validation_bundle,
     }
 
 
@@ -1097,6 +1635,39 @@ def load_model_profile(
     if parsed is None:
         fail(f"{profile}: model profile is missing or invalid")
     return parsed
+
+
+def verify_profile_validation_bundle(
+    *,
+    models_dir: str | pathlib.Path,
+    profile: str,
+    profile_contract: dict[str, Any],
+    expected_seal_ref: str | None = None,
+) -> dict[str, Any]:
+    parsed = load_hf_profile(models_dir, profile)
+    seal = parsed.get("expected_model_seal")
+    bundle = parsed.get("validation_bundle")
+    if seal is None or bundle is None:
+        fail(f"{profile}: no reviewed expected seal and validation bundle")
+    if (
+        expected_seal_ref is not None
+        and parsed.get("expected_model_seal_ref") != expected_seal_ref
+    ):
+        fail(f"{profile}: sourced EXPECTED_MODEL_SEAL differs from parsed profile")
+    profile_contract = validate_profile_contract_document(profile_contract)
+    validate_validation_bundle(
+        bundle,
+        profile=profile,
+        expected_seal=seal,
+        expected_profile_contract=profile_contract,
+    )
+    return {
+        "state": "match",
+        "profile": profile,
+        "profile_contract_id": canonical_json_digest(profile_contract),
+        "expected_model_seal": expected_model_seal_projection(seal),
+        "validation_bundle": validation_bundle_projection(bundle),
+    }
 
 
 def observed_model_seal_projection(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -1284,6 +1855,11 @@ def build_catalog(
                 "expected_model_seal_ref": profile.get("expected_model_seal_ref"),
                 "expected_model_seal": (
                     expected_model_seal_projection(expected) if expected else None
+                ),
+                "validation_bundle": (
+                    validation_bundle_projection(profile["validation_bundle"])
+                    if profile.get("validation_bundle")
+                    else None
                 ),
             }
             entry["profiles"].append(profile["profile"])
@@ -5098,6 +5674,37 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify_profile_bundle(args: argparse.Namespace) -> int:
+    contract = build_profile_contract(
+        model_id=args.model_id,
+        served_name=args.served_name,
+        image=args.image,
+        nodes=args.nodes,
+        port=args.port,
+        gpu_mem_util=args.gpu_mem_util,
+        engine_args=args.engine_arg,
+        container_env=args.container_env,
+        spec_decode_args=args.spec_decode_arg,
+        recommended_spec=bool(args.recommended_spec),
+        profile_purpose=args.profile_purpose,
+        topology_class=args.topology_class,
+        min_rails_per_pair=args.min_rails_per_pair,
+        weights_gib=args.weights_gib or None,
+        weights_ram_gib=args.weights_ram_gib or None,
+        kv_gib=args.kv_gib or None,
+        overhead_gib=args.overhead_gib or None,
+        mem_min_free_gib=args.mem_min_free_gib or None,
+    )
+    result = verify_profile_validation_bundle(
+        models_dir=args.models_dir,
+        profile=args.profile,
+        profile_contract=contract,
+        expected_seal_ref=args.expected_seal_ref or None,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     catalog = load_catalog(args.catalog)
     if args.json:
@@ -6096,6 +6703,42 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--primary", action="append", default=[], help="identity_or_model=node_id")
     build.add_argument("--json", action="store_true")
     build.set_defaults(func=cmd_build)
+
+    verify_bundle = sub.add_parser(
+        "verify-profile-bundle",
+        help="Verify a sourced profile against its reviewed validation bundle",
+    )
+    verify_bundle.add_argument("--models-dir", required=True)
+    verify_bundle.add_argument("--profile", required=True)
+    verify_bundle.add_argument("--expected-seal-ref", default="")
+    verify_bundle.add_argument("--model-id", required=True)
+    verify_bundle.add_argument("--served-name", required=True)
+    verify_bundle.add_argument("--image", required=True)
+    verify_bundle.add_argument("--nodes", type=int, required=True)
+    verify_bundle.add_argument("--port", type=int, required=True)
+    verify_bundle.add_argument("--gpu-mem-util", required=True)
+    verify_bundle.add_argument("--engine-arg", action="append", default=[])
+    verify_bundle.add_argument("--container-env", action="append", default=[])
+    verify_bundle.add_argument("--spec-decode-arg", action="append", default=[])
+    verify_bundle.add_argument(
+        "--recommended-spec",
+        type=int,
+        choices=(0, 1),
+        required=True,
+    )
+    verify_bundle.add_argument(
+        "--profile-purpose",
+        choices=("serving", "diagnostic"),
+        required=True,
+    )
+    verify_bundle.add_argument("--topology-class", required=True)
+    verify_bundle.add_argument("--min-rails-per-pair", type=int, required=True)
+    verify_bundle.add_argument("--weights-gib", default="")
+    verify_bundle.add_argument("--weights-ram-gib", default="")
+    verify_bundle.add_argument("--kv-gib", default="")
+    verify_bundle.add_argument("--overhead-gib", default="")
+    verify_bundle.add_argument("--mem-min-free-gib", default="")
+    verify_bundle.set_defaults(func=cmd_verify_profile_bundle)
 
     list_p = sub.add_parser("list", help="List catalog entries")
     list_p.add_argument("--catalog", required=True)

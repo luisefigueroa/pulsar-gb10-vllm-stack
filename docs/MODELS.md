@@ -34,8 +34,9 @@ numbers). Nothing gets `tested` from arithmetic.
 
 **Model-content identity transition:** these rows are historical profile
 validation claims. The model-library now supports reviewed expected seals,
-exact commit/manifest comparison, and exact snapshot launch, but no current
-profile references an issued seal. All remain `legacy-unsealed`, and normal
+content-addressed validation bundles, exact commit/manifest comparison, and
+exact snapshot launch, but no current profile references an issued seal or
+bundle. All remain `legacy-unsealed`, and normal
 replicated downloads are still mutable. `STATUS=tested*` must not be interpreted
 as validating arbitrary bytes under the same repository ID. Do not generate an
 expected seal from a user cache; recover the lab artifact used for the run or
@@ -44,6 +45,7 @@ creates a rank-local serve witness; unchanged launch uses its metadata fast
 path, while drift rehashes. That mechanism preserves an established identity
 but cannot turn these legacy rows into lab-sealed claims. See
 [models/seals/README.md](../models/seals/README.md),
+[models/validation-bundles/README.md](../models/validation-bundles/README.md),
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 

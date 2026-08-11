@@ -45,10 +45,13 @@ calculation.
 2. Build the complete SHA-256 snapshot manifest from the exact lab bytes.
 3. Run all required model, image, profile, geometry, correctness, context, and
    soak gates and publish sanitized repository-relative evidence.
-4. Produce the reviewed validation-bundle ID in the lab pipeline.
-5. Commit the seal and add its `EXPECTED_MODEL_SEAL` reference to the tested
-   profile in the same pull request.
-6. Run `scripts/selftest.sh`, refresh the site catalog, and activate without
+4. Author the complete validation bundle under
+   `models/validation-bundles/<validation_bundle_id>.json` from those lab
+   inputs and evidence.
+5. Commit the seal, bundle, and profile `EXPECTED_MODEL_SEAL` reference in the
+   same pull request.
+6. Run `scripts/model-library.sh validation-bundle verify <profile>` and
+   `scripts/selftest.sh`, refresh the site catalog, and activate without
    `--allow-unvalidated`. Activation must full-hash the source and report
    `identity_status=match` before it can publish ready hot state.
 
@@ -71,8 +74,14 @@ refreshes the witness. The exact `snapshots/<revision>` path is then passed to
 vLLM. Container labels and multi-node startup evidence carry revision, identity
 status, seal ID, and validation-bundle ID.
 
-A standalone machine-readable validation-bundle document and lab issuance
-automation are still pending; the current seal carries the lab-provided bundle
-ID without reconstructing that bundle from user state. The witness is only an
-accelerator for identity previously established by a full verification. It is
-never a seal issuer.
+Schema-1 validation-bundle loading is implemented. The seal's
+`validation_bundle_id` must resolve to the content-addressed document under
+`models/validation-bundles/`. Profile load verifies its bundle ID, exact
+primary model identity, provenance/evidence parity with the seal, declared
+external-artifact identities/digests, and the normalized live profile contract
+including the digest-pinned image and geometry. No real profile seal or bundle ships yet;
+trusted lab issuance remains a reviewed release activity and is never derived
+from user state. See
+[validation-bundles/README.md](../validation-bundles/README.md). The witness is
+only an accelerator for identity previously established by full verification.
+It is never a seal issuer.

@@ -204,6 +204,7 @@ load_conf() {
 
   MODEL="" SERVED_NAME="" IMAGE="" NOTES="" STATUS="?"
   EXPECTED_MODEL_SEAL=""
+  PROFILE_VALIDATION_BUNDLE_JSON=""
   NODES=1 PORT=8000 GPU_MEM_UTIL=0.80
   ENGINE_ARGS=() CONTAINER_ENV=() SPEC_DECODE_ARGS=()
   WEIGHTS_GIB="" WEIGHTS_RAM_GIB="" KV_GIB="" OVERHEAD_GIB="" MEM_MIN_FREE_GIB=""
@@ -241,6 +242,7 @@ load_conf() {
 
   [[ "$NODES" =~ ^[1-9][0-9]*$ ]] || die "$name: NODES must be a positive integer"
   validate_profile_contract
+  [ -z "$EXPECTED_MODEL_SEAL" ] || validate_loaded_profile_bundle
 }
 
 engine_arg_value() {
@@ -288,6 +290,47 @@ validate_profile_contract() {
   elif [ "$TOPOLOGY_CLASS" != single ]; then
     die "$CONF_NAME: single-node profile requires TOPOLOGY_CLASS=single"
   fi
+}
+
+validate_loaded_profile_bundle() {
+  local tool item output
+  local -a args
+  tool="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
+  [ -f "$tool" ] || die "missing $tool"
+  args=(
+    verify-profile-bundle
+    --models-dir "$REPO_DIR/models"
+    --profile "$CONF_NAME"
+    --expected-seal-ref "$EXPECTED_MODEL_SEAL"
+    --model-id "$MODEL"
+    --served-name "$SERVED_NAME"
+    --image "$IMAGE"
+    --nodes "$NODES"
+    --port "$PORT"
+    --gpu-mem-util "$GPU_MEM_UTIL"
+    --recommended-spec "$RECOMMENDED_SPEC"
+    --profile-purpose "$PROFILE_PURPOSE"
+    --topology-class "$TOPOLOGY_CLASS"
+    --min-rails-per-pair "$MIN_RAILS_PER_PAIR"
+    "--weights-gib=$WEIGHTS_GIB"
+    "--weights-ram-gib=$WEIGHTS_RAM_GIB"
+    "--kv-gib=$KV_GIB"
+    "--overhead-gib=$OVERHEAD_GIB"
+    "--mem-min-free-gib=$MEM_MIN_FREE_GIB"
+  )
+  for item in ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"}; do
+    args+=("--engine-arg=$item")
+  done
+  for item in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do
+    args+=("--container-env=$item")
+  done
+  for item in ${SPEC_DECODE_ARGS[@]+"${SPEC_DECODE_ARGS[@]}"}; do
+    args+=("--spec-decode-arg=$item")
+  done
+  if ! output=$(python3 "$tool" "${args[@]}"); then
+    die "$CONF_NAME: reviewed validation bundle does not match the sourced profile"
+  fi
+  PROFILE_VALIDATION_BUNDLE_JSON="$output"
 }
 
 model_source_kind() {

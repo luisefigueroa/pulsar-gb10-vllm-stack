@@ -10,16 +10,20 @@ repository-relative sequence; expect roughly half a day, mostly machine time.
 
 Model-library catalog schema 2 and hot schema 3 now enforce a reviewed
 lab-issued expected model seal, exact commit/manifest comparison, and exact
-snapshot launch. Existing rows predate that binding and remain
-`legacy-unsealed`; no real profile seal ships yet. Never create an expected
-seal from arbitrary user-observed cache contents. Recover the exact lab
-artifact used for the historical run or revalidate the intended revision, then
+snapshot launch. Schema-1 validation bundles additionally bind declared
+external-artifact identities/digests, the digest-pinned image, normalized live
+runtime/memory settings, geometry, provenance, and evidence. Existing rows
+predate that binding and remain `legacy-unsealed`; no real profile seal or
+bundle ships yet. Never
+create an expected seal or bundle from arbitrary user-observed cache contents.
+Recover the exact lab artifact used for the historical run or revalidate the
+intended revision, then
 follow [models/seals/README.md](../models/seals/README.md) in the evidence pull
 request. A future mirror may distribute the bytes, but hosting location is not
 validation identity. The rank-local serve witness is implemented: activation
 creates it only after full verification, while unchanged launch uses metadata
-and drift visibly rehashes before refresh. The standalone full
-validation-bundle document remains pending.
+and drift visibly rehashes before refresh. The standalone bundle verifier is
+implemented; trusted issuance of a real bundle remains pending.
 
 ## 0. Prep (5 min)
 
@@ -217,9 +221,11 @@ model/profile/image is already `tested` with replicated weights.
 - Update conf `STATUS`/`NOTES` and `docs/VALIDATION.md` with the measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
-- Publish the lab-reviewed expected seal and validation-bundle ID in the same
-  evidence pull request, then add the profile `EXPECTED_MODEL_SEAL` reference.
-  Never promote a locally observed user seal into expected identity.
+- Publish the complete lab-reviewed validation bundle and expected seal in the
+  same evidence pull request, then add the profile `EXPECTED_MODEL_SEAL`
+  reference. Run `scripts/model-library.sh validation-bundle verify <profile>`
+  before merge. Never promote a locally observed user seal or bundle into
+  expected identity.
 - Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
 - Archive the new raw results under `results/` using a unique bump tag.
 - Run a current-tree secret/path scan and inspect `git diff` before merge.
