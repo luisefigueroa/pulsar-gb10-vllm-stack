@@ -201,6 +201,14 @@ Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local
 input and must not be published verbatim.
 
+The current policy passed deterministic contracts and a non-mutating physical
+gate on 2026-08-11. It inventoried every confirmed rank, then proved exact
+home-zero/non-home manifest accounting, default-reserve preservation, explicit
+hard-cap refusal, and unchanged hot ownership on both DeepSeek-selected ranks. See
+`results/model-library/model-library-hot-budget-admission-gate-20260811.json`.
+Repeat it when admission arithmetic, hot-root accounting, selected-rank
+barriers, or hot locking changes.
+
 The path remains experimental if any artifact is absent, even when the same
 model/profile/image is already `tested` with replicated weights.
 

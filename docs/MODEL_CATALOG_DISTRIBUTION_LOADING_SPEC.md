@@ -1258,8 +1258,8 @@ These points combine current evidence with the accepted architecture:
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
 3. Treat 8-stream SSH-over-RoCE activation into sealed local hot as a separate
-   promotion candidate. Do not guide it until real release seals, flagship
-   admission evidence, determinism, and soak pass.
+   promotion candidate. Do not guide it until real release seals, determinism,
+   and soak pass.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
@@ -1460,10 +1460,11 @@ lifecycle gate. The active-use removal guard also passed deterministic and
 three-node physical checks using disposable synthetic repositories. This does
 not close real release identity. Exact all-rank hot admission is now
 implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
-default, but the non-mutating flagship capacity artifact, strict DeepSeek
-determinism, and sustained soak remain pending. Live NFS/RDMA additionally
-retains its owner-recovery and three-node validation work. The accurate product
-claim is:
+default. The non-mutating flagship capacity artifact passed exact home-zero and
+non-home manifest accounting, default-reserve preservation, explicit hard-cap
+refusal, and unchanged hot ownership. Strict DeepSeek determinism and sustained
+soak remain pending. Live NFS/RDMA additionally retains its owner-recovery and
+three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing under the
 > historical profile-validation ledger. Model-library code can enforce reviewed

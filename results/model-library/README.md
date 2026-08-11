@@ -27,12 +27,13 @@ The filesystem-backed admission policy is implemented and deterministic tests
 cover default reserve arithmetic, optional hard caps, durable-home zero charge,
 sealed-hot manifest charge, replacement accounting, no-follow inventory,
 malformed/untracked bytes, exact all-rank merge, narrow output, and hot-lock
-contention. A sanitized non-mutating flagship-sized physical artifact is still
-pending; raw `budget --json` output is site-local because it contains node and
-path identity.
+contention. The sanitized non-mutating flagship-sized physical artifact passed
+on 2026-08-11; raw `budget --json` output remains site-local because it contains
+node and path identity.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| `model-library-hot-budget-admission-gate-20260811.json` | Exact all-rank filesystem admission; DeepSeek revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`; capacity only, not model identity | Current hot-budget gate PASS; no model bytes changed; not a promotion | Reviewed; site topology, paths, hosts, node/interface identity, and filesystem identity omitted |
 | `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Current lifecycle gate PASS; no production model was deleted; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
 | `qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json` | Physical durable-home symlink, sealed-hot, witness fallback, exact-snapshot launch, pin/restart, mismatch, and no-follow purge; Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, observed manifest only | Current lifecycle gate PASS; identity remains `legacy-unsealed`; not a promotion | Reviewed; site topology, paths, filesystem identity, and witness IDs omitted |
 | `model-library-promotion-assessment-20260810.json` | Consolidated DeepSeek/Qwen promotion assessment; schema-2 local content digest, not a lab-issued expected seal | Historical assessment; materialization recommendation superseded | Embedded redaction declaration; topology/site fields omitted |

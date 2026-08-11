@@ -568,7 +568,7 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Hot purge and force-unpin no-follow behavior passes the physical gate
 [x] Warm-home pin/restart reports its durable-home dependency honestly
 [x] Exact all-rank admission charges durable-home as zero and sealed-hot by manifest bytes
-[ ] Flagship-sized non-home admission preserves the default reserve on every selected rank
+[x] Flagship-sized non-home admission preserves the default reserve on every selected rank
 ```
 
 The active-use guard has deterministic coverage for exact target shape,
@@ -581,9 +581,13 @@ was removed. See
 The witness checks above have deterministic control-plane coverage. The
 legacy-unsealed Qwen canary also passed the physical symlink, both-rank witness,
 read-only launch, pin/restart, mismatch, and no-follow purge gate on 2026-08-11.
-Neither artifact issues a real seal or replaces the flagship-sized budget,
-strict DeepSeek determinism, or sustained soak gates. Failed or incomplete
-evidence is not rewritten because an architectural blocker changed.
+The non-mutating DeepSeek admission gate then passed exact home-zero/non-home
+manifest accounting, the default filesystem reserve, an explicit hard-cap
+refusal, and unchanged hot ownership. See
+`results/model-library/model-library-hot-budget-admission-gate-20260811.json`.
+None of these artifacts issues a real seal or replaces strict DeepSeek
+determinism or sustained soak. Failed or incomplete evidence is not rewritten
+because an architectural blocker changed.
 
 ---
 
@@ -633,3 +637,4 @@ evidence is not rewritten because an architectural blocker changed.
 | 2026-08-11 | Guarded durable-home removal probes every confirmed node, blocks all managed hot/container references, serializes supported lifecycle commands, requires explicit last-home acknowledgement, and deletes only an unchanged exact single-revision repository. |
 | 2026-08-11 | The durable-home removal guard passed deterministic tests and a three-node physical gate using disposable synthetic repositories; the real Qwen home and adjacent repository content were preserved. |
 | 2026-08-11 | Implemented exact all-rank hot admission: sealed-hot ranks charge manifest bytes, durable-home views charge zero, the default preserves max(64 GiB, 5% filesystem capacity), optional hard caps remain explicit, and blocked capacity never auto-evicts or falls back. |
+| 2026-08-11 | The non-mutating flagship gate inventoried every confirmed rank, then passed on both DeepSeek-selected ranks: 166,898,661,074 bytes on sealed-hot, zero on durable-home, default reserve preserved, one-byte hard cap blocked, and hot ownership unchanged. |
