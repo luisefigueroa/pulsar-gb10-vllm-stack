@@ -8,6 +8,7 @@ import io
 import json
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -26,7 +27,9 @@ class ExpectedModelSealContracts(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         self.models_dir = self.root / "models"
         self.seals_dir = self.models_dir / "seals"
+        self.bundles_dir = self.models_dir / "validation-bundles"
         self.seals_dir.mkdir(parents=True)
+        self.bundles_dir.mkdir(parents=True)
         self.profile = "sealed-fixture"
         self.model_id = "Fixture/Sealed-Model"
         self.revision = "a" * 40
@@ -52,6 +55,31 @@ class ExpectedModelSealContracts(unittest.TestCase):
         evidence = self.root / "results" / "model-library" / "fixture.json"
         evidence.parent.mkdir(parents=True)
         evidence.write_text("{}\n", encoding="utf-8")
+        self.evidence = ["results/model-library/fixture.json"]
+        self.issuer = "pulsar-lab-fixture"
+        self.issued_at = "2026-08-10T12:00:00Z"
+        self.image = "registry.invalid/fixture@sha256:" + ("9" * 64)
+        self.profile_contract = model_library.build_profile_contract(
+            model_id=self.model_id,
+            served_name=self.profile,
+            image=self.image,
+            nodes=1,
+            port=8000,
+            gpu_mem_util="0.80",
+            engine_args=[],
+            container_env=[],
+            spec_decode_args=[],
+            recommended_spec=False,
+            profile_purpose="serving",
+            topology_class="single",
+            min_rails_per_pair=0,
+            weights_gib="1",
+            weights_ram_gib="1",
+            kv_gib="2",
+            overhead_gib="3",
+            mem_min_free_gib="4",
+        )
+        self.bundle = self._write_bundle()
         self.seal_path = self.seals_dir / f"{self.profile}.json"
         self._write_seal()
         self._write_profile()
@@ -71,10 +99,10 @@ class ExpectedModelSealContracts(unittest.TestCase):
                 "manifest_id": self.manifest["manifest_id"],
             },
             "provenance": {
-                "validation_bundle_id": "b" * 64,
-                "issuer": "pulsar-lab-fixture",
-                "issued_at": "2026-08-10T12:00:00Z",
-                "evidence": ["results/model-library/fixture.json"],
+                "validation_bundle_id": self.bundle["bundle_id"],
+                "issuer": self.issuer,
+                "issued_at": self.issued_at,
+                "evidence": self.evidence,
             },
         }
         seal.update(changes)
@@ -86,11 +114,59 @@ class ExpectedModelSealContracts(unittest.TestCase):
         self.seal_path.write_text(json.dumps(seal), encoding="utf-8")
         return seal
 
+    def _bundle(self, **changes: object) -> dict[str, object]:
+        bundle: dict[str, object] = {
+            "schema_version": 1,
+            "kind": "pulsar-validation-bundle",
+            "profile": self.profile,
+            "models": [
+                {
+                    "role": "primary",
+                    "model_id": self.model_id,
+                    "revision_kind": "huggingface-commit",
+                    "snapshot_revision": self.revision,
+                    "manifest": {
+                        "scheme": "sha256-snapshot-manifest-v1",
+                        "manifest_id": self.manifest["manifest_id"],
+                    },
+                }
+            ],
+            "external_artifacts": [],
+            "profile_contract": self.profile_contract,
+            "evidence": self.evidence,
+            "provenance": {
+                "issuer": self.issuer,
+                "issued_at": self.issued_at,
+            },
+        }
+        bundle.update(changes)
+        bundle["bundle_id"] = model_library.validation_bundle_id(bundle)
+        return bundle
+
+    def _write_bundle(self, **changes: object) -> dict[str, object]:
+        bundle = self._bundle(**changes)
+        path = self.bundles_dir / f"{bundle['bundle_id']}.json"
+        path.write_text(json.dumps(bundle), encoding="utf-8")
+        self.bundle_path = path
+        return bundle
+
     def _write_profile(self, *, status: str = "tested", sealed: bool = True) -> None:
         lines = [
             f"MODEL=\"{self.model_id}\"",
+            f"SERVED_NAME=\"{self.profile}\"",
+            f"IMAGE=\"{self.image}\"",
             f"STATUS=\"{status}\"",
             "NODES=1",
+            "TOPOLOGY_CLASS=\"single\"",
+            "MIN_RAILS_PER_PAIR=0",
+            "PORT=8000",
+            "GPU_MEM_UTIL=0.80",
+            "PROFILE_PURPOSE=\"serving\"",
+            "WEIGHTS_GIB=1",
+            "WEIGHTS_RAM_GIB=1",
+            "KV_GIB=2",
+            "OVERHEAD_GIB=3",
+            "MEM_MIN_FREE_GIB=4",
         ]
         if sealed:
             lines.append(f"EXPECTED_MODEL_SEAL=\"seals/{self.seal_path.name}\"")
@@ -144,6 +220,9 @@ class ExpectedModelSealContracts(unittest.TestCase):
         self.assertEqual(entry["validation"], "expected-unverified")
         expected = entry["profile_validation"][0]["expected_model_seal"]
         self.assertEqual(expected["manifest_id"], self.manifest["manifest_id"])
+        bundle = entry["profile_validation"][0]["validation_bundle"]
+        self.assertEqual(bundle["bundle_id"], self.bundle["bundle_id"])
+        self.assertEqual(bundle["image_digest"], "sha256:" + ("9" * 64))
         self.assertTrue(model_library.catalog_entry_has_expected_identity(entry))
 
     def test_activation_full_hash_matches_lab_expected_seal(self) -> None:
@@ -326,10 +405,9 @@ class ExpectedModelSealContracts(unittest.TestCase):
 
     def test_seal_change_creates_distinct_hot_identity(self) -> None:
         first = self._plan()
-        changed = self._seal()
-        changed["provenance"]["validation_bundle_id"] = "d" * 64
-        changed["seal_id"] = model_library.expected_model_seal_id(changed)
-        self.seal_path.write_text(json.dumps(changed), encoding="utf-8")
+        self.issued_at = "2026-08-10T12:00:01Z"
+        self.bundle = self._write_bundle()
+        self._write_seal()
         self._write_catalog()
         second = self._plan()
         self.assertNotEqual(first["content_id"], second["content_id"])
@@ -370,16 +448,128 @@ class ExpectedModelSealContracts(unittest.TestCase):
 
     def test_live_seal_change_invalidates_existing_hot_stamp(self) -> None:
         _plan, instance = self._materialize_hot()
-        changed = self._seal()
-        changed["provenance"]["validation_bundle_id"] = "d" * 64
-        changed["seal_id"] = model_library.expected_model_seal_id(changed)
-        self.seal_path.write_text(json.dumps(changed), encoding="utf-8")
+        self.issued_at = "2026-08-10T12:00:01Z"
+        self.bundle = self._write_bundle()
+        self._write_seal()
         live_profile = model_library.load_hf_profile(self.models_dir, self.profile)
         stamp = model_library.load_hot_stamp(instance)
         with self.assertRaisesRegex(
             model_library.ModelLibraryError, "provenance differs"
         ):
             model_library.verify_hot_stamp_against_profile(stamp, live_profile)
+
+    def test_expected_seal_requires_its_content_addressed_bundle(self) -> None:
+        self.bundle_path.unlink()
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "validation bundle is missing",
+        ):
+            model_library.load_hf_profile(self.models_dir, self.profile)
+
+    def test_live_profile_contract_drift_fails_closed(self) -> None:
+        changed = json.loads(json.dumps(self.profile_contract))
+        changed["runtime"]["port"] = 9000
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "profile contract differs from live profile",
+        ):
+            model_library.verify_profile_validation_bundle(
+                models_dir=self.models_dir,
+                profile=self.profile,
+                profile_contract=changed,
+                expected_seal_ref=f"seals/{self.seal_path.name}",
+            )
+
+    def test_shell_load_conf_checks_sourced_profile_against_bundle(self) -> None:
+        command = r'''
+. "$1/scripts/lib.sh"
+REPO_DIR="$2"
+PULSAR_MODEL_LIBRARY_PY="$1/scripts/model_library.py"
+load_conf sealed-fixture
+printf '%s\n' "$PROFILE_VALIDATION_BUNDLE_JSON"
+'''
+        matched = subprocess.run(
+            ["bash", "-c", command, "bundle-test", str(REPO_ROOT), str(self.root)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(matched.returncode, 0, matched.stderr)
+        self.assertEqual(json.loads(matched.stdout)["state"], "match")
+
+        profile_path = self.models_dir / f"{self.profile}.conf"
+        profile_path.write_text(
+            profile_path.read_text(encoding="utf-8").replace(
+                "PORT=8000",
+                "PORT=9000",
+            ),
+            encoding="utf-8",
+        )
+        drifted = subprocess.run(
+            ["bash", "-c", command, "bundle-test", str(REPO_ROOT), str(self.root)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(drifted.returncode, 0)
+        self.assertIn("does not match the sourced profile", drifted.stderr)
+
+    def test_external_artifact_identity_is_content_addressed(self) -> None:
+        artifacts = [
+            {
+                "role": "adapter",
+                "artifact_id": "Fixture/Adapter",
+                "revision": "adapter-release-1",
+                "digest": {"scheme": "sha256", "value": "8" * 64},
+            }
+        ]
+        changed = self._bundle(external_artifacts=artifacts)
+        model_library.validate_validation_bundle(changed, profile=self.profile)
+        self.assertNotEqual(changed["bundle_id"], self.bundle["bundle_id"])
+
+        malformed = json.loads(json.dumps(changed))
+        malformed["external_artifacts"][0]["digest"]["value"] = "not-a-digest"
+        malformed["bundle_id"] = model_library.validation_bundle_id(malformed)
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "digest value is invalid",
+        ):
+            model_library.validate_validation_bundle(malformed)
+
+    def test_profile_contract_requires_digest_pinned_image(self) -> None:
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "image must be pinned",
+        ):
+            model_library.build_profile_contract(
+                model_id=self.model_id,
+                served_name=self.profile,
+                image="registry.invalid/fixture:mutable",
+                nodes=1,
+                port=8000,
+                gpu_mem_util="0.8",
+                engine_args=[],
+                container_env=[],
+                spec_decode_args=[],
+                recommended_spec=False,
+                profile_purpose="serving",
+                topology_class="single",
+                min_rails_per_pair=0,
+            )
+
+    def test_bundle_model_or_provenance_cannot_diverge_from_seal(self) -> None:
+        changed = json.loads(json.dumps(self.bundle))
+        changed["provenance"]["issuer"] = "another-lab"
+        changed["bundle_id"] = model_library.validation_bundle_id(changed)
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "validation_bundle_id differs from bundle",
+        ):
+            model_library.validate_validation_bundle(
+                changed,
+                profile=self.profile,
+                expected_seal=self._seal(),
+            )
 
     def test_seal_identity_and_path_traversal_fail_closed(self) -> None:
         bad = self._seal()

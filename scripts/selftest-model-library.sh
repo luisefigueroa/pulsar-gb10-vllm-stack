@@ -151,6 +151,17 @@ python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["recommendations"]
 # CLI wrapper local-only path needs topology — skip full refresh; smoke --help
 assert_true "model-library.sh help" bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'Federated model library'"
 assert_true "model-library.sh is executable" test -x "$REPO_DIR/scripts/model-library.sh"
+assert_true "validation-bundle verify documented in CLI" \
+  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'validation-bundle verify'"
+set +e
+bundle_unsealed_out=$("$REPO_DIR/scripts/model-library.sh" \
+  validation-bundle verify qwen3-1.7b --json 2>&1)
+bundle_unsealed_rc=$?
+set -e
+assert_eq "validation-bundle verify refuses unsealed profile" \
+  "$bundle_unsealed_rc" "1"
+assert_true "validation-bundle verify explains missing trust root" \
+  grep -q "no reviewed expected seal" <<<"$bundle_unsealed_out"
 
 # never write under HF_CACHE: build output is only catalog path
 assert_true "catalog written outside node caches" test -f "$STATE/catalog.json"

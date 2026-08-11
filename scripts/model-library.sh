@@ -30,6 +30,7 @@ Usage:
   scripts/model-library.sh catalog refresh [--json] [--local-only]
   scripts/model-library.sh catalog list [--validated] [--json]
   scripts/model-library.sh catalog show <model_id|profile> [--json]
+  scripts/model-library.sh validation-bundle verify <profile> [--json]
   scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
   scripts/model-library.sh home check <profile|model_id|model_id@revision>
@@ -68,6 +69,8 @@ Notes:
   • Catalog identity labels distinguish reviewed expected seals from
     legacy-unsealed STATUS claims; local bytes never create expected identity.
     catalog list --validated shows present entries with reviewed expected seals.
+    Sealed profiles also require a content-addressed validation bundle whose
+    model, image, runtime, geometry, artifact, and evidence contract matches.
     activate refuses legacy-unsealed profiles unless --allow-unvalidated marks
     an explicit experiment; that flag never bypasses a configured seal mismatch.
   • Duplicate complete homes refuse resolve until a primary is chosen.
@@ -102,6 +105,55 @@ Notes:
     or capacity fallback occurs.
   • Does not change wizard defaults or --weight-source fabric.
 EOF
+}
+
+cmd_validation_bundle_verify() {
+  local profile="${1:-}" json=0
+  shift || true
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      *) die "unknown validation-bundle verify option: $1" ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] \
+    || die "usage: validation-bundle verify <profile> [--json]"
+  load_conf "$profile"
+  [ -n "$EXPECTED_MODEL_SEAL" ] \
+    || die "$profile has no reviewed expected seal or validation bundle"
+  [ -n "$PROFILE_VALIDATION_BUNDLE_JSON" ] \
+    || die "$profile validation bundle verification returned no result"
+  if [ "$json" = 1 ]; then
+    printf '%s\n' "$PROFILE_VALIDATION_BUNDLE_JSON"
+    return 0
+  fi
+  local -a fields=()
+  mapfile -t fields < <(
+    printf '%s' "$PROFILE_VALIDATION_BUNDLE_JSON" |
+      python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["validation_bundle"]["bundle_id"])
+print(d["expected_model_seal"]["seal_id"])
+print(d["expected_model_seal"]["snapshot_revision"])
+print(d["validation_bundle"]["image_digest"])
+print(d["validation_bundle"]["topology_class"])
+print(d["validation_bundle"]["nodes"])
+print(d["profile_contract_id"])
+'
+  )
+  [ "${#fields[@]}" -eq 7 ] \
+    || die "$profile validation bundle result is incomplete"
+  render_human_section "Validation bundle" \
+    "profile" "$profile" \
+    "state" "match" \
+    "bundle" "${fields[0]}" \
+    "model seal" "${fields[1]}" \
+    "revision" "${fields[2]}" \
+    "image" "${fields[3]}" \
+    "geometry" "${fields[5]} node(s) · ${fields[4]}" \
+    "profile contract" "${fields[6]}"
 }
 
 # Experiment: control (default) vs roce (rsync -e ssh to fabric IPs).
@@ -388,6 +440,19 @@ scan_rank_homes() {
   printf '%s\n' "$out"
 }
 
+validate_catalog_profile_contracts() {
+  local conf profile
+  for conf in "$REPO_DIR"/models/*.conf; do
+    [ -e "$conf" ] || continue
+    profile="${conf##*/}"
+    profile="${profile%.conf}"
+    # A sealed profile is validated here from its sourced Bash values. The
+    # Python catalog parser deliberately handles only the small declarative
+    # subset and cannot reconstruct arrays, defaults, or resolved image state.
+    load_conf "$profile"
+  done
+}
+
 cmd_catalog_refresh() {
   local json=0 local_only=0 tmp all_homes rank homes_piece
   while [ $# -gt 0 ]; do
@@ -400,6 +465,7 @@ cmd_catalog_refresh() {
     shift
   done
   require_py
+  validate_catalog_profile_contracts
   load_cluster_topology >/dev/null \
     || die "confirmed topology required (scripts/detect-fabric.sh --write-topology)"
 
@@ -2636,6 +2702,15 @@ main() {
         refresh) cmd_catalog_refresh "$@" ;;
         list) cmd_catalog_list "$@" ;;
         show) cmd_catalog_show "$@" ;;
+        *) usage; exit 2 ;;
+      esac
+      ;;
+    validation-bundle)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      local bundle_sub="$1"
+      shift
+      case "$bundle_sub" in
+        verify) cmd_validation_bundle_verify "$@" ;;
         *) usage; exit 2 ;;
       esac
       ;;
