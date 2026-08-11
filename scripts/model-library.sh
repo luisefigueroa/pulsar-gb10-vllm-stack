@@ -32,6 +32,10 @@ Usage:
   scripts/model-library.sh catalog show <model_id|profile> [--json]
   scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
+  scripts/model-library.sh home check <profile|model_id|model_id@revision>
+      [--node RANK|NODE_ID] [--allow-last-home] [--json]
+  scripts/model-library.sh home remove <profile|model_id|model_id@revision>
+      [--node RANK|NODE_ID] [--allow-last-home] --yes
   scripts/model-library.sh cold scan [--json] [--complete-only] [--root PATH]
   scripts/model-library.sh cold show <model_id|/abs/path> [--json]
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
@@ -67,6 +71,11 @@ Notes:
     activate refuses legacy-unsealed profiles unless --allow-unvalidated marks
     an explicit experiment; that flag never bypasses a configured seal mismatch.
   • Duplicate complete homes refuse resolve until a primary is chosen.
+  • home check/remove probes managed containers and every hot root on all
+    confirmed nodes. Any dependent retained view blocks removal, including
+    ready, verifying, or pinned hot state. Unobservable nodes fail closed.
+    Removal is exact-repository-only, refuses multi-revision hub trees, and
+    needs --allow-last-home before deleting the final durable copy.
   • activate --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -622,6 +631,236 @@ cmd_cleanup_recommend() {
   else
     python3 "$PY_TOOL" cleanup-recommend --catalog "$CATALOG_FILE"
   fi
+}
+
+home_removal_target_json() {
+  local query="${1:?}" node_selector="${2:-}"
+  local -a args=(
+    resolve-home-removal-target
+    --catalog "$CATALOG_FILE"
+  )
+  [ -z "$node_selector" ] || args+=(--node "$node_selector")
+  args+=("$query")
+  python3 "$PY_TOOL" "${args[@]}"
+}
+
+inspect_removable_home_on_rank() {
+  local rank="${1:?}" cache_root="${2:?}" hub_path="${3:?}"
+  local model_id="${4:?}" revision="${5:?}" node_id="${6:?}"
+  local command
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" inspect-removable-home \
+      --cache-root "$cache_root" \
+      --hub-path "$hub_path" \
+      --model-id "$model_id" \
+      --revision "$revision" \
+      --rank "$rank" \
+      --node-id "$node_id"
+    return
+  fi
+  command=$(shell_join_q python3 - inspect-removable-home \
+    --cache-root "$cache_root" \
+    --hub-path "$hub_path" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --rank "$rank" \
+    --node-id "$node_id")
+  ssh_node "$rank" "$command" <"$PY_TOOL"
+}
+
+scan_home_hot_references_on_rank() {
+  local rank="${1:?}" node_id="${2:?}" command
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" scan-home-hot-references \
+      --hot-root "$HOT_ROOT" \
+      --rank "$rank" \
+      --node-id "$node_id"
+    return
+  fi
+  command=$(shell_join_q python3 - scan-home-hot-references \
+    --hot-root "$HOT_ROOT" \
+    --rank "$rank" \
+    --node-id "$node_id")
+  ssh_node "$rank" "$command" <"$PY_TOOL"
+}
+
+collect_managed_container_metadata_on_rank() {
+  local rank="${1:?}" destination="${2:?}" ids id metadata rc host
+  : >"$destination"
+  if [ "$rank" = 0 ]; then
+    ids=$(list_managed_container_ids_local) \
+      || die "home removal: cannot enumerate managed containers on rank 0"
+  else
+    host="${CLUSTER_NODE_SSH_HOSTS[$rank]:-}"
+    [ -n "$host" ] || die "home removal: rank $rank has no confirmed SSH host"
+    ids=$(list_managed_container_ids_remote "$host") \
+      || die "home removal: rank $rank is unreachable or Docker is unavailable"
+  fi
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    rc=0
+    if [ "$rank" = 0 ]; then
+      metadata=$(container_ownership_inspect_local "$id") || rc=$?
+    else
+      metadata=$(container_ownership_inspect_remote "$host" "$id") || rc=$?
+    fi
+    if [ "$rc" -eq 3 ]; then
+      continue
+    fi
+    [ "$rc" -eq 0 ] \
+      || die "home removal: rank $rank container metadata became unobservable"
+    printf '%s\n' "$metadata" >>"$destination"
+  done <<<"$ids"
+}
+
+build_home_removal_plan() (
+  set -euo pipefail
+  local query="${1:?}" node_selector="${2:-}" allow_last_home="${3:-0}"
+  local target tmp rank node_id home_rank home_node_id cache_root hub_path
+  local model_id revision
+  local -a plan_args
+  require_py
+  ensure_catalog
+  load_cluster_topology >/dev/null \
+    || die "home removal: confirmed topology required"
+  target=$(home_removal_target_json "$query" "$node_selector")
+  home_rank=$(printf '%s' "$target" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
+  home_node_id=$(printf '%s' "$target" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["home"]["node_id"])')
+  cache_root=$(printf '%s' "$target" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["home"]["cache_root"])')
+  hub_path=$(printf '%s' "$target" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["home"]["hub_path"])')
+  model_id=$(printf '%s' "$target" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  revision=$(printf '%s' "$target" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["revision"])')
+  if ! [[ "$home_rank" =~ ^[0-9]+$ ]] \
+      || [ "$home_rank" -ge "$CLUSTER_TOPOLOGY_COUNT" ]; then
+    die "home removal: catalog home rank is outside confirmed topology"
+  fi
+  [ "${CLUSTER_NODE_IDS[$home_rank]:-}" = "$home_node_id" ] \
+    || die "home removal: catalog home node differs from confirmed topology"
+
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-removal.XXXXXX")
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+  inspect_removable_home_on_rank \
+    "$home_rank" "$cache_root" "$hub_path" "$model_id" "$revision" \
+    "$home_node_id" >"$tmp/inspection.json" \
+    || die "home removal: authoritative home inspection failed"
+
+  for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+    node_id="${CLUSTER_NODE_IDS[$rank]:-}"
+    [ -n "$node_id" ] || die "home removal: rank $rank lacks a node ID"
+    scan_home_hot_references_on_rank "$rank" "$node_id" \
+      >"$tmp/hot-$rank.json" \
+      || die "home removal: rank $rank hot references are unobservable"
+    collect_managed_container_metadata_on_rank \
+      "$rank" "$tmp/containers-$rank.jsonl"
+  done
+
+  plan_args=(
+    plan-home-removal
+    --catalog "$CATALOG_FILE"
+    --topology-file "$CLUSTER_TOPOLOGY_FILE"
+    --topology-id "$CLUSTER_TOPOLOGY_ID"
+    --models-dir "$REPO_DIR/models"
+    --inspection-file "$tmp/inspection.json"
+    --observations-dir "$tmp"
+  )
+  [ -z "$node_selector" ] || plan_args+=(--node "$node_selector")
+  [ "$allow_last_home" = 0 ] || plan_args+=(--allow-last-home)
+  plan_args+=("$query")
+  python3 "$PY_TOOL" "${plan_args[@]}"
+)
+
+render_home_removal_plan_json() {
+  local plan="${1:?}"
+  python3 "$PY_TOOL" render-home-removal-plan --plan-json "$plan"
+}
+
+execute_home_removal_on_rank() {
+  local plan="${1:?}" rank node_id command
+  rank=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["rank"])')
+  node_id=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["node_id"])')
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" execute-home-removal \
+      --plan-json "$plan" --rank "$rank" --node-id "$node_id"
+    return
+  fi
+  command=$(shell_join_q python3 - execute-home-removal \
+    --plan-json "$plan" --rank "$rank" --node-id "$node_id")
+  ssh_node "$rank" "$command" <"$PY_TOOL"
+}
+
+cmd_home_check() {
+  local query="" node_selector="" allow_last_home=0 json=0 plan state
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --node)
+        shift
+        [ $# -gt 0 ] || die "--node needs a rank or node ID"
+        node_selector="$1"
+        ;;
+      --allow-last-home) allow_last_home=1 ;;
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] \
+    || die "usage: home check <profile|model_id|identity> [--node RANK|NODE_ID]"
+  plan=$(build_home_removal_plan "$query" "$node_selector" "$allow_last_home")
+  if [ "$json" = 1 ]; then
+    printf '%s\n' "$plan"
+  else
+    render_home_removal_plan_json "$plan"
+  fi
+  state=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["state"])')
+  [ "$state" = eligible ]
+}
+
+cmd_home_remove() {
+  local query="" node_selector="" allow_last_home=0 yes=0 plan state
+  local result_file
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --node)
+        shift
+        [ $# -gt 0 ] || die "--node needs a rank or node ID"
+        node_selector="$1"
+        ;;
+      --allow-last-home) allow_last_home=1 ;;
+      --yes|-y) yes=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] \
+    || die "usage: home remove <profile|model_id|identity> [--node RANK|NODE_ID] --yes"
+  plan=$(build_home_removal_plan "$query" "$node_selector" "$allow_last_home")
+  render_home_removal_plan_json "$plan"
+  state=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["state"])')
+  [ "$state" = eligible ] \
+    || die "home removal is blocked; no durable content was changed"
+  [ "$yes" = 1 ] \
+    || die "home removal requires --yes after reviewing the eligible plan"
+
+  result_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-home-removed.XXXXXX")
+  trap 'rm -f "$result_file"' RETURN
+  execute_home_removal_on_rank "$plan" >"$result_file" \
+    || die "home removal failed; inspect the reported retirement path before retrying"
+  if ! cmd_catalog_refresh >/dev/null; then
+    die "home was removed, but catalog refresh failed; run catalog refresh before serving"
+  fi
+  python3 "$PY_TOOL" render-home-removal-result --result-file "$result_file"
 }
 
 # Keep the confirmed control endpoint as the SSH identity. Transfer modes
@@ -2246,6 +2485,15 @@ main() {
   local cmd="$1"
   shift
   case "$cmd" in
+    -h|--help|help) ;;
+    home)
+      acquire_model_library_lifecycle_lock exclusive
+      ;;
+    *)
+      acquire_model_library_lifecycle_lock shared
+      ;;
+  esac
+  case "$cmd" in
     catalog)
       [ $# -ge 1 ] || { usage; exit 2; }
       local sub="$1"
@@ -2259,6 +2507,16 @@ main() {
       ;;
     resolve) cmd_resolve "$@" ;;
     cleanup-recommend) cmd_cleanup_recommend "$@" ;;
+    home)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      local home_sub="$1"
+      shift
+      case "$home_sub" in
+        check) cmd_home_check "$@" ;;
+        remove) cmd_home_remove "$@" ;;
+        *) usage; exit 2 ;;
+      esac
+      ;;
     cold)
       [ $# -ge 1 ] || { usage; exit 2; }
       local cold_sub="$1"

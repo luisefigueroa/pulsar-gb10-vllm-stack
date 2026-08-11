@@ -1719,6 +1719,8 @@ PY
 command="${1:-}"
 [ -n "$command" ] || { usage; exit 2; }
 shift
+[ "$command" = help ] || [ "$command" = -h ] || [ "$command" = --help ] \
+  || acquire_model_library_lifecycle_lock shared
 case "$command" in
   configure)
     [ "$#" -ge 1 ] || die "configure requires a profile" 2

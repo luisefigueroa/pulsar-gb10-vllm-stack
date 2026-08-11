@@ -42,6 +42,8 @@ lab-issued validation bundle. Routine home-rank hot materialization is ruled
 out. Current code implements the reviewed expected-seal reference, exact commit
 selection/comparison, seal-bound hot state, exact snapshot launch, and the
 rank-local fast metadata witness with visible full-verification fallback. It
+also implements confirmation-gated exact-repository home removal with
+all-confirmed-node reference observation and lifecycle serialization. It
 does not yet implement a standalone validation-bundle document, and no real
 profile seal ships yet.
 
@@ -159,6 +161,12 @@ that way.
   `sealed-hot`, or `live-mount`.
 - **Confirmed topology**: a validated site manifest with stable identity and
   verified connectivity. A missing manifest is not “confirmed one node.”
+- **Home-removal plan**: one ephemeral decision document binding an exact
+  catalog home, repository metadata fingerprint, all-rank managed references,
+  last-home acknowledgement, and blockers. It is revalidated before mutation.
+- **Lifecycle lock**: repository-local shared/exclusive lock held by supported
+  model readers/launchers and home removal respectively. It closes supported
+  control-plane races; it does not inventory unmanaged operating-system users.
 
 ## 5. Model catalog specification
 
@@ -840,8 +848,49 @@ incompletely loaded service still depends on the configured source.
 - A successful Docker start is not a successful service; `/health` and smoke or
   warmup are required.
 - Results from failed runs are preserved when safe, not overwritten as passes.
+- Durable-home deletion is a distinct confirmation-gated operation; hot purge
+  never implies permission to delete durable storage.
 
-### 11.2 Fabric fault matrix
+### 11.2 Durable-home removal
+
+The current public surface is `scripts/model-library.sh home check|remove`.
+Planning resolves one exact catalog identity and home, validates that the home
+is an exact non-symlinked HF repository child, and refuses a repository with
+multiple snapshot entries, a symlinked `snapshots`/`refs` layout, an incomplete
+snapshot, or any ref targeting another revision. Model-ID and profile queries
+must be unambiguous; `model_id@revision` is the destructive-workflow form.
+
+Every confirmed topology rank is then observed. Any schema-3 hot stamp whose
+`home_node_id` and model match becomes a blocker regardless of `ready`,
+`verifying`, or `pinned` state. All Pulsar-managed Docker containers are
+enumerated with `docker ps -aq`, so stopped containers also block when their
+labels may depend on the target. Unknown managed profiles and weight sources
+are treated conservatively on the home node. Missing topology, SSH, Docker, or
+a contradictory observation contract aborts planning. Legacy, unreadable, or
+otherwise untrusted hot metadata remains a visible blocker rather than proving
+absence.
+
+The final complete durable home is an ordinary blocker unless the operator
+passes `--allow-last-home`; that acknowledgement states that the exact revision
+will become unavailable. `home remove` additionally requires `--yes`. Supported
+catalog, activation, launch, readiness, download, and fabric entrypoints hold a
+shared lifecycle lock, while both home commands hold the exclusive lock from
+observation through mutation. This prevents a supported command from creating
+a managed reference after the plan is built.
+
+Execution validates the plan identity and target node, repeats the exact
+repository inspection, and requires the metadata fingerprint to match. It then
+atomically renames only that repository to a plan-bound sibling retirement path,
+fsyncs the parent, recursively deletes the retired tree, fsyncs again, and
+refreshes the catalog. A post-rename deletion failure is explicit and leaves the
+reported retirement path for operator inspection; it is never reported as a
+successful catalog refresh.
+
+This guard is a managed-control-plane contract, not a kernel open-file census.
+Manually created containers, bind mounts, or processes outside Pulsar labels
+remain operator responsibility and must be stopped before removal.
+
+### 11.3 Fabric fault matrix
 
 | Scenario | Expected behavior | Required recovery proof |
 |---|---|---|
@@ -937,6 +986,7 @@ promotes any experimental storage path for general users.
 | Three-node concurrent loading/traffic proof | PENDING | Three ranks pass readiness/full integrity, but concurrent three-node promotion evidence remains required. |
 | Restart loop and sustained fabric soak | PENDING | Required before general promotion. |
 | Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
+| Durable-home active-use removal guard | PASS on three-node physical topology | Disposable synthetic repositories proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. No production home was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
 
 The headless boot issue is currently classified as an owner operating-system
@@ -1152,9 +1202,14 @@ directory device/inode identity, exact logical files, and per-file
 device/inode/size/mtime/ctime. Launch checks the current validation identity
 before the fast path; drift visibly rehashes and refreshes only after a stable
 match. Qwen 1.7B now has physical symlink, witness, read-only launch,
-pin/restart, mismatch, and no-follow lifecycle evidence. Remaining promotion
-work is to issue real release seals, add active home-removal protection, and
-repeat the applicable identity gate with a sealed release profile.
+pin/restart, mismatch, and no-follow lifecycle evidence. The active-use
+durable-home removal guard is implemented with deterministic exact-target,
+all-rank observation, reference-blocking, lifecycle-lock, drift, and deletion
+coverage. The guard then passed a three-node physical gate using disposable
+synthetic repositories; the real Qwen home was preserved. Remaining promotion
+work is to issue real release seals and repeat the applicable identity gate
+with a sealed release profile. See
+`results/model-library/model-library-home-removal-guard-20260811.json`.
 Production budget policy, crash recovery, garbage collection, and per-rank
 witness/runtime-source inventory also require promotion-level hardening.
 
@@ -1187,8 +1242,8 @@ These points combine current evidence with the accepted architecture:
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
 3. Treat 8-stream SSH-over-RoCE activation into sealed local hot as a separate
-   promotion candidate. Do not guide it until real release seals, the remaining
-   lifecycle gates, budget policy, determinism, and soak pass.
+   promotion candidate. Do not guide it until real release seals, budget
+   policy, determinism, and soak pass.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
@@ -1385,8 +1440,9 @@ Those wins are not a promotion. The durable-home symlink, optional
 expected-seal/exact-revision enforcement, and rank-local witness fast path are
 implemented. A legacy-unsealed Qwen canary physically passed the symlink,
 both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
-lifecycle gate. That does not close real release identity or active-home-removal
-protection. The 100 GiB default hot budget cannot
+lifecycle gate. The active-use removal guard also passed deterministic and
+three-node physical checks using disposable synthetic repositories. This does
+not close real release identity. The 100 GiB default hot budget cannot
 admit the 167 GB flagship on a non-home rank, strict DeepSeek determinism failed
 on both library-hot and replicated controls, and the required sustained soak is
 pending. Live NFS/RDMA additionally retains its owner-recovery and three-node

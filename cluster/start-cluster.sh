@@ -45,6 +45,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+acquire_model_library_lifecycle_lock shared
 load_conf "$MODEL_NAME"
 case "$WEIGHT_SOURCE" in
   replicated|fabric|library-hot) ;;

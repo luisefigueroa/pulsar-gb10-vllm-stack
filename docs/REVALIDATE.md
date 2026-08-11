@@ -170,6 +170,23 @@ Do not inherit replicated-cache validation for `--weight-source fabric` or
 7. for library-hot, activation-created witness plus unchanged-launch fast-path,
    metadata-drift full-verify/fail-closed behavior on every rank, no-follow
    purge, and honest durable-home pin/restart dependency.
+8. active-use durable-home removal protection on the confirmed physical
+   topology:
+   - normal last-home refusal and separate `--allow-last-home` acknowledgement;
+   - retained `ready`, `verifying`, and `pinned` hot references;
+   - running and stopped managed-container references;
+   - fail-closed unreachable-node, Docker, and malformed-hot-state probes;
+   - shared/exclusive lifecycle-lock race behavior; and
+   - actual deletion only against a disposable exact HF repository, with
+     sibling preservation and catalog refresh. Never delete a production or
+     serving-validation canary durable home merely to prove the guard; create a
+     disposable synthetic repository instead.
+
+The current guard passed that deterministic and three-node physical gate on
+2026-08-11. See
+`results/model-library/model-library-home-removal-guard-20260811.json`.
+Repeat the gate when removal targeting, reference observation, or lifecycle
+locking semantics change.
 
 The path remains experimental if any artifact is absent, even when the same
 model/profile/image is already `tested` with replicated weights.

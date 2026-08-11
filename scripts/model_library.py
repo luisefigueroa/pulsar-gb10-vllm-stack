@@ -22,6 +22,15 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any
 
+try:
+    from scripts.terminal_format import TerminalWriter
+except ModuleNotFoundError:
+    try:
+        from terminal_format import TerminalWriter
+    except ModuleNotFoundError:
+        # Remote schema/inspection commands stream this file without the repo.
+        TerminalWriter = None  # type: ignore[assignment,misc]
+
 SCHEMA_VERSION = 2
 HOT_SCHEMA_VERSION = 3
 HOT_WITNESS_SCHEMA_VERSION = 1
@@ -32,6 +41,9 @@ SNAPSHOT_MANIFEST_KIND = "model-library-snapshot-manifest"
 SNAPSHOT_INTEGRITY_SCHEME = "sha256-snapshot-manifest-v1"
 EXPECTED_MODEL_SEAL_SCHEMA_VERSION = 1
 EXPECTED_MODEL_SEAL_KIND = "pulsar-expected-model-seal"
+HOME_REMOVAL_PLAN_SCHEMA_VERSION = 1
+HOME_REMOVAL_PLAN_KIND = "pulsar-model-library-home-removal-plan"
+HOME_REMOVAL_RESULT_KIND = "pulsar-model-library-home-removal-result"
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 HF_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
 HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
@@ -3585,6 +3597,837 @@ def purge_hot_instance(
     shutil.rmtree(instance_dir)
 
 
+def select_home_removal_target(
+    catalog_path: str | pathlib.Path,
+    query: str,
+    *,
+    node_selector: str = "",
+) -> dict[str, Any]:
+    """Resolve one exact durable hub home for a destructive operation."""
+    catalog = load_catalog(catalog_path)
+    if "@" in query:
+        entry = find_model_entry(catalog, identity_key=query)
+    elif "/" in query:
+        entry = find_model_entry(catalog, model_id=query)
+    else:
+        entry = find_model_entry(catalog, profile=query)
+    if entry is None:
+        fail(f"home removal: no catalog entry matching {query!r}")
+
+    revision = entry.get("revision")
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        fail("home removal: catalog entry lacks an exact snapshot revision")
+    complete = [
+        dict(home)
+        for home in entry.get("homes") or []
+        if home.get("state") == "complete"
+    ]
+    if not complete:
+        fail("home removal: catalog entry has no complete durable home")
+
+    selected: dict[str, Any] | None = None
+    if node_selector:
+        matches = [
+            home
+            for home in complete
+            if str(home.get("rank")) == node_selector
+            or str(home.get("node_id") or "") == node_selector
+        ]
+        if len(matches) != 1:
+            fail(
+                "home removal: --node must match exactly one complete home "
+                f"by rank or node ID (selector={node_selector!r})"
+            )
+        selected = matches[0]
+    elif len(complete) == 1:
+        selected = complete[0]
+    else:
+        primaries = [home for home in complete if home.get("primary")]
+        if len(primaries) == 1:
+            selected = primaries[0]
+        else:
+            fail(
+                "home removal: duplicate homes have no unique primary; "
+                "pass --node with the exact rank or node ID"
+            )
+
+    assert selected is not None
+    required = ("rank", "node_id", "cache_root", "hub_path")
+    missing = [name for name in required if selected.get(name) in (None, "")]
+    if missing:
+        fail(f"home removal: catalog home is incomplete (missing={missing})")
+    try:
+        rank = int(selected["rank"])
+    except (TypeError, ValueError):
+        fail("home removal: catalog home rank is invalid")
+    selected["rank"] = rank
+
+    alternates = [
+        home
+        for home in complete
+        if not (
+            int(home.get("rank", -1)) == rank
+            and home.get("node_id") == selected.get("node_id")
+            and home.get("hub_path") == selected.get("hub_path")
+        )
+    ]
+    return {
+        "topology_id": catalog.get("topology_id") or "",
+        "model_id": entry["model_id"],
+        "revision": revision,
+        "identity_key": entry["identity_key"],
+        "profiles": sorted(entry.get("profiles") or []),
+        "home": selected,
+        "alternate_homes": alternates,
+        "last_durable_home": not bool(alternates),
+    }
+
+
+def _path_metadata(path: pathlib.Path, *, relative_to: pathlib.Path) -> dict[str, Any]:
+    metadata = path.lstat()
+    if stat.S_ISDIR(metadata.st_mode):
+        kind = "directory"
+    elif stat.S_ISREG(metadata.st_mode):
+        kind = "file"
+    elif stat.S_ISLNK(metadata.st_mode):
+        kind = "symlink"
+    else:
+        kind = "other"
+    return {
+        "path": path.relative_to(relative_to).as_posix() or ".",
+        "kind": kind,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "size": metadata.st_size,
+        "mtime_ns": metadata.st_mtime_ns,
+        "ctime_ns": metadata.st_ctime_ns,
+    }
+
+
+def inspect_removable_home(
+    hub_path: str | pathlib.Path,
+    *,
+    cache_root: str | pathlib.Path,
+    model_id: str,
+    revision: str,
+    rank: int,
+    node_id: str,
+) -> dict[str, Any]:
+    """Validate that an exact catalog home is a safely removable HF repo tree."""
+    if HF_MODEL_ID_RE.fullmatch(model_id) is None:
+        fail("home removal: model_id is invalid")
+    if SAFE_REV.fullmatch(revision) is None:
+        fail("home removal: revision is invalid")
+
+    hub = pathlib.Path(hub_path).expanduser()
+    cache = pathlib.Path(cache_root).expanduser()
+    expected = cache / "hub" / model_id_to_hub_dirname(model_id)
+    result: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "pulsar-model-library-removable-home-inspection",
+        "rank": rank,
+        "node_id": node_id,
+        "model_id": model_id,
+        "revision": revision,
+        "cache_root": str(cache),
+        "hub_path": str(hub),
+        "canonical_hub_path": None,
+        "repository_bytes": 0,
+        "snapshot_entries": [],
+        "ref_targets": [],
+        "fingerprint": None,
+        "blockers": [],
+    }
+    blockers: list[dict[str, str]] = result["blockers"]
+
+    def block(code: str, detail: str) -> None:
+        blockers.append({"code": code, "detail": detail})
+
+    if not hub.is_absolute() or not cache.is_absolute():
+        block("path-not-absolute", "cache_root and hub_path must be absolute")
+    if pathlib.Path(os.path.abspath(hub)) != pathlib.Path(os.path.abspath(expected)):
+        block("path-not-exact-hub-child", f"hub_path must equal {expected}")
+
+    try:
+        hub_meta = hub.lstat()
+    except OSError as exc:
+        block("home-unavailable", f"cannot inspect durable home: {exc}")
+        result["state"] = "blocked"
+        return result
+    if stat.S_ISLNK(hub_meta.st_mode):
+        block("home-is-symlink", "durable home repository root must not be a symlink")
+    elif not stat.S_ISDIR(hub_meta.st_mode):
+        block("home-not-directory", "durable home repository root is not a directory")
+
+    try:
+        canonical_hub = hub.resolve(strict=True)
+        canonical_hub_parent = (cache / "hub").resolve(strict=True)
+        if canonical_hub.parent != canonical_hub_parent:
+            block(
+                "canonical-path-escape",
+                "canonical durable home is not an exact child of the cache hub root",
+            )
+        result["canonical_hub_path"] = str(canonical_hub)
+    except OSError as exc:
+        block("canonical-path-unavailable", f"cannot resolve durable home: {exc}")
+
+    snapshots = hub / "snapshots"
+    snapshot = snapshots / revision
+    snapshots_usable = False
+    try:
+        snapshots_meta = snapshots.lstat()
+    except OSError as exc:
+        block("snapshots-unavailable", f"cannot inspect snapshots directory: {exc}")
+    else:
+        if stat.S_ISLNK(snapshots_meta.st_mode):
+            block("snapshots-is-symlink", "snapshots directory must not be a symlink")
+        elif not stat.S_ISDIR(snapshots_meta.st_mode):
+            block("snapshots-not-directory", "snapshots path is not a directory")
+        else:
+            snapshots_usable = True
+    snapshot_children: list[pathlib.Path] = []
+    if snapshots_usable:
+        try:
+            snapshot_children = sorted(snapshots.iterdir(), key=lambda item: item.name)
+            result["snapshot_entries"] = [item.name for item in snapshot_children]
+        except OSError as exc:
+            block("snapshots-unavailable", f"cannot enumerate snapshots: {exc}")
+    unexpected = [item.name for item in snapshot_children if item.name != revision]
+    if unexpected:
+        block(
+            "multiple-snapshot-revisions",
+            "repository contains other snapshot entries: " + ", ".join(unexpected),
+        )
+    if snapshots_usable:
+        try:
+            snapshot_meta = snapshot.lstat()
+            if not stat.S_ISDIR(snapshot_meta.st_mode):
+                block("snapshot-not-directory", "exact snapshot is not a directory")
+        except OSError as exc:
+            block("snapshot-unavailable", f"cannot inspect exact snapshot: {exc}")
+        if hub_snapshot_state(hub, revision) != "complete":
+            block("snapshot-incomplete", "exact snapshot is not complete")
+    if _has_incomplete_marker(hub):
+        block("incomplete-download", "repository contains an .incomplete marker")
+
+    refs = hub / "refs"
+    ref_paths: list[pathlib.Path] = []
+    refs_present = False
+    refs_usable = False
+    try:
+        refs_meta = refs.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        block("refs-unreadable", f"cannot inspect refs directory: {exc}")
+    else:
+        refs_present = True
+        if stat.S_ISLNK(refs_meta.st_mode):
+            block("refs-is-symlink", "refs directory must not be a symlink")
+        elif not stat.S_ISDIR(refs_meta.st_mode):
+            block("refs-not-directory", "refs path is not a directory")
+        else:
+            refs_usable = True
+    if refs_usable:
+        walk_errors: list[str] = []
+
+        def on_walk_error(exc: OSError) -> None:
+            walk_errors.append(str(exc))
+
+        for dirpath, dirnames, filenames in os.walk(
+            refs,
+            followlinks=False,
+            onerror=on_walk_error,
+        ):
+            root = pathlib.Path(dirpath)
+            kept: list[str] = []
+            for name in dirnames:
+                candidate = root / name
+                try:
+                    if candidate.is_symlink():
+                        block("ref-symlink", f"ref directory is a symlink: {candidate}")
+                    else:
+                        kept.append(name)
+                except OSError as exc:
+                    block("ref-unreadable", f"cannot inspect ref directory: {exc}")
+            dirnames[:] = kept
+            for name in filenames:
+                ref_paths.append(root / name)
+        for detail in walk_errors:
+            block("refs-unreadable", detail)
+
+    ref_targets: list[dict[str, str]] = []
+    for ref_path in sorted(ref_paths, key=lambda item: item.as_posix()):
+        try:
+            ref_meta = ref_path.lstat()
+            if not stat.S_ISREG(ref_meta.st_mode):
+                block("ref-not-regular", f"ref is not a regular file: {ref_path}")
+                continue
+            target = ref_path.read_text(encoding="utf-8").strip().replace("\r", "")
+        except (OSError, UnicodeError) as exc:
+            block("ref-unreadable", f"cannot read ref {ref_path}: {exc}")
+            continue
+        relative = ref_path.relative_to(hub).as_posix()
+        ref_targets.append({"path": relative, "revision": target})
+        if target != revision:
+            block(
+                "ref-target-differs",
+                f"{relative} points to {target!r}, not {revision!r}",
+            )
+    result["ref_targets"] = ref_targets
+    result["repository_bytes"] = tree_bytes(hub)
+
+    fingerprint_paths = [
+        hub,
+        snapshots,
+        snapshot,
+        *([refs] if refs_present else []),
+        *ref_paths,
+    ]
+    fingerprint_records: list[dict[str, Any]] = []
+    for path in fingerprint_paths:
+        try:
+            fingerprint_records.append(_path_metadata(path, relative_to=hub))
+        except (OSError, ValueError) as exc:
+            block("metadata-unavailable", f"cannot fingerprint {path}: {exc}")
+    fingerprint_payload = {
+        "model_id": model_id,
+        "revision": revision,
+        "canonical_hub_path": result["canonical_hub_path"],
+        "snapshot_entries": result["snapshot_entries"],
+        "ref_targets": result["ref_targets"],
+        "paths": fingerprint_records,
+    }
+    result["fingerprint"] = canonical_json_digest(fingerprint_payload)
+    result["state"] = "eligible" if not blockers else "blocked"
+    return result
+
+
+def scan_home_hot_references(
+    hot_root: str | pathlib.Path,
+    *,
+    rank: int,
+    node_id: str,
+) -> dict[str, Any]:
+    """Scan managed hot stamps without following durable-home view symlinks."""
+    root = pathlib.Path(hot_root).expanduser()
+    references: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        return {
+            "schema_version": 1,
+            "kind": "pulsar-model-library-home-hot-reference-scan",
+            "rank": rank,
+            "node_id": node_id,
+            "hot_root": str(root),
+            "status": "ok",
+            "references": references,
+            "errors": errors,
+        }
+    except OSError as exc:
+        errors.append({"path": str(root), "detail": f"cannot inspect hot root: {exc}"})
+    if not errors and not root.is_dir():
+        errors.append({"path": str(root), "detail": "hot root is not a directory"})
+    if not errors:
+        walk_errors: list[OSError] = []
+        for dirpath, dirnames, filenames in os.walk(
+            root,
+            followlinks=False,
+            onerror=walk_errors.append,
+        ):
+            current = pathlib.Path(dirpath)
+            kept: list[str] = []
+            for name in dirnames:
+                child = current / name
+                if child.is_symlink():
+                    if name == ".pulsar":
+                        errors.append(
+                            {
+                                "path": str(child),
+                                "detail": "managed metadata directory is a symlink",
+                            }
+                        )
+                    continue
+                kept.append(name)
+            dirnames[:] = kept
+            if current.name != ".pulsar" or "hot.json" not in filenames:
+                continue
+            stamp_path = current / "hot.json"
+            try:
+                stamp = load_json(stamp_path)
+            except ModelLibraryError as exc:
+                errors.append({"path": str(stamp_path), "detail": str(exc)})
+                continue
+            if not isinstance(stamp, dict):
+                errors.append({"path": str(stamp_path), "detail": "hot stamp is not an object"})
+                continue
+            missing = [
+                field
+                for field in ("profile", "model_id", "revision", "home_node_id", "state")
+                if stamp.get(field) in (None, "")
+            ]
+            if stamp.get("schema_version") != HOT_SCHEMA_VERSION:
+                errors.append(
+                    {
+                        "path": str(stamp_path),
+                        "detail": f"unsupported hot schema {stamp.get('schema_version')!r}",
+                    }
+                )
+            if missing:
+                errors.append(
+                    {
+                        "path": str(stamp_path),
+                        "detail": f"hot stamp fields missing: {missing}",
+                    }
+                )
+            references.append(
+                {
+                    "rank": rank,
+                    "node_id": node_id,
+                    "instance_dir": str(current.parent),
+                    "schema_version": stamp.get("schema_version"),
+                    "profile": stamp.get("profile"),
+                    "model_id": stamp.get("model_id"),
+                    "revision": stamp.get("revision"),
+                    "home_node_id": stamp.get("home_node_id"),
+                    "content_id": stamp.get("content_id"),
+                    "state": stamp.get("state"),
+                    "pinned": bool(stamp.get("pinned")),
+                }
+            )
+        errors.extend({"path": str(root), "detail": str(exc)} for exc in walk_errors)
+    return {
+        "schema_version": 1,
+        "kind": "pulsar-model-library-home-hot-reference-scan",
+        "rank": rank,
+        "node_id": node_id,
+        "hot_root": str(root),
+        "status": "ok" if not errors else "error",
+        "references": references,
+        "errors": errors,
+    }
+
+
+def _load_home_reference_observations(
+    observations_dir: str | pathlib.Path,
+    topology: dict[str, Any],
+) -> list[dict[str, Any]]:
+    directory = pathlib.Path(observations_dir)
+    observations: list[dict[str, Any]] = []
+    for node in sorted(topology.get("nodes") or [], key=lambda item: int(item["rank"])):
+        rank = int(node["rank"])
+        node_id = str(node.get("node_id") or "")
+        hot_path = directory / f"hot-{rank}.json"
+        containers_path = directory / f"containers-{rank}.jsonl"
+        if not hot_path.is_file() or not containers_path.is_file():
+            fail(f"home removal: rank {rank} reference probes are incomplete")
+        hot_scan = load_json(hot_path)
+        if not isinstance(hot_scan, dict):
+            fail(f"home removal: rank {rank} hot scan is not an object")
+        if hot_scan.get("rank") != rank or hot_scan.get("node_id") != node_id:
+            fail(f"home removal: rank {rank} hot scan identity differs from topology")
+        if (
+            hot_scan.get("schema_version") != 1
+            or hot_scan.get("kind") != "pulsar-model-library-home-hot-reference-scan"
+        ):
+            fail(f"home removal: rank {rank} hot scan contract is unsupported")
+        status = hot_scan.get("status")
+        errors = hot_scan.get("errors")
+        references = hot_scan.get("references")
+        if status not in {"ok", "error"}:
+            fail(f"home removal: rank {rank} hot scan status is invalid")
+        if not isinstance(errors, list) or any(
+            not isinstance(item, dict) for item in errors
+        ):
+            fail(f"home removal: rank {rank} hot scan errors are invalid")
+        if not isinstance(references, list) or any(
+            not isinstance(item, dict) for item in references
+        ):
+            fail(f"home removal: rank {rank} hot scan references are invalid")
+        if status == "error" and not errors:
+            fail(f"home removal: rank {rank} hot error lacks diagnostic details")
+        if status == "ok" and errors:
+            fail(f"home removal: rank {rank} hot scan status contradicts its errors")
+        containers: list[dict[str, Any]] = []
+        try:
+            with open(containers_path, encoding="utf-8") as handle:
+                for line_number, raw in enumerate(handle, start=1):
+                    if not raw.strip():
+                        continue
+                    value = json.loads(raw)
+                    if not isinstance(value, dict):
+                        fail(
+                            "home removal: container observation must be an object "
+                            f"({containers_path}:{line_number})"
+                        )
+                    containers.append(value)
+        except (OSError, json.JSONDecodeError) as exc:
+            fail(f"home removal: cannot read container observations: {exc}")
+        observations.append(
+            {
+                "rank": rank,
+                "node_id": node_id,
+                "hostname": str(node.get("hostname") or ""),
+                "hot_scan": hot_scan,
+                "containers": containers,
+            }
+        )
+    return observations
+
+
+def _profile_model_map(models_dir: str | pathlib.Path) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    root = pathlib.Path(models_dir)
+    for path in sorted(root.glob("*.conf")):
+        parsed = parse_profile_conf_any(path)
+        if parsed and parsed.get("model_id"):
+            mapping[path.stem] = str(parsed["model_id"])
+    return mapping
+
+
+def _container_home_blocker(
+    metadata: dict[str, Any],
+    observation: dict[str, Any],
+    target: dict[str, Any],
+    profile_models: dict[str, str],
+) -> dict[str, Any] | None:
+    labels = metadata.get("labels") or {}
+    if not isinstance(labels, dict):
+        fail("home removal: container labels are not an object")
+    managed = str(labels.get("io.pulsar.gb10.managed", "") or "")
+    if managed != "true":
+        return None
+    source = str(labels.get("io.pulsar.gb10.weight-source", "") or "")
+    profile = str(labels.get("io.pulsar.gb10.conf", "") or "")
+    owner = str(labels.get("io.pulsar.gb10.weight-owner", "") or "")
+    revision = str(labels.get("io.pulsar.gb10.model-revision", "") or "")
+    profile_model = profile_models.get(profile)
+    profile_matches = (
+        profile in set(target.get("profiles") or [])
+        or profile_model == target["model_id"]
+    )
+    owner_matches = owner == target["home"]["node_id"]
+    on_home_node = observation["node_id"] == target["home"]["node_id"]
+
+    if source == "replicated":
+        depends = on_home_node and (profile_matches or profile_model is None)
+    elif source in {"library-hot", "fabric"}:
+        depends = owner_matches and (
+            profile_matches
+            or revision == target["revision"]
+            or profile_model is None
+        )
+    else:
+        depends = on_home_node and (profile_matches or profile_model is None)
+    if not depends:
+        return None
+    return {
+        "kind": "container-reference",
+        "rank": observation["rank"],
+        "node_id": observation["node_id"],
+        "name": str(metadata.get("name") or "").lstrip("/"),
+        "container_id": str(metadata.get("id") or "")[:12],
+        "profile": profile or None,
+        "weight_source": source or "unknown",
+        "owner_node_id": owner or None,
+        "revision": revision or None,
+        "detail": "managed container still references this durable repository",
+    }
+
+
+def home_removal_plan_id(plan: dict[str, Any]) -> str:
+    return canonical_json_digest(
+        {
+            key: value
+            for key, value in plan.items()
+            if key not in {"plan_id", "created_at"}
+        }
+    )
+
+
+def plan_home_removal(
+    *,
+    catalog_path: str | pathlib.Path,
+    query: str,
+    topology_file: str | pathlib.Path,
+    topology_id: str,
+    models_dir: str | pathlib.Path,
+    inspection_path: str | pathlib.Path,
+    observations_dir: str | pathlib.Path,
+    node_selector: str = "",
+    allow_last_home: bool = False,
+) -> dict[str, Any]:
+    topology = load_topology_for_plan(topology_file)
+    live_topology_id = str(topology.get("topology_id") or "")
+    if live_topology_id != topology_id:
+        fail("home removal: loaded topology differs from controller topology")
+    target = select_home_removal_target(
+        catalog_path,
+        query,
+        node_selector=node_selector,
+    )
+    if target["topology_id"] != topology_id:
+        fail("home removal: catalog topology is stale; run catalog refresh")
+    ranks = {int(node["rank"]): node for node in topology.get("nodes") or []}
+    home = target["home"]
+    rank = int(home["rank"])
+    if rank not in ranks or ranks[rank].get("node_id") != home.get("node_id"):
+        fail("home removal: catalog home identity differs from confirmed topology")
+
+    inspection = load_json(inspection_path)
+    if not isinstance(inspection, dict):
+        fail("home removal: home inspection is not an object")
+    for field, expected in (
+        ("rank", rank),
+        ("node_id", home["node_id"]),
+        ("model_id", target["model_id"]),
+        ("revision", target["revision"]),
+        ("cache_root", home["cache_root"]),
+        ("hub_path", home["hub_path"]),
+    ):
+        if inspection.get(field) != expected:
+            fail(f"home removal: inspection {field} differs from catalog target")
+
+    observations = _load_home_reference_observations(observations_dir, topology)
+    profile_models = _profile_model_map(models_dir)
+    blockers: list[dict[str, Any]] = []
+    for item in inspection.get("blockers") or []:
+        blockers.append(
+            {
+                "kind": "home-shape",
+                "rank": rank,
+                "node_id": home["node_id"],
+                "code": item.get("code"),
+                "detail": item.get("detail"),
+            }
+        )
+    observed_nodes: list[dict[str, Any]] = []
+    for observation in observations:
+        hot_scan = observation["hot_scan"]
+        for error in hot_scan.get("errors") or []:
+            blockers.append(
+                {
+                    "kind": "observability",
+                    "rank": observation["rank"],
+                    "node_id": observation["node_id"],
+                    "path": error.get("path"),
+                    "detail": error.get("detail") or "hot state is unobservable",
+                }
+            )
+        hot_matches = 0
+        for reference in hot_scan.get("references") or []:
+            if (
+                reference.get("home_node_id") == home["node_id"]
+                and reference.get("model_id") == target["model_id"]
+            ):
+                hot_matches += 1
+                blockers.append(
+                    {
+                        "kind": "hot-reference",
+                        "rank": observation["rank"],
+                        "node_id": observation["node_id"],
+                        "profile": reference.get("profile"),
+                        "revision": reference.get("revision"),
+                        "state": reference.get("state"),
+                        "pinned": bool(reference.get("pinned")),
+                        "content_id": reference.get("content_id"),
+                        "instance_dir": reference.get("instance_dir"),
+                        "detail": (
+                            "pinned hot view depends on this home"
+                            if reference.get("pinned")
+                            else "retained managed hot view depends on this home"
+                        ),
+                    }
+                )
+        container_matches = 0
+        for metadata in observation["containers"]:
+            blocker = _container_home_blocker(
+                metadata,
+                observation,
+                target,
+                profile_models,
+            )
+            if blocker is not None:
+                container_matches += 1
+                blockers.append(blocker)
+        observed_nodes.append(
+            {
+                "rank": observation["rank"],
+                "node_id": observation["node_id"],
+                "hostname": observation["hostname"],
+                "hot_probe": hot_scan.get("status"),
+                "hot_references": len(hot_scan.get("references") or []),
+                "matching_hot_references": hot_matches,
+                "managed_containers": len(observation["containers"]),
+                "matching_containers": container_matches,
+            }
+        )
+
+    if target["last_durable_home"] and not allow_last_home:
+        blockers.append(
+            {
+                "kind": "last-durable-home",
+                "rank": rank,
+                "node_id": home["node_id"],
+                "detail": (
+                    "this is the last complete durable home for the exact revision; "
+                    "pass --allow-last-home to acknowledge model unavailability"
+                ),
+            }
+        )
+    blockers.sort(
+        key=lambda item: (
+            int(item.get("rank", -1)),
+            str(item.get("kind") or ""),
+            str(item.get("profile") or item.get("path") or ""),
+        )
+    )
+    plan: dict[str, Any] = {
+        "schema_version": HOME_REMOVAL_PLAN_SCHEMA_VERSION,
+        "kind": HOME_REMOVAL_PLAN_KIND,
+        "created_at": utc_now(),
+        "state": "eligible" if not blockers else "blocked",
+        "ok": not blockers,
+        "topology_id": topology_id,
+        "target": target,
+        "inspection": inspection,
+        "allow_last_home": allow_last_home,
+        "observed_nodes": observed_nodes,
+        "blockers": blockers,
+    }
+    plan["plan_id"] = home_removal_plan_id(plan)
+    return plan
+
+
+def render_home_removal_plan(plan: dict[str, Any]) -> None:
+    if TerminalWriter is None:
+        fail("home removal rendering requires scripts/terminal_format.py")
+    term = TerminalWriter()
+    target = plan["target"]
+    home = target["home"]
+    term.emit(f"durable home removal  {str(plan['state']).upper()}")
+    term.field("model", target["model_id"])
+    term.field("revision", target["revision"])
+    term.field("home", f"rank {home['rank']} · node {str(home['node_id'])[:12]}")
+    term.field("path", home["hub_path"])
+    term.field("bytes", plan["inspection"].get("repository_bytes") or 0)
+    term.field("last home", "yes" if target["last_durable_home"] else "no")
+    term.field("probes", f"{len(plan.get('observed_nodes') or [])} confirmed nodes")
+    blockers = plan.get("blockers") or []
+    if blockers:
+        term.blank()
+        term.emit(f"Blocked by {len(blockers)} condition(s):")
+        for blocker in blockers:
+            rank = blocker.get("rank")
+            label = blocker.get("kind") or "unknown"
+            profile = blocker.get("profile")
+            suffix = f" · {profile}" if profile else ""
+            term.emit(
+                f"rank {rank} · {label}{suffix}",
+                initial_indent="  ",
+                subsequent_indent="    ",
+            )
+            term.emit(
+                blocker.get("detail") or "dependency remains",
+                initial_indent="    ",
+                subsequent_indent="    ",
+            )
+            if blocker.get("instance_dir"):
+                term.emit(
+                    blocker["instance_dir"],
+                    initial_indent="    ",
+                    subsequent_indent="    ",
+                )
+        term.blank()
+        term.emit("Stop/remove dependent managed containers and purge their hot views.")
+        term.emit("Then rerun the check; unobservable nodes or metadata fail closed.")
+    else:
+        term.blank()
+        term.emit(
+            "No managed container, retained hot view, or topology probe blocks removal."
+        )
+        term.emit("Mutation requires home remove with the separate --yes confirmation.")
+
+
+def execute_home_removal_plan(
+    plan: dict[str, Any],
+    *,
+    rank: int,
+    node_id: str,
+) -> dict[str, Any]:
+    if plan.get("schema_version") != HOME_REMOVAL_PLAN_SCHEMA_VERSION:
+        fail("home removal: unsupported plan schema")
+    if plan.get("kind") != HOME_REMOVAL_PLAN_KIND:
+        fail("home removal: invalid plan kind")
+    if plan.get("plan_id") != home_removal_plan_id(plan):
+        fail("home removal: plan identity mismatch")
+    if plan.get("state") != "eligible" or plan.get("blockers"):
+        fail("home removal: plan is blocked")
+    target = plan.get("target") or {}
+    home = target.get("home") or {}
+    if int(home.get("rank", -1)) != rank or home.get("node_id") != node_id:
+        fail("home removal: execution node differs from the plan")
+    if target.get("last_durable_home") and not plan.get("allow_last_home"):
+        fail("home removal: last-home acknowledgement is missing")
+
+    current = inspect_removable_home(
+        home["hub_path"],
+        cache_root=home["cache_root"],
+        model_id=target["model_id"],
+        revision=target["revision"],
+        rank=rank,
+        node_id=node_id,
+    )
+    if current.get("state") != "eligible":
+        fail("home removal: durable-home shape changed before execution")
+    expected_fingerprint = (plan.get("inspection") or {}).get("fingerprint")
+    if not expected_fingerprint or current.get("fingerprint") != expected_fingerprint:
+        fail("home removal: durable-home metadata changed after the guard check")
+
+    hub = pathlib.Path(home["hub_path"])
+    tombstone = hub.parent / (
+        f".{hub.name}.pulsar-removing-{str(plan['plan_id'])[:12]}"
+    )
+    if tombstone.exists() or tombstone.is_symlink():
+        fail(f"home removal: tombstone path already exists: {tombstone}")
+    try:
+        os.rename(hub, tombstone)
+        parent_fd = os.open(hub.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError as exc:
+        fail(f"home removal: atomic retirement failed before deletion: {exc}")
+    try:
+        shutil.rmtree(tombstone)
+        parent_fd = os.open(hub.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError as exc:
+        fail(
+            "home removal: repository left at the retirement path after a "
+            f"deletion failure: {tombstone}: {exc}"
+        )
+    return {
+        "schema_version": 1,
+        "kind": HOME_REMOVAL_RESULT_KIND,
+        "state": "removed",
+        "removed_at": utc_now(),
+        "plan_id": plan["plan_id"],
+        "model_id": target["model_id"],
+        "revision": target["revision"],
+        "rank": rank,
+        "node_id": node_id,
+        "hub_path": str(hub),
+        "repository_bytes": current.get("repository_bytes") or 0,
+    }
+
+
 def catalog_entry_has_expected_identity(entry: dict[str, Any]) -> bool:
     """Return whether a catalog entry carries a reviewed lab expectation."""
     return any(
@@ -3615,6 +4458,102 @@ def render_catalog_human(catalog: dict[str, Any], *, validated_only: bool = Fals
             f"{entry.get('validation', '?'):<20} "
             f"{complete:>5} {dup:>3}  {profiles}"
         )
+
+
+def cmd_resolve_home_removal_target(args: argparse.Namespace) -> int:
+    target = select_home_removal_target(
+        args.catalog,
+        args.query,
+        node_selector=args.node,
+    )
+    print(json.dumps(target, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_inspect_removable_home(args: argparse.Namespace) -> int:
+    result = inspect_removable_home(
+        args.hub_path,
+        cache_root=args.cache_root,
+        model_id=args.model_id,
+        revision=args.revision,
+        rank=args.rank,
+        node_id=args.node_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_scan_home_hot_references(args: argparse.Namespace) -> int:
+    result = scan_home_hot_references(
+        args.hot_root or default_hot_root(),
+        rank=args.rank,
+        node_id=args.node_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_plan_home_removal(args: argparse.Namespace) -> int:
+    plan = plan_home_removal(
+        catalog_path=args.catalog,
+        query=args.query,
+        topology_file=args.topology_file,
+        topology_id=args.topology_id,
+        models_dir=args.models_dir,
+        inspection_path=args.inspection_file,
+        observations_dir=args.observations_dir,
+        node_selector=args.node,
+        allow_last_home=args.allow_last_home,
+    )
+    print(json.dumps(plan, indent=2, sort_keys=True))
+    return 0
+
+
+def _load_home_removal_plan_arg(args: argparse.Namespace) -> dict[str, Any]:
+    if args.plan_json:
+        try:
+            plan = json.loads(args.plan_json)
+        except json.JSONDecodeError as exc:
+            fail(f"home removal plan JSON: {exc}")
+    elif args.plan_file:
+        plan = load_json(args.plan_file)
+    else:
+        fail("home removal: --plan-json or --plan-file is required")
+    if not isinstance(plan, dict):
+        fail("home removal: plan must be an object")
+    return plan
+
+
+def cmd_render_home_removal_plan(args: argparse.Namespace) -> int:
+    render_home_removal_plan(_load_home_removal_plan_arg(args))
+    return 0
+
+
+def cmd_execute_home_removal(args: argparse.Namespace) -> int:
+    result = execute_home_removal_plan(
+        _load_home_removal_plan_arg(args),
+        rank=args.rank,
+        node_id=args.node_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_render_home_removal_result(args: argparse.Namespace) -> int:
+    result = load_json(args.result_file)
+    if not isinstance(result, dict) or result.get("kind") != HOME_REMOVAL_RESULT_KIND:
+        fail("home removal: result document is invalid")
+    if TerminalWriter is None:
+        fail("home removal rendering requires scripts/terminal_format.py")
+    term = TerminalWriter()
+    term.emit("durable home removal  REMOVED")
+    term.field("model", result["model_id"])
+    term.field("revision", result["revision"])
+    term.field("home", f"rank {result['rank']} · node {str(result['node_id'])[:12]}")
+    term.field("path", result["hub_path"])
+    term.field("bytes", result.get("repository_bytes") or 0)
+    term.field("catalog", "refreshed from confirmed topology")
+    return 0
 
 
 def cmd_scan_hub(args: argparse.Namespace) -> int:
@@ -4470,6 +5409,76 @@ def cmd_compare_bench(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pulsar federated model library")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    home_target = sub.add_parser(
+        "resolve-home-removal-target",
+        help="Resolve one exact durable home for guarded removal",
+    )
+    home_target.add_argument("--catalog", required=True)
+    home_target.add_argument("--node", default="")
+    home_target.add_argument("query")
+    home_target.set_defaults(func=cmd_resolve_home_removal_target)
+
+    home_inspect = sub.add_parser(
+        "inspect-removable-home",
+        help="Inspect one exact HF repository before guarded removal",
+    )
+    home_inspect.add_argument("--hub-path", required=True)
+    home_inspect.add_argument("--cache-root", required=True)
+    home_inspect.add_argument("--model-id", required=True)
+    home_inspect.add_argument("--revision", required=True)
+    home_inspect.add_argument("--rank", type=int, required=True)
+    home_inspect.add_argument("--node-id", required=True)
+    home_inspect.set_defaults(func=cmd_inspect_removable_home)
+
+    hot_refs = sub.add_parser(
+        "scan-home-hot-references",
+        help="Scan one rank for managed hot references to durable homes",
+    )
+    hot_refs.add_argument("--hot-root", default="")
+    hot_refs.add_argument("--rank", type=int, required=True)
+    hot_refs.add_argument("--node-id", required=True)
+    hot_refs.set_defaults(func=cmd_scan_home_hot_references)
+
+    home_plan = sub.add_parser(
+        "plan-home-removal",
+        help="Build a fail-closed all-node durable-home removal plan",
+    )
+    home_plan.add_argument("--catalog", required=True)
+    home_plan.add_argument("--topology-file", required=True)
+    home_plan.add_argument("--topology-id", required=True)
+    home_plan.add_argument("--models-dir", required=True)
+    home_plan.add_argument("--inspection-file", required=True)
+    home_plan.add_argument("--observations-dir", required=True)
+    home_plan.add_argument("--node", default="")
+    home_plan.add_argument("--allow-last-home", action="store_true")
+    home_plan.add_argument("query")
+    home_plan.set_defaults(func=cmd_plan_home_removal)
+
+    home_render = sub.add_parser(
+        "render-home-removal-plan",
+        help="Render a guarded durable-home removal plan",
+    )
+    home_render.add_argument("--plan-file", default="")
+    home_render.add_argument("--plan-json", default="")
+    home_render.set_defaults(func=cmd_render_home_removal_plan)
+
+    home_execute = sub.add_parser(
+        "execute-home-removal",
+        help="Execute an eligible guarded durable-home removal plan",
+    )
+    home_execute.add_argument("--plan-file", default="")
+    home_execute.add_argument("--plan-json", default="")
+    home_execute.add_argument("--rank", type=int, required=True)
+    home_execute.add_argument("--node-id", required=True)
+    home_execute.set_defaults(func=cmd_execute_home_removal)
+
+    home_result = sub.add_parser(
+        "render-home-removal-result",
+        help="Render a completed durable-home removal result",
+    )
+    home_result.add_argument("--result-file", required=True)
+    home_result.set_defaults(func=cmd_render_home_removal_result)
 
     scan = sub.add_parser("scan-hub", help="Scan one HF cache root for hub models")
     scan.add_argument("--cache-root", required=True)
