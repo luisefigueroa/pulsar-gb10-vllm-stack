@@ -10,15 +10,17 @@ The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
 measurements and other failed/pending gates remain valid and are not rewritten.
 Catalog schema 2/hot schema 3 expected-seal enforcement and rank-local witness
-schema 1 landed afterward as control-plane changes. Deterministic tests cover
-unchanged metadata, drift fallback, same-size corruption, symlink retargeting,
-and rank-local filesystem identity; no new hardware artifact or real lab-issued
-profile seal is claimed here, so every artifact below still predates release
-seal binding. Site-local witness documents contain absolute paths and
-filesystem identifiers and are never publishable evidence.
+schema 1 landed afterward. Deterministic tests cover unchanged metadata, drift
+fallback, same-size corruption, symlink retargeting, and rank-local filesystem
+identity. The 2026-08-11 Qwen artifact adds physical symlink, witness,
+read-only launch, pin/restart, mismatch, and no-follow purge evidence, but it is
+explicitly `legacy-unsealed` and does not claim lab-issued identity. Site-local
+witness documents contain absolute paths and filesystem identifiers and are
+never publishable evidence.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| `qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json` | Physical durable-home symlink, sealed-hot, witness fallback, exact-snapshot launch, pin/restart, mismatch, and no-follow purge; Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, observed manifest only | Current lifecycle gate PASS; identity remains `legacy-unsealed`; not a promotion | Reviewed; site topology, paths, filesystem identity, and witness IDs omitted |
 | `model-library-promotion-assessment-20260810.json` | Consolidated DeepSeek/Qwen promotion assessment; schema-2 local content digest, not a lab-issued expected seal | Historical assessment; materialization recommendation superseded | Embedded redaction declaration; topology/site fields omitted |
 | `topology-ssh-trust-gate-20260810.json` | Topology-bound SSH alias/key/endpoint gate and Qwen sealed activation | Current gate evidence | Embedded redaction declaration |
 | `deepseek-v4-flash-ssh-roce8-vs-control8-counterbalanced-20260810.json` | DeepSeek full-model `ssh-control` versus `ssh-roce` performance/traffic proof | Current performance evidence | Embedded redaction declaration |
