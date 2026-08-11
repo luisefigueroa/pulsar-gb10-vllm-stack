@@ -194,7 +194,10 @@ create a rank-local witness after full verification, use a metadata fast path
 for unchanged launch, and visibly rehash on drift before launching the exact
 snapshot. This release still issues no real profile seals. See
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
-[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md).
+[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). Maintainers can
+assemble deterministic unreviewed identity candidates through the separate
+[model release runbook](docs/MODEL_RELEASE.md); that tool cannot issue or
+promote a claim and is not exposed through `pulsar`.
 
 ### What the tools do
 
@@ -335,12 +338,14 @@ no leaks, no thermal throttling anywhere).
 |---|---|
 | `models/*.conf` | one validated flag set per model; statuses earned by runs |
 | `models/seals/` | reviewed exact model seal contract and future lab-issued profile seals |
+| `models/validation-bundles/` | content-addressed exact model/runtime/image/geometry/evidence claims |
+| `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
 | `patches/pr41834-dspark-opt/` | **DEPRECATED** DSpark draft-path A/B (perf-neutral; obsolete after vllm #49731). Not on default build path — see that dir’s README |
-| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity doctrine), **decisions/** (accepted rationale), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
+| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **decisions/** (accepted rationale), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.

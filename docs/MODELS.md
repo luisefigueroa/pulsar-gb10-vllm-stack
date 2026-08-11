@@ -43,7 +43,11 @@ expected seal from a user cache; recover the lab artifact used for the run or
 revalidate the exact content. Library-hot activation now full-verifies and
 creates a rank-local serve witness; unchanged launch uses its metadata fast
 path, while drift rehashes. That mechanism preserves an established identity
-but cannot turn these legacy rows into lab-sealed claims. See
+but cannot turn these legacy rows into lab-sealed claims.
+
+Maintainers can now assemble deterministic unreviewed candidates with
+`scripts/model-release.sh`, but candidate generation alone does not change any
+row or issue a claim. See [MODEL_RELEASE.md](./MODEL_RELEASE.md),
 [models/seals/README.md](../models/seals/README.md),
 [models/validation-bundles/README.md](../models/validation-bundles/README.md),
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and

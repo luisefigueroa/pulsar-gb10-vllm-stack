@@ -14,20 +14,22 @@
 > [docs/archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md).
 > A descriptive snapshot of **current** code behavior lives in
 > [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md).
+> The maintainer-only, candidate-stage release workflow is documented in
+> [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 > The durable rationale for the home-view and validation-identity decision is
 > [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); expected-seal/exact-revision, content-addressed validation-bundle verification, serve-time witness, and guarded durable-home removal landed; issued release seals/bundles pending |
+| Status | Implemented experiment (not promoted); expected-seal/exact-revision enforcement, content-addressed validation-bundle verification, untrusted release-candidate assembly, serve-time witness, and guarded durable-home removal landed; reviewed issuance pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
-| Experimental today | `scripts/model-library.sh` catalog/cold/activate/hot/pin workflows; `--weight-mode library-hot`; and `--weight-source fabric` live NFSv4.2/RDMA |
+| Experimental today | `scripts/model-library.sh` catalog/cold/activate/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; and maintainer-only `scripts/model-release.sh` candidate assembly |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a tested profile to
@@ -53,6 +55,13 @@ requires a content-addressed schema-1 validation bundle whose primary model,
 external artifacts, lab provenance/evidence, digest-pinned image, normalized
 runtime contract, and geometry match the reviewed seal and live sourced
 profile. No production profile has an issued seal or bundle yet.
+
+`scripts/model_identity.py` is the single local owner of the profile-contract,
+validation-bundle, and expected-seal schemas. `scripts/model-release.sh` can
+hash an explicitly selected commit and assemble deterministic candidate
+documents only under an untrusted output boundary. Candidates declare no
+authority, cannot write the reviewed model directories, cannot edit profiles,
+and do not affect validation status.
 
 ---
 
@@ -416,6 +425,12 @@ normalized live profile/image/geometry binding before catalog, activation, or la
 the sealed claim. The bundle deliberately omits the seal ID to avoid a hash
 cycle. No real profile bundle is issued in the repository yet.
 
+The maintainer-only release service now builds the same schema through
+`scripts/model_identity.py`, but its output is explicitly `unreviewed` with
+`authority=none` and `promotion=not-authorized`. Internal consistency is not
+issuance; a reviewed pull request and applicable lab evidence remain the trust
+boundary.
+
 ### 4.6 Activate transfers
 
 Transfer moves bytes only to ranks whose runtime source is `sealed-hot`.
@@ -563,6 +578,7 @@ Promotion now requires this identity/lifecycle evidence:
 
 ```text
 [x] Content-addressed validation-bundle schema and live profile binding are enforced
+[x] Deterministic candidate tooling refuses trusted roots and cannot claim authority
 [ ] Repo release provides a real lab-issued seal and complete validation bundle
 [x] Catalog/activation compare exact model, commit, and manifest
 [x] Launch validates witness (or full-verifies drift) and passes exact snapshot path
@@ -600,7 +616,7 @@ because an architectural blocker changed.
 ## 8. Remaining deferred work
 
 - Promotion into the wizard or other guided defaults
-- Issue a reviewed real-profile seal and complete immutable validation bundle
+- Review and issue a real-profile seal and complete immutable validation bundle
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas
 - Destructive duplicate-home cleanup beyond the current recommendation flow
@@ -644,3 +660,4 @@ because an architectural blocker changed.
 | 2026-08-11 | Implemented exact all-rank hot admission: sealed-hot ranks charge manifest bytes, durable-home views charge zero, the default preserves max(64 GiB, 5% filesystem capacity), optional hard caps remain explicit, and blocked capacity never auto-evicts or falls back. |
 | 2026-08-11 | The non-mutating flagship gate inventoried every confirmed rank, then passed on both DeepSeek-selected ranks: 166,898,661,074 bytes on sealed-hot, zero on durable-home, default reserve preserved, one-byte hard cap blocked, and hot ownership unchanged. |
 | 2026-08-11 | Implemented content-addressed validation-bundle schema 1 and fail-closed profile-load verification across exact model identity, declared external-artifact identities/digests, lab provenance/evidence, digest-pinned image, normalized runtime configuration, memory contract, and geometry. No production seal or bundle was issued. |
+| 2026-08-11 | Added a maintainer-only release identity service: `model_identity.py` owns the trust schemas, while `model-release` hashes an exact commit and atomically assembles deterministic unreviewed candidates below a protected output boundary. It cannot issue, publish, edit profiles, or change status; no production seal or bundle was issued. |

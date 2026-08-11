@@ -42,8 +42,12 @@ language for new features without an explicit decision.
 - Profile confs remain shell-style under `models/`; Bash may `load_conf` and
   pass `MODEL` / `NODES` / `STATUS` into Python as args or a small JSON dump.
   `EXPECTED_MODEL_SEAL` is only a reviewed repository-relative reference under
-  `models/seals/`; Python owns its strict schema and identity validation. Bash
-  and operator-local state must never manufacture or rewrite expected seals.
+  `models/seals/`; `scripts/model_identity.py` owns its strict schema and
+  identity validation. Bash and operator-local state must never manufacture or
+  rewrite reviewed expected seals. `scripts/model-release.sh` may assemble only
+  explicitly unreviewed candidates under gitignored
+  `experiments/release-candidates/` (or an explicit path outside the repo); it
+  must not write trust roots, edit profiles, or change validation status.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -165,6 +169,9 @@ this work; the skill is procedural and does not outrank these sources.
 - `STATUS=tested` ultimately binds an immutable validation bundle, not a model
   repository ID alone. Expected identity comes from lab validation; locally
   observed content can match that identity but cannot create or replace it.
+- A deterministic release candidate has no authority by itself. Trusted
+  issuance remains a reviewed change that binds lab evidence; candidate tools
+  must fail if output claims review/promotion or targets trusted directories.
 - The default library policy is one durable home per exact model revision.
   The home rank uses that durable tree through a validated symlink or equivalent
   rank-local view; **do not materialize a second hot copy on the home rank**.

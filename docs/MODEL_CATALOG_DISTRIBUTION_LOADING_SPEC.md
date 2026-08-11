@@ -27,13 +27,14 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of four implementation areas:
+This snapshot supports review of five implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
 2. the promoted replicated distribution path;
 3. the experimental live NFS/RDMA single-copy path; and
-4. the experimental transfer-then-load model-library path.
+4. the experimental transfer-then-load model-library path; and
+5. the maintainer-only release identity and candidate-assembly service.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -45,7 +46,10 @@ rank-local fast metadata witness with visible full-verification fallback. It
 also implements confirmation-gated exact-repository home removal with
 all-confirmed-node reference observation and lifecycle serialization. A sealed
 profile now requires a content-addressed schema-1 validation bundle matching
-the seal and live profile contract. No real profile seal or bundle ships yet.
+the seal and live profile contract. Shared Python identity code now owns those
+schemas, and candidate tooling can assemble deterministic unreviewed documents
+without access to the trusted directories. No real profile seal or bundle
+ships yet.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -1078,9 +1082,18 @@ The schema-1 bundle is stored at
 `models/validation-bundles/<validation_bundle_id>.json`. Profile loading checks
 its content address, primary-model/seal equality, provenance/evidence parity,
 declared external-artifact identities/digests, and exact normalized live
-profile contract. The resolved image must be digest-pinned.
-`scripts/model-library.sh validation-bundle verify
-<profile>` exposes that check for release and operator review.
+profile contract. The resolved image must be digest-pinned. The command
+`scripts/model-library.sh validation-bundle verify <profile>` exposes that
+check for release and operator review.
+
+`scripts/model_identity.py` now owns profile-contract, validation-bundle, and
+expected-seal normalization and identity. The separate maintainer CLI,
+`scripts/model-release.sh`, has `plan`, exact-commit `manifest`, `assemble`, and
+`verify-candidate` commands. It writes atomically only to a new candidate
+directory outside the trust roots; repository-local output is restricted to
+gitignored `experiments/release-candidates/`. Its descriptor is fixed to
+`state=unreviewed`, `authority=none`, privacy review pending, and promotion not
+authorized. It is deliberately absent from `./pulsar` and the wizard.
 
 No real profile seal or bundle is issued in this release, so existing profiles
 remain legacy-unsealed and downloads still default to upstream `main`.
@@ -1432,6 +1445,13 @@ The implementation described here is primarily defined by:
   [`scripts/model_library.py`](../scripts/model_library.py) — experimental
   federated catalog, cold resolution, copy/fabric activation, hot-state,
   pin/purge, release, and benchmark workflows;
+- [`scripts/model_identity.py`](../scripts/model_identity.py) — canonical pure
+  profile-contract, validation-bundle, and expected-seal schemas and IDs;
+- [`scripts/model-release.sh`](../scripts/model-release.sh) and
+  [`scripts/model_release.py`](../scripts/model_release.py) — maintainer-only
+  exact-manifest and untrusted release-candidate assembly/verification;
+- [`docs/MODEL_RELEASE.md`](./MODEL_RELEASE.md) — candidate-stage maintainer
+  runbook and trust boundary;
 - [`docs/WEIGHT_FABRIC.md`](./WEIGHT_FABRIC.md) — operator design/runbook;
 - [`docs/MODEL_LIBRARY_DESIGN.md`](./MODEL_LIBRARY_DESIGN.md) — canonical
   architecture for the experimental library + activate path;
@@ -1466,7 +1486,9 @@ catalog-loss restart, real serving, and 447k-context gates also passed.
 
 Those wins are not a promotion. The durable-home symlink, optional
 expected-seal/exact-revision enforcement, validation-bundle/live-profile
-binding, and rank-local witness fast path are implemented. A legacy-unsealed
+binding, untrusted deterministic release-candidate assembly, and rank-local
+witness fast path are implemented. Candidate tooling cannot issue or publish a
+claim. A legacy-unsealed
 Qwen canary physically passed the symlink,
 both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
 lifecycle gate. The active-use removal guard also passed deterministic and
@@ -1481,7 +1503,8 @@ three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing under the
 > historical profile-validation ledger. Model-library code can enforce reviewed
-> exact seals and their complete validation bundles, but this release issues
-> none, so current profiles remain legacy-unsealed. Sealed local-hot activation over
+> exact seals and their complete validation bundles, and maintainer tooling can
+> assemble unreviewed candidates, but this release issues none, so current
+> profiles remain legacy-unsealed. Sealed local-hot activation over
 > SSH-over-RoCE is a measured promotion candidate, and live NFS/RDMA is a
 > separate documented experiment; neither is a promoted default.
