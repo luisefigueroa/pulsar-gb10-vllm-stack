@@ -187,7 +187,13 @@ the default. A separate, unpromoted NFSv4.2/RDMA path can keep one
 authoritative copy, mount exact clients read-only over confirmed RoCE rails,
 seal it with SHA-256 manifests, and benchmark two or three storage consumers.
 It requires explicit `--weight-source fabric`; the wizard never selects it or
-falls back to it. See [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md).
+falls back to it. A distinct `library-hot` candidate keeps one durable home,
+uses a symlink view on that rank, and transfers sealed hot copies only to other
+ranks. Its control plane can now enforce reviewed exact commit/manifest seals
+and launch the exact snapshot, but this release issues no real profile seals
+and the fast metadata witness remains pending. See
+[docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
+[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md).
 
 ### What the tools do
 
@@ -327,6 +333,7 @@ no leaks, no thermal throttling anywhere).
 | Path | What |
 |---|---|
 | `models/*.conf` | one validated flag set per model; statuses earned by runs |
+| `models/seals/` | reviewed exact model seal contract and future lab-issued profile seals |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |

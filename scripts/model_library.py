@@ -22,12 +22,16 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any
 
-SCHEMA_VERSION = 1
-HOT_SCHEMA_VERSION = 2
+SCHEMA_VERSION = 2
+HOT_SCHEMA_VERSION = 3
 SNAPSHOT_MANIFEST_SCHEMA_VERSION = 1
 SNAPSHOT_MANIFEST_KIND = "model-library-snapshot-manifest"
 SNAPSHOT_INTEGRITY_SCHEME = "sha256-snapshot-manifest-v1"
+EXPECTED_MODEL_SEAL_SCHEMA_VERSION = 1
+EXPECTED_MODEL_SEAL_KIND = "pulsar-expected-model-seal"
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+HF_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
+HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
 STATUS_TESTED = re.compile(r"^tested")
@@ -97,6 +101,182 @@ def atomic_write_json(path: str | pathlib.Path, value: Any, mode: int = 0o600) -
         raise
 
 
+def canonical_json_digest(value: Any) -> str:
+    raw = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def expected_model_seal_identity(seal: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in seal.items() if key != "seal_id"}
+
+
+def expected_model_seal_id(seal: dict[str, Any]) -> str:
+    return canonical_json_digest(expected_model_seal_identity(seal))
+
+
+def _validate_evidence_path(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        fail("expected seal evidence path must be a non-empty string")
+    path = pathlib.PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or "\\" in value:
+        fail(f"expected seal evidence path must be repository-relative: {value!r}")
+    return value
+
+
+def validate_expected_model_seal(
+    seal: Any,
+    *,
+    profile: str | None = None,
+    model_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate a repository-reviewed lab-issued expected model seal."""
+    if not isinstance(seal, dict):
+        fail("expected model seal must be an object")
+    required = {
+        "schema_version",
+        "kind",
+        "profile",
+        "model_id",
+        "revision_kind",
+        "snapshot_revision",
+        "manifest",
+        "provenance",
+        "seal_id",
+    }
+    if set(seal) != required:
+        missing = sorted(required - set(seal))
+        extra = sorted(set(seal) - required)
+        fail(f"expected model seal fields differ (missing={missing}, extra={extra})")
+    if seal.get("schema_version") != EXPECTED_MODEL_SEAL_SCHEMA_VERSION:
+        fail("expected model seal schema_version is unsupported")
+    if seal.get("kind") != EXPECTED_MODEL_SEAL_KIND:
+        fail("expected model seal kind is invalid")
+    seal_profile = seal.get("profile")
+    if not isinstance(seal_profile, str) or not seal_profile:
+        fail("expected model seal profile is invalid")
+    if profile and seal_profile != profile:
+        fail(
+            f"expected model seal profile differs: seal={seal_profile} profile={profile}"
+        )
+    seal_model = seal.get("model_id")
+    if (
+        not isinstance(seal_model, str)
+        or HF_MODEL_ID_RE.fullmatch(seal_model) is None
+    ):
+        fail("expected model seal model_id must be an exact Hugging Face repository ID")
+    if model_id and seal_model != model_id:
+        fail(
+            f"expected model seal model_id differs: seal={seal_model} profile={model_id}"
+        )
+    if seal.get("revision_kind") != "huggingface-commit":
+        fail("expected model seal revision_kind must be huggingface-commit")
+    revision = seal.get("snapshot_revision")
+    if not isinstance(revision, str) or HF_COMMIT_RE.fullmatch(revision) is None:
+        fail("expected model seal snapshot_revision must be an immutable HF commit")
+
+    manifest = seal.get("manifest")
+    if not isinstance(manifest, dict) or set(manifest) != {"scheme", "manifest_id"}:
+        fail("expected model seal manifest fields are invalid")
+    if manifest.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME:
+        fail("expected model seal manifest scheme is unsupported")
+    if not isinstance(manifest.get("manifest_id"), str) or SHA256_HEX_RE.fullmatch(
+        manifest["manifest_id"]
+    ) is None:
+        fail("expected model seal manifest_id is invalid")
+
+    provenance = seal.get("provenance")
+    provenance_fields = {
+        "validation_bundle_id",
+        "issuer",
+        "issued_at",
+        "evidence",
+    }
+    if not isinstance(provenance, dict) or set(provenance) != provenance_fields:
+        fail("expected model seal provenance fields are invalid")
+    bundle_id = provenance.get("validation_bundle_id")
+    if not isinstance(bundle_id, str) or SHA256_HEX_RE.fullmatch(bundle_id) is None:
+        fail("expected model seal validation_bundle_id is invalid")
+    issuer = provenance.get("issuer")
+    if not isinstance(issuer, str) or not issuer.strip():
+        fail("expected model seal issuer is invalid")
+    issued_at = provenance.get("issued_at")
+    if not isinstance(issued_at, str) or not issued_at.endswith("Z"):
+        fail("expected model seal issued_at must be an RFC3339 UTC timestamp")
+    try:
+        parsed_issued_at = datetime.fromisoformat(issued_at[:-1] + "+00:00")
+    except ValueError:
+        fail("expected model seal issued_at must be an RFC3339 UTC timestamp")
+    if parsed_issued_at.tzinfo is None:
+        fail("expected model seal issued_at must include UTC")
+    evidence = provenance.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        fail("expected model seal provenance must include evidence")
+    for item in evidence:
+        _validate_evidence_path(item)
+
+    seal_id = seal.get("seal_id")
+    if not isinstance(seal_id, str) or SHA256_HEX_RE.fullmatch(seal_id) is None:
+        fail("expected model seal seal_id is invalid")
+    if seal_id != expected_model_seal_id(seal):
+        fail("expected model seal identity mismatch")
+    return seal
+
+
+def expected_model_seal_projection(seal: dict[str, Any]) -> dict[str, Any]:
+    seal = validate_expected_model_seal(seal)
+    return {
+        "seal_id": seal["seal_id"],
+        "validation_bundle_id": seal["provenance"]["validation_bundle_id"],
+        "model_id": seal["model_id"],
+        "snapshot_revision": seal["snapshot_revision"],
+        "manifest_id": seal["manifest"]["manifest_id"],
+    }
+
+
+def load_profile_expected_model_seal(
+    profile_path: pathlib.Path,
+    reference: str | None,
+    *,
+    profile: str,
+    model_id: str,
+) -> dict[str, Any] | None:
+    if not reference:
+        return None
+    relative = pathlib.PurePosixPath(reference)
+    if relative.is_absolute() or ".." in relative.parts or "\\" in reference:
+        fail(f"{profile}: EXPECTED_MODEL_SEAL must be relative to models/")
+    seal_root = (profile_path.parent / "seals").resolve()
+    candidate = (profile_path.parent / pathlib.Path(reference)).resolve()
+    try:
+        candidate.relative_to(seal_root)
+    except ValueError:
+        fail(f"{profile}: EXPECTED_MODEL_SEAL must live under models/seals/")
+    if not candidate.is_file():
+        fail(f"{profile}: expected model seal is missing: {candidate}")
+    seal = validate_expected_model_seal(
+        load_json(candidate),
+        profile=profile,
+        model_id=model_id,
+    )
+    repository_root = profile_path.parent.parent.resolve()
+    for evidence_ref in seal["provenance"]["evidence"]:
+        evidence_path = (repository_root / evidence_ref).resolve()
+        try:
+            evidence_path.relative_to(repository_root)
+        except ValueError:
+            fail(f"{profile}: expected seal evidence escapes the repository")
+        if not evidence_path.is_file():
+            fail(
+                f"{profile}: expected seal evidence is missing: {evidence_ref}"
+            )
+    return seal
+
+
 def hub_dirname_to_model_id(dirname: str) -> str | None:
     match = HUB_DIR_RE.fullmatch(dirname)
     if not match:
@@ -110,6 +290,7 @@ def model_id_to_hub_dirname(model_id: str) -> str:
 
 
 def read_revision(hub_root: pathlib.Path) -> str | None:
+    """Return mutable refs/main for legacy callers; never use it as sealed identity."""
     ref_path = hub_root / "refs" / "main"
     if not ref_path.is_file():
         return None
@@ -122,6 +303,38 @@ def read_revision(hub_root: pathlib.Path) -> str | None:
     if not (hub_root / "snapshots" / rev).is_dir():
         return None
     return rev
+
+
+def hub_snapshot_state(hub_root: pathlib.Path, revision: str) -> str:
+    """Return complete | partial | missing for one exact snapshot directory."""
+    if not hub_root.is_dir():
+        return "missing"
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        return "partial"
+    snapshot = hub_root / "snapshots" / revision
+    try:
+        mode = snapshot.lstat().st_mode
+    except OSError:
+        return "missing"
+    if not stat.S_ISDIR(mode) or _has_incomplete_marker(snapshot):
+        return "partial"
+    return weight_dir_state(snapshot)
+
+
+def complete_snapshot_revisions(hub_root: pathlib.Path) -> list[str]:
+    """List complete immutable snapshot directories without consulting refs/main."""
+    snapshots = hub_root / "snapshots"
+    try:
+        children = sorted(snapshots.iterdir(), key=lambda item: item.name)
+    except OSError:
+        return []
+    revisions: list[str] = []
+    for child in children:
+        if SAFE_REV.fullmatch(child.name) is None:
+            continue
+        if hub_snapshot_state(hub_root, child.name) == "complete":
+            revisions.append(child.name)
+    return revisions
 
 
 def tree_bytes(path: pathlib.Path) -> int:
@@ -254,17 +467,13 @@ def weight_dir_state(weight_dir: pathlib.Path) -> str:
 
 
 def hub_tree_state(hub_root: pathlib.Path) -> str:
-    """Return complete | partial | missing for a hub model directory."""
+    """Return legacy refs/main state; sealed paths use hub_snapshot_state()."""
     if not hub_root.is_dir():
         return "missing"
-    if _has_incomplete_marker(hub_root):
-        return "partial"
-
     revision = read_revision(hub_root)
     if revision is None:
         return "partial"
-    snapshot = hub_root / "snapshots" / revision
-    return weight_dir_state(snapshot)
+    return hub_snapshot_state(hub_root, revision)
 
 
 def flat_tree_state(model_root: pathlib.Path) -> str:
@@ -329,24 +538,36 @@ def scan_hub_cache(
         model_id = hub_dirname_to_model_id(entry.name)
         if model_id is None:
             continue
-        state = hub_tree_state(entry)
-        revision = read_revision(entry) if state == "complete" else None
-        identity = f"{model_id}@{revision}" if revision else f"{model_id}@unknown"
-        homes.append(
-            {
-                "model_id": model_id,
-                "revision": revision,
-                "identity_key": identity,
-                "rank": rank,
-                "node_id": node_id,
-                "hostname": hostname,
-                "ssh_host": ssh_host,
-                "cache_root": str(cache_root),
-                "hub_path": str(entry),
-                "state": state,
-                "bytes": tree_bytes(entry) if state == "complete" else 0,
-            }
-        )
+        active_revision = read_revision(entry)
+        revisions = complete_snapshot_revisions(entry)
+        if not revisions:
+            revisions = [active_revision] if active_revision else [None]
+        repository_bytes = tree_bytes(entry)
+        for revision in revisions:
+            state = (
+                hub_snapshot_state(entry, revision)
+                if revision is not None
+                else "partial"
+            )
+            identity = (
+                f"{model_id}@{revision}" if revision else f"{model_id}@unknown"
+            )
+            homes.append(
+                {
+                    "model_id": model_id,
+                    "revision": revision,
+                    "identity_key": identity,
+                    "rank": rank,
+                    "node_id": node_id,
+                    "hostname": hostname,
+                    "ssh_host": ssh_host,
+                    "cache_root": str(cache_root),
+                    "hub_path": str(entry),
+                    "state": state,
+                    "active": revision is not None and revision == active_revision,
+                    "bytes": repository_bytes if state == "complete" else 0,
+                }
+            )
     return homes
 
 
@@ -428,10 +649,16 @@ def _cold_entry(
     path: pathlib.Path,
     layout: str,
     category: str = "",
+    revision: str | None = None,
 ) -> dict[str, Any]:
     if layout == "hub":
-        state = hub_tree_state(path)
-        revision = read_revision(path) if state == "complete" else None
+        selected_revision = revision or read_revision(path)
+        state = (
+            hub_snapshot_state(path, selected_revision)
+            if selected_revision is not None
+            else hub_tree_state(path)
+        )
+        revision = selected_revision if state == "complete" else None
     else:
         state = flat_tree_state(path)
         revision = None
@@ -466,14 +693,27 @@ def _scan_cold_hub_dir(hub_dir: pathlib.Path, *, category: str) -> list[dict[str
         model_id = hub_dirname_to_model_id(entry.name)
         if model_id is None:
             continue
-        out.append(
-            _cold_entry(
-                model_id=model_id,
-                path=entry,
-                layout="hub",
-                category=category,
+        revisions = complete_snapshot_revisions(entry)
+        if revisions:
+            for revision in revisions:
+                out.append(
+                    _cold_entry(
+                        model_id=model_id,
+                        path=entry,
+                        layout="hub",
+                        category=category,
+                        revision=revision,
+                    )
+                )
+        else:
+            out.append(
+                _cold_entry(
+                    model_id=model_id,
+                    path=entry,
+                    layout="hub",
+                    category=category,
+                )
             )
-        )
     return out
 
 
@@ -518,21 +758,23 @@ def scan_cold_archive(cold_root: str | pathlib.Path) -> list[dict[str, Any]]:
         fail(status["reason"] or f"cold root unavailable: {cold_root}")
     root = pathlib.Path(status["root"])
     entries: list[dict[str, Any]] = []
-    seen_paths: set[str] = set()
+    seen_identities: set[tuple[str, str | None]] = set()
 
     for rel in COLD_HUB_REL_PATHS:
         hub_dir = root / rel
         for item in _scan_cold_hub_dir(hub_dir, category=f"hub:{rel}"):
-            if item["path"] in seen_paths:
+            key = (item["path"], item.get("revision"))
+            if key in seen_identities:
                 continue
-            seen_paths.add(item["path"])
+            seen_identities.add(key)
             entries.append(item)
 
     for cat in COLD_CATEGORY_DIRS:
         for item in _scan_cold_category(root / cat, category=cat):
-            if item["path"] in seen_paths:
+            key = (item["path"], item.get("revision"))
+            if key in seen_identities:
                 continue
-            seen_paths.add(item["path"])
+            seen_identities.add(key)
             entries.append(item)
 
     entries.sort(key=lambda e: (e["model_id"], e["path"]))
@@ -544,6 +786,7 @@ def find_cold_entry(
     *,
     model_id: str | None = None,
     path: str | None = None,
+    revision: str | None = None,
     require_complete: bool = True,
 ) -> dict[str, Any] | None:
     """Find one cold entry by absolute path or model_id (org/name)."""
@@ -574,7 +817,13 @@ def find_cold_entry(
             mid = _infer_model_id_from_cold_path(root, candidate, layout)
         if mid is None:
             fail(f"cold path: cannot infer model_id for {candidate}")
-        entry = _cold_entry(model_id=mid, path=candidate, layout=layout, category="path")
+        entry = _cold_entry(
+            model_id=mid,
+            path=candidate,
+            layout=layout,
+            category="path",
+            revision=revision,
+        )
         if require_complete and entry["state"] != "complete":
             return None
         return entry
@@ -603,6 +852,7 @@ def find_cold_entry(
             path=candidate,
             layout=layout,
             category="lookup",
+            revision=revision,
         )
         if require_complete and entry["state"] != "complete":
             continue
@@ -614,6 +864,8 @@ def find_cold_entry(
     if not exact:
         lower = model_id.lower()
         exact = [e for e in scanned if e["model_id"].lower() == lower]
+    if revision is not None:
+        exact = [e for e in exact if e.get("revision") == revision]
     if require_complete:
         exact = [e for e in exact if e["state"] == "complete"]
     if not exact:
@@ -688,6 +940,7 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
     model = None
     status = "?"
     nodes = 1
+    expected_seal_ref = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -702,6 +955,8 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
                 nodes = int(line.split("=", 1)[1].strip())
             except ValueError:
                 nodes = 1
+        elif line.startswith("EXPECTED_MODEL_SEAL="):
+            expected_seal_ref = line.split("=", 1)[1].strip().strip("\"'") or None
     if not model:
         return None
     absolute = model.startswith("/")
@@ -721,13 +976,24 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
             model_id = f"{parts[-2]}/{parts[-1]}"
     else:
         model_id = model
+    expected_seal = load_profile_expected_model_seal(
+        path,
+        expected_seal_ref,
+        profile=path.stem,
+        model_id=model_id,
+    )
+    tested = bool(STATUS_TESTED.match(status))
+    if expected_seal is not None and not tested:
+        fail(f"{path.stem}: EXPECTED_MODEL_SEAL requires STATUS=tested*")
     return {
         "profile": path.stem,
         "model_id": model_id,
         "absolute_path": model if absolute else None,
         "status": status,
         "nodes": nodes,
-        "validated": bool(STATUS_TESTED.match(status)),
+        "validated": tested,
+        "expected_model_seal_ref": expected_seal_ref,
+        "expected_model_seal": expected_seal,
     }
 
 
@@ -740,6 +1006,7 @@ def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
     model = None
     status = "?"
     nodes = 1
+    expected_seal_ref = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -754,14 +1021,27 @@ def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
                 nodes = int(line.split("=", 1)[1].strip())
             except ValueError:
                 nodes = 1
+        elif line.startswith("EXPECTED_MODEL_SEAL="):
+            expected_seal_ref = line.split("=", 1)[1].strip().strip("\"'") or None
     if not model or model.startswith("/"):
         return None
+    expected_seal = load_profile_expected_model_seal(
+        path,
+        expected_seal_ref,
+        profile=path.stem,
+        model_id=model,
+    )
+    tested = bool(STATUS_TESTED.match(status))
+    if expected_seal is not None and not tested:
+        fail(f"{path.stem}: EXPECTED_MODEL_SEAL requires STATUS=tested*")
     return {
         "profile": path.stem,
         "model_id": model,
         "status": status,
         "nodes": nodes,
-        "validated": bool(STATUS_TESTED.match(status)),
+        "validated": tested,
+        "expected_model_seal_ref": expected_seal_ref,
+        "expected_model_seal": expected_seal,
     }
 
 
@@ -777,6 +1057,120 @@ def load_hf_profiles(models_dir: str | pathlib.Path) -> list[dict[str, Any]]:
     return profiles
 
 
+def load_hf_profile(
+    models_dir: str | pathlib.Path,
+    profile: str,
+) -> dict[str, Any]:
+    path = pathlib.Path(models_dir) / f"{profile}.conf"
+    parsed = parse_profile_conf(path)
+    if parsed is None:
+        fail(f"{profile}: expected a Hugging Face model profile")
+    return parsed
+
+
+def load_model_profile(
+    models_dir: str | pathlib.Path,
+    profile: str,
+) -> dict[str, Any]:
+    """Load an HF or absolute-path profile for hot-state revalidation."""
+    path = pathlib.Path(models_dir) / f"{profile}.conf"
+    parsed = parse_profile_conf_any(path)
+    if parsed is None:
+        fail(f"{profile}: model profile is missing or invalid")
+    return parsed
+
+
+def observed_model_seal_projection(manifest: dict[str, Any]) -> dict[str, Any]:
+    manifest = validate_snapshot_manifest(manifest)
+    return {
+        "model_id": manifest["model_id"],
+        "snapshot_revision": manifest["snapshot_revision"],
+        "manifest_id": manifest["manifest_id"],
+    }
+
+
+def compare_profile_expected_identity(
+    profile: dict[str, Any],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare observed bytes with a profile's lab-issued trust root."""
+    observed = observed_model_seal_projection(manifest)
+    expected = profile.get("expected_model_seal")
+    if expected is None:
+        return {
+            "identity_status": (
+                "legacy-unsealed" if profile.get("validated") else "unvalidated"
+            ),
+            "expected_seal": None,
+            "observed_seal": observed,
+        }
+
+    expected_projection = expected_model_seal_projection(expected)
+    for field in ("model_id", "snapshot_revision", "manifest_id"):
+        if observed[field] != expected_projection[field]:
+            fail(
+                f"expected model seal mismatch: {field} "
+                f"observed={observed[field]} expected={expected_projection[field]}"
+            )
+    return {
+        "identity_status": "match" if profile.get("validated") else "unvalidated",
+        "expected_seal": expected_projection,
+        "observed_seal": observed,
+    }
+
+
+def require_activation_identity(
+    profile: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    allow_unvalidated: bool,
+) -> dict[str, Any]:
+    validation = compare_profile_expected_identity(profile, manifest)
+    status = validation["identity_status"]
+    if status != "match" and not allow_unvalidated:
+        if status == "legacy-unsealed":
+            fail(
+                f"activate: {profile['profile']} is legacy-unsealed; add a reviewed "
+                "EXPECTED_MODEL_SEAL or pass --allow-unvalidated for an explicit experiment"
+            )
+        fail(
+            f"activate: {profile['profile']} identity status is {status}; "
+            "pass --allow-unvalidated for an explicit experiment"
+        )
+    return validation
+
+
+def _catalog_entry(
+    model_id: str,
+    revision: str | None,
+    identity_key: str,
+) -> dict[str, Any]:
+    return {
+        "model_id": model_id,
+        "revision": revision,
+        "identity_key": identity_key,
+        "validation": "unvalidated",
+        "profiles": [],
+        "profile_validation": [],
+        "homes": [],
+        "duplicate": False,
+    }
+
+
+def _profile_catalog_status(
+    profile: dict[str, Any],
+    *,
+    present: bool,
+) -> str:
+    if not present:
+        return "missing"
+    if not profile.get("validated"):
+        return "unvalidated"
+    if profile.get("expected_model_seal") is None:
+        return "legacy-unsealed"
+    return "expected-unverified"
+
+
 def build_catalog(
     *,
     topology_id: str,
@@ -784,29 +1178,17 @@ def build_catalog(
     profiles: list[dict[str, Any]],
     primary_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Merge scanned homes with profile validation labels."""
+    """Merge scanned homes with exact profile/seal identity expectations."""
     primary_overrides = primary_overrides or {}
-    by_model: dict[str, dict[str, Any]] = {}
-
-    profile_by_model: dict[str, list[dict[str, Any]]] = {}
-    for profile in profiles:
-        profile_by_model.setdefault(profile["model_id"], []).append(profile)
+    by_identity: dict[str, dict[str, Any]] = {}
 
     for home in homes:
         model_id = home["model_id"]
         revision = home.get("revision") or "unknown"
         identity = home.get("identity_key") or f"{model_id}@{revision}"
-        entry = by_model.setdefault(
+        entry = by_identity.setdefault(
             identity,
-            {
-                "model_id": model_id,
-                "revision": home.get("revision"),
-                "identity_key": identity,
-                "validation": "unvalidated",
-                "profiles": [],
-                "homes": [],
-                "duplicate": False,
-            },
+            _catalog_entry(model_id, home.get("revision"), identity),
         )
         entry["homes"].append(
             {
@@ -817,46 +1199,100 @@ def build_catalog(
                 "cache_root": home["cache_root"],
                 "hub_path": home["hub_path"],
                 "state": home["state"],
+                "active": bool(home.get("active")),
                 "bytes": home.get("bytes") or 0,
                 "primary": False,
             }
         )
 
-    # Attach profiles / validation for any identity with matching model_id
-    for identity, entry in by_model.items():
-        model_id = entry["model_id"]
-        matched = profile_by_model.get(model_id) or []
-        entry["profiles"] = [p["profile"] for p in matched]
-        if any(p["validated"] for p in matched):
-            entry["validation"] = "validated"
-        else:
-            entry["validation"] = "unvalidated"
-
-    # Also surface validated profiles with zero homes (not on disk)
-    seen_models = {e["model_id"] for e in by_model.values()}
     for profile in profiles:
-        if profile["model_id"] in seen_models:
-            continue
-        identity = f"{profile['model_id']}@missing"
-        by_model[identity] = {
-            "model_id": profile["model_id"],
-            "revision": None,
-            "identity_key": identity,
-            "validation": "validated" if profile["validated"] else "unvalidated",
-            "profiles": [profile["profile"]],
-            "homes": [],
-            "duplicate": False,
-            "on_disk": False,
-        }
+        model_id = profile["model_id"]
+        expected = profile.get("expected_model_seal")
+        expected_revision = expected.get("snapshot_revision") if expected else None
+        model_targets = [
+            entry for entry in by_identity.values() if entry["model_id"] == model_id
+        ]
+        if expected_revision is not None:
+            targets = [
+                entry
+                for entry in model_targets
+                if entry.get("revision") == expected_revision
+            ]
+        else:
+            # Preserve the legacy experimental interpretation of refs/main when
+            # it is unambiguous. Sealed profiles never enter this branch.
+            targets = [
+                entry
+                for entry in model_targets
+                if any(
+                    home.get("active") and home.get("state") == "complete"
+                    for home in entry.get("homes") or []
+                )
+            ]
+            if not targets:
+                complete_targets = [
+                    entry
+                    for entry in model_targets
+                    if any(
+                        home.get("state") == "complete"
+                        for home in entry.get("homes") or []
+                    )
+                ]
+                targets = (
+                    complete_targets
+                    if len(complete_targets) == 1
+                    else model_targets
+                )
+        if not targets:
+            revision = expected_revision
+            suffix = revision or "missing"
+            identity = f"{model_id}@{suffix}"
+            entry = by_identity.setdefault(
+                identity,
+                _catalog_entry(model_id, revision, identity),
+            )
+            targets = [entry]
 
+        for entry in targets:
+            complete_present = any(
+                home.get("state") == "complete" for home in entry.get("homes") or []
+            )
+            status = _profile_catalog_status(profile, present=complete_present)
+            profile_state: dict[str, Any] = {
+                "profile": profile["profile"],
+                "profile_status": profile["status"],
+                "identity_status": status,
+                "expected_model_seal_ref": profile.get("expected_model_seal_ref"),
+                "expected_model_seal": (
+                    expected_model_seal_projection(expected) if expected else None
+                ),
+            }
+            entry["profiles"].append(profile["profile"])
+            entry["profile_validation"].append(profile_state)
+
+    precedence = (
+        "expected-unverified",
+        "legacy-unsealed",
+        "missing",
+        "unvalidated",
+    )
     models_out: list[dict[str, Any]] = []
-    for identity in sorted(by_model.keys()):
-        entry = by_model[identity]
+    for identity in sorted(by_identity):
+        entry = by_identity[identity]
         complete_homes = [h for h in entry["homes"] if h["state"] == "complete"]
         partial_homes = [h for h in entry["homes"] if h["state"] != "complete"]
         entry["homes"] = complete_homes + partial_homes
         entry["on_disk"] = bool(complete_homes)
         entry["duplicate"] = len(complete_homes) > 1
+        statuses = {
+            item.get("identity_status") for item in entry["profile_validation"]
+        }
+        entry["validation"] = next(
+            (candidate for candidate in precedence if candidate in statuses),
+            "unvalidated",
+        )
+        entry["profiles"] = sorted(set(entry["profiles"]))
+        entry["profile_validation"].sort(key=lambda item: item["profile"])
 
         override = primary_overrides.get(entry["identity_key"]) or primary_overrides.get(
             entry["model_id"]
@@ -872,7 +1308,6 @@ def build_catalog(
             complete_homes[0]["primary"] = True
             primary_set = True
         if not primary_set and len(complete_homes) > 1:
-            # Fail-closed: no automatic primary when duplicates exist
             for home in complete_homes:
                 home["primary"] = False
         entry["has_primary"] = any(h.get("primary") for h in complete_homes)
@@ -902,19 +1337,37 @@ def find_model_entry(
     profile: str | None = None,
     identity_key: str | None = None,
 ) -> dict[str, Any] | None:
-    for entry in catalog.get("models") or []:
-        if identity_key and entry.get("identity_key") == identity_key:
-            return entry
-        if profile and profile in (entry.get("profiles") or []):
-            return entry
-        if model_id and entry.get("model_id") == model_id and entry.get("on_disk", True):
-            # Prefer complete-on-disk entries for model_id
-            if any(h.get("state") == "complete" for h in entry.get("homes") or []):
-                return entry
+    entries = catalog.get("models") or []
+    if identity_key:
+        return next(
+            (entry for entry in entries if entry.get("identity_key") == identity_key),
+            None,
+        )
+    if profile:
+        matches = [entry for entry in entries if profile in (entry.get("profiles") or [])]
+        if len(matches) > 1:
+            fail(
+                f"resolve: profile {profile} matches multiple revisions; "
+                "add an EXPECTED_MODEL_SEAL with an exact commit"
+            )
+        return matches[0] if matches else None
     if model_id:
-        for entry in catalog.get("models") or []:
-            if entry.get("model_id") == model_id:
-                return entry
+        complete = [
+            entry
+            for entry in entries
+            if entry.get("model_id") == model_id
+            and any(h.get("state") == "complete" for h in entry.get("homes") or [])
+        ]
+        if len(complete) > 1:
+            fail(
+                f"resolve: model {model_id} has multiple revisions; "
+                "select an exact identity or profile seal"
+            )
+        if complete:
+            return complete[0]
+        missing = [entry for entry in entries if entry.get("model_id") == model_id]
+        if len(missing) == 1:
+            return missing[0]
     return None
 
 
@@ -934,14 +1387,18 @@ def resolve_entry(
       None / "" / "none" — disable cold fall-through
       str — explicit cold root
     """
-    # Profile conf may supply model_id or absolute cold path.
-    if profile and models_dir and (model_id is None or absolute_path is None):
+    # Profile conf supplies model identity and, when reviewed, the exact commit.
+    profile_expected_revision = None
+    if profile and models_dir:
         conf = pathlib.Path(models_dir) / f"{profile}.conf"
         if conf.is_file():
             parsed = parse_profile_conf_any(conf)
             if parsed:
                 model_id = model_id or parsed.get("model_id")
                 absolute_path = absolute_path or parsed.get("absolute_path")
+                expected_seal = parsed.get("expected_model_seal")
+                if expected_seal:
+                    profile_expected_revision = expected_seal["snapshot_revision"]
 
     warm_error: str | None = None
     if catalog is not None and not absolute_path:
@@ -966,11 +1423,25 @@ def resolve_entry(
                 primary = next((h for h in complete if h.get("primary")), None)
                 if primary is None:
                     fail(f"resolve: {entry['model_id']}: no primary home selected")
+                profile_validation = next(
+                    (
+                        item
+                        for item in entry.get("profile_validation") or []
+                        if item.get("profile") == profile
+                    ),
+                    None,
+                )
                 return {
                     "model_id": entry["model_id"],
                     "revision": entry.get("revision"),
                     "identity_key": entry["identity_key"],
                     "validation": entry.get("validation"),
+                    "identity_status": (
+                        profile_validation.get("identity_status")
+                        if profile_validation
+                        else entry.get("validation")
+                    ),
+                    "profile_validation": profile_validation,
                     "profiles": entry.get("profiles") or [],
                     "home": primary,
                     "duplicate": bool(entry.get("duplicate")),
@@ -1009,15 +1480,28 @@ def resolve_entry(
     cold: dict[str, Any] | None = None
     try:
         if absolute_path:
-            cold = find_cold_entry(root, path=absolute_path, require_complete=True)
+            cold = find_cold_entry(
+                root,
+                path=absolute_path,
+                revision=profile_expected_revision,
+                require_complete=True,
+            )
         elif model_id:
-            cold = find_cold_entry(root, model_id=model_id, require_complete=True)
+            cold = find_cold_entry(
+                root,
+                model_id=model_id,
+                revision=profile_expected_revision,
+                require_complete=True,
+            )
         elif profile and catalog is not None:
             # Profile known but no model_id — already tried warm via profile.
             entry = find_model_entry(catalog, profile=profile)
             if entry and entry.get("model_id"):
                 cold = find_cold_entry(
-                    root, model_id=entry["model_id"], require_complete=True
+                    root,
+                    model_id=entry["model_id"],
+                    revision=profile_expected_revision,
+                    require_complete=True,
                 )
     except ModelLibraryError:
         raise
@@ -1115,18 +1599,18 @@ def materialize_hub_tree(
         fail(f"materialize: cannot detect layout at {source}")
 
     if layout == "hub":
-        state = hub_tree_state(source)
-        if state != "complete":
-            fail(f"materialize: source hub is {state}: {source}")
         rev = revision or read_revision(source)
         if not rev:
             fail(f"materialize: source hub has no revision: {source}")
+        state = hub_snapshot_state(source, rev)
+        if state != "complete":
+            fail(f"materialize: source snapshot {rev} is {state}: {source}")
         if dest_hub.exists():
             shutil.rmtree(dest_hub)
         dest_hub.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, dest_hub, symlinks=False)
-        if hub_tree_state(dest_hub) != "complete":
-            fail(f"materialize: dest hub incomplete after copy: {dest_hub}")
+        if hub_snapshot_state(dest_hub, rev) != "complete":
+            fail(f"materialize: dest snapshot {rev} incomplete after copy: {dest_hub}")
         return {
             "layout": "hub",
             "source": str(source),
@@ -1176,17 +1660,22 @@ def plan_cold_adopt(
     if root is None:
         fail("cold adopt: cold root not configured (PULSAR_COLD_ROOT or MODELS_NFS)")
 
-    if profile and models_dir and not model_id and not path:
+    expected_revision = None
+    if profile and models_dir:
         conf = pathlib.Path(models_dir) / f"{profile}.conf"
         parsed = parse_profile_conf_any(conf) if conf.is_file() else None
         if parsed:
-            model_id = parsed.get("model_id")
-            path = parsed.get("absolute_path")
+            model_id = model_id or parsed.get("model_id")
+            path = path or parsed.get("absolute_path")
+            expected_seal = parsed.get("expected_model_seal")
+            if expected_seal:
+                expected_revision = expected_seal["snapshot_revision"]
 
     entry = find_cold_entry(
         root,
         model_id=model_id,
         path=path,
+        revision=expected_revision,
         require_complete=True,
     )
     if entry is None:
@@ -1230,7 +1719,10 @@ def execute_cold_adopt(plan: dict[str, Any]) -> dict[str, Any]:
         "executed": True,
         "revision": result["revision"],
         "dest_bytes": result["bytes"],
-        "dest_state": hub_tree_state(pathlib.Path(plan["dest_hub"])),
+        "dest_state": hub_snapshot_state(
+            pathlib.Path(plan["dest_hub"]),
+            result["revision"],
+        ),
     }
 
 
@@ -1252,43 +1744,41 @@ def plan_cold_stage(
     if root is None:
         fail("cold stage-only: cold root not configured (PULSAR_COLD_ROOT or MODELS_NFS)")
 
-    if profile and models_dir and not model_id and not absolute_path:
+    profile_data = None
+    if profile and models_dir:
         conf = pathlib.Path(models_dir) / f"{profile}.conf"
-        parsed = parse_profile_conf_any(conf) if conf.is_file() else None
-        if parsed:
-            model_id = parsed.get("model_id")
-            absolute_path = parsed.get("absolute_path")
+        profile_data = parse_profile_conf_any(conf) if conf.is_file() else None
+        if profile_data:
+            model_id = model_id or profile_data.get("model_id")
+            absolute_path = absolute_path or profile_data.get("absolute_path")
 
-    # Catalog may supply model_id / validation for HF profiles.
+    # Catalog may supply model_id for HF profiles, but never supplies trust.
     catalog = load_catalog(catalog_path) if catalog_path else None
-    validation = "unvalidated"
     if catalog is not None:
         warm_entry = find_model_entry(catalog, model_id=model_id, profile=profile)
         if warm_entry:
-            validation = warm_entry.get("validation") or validation
             model_id = model_id or warm_entry.get("model_id")
 
+    expected_revision = None
+    if profile_data and profile_data.get("expected_model_seal"):
+        expected_revision = profile_data["expected_model_seal"]["snapshot_revision"]
     entry = find_cold_entry(
         root,
         model_id=model_id,
         path=absolute_path,
+        revision=expected_revision,
         require_complete=True,
     )
     if entry is None:
         target = absolute_path or model_id or profile or "?"
         fail(f"cold stage-only: no complete cold tree for {target}")
 
-    if validation != "validated" and not allow_unvalidated:
-        fail(
-            f"cold stage-only: {entry['model_id']} is unvalidated; "
-            "pass --allow-unvalidated to proceed"
-        )
-
     source = pathlib.Path(entry["path"])
     layout = entry.get("layout") or detect_model_layout(source)
     if layout == "hub":
-        if hub_tree_state(source) != "complete":
-            fail(f"cold stage-only: source hub incomplete: {source}")
+        revision = entry.get("revision")
+        if not revision or hub_snapshot_state(source, revision) != "complete":
+            fail(f"cold stage-only: selected source snapshot is incomplete: {source}")
     else:
         if flat_tree_state(source) != "complete":
             fail(f"cold stage-only: source flat incomplete: {source}")
@@ -1296,6 +1786,7 @@ def plan_cold_stage(
         integrity_manifest = build_snapshot_manifest(
             source,
             model_id=entry["model_id"],
+            revision=entry.get("revision"),
         )
     else:
         revision = entry.get("revision")
@@ -1306,9 +1797,26 @@ def plan_cold_stage(
             model_id=entry["model_id"],
             revision=revision,
         )
+    if profile_data is None:
+        validation = {
+            "identity_status": "unvalidated",
+            "expected_seal": None,
+            "observed_seal": observed_model_seal_projection(integrity_manifest),
+        }
+        if not allow_unvalidated:
+            fail(
+                "cold stage-only: profile identity is unvalidated; "
+                "pass --allow-unvalidated for an explicit experiment"
+            )
+    else:
+        validation = require_activation_identity(
+            profile_data,
+            integrity_manifest,
+            allow_unvalidated=allow_unvalidated,
+        )
     source_digest = integrity_manifest["manifest_id"]
     # Instance path is keyed by the exact sealed snapshot identity.
-    cid = content_id_for(entry["identity_key"], source_digest)
+    cid = hot_content_id(entry["identity_key"], source_digest, validation)
     bytes_logical = integrity_manifest["total_bytes"]
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     hub_dest = hot_hub_path(instance, entry["model_id"])
@@ -1326,6 +1834,7 @@ def plan_cold_stage(
         if (
             same_source
             and existing.get("identity_key") == entry["identity_key"]
+            and existing.get("validation") == validation
             and existing.get("state") in {"ready", "pinned"}
         ):
             return {
@@ -1346,6 +1855,7 @@ def plan_cold_stage(
                 "content_digest": existing.get("content_digest") or source_digest,
                 "source_content_digest": source_digest,
                 "integrity_manifest": integrity_manifest,
+                "validation": validation,
                 "bytes_logical": bytes_logical,
                 "backend": "copy",
                 "stamp": existing,
@@ -1365,6 +1875,7 @@ def plan_cold_stage(
         content_id=cid,
         content_digest=provisional_digest,
         integrity_manifest=integrity_manifest,
+        validation=validation,
         backend="copy",
         bytes_logical=bytes_logical,
     )
@@ -1399,6 +1910,7 @@ def plan_cold_stage(
         "content_digest": provisional_digest,
         "source_content_digest": source_digest,
         "integrity_manifest": integrity_manifest,
+        "validation": validation,
         "bytes_logical": bytes_logical,
         "backend": "copy",
         "target_ranks": target_ranks,
@@ -1504,12 +2016,17 @@ def _resolved_inside_file(path: pathlib.Path, root: pathlib.Path) -> pathlib.Pat
 
 def iter_snapshot_files(
     hub_path: str | pathlib.Path,
+    *,
+    revision: str | None = None,
 ) -> tuple[str, list[tuple[str, pathlib.Path]]]:
-    """Return the active snapshot revision and its exact logical file set."""
+    """Return one exact snapshot revision and its logical file set."""
     hub = pathlib.Path(hub_path)
-    revision = read_revision(hub)
+    revision = revision or read_revision(hub)
     if revision is None:
-        fail(f"integrity: hub has no complete active revision: {hub}")
+        fail(f"integrity: hub has no selected snapshot revision: {hub}")
+    state = hub_snapshot_state(hub, revision)
+    if state != "complete":
+        fail(f"integrity: snapshot {revision} is {state}: {hub}")
     snapshot = hub / "snapshots" / revision
     files: list[tuple[str, pathlib.Path]] = []
     try:
@@ -1586,9 +2103,10 @@ def build_snapshot_manifest(
     hub_path: str | pathlib.Path,
     *,
     model_id: str,
+    revision: str | None = None,
 ) -> dict[str, Any]:
     hub = pathlib.Path(hub_path)
-    revision, files = iter_snapshot_files(hub)
+    revision, files = iter_snapshot_files(hub, revision=revision)
     return _build_manifest_from_files(
         model_id=model_id,
         revision=revision,
@@ -1694,7 +2212,10 @@ def verify_snapshot_manifest(
 ) -> dict[str, Any]:
     manifest = validate_snapshot_manifest(manifest)
     hub = pathlib.Path(hub_path)
-    revision, actual_files = iter_snapshot_files(hub)
+    revision, actual_files = iter_snapshot_files(
+        hub,
+        revision=manifest["snapshot_revision"],
+    )
     if revision != manifest["snapshot_revision"]:
         fail(
             f"integrity: snapshot is {revision}, expected "
@@ -1758,6 +2279,18 @@ def content_id_for(identity_key: str, digest: str) -> str:
     return hashlib.sha256(raw).hexdigest()[:12]
 
 
+def hot_content_id(
+    identity_key: str,
+    digest: str,
+    validation: dict[str, Any],
+) -> str:
+    expected = validation.get("expected_seal") or {}
+    validation_key = expected.get("seal_id") or validation.get("identity_status")
+    if not isinstance(validation_key, str) or not validation_key:
+        fail("hot content identity lacks validation provenance")
+    return content_id_for(f"{identity_key}|validation:{validation_key}", digest)
+
+
 def hot_instance_dir(
     hot_root: str | pathlib.Path,
     profile: str,
@@ -1803,6 +2336,50 @@ def resolve_activate_transport(
     return resolved_backend, resolved_transport
 
 
+def validate_hot_validation(
+    validation: Any,
+    *,
+    profile: str,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(validation, dict) or set(validation) != {
+        "identity_status",
+        "expected_seal",
+        "observed_seal",
+    }:
+        fail("hot validation provenance is invalid")
+    if not isinstance(profile, str) or not profile:
+        fail("hot validation profile is invalid")
+    status = validation.get("identity_status")
+    if status not in {"match", "legacy-unsealed", "unvalidated"}:
+        fail(f"hot identity status is not launchable: {status!r}")
+    observed = validation.get("observed_seal")
+    expected_observed = observed_model_seal_projection(manifest)
+    if observed != expected_observed:
+        fail("hot observed seal differs from integrity manifest")
+    expected = validation.get("expected_seal")
+    if status == "match":
+        required = {
+            "seal_id",
+            "validation_bundle_id",
+            "model_id",
+            "snapshot_revision",
+            "manifest_id",
+        }
+        if not isinstance(expected, dict) or set(expected) != required:
+            fail("hot expected seal projection is invalid")
+        for digest_field in ("seal_id", "validation_bundle_id", "manifest_id"):
+            value = expected.get(digest_field)
+            if not isinstance(value, str) or SHA256_HEX_RE.fullmatch(value) is None:
+                fail(f"hot expected seal {digest_field} is invalid")
+        for field in ("model_id", "snapshot_revision", "manifest_id"):
+            if expected.get(field) != observed.get(field):
+                fail(f"hot expected and observed {field} differ")
+    elif expected is not None:
+        fail(f"hot {status} state must not carry an expected seal")
+    return validation
+
+
 def build_hot_stamp(
     *,
     profile: str,
@@ -1814,6 +2391,7 @@ def build_hot_stamp(
     content_id: str,
     content_digest: str,
     integrity_manifest: dict[str, Any],
+    validation: dict[str, Any],
     backend: str,
     bytes_logical: int,
     transport: str | None = None,
@@ -1825,10 +2403,17 @@ def build_hot_stamp(
         fail("hot stamp content_digest differs from integrity manifest")
     if manifest.get("model_id") != model_id:
         fail("hot stamp model_id differs from integrity manifest")
-    if revision and manifest.get("snapshot_revision") != revision:
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        fail("hot stamp revision is invalid")
+    if manifest.get("snapshot_revision") != revision:
         fail("hot stamp revision differs from integrity manifest")
     if manifest.get("total_bytes") != bytes_logical:
         fail("hot stamp bytes_logical differs from integrity manifest")
+    validation = validate_hot_validation(
+        validation,
+        profile=profile,
+        manifest=manifest,
+    )
     stamp = {
         "schema_version": HOT_SCHEMA_VERSION,
         "state": state,
@@ -1844,6 +2429,7 @@ def build_hot_stamp(
             "scheme": SNAPSHOT_INTEGRITY_SCHEME,
             "manifest": manifest,
         },
+        "validation": validation,
         "backend": backend,
         "bytes_logical": bytes_logical,
         "activated_at": utc_now(),
@@ -1878,8 +2464,10 @@ def find_hot_instance_for_profile(
     hot_root: str | pathlib.Path,
     profile: str,
     topology_id: str,
+    *,
+    profile_data: dict[str, Any] | None = None,
 ) -> pathlib.Path | None:
-    """Return newest ready/pinned instance dir for profile+topology, if any."""
+    """Return the newest ready instance matching the live expected identity."""
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
     if not parent.is_dir():
@@ -1915,7 +2503,17 @@ def find_hot_instance_for_profile(
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+    for _activated, candidate in candidates:
+        if profile_data is not None:
+            try:
+                verify_hot_stamp_against_profile(
+                    load_hot_stamp(candidate),
+                    profile_data,
+                )
+            except ModelLibraryError:
+                continue
+        return candidate
+    return None
 
 
 def dir_size_bytes(path: pathlib.Path) -> int:
@@ -1928,6 +2526,7 @@ def inspect_hub_inventory(
     rank: int,
     node_id: str,
     model_id: str | None = None,
+    revision: str | None = None,
 ) -> dict[str, Any]:
     """Inspect and seal one catalog home on the node that owns its path."""
     path = pathlib.Path(hub_path)
@@ -1941,7 +2540,12 @@ def inspect_hub_inventory(
     resolved_model_id = model_id or hub_dirname_to_model_id(path.name)
     if not resolved_model_id:
         fail("inspect-hub: model_id is required for a non-standard hub path")
-    state = hub_tree_state(path)
+    selected_revision = revision or read_revision(path)
+    state = (
+        hub_snapshot_state(path, selected_revision)
+        if selected_revision is not None
+        else hub_tree_state(path)
+    )
     result: dict[str, Any] = {
         "schema_version": 2,
         "kind": "model-library-home-inventory",
@@ -1950,13 +2554,17 @@ def inspect_hub_inventory(
         "hub_path": str(path),
         "model_id": resolved_model_id,
         "state": state,
-        "revision": read_revision(path),
+        "revision": selected_revision,
         "content_digest": None,
         "bytes_logical": 0,
         "integrity_manifest": None,
     }
     if state == "complete":
-        manifest = build_snapshot_manifest(path, model_id=resolved_model_id)
+        manifest = build_snapshot_manifest(
+            path,
+            model_id=resolved_model_id,
+            revision=selected_revision,
+        )
         result["content_digest"] = manifest["manifest_id"]
         result["bytes_logical"] = manifest["total_bytes"]
         result["integrity_manifest"] = manifest
@@ -2031,6 +2639,7 @@ def activation_home_inventory(
             rank=int(home["rank"]),
             node_id=str(home["node_id"]),
             model_id=model_id,
+            revision=catalog_revision,
         )
     return validate_activation_home_inventory(
         home,
@@ -2225,6 +2834,7 @@ def plan_activate(
     profile: str,
     topology_id: str,
     hot_root: str,
+    models_dir: str | pathlib.Path,
     backend: str | None = None,
     transport: str | None = None,
     allow_unvalidated: bool = False,
@@ -2244,17 +2854,20 @@ def plan_activate(
             "run catalog refresh"
         )
     # Activate is warm-catalog only; cold uses adopt or stage-only.
-    resolved = resolve_entry(catalog, profile=profile, cold_root=None)
+    profile_data = load_hf_profile(models_dir, profile)
+    resolved = resolve_entry(
+        catalog,
+        profile=profile,
+        cold_root=None,
+        models_dir=models_dir,
+    )
     if resolved.get("tier") == "cold":
         fail(
             "activate: cold source requires "
             "`cold adopt` (durable warm home) or `cold stage-only` (hot only)"
         )
-    if resolved.get("validation") != "validated" and not allow_unvalidated:
-        fail(
-            f"activate: {resolved['model_id']} is unvalidated; "
-            "pass --allow-unvalidated to proceed"
-        )
+    if resolved.get("model_id") != profile_data.get("model_id"):
+        fail("activate: catalog model differs from the live profile")
     home = resolved["home"]
     hub_path = home["hub_path"]
     digest, bytes_logical, integrity_manifest = activation_home_inventory(
@@ -2263,7 +2876,12 @@ def plan_activate(
         home_inventory,
         model_id=resolved["model_id"],
     )
-    cid = content_id_for(resolved["identity_key"], digest)
+    validation = require_activation_identity(
+        profile_data,
+        integrity_manifest,
+        allow_unvalidated=allow_unvalidated,
+    )
+    cid = hot_content_id(resolved["identity_key"], digest, validation)
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     target_ranks = list(range(nodes if nodes is not None else 1))
     existing = None
@@ -2272,6 +2890,7 @@ def plan_activate(
         if (
             existing.get("content_digest") == digest
             and existing.get("identity_key") == resolved["identity_key"]
+            and existing.get("validation") == validation
             and existing.get("state") in {"ready", "pinned"}
         ):
             return {
@@ -2288,6 +2907,7 @@ def plan_activate(
                 "content_id": cid,
                 "content_digest": digest,
                 "integrity_manifest": integrity_manifest,
+                "validation": validation,
                 "bytes_logical": bytes_logical,
                 "backend": backend,
                 "transport": transport,
@@ -2312,6 +2932,7 @@ def plan_activate(
         content_id=cid,
         content_digest=digest,
         integrity_manifest=integrity_manifest,
+        validation=validation,
         backend=backend,
         bytes_logical=bytes_logical,
         transport=transport,
@@ -2375,6 +2996,7 @@ def plan_activate(
         "content_id": cid,
         "content_digest": digest,
         "integrity_manifest": integrity_manifest,
+        "validation": validation,
         "bytes_logical": bytes_logical,
         "backend": backend,
         "transport": transport,
@@ -2411,34 +3033,73 @@ def verify_hot_ready(
     if topology_id and stamp.get("topology_id") != topology_id:
         fail("hot topology_id mismatch")
     hub = hot_hub_path(instance_dir, stamp["model_id"])
-    if hub_tree_state(hub) != "complete":
-        fail(f"hot hub incomplete: {hub}")
     integrity = stamp.get("integrity")
     if not isinstance(integrity, dict):
         fail("hot integrity seal missing")
     if integrity.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME:
         fail("hot integrity scheme is unsupported")
     manifest = validate_snapshot_manifest(integrity.get("manifest"))
+    stamp_revision = stamp.get("revision")
+    if (
+        not isinstance(stamp_revision, str)
+        or SAFE_REV.fullmatch(stamp_revision) is None
+        or stamp_revision != manifest["snapshot_revision"]
+    ):
+        fail("hot revision differs from sealed manifest")
+    snapshot_state = hub_snapshot_state(hub, manifest["snapshot_revision"])
+    if snapshot_state != "complete":
+        fail(
+            f"hot snapshot {manifest['snapshot_revision']} is {snapshot_state}: {hub}"
+        )
     if manifest.get("manifest_id") != stamp.get("content_digest"):
         fail("hot content_digest differs from sealed manifest")
     if manifest.get("model_id") != stamp.get("model_id"):
         fail("hot model_id differs from sealed manifest")
-    if stamp.get("revision") and (
-        manifest.get("snapshot_revision") != stamp.get("revision")
-    ):
-        fail("hot revision differs from sealed manifest")
+    validation = validate_hot_validation(
+        stamp.get("validation"),
+        profile=str(stamp.get("profile") or ""),
+        manifest=manifest,
+    )
     verification = verify_snapshot_manifest(
         hub,
         manifest,
         metadata_only=not require_digest,
         workers=workers,
     )
+    snapshot_path = hub / "snapshots" / manifest["snapshot_revision"]
     return {
         "stamp": stamp,
         "hub_path": str(hub),
+        "snapshot_path": str(snapshot_path),
+        "runtime_model_relative": f"snapshots/{manifest['snapshot_revision']}",
         "instance_dir": str(instance_dir),
         "integrity": verification,
+        "validation": validation,
     }
+
+
+def verify_hot_stamp_against_profile(
+    stamp: dict[str, Any],
+    profile_data: dict[str, Any],
+) -> dict[str, Any]:
+    if stamp.get("profile") != profile_data.get("profile"):
+        fail("hot profile differs from live profile")
+    integrity = stamp.get("integrity")
+    if not isinstance(integrity, dict):
+        fail("hot integrity seal missing")
+    manifest = validate_snapshot_manifest(integrity.get("manifest"))
+    live_validation = compare_profile_expected_identity(profile_data, manifest)
+    stored_validation = validate_hot_validation(
+        stamp.get("validation"),
+        profile=profile_data["profile"],
+        manifest=manifest,
+    )
+    if stored_validation != live_validation:
+        fail(
+            "hot validation provenance differs from the live profile/seal; "
+            "reactivate from the current expected identity"
+        )
+    return live_validation
 
 
 def set_hot_pinned(instance_dir: str | pathlib.Path, pinned: bool) -> dict[str, Any]:
@@ -2466,10 +3127,19 @@ def purge_hot_instance(
     shutil.rmtree(instance_dir)
 
 
+def catalog_entry_has_expected_identity(entry: dict[str, Any]) -> bool:
+    """Return whether a catalog entry carries a reviewed lab expectation."""
+    return any(
+        item.get("expected_model_seal") is not None
+        and item.get("identity_status") in {"expected-unverified", "match"}
+        for item in entry.get("profile_validation") or []
+    )
+
+
 def render_catalog_human(catalog: dict[str, Any], *, validated_only: bool = False) -> None:
     models = catalog.get("models") or []
     if validated_only:
-        models = [m for m in models if m.get("validation") == "validated"]
+        models = [m for m in models if catalog_entry_has_expected_identity(m)]
     print(f"model library  topology={str(catalog.get('topology_id') or '')[:12]}")
     print(f"refreshed      {catalog.get('refreshed_at')}")
     print(f"entries        {len(models)}")
@@ -2477,14 +3147,14 @@ def render_catalog_human(catalog: dict[str, Any], *, validated_only: bool = Fals
     if not models:
         print("(empty)")
         return
-    print(f"{'MODEL':<36} {'VAL':<12} {'HOMES':>5} {'DUP':>3}  PROFILES")
+    print(f"{'MODEL':<36} {'VAL':<20} {'HOMES':>5} {'DUP':>3}  PROFILES")
     for entry in models:
         complete = sum(1 for h in entry.get("homes") or [] if h.get("state") == "complete")
         dup = "yes" if entry.get("duplicate") else "no"
         profiles = ",".join(entry.get("profiles") or []) or "-"
         print(
             f"{entry.get('model_id', '?'):<36} "
-            f"{entry.get('validation', '?'):<12} "
+            f"{entry.get('validation', '?'):<20} "
             f"{complete:>5} {dup:>3}  {profiles}"
         )
 
@@ -2538,8 +3208,14 @@ def cmd_list(args: argparse.Namespace) -> int:
     if args.json:
         models = catalog.get("models") or []
         if args.validated:
-            models = [m for m in models if m.get("validation") == "validated"]
-        print(json.dumps({"schema_version": SCHEMA_VERSION, "models": models}, indent=2, sort_keys=True))
+            models = [m for m in models if catalog_entry_has_expected_identity(m)]
+        print(
+            json.dumps(
+                {"schema_version": SCHEMA_VERSION, "models": models},
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         render_catalog_human(catalog, validated_only=args.validated)
     return 0
@@ -2759,6 +3435,7 @@ def cmd_inspect_hub(args: argparse.Namespace) -> int:
         rank=args.rank,
         node_id=args.node_id,
         model_id=args.model_id or None,
+        revision=args.revision or None,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -2779,6 +3456,7 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
         profile=args.profile,
         topology_id=args.topology_id,
         hot_root=args.hot_root or default_hot_root(),
+        models_dir=args.models_dir,
         backend=args.backend or None,
         transport=args.transport or None,
         allow_unvalidated=args.allow_unvalidated,
@@ -2821,22 +3499,54 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
         allow_verifying=args.allow_verifying,
         workers=args.workers,
     )
+    if args.models_dir:
+        if not args.profile:
+            fail("verify-hot: --profile is required with --models-dir")
+        profile_data = load_model_profile(args.models_dir, args.profile)
+        result["validation"] = verify_hot_stamp_against_profile(
+            result["stamp"],
+            profile_data,
+        )
+    if args.expected_validation_json:
+        try:
+            expected_validation = json.loads(args.expected_validation_json)
+        except json.JSONDecodeError as exc:
+            fail(f"verify-hot: expected-validation-json: {exc}")
+        if result["validation"] != expected_validation:
+            fail("hot validation provenance differs from controller expectation")
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
 def cmd_find_hot(args: argparse.Namespace) -> int:
+    profile_data = (
+        load_model_profile(args.models_dir, args.profile) if args.models_dir else None
+    )
     path = find_hot_instance_for_profile(
         args.hot_root or default_hot_root(),
         args.profile,
         args.topology_id,
+        profile_data=profile_data,
     )
     if path is None:
         fail(f"find-hot: no ready instance for profile {args.profile}")
     stamp = load_hot_stamp(path)
+    if profile_data is not None:
+        verify_hot_stamp_against_profile(stamp, profile_data)
+    hub = hot_hub_path(path, stamp["model_id"])
+    revision = stamp.get("revision")
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        fail("find-hot: sealed revision is invalid")
+    container_hub = (
+        "/root/.cache/huggingface/hub/"
+        + model_id_to_hub_dirname(stamp["model_id"])
+    )
     out = {
         "instance_dir": str(path),
-        "hub_path": str(hot_hub_path(path, stamp["model_id"])),
+        "hub_path": str(hub),
+        "snapshot_path": str(hub / "snapshots" / revision),
+        "runtime_model_relative": f"snapshots/{revision}",
+        "container_model_path": f"{container_hub}/snapshots/{revision}",
         "stamp": stamp,
     }
     print(json.dumps(out, indent=2, sort_keys=True))
@@ -3286,6 +3996,11 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--rank", type=int, required=True)
     inspect.add_argument("--node-id", required=True)
     inspect.add_argument("--model-id", default="")
+    inspect.add_argument(
+        "--revision",
+        default="",
+        help="Exact snapshot revision to inspect (never inferred from mutable main)",
+    )
     inspect.set_defaults(func=cmd_inspect_hub)
 
     build = sub.add_parser("build", help="Build catalog from homes JSON + profiles")
@@ -3407,6 +4122,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--profile", required=True)
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
+    plan.add_argument("--models-dir", required=True)
     plan.add_argument("--backend", default="", choices=("copy", "fabric"))
     plan.add_argument(
         "--transport",
@@ -3441,6 +4157,8 @@ def build_parser() -> argparse.ArgumentParser:
     vh.add_argument("--instance-dir", required=True)
     vh.add_argument("--profile")
     vh.add_argument("--topology-id")
+    vh.add_argument("--models-dir", default="")
+    vh.add_argument("--expected-validation-json", default="", help=argparse.SUPPRESS)
     vh.add_argument("--skip-digest", action="store_true")
     vh.add_argument("--workers", type=int)
     vh.add_argument(
@@ -3452,6 +4170,7 @@ def build_parser() -> argparse.ArgumentParser:
     fh.add_argument("--profile", required=True)
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")
+    fh.add_argument("--models-dir", default="")
     fh.set_defaults(func=cmd_find_hot)
 
     sp = sub.add_parser("set-pinned", help="Set pinned flag on hot stamp")

@@ -21,6 +21,12 @@ class RemoteHomeActivationContracts(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
         self.revision = "abc123def456"
+        self.models_dir = self.root / "models"
+        self.models_dir.mkdir()
+        (self.models_dir / "qwen3-1.7b-2node.conf").write_text(
+            'MODEL="Qwen/Qwen3-1.7B"\nSTATUS="tested"\nNODES=2\n',
+            encoding="utf-8",
+        )
         self.actual_hub = self.root / "rank-1-home"
         snapshot = self.actual_hub / "snapshots" / self.revision
         snapshot.mkdir(parents=True)
@@ -45,7 +51,7 @@ class RemoteHomeActivationContracts(unittest.TestCase):
         self.inventory["hub_path"] = self.remote_hub
         self.catalog_path = self.root / "catalog.json"
         catalog = {
-            "schema_version": 1,
+            "schema_version": 2,
             "refreshed_at": "2026-08-10T00:00:00.000Z",
             "topology_id": "topology-test",
             "models": [
@@ -55,8 +61,17 @@ class RemoteHomeActivationContracts(unittest.TestCase):
                     "identity_key": (
                         f"Qwen/Qwen3-1.7B@{self.revision}"
                     ),
-                    "validation": "validated",
+                    "validation": "legacy-unsealed",
                     "profiles": ["qwen3-1.7b-2node"],
+                    "profile_validation": [
+                        {
+                            "profile": "qwen3-1.7b-2node",
+                            "profile_status": "tested",
+                            "identity_status": "legacy-unsealed",
+                            "expected_model_seal_ref": None,
+                            "expected_model_seal": None,
+                        }
+                    ],
                     "homes": [
                         {
                             "rank": 1,
@@ -86,7 +101,9 @@ class RemoteHomeActivationContracts(unittest.TestCase):
             profile="qwen3-1.7b-2node",
             topology_id="topology-test",
             hot_root=str(self.root / "hot"),
+            models_dir=str(self.models_dir),
             backend="copy",
+            allow_unvalidated=True,
             nodes=2,
             home_inventory=inventory,
         )

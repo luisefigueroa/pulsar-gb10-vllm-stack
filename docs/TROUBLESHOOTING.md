@@ -69,9 +69,16 @@ start a second model on the same port.
 `blobs/` (and a `trees/` dir from xet-era downloads) but **no `refs/main`**.
 With `HF_HUB_OFFLINE=1` (our default) huggingface_hub needs `refs/main` to
 resolve the revision and fails even though all weights are present.
-**Fix:** write the ref once:
-`printf '%s' "$(ls <cache>/models--ORG--NAME/snapshots/ | head -1)" > <cache>/models--ORG--NAME/refs/main`
-(One-liner over all models in cluster/README or run the loop in git history.)
+**Fix for replicated/offline Hugging Face loading:** restore `refs/main` to
+the intended exact revision. For a legacy profile, re-download with
+`scripts/pull-weights.sh <profile> --yes` or recover the known lab/upstream
+revision. **Do not select the first directory from `snapshots/`:** a cache can
+contain several commits and filesystem order is not identity.
+
+A sealed `library-hot` profile is different: catalog refresh discovers complete
+snapshot directories directly and selects `snapshot_revision` from the reviewed
+seal, so it does not require or trust `refs/main`. The exact sealed snapshot
+must still exist and match its manifest.
 `scripts/check-weights.sh` (used by wizard/up) requires `refs/main` to resolve
 to a snapshot, a non-empty config and weight file, no `.incomplete` marker,
 and no locally indexed missing/empty shard. It checks every exact active rank for multi-node profiles. A missing ref is therefore reported as `partial` before launch;

@@ -354,7 +354,11 @@ flow:
 
 ```bash
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh activate <profile> --backend copy --yes
+scripts/model-library.sh catalog list --validated
+# Reviewed sealed profile: no override is accepted or needed.
+scripts/model-library.sh activate <sealed-profile> --backend copy --yes
+# Current legacy-unsealed profiles: explicit experiment only.
+scripts/model-library.sh activate <profile> --backend copy --allow-unvalidated --yes
 scripts/up.sh <profile> --weight-mode library-hot
 # optional after stop:
 scripts/down.sh <profile> --pin-weights   # protect retained hot from purge
@@ -380,15 +384,34 @@ accepted accounting is one durable home plus N−1 hot working copies. Hot purge
 must never follow the home symlink target. Defaults and the wizard stay on
 replicated weights until this path is promoted.
 
-**Accepted serve-time identity contract (not yet implemented):** the home view
-must resolve to the expected canonical local durable tree, and model ID, exact
-commit, and manifest ID must match a lab-issued validation bundle. A fast
-metadata witness may be used only after a full verification and must cover the
-canonical target/filesystem, exact revision/file set, and per-file
-device/inode/size/mtime/ctime. Drift visibly triggers full verification against
-the expected seal or fails closed; it never auto-reseals changed content.
-Current code instead full-verifies a manifest derived from the locally observed
-source and does not yet have the lab-issued trust anchor or fast witness.
+**Current identity behavior:** a tested profile may reference a reviewed seal
+under `models/seals/` with `EXPECTED_MODEL_SEAL="seals/<file>.json"`.
+Catalog schema 2 selects only its immutable commit. Activation full-hashes the
+home, compares model/commit/manifest to the expected seal, and writes hot schema
+3 with expected and observed provenance. A configured mismatch fails even with
+`--allow-unvalidated`. Launch rechecks the current profile/seal, full-verifies
+every rank, mounts the hub read-only, and passes the exact
+`snapshots/<revision>` path rather than mutable `main`. Labels and multi-node
+startup evidence include revision, identity status, seal ID, and bundle ID.
+
+No real profile seal ships yet, so current profiles are `legacy-unsealed` and
+require `--allow-unvalidated` for this experimental path. Catalog refresh
+enumerates complete `snapshots/<revision>` directories directly. A sealed
+profile therefore finds its reviewed commit even when `refs/main` is absent or
+has moved; only the legacy-unsealed experimental selection consults an
+unambiguous `refs/main`. Follow
+[models/seals/README.md](../models/seals/README.md) for the lab issuance
+contract; never derive expected identity from a user cache. The fast metadata
+witness is still pending, so launch pays a full SHA-256 verification cost. A
+future witness must cover the canonical target/filesystem, exact revision/file
+set, and per-file device/inode/size/mtime/ctime; drift must visibly full-verify
+against the expected seal or fail closed.
+
+**Upgrade note:** catalog schema 1 and hot schema 2 state are intentionally not
+accepted by this implementation. After upgrading, run `catalog refresh`, then
+reactivate each required profile. Current unsealed profiles need the explicit
+experimental `--allow-unvalidated` flag shown above. Do not hand-edit or relabel
+old site-local state into the new schemas.
 
 **Optional cold archive:** shared/local fill tier (conventionally
 `MODELS_NFS=/mnt/Models`, overridable with `PULSAR_COLD_ROOT`; empty
@@ -399,7 +422,9 @@ source and does not yet have the lab-issued trust anchor or fast witness.
 
 Resolve order is **warm complete home → cold (if configured) → fail closed**.
 Cold is preferred over a fresh Hugging Face download when warm misses; it is
-**not** the multi-node runtime filesystem.
+**not** the multi-node runtime filesystem. A sealed Hugging Face profile can
+stage only from a source preserving the expected commit and complete manifest;
+a flat archive with an inferred local revision will not match that seal.
 
 ```bash
 # inventory
@@ -412,7 +437,7 @@ scripts/model-library.sh cold adopt poolside/Laguna-S-2.1-NVFP4 --yes
 scripts/model-library.sh catalog refresh
 
 # or stage for this job only (cold remains sole durable copy)
-scripts/model-library.sh cold stage-only laguna-s-2.1-nvfp4 --yes
+scripts/model-library.sh cold stage-only laguna-s-2.1-nvfp4 --allow-unvalidated --yes
 scripts/up.sh laguna-s-2.1-nvfp4 --weight-mode library-hot
 ```
 
@@ -426,11 +451,11 @@ from the catalog primary home over confirmed RoCE rails into hot staging, then
 **release** of mounts/export (not a long-lived mount under vLLM):
 
 ```bash
-scripts/model-library.sh activate <profile> --backend fabric --yes
+scripts/model-library.sh activate <profile> --backend fabric --allow-unvalidated --yes
 # optional attended sudo:
-scripts/model-library.sh activate <profile> --backend fabric --yes --interactive-sudo
+scripts/model-library.sh activate <profile> --backend fabric --allow-unvalidated --yes --interactive-sudo
 # measure wall time:
-scripts/model-library.sh activate <profile> --backend fabric --yes --time
+scripts/model-library.sh activate <profile> --backend fabric --allow-unvalidated --yes --time
 # emergency cleanup of transfer plane:
 scripts/model-library.sh release-transfer <profile> --yes
 ```
@@ -499,7 +524,7 @@ PULSAR_COPY_STREAM_STAGGER_MS=150 \
 
 # Manual one-shot over RoCE TCP with the enrolled alias/key identity:
 scripts/model-library.sh activate <profile> --transport ssh-roce \
-  --backend copy --copy-streams 8 --yes
+  --backend copy --copy-streams 8 --allow-unvalidated --yes
 ```
 
 `--copy-streams` accepts 1-16 and defaults to 1. Above eight streams, the

@@ -40,6 +40,11 @@ The initial GB10 implementation uses Linux NFSv4.2 over RPC/RDMA:
    configuration ID. Inventory therefore reports which running service
    depends on the owner.
 
+This live-mode manifest seals locally observed owner content; it is not yet
+wired to the reviewed `models/seals/` expected-identity mechanism implemented
+for `library-hot`. Passing live-fabric integrity therefore does not establish
+that the bytes match a lab-issued release seal.
+
 The config distinguishes `nodes` from `storage_nodes`. A two-rank vLLM profile
 can expose and benchmark the same copy on all three confirmed Sparks without
 silently adding a third vLLM rank. Launch readiness checks only serving ranks;

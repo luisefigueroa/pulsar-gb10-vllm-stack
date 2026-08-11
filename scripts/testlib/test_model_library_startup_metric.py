@@ -35,6 +35,15 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             "content_digest": "c" * 64,
             "transport": "ssh-roce",
             "integrity_scheme": "sha256-snapshot-manifest-v1",
+            "model_revision": "d" * 40,
+            "identity_status": "match",
+            "model_seal_id": "e" * 64,
+            "validation_bundle_id": "f" * 64,
+            "runtime_model_path": (
+                "/root/.cache/huggingface/hub/models--Org--Fixture/"
+                + "snapshots/"
+                + "d" * 40
+            ),
             "tag": "schema2-roce8",
             "cache_state": "sealed-hot",
             "started_at": "2026-08-10T00:00:00.000Z",
@@ -59,6 +68,11 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
         self.assertEqual(
             metric["integrity_scheme"], "sha256-snapshot-manifest-v1"
         )
+        self.assertEqual(metric["model_revision"], "d" * 40)
+        self.assertEqual(metric["identity_status"], "match")
+        self.assertEqual(metric["model_seal_id"], "e" * 64)
+        self.assertEqual(metric["validation_bundle_id"], "f" * 64)
+        self.assertTrue(metric["runtime_model_path"].endswith("d" * 40))
         self.assertEqual(
             metric["owner_node_fingerprint"],
             hashlib.sha256(b"fixture-node-a").hexdigest()[:16],
@@ -74,6 +88,9 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             ({"transport": None}, "transport"),
             ({"cache_state": "warm"}, "must be sealed-hot"),
             ({"configuration_id": "d" * 64}, "not a fabric config"),
+            ({"model_revision": None}, "model revision"),
+            ({"model_seal_id": None}, "model seal"),
+            ({"runtime_model_path": "Org/Fixture"}, "exact revision"),
         ):
             with self.subTest(overrides=overrides):
                 if self.output.exists():

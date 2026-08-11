@@ -99,6 +99,7 @@ resolve_single_node_placement "$NODE_SELECTOR" \
   || die "cannot resolve physical node placement '$NODE_SELECTOR'"
 
 weight_volume="${HF_CACHE}:/root/.cache/huggingface"
+runtime_model="$MODEL"
 LIBRARY_HOT_HOME_NODE_ID=""
 LIBRARY_HOT_CONTENT_ID=""
 if [ "$WEIGHT_SOURCE" = library-hot ]; then
@@ -109,8 +110,10 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
   load_cluster_topology >/dev/null 2>&1 \
     || die "library-hot requires confirmed topology"
   resolve_library_hot_for_profile "$MODEL_NAME"
-  model_cache_name=$(hf_hub_dirname "$MODEL")
+  model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
   weight_volume="${LIBRARY_HOT_HUB_PATH}:/root/.cache/huggingface/hub/${model_cache_name}:ro"
+  runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
+  echo "library-hot identity=$LIBRARY_HOT_IDENTITY_STATUS revision=${LIBRARY_HOT_REVISION:0:12} model_path=$runtime_model"
 fi
 
 CONTAINER=$(container_name_for "$MODEL_NAME" 1)
@@ -138,7 +141,15 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
   CMD+=(
     --label "${PULSAR_WEIGHT_OWNER_LABEL}=${LIBRARY_HOT_HOME_NODE_ID}"
     --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${LIBRARY_HOT_CONTENT_ID}"
+    --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
+    --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
   )
+  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
+    CMD+=(
+      --label "${PULSAR_MODEL_SEAL_LABEL}=${LIBRARY_HOT_MODEL_SEAL_ID}"
+      --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
+    )
+  fi
 fi
 if [ -n "$SINGLE_NODE_TOPOLOGY_ID" ]; then
   CMD+=(--label "${PULSAR_TOPOLOGY_LABEL}=${SINGLE_NODE_TOPOLOGY_ID}")
@@ -151,7 +162,7 @@ for e in ${EXTRA_ENV:-}; do CMD+=(-e "$e"); done
 
 CMD+=(
   "$IMAGE"
-  --model "$MODEL"
+  --model "$runtime_model"
   --served-model-name "$SERVED_NAME"
   --host 0.0.0.0 --port "$PORT"
   --gpu-memory-utilization "$GPU_MEM_UTIL"

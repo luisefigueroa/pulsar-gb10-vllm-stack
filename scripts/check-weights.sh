@@ -81,7 +81,8 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
     python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
       --profile "$NAME" \
       --topology-id "$CLUSTER_TOPOLOGY_ID" \
-      --hot-root "$PULSAR_HOT_ROOT" 2>/dev/null
+      --hot-root "$PULSAR_HOT_ROOT" \
+      --models-dir "$REPO_DIR/models" 2>/dev/null
   ); then
     if [ "$JSON" = 1 ]; then
       printf '%s\n' '{"state":"missing","source":"library-hot","ok":false}'
@@ -96,7 +97,8 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
   if ! python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
       --instance-dir "$instance" \
       --profile "$NAME" \
-      --topology-id "$CLUSTER_TOPOLOGY_ID" >/dev/null; then
+      --topology-id "$CLUSTER_TOPOLOGY_ID" \
+      --models-dir "$REPO_DIR/models" >/dev/null; then
     if [ "$JSON" = 1 ]; then
       printf '%s\n' '{"state":"invalid","source":"library-hot","ok":false}'
     elif [ "${QUIET:-0}" = 1 ]; then
@@ -114,13 +116,19 @@ print(json.dumps({"state":"ok","source":"library-hot","ok":True,
   "instance_dir":d["instance_dir"],"hub_path":d["hub_path"],
   "home_node_id":d["stamp"].get("home_node_id"),
   "content_id":d["stamp"].get("content_id"),
+  "revision":d["stamp"].get("revision"),
+  "identity_status":(d["stamp"].get("validation") or {}).get("identity_status"),
+  "model_seal_id":(((d["stamp"].get("validation") or {}).get("expected_seal") or {}).get("seal_id")),
+  "validation_bundle_id":(((d["stamp"].get("validation") or {}).get("expected_seal") or {}).get("validation_bundle_id")),
+  "runtime_model_path":d.get("container_model_path"),
   "pinned":bool(d["stamp"].get("pinned"))}, indent=2, sort_keys=True))
 '
   elif [ "${QUIET:-0}" = 1 ]; then
-    echo "PASS  weights   source=library-hot · hot ready"
+    identity_status=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "invalid")')
+    echo "PASS  weights   source=library-hot · hot ready · identity=$identity_status"
   else
     echo "library-hot OK  instance=$instance"
-    printf '%s\n' "$hot_info" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("hub", d["hub_path"]); print("home", d["stamp"].get("home_node_id")); print("pinned", d["stamp"].get("pinned"))'
+    printf '%s\n' "$hot_info" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("hub", d["hub_path"]); print("runtime", d.get("container_model_path")); print("home", d["stamp"].get("home_node_id")); print("revision", d["stamp"].get("revision")); print("identity", (d["stamp"].get("validation") or {}).get("identity_status")); print("pinned", d["stamp"].get("pinned"))'
   fi
   exit 0
 fi
