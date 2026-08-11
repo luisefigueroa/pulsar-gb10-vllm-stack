@@ -386,13 +386,28 @@ replicated weights until this path is promoted.
 
 **Current identity behavior:** a tested profile may reference a reviewed seal
 under `models/seals/` with `EXPECTED_MODEL_SEAL="seals/<file>.json"`.
-Catalog schema 2 selects only its immutable commit. Activation full-hashes the
-home, compares model/commit/manifest to the expected seal, and writes hot schema
-3 with expected and observed provenance. A configured mismatch fails even with
-`--allow-unvalidated`. Launch rechecks the current profile/seal, full-verifies
-every rank, mounts the hub read-only, and passes the exact
-`snapshots/<revision>` path rather than mutable `main`. Labels and multi-node
-startup evidence include revision, identity status, seal ID, and bundle ID.
+Catalog schema 2 selects only its immutable commit. Activation full-hashes every
+rank, compares model/commit/manifest to the expected seal, writes hot schema 3
+with expected and observed provenance, and atomically creates that rank's
+`<instance>/.pulsar/witness.json` before ready is published. A configured
+mismatch fails even with `--allow-unvalidated`.
+
+Launch rechecks the live profile/seal locally and the controller-provided
+validation identity remotely **before** using the witness. An unchanged witness
+checks only rank-local metadata and hashes zero model bytes. It covers the
+canonical hub/snapshot targets, directory filesystem identity, exact revision
+and logical file set, and each resolved file's
+device/inode/size/`mtime_ns`/`ctime_ns`. The container mounts the hub read-only
+and receives the exact `snapshots/<revision>` path rather than mutable
+`main`. Labels and multi-node startup evidence include revision, identity
+status, seal ID, and bundle ID; per-rank witness labels remain future work.
+
+A missing, malformed, or drifted witness prints a message and runs a stable full
+SHA-256 verification. Success atomically refreshes the witness and continues;
+content mismatch or metadata changing during the full pass fails closed and
+does not refresh. Reactivate if the fallback fails. Do not hand-edit
+`hot.json` or `witness.json`, and do not treat a successful rehash of
+`legacy-unsealed` content as lab validation.
 
 No real profile seal ships yet, so current profiles are `legacy-unsealed` and
 require `--allow-unvalidated` for this experimental path. Catalog refresh
@@ -401,17 +416,15 @@ profile therefore finds its reviewed commit even when `refs/main` is absent or
 has moved; only the legacy-unsealed experimental selection consults an
 unambiguous `refs/main`. Follow
 [models/seals/README.md](../models/seals/README.md) for the lab issuance
-contract; never derive expected identity from a user cache. The fast metadata
-witness is still pending, so launch pays a full SHA-256 verification cost. A
-future witness must cover the canonical target/filesystem, exact revision/file
-set, and per-file device/inode/size/mtime/ctime; drift must visibly full-verify
-against the expected seal or fail closed.
+contract; never derive expected identity from a user cache.
 
 **Upgrade note:** catalog schema 1 and hot schema 2 state are intentionally not
 accepted by this implementation. After upgrading, run `catalog refresh`, then
-reactivate each required profile. Current unsealed profiles need the explicit
-experimental `--allow-unvalidated` flag shown above. Do not hand-edit or relabel
-old site-local state into the new schemas.
+reactivate each required profile. Hot schema 3 instances created before witness
+support remain readable: the first `library-hot` readiness check visibly
+full-verifies and creates the missing rank-local witness. Current unsealed
+profiles need the explicit experimental `--allow-unvalidated` flag shown above.
+Do not hand-edit or relabel old site-local state into the new schemas.
 
 **Optional cold archive:** shared/local fill tier (conventionally
 `MODELS_NFS=/mnt/Models`, overridable with `PULSAR_COLD_ROOT`; empty

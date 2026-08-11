@@ -20,7 +20,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); expected-seal/exact-revision enforcement landed, issued release seals and fast witness pending |
+| Status | Implemented experiment (not promoted); expected-seal/exact-revision and serve-time witness enforcement landed, issued release seals pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -33,15 +33,19 @@
 optional reviewed `models/seals/*.json` trust root and binds a tested profile to
 its exact Hugging Face commit. Hot schema 3 records the expected seal,
 validation-bundle ID, and locally observed revision/manifest. Activation
-full-hashes before publishing ready state, a configured mismatch cannot be
-bypassed, and launch full-verifies again before passing the exact
+full-hashes every rank and atomically writes a rank-local witness before
+publishing ready state. Launch first rechecks the live profile or controller
+expectation, then uses the witness when canonical view and file metadata are
+unchanged. A missing, invalid, or drifted witness is visible and causes a stable
+full SHA-256 verification; success atomically refreshes it, while a content
+mismatch fails without refresh. Launch still passes the exact
 `snapshots/<revision>` path to vLLM. Existing profiles have no issued seals and
 remain `legacy-unsealed`; they require explicit `--allow-unvalidated` for
-model-library experiments. Catalog refresh discovers complete snapshot
-commit directories independently of mutable `refs/main`; sealed inspection,
+model-library experiments. Catalog refresh discovers complete snapshot commit
+directories independently of mutable `refs/main`; sealed inspection,
 manifest construction, verification, and launch all receive that selected
-commit explicitly. The fast serve-time metadata witness and standalone
-machine-readable validation-bundle document remain unimplemented.
+commit explicitly. The standalone machine-readable validation-bundle document
+remains unimplemented.
 
 ---
 
@@ -365,12 +369,21 @@ the changed content as validated.
 
 **Current implementation:** hot schema 3 carries both the reviewed expected
 seal projection and the observed seal. Activation compares model ID, immutable
-commit, and manifest ID, then full-verifies every rank before publishing ready
-state. Launch revalidates the current profile/seal, full-verifies the manifest,
-and passes the exact snapshot path. The fast metadata witness is still a gap,
-so unchanged launches pay the full-hash cost. The seal carries a lab-provided
-validation-bundle ID, but a standalone bundle document that machine-checks the
-full profile/image/geometry binding is still pending.
+commit, and manifest ID, then full-verifies every rank and atomically creates
+that rank's `.pulsar/witness.json` before publishing ready state. The witness
+schema binds hot and validation identity, canonical hub/snapshot targets,
+filesystem device/inode identity, the exact logical file set, and per-file
+device/inode/size/`mtime_ns`/`ctime_ns`. Launch validates the current
+profile/seal or controller expectation before consulting it. An unchanged
+witness hashes zero model bytes; missing, malformed, or drifted metadata emits a
+visible fallback, full-verifies the sealed manifest under stable metadata, and
+atomically refreshes the witness only on success. Launch then passes the exact
+snapshot path. For `identity_status=match`, that manifest is bound to the
+lab-issued expected seal. A `legacy-unsealed` experiment gets only
+activation-manifest integrity and never becomes validated through the witness.
+The seal carries a lab-provided validation-bundle ID, but a standalone bundle
+document that machine-checks the full profile/image/geometry binding is still
+pending.
 
 ### 4.6 Activate transfers
 
@@ -498,18 +511,20 @@ Promotion now requires this identity/lifecycle evidence:
 ```text
 [ ] Repo release provides a real lab-issued seal and validation-bundle ID
 [x] Catalog/activation compare exact model, commit, and manifest
-[x] Launch full-verifies and passes the same exact snapshot path to vLLM
+[x] Launch validates witness (or full-verifies drift) and passes exact snapshot path
 [x] Home-rank activation creates the durable-home symlink/view, not a hot copy
-[ ] Serve-time metadata witness covers the canonical target and exact file set
-[ ] Witness drift visibly full-verifies against the expected seal or fails
+[x] Serve-time metadata witness covers the canonical target and exact file set
+[x] Witness drift visibly full-verifies against the expected seal or fails
 [ ] Active-use removal guard and production read-only lifecycle evidence pass
 [ ] Hot purge and force-unpin no-follow behavior passes the physical gate
 [x] Warm-home pin/restart reports its durable-home dependency honestly
 ```
 
-Production hot-budget policy, strict DeepSeek determinism, serving gates, and
-sustained soak remain required. Failed or incomplete evidence is not rewritten
-because an architectural blocker changed.
+The witness checks above are deterministic control-plane contracts; they do
+not issue a real seal or replace the physical lifecycle, start-to-healthy, and
+soak gates. Production hot-budget policy, strict DeepSeek determinism, serving
+gates, and sustained soak remain required. Failed or incomplete evidence is
+not rewritten because an architectural blocker changed.
 
 ---
 
@@ -518,7 +533,6 @@ because an architectural blocker changed.
 - Promotion into the wizard or other guided defaults
 - Issue reviewed seals for real profiles and add machine-readable immutable
   validation-bundle documents
-- Serve-time metadata witness with visible full-verify fallback
 - Per-rank runtime-source labels and home deletion/reference guards
 - Stable public guarantees for machine-readable JSON schemas
 - Numeric production defaults and policy UX for non-home hot/pin budgets
@@ -555,4 +569,5 @@ because an architectural blocker changed.
 | 2026-08-10 | Full-model counterbalanced trials passed the performance gate: 8-stream SSH-over-RoCE was 1.898x the control-path median; 16 streams did not improve the median. |
 | 2026-08-10 | **No promotion:** keep replicated guided defaults. SSH identity passed; production hot-budget policy, strict DeepSeek determinism, and sustained soak remain open. |
 | 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |
-| 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued and the fast witness remains pending. |
+| 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued. |
+| 2026-08-10 | Implemented rank-local serve-witness schema 1: activation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |

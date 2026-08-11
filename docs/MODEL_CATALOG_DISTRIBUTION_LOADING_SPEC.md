@@ -40,9 +40,10 @@ one durable home per exact revision, a validated durable-home view on the home
 rank, sealed hot only on non-home ranks, and content identity anchored in a
 lab-issued validation bundle. Routine home-rank hot materialization is ruled
 out. Current code implements the reviewed expected-seal reference, exact commit
-selection/comparison, seal-bound hot state, and exact snapshot launch. It does
-not yet implement the fast metadata witness or a standalone validation-bundle
-document, and no real profile seal ships yet.
+selection/comparison, seal-bound hot state, exact snapshot launch, and the
+rank-local fast metadata witness with visible full-verification fallback. It
+does not yet implement a standalone validation-bundle document, and no real
+profile seal ships yet.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -151,6 +152,9 @@ that way.
 - **Expected seal**: optional reviewed schema-1 document under `models/seals/` containing model ID, immutable commit, manifest ID, lab provenance, and validation-bundle ID.
 - **Observed seal**: locally computed identity compared with the expected seal;
   it cannot establish validation by itself.
+- **Serve witness**: rank-local schema-1 metadata record created only after a
+  stable full SHA-256 verification. It accelerates unchanged launches but is
+  never an expected-identity source.
 - **Runtime source**: target per-rank classification of `durable-home`,
   `sealed-hot`, or `live-mount`.
 - **Confirmed topology**: a validated site manifest with stable identity and
@@ -962,6 +966,13 @@ repair.
    configured catalog root read-only rather than the exact selected subtree.
 8. **Container cleanup is label- and identity-bound.** An ambiguous name match
    is left for manual inspection rather than force-removed.
+9. **The witness is trusted site-local control state, not a signature.** Its
+   canonical digest detects corruption and its metadata detects ordinary model
+   drift, but it does not defend against an actor who can deliberately rewrite
+   both model bytes and the user-owned witness. Such host/control-state
+   compromise is outside this accelerator's trust boundary and requires a fresh
+   full verification from reviewed state (or future protected storage such as
+   fs-verity).
 
 ## 15. Known limitations and design tensions
 
@@ -1000,11 +1011,16 @@ Container labels and multi-node startup evidence carry the same identities.
 
 No real profile seal is issued in this release, so existing profiles remain
 legacy-unsealed and downloads still default to upstream `main`. Replicated and
-live-mount paths are not yet bound by this mechanism. The fast witness,
-`drift | mismatch` persisted states, per-rank runtime-source inventory, and a
-standalone machine-validated bundle for normalized runtime configuration,
-resolved image digest, topology class, and evidence remain gaps. A local
-observed manifest may match an expected seal but cannot issue it.
+live-mount paths are not yet bound by this mechanism. Rank-local witness schema
+1 is implemented for `library-hot`: activation full-verifies before atomic
+creation, and launch validates the live profile/controller expectation before
+using it. A metadata match hashes zero model bytes. Missing, malformed, or
+drifted metadata is reported on stderr, then full-verifies and atomically
+refreshes only on success; content mismatch fails without refresh. Persisted
+`drift | mismatch` inventory states, per-rank runtime-source/witness labels,
+and a standalone machine-validated bundle for normalized runtime
+configuration, resolved image digest, topology class, and evidence remain
+gaps. A local observed manifest may match an expected seal but cannot issue it.
 
 ### 15.4 Live owner dependency
 
@@ -1113,8 +1129,9 @@ alongside a control-path copy backend:
 2. seal the exact snapshot paths, sizes, and file contents with SHA-256;
 3. transfer and full-verify it in an isolated local staging root on each
    non-home serving rank;
-4. optionally unmount/release the transfer plane; and
-5. launch vLLM from the verified hot paths.
+4. atomically create a rank-local serve witness under stable metadata;
+5. optionally unmount/release the transfer plane; and
+6. launch vLLM from the verified hot paths.
 
 This removes hard NFS mounts from the runtime. The implementation includes
 federated warm catalog discovery, an optional cold tier, copy and fabric
@@ -1126,13 +1143,32 @@ strict “one physical copy” property while staged.
 
 Accepted architecture and current behavior both use a warm-home symlink into
 the durable HF cache. This is not a materialization gap: routine home-rank hot
-copying is prohibited. The control plane now binds that view to an optional reviewed expected seal,
-full-verifies it, launches the same exact revision, and exposes seal/bundle
-identity in labels and startup evidence. Remaining promotion work is to issue
-real release seals, validate a fast metadata witness at serve time, add active
+copying is prohibited. The control plane now binds that view to an optional
+reviewed expected seal, full-verifies it, creates a rank-local metadata witness,
+launches the same exact revision, and exposes seal/bundle identity in labels and
+startup evidence. The witness binds the canonical hub and snapshot paths,
+directory device/inode identity, exact logical files, and per-file
+device/inode/size/mtime/ctime. Launch checks the current validation identity
+before the fast path; drift visibly rehashes and refreshes only after a stable
+match. Remaining promotion work is to issue real release seals, add active
 home-removal protection, and complete physical no-follow lifecycle evidence.
-Production budget policy, crash recovery, and garbage collection also require
-promotion-level evidence and hardening.
+Production budget policy, crash recovery, garbage collection, and per-rank
+witness/runtime-source inventory also require promotion-level hardening.
+
+The witness is a separate site-local
+`<instance>/.pulsar/witness.json`; hot schema 3 is unchanged because one
+shared hot stamp cannot truthfully carry rank-specific inode/device values.
+Witness schema 1 has strict identity fields for profile, model, revision,
+topology, home, content, manifest, and validation provenance; a `view` object
+for logical/canonical hub and snapshot paths plus directory device/inode; a
+sorted `files` array with logical path and resolved-file
+device/inode/size/`mtime_ns`/`ctime_ns`; counts; verification time; and a
+canonical-JSON `witness_id`. The `verify-hot --refresh-witness` trust-boundary
+mode always hashes and refreshes atomically. The
+`verify-hot --serve-time-witness` launch mode reports
+`witness.status=match|refreshed` and
+`integrity.mode=witness|full`. These site paths and filesystem identifiers
+must never be copied into publishable evidence.
 
 This path is implemented but experimental and unpromoted. It must continue to
 be evaluated against replicated mode and live fabric rather than being assumed
@@ -1148,9 +1184,8 @@ These points combine current evidence with the accepted architecture:
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
 3. Treat 8-stream SSH-over-RoCE activation into sealed local hot as a separate
-   promotion candidate. Do not guide it until real release seals, the fast
-   serve-time witness and lifecycle gates, budget policy, determinism, and soak
-   pass.
+   promotion candidate. Do not guide it until real release seals, the remaining
+   lifecycle gates, budget policy, determinism, and soak pass.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
@@ -1343,10 +1378,10 @@ showed that 8-stream SSH-over-RoCE activation was 1.898x the control-path
 median; 16 streams did not improve the median. Integrity, interruption/retry,
 catalog-loss restart, real serving, and 447k-context gates also passed.
 
-Those wins are not a promotion. The durable-home symlink and optional
-expected-seal/exact-revision enforcement are implemented, but no real profile
-seal is issued and the fast witness/lifecycle evidence remain pending. The
-100 GiB default hot budget cannot
+Those wins are not a promotion. The durable-home symlink, optional
+expected-seal/exact-revision enforcement, and rank-local witness fast path are
+implemented, but no real profile seal is issued and physical lifecycle evidence
+remains pending. The 100 GiB default hot budget cannot
 admit the 167 GB flagship on a non-home rank, strict DeepSeek determinism failed
 on both library-hot and replicated controls, and the required sustained soak is
 pending. Live NFS/RDMA additionally retains its owner-recovery and three-node

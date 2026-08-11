@@ -24,6 +24,9 @@ from typing import Any
 
 SCHEMA_VERSION = 2
 HOT_SCHEMA_VERSION = 3
+HOT_WITNESS_SCHEMA_VERSION = 1
+HOT_WITNESS_KIND = "pulsar-model-library-serve-witness"
+HOT_WITNESS_SCHEME = "stat-witness-v1"
 SNAPSHOT_MANIFEST_SCHEMA_VERSION = 1
 SNAPSHOT_MANIFEST_KIND = "model-library-snapshot-manifest"
 SNAPSHOT_INTEGRITY_SCHEME = "sha256-snapshot-manifest-v1"
@@ -2309,6 +2312,10 @@ def hot_stamp_path(instance_dir: pathlib.Path) -> pathlib.Path:
     return instance_dir / ".pulsar" / "hot.json"
 
 
+def hot_witness_path(instance_dir: pathlib.Path) -> pathlib.Path:
+    return instance_dir / ".pulsar" / "witness.json"
+
+
 def resolve_activate_transport(
     backend: str | None,
     transport: str | None,
@@ -2378,6 +2385,379 @@ def validate_hot_validation(
     elif expected is not None:
         fail(f"hot {status} state must not carry an expected seal")
     return validation
+
+
+def hot_witness_observation(witness: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in witness.items()
+        if key not in {"verified_at", "witness_id"}
+    }
+
+
+def hot_witness_id(witness: dict[str, Any]) -> str:
+    return canonical_json_digest(
+        {key: value for key, value in witness.items() if key != "witness_id"}
+    )
+
+
+def _directory_filesystem_identity(
+    path: pathlib.Path,
+    *,
+    label: str,
+) -> dict[str, int]:
+    try:
+        metadata = path.stat()
+    except OSError as exc:
+        fail(f"witness: cannot stat {label} {path}: {exc}")
+    if not stat.S_ISDIR(metadata.st_mode):
+        fail(f"witness: {label} is not a directory: {path}")
+    return {
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+    }
+
+
+def build_hot_witness_observation(
+    stamp: dict[str, Any],
+    *,
+    hub: pathlib.Path,
+    manifest: dict[str, Any],
+    validation: dict[str, Any],
+) -> dict[str, Any]:
+    # Capture rank-local metadata that may accelerate a later launch.
+    manifest = validate_snapshot_manifest(manifest)
+    validation = validate_hot_validation(
+        validation,
+        profile=str(stamp.get("profile") or ""),
+        manifest=manifest,
+    )
+    revision, actual_files = iter_snapshot_files(
+        hub,
+        revision=manifest["snapshot_revision"],
+    )
+    expected = {item["path"]: item for item in manifest["files"]}
+    actual = {relative: resolved for relative, resolved in actual_files}
+    if set(actual) != set(expected):
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        fail(
+            "witness: snapshot file set changed "
+            f"(missing={missing[:1]} extra={extra[:1]})"
+        )
+
+    try:
+        canonical_hub = hub.resolve(strict=True)
+        logical_snapshot = hub / "snapshots" / revision
+        canonical_snapshot = logical_snapshot.resolve(strict=True)
+        canonical_snapshot.relative_to(canonical_hub)
+    except (OSError, ValueError) as exc:
+        fail(f"witness: canonical runtime view is unavailable or escapes: {exc}")
+
+    files: list[dict[str, Any]] = []
+    for relative in sorted(expected):
+        resolved = actual[relative]
+        try:
+            metadata = resolved.stat()
+        except OSError as exc:
+            fail(f"witness: cannot stat {relative}: {exc}")
+        if not stat.S_ISREG(metadata.st_mode):
+            fail(f"witness: snapshot entry is not a regular file: {relative}")
+        if metadata.st_size != expected[relative]["size"]:
+            fail(
+                f"witness: size changed for {relative} "
+                f"({metadata.st_size} != {expected[relative]['size']})"
+            )
+        files.append(
+            {
+                "path": relative,
+                "device": metadata.st_dev,
+                "inode": metadata.st_ino,
+                "size": metadata.st_size,
+                "mtime_ns": metadata.st_mtime_ns,
+                "ctime_ns": metadata.st_ctime_ns,
+            }
+        )
+
+    observation: dict[str, Any] = {
+        "schema_version": HOT_WITNESS_SCHEMA_VERSION,
+        "kind": HOT_WITNESS_KIND,
+        "scheme": HOT_WITNESS_SCHEME,
+        "profile": stamp["profile"],
+        "model_id": stamp["model_id"],
+        "snapshot_revision": revision,
+        "topology_id": stamp["topology_id"],
+        "home_node_id": stamp["home_node_id"],
+        "content_id": stamp["content_id"],
+        "manifest_id": manifest["manifest_id"],
+        "validation": validation,
+        "view": {
+            "hub": {
+                "logical_path": str(hub.absolute()),
+                "canonical_path": str(canonical_hub),
+                **_directory_filesystem_identity(
+                    canonical_hub,
+                    label="canonical hub",
+                ),
+            },
+            "snapshot": {
+                "logical_path": str(logical_snapshot.absolute()),
+                "canonical_path": str(canonical_snapshot),
+                **_directory_filesystem_identity(
+                    canonical_snapshot,
+                    label="canonical snapshot",
+                ),
+            },
+        },
+        "files": files,
+        "file_count": len(files),
+        "total_bytes": sum(item["size"] for item in files),
+    }
+    if observation["file_count"] != manifest["file_count"]:
+        fail("witness: file_count differs from sealed manifest")
+    if observation["total_bytes"] != manifest["total_bytes"]:
+        fail("witness: total_bytes differs from sealed manifest")
+    return observation
+
+
+def build_stable_hot_witness_observation(
+    stamp: dict[str, Any],
+    *,
+    hub: pathlib.Path,
+    manifest: dict[str, Any],
+    validation: dict[str, Any],
+) -> dict[str, Any]:
+    first = build_hot_witness_observation(
+        stamp,
+        hub=hub,
+        manifest=manifest,
+        validation=validation,
+    )
+    second = build_hot_witness_observation(
+        stamp,
+        hub=hub,
+        manifest=manifest,
+        validation=validation,
+    )
+    if first != second:
+        fail("witness: runtime metadata changed during observation")
+    return second
+
+
+def finalize_hot_witness(observation: dict[str, Any]) -> dict[str, Any]:
+    witness = {
+        **observation,
+        "verified_at": utc_now(),
+    }
+    witness["witness_id"] = hot_witness_id(witness)
+    return witness
+
+
+def validate_hot_witness(witness: Any) -> dict[str, Any]:
+    if not isinstance(witness, dict):
+        fail("witness: document must be an object")
+    required = {
+        "schema_version",
+        "kind",
+        "scheme",
+        "profile",
+        "model_id",
+        "snapshot_revision",
+        "topology_id",
+        "home_node_id",
+        "content_id",
+        "manifest_id",
+        "validation",
+        "view",
+        "files",
+        "file_count",
+        "total_bytes",
+        "verified_at",
+        "witness_id",
+    }
+    if set(witness) != required:
+        missing = sorted(required - set(witness))
+        extra = sorted(set(witness) - required)
+        fail(f"witness: fields differ (missing={missing}, extra={extra})")
+    if witness.get("schema_version") != HOT_WITNESS_SCHEMA_VERSION:
+        fail("witness: unsupported schema_version")
+    if witness.get("kind") != HOT_WITNESS_KIND:
+        fail("witness: kind is invalid")
+    if witness.get("scheme") != HOT_WITNESS_SCHEME:
+        fail("witness: scheme is unsupported")
+    for field in (
+        "profile",
+        "model_id",
+        "snapshot_revision",
+        "topology_id",
+        "home_node_id",
+        "content_id",
+    ):
+        if not isinstance(witness.get(field), str) or not witness[field]:
+            fail(f"witness: {field} is invalid")
+    if SAFE_REV.fullmatch(witness["snapshot_revision"]) is None:
+        fail("witness: snapshot_revision is unsafe")
+    if (
+        not isinstance(witness.get("manifest_id"), str)
+        or SHA256_HEX_RE.fullmatch(witness["manifest_id"]) is None
+    ):
+        fail("witness: manifest_id is invalid")
+    validation = witness.get("validation")
+    if not isinstance(validation, dict) or set(validation) != {
+        "identity_status",
+        "expected_seal",
+        "observed_seal",
+    }:
+        fail("witness: validation provenance is invalid")
+
+    view = witness.get("view")
+    if not isinstance(view, dict) or set(view) != {"hub", "snapshot"}:
+        fail("witness: view is invalid")
+    view_fields = {"logical_path", "canonical_path", "device", "inode"}
+    for label in ("hub", "snapshot"):
+        item = view.get(label)
+        if not isinstance(item, dict) or set(item) != view_fields:
+            fail(f"witness: {label} view is invalid")
+        for path_field in ("logical_path", "canonical_path"):
+            value = item.get(path_field)
+            if not isinstance(value, str) or not pathlib.Path(value).is_absolute():
+                fail(f"witness: {label} {path_field} is invalid")
+        for number_field in ("device", "inode"):
+            value = item.get(number_field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                fail(f"witness: {label} {number_field} is invalid")
+
+    files = witness.get("files")
+    if not isinstance(files, list) or not files:
+        fail("witness: files must be a non-empty list")
+    file_fields = {"path", "device", "inode", "size", "mtime_ns", "ctime_ns"}
+    observed_paths: list[str] = []
+    total_bytes = 0
+    for index, item in enumerate(files):
+        if not isinstance(item, dict) or set(item) != file_fields:
+            fail(f"witness: files[{index}] is invalid")
+        relative = item.get("path")
+        if not isinstance(relative, str) or not relative:
+            fail(f"witness: files[{index}].path is invalid")
+        pure = pathlib.PurePosixPath(relative)
+        if pure.is_absolute() or ".." in pure.parts or relative in observed_paths:
+            fail(f"witness: unsafe or duplicate file path: {relative}")
+        observed_paths.append(relative)
+        for number_field in ("device", "inode", "size", "mtime_ns", "ctime_ns"):
+            value = item.get(number_field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                fail(f"witness: invalid {number_field} for {relative}")
+        if item["size"] < 1:
+            fail(f"witness: invalid size for {relative}")
+        total_bytes += item["size"]
+    if observed_paths != sorted(observed_paths):
+        fail("witness: files are not sorted")
+    if witness.get("file_count") != len(files):
+        fail("witness: file_count mismatch")
+    if witness.get("total_bytes") != total_bytes:
+        fail("witness: total_bytes mismatch")
+
+    verified_at = witness.get("verified_at")
+    if not isinstance(verified_at, str) or not verified_at.endswith("Z"):
+        fail("witness: verified_at must be an RFC3339 UTC timestamp")
+    try:
+        parsed_verified_at = datetime.fromisoformat(
+            verified_at[:-1] + "+00:00"
+        )
+    except ValueError:
+        fail("witness: verified_at must be an RFC3339 UTC timestamp")
+    if parsed_verified_at.tzinfo is None:
+        fail("witness: verified_at must include UTC")
+    witness_id = witness.get("witness_id")
+    if (
+        not isinstance(witness_id, str)
+        or SHA256_HEX_RE.fullmatch(witness_id) is None
+        or witness_id != hot_witness_id(witness)
+    ):
+        fail("witness: identity mismatch")
+    return witness
+
+
+def write_hot_witness(
+    instance_dir: str | pathlib.Path,
+    witness: dict[str, Any],
+) -> pathlib.Path:
+    witness = validate_hot_witness(witness)
+    path = hot_witness_path(pathlib.Path(instance_dir))
+    atomic_write_json(path, witness)
+    return path
+
+
+def load_hot_witness(instance_dir: str | pathlib.Path) -> dict[str, Any]:
+    path = hot_witness_path(pathlib.Path(instance_dir))
+    if not path.is_file():
+        fail(f"witness: missing: {path}")
+    return validate_hot_witness(load_json(path))
+
+
+def _witness_result(
+    witness: dict[str, Any],
+    *,
+    status: str,
+    reason: str,
+    path: pathlib.Path,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "reason": reason,
+        "scheme": HOT_WITNESS_SCHEME,
+        "path": str(path),
+        "witness_id": witness["witness_id"],
+        "verified_at": witness["verified_at"],
+    }
+
+
+def _witness_integrity_result(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "state": "ok",
+        "mode": "witness",
+        "scheme": SNAPSHOT_INTEGRITY_SCHEME,
+        "manifest_id": manifest["manifest_id"],
+        "snapshot_revision": manifest["snapshot_revision"],
+        "file_count": manifest["file_count"],
+        "total_bytes": manifest["total_bytes"],
+        "bytes_hashed": 0,
+        "workers": 0,
+    }
+
+
+def full_verify_and_refresh_hot_witness(
+    instance_dir: str | pathlib.Path,
+    stamp: dict[str, Any],
+    *,
+    hub: pathlib.Path,
+    manifest: dict[str, Any],
+    validation: dict[str, Any],
+    workers: int | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    before = build_stable_hot_witness_observation(
+        stamp,
+        hub=hub,
+        manifest=manifest,
+        validation=validation,
+    )
+    verification = verify_snapshot_manifest(
+        hub,
+        manifest,
+        metadata_only=False,
+        workers=workers,
+    )
+    after = build_stable_hot_witness_observation(
+        stamp,
+        hub=hub,
+        manifest=manifest,
+        validation=validation,
+    )
+    if before != after:
+        fail("witness: runtime metadata changed during full verification")
+    witness = finalize_hot_witness(after)
+    write_hot_witness(instance_dir, witness)
+    return verification, witness
 
 
 def build_hot_stamp(
@@ -3020,7 +3400,11 @@ def verify_hot_ready(
     require_digest: bool = True,
     allow_verifying: bool = False,
     workers: int | None = None,
+    serve_time_witness: bool = False,
+    refresh_witness: bool = False,
 ) -> dict[str, Any]:
+    if serve_time_witness and refresh_witness:
+        fail("hot verify cannot both consume and force-refresh a witness")
     instance_dir = pathlib.Path(instance_dir)
     stamp = load_hot_stamp(instance_dir)
     allowed_states = {"ready", "pinned"}
@@ -3060,12 +3444,85 @@ def verify_hot_ready(
         profile=str(stamp.get("profile") or ""),
         manifest=manifest,
     )
-    verification = verify_snapshot_manifest(
-        hub,
-        manifest,
-        metadata_only=not require_digest,
-        workers=workers,
-    )
+
+    witness_path = hot_witness_path(instance_dir)
+    witness_result: dict[str, Any] = {
+        "status": "not-checked",
+        "reason": "verification mode did not use the serve witness",
+        "scheme": HOT_WITNESS_SCHEME,
+        "path": str(witness_path),
+    }
+    if serve_time_witness:
+        observation = build_stable_hot_witness_observation(
+            stamp,
+            hub=hub,
+            manifest=manifest,
+            validation=validation,
+        )
+        witness = None
+        fallback_reason = ""
+        try:
+            witness = load_hot_witness(instance_dir)
+        except ModelLibraryError as exc:
+            fallback_reason = str(exc)
+        if witness is not None and hot_witness_observation(witness) == observation:
+            verification = _witness_integrity_result(manifest)
+            witness_result = _witness_result(
+                witness,
+                status="match",
+                reason="rank-local metadata is unchanged",
+                path=witness_path,
+            )
+        else:
+            if witness is not None:
+                fallback_reason = "rank-local metadata differs from the witness"
+            print(
+                "model-library: serve witness drift "
+                f"({fallback_reason}); running full SHA-256 verification",
+                file=sys.stderr,
+            )
+            verification, witness = full_verify_and_refresh_hot_witness(
+                instance_dir,
+                stamp,
+                hub=hub,
+                manifest=manifest,
+                validation=validation,
+                workers=workers,
+            )
+            witness_result = _witness_result(
+                witness,
+                status="refreshed",
+                reason=fallback_reason,
+                path=witness_path,
+            )
+            print(
+                "model-library: full SHA-256 verification passed; "
+                f"serve witness refreshed at {witness_path}",
+                file=sys.stderr,
+            )
+    elif refresh_witness:
+        verification, witness = full_verify_and_refresh_hot_witness(
+            instance_dir,
+            stamp,
+            hub=hub,
+            manifest=manifest,
+            validation=validation,
+            workers=workers,
+        )
+        witness_result = _witness_result(
+            witness,
+            status="refreshed",
+            reason="full verification trust boundary",
+            path=witness_path,
+        )
+    else:
+        verification = verify_snapshot_manifest(
+            hub,
+            manifest,
+            metadata_only=not require_digest,
+            workers=workers,
+        )
+
     snapshot_path = hub / "snapshots" / manifest["snapshot_revision"]
     return {
         "stamp": stamp,
@@ -3075,6 +3532,7 @@ def verify_hot_ready(
         "instance_dir": str(instance_dir),
         "integrity": verification,
         "validation": validation,
+        "witness": witness_result,
     }
 
 
@@ -3372,30 +3830,29 @@ def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
         nodes=args.nodes,
     )
     if args.execute and plan.get("action") == "stage-only":
-        # Local materialize into hub_dest + write stamp (selftests / single-node).
+        # Publish ready only after a stable full verify creates the local witness.
         materialize_hub_tree(
             plan["source_path"],
             plan["hub_dest"],
             layout=plan.get("layout"),
             revision=plan.get("revision"),
         )
-        integrity = verify_snapshot_manifest(
-            plan["hub_dest"],
-            plan["integrity_manifest"],
-            metadata_only=False,
-        )
         stamp = dict(plan["stamp"])
         stamp["source_content_digest"] = plan.get("source_content_digest") or stamp.get(
             "source_content_digest"
         )
-        write_hot_stamp(pathlib.Path(plan["instance_dir"]), stamp)
+        provisional = dict(stamp)
+        provisional["state"] = "verifying"
+        write_hot_stamp(pathlib.Path(plan["instance_dir"]), provisional)
         verify = verify_hot_ready(
             plan["instance_dir"],
             profile=args.profile,
             topology_id=args.topology_id,
-            require_digest=False,
+            allow_verifying=True,
+            refresh_witness=True,
         )
-        verify["integrity"] = integrity
+        write_hot_stamp(pathlib.Path(plan["instance_dir"]), stamp)
+        verify["stamp"] = stamp
         plan = {
             **plan,
             "executed": True,
@@ -3491,20 +3948,38 @@ def cmd_write_hot_stamp(args: argparse.Namespace) -> int:
 
 
 def cmd_verify_hot(args: argparse.Namespace) -> int:
-    result = verify_hot_ready(
-        args.instance_dir,
-        profile=args.profile,
-        topology_id=args.topology_id,
-        require_digest=not args.skip_digest,
-        allow_verifying=args.allow_verifying,
-        workers=args.workers,
+    stamp = load_hot_stamp(args.instance_dir)
+    allowed_states = {"ready", "pinned"}
+    if args.allow_verifying:
+        allowed_states.add("verifying")
+    if stamp.get("state") not in allowed_states and not stamp.get("pinned"):
+        fail(
+            f"hot not ready: state={stamp.get('state')!r} "
+            f"at {args.instance_dir}"
+        )
+    if args.profile and stamp.get("profile") != args.profile:
+        fail(
+            f"hot profile mismatch: stamp={stamp.get('profile')} "
+            f"want={args.profile}"
+        )
+    if args.topology_id and stamp.get("topology_id") != args.topology_id:
+        fail("hot topology_id mismatch")
+
+    integrity = stamp.get("integrity")
+    if not isinstance(integrity, dict):
+        fail("hot integrity seal missing")
+    manifest = validate_snapshot_manifest(integrity.get("manifest"))
+    checked_validation = validate_hot_validation(
+        stamp.get("validation"),
+        profile=str(stamp.get("profile") or ""),
+        manifest=manifest,
     )
     if args.models_dir:
         if not args.profile:
             fail("verify-hot: --profile is required with --models-dir")
         profile_data = load_model_profile(args.models_dir, args.profile)
-        result["validation"] = verify_hot_stamp_against_profile(
-            result["stamp"],
+        checked_validation = verify_hot_stamp_against_profile(
+            stamp,
             profile_data,
         )
     if args.expected_validation_json:
@@ -3512,8 +3987,20 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
             expected_validation = json.loads(args.expected_validation_json)
         except json.JSONDecodeError as exc:
             fail(f"verify-hot: expected-validation-json: {exc}")
-        if result["validation"] != expected_validation:
+        if checked_validation != expected_validation:
             fail("hot validation provenance differs from controller expectation")
+
+    result = verify_hot_ready(
+        args.instance_dir,
+        profile=args.profile,
+        topology_id=args.topology_id,
+        require_digest=not args.skip_digest,
+        allow_verifying=args.allow_verifying,
+        workers=args.workers,
+        serve_time_witness=getattr(args, "serve_time_witness", False),
+        refresh_witness=getattr(args, "refresh_witness", False),
+    )
+    result["validation"] = checked_validation
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4159,7 +4646,18 @@ def build_parser() -> argparse.ArgumentParser:
     vh.add_argument("--topology-id")
     vh.add_argument("--models-dir", default="")
     vh.add_argument("--expected-validation-json", default="", help=argparse.SUPPRESS)
-    vh.add_argument("--skip-digest", action="store_true")
+    verify_mode = vh.add_mutually_exclusive_group()
+    verify_mode.add_argument("--skip-digest", action="store_true")
+    verify_mode.add_argument(
+        "--serve-time-witness",
+        action="store_true",
+        help="Use the rank-local metadata witness, with visible full-verify fallback",
+    )
+    verify_mode.add_argument(
+        "--refresh-witness",
+        action="store_true",
+        help="Full-verify and atomically refresh the rank-local witness",
+    )
     vh.add_argument("--workers", type=int)
     vh.add_argument(
         "--allow-verifying", action="store_true", help=argparse.SUPPRESS

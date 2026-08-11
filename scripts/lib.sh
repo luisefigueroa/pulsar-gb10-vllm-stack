@@ -845,7 +845,8 @@ resolve_library_hot_for_profile() {
     --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
     --profile "$profile" \
     --topology-id "$topology_id" \
-    --models-dir "$REPO_DIR/models" >/dev/null \
+    --models-dir "$REPO_DIR/models" \
+    --serve-time-witness >/dev/null \
     || die "library-hot: hot instance failed verify for $profile"
   [ -n "$LIBRARY_HOT_CONTENT_ID" ] \
     && [ -n "$LIBRARY_HOT_CONTENT_DIGEST" ] \
