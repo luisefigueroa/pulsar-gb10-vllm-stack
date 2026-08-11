@@ -11,17 +11,25 @@ recommendation to materialize the home rank is **superseded by ADR 0001**. Its
 measurements and other failed/pending gates remain valid and are not rewritten.
 Catalog schema 2/hot schema 3 expected-seal enforcement, content-addressed
 validation-bundle schema 1, and rank-local witness schema 1 landed afterward.
-No production bundle was issued and no historical artifact was relabeled as
-lab-sealed. Maintainer-only release-candidate tooling now has deterministic
-schema, exact-commit, tamper, drift, and output-boundary selftests; it adds no
-physical or issuance evidence and no result artifact. Deterministic tests also
-cover unchanged metadata, drift
-fallback, same-size corruption, symlink retargeting, and rank-local filesystem
-identity. The 2026-08-11 Qwen artifact adds physical symlink, witness,
+No historical artifact was relabeled as lab-sealed. Maintainer-only
+release-candidate tooling now has deterministic schema, exact-commit, tamper,
+drift, and output-boundary selftests; candidate generation alone adds no
+physical or issuance evidence. Deterministic tests also cover unchanged
+metadata, drift fallback, same-size corruption, symlink retargeting, and
+rank-local filesystem identity. The 2026-08-11 Qwen artifact adds physical
+symlink, witness,
 read-only launch, pin/restart, mismatch, and no-follow purge evidence, but it is
 explicitly `legacy-unsealed` and does not claim lab-issued identity. Site-local
 witness documents contain absolute paths and filesystem identifiers and are
 never publishable evidence.
+
+Later on 2026-08-11, the one-node diagnostic `qwen3-1.7b` profile became the
+first reviewed lab-issued identity. Its candidate reproduced byte-for-byte,
+the exact snapshot and fresh runtime gates passed privacy review, and the
+issued seal/bundle then passed physical `library-hot` activation, launch,
+zero-byte witness verification, smoke, and cleanup. This does not alter the
+legacy scope of the earlier two-node artifact, seal `qwen3-1.7b-2node`, or
+promote model-library distribution.
 
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
@@ -38,6 +46,12 @@ node and path identity.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| [`qwen3-1.7b-release-validation-20260811.json`](./qwen3-1.7b-release-validation-20260811.json) | Reviewed release summary for Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, exact one-node profile, and digest-pinned image | Current first-identity issuance input PASS; not a storage-path promotion | Reviewed; repository-relative evidence only; site identity omitted |
+| [`qwen3-1.7b-snapshot-manifest-20260811.json`](./qwen3-1.7b-snapshot-manifest-20260811.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued Qwen revision; 12 files, 4,079,450,110 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
+| [`qwen3-1.7b-release-identity-20260811-runA.json`](../qwen3-1.7b-release-identity-20260811-runA.json) | Fresh exact-profile greedy capture A for the issued one-node Qwen identity | Current release validation PASS; 30-prompt source capture | Reviewed; prompts/results contain no site identity or secrets |
+| [`qwen3-1.7b-release-identity-20260811-runB.json`](../qwen3-1.7b-release-identity-20260811-runB.json) | Fresh exact-profile greedy capture B for the issued one-node Qwen identity | Current determinism PASS; 30/30 identical to run A | Reviewed; prompts/results contain no site identity or secrets |
+| [`qwen3-1.7b-release-identity-20260811-bench.json`](../qwen3-1.7b-release-identity-20260811-bench.json) | Fresh throughput capture for the issued one-node Qwen identity | Current release performance record; c=1/2/4/8 complete | Reviewed; no site identity or secrets |
+| [`qwen3-1.7b-sealed-enforcement-gate-20260811.json`](./qwen3-1.7b-sealed-enforcement-gate-20260811.json) | Post-issuance exact-seal catalog, activation, read-only launch, identity-label, zero-byte witness, smoke, and cleanup proof | Current sealed `library-hot` enforcement PASS; not included in its own issuance bundle and not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
 | `model-library-hot-budget-admission-gate-20260811.json` | Exact all-rank filesystem admission; DeepSeek revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`; capacity only, not model identity | Current hot-budget gate PASS; no model bytes changed; not a promotion | Reviewed; site topology, paths, hosts, node/interface identity, and filesystem identity omitted |
 | `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Current lifecycle gate PASS; no production model was deleted; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
 | `qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json` | Physical durable-home symlink, sealed-hot, witness fallback, exact-snapshot launch, pin/restart, mismatch, and no-follow purge; Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, observed manifest only | Current lifecycle gate PASS; identity remains `legacy-unsealed`; not a promotion | Reviewed; site topology, paths, filesystem identity, and witness IDs omitted |

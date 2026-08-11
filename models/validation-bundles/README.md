@@ -9,9 +9,17 @@ file at:
 models/validation-bundles/<validation_bundle_id>.json
 ```
 
-This release contains no production bundle. Existing tested profiles therefore
-remain `legacy-unsealed`; do not manufacture a bundle from a user's cache to
-change that status.
+This release contains one reviewed bundle for the diagnostic `qwen3-1.7b`
+profile:
+
+```text
+9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380.json
+```
+
+Every other tested profile, including `qwen3-1.7b-2node`, remains
+`legacy-unsealed`. Do not manufacture a bundle from a user's cache to change
+that status. The issued bundle is enforced by `library-hot`; replicated and
+live-mount launch paths are not yet content-bound by it.
 
 ## Identity and binding
 

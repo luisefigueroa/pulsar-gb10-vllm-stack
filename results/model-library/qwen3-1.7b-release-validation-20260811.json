@@ -1,0 +1,193 @@
+{
+  "artifacts": [
+    {
+      "path": "results/model-library/qwen3-1.7b-snapshot-manifest-20260811.json",
+      "role": "complete-snapshot-manifest",
+      "sha256": "2f72290e35447d15158d15fba2076e21f4d0aef9485b5abaeabe941d2ae812a2"
+    },
+    {
+      "path": "results/qwen3-1.7b-release-identity-20260811-runA.json",
+      "role": "digest-pinned-greedy-capture-a",
+      "sha256": "21d8ca0dd211b87ff4d05fd1dd21f843332bb498d1d107aa26ea495f9698bf86"
+    },
+    {
+      "path": "results/qwen3-1.7b-release-identity-20260811-runB.json",
+      "role": "digest-pinned-greedy-capture-b",
+      "sha256": "21d8ca0dd211b87ff4d05fd1dd21f843332bb498d1d107aa26ea495f9698bf86"
+    },
+    {
+      "path": "results/qwen3-1.7b-release-identity-20260811-bench.json",
+      "role": "digest-pinned-throughput-sweep",
+      "sha256": "a98d37094e0bca933ea67f9e216a85d02a5b190bd8f57b1306f1dcaa2482f4f8"
+    },
+    {
+      "path": "results/qwen1.7b-vllm-node2-runA.json",
+      "role": "historical-vllm-baseline",
+      "sha256": "21d8ca0dd211b87ff4d05fd1dd21f843332bb498d1d107aa26ea495f9698bf86"
+    },
+    {
+      "path": "results/qwen1.7b-hf-ref.json",
+      "role": "hugging-face-reference",
+      "sha256": "b3786dd719bf2eabbd3bd638c0d5ce3f4db7591bc0428d01c3eaf3f08ad66701"
+    },
+    {
+      "path": "results/model-library/qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json",
+      "role": "prior-manifest-and-image-continuity",
+      "sha256": "b1bcb3faaa7a25d352b8a4e721c4f81c3a53a6adcd2d41a6865672570a9e5e5e"
+    }
+  ],
+  "claim_scope": {
+    "does_not_establish": [
+      "two-node qwen3-1.7b-2node validation identity",
+      "model-library distribution promotion",
+      "durable-home-loss resilience",
+      "a new long-context or serving-workload claim"
+    ],
+    "establishes": [
+      "exact Qwen/Qwen3-1.7B content identity for qwen3-1.7b",
+      "digest-pinned vLLM v0.26.0 image identity",
+      "normalized one-node diagnostic profile contract",
+      "same-run determinism and historical vLLM capture parity",
+      "FP-equivalent parity with the retained Hugging Face reference",
+      "single-node smoke and throughput behavior on NVIDIA GB10"
+    ]
+  },
+  "gates": {
+    "historical_vllm_parity": {
+      "baseline": "results/qwen1.7b-vllm-node2-runA.json",
+      "exact_text_matches": "30/30",
+      "identical_captures": "30/30",
+      "max_logprob_delta": 0.0,
+      "mean_prefix_match": 1.0,
+      "min_prefix_match": 1.0,
+      "status": "pass",
+      "verdict": "identical"
+    },
+    "hugging_face_reference": {
+      "exact_text_matches": "18/30",
+      "identical_captures": "0/30",
+      "max_logprob_delta": 0.1412,
+      "mean_prefix_match": 0.7229,
+      "min_prefix_match": 0.0,
+      "reference": "results/qwen1.7b-hf-ref.json",
+      "status": "pass",
+      "verdict": "fp-equivalent"
+    },
+    "preflight": {
+      "exact_image_present": true,
+      "memory": "pass",
+      "snapshot_complete": true,
+      "status": "pass"
+    },
+    "same_run_determinism": {
+      "capture_a_sha256": "21d8ca0dd211b87ff4d05fd1dd21f843332bb498d1d107aa26ea495f9698bf86",
+      "capture_b_sha256": "21d8ca0dd211b87ff4d05fd1dd21f843332bb498d1d107aa26ea495f9698bf86",
+      "exact_text_matches": "30/30",
+      "identical_captures": "30/30",
+      "max_logprob_delta": 0.0,
+      "mean_prefix_match": 1.0,
+      "min_prefix_match": 1.0,
+      "status": "pass",
+      "verdict": "identical"
+    },
+    "smoke": {
+      "model_advertised": true,
+      "non_empty_completion": true,
+      "status": "pass"
+    },
+    "throughput": {
+      "results": [
+        {
+          "aggregate_tps": 47.15,
+          "concurrency": 1,
+          "decode_tps_p50": 47.33,
+          "requests": 4,
+          "ttft_p50_ms": 42.2,
+          "wall_seconds": 21.7
+        },
+        {
+          "aggregate_tps": 117.9,
+          "concurrency": 2,
+          "decode_tps_p50": 59.23,
+          "requests": 4,
+          "ttft_p50_ms": 29.4,
+          "wall_seconds": 8.7
+        },
+        {
+          "aggregate_tps": 222.36,
+          "concurrency": 4,
+          "decode_tps_p50": 56.56,
+          "requests": 8,
+          "ttft_p50_ms": 51.4,
+          "wall_seconds": 9.2
+        },
+        {
+          "aggregate_tps": 406.64,
+          "concurrency": 8,
+          "decode_tps_p50": 52.38,
+          "requests": 16,
+          "ttft_p50_ms": 56.4,
+          "wall_seconds": 10.1
+        }
+      ],
+      "status": "pass"
+    }
+  },
+  "identity": {
+    "image": {
+      "digest": "sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52",
+      "reference": "vllm/vllm-openai@sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52",
+      "source_commit": "ffd46bfab2128bb84146050e98b51a617c6575ab"
+    },
+    "manifest": {
+      "file_count": 12,
+      "manifest_id": "775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1",
+      "scheme": "sha256-snapshot-manifest-v1",
+      "total_bytes": 4079450110
+    },
+    "model_id": "Qwen/Qwen3-1.7B",
+    "revision_kind": "huggingface-commit",
+    "snapshot_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
+  },
+  "kind": "model-release-validation-evidence",
+  "privacy": {
+    "omitted": [
+      "hostnames",
+      "IP addresses",
+      "SSH aliases",
+      "node IDs",
+      "interface names",
+      "topology IDs",
+      "absolute paths",
+      "container IDs",
+      "filesystem identities"
+    ],
+    "review_status": "pass",
+    "site_identity_published": false
+  },
+  "profile": "qwen3-1.7b",
+  "profile_contract_id": "1c0153671f0ccee1abafacf7cb8ac80510e29e0f4e839b70a180eb15e62c5eac",
+  "recorded_at": "2026-08-11",
+  "repository_base_commit": "02a99bad112b5e03490b2a6349105f7ad7461fda",
+  "run_window_utc": {
+    "ended_at": "2026-08-11T22:47:27Z",
+    "started_at": "2026-08-11T22:45:54Z"
+  },
+  "runtime": {
+    "attention_backend": "FLASH_ATTN",
+    "exact_snapshot_argument": true,
+    "hardware": "NVIDIA GB10",
+    "image_digest_verified_on_active_rank": true,
+    "max_model_len": 32768,
+    "max_num_seqs": 16,
+    "nodes": 1,
+    "pipeline_parallel_size": 1,
+    "profile_purpose": "diagnostic",
+    "served_name": "qwen3-1.7b",
+    "tensor_parallel_size": 1,
+    "topology_class": "single",
+    "weight_source": "replicated-local-hf-cache"
+  },
+  "schema_version": 1,
+  "status": "pass"
+}

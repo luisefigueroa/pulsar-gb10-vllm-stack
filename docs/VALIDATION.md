@@ -21,7 +21,7 @@ HISTORICAL / SUPERSEDED markers.
 | Fast single-node | `./serve.sh nemotron-3-nano-30b-nvfp4 -d` | mainline | Fastest tok/s on box |
 | Large single-node | `./serve.sh nemotron-3-super-120b-nvfp4 -d` | mainline | MTP opt-in via `--spec-decode` |
 | Reasoning single-node | `./serve.sh qwen3.6-27b-fp8 -d` | mainline | **Never** ngram spec; not 2-node |
-| Diagnostic canary | `./serve.sh qwen3-1.7b -d` | mainline | Build/plumbing probe; hidden from serving wizard |
+| Diagnostic canary | `./serve.sh qwen3-1.7b -d` | `v0.26.0` digest pinned in model conf | Build/plumbing probe; first lab-sealed identity; hidden from serving wizard |
 
 **Not shipped:** stock `v0.26.0` for DeepSeek-V4 multi-node (livelock); community sparkrun binary (removed from tree); Ray multi-node; ngram on GDN hybrids.
 
@@ -31,10 +31,33 @@ HISTORICAL / SUPERSEDED markers.
 |---|---|---|
 | Replicated local HF caches | **SHIPPED DEFAULT** | Existing model/profile rows below; wizard and normal CLI use this path |
 | Single authoritative copy over NFSv4.2/RDMA | **PENDING — NOT PROMOTED** | Deterministic config/manifest/route/launcher/benchmark self-tests exist, but physical two/three-node throughput, startup, faults, correctness, long-context, restart, and soak artifacts are still required by `WEIGHT_FABRIC.md` |
-| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **PROMOTION CANDIDATE — NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; schema-2 transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, and topology-bound SSH identity gates passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). Rank-local witness contracts pass deterministic tests, and the 2026-08-11 Qwen physical gate passed durable-home symlink versus sealed-hot placement, both-rank zero-hash/fallback behavior, exact-snapshot read-only serving, warm-home pin/restart, mismatch fail-closed, and no-follow purge. That Qwen artifact is `legacy-unsealed`; it does not establish lab-issued identity. The active-use durable-home removal guard then passed deterministic and three-node physical checks using only disposable synthetic repositories; the production Qwen home was preserved. Exact all-rank hot admission has no arbitrary default cap: sealed-hot charges manifest bytes, durable-home charges zero, and every selected rank preserves max(64 GiB, 5% filesystem capacity) unless explicitly overridden. The non-mutating DeepSeek gate passed with 166,898,661,074 bytes charged to the sealed-hot rank, zero to the durable-home rank, default-reserve preservation, explicit one-byte-cap refusal, and unchanged hot ownership. Content-addressed validation-bundle schema 1 now fail-closed binds exact model identity, declared external-artifact identities/digests, lab provenance/evidence, a digest-pinned image, normalized live profile settings, and geometry. Deterministic maintainer-only tooling can assemble and verify unreviewed candidates, but it cannot issue, publish, or promote them and supplies no physical evidence. Remaining blockers are issuance of a real profile seal plus complete lab bundle, strict DeepSeek determinism, and sustained soak. No release profile has a seal or bundle yet. The dated promotion assessment remains historical evidence; this ledger supersedes only its materialization recommendation. See `results/model-library/model-library-promotion-assessment-20260810.json`, `results/model-library/topology-ssh-trust-gate-20260810.json`, `results/model-library/qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json`, `results/model-library/model-library-home-removal-guard-20260811.json`, and `results/model-library/model-library-hot-budget-admission-gate-20260811.json`. |
+| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **PROMOTION CANDIDATE — NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, topology-bound SSH identity, active-use removal, and exact all-rank admission gates also passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). The earlier two-node Qwen symlink/witness/lifecycle artifact remains `legacy-unsealed`. The one-node diagnostic `qwen3-1.7b` profile now carries the first reviewed seal and complete validation bundle; a separate post-issuance gate passed exact-seal catalog resolution, full-hash activation without an override, read-only launch, identity labels, smoke, and zero-byte witness verification. This neither seals `qwen3-1.7b-2node` nor promotes the path. Remaining blockers are issuance and applicable physical identity/lifecycle evidence for a promotion-scope multi-node or flagship profile, strict DeepSeek determinism, and sustained soak. Replicated and live-mount launches are not yet content-bound by expected seals. See the [model-library evidence index](../results/model-library/README.md). |
 
 The storage experiment does not change any model's `tested` claim until that
 exact storage source independently passes its promotion battery.
+
+### First issued model identity
+
+The one-node diagnostic `qwen3-1.7b` profile now binds:
+
+- model commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`;
+- complete manifest
+  `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`;
+- expected seal
+  `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`;
+- validation bundle
+  `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`;
+  and
+- exact digest-pinned image and normalized one-node profile contract.
+
+Fresh run A/B outputs were 30/30 identical, the historical vLLM baseline was
+30/30 identical, and the retained HF comparison stayed within the previously
+accepted FP-equivalent envelope. The trusted verifier returned `match`, and a
+post-issuance `library-hot` activation/launch proved the same IDs physically.
+See the [model-library evidence index](../results/model-library/README.md).
+This is an identity issuance for a hidden diagnostic profile, not a
+`library-hot` promotion, a seal for the two-node Qwen profile, or an assertion
+that replicated/live-mount launches enforce the seal.
 
 **Security:** API binds `0.0.0.0:8000` without auth — lab network only ([SECURITY.md](../SECURITY.md)).
 

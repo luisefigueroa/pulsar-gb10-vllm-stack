@@ -8,8 +8,9 @@ EXPECTED_MODEL_SEAL="seals/<profile>.json"
 ```
 
 The reference is relative to `models/` and must resolve inside this directory.
-Only `STATUS=tested*` profiles may reference a seal. This release contains no
-real profile seals yet, so existing tested profiles remain `legacy-unsealed`.
+Only `STATUS=tested*` profiles may reference a seal. The one-node diagnostic
+`qwen3-1.7b` profile carries the first reviewed lab-issued seal. Every other
+tested profile, including `qwen3-1.7b-2node`, remains `legacy-unsealed`.
 
 ## Issuance rule
 
@@ -85,9 +86,14 @@ Schema-1 validation-bundle loading is implemented. The seal's
 `models/validation-bundles/`. Profile load verifies its bundle ID, exact
 primary model identity, provenance/evidence parity with the seal, declared
 external-artifact identities/digests, and the normalized live profile contract
-including the digest-pinned image and geometry. No real profile seal or bundle ships yet;
-trusted lab issuance remains a reviewed release activity and is never derived
-from user state. See
+including the digest-pinned image and geometry. The issued `qwen3-1.7b` seal is
+`ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`
+and references validation bundle
+`9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`.
+Trusted lab issuance remains a reviewed release activity and is never derived
+from user state. Current expected-seal enforcement is on the experimental
+`library-hot` path; replicated and live-mount launches are not yet bound by
+this identity. See
 [validation-bundles/README.md](../validation-bundles/README.md) and
 [docs/MODEL_RELEASE.md](../../docs/MODEL_RELEASE.md). The witness is
 only an accelerator for identity previously established by full verification.

@@ -153,9 +153,14 @@ assert_true "model-library.sh help" bash -c "'$REPO_DIR/scripts/model-library.sh
 assert_true "model-library.sh is executable" test -x "$REPO_DIR/scripts/model-library.sh"
 assert_true "validation-bundle verify documented in CLI" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'validation-bundle verify'"
+bundle_sealed_state=$("$REPO_DIR/scripts/model-library.sh" \
+  validation-bundle verify qwen3-1.7b --json |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+assert_eq "validation-bundle verify accepts sealed profile" \
+  "$bundle_sealed_state" "match"
 set +e
 bundle_unsealed_out=$("$REPO_DIR/scripts/model-library.sh" \
-  validation-bundle verify qwen3-1.7b --json 2>&1)
+  validation-bundle verify qwen3-1.7b-2node --json 2>&1)
 bundle_unsealed_rc=$?
 set -e
 assert_eq "validation-bundle verify refuses unsealed profile" \

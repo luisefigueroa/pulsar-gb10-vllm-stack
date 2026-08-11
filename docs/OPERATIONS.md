@@ -357,7 +357,7 @@ scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list --validated
 # Reviewed sealed profile: no override is accepted or needed.
 scripts/model-library.sh activate <sealed-profile> --backend copy --yes
-# Current legacy-unsealed profiles: explicit experiment only.
+# Profiles without a reviewed seal: explicit experiment only.
 scripts/model-library.sh activate <profile> --backend copy --allow-unvalidated --yes
 scripts/up.sh <profile> --weight-mode library-hot
 # optional after stop:
@@ -483,12 +483,18 @@ does not refresh. Reactivate if the fallback fails. Do not hand-edit
 `hot.json` or `witness.json`, and do not treat a successful rehash of
 `legacy-unsealed` content as lab validation.
 
-No real profile seal or validation bundle ships yet, so current profiles are
-require `--allow-unvalidated` for this experimental path. Catalog refresh
-enumerates complete `snapshots/<revision>` directories directly. A sealed
-profile therefore finds its reviewed commit even when `refs/main` is absent or
-has moved; only the legacy-unsealed experimental selection consults an
-unambiguous `refs/main`. Follow
+The one-node diagnostic profile `qwen3-1.7b` is the first profile with a
+reviewed seal and validation bundle, so its `library-hot` activation must
+match without `--allow-unvalidated`. Profiles without a seal, including
+`qwen3-1.7b-2node`, still require that explicit experimental flag. Catalog
+refresh enumerates complete `snapshots/<revision>` directories directly. A
+sealed profile therefore finds its reviewed commit even when `refs/main` is
+absent or has moved; only the legacy-unsealed experimental selection consults
+an unambiguous `refs/main`.
+
+This enforcement currently belongs to `library-hot`. Replicated and live-mount
+launch paths are not yet content-locked by the expected seal; structural
+readiness on those paths must not be reported as `identity=match`. Follow
 [models/seals/README.md](../models/seals/README.md) and
 [models/validation-bundles/README.md](../models/validation-bundles/README.md)
 for the lab issuance contract; never derive expected identity from a user
@@ -499,7 +505,8 @@ accepted by this implementation. After upgrading, run `catalog refresh`, then
 reactivate each required profile. Hot schema 3 instances created before witness
 support remain readable: the first `library-hot` readiness check visibly
 full-verifies and creates the missing rank-local witness. Current unsealed
-profiles need the explicit experimental `--allow-unvalidated` flag shown above.
+profiles without a seal need the explicit experimental `--allow-unvalidated`
+flag shown above.
 Do not hand-edit or relabel old site-local state into the new schemas.
 
 **Optional cold archive:** shared/local fill tier (conventionally

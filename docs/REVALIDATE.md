@@ -12,21 +12,22 @@ Model-library catalog schema 2 and hot schema 3 now enforce a reviewed
 lab-issued expected model seal, exact commit/manifest comparison, and exact
 snapshot launch. Schema-1 validation bundles additionally bind declared
 external-artifact identities/digests, the digest-pinned image, normalized live
-runtime/memory settings, geometry, provenance, and evidence. Existing rows
-predate that binding and remain `legacy-unsealed`; no real profile seal or
-bundle ships yet. Never
-create an expected seal or bundle from arbitrary user-observed cache contents.
-Recover the exact lab artifact used for the historical run or revalidate the
-intended revision, then
-follow [models/seals/README.md](../models/seals/README.md) in the evidence pull
+runtime/memory settings, geometry, provenance, and evidence. The one-node
+diagnostic `qwen3-1.7b` profile is the first issued identity. Every other
+tested profile, including `qwen3-1.7b-2node`, predates that binding and remains
+`legacy-unsealed`. Never create an expected seal or bundle from arbitrary
+user-observed cache contents. Recover the exact lab artifact used for the
+historical run or revalidate the intended revision, then follow
+[models/seals/README.md](../models/seals/README.md) in the evidence pull
 request. A future mirror may distribute the bytes, but hosting location is not
-validation identity. The rank-local serve witness is implemented: activation
-creates it only after full verification, while unchanged launch uses metadata
-and drift visibly rehashes before refresh. The standalone bundle verifier is
-implemented. Maintainer-only `scripts/model-release.sh` can now hash an exact
-commit and assemble/verify deterministic unreviewed candidates, but trusted
-review and issuance of a real bundle remain pending. See
-[MODEL_RELEASE.md](./MODEL_RELEASE.md).
+validation identity. The rank-local serve witness is implemented for
+`library-hot`: activation creates it only after full verification, while
+unchanged launch uses metadata and drift visibly rehashes before refresh.
+Replicated and live-mount launch paths are not yet content-bound by the seal.
+The standalone bundle verifier is implemented. Maintainer-only
+`scripts/model-release.sh` can hash an exact commit and assemble/verify
+deterministic unreviewed candidates; trusted publication remains a deliberate
+reviewed repository change. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 
 ## 0. Prep (5 min)
 
