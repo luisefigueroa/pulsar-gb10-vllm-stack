@@ -4,6 +4,37 @@
 
 This repository is an operations and validation stack for serving vLLM on one or two NVIDIA DGX Spark GB10 systems. Entry points are `serve.sh` and `wizard.sh`; higher-level lifecycle commands live in `scripts/`, while `cluster/` contains two-node launch, stop, and preflight tooling. Model profiles are shell-style files under `models/`. Python benchmarks and correctness checks live in `validate/`, with measured artifacts in `results/` and hardware probes in `bench/`. Keep operational explanations in `docs/`; deprecated experimental overlays belong in `patches/`.
 
+### Pulsar subsystem map
+
+```mermaid
+flowchart LR
+  operator["Operator"] --> surfaces["Operator surfaces<br/>pulsar · wizard.sh · scripts/home.sh"]
+  surfaces --> lifecycle["Lifecycle control<br/>scripts/up.sh · down.sh · status.sh"]
+
+  profiles["Model policy<br/>models/*.conf · reviewed seals"] --> lifecycle
+  topology["Topology and control plane<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
+  artifacts["Launch gates<br/>image · memory · weights · preflight"] --> lifecycle
+
+  lifecycle --> single["Single-node launcher<br/>serve.sh"]
+  lifecycle --> cluster["Multi-node launcher<br/>cluster/*"]
+  single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
+  cluster --> runtime
+
+  library["Experimental model library<br/>catalog · identity · activate · hot views"] -. explicit opt-in .-> artifacts
+  fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
+
+  runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
+  validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
+
+  classDef experimental stroke-dasharray: 5 5;
+  class library,fabric experimental;
+```
+
+Solid arrows show the promoted control and evidence flow. Dashed arrows are
+explicit experimental weight paths; neither is a silent fallback or wizard
+default. Control SSH, inference NCCL/RoCE, and weight transfer remain distinct
+data planes even when they involve the same machines.
+
 ## Build, Test, and Development Commands
 
 - `scripts/selftest.sh` runs control-plane tests and Python syntax checks without requiring Docker.
