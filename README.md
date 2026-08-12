@@ -226,8 +226,10 @@ for unchanged launch, and visibly rehash on drift before launching the exact
 snapshot. The diagnostic `qwen3-1.7b` profile carries the first reviewed lab
 seal and validation bundle; its sealed `library-hot` activation and launch
 reported `identity=match`. The flagship `deepseek-v4-flash` profile carries
-the second issued identity; its post-issuance physical enforcement gate is
-still pending. Profiles without seals remain legacy-unsealed, and this does
+the second issued identity; its post-issuance physical enforcement and
+one-home lifecycle gates passed in the catalog and serving-integration scopes.
+Strict determinism and sustained-soak requirements still block storage-path
+promotion. Profiles without seals remain legacy-unsealed, and this does
 not promote `library-hot`. Sealed replicated caches now enforce the
 reviewed commit/manifest with full verification, a rank-local witness, and
 exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
@@ -385,7 +387,7 @@ no leaks, no thermal throttling anywhere).
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
 | `patches/pr41834-dspark-opt/` | **DEPRECATED** DSpark draft-path A/B (perf-neutral; obsolete after vllm #49731). Not on default build path — see that dir’s README |
-| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **decisions/** (accepted rationale), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
+| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **decisions/** (accepted rationale), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.

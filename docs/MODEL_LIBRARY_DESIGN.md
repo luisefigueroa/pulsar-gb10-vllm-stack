@@ -18,14 +18,16 @@
 > [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 > The durable rationale for the home-view and validation-identity decision is
 > [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
+> Qualification scope and evidence reuse are governed by
+> [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
 
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
 | Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; the existing DeepSeek duplicate was reconciled to one persistent durable home and the exact sealed lifecycle passed again, while the strict-determinism policy question and soak remain pending |
-| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued 2026-08-12 |
+| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md) |
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
@@ -166,7 +168,7 @@ config; a missing or stale config makes schema 2 unloadable.
 
 ## 2. Layering
 
-Do not conflate these three:
+Do not conflate these three storage/runtime layers:
 
 ```text
 1. Catalog / library (durable)  ← Requirement A
@@ -200,6 +202,25 @@ mount under vLLM remains an experiment ([WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md)).
 Evidence, labels, and future schemas should record these axes independently.
 In particular, SSH/TCP over a RoCE interface is `ssh-roce`; it is not the live
 NFS/RDMA runtime mode merely because both use the fabric NIC.
+
+### 2.2 Qualification boundaries
+
+Storage/runtime layers are also distinct from evidence scope. Pulsar evaluates
+four scopes independently and combines them only for release or promotion:
+
+| Scope | Question |
+|---|---|
+| Catalog and artifact service | Are the exact bytes identified, placed, transferred, retained, repaired, and cleaned up according to the library contract? |
+| Serving integration | Did the selected image and launcher mount and load the intended exact runtime source, then pass health, warmup, and completion smoke? |
+| Model qualification | Does the exact model/image/configuration/geometry meet correctness, determinism, performance, context, and soak requirements? |
+| Release and promotion | Have all subsystem gates required for the supported profile or guided policy passed together? |
+
+A failure in one subsystem does not erase valid evidence from another unless a
+causal connection is demonstrated. It does block a release claim that requires
+both. A successful health check or completion proves serving integration, not
+model qualification. Similarly, catalog acceptance does not promote a profile,
+storage path, wizard choice, or default policy. See
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
 
 ---
 
@@ -627,13 +648,23 @@ Pulsar's discovery boundary.
     hidden mount or replica behavior.
 14. **Raw experiments stay local** under gitignored `/experiments/`; durable
     decisions belong in reviewed design/ADR/runbook docs and sanitized evidence.
+15. **Evidence is scoped, not globally contagious** — preserve valid catalog,
+    integration, and model results within their measured contracts; combine
+    them only for a release claim, and expand invalidation only when inputs or a
+    demonstrated causal dependency cross subsystem boundaries.
 
 ---
 
 ## 7. Promotion gates
 
-The model-library path cannot become a wizard/default distribution policy until
-all of these SSH identity controls are implemented and evidenced:
+These are combined **release/promotion** gates, not a single verdict on every
+subsystem. Catalog/artifact and serving-integration results may be accepted and
+preserved in their own scopes while model qualification remains open. The
+model-library path cannot become a wizard/default distribution policy until all
+applicable scopes pass together. A subsystem pass never changes profile
+`STATUS`, guided exposure, or the default storage path by itself.
+
+The combined promotion claim first requires these SSH identity controls:
 
 ```text
 [x] Confirmed topology records trusted SSH host-key fingerprints per node
@@ -732,6 +763,8 @@ blocker changed.
 ## 8. Remaining deferred work
 
 - Promotion into the wizard or other guided defaults
+- Machine-readable qualification dimensions; current scope separation is a
+  documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas other than the
@@ -768,6 +801,7 @@ blocker changed.
 | 2026-08-10 | Full-model counterbalanced trials passed the performance gate: 8-stream SSH-over-RoCE was 1.898x the control-path median; 16 streams did not improve the median. |
 | 2026-08-10 | **No promotion:** keep replicated guided defaults. SSH identity passed; production hot-budget policy, strict DeepSeek determinism, and sustained soak remain open. |
 | 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |
+| 2026-08-12 | **ADR 0002 accepted:** separate catalog/artifact, serving-integration, model-qualification, and release/promotion evidence. Preserve valid subsystem results unless a causal dependency invalidates them; combined promotion still requires every applicable scope. |
 | 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued. |
 | 2026-08-10 | Implemented rank-local serve-witness schema 1: activation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |
 | 2026-08-11 | Qwen 1.7B physically passed durable-home symlink, non-home sealed-hot, both-rank witness fallback, exact-snapshot read-only launch, warm-home pin/restart, mismatch fail-closed, and force-unpin no-follow purge. The artifact is `legacy-unsealed`; release identity and promotion remain open. |

@@ -1,11 +1,31 @@
 # Validation ledger
 
-Rules: nothing is "done" until it passes here. Gates are
-token-match rate + logprob closeness (not bit-exactness) across kernels /
-parallelism; bit-exactness IS required run-to-run on identical config.
+Rules: no profile, guided path, or default policy is release-complete until
+every required qualification scope passes here. Gates are token-match rate +
+logprob closeness (not bit-exactness) across kernels / parallelism; bit-exactness
+IS required run-to-run on identical config. Narrower subsystem evidence may be
+accepted without overstating the combined release claim.
 Raw artifacts: `results/`.
 
 Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
+
+### Qualification scopes
+
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
+separates four scopes:
+
+| Scope | Ledger interpretation |
+|---|---|
+| Catalog and artifact service | Exact bytes/identity, placement, transfer, runtime views, retention, repair, and cleanup |
+| Serving integration | Exact-source launch, health, warmup, completion smoke, and owned stop |
+| Model qualification | Accuracy, determinism, throughput, long context, and soak for exact runtime inputs |
+| Release and promotion | All required scopes combined for `STATUS`, wizard exposure, or a guided/default policy |
+
+A failure does not erase valid evidence from another scope unless a causal
+connection is demonstrated. It does block any release claim requiring both.
+Health or a completion smoke is integration evidence, not model qualification.
+Existing historical artifacts keep their recorded outcomes; this ledger supplies
+their current scope and interpretation.
 
 ## Current ship set (read this first)
 
@@ -31,11 +51,14 @@ HISTORICAL / SUPERSEDED markers.
 |---|---|---|
 | Replicated local HF caches | **SHIPPED DEFAULT** | Existing model/profile rows below; wizard and normal CLI use this path |
 | Single authoritative copy over NFSv4.2/RDMA | **PENDING — NOT PROMOTED** | Deterministic config/manifest/route/launcher/benchmark self-tests exist, but physical two/three-node throughput, startup, faults, correctness, long-context, restart, and soak artifacts are still required by `WEIGHT_FABRIC.md` |
-| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **PROMOTION CANDIDATE — NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, topology-bound SSH identity, active-use removal, and exact all-rank admission gates also passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). The earlier two-node Qwen symlink/witness/lifecycle artifact remains `legacy-unsealed`. The one-node diagnostic `qwen3-1.7b` profile and flagship `deepseek-v4-flash` profile now carry reviewed seals and complete validation bundles, and both passed applicable post-issuance physical enforcement. The existing DeepSeek duplicate has now been reconciled to one persistent rank-1 durable home. From that state, a clean repeat passed 73-second eight-stream SSH-over-RoCE transfer, 47-second full verification, 120-second activation, durable-home/sealed-hot placement, zero-byte witnesses, 414.944-second first health, eight warmup phases, completion smoke, read-only mounts, owned cleanup, and return to one durable copy. Remaining blockers include the separately tracked strict-determinism policy question and sustained soak. Sealed replicated caches enforce expected identity; legacy-unsealed replicated and live-mount launches do not. See the [model-library evidence index](../results/model-library/README.md). |
+| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **CATALOG/INTEGRATION ACCEPTED — RELEASE NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, topology-bound SSH identity, active-use removal, and exact all-rank admission gates also passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). The earlier two-node Qwen symlink/witness/lifecycle artifact remains `legacy-unsealed`. The one-node diagnostic `qwen3-1.7b` profile and flagship `deepseek-v4-flash` profile now carry reviewed seals and complete validation bundles, and both passed applicable post-issuance physical enforcement. The existing DeepSeek duplicate has now been reconciled to one persistent rank-1 durable home. From that state, a clean repeat passed 73-second eight-stream SSH-over-RoCE transfer, 47-second full verification, 120-second activation, durable-home/sealed-hot placement, zero-byte witnesses, 414.944-second first health, eight warmup phases, completion smoke, read-only mounts, owned cleanup, and return to one durable copy. Remaining blockers include the separately tracked strict-determinism policy question and sustained soak. Sealed replicated caches enforce expected identity; legacy-unsealed replicated and live-mount launches do not. See the [model-library evidence index](../results/model-library/README.md). |
 | Read-only model-library health and legacy-hot repair | **PASS — IMPLEMENTED, NOT A STORAGE-PATH PROMOTION** | Stable sanitized health schema 1, Doctor warning rows, shallow schema-1/2/3 observation, stale-ID/active/pinned/symlink/malformed refusal, atomic retirement, retry, sibling preservation, and no-follow sentinel behavior pass deterministic Python and role-driven multi-rank shell contracts. The isolated three-node physical repeat also passed health inventory, stopped-container/pinned blockers, local and remote repair, preserved-untracked attention, no-follow cleanup, legacy-reference removal, and exact disposable-home removal. No real hot entry, durable cache, or DeepSeek duplicate was changed. See [`model-library-health-legacy-repair-gate-20260812.json`](../results/model-library/model-library-health-legacy-repair-gate-20260812.json). |
 
-The storage experiment does not change any model's `tested` claim until that
-exact storage source independently passes its promotion battery.
+The catalog/artifact and serving-integration results above are accepted within
+their recorded contracts. They do not change any model’s `tested` claim or
+promote the storage path. The combined release remains blocked until the exact
+storage source passes every applicable model-qualification and promotion gate,
+including the open strict-determinism decision and sustained soak.
 
 ### Issued model identities
 
