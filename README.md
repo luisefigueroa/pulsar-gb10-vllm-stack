@@ -20,6 +20,37 @@ measured run in `docs/VALIDATION.md` with raw evidence in `results/`.
 
 Priority order everywhere: **stability > accuracy > throughput > latency.**
 
+## Pulsar subsystem map
+
+```mermaid
+flowchart LR
+  operator["Operator"] --> surfaces["Operator surfaces<br/>pulsar · wizard.sh · scripts/home.sh"]
+  surfaces --> lifecycle["Lifecycle control<br/>scripts/up.sh · down.sh · status.sh"]
+
+  profiles["Model policy<br/>models/*.conf · reviewed seals"] --> lifecycle
+  topology["Topology and control plane<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
+  artifacts["Launch gates<br/>image · memory · weights · preflight"] --> lifecycle
+
+  lifecycle --> single["Single-node launcher<br/>serve.sh"]
+  lifecycle --> cluster["Multi-node launcher<br/>cluster/*"]
+  single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
+  cluster --> runtime
+
+  library["Experimental model library<br/>catalog · identity · activate · hot views"] -. explicit opt-in .-> artifacts
+  fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
+
+  runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
+  validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
+
+  classDef experimental stroke-dasharray: 5 5;
+  class library,fabric experimental;
+```
+
+Solid arrows show the promoted control and evidence flow. Dashed arrows are
+explicit experimental weight paths; neither is a silent fallback or wizard
+default. Control SSH, inference NCCL/RoCE, and weight transfer remain distinct
+data planes even when they involve the same machines.
+
 ## What sets this stack apart
 
 1. **Multi-node is real, measured, and root-caused — not "wired but
