@@ -1,7 +1,7 @@
 # Expected model seals
 
 Files in this directory are repository-reviewed trust roots for model-library
-activation. A profile opts in with:
+preparation. A profile opts in with:
 
 ```bash
 EXPECTED_MODEL_SEAL="seals/<profile>.json"
@@ -59,8 +59,8 @@ calculation.
    their trusted paths and commit them with the profile
    `EXPECTED_MODEL_SEAL` reference in one pull request.
 6. Run `scripts/model-library.sh validation-bundle verify <profile>` and
-   `scripts/selftest.sh`, refresh the site catalog, and activate without
-   `--allow-unvalidated`. Activation must full-hash the source and report
+   `scripts/selftest.sh`, refresh the site catalog, and prepare without
+   `--allow-unvalidated`. Preparation must full-hash the source and report
    `identity_status=match` before it can publish ready hot state.
 
 A configured model, commit, or manifest mismatch cannot be bypassed with
@@ -73,7 +73,7 @@ Catalog schema 2 validates the reviewed seal and selects only its exact
 revision. Catalog refresh discovers complete snapshot commit directories
 without depending on `refs/main`, so a direct commit-pinned download remains
 usable and later upstream ref movement cannot retarget the profile. Hot schema
-3 records expected and observed identity. Activation full-verifies every rank
+3 records expected and observed identity. Preparation full-verifies every rank
 and atomically creates a rank-local serve witness before publishing ready.
 Launch validates the live profile/controller expectation, uses that witness
 when canonical view and file metadata are unchanged, and visibly falls back to

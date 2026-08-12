@@ -22,7 +22,7 @@ historical run or revalidate the intended revision, then follow
 [models/seals/README.md](../models/seals/README.md) in the evidence pull
 request. A future mirror may distribute the bytes, but hosting location is not
 validation identity. The rank-local serve witness is implemented for
-`library-hot` and sealed replicated caches: activation/acquisition creates it
+`library-hot` and sealed replicated caches: preparation/acquisition creates it
 only after full verification, while unchanged launch uses metadata and drift
 visibly rehashes before refresh. Sealed replicated download pins the exact
 commit and every materialized rank is verified. Legacy-unsealed replicated
@@ -215,7 +215,7 @@ preserve unique result bundles for the affected scopes:
    soak recovery;
 5. exact expected-versus-observed model seal and revision binding;
 6. proof that non-home clients retain no complete durable model cache;
-7. for library-hot, activation-created witness plus unchanged-launch fast-path,
+7. for library-hot, preparation-created witness plus unchanged-launch fast-path,
    metadata-drift full-verify/fail-closed behavior on every rank, no-follow
    purge, and honest durable-home pin/restart dependency.
 8. active-use durable-home removal protection on the confirmed physical

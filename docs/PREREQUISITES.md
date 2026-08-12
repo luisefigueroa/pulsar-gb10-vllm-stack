@@ -116,8 +116,8 @@ in the tooling is 900 s for this reason.
 
 ## 3. Confirmed multi-node topology (`cluster/*.sh`)
 
-Extra requirements beyond §1 apply to every node that an exact profile will
-activate. Run discovery on the machine that will be rank 0 and host the API.
+Extra requirements beyond §1 apply to every node on which an exact profile will
+run. Run discovery on the machine that will be rank 0 and host the API.
 
 ### 3.1 Discovery, identity, and trust
 
@@ -290,7 +290,7 @@ not permission to serve an unmeasured geometry.
 | [HARDWARE.md](./HARDWARE.md) | Measured bandwidth, RoCE map, storage |
 | [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
 | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Experimental one-copy NFS/RDMA design, operations, faults, and gates |
-| [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, activate/hot/pin policy; experiment not promoted |
+| [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, preparation/hot/pin policy; experiment not promoted |
 | [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: validated home symlink, non-home hot only, expected seal and serve-time witness |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |
 | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) | Descriptive current implementation, evidence boundaries, and known gaps |

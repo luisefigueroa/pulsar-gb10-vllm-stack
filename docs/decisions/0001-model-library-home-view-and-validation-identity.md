@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-10
-- **Scope:** Federated model library, library-hot activation, pin/restart, and
+- **Scope:** Federated model library, library-hot preparation, pin/restart, and
   model validation identity
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 

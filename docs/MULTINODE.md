@@ -21,7 +21,7 @@ PP=3, or any other unmeasured launch.
 
 A multi-node profile is valid only when `TP × PP == NODES`, uses the native
 `mp` distributed executor, and its topology requirements are met. Launchers
-activate ranks `0..NODES-1`; extra confirmed ranks remain idle. The wizard
+prepares ranks `0..NODES-1`; extra confirmed ranks remain idle. The wizard
 shows only `STATUS=tested*` profiles whose exact `NODES` value fits the
 confirmed capacity. Related profiles can carry family and variant labels, but
 each node-count variant must earn its own status.

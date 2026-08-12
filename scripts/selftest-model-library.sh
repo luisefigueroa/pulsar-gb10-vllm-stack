@@ -373,14 +373,14 @@ assert_true "cluster launch validates remote expected identity" \
   grep -q -- --expected-validation-json "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "cluster launch uses serve-time witness with full-verify fallback" \
   grep -q -- --serve-time-witness "$REPO_DIR/cluster/start-cluster.sh"
-assert_true "activation full-verifies and refreshes rank-local witnesses" \
+assert_true "preparation full-verifies and refreshes rank-local witnesses" \
   grep -q -- --refresh-witness "$REPO_DIR/scripts/model-library.sh"
 out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)
 assert_true "check-weights library-hot fails closed without hot" \
-  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|activate|topology|hot'"
+  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|prepare|topology|hot'"
 assert_true "down.sh documents pin-weights" \
   grep -q pin-weights "$REPO_DIR/scripts/down.sh"
-assert_true "activate implements fabric transfer plane" \
+assert_true "prepare implements fabric transfer plane" \
   grep -q fabric_apply_transfer "$REPO_DIR/scripts/model-library.sh"
 assert_true "release-transfer command exists" \
   grep -q release-transfer "$REPO_DIR/scripts/model-library.sh"
@@ -548,7 +548,7 @@ stage2=$(python3 "$PY" plan-cold-stage \
 stage2_action=$(printf '%s' "$stage2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "stage-only skip when hot ready" "$stage2_action" "skip"
 
-# activate stays warm-only (cold profile with no warm home fails)
+# Preparation stays warm-only (the internal plan-activate command rejects a cold-only profile)
 set +e
 python3 "$PY" plan-activate \
   --catalog "$STATE/catalog-cold.json" \
@@ -597,8 +597,14 @@ assert_eq "bench copy_faster when fabric > copy" "$v" "copy_faster"
 fp=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-lose.json"'"))["fabric_claims_fast_path"])')
 assert_eq "fabric_claims_fast_path false" "$fp" "False"
 
-assert_true "bench-activate documented in CLI" \
-  grep -q bench-activate "$REPO_DIR/scripts/model-library.sh"
+assert_true "prepare is the preferred CLI command" \
+  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'prepare <profile>'"
+assert_true "activate remains a compatibility alias" \
+  grep -q 'prepare|activate) cmd_activate' "$REPO_DIR/scripts/model-library.sh"
+assert_true "bench-activate remains a compatibility alias" \
+  grep -q 'bench-prepare|bench-activate) cmd_bench_activate' "$REPO_DIR/scripts/model-library.sh"
+assert_true "bench-prepare documented in CLI" \
+  grep -q bench-prepare "$REPO_DIR/scripts/model-library.sh"
 assert_true "bench-ssh-roce documented in CLI" \
   grep -q bench-ssh-roce "$REPO_DIR/scripts/model-library.sh"
 assert_true "probe-ssh-roce documented in CLI" \
@@ -712,7 +718,7 @@ assert_true "parallel relay geometry fails closed" \
   grep -q 'does not support remote-home to remote-target relay' "$REPO_DIR/scripts/model-library.sh"
 assert_true "home materialize prefers symlink" \
   grep -q symlink_home "$REPO_DIR/scripts/model-library.sh"
-assert_true "activate materializes ranks in parallel" \
+assert_true "prepare materializes ranks in parallel" \
   grep -q 'pids+=("$!")' "$REPO_DIR/scripts/model-library.sh"
 
 echo

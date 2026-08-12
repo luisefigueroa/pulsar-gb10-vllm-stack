@@ -15,11 +15,11 @@ creates two opposite errors:
 
 - a model-runtime failure can incorrectly erase valid identity, transfer, or
   lifecycle evidence; or
-- a successful activation and completion smoke can be overstated as model
+- a successful preparation and completion smoke can be overstated as model
   correctness, determinism, soak, or release qualification.
 
 The DeepSeek model-library work exposed this distinction directly. Exact
-sealed bytes, one-home placement, activation, witnesses, read-only launch, and
+sealed bytes, one-home placement, preparation, witnesses, read-only launch, and
 cleanup passed their catalog and integration gates. The selected runtime still
 has a separately tracked strict-determinism question and lacks the sustained
 soak required for storage-path promotion.

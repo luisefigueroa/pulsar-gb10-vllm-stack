@@ -1,6 +1,6 @@
 ---
 name: change-pulsar-model-library
-description: Guide reviews, experiments, designs, implementations, and documentation changes affecting Pulsar's model catalog, downloads, durable homes, activation and transfer paths, rank-local runtime views, pin/purge lifecycle, validation identity, or model-library promotion. Use for changes to model-library scripts, library-hot launch behavior, weight-fabric interactions, model distribution policy, seals and witnesses, storage or resilience claims, and their operations, validation, or evidence documents.
+description: Guide reviews, experiments, designs, implementations, and documentation changes affecting Pulsar's model catalog, downloads, durable homes, preparation and transfer paths, rank-local runtime views, pin/purge lifecycle, validation identity, or model-library promotion. Use for changes to model-library scripts, library-hot launch behavior, weight-fabric interactions, model distribution policy, seals and witnesses, storage or resilience claims, and their operations, validation, or evidence documents.
 ---
 
 # Change Pulsar Model Library
@@ -106,7 +106,7 @@ Map the proposed work across these independent axes before editing:
 - expected identity, observed identity, validation bundle, and witness state;
 - control, inference, and weight-transfer planes;
 - rank geometry, topology identity, and trust boundaries;
-- activation, launch, pin, purge, restart, home loss, and rollback;
+- preparation, launch, pin, purge, restart, home loss, and rollback;
 - human CLI behavior and machine-readable schemas; and
 - experimental, candidate, promoted, and historically tested claims.
 

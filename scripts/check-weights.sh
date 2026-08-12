@@ -93,7 +93,7 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
     elif [ "${QUIET:-0}" = 1 ]; then
       echo "FAIL  weights   source=library-hot · hot missing"
     else
-      echo "library-hot: no ready hot instance — run: scripts/model-library.sh activate $NAME --yes" >&2
+      echo "library-hot: model files are not prepared — run: scripts/model-library.sh prepare $NAME --yes" >&2
     fi
     exit 1
   fi

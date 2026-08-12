@@ -36,7 +36,7 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Experimental model library<br/>catalog · identity · activate · hot views"] -. explicit opt-in .-> artifacts
+  library["Experimental model library<br/>catalog · identity · prepare · hot views"] -. explicit opt-in .-> artifacts
   fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
@@ -224,7 +224,7 @@ ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
 create a rank-local witness after full verification, use a metadata fast path
 for unchanged launch, and visibly rehash on drift before launching the exact
 snapshot. The diagnostic `qwen3-1.7b` profile carries the first reviewed lab
-seal and validation bundle; its sealed `library-hot` activation and launch
+seal and validation bundle; its sealed `library-hot` preparation and launch
 reported `identity=match`. The flagship `deepseek-v4-flash` profile carries
 the second issued identity; its post-issuance physical enforcement and
 one-home lifecycle gates passed in the catalog and serving-integration scopes.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Federated model library: warm catalog + optional cold + hot staging.
 
-Bash owns topology/SSH, rsync activate/adopt, and operator entrypoints. This
+Bash owns topology/SSH, model preparation/adoption, and operator entrypoints. This
 module owns operational schemas, hub/flat completeness, labels, digests,
 hot.json, disk budget, and cold-archive resolve (warm → cold → fail closed).
 Trust-document schemas live in model_identity.py.
@@ -1382,11 +1382,11 @@ def require_activation_identity(
     if status != "match" and not allow_unvalidated:
         if status == "legacy-unsealed":
             fail(
-                f"activate: {profile['profile']} is legacy-unsealed; add a reviewed "
+                f"prepare: {profile['profile']} is legacy-unsealed; add a reviewed "
                 "EXPECTED_MODEL_SEAL or pass --allow-unvalidated for an explicit experiment"
             )
         fail(
-            f"activate: {profile['profile']} identity status is {status}; "
+            f"prepare: {profile['profile']} identity status is {status}; "
             "pass --allow-unvalidated for an explicit experiment"
         )
     return validation
@@ -2112,7 +2112,7 @@ def resolve_entry(
             fail(warm_error + f"; not found complete in cold archive ({root})")
         fail(f"resolve: {target}: not found complete in cold archive ({root})")
 
-    # Synthetic "home" so activate/stage paths can treat cold like a source.
+    # Synthetic "home" so preparation/stage paths can treat cold like a source.
     cold_home = {
         "rank": -1,
         "node_id": "cold",
@@ -2977,15 +2977,15 @@ def resolve_activate_transport(
     backend = backend or ""
     transport = transport or ""
     if backend and backend not in {"copy", "fabric"}:
-        fail(f"activate: backend {backend!r} not supported (use copy or fabric)")
+        fail(f"prepare: backend {backend!r} not supported (use copy or fabric)")
     if transport:
         expected_backend = ACTIVATE_TRANSPORT_BACKENDS.get(transport)
         if expected_backend is None:
             choices = ", ".join(ACTIVATE_TRANSPORT_BACKENDS)
-            fail(f"activate: transport {transport!r} not supported (use {choices})")
+            fail(f"prepare: transport {transport!r} not supported (use {choices})")
         if backend and backend != expected_backend:
             fail(
-                f"activate: transport {transport} requires backend "
+                f"prepare: transport {transport} requires backend "
                 f"{expected_backend}, not {backend}"
             )
         return expected_backend, transport
@@ -3886,40 +3886,40 @@ def validate_activation_home_inventory(
 ) -> tuple[str, int, dict[str, Any]]:
     """Bind a sealed remote-home manifest to the resolved catalog identity."""
     if inventory.get("schema_version") != 2:
-        fail("activate: home inventory schema_version must be 2")
+        fail("prepare: home inventory schema_version must be 2")
     if inventory.get("kind") != "model-library-home-inventory":
-        fail("activate: home inventory kind is invalid")
+        fail("prepare: home inventory kind is invalid")
     try:
         expected_rank = int(home["rank"])
     except (KeyError, TypeError, ValueError):
-        fail("activate: catalog home rank is invalid")
+        fail("prepare: catalog home rank is invalid")
     actual_rank = inventory.get("rank")
     if isinstance(actual_rank, bool) or actual_rank != expected_rank:
-        fail("activate: home inventory rank differs from catalog home")
+        fail("prepare: home inventory rank differs from catalog home")
     expected_node_id = str(home.get("node_id") or "")
     if inventory.get("node_id") != expected_node_id:
-        fail("activate: home inventory node_id differs from catalog home")
+        fail("prepare: home inventory node_id differs from catalog home")
     expected_path = str(pathlib.Path(str(home.get("hub_path") or "")))
     if not pathlib.Path(expected_path).is_absolute():
-        fail("activate: catalog home hub_path must be absolute")
+        fail("prepare: catalog home hub_path must be absolute")
     if inventory.get("hub_path") != expected_path:
-        fail("activate: home inventory path differs from catalog home")
+        fail("prepare: home inventory path differs from catalog home")
     if inventory.get("model_id") != model_id:
-        fail("activate: home inventory model_id differs from catalog")
+        fail("prepare: home inventory model_id differs from catalog")
     state = inventory.get("state")
     if state != "complete":
-        fail(f"activate: home hub is {state or 'invalid'}: {expected_path}")
+        fail(f"prepare: home hub is {state or 'invalid'}: {expected_path}")
     revision = inventory.get("revision")
     if catalog_revision and revision != catalog_revision:
-        fail("activate: home revision differs from catalog; run catalog refresh")
+        fail("prepare: home revision differs from catalog; run catalog refresh")
     manifest = validate_snapshot_manifest(inventory.get("integrity_manifest"))
     if manifest.get("model_id") != model_id:
-        fail("activate: home manifest model_id differs from catalog")
+        fail("prepare: home manifest model_id differs from catalog")
     if manifest.get("snapshot_revision") != revision:
-        fail("activate: home manifest revision differs from inventory")
+        fail("prepare: home manifest revision differs from inventory")
     digest = inventory.get("content_digest")
     if digest != manifest.get("manifest_id"):
-        fail("activate: home inventory content_digest differs from manifest")
+        fail("prepare: home inventory content_digest differs from manifest")
     bytes_logical = inventory.get("bytes_logical")
     if (
         isinstance(bytes_logical, bool)
@@ -3927,7 +3927,7 @@ def validate_activation_home_inventory(
         or bytes_logical < 1
         or bytes_logical != manifest.get("total_bytes")
     ):
-        fail("activate: home inventory bytes_logical differs from manifest")
+        fail("prepare: home inventory bytes_logical differs from manifest")
     return digest, bytes_logical, manifest
 
 
@@ -4490,7 +4490,7 @@ def render_hot_budget_plan(plan: dict[str, Any]) -> None:
 def load_topology_for_plan(topology_file: str | pathlib.Path | None) -> dict[str, Any]:
     """Load confirmed topology for fabric rail selection."""
     if not topology_file:
-        fail("fabric activate requires --topology-file (confirmed cluster topology)")
+        fail("fabric preparation requires --topology-file (confirmed cluster topology)")
     path = pathlib.Path(topology_file)
     if not path.is_file():
         fail(f"topology file missing: {path}")
@@ -4621,16 +4621,16 @@ def plan_activate(
     fabric_port: int = DEFAULT_FABRIC_PORT,
     home_inventory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return activate plan JSON for bash to execute (copy/fabric + stamp)."""
+    """Return a model-preparation plan JSON for bash to execute (copy/fabric + stamp)."""
     backend, transport = resolve_activate_transport(backend, transport)
     catalog = load_catalog(catalog_path)
     if catalog.get("topology_id") and topology_id and catalog["topology_id"] != topology_id:
         fail(
-            f"activate: catalog topology_id mismatch "
+            f"prepare: catalog topology_id mismatch "
             f"(catalog={catalog['topology_id'][:12]}… live={topology_id[:12]}…); "
             "run catalog refresh"
         )
-    # Activate is warm-catalog only; cold uses adopt or stage-only.
+    # Preparation is warm-catalog only; cold uses adopt or stage-only.
     profile_data = load_hf_profile(models_dir, profile)
     resolved = resolve_entry(
         catalog,
@@ -4640,11 +4640,11 @@ def plan_activate(
     )
     if resolved.get("tier") == "cold":
         fail(
-            "activate: cold source requires "
+            "prepare: cold source requires "
             "`cold adopt` (durable warm home) or `cold stage-only` (hot only)"
         )
     if resolved.get("model_id") != profile_data.get("model_id"):
-        fail("activate: catalog model differs from the live profile")
+        fail("prepare: catalog model differs from the live profile")
     home = resolved["home"]
     hub_path = home["hub_path"]
     digest, bytes_logical, integrity_manifest = activation_home_inventory(
@@ -4729,7 +4729,7 @@ def plan_activate(
             topology = load_topology_for_plan(topology_file)
             if topology.get("topology_id") and topology["topology_id"] != topology_id:
                 fail(
-                    "fabric activate: live topology_id does not match plan topology_id"
+                    "fabric preparation: live topology_id does not match plan topology_id"
                 )
             transfer = build_fabric_transfer(
                 topology=topology,
@@ -4758,7 +4758,7 @@ def plan_activate(
                 "home_rank": int(home["rank"]),
                 "home_node_id": home["node_id"],
                 "sources": {str(home["rank"]): hub_path},
-                "note": "single-rank fabric activate uses local home path (no NFS)",
+                "note": "single-rank fabric preparation uses local home path (no NFS)",
             }
 
     return {
@@ -4955,7 +4955,7 @@ def verify_hot_stamp_against_profile(
     if stored_validation != live_validation:
         fail(
             "hot validation provenance differs from the live profile/seal; "
-            "reactivate from the current expected identity"
+            "prepare again from the current expected identity"
         )
     return live_validation
 
@@ -7677,7 +7677,7 @@ def build_ssh_roce_map(
 ) -> dict[str, Any]:
     """Map ranks → control SSH host and RoCE IP for experimental SSH-over-RoCE copy.
 
-    Uses the same selected_rail() as fabric NFS. Does not change product activate
+    Uses the same selected_rail() as fabric NFS. Does not change the product preparation policy;
     defaults — experiment-only addressing for rsync -e ssh over fabric IPs.
     """
     nodes = topology.get("nodes") or []
@@ -8350,7 +8350,7 @@ def build_parser() -> argparse.ArgumentParser:
     primary_clear.set_defaults(func=cmd_catalog_primary)
 
     plan = sub.add_parser(
-        "plan-activate", help="Plan copy/fabric activate into hot staging"
+        "plan-activate", help="Plan copy/fabric preparation into hot staging"
     )
     plan.add_argument("--catalog", required=True)
     plan.add_argument("--profile", required=True)
@@ -8547,7 +8547,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bench = sub.add_parser(
         "compare-bench",
-        help="Compare copy vs fabric activate wall times (B gate)",
+        help="Compare copy vs fabric preparation wall times (B gate)",
     )
     bench.add_argument("--profile", required=True)
     bench.add_argument("--topology-id", required=True)

@@ -110,7 +110,7 @@ require_cmd() {
 }
 
 # Serialize supported launches/library operations against destructive durable-
-# home removal. Shared holders may read/activate/launch concurrently; removal
+# home removal. Shared holders may read/prepare/launch concurrently; removal
 # takes the exclusive form before it probes references and changes a home.
 acquire_model_library_lifecycle_lock() {
   local mode="${1:-shared}" timeout lock_dir lock_path lock_parent lock_fd
@@ -151,7 +151,7 @@ acquire_model_library_lifecycle_lock() {
 }
 
 # Serialize supported hot-tree mutations so each all-rank capacity observation
-# remains valid until the matching activate/pin/purge operation finishes.
+# remains valid until the matching prepare/pin/purge operation finishes.
 # Launch/readiness paths take the shared form; hot writers take exclusive.
 acquire_model_library_hot_lock() {
   local mode="${1:-shared}" timeout lock_dir lock_path lock_parent lock_fd
@@ -184,7 +184,7 @@ acquire_model_library_hot_lock() {
   else
     flock -s -w "$timeout" "$lock_fd" || {
       exec {lock_fd}>&-
-      die "hot activation/pin/purge is in progress; hot read lock timed out"
+      die "hot preparation/pin/purge is in progress; hot read lock timed out"
     }
   fi
   PULSAR_MODEL_LIBRARY_HOT_LOCK_FD="$lock_fd"
@@ -1018,7 +1018,7 @@ resolve_library_hot_for_profile() {
       --topology-id "$topology_id" \
       --hot-root "$PULSAR_HOT_ROOT" \
       --models-dir "$REPO_DIR/models"
-  ) || die "library-hot: no ready hot instance for $profile — run: scripts/model-library.sh activate $profile --yes"
+  ) || die "library-hot: model files are not prepared for $profile — run: scripts/model-library.sh prepare $profile --yes"
   LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \

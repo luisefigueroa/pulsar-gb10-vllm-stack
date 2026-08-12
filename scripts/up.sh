@@ -202,7 +202,7 @@ if [ "$SKIP_W" != 1 ]; then
       die "single-copy fabric is not ready (state=$w_state) — run: scripts/weight-fabric.sh check $NAME"
     fi
     if [ "$WEIGHT_SOURCE" = library-hot ]; then
-      die "library-hot is not ready (state=$w_state) — run: scripts/model-library.sh activate $NAME --yes"
+      die "library-hot model files are not prepared (state=$w_state) — run: scripts/model-library.sh prepare $NAME --yes"
     fi
     kind=$(model_source_kind)
     if [ "$kind" = hf ]; then

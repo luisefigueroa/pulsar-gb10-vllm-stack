@@ -181,7 +181,7 @@ cmd_enroll() {
 
   echo
   print_hanging "  Effect    " \
-    "Writes topology schema 2 and .cluster-ssh-config. The topology ID changes, so prior catalog/hot activation state must be refreshed before serving."
+    "Writes topology schema 2 and .cluster-ssh-config. The topology ID changes, so prior catalog/hot preparation state must be refreshed before serving."
   if [ "$yes" = 0 ]; then
     printf 'Enroll these SSH identities? [y/N] '
     read -r answer
@@ -199,7 +199,7 @@ cmd_enroll() {
     --ssh-config "$CLUSTER_SSH_CONFIG_FILE" \
     --probe "$PROBE_TOOL" \
     --ssh-bin "$PULSAR_SSH"
-  log "next: refresh the model-library catalog and reactivate the diagnostic model"
+  log "next: refresh the model-library catalog and prepare the diagnostic model again"
 }
 
 command_name="${1:-}"
