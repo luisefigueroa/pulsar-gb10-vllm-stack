@@ -54,8 +54,11 @@ post-issuance physical `library-hot` enforcement. Flagship
 `deepseek-v4-flash` carries the second reviewed identity and has now passed the
 applicable two-node physical enforcement gate. That run required a temporary
 primary selection because two durable copies already existed, so it does not
-prove the one-durable-home steady state. Profiles without a seal remain
-legacy-unsealed, and neither issuance nor gate promotes the model-library path.
+prove the one-durable-home steady state. The catalog now persists an
+exact-revision primary choice and supplies guarded reconciliation commands, but
+the lab duplicate has not been physically removed. Profiles without a seal
+remain legacy-unsealed, and neither issuance nor gate promotes the
+model-library path.
 The replicated control plane applies the reviewed seal when a profile has one;
 live-mount launches remain unbound.
 
@@ -314,6 +317,19 @@ eviction, policy relaxation, or transfer fallback.
 It intentionally does not return the full image, engine arguments, memory
 budgets, notes, or executable profile body. Consumers requiring launch details
 must use the trusted profile loader.
+
+The separate site-local model-library catalog remains schema 2 and now owns
+operator primary policy as well as discovered inventory. Its
+`primary_selections` array binds an exact `model_id@revision` to a stable
+node ID and selection timestamp. Setting one also verifies the catalog
+rank/node pair against the currently confirmed topology. Catalog refresh
+atomically carries those records forward. Each entry reports
+`automatic-single-home`, explicit `match`, operator-required `missing`, or
+explicit `stale` state. A stale selection never falls back to another
+complete home. This extension is
+backward-compatible with schema-2 catalogs that lack the optional array; an old
+duplicate's transient `primary=true` flag has no authority without the
+persistent selection.
 
 ### 5.8 Current catalog snapshot
 
@@ -913,6 +929,14 @@ shared lifecycle lock, while both home commands hold the exclusive lock from
 observation through mutation. This prevents a supported command from creating
 a managed reference after the plan is built.
 
+For duplicate reconciliation, `cleanup-recommend` emits only primary-selection
+choices until the operator makes one, and direct removal remains blocked even
+with `--node`. Afterward it emits `home check` and
+separate `home remove --node ... --yes` commands only for non-primary homes.
+Removing the selected primary while an alternate exists is blocked; select the
+intended survivor first. Catalog refresh and primary mutation both use the
+exclusive lifecycle lock so a refresh cannot overwrite an operator selection.
+
 Execution validates the plan identity and target node, repeats the exact
 repository inspection, and requires the metadata fingerprint to match. It then
 atomically renames only that repository to a plan-bound sibling retirement path,
@@ -1032,7 +1056,8 @@ promotes any experimental storage path for general users.
 | Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
 | One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash activation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
 | Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection remain disclosed implementation conditions; this is not steady-state storage proof or a promotion. |
-| Durable-home active-use removal guard | PASS on three-node physical topology | Disposable synthetic repositories proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. No production home was removed. |
+| Persistent primary and guarded reconciliation | PASS, deterministic control plane | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. The existing DeepSeek duplicate has not been removed, so physical one-home steady state remains pending. |
+| Durable-home active-use removal guard | Baseline PASS on three-node physical topology; selected-primary repeat pending | Disposable synthetic repositories proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The later selected-primary blocker passes deterministically but needs a physical repeat. No production home was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
 
 The headless boot issue is currently classified as an owner operating-system
@@ -1087,10 +1112,12 @@ Current CLIs and JSON do not yet expose this complete vocabulary. In
 particular, SSH/TCP over a confirmed RoCE endpoint is `ssh-roce`, while live
 NFS/RDMA is a distinct runtime dependency.
 
-### 15.2 Owner choice is outside the catalog and wizard
+### 15.2 Live-fabric owner choice is outside the catalog and wizard
 
-This is intentional today because the default has no owner and fabric is not a
-guided feature. If fabric becomes user-facing, the product must add an advanced
+This concerns the live NFS/RDMA service owner, not the model-library's
+persistent durable-home primary. It is intentional today because the default
+has no live owner and fabric is not a guided feature. If fabric becomes
+user-facing, the product must add an advanced
 workflow that explicitly asks which confirmed serving node owns the cache,
 explains why that choice matters, shows existing copy/free-space/boot evidence,
 and confirms storage-visible scope. Silently electing an owner would create an
@@ -1285,8 +1312,10 @@ diagnostic Qwen identity subsequently passed the applicable sealed enforcement
 gate. The issued flagship DeepSeek identity then passed the two-node gate with
 full verification, rank-local durable-home/sealed-hot views, exact read-only
 launch, matching labels, zero-byte witnesses, smoke, and cleanup. Its temporary
-primary selection and duplicate durable-cache site condition leave persistent
-primary management and one-home reconciliation open. See the
+primary selection and duplicate durable-cache site condition left one-home
+reconciliation open. Persistent exact-revision primary management and guarded
+non-primary removal guidance were implemented afterward; the existing duplicate
+bytes remain untouched. See the
 `results/model-library/` evidence index.
 The production admission policy is implemented: every selected rank reports
 live filesystem capacity and current hot ownership before writes; sealed-hot
@@ -1343,12 +1372,15 @@ These points combine current evidence with the accepted architecture:
    claim. Locally observed content cannot self-bless.
 7. Separate origin, transfer, runtime source, and retention in future CLI and
    evidence schemas; never auto-elect or silently fall back.
-8. Continue comparing paths using disk use, end-to-end cold start,
+8. Use the persistent exact-revision catalog primary when duplicates exist.
+   Treat a stale selection as unavailable, and reconcile non-primary homes only
+   through the read-only plan plus separate confirmed removal command.
+9. Continue comparing paths using disk use, end-to-end cold start,
    recoverability, dependencies, and failure blast radius—not peak throughput
    alone.
-9. Narrow absolute catalog container mounts to the selected subtree and add
+10. Narrow absolute catalog container mounts to the selected subtree and add
    mount identity/integrity policy if catalog profiles remain first-class.
-10. Define the intended boot policy for live storage owners. A connected display
+11. Define the intended boot policy for live storage owners. A connected display
     is evidence of a workaround, not a headless deployment solution.
 
 ## 18. Remaining implementation questions
@@ -1547,14 +1579,16 @@ no-follow purge lifecycle gate. The separately reviewed one-node Qwen identity
 closed the first-issuance gate and passed post-issuance physical enforcement.
 The flagship DeepSeek identity also passed applicable post-issuance two-node
 physical enforcement. Its lab inventory contained duplicate durable caches and
-required temporary primary selection, so persistent selection and one-home
-reconciliation remain open. The active-use removal guard also passed
-deterministic and three-node physical checks using disposable synthetic
-repositories. Exact all-rank hot admission is now implemented with a filesystem
-reserve instead of the obsolete 100 GiB fixed default. The non-mutating
+required temporary primary selection, so the artifact still does not prove
+one-home steady state. Persistent selection and guarded reconciliation now pass
+deterministic contracts; the physical duplicate remains. The active-use
+removal guard also passed deterministic and three-node physical checks using
+disposable synthetic repositories. Exact all-rank hot admission is now
+implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
+default. The non-mutating
 flagship capacity artifact passed exact home-zero and non-home manifest
 accounting, default-reserve preservation, explicit hard-cap refusal, and
-unchanged hot ownership. Persistent primary handling, strict DeepSeek
+unchanged hot ownership. Physical duplicate reconciliation, strict DeepSeek
 determinism, and sustained soak remain pending. Live NFS/RDMA additionally
 retains its owner-recovery and three-node validation work. The accurate product claim is:
 

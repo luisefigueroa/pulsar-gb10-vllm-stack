@@ -183,6 +183,16 @@ Do not inherit replicated-cache validation for `--weight-source fabric` or
    purge, and honest durable-home pin/restart dependency.
 8. active-use durable-home removal protection on the confirmed physical
    topology:
+   - duplicate discovery refuses resolution before selection;
+   - exact-revision primary selection survives catalog refresh;
+   - primary selection rejects a catalog rank/node that differs from confirmed
+     topology;
+   - a missing selected home becomes `stale` without auto-election;
+   - cleanup guidance emits no removal command before selection and targets
+     only explicit non-primary ranks afterward;
+   - direct `home remove --node` remains blocked before selection;
+   - selected-primary removal remains blocked until the intended survivor is
+     selected;
    - normal last-home refusal and separate `--allow-last-home` acknowledgement;
    - retained `ready`, `verifying`, and `pinned` hot references;
    - running and stopped managed-container references;
@@ -206,7 +216,10 @@ The current guard passed that deterministic and three-node physical gate on
 2026-08-11. See
 `results/model-library/model-library-home-removal-guard-20260811.json`.
 Repeat the gate when removal targeting, reference observation, or lifecycle
-locking semantics change.
+locking semantics change. Persistent-primary implementation changes removal
+targeting by adding a selected-primary blocker: its deterministic contracts
+pass, but the disposable-repository physical removal gate must be repeated
+before that new blocker is counted as physical evidence.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local
