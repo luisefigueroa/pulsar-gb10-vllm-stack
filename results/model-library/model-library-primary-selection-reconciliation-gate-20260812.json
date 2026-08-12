@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "kind": "model-library-primary-selection-reconciliation-gate",
+  "gate": "persistent exact-revision primary selection and guarded non-primary reconciliation",
+  "recorded_at": "2026-08-12",
+  "repository_commit": "e3b2da16763a81f30b5538c37c074a79ed42ec84",
+  "status": "pass",
+  "physical_check": {
+    "confirmed_nodes": 3,
+    "duplicate_complete_homes": 2,
+    "cleanup_before_selection_has_no_remove_command": "pass",
+    "direct_removal_before_selection": "blocked-as-required",
+    "primary_selection_refresh_preservation": "pass",
+    "selected_primary_removal": "blocked-as-required",
+    "non_primary_check": "eligible",
+    "non_primary_removal": "pass",
+    "one_home_catalog_state_after_reconciliation": "pass",
+    "sibling_preservation": "pass",
+    "catalog_refresh_after_delete": "pass",
+    "status": "pass"
+  },
+  "hot_observation_scope": {
+    "dedicated_empty_hot_root": true,
+    "default_hot_root_modified": false,
+    "baseline_reference": "model-library-home-removal-guard-20260811.json",
+    "reason": "isolate the changed primary-targeting contract without deleting unrelated unpinned historical staging; the baseline artifact already covers legacy and malformed hot-state blocking"
+  },
+  "evidence_scope": {
+    "establishes": [
+      "pre-selection cleanup emits no removal command",
+      "direct removal refuses before exact-revision primary selection",
+      "selection survives catalog refresh",
+      "selected-primary removal refuses while an alternate exists",
+      "only the explicit non-primary home is eligible and removed",
+      "all confirmed nodes are observed",
+      "catalog reaches one selected durable home",
+      "adjacent disposable repository remains byte-identical"
+    ],
+    "does_not_establish": [
+      "reconciliation of the existing DeepSeek durable-cache duplicate",
+      "lab-issued identity for synthetic content",
+      "serving correctness, performance, determinism, or soak",
+      "durable-home-loss resilience",
+      "model-library promotion"
+    ]
+  },
+  "final_state": {
+    "disposable_primary_selection_absent": true,
+    "disposable_repositories_absent": true,
+    "production_model_homes_unchanged": true,
+    "retirement_paths_absent": true,
+    "unrelated_hot_staging_unchanged": true
+  },
+  "promotion": {
+    "selected_primary_targeting_gate": "pass",
+    "existing_deepseek_duplicate_reconciled": false,
+    "default_changed": false,
+    "guided_default": "replicated-local-hf-cache",
+    "overall_status": "not-promoted"
+  },
+  "privacy": {
+    "topology_redacted": true,
+    "raw_site_state_published": false,
+    "omitted": [
+      "hostnames",
+      "IP addresses",
+      "SSH aliases and keys",
+      "node IDs",
+      "container IDs",
+      "interface names",
+      "absolute paths",
+      "topology ID",
+      "filesystem device and inode values"
+    ]
+  }
+}
