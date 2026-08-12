@@ -718,6 +718,7 @@ PULSAR_SSH="${PULSAR_SSH:-ssh}"
 PULSAR_WEIGHT_FABRIC_TOOL="${PULSAR_WEIGHT_FABRIC_TOOL:-$REPO_DIR/scripts/weight-fabric.sh}"
 PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
+PULSAR_REPLICATED_WITNESS_ROOT="${PULSAR_REPLICATED_WITNESS_ROOT:-$HF_CACHE/.pulsar/replicated-witnesses}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"
 PULSAR_SSH_OPTS=(
   -o BatchMode=yes
@@ -922,6 +923,80 @@ PULSAR_MODEL_REVISION_LABEL="io.pulsar.gb10.model-revision"
 PULSAR_MODEL_SEAL_LABEL="io.pulsar.gb10.model-seal"
 PULSAR_VALIDATION_BUNDLE_LABEL="io.pulsar.gb10.validation-bundle"
 PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
+
+# Load the controller-reviewed plan for a sealed profile. Unsealed profiles do
+# not call this path and retain the structural replicated-cache behavior.
+# Sets REPLICATED_PLAN_B64, REPLICATED_REVISION, REPLICATED_MODEL_SEAL_ID,
+# REPLICATED_VALIDATION_BUNDLE_ID, REPLICATED_MANIFEST_ID, and container path.
+load_replicated_identity_plan() {
+  local profile="${1:?profile required}" envelope plan
+  local -a plan_args
+  [ -n "${EXPECTED_MODEL_SEAL:-}" ] ||
+    die "$profile: replicated identity plan requires EXPECTED_MODEL_SEAL"
+  [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
+  plan_args=(
+    replicated-plan
+    --models-dir "$REPO_DIR/models"
+    --profile "$profile"
+  )
+  envelope=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${plan_args[@]}" --transport-envelope) ||
+    die "$profile: cannot build reviewed replicated identity plan"
+  plan=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["plan"]))') ||
+    die "$profile: cannot read reviewed replicated identity plan"
+  REPLICATED_PLAN_B64=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.load(sys.stdin)["encoded_plan"])') ||
+    die "$profile: cannot read encoded replicated identity plan"
+  REPLICATED_REVISION=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_revision"])')
+  REPLICATED_MODEL_SEAL_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["seal_id"])')
+  REPLICATED_VALIDATION_BUNDLE_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["validation_bundle_id"])')
+  REPLICATED_MANIFEST_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"]["manifest_id"])')
+  REPLICATED_HUB_PATH=$(hf_hub_path)
+  REPLICATED_WITNESS_PATH="$PULSAR_REPLICATED_WITNESS_ROOT/$profile/$REPLICATED_MODEL_SEAL_ID.json"
+  REPLICATED_CONTAINER_MODEL_PATH="/root/.cache/huggingface/hub/$(hf_hub_dirname "$MODEL")/snapshots/$REPLICATED_REVISION"
+  if [ -z "$REPLICATED_PLAN_B64" ] ||
+      [ -z "$REPLICATED_REVISION" ] ||
+      [ -z "$REPLICATED_MODEL_SEAL_ID" ] ||
+      [ -z "$REPLICATED_VALIDATION_BUNDLE_ID" ] ||
+      [ -z "$REPLICATED_MANIFEST_ID" ]; then
+    die "$profile: reviewed replicated identity plan is incomplete"
+  fi
+}
+
+verify_replicated_identity_local() {
+  local mode="${1:-serve}" output
+  local -a args=(
+    verify-replicated
+    --plan-b64 "$REPLICATED_PLAN_B64"
+    --hub-path "$REPLICATED_HUB_PATH"
+    --witness-path "$REPLICATED_WITNESS_PATH"
+    --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
+  )
+  [ "$mode" = serve ] && args+=(--serve-time-witness)
+  output=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${args[@]}") || return 1
+  printf '%s\n' "$output"
+}
+
+verify_replicated_identity_remote() {
+  local host="${1:?host required}" mode="${2:-serve}" command
+  local -a args=(
+    python3 - verify-replicated
+    --plan-b64 "$REPLICATED_PLAN_B64"
+    --hub-path "$REPLICATED_HUB_PATH"
+    --witness-path "$REPLICATED_WITNESS_PATH"
+    --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
+  )
+  [ "$mode" = serve ] && args+=(--serve-time-witness)
+  command=$(shell_join_q "${args[@]}")
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$command" <"$PULSAR_MODEL_LIBRARY_PY"
+}
+
+verify_replicated_identity_selected_node() {
+  local mode="${1:-serve}"
+  if [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
+    verify_replicated_identity_remote "$SINGLE_NODE_SSH_HOST" "$mode"
+  else
+    verify_replicated_identity_local "$mode"
+  fi
+}
 
 # Resolve a ready hot-staging instance for library-hot launch.
 # Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,

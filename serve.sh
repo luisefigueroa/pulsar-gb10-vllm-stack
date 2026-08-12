@@ -104,9 +104,19 @@ resolve_single_node_placement "$NODE_SELECTOR" \
 
 weight_volume="${HF_CACHE}:/root/.cache/huggingface"
 runtime_model="$MODEL"
+SEALED_REPLICATED=0
 LIBRARY_HOT_HOME_NODE_ID=""
 LIBRARY_HOT_CONTENT_ID=""
-if [ "$WEIGHT_SOURCE" = library-hot ]; then
+if [ "$WEIGHT_SOURCE" = replicated ] && [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+  load_replicated_identity_plan "$MODEL_NAME"
+  verify_replicated_identity_selected_node serve >/dev/null ||
+    die "replicated: selected node failed exact identity verification"
+  replicated_container_hub="/root/.cache/huggingface/hub/$(hf_hub_dirname "$MODEL")"
+  weight_volume="${REPLICATED_HUB_PATH}:${replicated_container_hub}:ro"
+  runtime_model="$REPLICATED_CONTAINER_MODEL_PATH"
+  SEALED_REPLICATED=1
+  echo "replicated identity=match revision=${REPLICATED_REVISION:0:12} model_path=$runtime_model"
+elif [ "$WEIGHT_SOURCE" = library-hot ]; then
   # Prefer topology from placement when available
   if [ -z "${CLUSTER_TOPOLOGY_ID:-}" ] && [ -n "${SINGLE_NODE_TOPOLOGY_ID:-}" ]; then
     CLUSTER_TOPOLOGY_ID="$SINGLE_NODE_TOPOLOGY_ID"
@@ -154,6 +164,14 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
       --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
     )
   fi
+fi
+if [ "$SEALED_REPLICATED" = 1 ]; then
+  CMD+=(
+    --label "${PULSAR_MODEL_REVISION_LABEL}=${REPLICATED_REVISION}"
+    --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=match"
+    --label "${PULSAR_MODEL_SEAL_LABEL}=${REPLICATED_MODEL_SEAL_ID}"
+    --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${REPLICATED_VALIDATION_BUNDLE_ID}"
+  )
 fi
 if [ -n "$SINGLE_NODE_TOPOLOGY_ID" ]; then
   CMD+=(--label "${PULSAR_TOPOLOGY_LABEL}=${SINGLE_NODE_TOPOLOGY_ID}")

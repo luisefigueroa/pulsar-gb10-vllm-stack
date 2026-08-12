@@ -149,11 +149,15 @@ compatibility `worker.status`/reason and blocks automatic multi-node
 stop/replacement. An operational failure is never converted into an empty
 “nothing is running” inventory.
 
-Weight readiness means more than “the cache directory exists.” HF profiles
-must have `refs/main` resolving to a snapshot with a readable non-empty
-`config.json` and at least one non-empty weight file; `.incomplete` markers and
-local shard indexes that reference missing/empty files fail preflight. Multi-node profiles are checked on every exact active rank. Docker/SSH failures are reported as
-operational failures and never offered as a download/pull problem.
+Weight readiness means more than “the cache directory exists.” Legacy-unsealed
+HF profiles require `refs/main` to resolve to a snapshot with a readable
+non-empty `config.json` and at least one non-empty weight file. Sealed
+profiles ignore `refs/main`, resolve the reviewed commit directly, and require
+the exact manifest identity through a rank-local witness or visible full-SHA
+fallback. `.incomplete` markers and local shard indexes that reference
+missing/empty files fail preflight. Multi-node profiles are checked on every
+exact active rank. Docker/SSH failures are reported as operational failures and
+never offered as a download/pull problem.
 
 The memory checker grants “already loaded” mode only to a running exact-name
 service whose stack ownership, selected conf, and every expected rank are
@@ -289,7 +293,11 @@ scripts/sync-image.sh <profile> --node <node-id> --pull --yes
 ```
 
 The weight helper downloads once on this node and copies the complete HF hub
-tree to every other node required by that profile, preserving `refs/main`.
+tree to every other node required by that profile. For a profile with
+`EXPECTED_MODEL_SEAL`, it requests the reviewed commit explicitly, full-hashes
+the controller snapshot and every copied rank, and writes a rank-local witness
+outside the repository. A configured mismatch fails closed. Unsealed profiles
+retain the legacy mutable-`refs/main` workflow.
 Its normal output uses readable stages and hostnames; set `PULSAR_VERBOSE=1`
 to expose raw Hugging Face and rsync diagnostics. The image helper loads every
 missing required node and repairs digest references that a bare `docker load`
@@ -484,21 +492,28 @@ does not refresh. Reactivate if the fallback fails. Do not hand-edit
 `legacy-unsealed` content as lab validation.
 
 The one-node diagnostic profile `qwen3-1.7b` is the first profile with a
-reviewed seal and validation bundle, so its `library-hot` activation must
-match without `--allow-unvalidated`. Profiles without a seal, including
-`qwen3-1.7b-2node`, still require that explicit experimental flag. Catalog
+reviewed seal and validation bundle. Its `library-hot` activation must match
+without `--allow-unvalidated`, and ordinary replicated staging/launch now
+enforces the same commit/manifest without an override. Profiles without a seal,
+including `qwen3-1.7b-2node`, still require that explicit experimental flag
+for `library-hot`. Catalog
 refresh enumerates complete `snapshots/<revision>` directories directly. A
 sealed profile therefore finds its reviewed commit even when `refs/main` is
 absent or has moved; only the legacy-unsealed experimental selection consults
 an unambiguous `refs/main`.
 
-This enforcement currently belongs to `library-hot`. Replicated and live-mount
-launch paths are not yet content-locked by the expected seal; structural
-readiness on those paths must not be reported as `identity=match`. Follow
+Replicated enforcement is conditional: sealed profiles download the exact
+commit, full-verify every materialization, use a rank-local witness under
+`<HF cache>/.pulsar/replicated-witnesses/`, mount only the selected repository
+read-only, pass the exact snapshot path, and label revision/seal/bundle.
+Legacy-unsealed replicated profiles remain structural and report
+`identity=legacy-unsealed`. Live-mount launch is not yet content-locked.
+Follow
 [models/seals/README.md](../models/seals/README.md) and
 [models/validation-bundles/README.md](../models/validation-bundles/README.md)
 for the lab issuance contract; never derive expected identity from a user
-cache.
+cache. If replicated witness fallback fails, repair or restage with
+`scripts/pull-weights.sh <profile> --yes`; do not hand-edit the witness.
 
 **Upgrade note:** catalog schema 1 and hot schema 2 state are intentionally not
 accepted by this implementation. After upgrading, run `catalog refresh`, then

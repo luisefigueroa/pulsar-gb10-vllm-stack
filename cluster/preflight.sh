@@ -196,19 +196,11 @@ if [ -n "$PROFILE" ]; then
       bad "library-hot not ready — run: scripts/model-library.sh activate $PROFILE --yes"
     fi
   else
-    for ((rank = 0; rank < EXPECTED_NODES; rank++)); do
-      if [[ "$MODEL" = /* ]]; then
-        weights_command="head -c 64 $(printf '%q' "$MODEL/config.json") >/dev/null 2>&1"
-        node_exec "$rank" "$weights_command" \
-          && ok "rank $rank: weights readable" \
-          || bad "rank $rank: cannot read $MODEL/config.json"
-      else
-        weights_command="test -d $(printf '%q' "$HF_CACHE/hub/$HFDIR")"
-        node_exec "$rank" "$weights_command" \
-          && ok "rank $rank: HF cache has $HFDIR" \
-          || bad "rank $rank: $HFDIR missing"
-      fi
-    done
+    if "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" --weight-source replicated >/dev/null; then
+      ok "replicated weights: every selected rank is launch-ready"
+    else
+      bad "replicated weights are not launch-ready — run: scripts/pull-weights.sh $PROFILE --yes"
+    fi
   fi
 fi
 

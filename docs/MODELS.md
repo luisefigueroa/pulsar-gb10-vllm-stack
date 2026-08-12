@@ -40,15 +40,17 @@ validation bundle. That claim binds exact commit
 `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`,
 digest-pinned image, normalized one-node profile, and repository evidence.
 Every other tested profile—including `qwen3-1.7b-2node`—remains
-`legacy-unsealed`. Normal replicated downloads and live-mount launches are
-still mutable and are not content-bound by the expected seal.
+`legacy-unsealed`. Replicated download/readiness/launch now enforces the
+reviewed seal for profiles that have one; unsealed replicated profiles and all
+current live-mount launches remain mutable and are not content-bound.
 `STATUS=tested*` must not be interpreted as validating arbitrary bytes under
 the same repository ID. Do not generate an expected seal from a user cache;
 recover the lab artifact used for the run or revalidate the exact content.
-`library-hot` activation full-verifies and creates a rank-local serve witness;
-unchanged launch uses its metadata fast path, while drift rehashes. That
-mechanism preserves an established identity but cannot turn legacy rows into
-lab-sealed claims.
+`library-hot` activation and sealed replicated acquisition both full-verify
+before creating their distinct rank-local serve witnesses. Unchanged launch
+uses the applicable metadata fast path, while drift rehashes. Those mechanisms
+preserve an established identity but cannot turn legacy rows into lab-sealed
+claims.
 
 Maintainers can now assemble deterministic unreviewed candidates with
 `scripts/model-release.sh`, but candidate generation alone does not change any

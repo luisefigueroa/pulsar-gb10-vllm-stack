@@ -10,6 +10,7 @@ Trust-document schemas live in model_identity.py.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -20,6 +21,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import zlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -46,6 +48,12 @@ HOT_SCHEMA_VERSION = 3
 HOT_WITNESS_SCHEMA_VERSION = 1
 HOT_WITNESS_KIND = "pulsar-model-library-serve-witness"
 HOT_WITNESS_SCHEME = "stat-witness-v1"
+REPLICATED_PLAN_SCHEMA_VERSION = 1
+REPLICATED_PLAN_KIND = "pulsar-replicated-model-verification-plan"
+REPLICATED_WITNESS_SCHEMA_VERSION = 1
+REPLICATED_WITNESS_KIND = "pulsar-replicated-model-serve-witness"
+REPLICATED_WEIGHT_SOURCE = "replicated"
+REPLICATED_RUNTIME_VIEW = "exact-snapshot"
 SNAPSHOT_MANIFEST_SCHEMA_VERSION = 1
 SNAPSHOT_MANIFEST_KIND = "model-library-snapshot-manifest"
 SNAPSHOT_INTEGRITY_SCHEME = "sha256-snapshot-manifest-v1"
@@ -1161,6 +1169,157 @@ def verify_profile_validation_bundle(
         "expected_model_seal": expected_model_seal_projection(seal),
         "validation_bundle": validation_bundle_projection(bundle),
     }
+
+
+def load_profile_expected_snapshot_manifest(
+    models_dir: str | pathlib.Path,
+    profile: str,
+) -> dict[str, Any]:
+    """Resolve the reviewed complete manifest backing one expected seal."""
+    models_root = pathlib.Path(models_dir).resolve()
+    repository_root = models_root.parent
+    parsed = load_hf_profile(models_root, profile)
+    seal = parsed.get("expected_model_seal")
+    bundle = parsed.get("validation_bundle")
+    if not isinstance(seal, dict) or not isinstance(bundle, dict):
+        fail(f"{profile}: no reviewed expected seal and validation bundle")
+
+    expected_id = ((seal.get("manifest") or {}).get("manifest_id"))
+    matches: list[dict[str, Any]] = []
+    for evidence_ref in bundle.get("evidence") or []:
+        candidate = (repository_root / evidence_ref).resolve()
+        try:
+            candidate.relative_to(repository_root)
+        except ValueError:
+            fail(f"{profile}: validation evidence escapes the repository")
+        try:
+            document = load_json(candidate)
+        except (ModelLibraryError, OSError, json.JSONDecodeError):
+            continue
+        if (
+            not isinstance(document, dict)
+            or document.get("kind") != SNAPSHOT_MANIFEST_KIND
+        ):
+            continue
+        manifest = validate_snapshot_manifest(document)
+        if manifest.get("manifest_id") == expected_id:
+            matches.append(manifest)
+    if len(matches) != 1:
+        fail(
+            f"{profile}: expected manifest {expected_id} must resolve to exactly "
+            f"one reviewed evidence document (found {len(matches)})"
+        )
+    manifest = matches[0]
+    if manifest["model_id"] != seal.get("model_id"):
+        fail(f"{profile}: expected manifest model differs from the seal")
+    if manifest["snapshot_revision"] != seal.get("snapshot_revision"):
+        fail(f"{profile}: expected manifest revision differs from the seal")
+    return manifest
+
+
+def replicated_verification_plan(
+    models_dir: str | pathlib.Path,
+    profile: str,
+) -> dict[str, Any]:
+    parsed = load_hf_profile(models_dir, profile)
+    seal = parsed.get("expected_model_seal")
+    bundle = parsed.get("validation_bundle")
+    if (
+        not parsed.get("validated")
+        or not isinstance(seal, dict)
+        or not isinstance(bundle, dict)
+    ):
+        fail(f"{profile}: replicated exact identity requires a reviewed expected seal")
+    manifest = load_profile_expected_snapshot_manifest(models_dir, profile)
+    expected = expected_model_seal_projection(seal)
+    observed = observed_model_seal_projection(manifest)
+    validation = {
+        "identity_status": "match",
+        "expected_seal": expected,
+        "observed_seal": observed,
+    }
+    validate_hot_validation(validation, profile=profile, manifest=manifest)
+    plan: dict[str, Any] = {
+        "schema_version": REPLICATED_PLAN_SCHEMA_VERSION,
+        "kind": REPLICATED_PLAN_KIND,
+        "weight_source": REPLICATED_WEIGHT_SOURCE,
+        "profile": profile,
+        "model_id": parsed["model_id"],
+        "snapshot_revision": manifest["snapshot_revision"],
+        "manifest": manifest,
+        "validation": validation,
+    }
+    plan["plan_id"] = canonical_json_digest(plan)
+    return validate_replicated_verification_plan(plan)
+
+
+def validate_replicated_verification_plan(plan: Any) -> dict[str, Any]:
+    if not isinstance(plan, dict):
+        fail("replicated identity plan must be an object")
+    required = {
+        "schema_version",
+        "kind",
+        "weight_source",
+        "profile",
+        "model_id",
+        "snapshot_revision",
+        "manifest",
+        "validation",
+        "plan_id",
+    }
+    if set(plan) != required:
+        fail("replicated identity plan fields are invalid")
+    if plan.get("schema_version") != REPLICATED_PLAN_SCHEMA_VERSION:
+        fail("replicated identity plan schema is unsupported")
+    if plan.get("kind") != REPLICATED_PLAN_KIND:
+        fail("replicated identity plan kind is invalid")
+    if plan.get("weight_source") != REPLICATED_WEIGHT_SOURCE:
+        fail("replicated identity weight source is invalid")
+    for field in ("profile", "model_id", "snapshot_revision"):
+        if not isinstance(plan.get(field), str) or not plan[field]:
+            fail(f"replicated identity plan {field} is invalid")
+    if SAFE_REV.fullmatch(plan["snapshot_revision"]) is None:
+        fail("replicated identity plan revision is unsafe")
+    manifest = validate_snapshot_manifest(plan.get("manifest"))
+    if manifest["model_id"] != plan["model_id"]:
+        fail("replicated identity plan model differs from its manifest")
+    if manifest["snapshot_revision"] != plan["snapshot_revision"]:
+        fail("replicated identity plan revision differs from its manifest")
+    validate_hot_validation(
+        plan.get("validation"),
+        profile=plan["profile"],
+        manifest=manifest,
+    )
+    plan_id = plan.get("plan_id")
+    if (
+        not isinstance(plan_id, str)
+        or SHA256_HEX_RE.fullmatch(plan_id) is None
+        or plan_id
+        != canonical_json_digest(
+            {key: value for key, value in plan.items() if key != "plan_id"}
+        )
+    ):
+        fail("replicated identity plan digest mismatch")
+    return plan
+
+
+def encode_replicated_verification_plan(plan: dict[str, Any]) -> str:
+    plan = validate_replicated_verification_plan(plan)
+    payload = json.dumps(
+        plan,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(zlib.compress(payload, level=9)).decode("ascii")
+
+
+def decode_replicated_verification_plan(value: str) -> dict[str, Any]:
+    try:
+        payload = zlib.decompress(base64.urlsafe_b64decode(value.encode("ascii")))
+        plan = json.loads(payload)
+    except (ValueError, UnicodeError, zlib.error, json.JSONDecodeError) as exc:
+        fail(f"replicated identity plan encoding is invalid: {exc}")
+    return validate_replicated_verification_plan(plan)
 
 
 def observed_model_seal_projection(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -2863,6 +3022,279 @@ def full_verify_and_refresh_hot_witness(
     witness = finalize_hot_witness(after)
     write_hot_witness(instance_dir, witness)
     return verification, witness
+
+
+def replicated_witness_observation(witness: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in witness.items()
+        if key not in {"verified_at", "witness_id"}
+    }
+
+
+def replicated_witness_id(witness: dict[str, Any]) -> str:
+    return canonical_json_digest(
+        {key: value for key, value in witness.items() if key != "witness_id"}
+    )
+
+
+def build_replicated_witness_observation(
+    plan: dict[str, Any],
+    *,
+    hub: pathlib.Path,
+) -> dict[str, Any]:
+    plan = validate_replicated_verification_plan(plan)
+    manifest = plan["manifest"]
+    hot_shape = build_hot_witness_observation(
+        {
+            "profile": plan["profile"],
+            "model_id": plan["model_id"],
+            "topology_id": REPLICATED_WEIGHT_SOURCE,
+            "home_node_id": REPLICATED_WEIGHT_SOURCE,
+            "content_id": manifest["manifest_id"],
+        },
+        hub=hub,
+        manifest=manifest,
+        validation=plan["validation"],
+    )
+    return {
+        "schema_version": REPLICATED_WITNESS_SCHEMA_VERSION,
+        "kind": REPLICATED_WITNESS_KIND,
+        "scheme": HOT_WITNESS_SCHEME,
+        "weight_source": REPLICATED_WEIGHT_SOURCE,
+        "runtime_view": REPLICATED_RUNTIME_VIEW,
+        "profile": plan["profile"],
+        "model_id": plan["model_id"],
+        "snapshot_revision": plan["snapshot_revision"],
+        "plan_id": plan["plan_id"],
+        "manifest_id": manifest["manifest_id"],
+        "validation": plan["validation"],
+        "view": hot_shape["view"],
+        "files": hot_shape["files"],
+        "file_count": hot_shape["file_count"],
+        "total_bytes": hot_shape["total_bytes"],
+    }
+
+
+def build_stable_replicated_witness_observation(
+    plan: dict[str, Any],
+    *,
+    hub: pathlib.Path,
+) -> dict[str, Any]:
+    first = build_replicated_witness_observation(plan, hub=hub)
+    second = build_replicated_witness_observation(plan, hub=hub)
+    if first != second:
+        fail("replicated witness: runtime metadata changed during observation")
+    return second
+
+
+def finalize_replicated_witness(observation: dict[str, Any]) -> dict[str, Any]:
+    witness = {**observation, "verified_at": utc_now()}
+    witness["witness_id"] = replicated_witness_id(witness)
+    return validate_replicated_witness(witness)
+
+
+def validate_replicated_witness(witness: Any) -> dict[str, Any]:
+    if not isinstance(witness, dict):
+        fail("replicated witness: document must be an object")
+    required = {
+        "schema_version",
+        "kind",
+        "scheme",
+        "weight_source",
+        "runtime_view",
+        "profile",
+        "model_id",
+        "snapshot_revision",
+        "plan_id",
+        "manifest_id",
+        "validation",
+        "view",
+        "files",
+        "file_count",
+        "total_bytes",
+        "verified_at",
+        "witness_id",
+    }
+    if set(witness) != required:
+        fail("replicated witness: fields are invalid")
+    if witness.get("schema_version") != REPLICATED_WITNESS_SCHEMA_VERSION:
+        fail("replicated witness: schema is unsupported")
+    if witness.get("kind") != REPLICATED_WITNESS_KIND:
+        fail("replicated witness: kind is invalid")
+    if witness.get("weight_source") != REPLICATED_WEIGHT_SOURCE:
+        fail("replicated witness: weight source is invalid")
+    if witness.get("runtime_view") != REPLICATED_RUNTIME_VIEW:
+        fail("replicated witness: runtime view is invalid")
+    for field in ("plan_id", "manifest_id"):
+        value = witness.get(field)
+        if not isinstance(value, str) or SHA256_HEX_RE.fullmatch(value) is None:
+            fail(f"replicated witness: {field} is invalid")
+    digest = witness.get("witness_id")
+    if (
+        not isinstance(digest, str)
+        or SHA256_HEX_RE.fullmatch(digest) is None
+        or digest != replicated_witness_id(witness)
+    ):
+        fail("replicated witness: identity mismatch")
+
+    # Reuse the established strict stat-witness validation for the common
+    # view, file-set, timestamp, and validation-provenance fields.
+    hot_shape = {
+        "schema_version": HOT_WITNESS_SCHEMA_VERSION,
+        "kind": HOT_WITNESS_KIND,
+        "scheme": witness["scheme"],
+        "profile": witness["profile"],
+        "model_id": witness["model_id"],
+        "snapshot_revision": witness["snapshot_revision"],
+        "topology_id": REPLICATED_WEIGHT_SOURCE,
+        "home_node_id": REPLICATED_WEIGHT_SOURCE,
+        "content_id": witness["manifest_id"],
+        "manifest_id": witness["manifest_id"],
+        "validation": witness["validation"],
+        "view": witness["view"],
+        "files": witness["files"],
+        "file_count": witness["file_count"],
+        "total_bytes": witness["total_bytes"],
+        "verified_at": witness["verified_at"],
+    }
+    hot_shape["witness_id"] = hot_witness_id(hot_shape)
+    validate_hot_witness(hot_shape)
+    return witness
+
+
+def load_replicated_witness(path: str | pathlib.Path) -> dict[str, Any]:
+    candidate = pathlib.Path(path)
+    if not candidate.is_file():
+        fail(f"replicated witness: missing: {candidate}")
+    return validate_replicated_witness(load_json(candidate))
+
+
+def write_replicated_witness(
+    path: str | pathlib.Path,
+    witness: dict[str, Any],
+) -> pathlib.Path:
+    witness = validate_replicated_witness(witness)
+    candidate = pathlib.Path(path)
+    atomic_write_json(candidate, witness)
+    return candidate
+
+
+def full_verify_and_refresh_replicated_witness(
+    plan: dict[str, Any],
+    *,
+    hub: pathlib.Path,
+    witness_path: pathlib.Path,
+    workers: int | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    before = build_stable_replicated_witness_observation(plan, hub=hub)
+    verification = verify_snapshot_manifest(
+        hub,
+        plan["manifest"],
+        metadata_only=False,
+        workers=workers,
+    )
+    after = build_stable_replicated_witness_observation(plan, hub=hub)
+    if before != after:
+        fail("replicated witness: runtime metadata changed during full verification")
+    witness = finalize_replicated_witness(after)
+    write_replicated_witness(witness_path, witness)
+    return verification, witness
+
+
+def verify_replicated_cache(
+    plan: dict[str, Any],
+    *,
+    hub_path: str | pathlib.Path,
+    witness_path: str | pathlib.Path,
+    serve_time_witness: bool,
+    workers: int | None = None,
+) -> dict[str, Any]:
+    plan = validate_replicated_verification_plan(plan)
+    hub = pathlib.Path(hub_path)
+    witness_file = pathlib.Path(witness_path)
+    hub_absolute = pathlib.Path(os.path.abspath(hub))
+    witness_absolute = pathlib.Path(os.path.abspath(witness_file))
+    hub_resolved = hub.resolve()
+    witness_resolved = witness_file.resolve()
+    for candidate, root in (
+        (witness_absolute, hub_absolute),
+        (witness_resolved, hub_resolved),
+    ):
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        fail("replicated witness: path must remain outside the model repository")
+    witness_status = "refreshed"
+    witness_reason = "full verification requested"
+
+    if serve_time_witness:
+        observation = build_stable_replicated_witness_observation(plan, hub=hub)
+        witness = None
+        try:
+            witness = load_replicated_witness(witness_file)
+        except ModelLibraryError:
+            pass
+        if (
+            witness is not None
+            and replicated_witness_observation(witness) == observation
+        ):
+            verification = _witness_integrity_result(plan["manifest"])
+            witness_status = "match"
+            witness_reason = "rank-local metadata is unchanged"
+        else:
+            witness_reason = (
+                "rank-local metadata differs from the witness"
+                if witness is not None
+                else "rank-local witness is missing or invalid"
+            )
+            print(
+                "replicated identity: serve witness drift "
+                f"({witness_reason}); running full SHA-256 verification",
+                file=sys.stderr,
+            )
+            verification, witness = full_verify_and_refresh_replicated_witness(
+                plan,
+                hub=hub,
+                witness_path=witness_file,
+                workers=workers,
+            )
+    else:
+        verification, witness = full_verify_and_refresh_replicated_witness(
+            plan,
+            hub=hub,
+            witness_path=witness_file,
+            workers=workers,
+        )
+
+    snapshot = hub / "snapshots" / plan["snapshot_revision"]
+    return {
+        "state": "ok",
+        "source": "replicated",
+        "weight_source": REPLICATED_WEIGHT_SOURCE,
+        "runtime_view": REPLICATED_RUNTIME_VIEW,
+        "profile": plan["profile"],
+        "model_id": plan["model_id"],
+        "snapshot_revision": plan["snapshot_revision"],
+        "snapshot_path": str(snapshot),
+        "runtime_model_relative": f"snapshots/{plan['snapshot_revision']}",
+        "identity_status": "match",
+        "model_seal_id": plan["validation"]["expected_seal"]["seal_id"],
+        "validation_bundle_id": plan["validation"]["expected_seal"][
+            "validation_bundle_id"
+        ],
+        "manifest_id": plan["manifest"]["manifest_id"],
+        "integrity": verification,
+        "witness": {
+            "status": witness_status,
+            "reason": witness_reason,
+            "scheme": HOT_WITNESS_SCHEME,
+            "path": str(witness_file),
+            "witness_id": witness["witness_id"],
+            "verified_at": witness["verified_at"],
+        },
+    }
 
 
 def build_hot_stamp(
@@ -5198,6 +5630,39 @@ def cmd_verify_profile_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replicated_plan(args: argparse.Namespace) -> int:
+    plan = replicated_verification_plan(args.models_dir, args.profile)
+    if args.transport_envelope:
+        print(
+            json.dumps(
+                {
+                    "encoded_plan": encode_replicated_verification_plan(plan),
+                    "plan": plan,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif args.encoded:
+        print(encode_replicated_verification_plan(plan))
+    else:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_verify_replicated(args: argparse.Namespace) -> int:
+    plan = decode_replicated_verification_plan(args.plan_b64)
+    result = verify_replicated_cache(
+        plan,
+        hub_path=args.hub_path,
+        witness_path=args.witness_path,
+        serve_time_witness=args.serve_time_witness,
+        workers=args.workers,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     catalog = load_catalog(args.catalog)
     if args.json:
@@ -6232,6 +6697,40 @@ def build_parser() -> argparse.ArgumentParser:
     verify_bundle.add_argument("--overhead-gib", default="")
     verify_bundle.add_argument("--mem-min-free-gib", default="")
     verify_bundle.set_defaults(func=cmd_verify_profile_bundle)
+
+    replicated_plan = sub.add_parser(
+        "replicated-plan",
+        help="Build the reviewed exact-identity plan for a replicated profile",
+    )
+    replicated_plan.add_argument("--models-dir", required=True)
+    replicated_plan.add_argument("--profile", required=True)
+    replicated_plan_output = replicated_plan.add_mutually_exclusive_group()
+    replicated_plan_output.add_argument(
+        "--encoded",
+        action="store_true",
+        help="Emit a compressed transport-safe plan for remote verification",
+    )
+    replicated_plan_output.add_argument(
+        "--transport-envelope",
+        action="store_true",
+        help="Emit the plan and its transport encoding from one reviewed load",
+    )
+    replicated_plan.set_defaults(func=cmd_replicated_plan)
+
+    verify_replicated = sub.add_parser(
+        "verify-replicated",
+        help="Verify one replicated HF cache against a reviewed exact identity",
+    )
+    verify_replicated.add_argument("--plan-b64", required=True)
+    verify_replicated.add_argument("--hub-path", required=True)
+    verify_replicated.add_argument("--witness-path", required=True)
+    verify_replicated.add_argument(
+        "--serve-time-witness",
+        action="store_true",
+        help="Use metadata fast path, with visible full-SHA fallback on drift",
+    )
+    verify_replicated.add_argument("--workers", type=int)
+    verify_replicated.set_defaults(func=cmd_verify_replicated)
 
     list_p = sub.add_parser("list", help="List catalog entries")
     list_p.add_argument("--catalog", required=True)

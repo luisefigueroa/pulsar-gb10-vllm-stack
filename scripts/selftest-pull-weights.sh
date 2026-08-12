@@ -46,9 +46,10 @@ assert_not_contains() {
 
 mkdir -p "$STATE_DIR/bin" "$STATE_DIR/hf"
 legacy="$STATE_DIR/hf/models--Qwen--Qwen3-1.7B"
-snapshot="$legacy/snapshots/test"
+revision=70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+snapshot="$legacy/snapshots/$revision"
 mkdir -p "$snapshot" "$legacy/refs"
-printf 'test\n' >"$legacy/refs/main"
+printf '%s\n' "$revision" >"$legacy/refs/main"
 printf '{}\n' >"$snapshot/config.json"
 printf 'weight-data\n' >"$snapshot/model.safetensors"
 
@@ -65,15 +66,52 @@ case " $* " in
   *" --quiet "*) ;;
   *) echo "missing quiet mode" >&2; exit 65 ;;
 esac
+case " $* " in
+  *" --revision 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e "*) ;;
+  *) echo "missing exact revision" >&2; exit 66 ;;
+esac
 test -d "$expected/models--Qwen--Qwen3-1.7B"
-printf '%s\n' "$expected/models--Qwen--Qwen3-1.7B/snapshots/test"
+printf '%s\n' "$expected/models--Qwen--Qwen3-1.7B/snapshots/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
 SHIM
 chmod +x "$STATE_DIR/bin/hf"
+
+cat >"$STATE_DIR/bin/model-library" <<'SHIM'
+#!/usr/bin/env python3
+import json
+import sys
+
+command = sys.argv[1] if len(sys.argv) > 1 else ""
+if command == "verify-profile-bundle":
+    print('{"state":"match"}')
+elif command == "replicated-plan":
+    plan = {
+        "snapshot_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+        "validation": {"expected_seal": {
+            "seal_id": "ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94",
+            "validation_bundle_id": "9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380",
+        }},
+        "manifest": {
+            "manifest_id": "775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1",
+        },
+    }
+    if "--transport-envelope" in sys.argv:
+        print(json.dumps({"encoded_plan": "encoded-plan", "plan": plan}))
+    elif "--encoded" in sys.argv:
+        print("encoded-plan")
+    else:
+        print(json.dumps(plan))
+elif command == "verify-replicated":
+    print('{"state":"ok","identity_status":"match"}')
+else:
+    raise SystemExit(64)
+SHIM
+chmod +x "$STATE_DIR/bin/model-library"
 : >"$STATE_DIR/hf.log"
 
 set +e
 output=$(COLUMNS=48 HF_CACHE="$STATE_DIR/hf" HF_SHIM_LOG="$STATE_DIR/hf.log" \
   PATH="$STATE_DIR/bin:$PATH" PULSAR_VERBOSE=0 \
+  PULSAR_MODEL_LIBRARY_PY="$STATE_DIR/bin/model-library" \
   "$REPO_DIR/scripts/pull-weights.sh" qwen3-1.7b --yes 2>&1)
 rc=$?
 set -e
@@ -87,6 +125,8 @@ assert_true "hf receives canonical cache directory" \
   grep -Fq -- "--cache-dir $STATE_DIR/hf/hub" "$STATE_DIR/hf.log"
 assert_true "hf runs quietly in default mode" \
   grep -Fq -- "--quiet" "$STATE_DIR/hf.log"
+assert_true "sealed download requests the reviewed commit" \
+  grep -Fq -- "--revision $revision" "$STATE_DIR/hf.log"
 assert_contains "$output" '^MODEL FILES$' \
   "staging starts with a semantic model section"
 assert_contains "$output" '^STORAGE CHECK$' \
@@ -109,6 +149,7 @@ mkdir -p "$STATE_DIR/hf/models--Qwen--Qwen3-1.7B"
 set +e
 conflict_output=$(COLUMNS=48 HF_CACHE="$STATE_DIR/hf" \
   HF_SHIM_LOG="$STATE_DIR/hf.log" PATH="$STATE_DIR/bin:$PATH" \
+  PULSAR_MODEL_LIBRARY_PY="$STATE_DIR/bin/model-library" \
   "$REPO_DIR/scripts/pull-weights.sh" qwen3-1.7b --yes 2>&1)
 conflict_rc=$?
 set -e

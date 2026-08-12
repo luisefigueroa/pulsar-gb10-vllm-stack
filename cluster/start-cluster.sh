@@ -76,11 +76,26 @@ done
 WEIGHT_OWNER_ID=""
 WEIGHT_CONFIG_ID=""
 runtime_model="$MODEL"
+SEALED_REPLICATED=0
 LIBRARY_HOT_HUB_PATH=""
 LIBRARY_HOT_CONTENT_DIGEST=""
 LIBRARY_HOT_TRANSPORT=""
 LIBRARY_HOT_INTEGRITY_SCHEME=""
-if [ "$WEIGHT_SOURCE" = fabric ]; then
+if [ "$WEIGHT_SOURCE" = replicated ] && [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+  load_replicated_identity_plan "$MODEL_NAME"
+  for ((rank = 0; rank < NODES; rank++)); do
+    echo "[cluster] serve witness + fail-closed identity verify: rank $rank"
+    if [ "$rank" = 0 ]; then
+      verify_replicated_identity_local serve >/dev/null ||
+        die "replicated: rank $rank failed exact identity verification"
+    else
+      verify_replicated_identity_remote "${CLUSTER_NODE_SSH_HOSTS[$rank]}" serve >/dev/null ||
+        die "replicated: rank $rank failed exact identity verification"
+    fi
+  done
+  runtime_model="$REPLICATED_CONTAINER_MODEL_PATH"
+  SEALED_REPLICATED=1
+elif [ "$WEIGHT_SOURCE" = fabric ]; then
   fabric_dir="${WEIGHT_FABRIC_DIR:-$REPO_DIR/.weight-fabric}"
   fabric_config="${WEIGHT_FABRIC_CONFIG:-$fabric_dir/$MODEL_NAME.json}"
   fabric_rows=$(
@@ -130,6 +145,13 @@ echo "[cluster] exact profile: $MODEL_NAME · $NODES ranks · topology ${CLUSTER
 case "$WEIGHT_SOURCE" in
   fabric) echo "[cluster] weights: fabric · NFS/RDMA · cold reads cross the fabric" ;;
   library-hot) echo "[cluster] weights: library-hot · local hot staging · home=${WEIGHT_OWNER_ID:0:12} · identity=$LIBRARY_HOT_IDENTITY_STATUS · revision=${LIBRARY_HOT_REVISION:0:12}" ;;
+  replicated)
+    if [ "$SEALED_REPLICATED" = 1 ]; then
+      echo "[cluster] weights: replicated · identity=match · revision=${REPLICATED_REVISION:0:12}"
+    else
+      echo "[cluster] weights: replicated · identity=legacy-unsealed"
+    fi
+    ;;
   *) echo "[cluster] weights: $WEIGHT_SOURCE" ;;
 esac
 echo "[cluster] spec-decode=$([ "$SPEC_DECODE_ENABLED" = 1 ] && echo ON || echo off) ($SPEC_DECODE_SOURCE)"
@@ -156,7 +178,10 @@ build_docker_cmd() {
   local weight_cache="${WEIGHT_CACHE_ROOTS[$role_rank]}"
   local weight_volume="${weight_cache}:/root/.cache/huggingface"
   local model_cache_target
-  if [ "$WEIGHT_SOURCE" = fabric ]; then
+  if [ "$SEALED_REPLICATED" = 1 ]; then
+    model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
+    weight_volume="${WEIGHT_REPOSITORY_PATHS[$role_rank]}:${model_cache_target}:ro"
+  elif [ "$WEIGHT_SOURCE" = fabric ]; then
     model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
     weight_volume="${WEIGHT_REPOSITORY_PATHS[$role_rank]}:${model_cache_target}:ro"
   elif [ "$WEIGHT_SOURCE" = library-hot ]; then
@@ -215,6 +240,14 @@ build_docker_cmd() {
         --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
       )
     fi
+  fi
+  if [ "$SEALED_REPLICATED" = 1 ]; then
+    cmd+=(
+      --label "${PULSAR_MODEL_REVISION_LABEL}=${REPLICATED_REVISION}"
+      --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=match"
+      --label "${PULSAR_MODEL_SEAL_LABEL}=${REPLICATED_MODEL_SEAL_ID}"
+      --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${REPLICATED_VALIDATION_BUNDLE_ID}"
+    )
   fi
   local env_item
   for env_item in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do

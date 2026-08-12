@@ -22,7 +22,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); the one-node diagnostic `qwen3-1.7b` identity is issued and physically enforced on `library-hot`; promotion-scope profile issuance, strict determinism, and soak remain pending |
+| Status | Implemented experiment (not promoted); the one-node diagnostic `qwen3-1.7b` identity is issued and enforced on `library-hot` and the default replicated-cache control plane; promotion-scope profile issuance, strict determinism, and soak remain pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -56,9 +56,13 @@ rechecks its metadata immediately before retirement. A sealed profile now also
 requires a content-addressed schema-1 validation bundle whose primary model,
 external artifacts, lab provenance/evidence, digest-pinned image, normalized
 runtime contract, and geometry match the reviewed seal and live sourced
-profile. This enforcement currently belongs to `library-hot`; replicated and
-live-mount launches are not yet content-bound by expected seals. No guided,
-multi-node, or flagship profile has an issued seal/bundle yet.
+profile. Sealed replicated profiles now request the exact commit during
+download, full-verify the controller copy and every copied rank, create a
+rank-local witness outside the copied repository, and launch the exact snapshot
+through a read-only repository mount with the same revision/seal/bundle labels.
+Legacy-unsealed replicated profiles retain their structural `refs/main`
+behavior. Live-mount launches are not yet content-bound by expected seals. No
+guided, multi-node, or flagship profile has an issued seal/bundle yet.
 
 `scripts/model_identity.py` is the single local owner of the profile-contract,
 validation-bundle, and expected-seal schemas. `scripts/model-release.sh` can
@@ -412,17 +416,21 @@ the changed content as validated.
 **Current implementation:** hot schema 3 carries both the reviewed expected
 seal projection and the observed seal. Activation compares model ID, immutable
 commit, and manifest ID, then full-verifies every rank and atomically creates
-that rank's `.pulsar/witness.json` before publishing ready state. The witness
-schema binds hot and validation identity, canonical hub/snapshot targets,
-filesystem device/inode identity, the exact logical file set, and per-file
+that rank's `.pulsar/witness.json` before publishing ready state. Sealed
+replicated acquisition applies the same expected manifest to the exact
+downloaded commit and every `rsync` destination, then writes a separate
+rank-local witness under the HF cache's Pulsar state directory—not inside the
+repository that is copied. Both witness schemas bind validation identity,
+canonical hub/snapshot targets, filesystem device/inode identity, the exact
+logical file set, and per-file
 device/inode/size/`mtime_ns`/`ctime_ns`. Launch validates the current
-profile/seal or controller expectation before consulting it. An unchanged
-witness hashes zero model bytes; missing, malformed, or drifted metadata emits a
-visible fallback, full-verifies the sealed manifest under stable metadata, and
-atomically refreshes the witness only on success. Launch then passes the exact
-snapshot path. For `identity_status=match`, that manifest is bound to the
-lab-issued expected seal. A `legacy-unsealed` experiment gets only
-activation-manifest integrity and never becomes validated through the witness.
+profile/seal or controller expectation before consulting the applicable
+witness. An unchanged witness hashes zero model bytes; missing, malformed, or
+drifted metadata emits a visible fallback, full-verifies the sealed manifest
+under stable metadata, and atomically refreshes the witness only on success.
+Launch then passes the exact snapshot path through a read-only repository view.
+For `identity_status=match`, that manifest is bound to the lab-issued expected
+seal. A `legacy-unsealed` path never becomes validated through a witness.
 The seal points one-way to a content-addressed schema-1 validation bundle.
 Profile load verifies the bundle ID, exact primary model projection,
 provenance/evidence parity, declared external-artifact identities/digests, and
@@ -588,6 +596,8 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Deterministic candidate tooling refuses trusted roots and cannot claim authority
 [x] Repo release provides the first real lab-issued seal and complete validation bundle (`qwen3-1.7b`)
 [x] First sealed one-node profile passes catalog, activation, launch, labels, smoke, and witness evidence
+[x] Sealed replicated acquisition pins the reviewed commit and full-verifies every materialized rank
+[x] Sealed replicated readiness/launch uses a rank-local witness, exact snapshot, read-only repository view, and identity labels
 [ ] A promotion-scope multi-node or flagship profile has an issued seal/bundle and applicable physical identity/lifecycle evidence
 [x] Catalog/activation compare exact model, commit, and manifest
 [x] Launch validates witness (or full-verifies drift) and passes exact snapshot path
@@ -678,3 +688,4 @@ blocker changed.
 | 2026-08-11 | Implemented content-addressed validation-bundle schema 1 and fail-closed profile-load verification across exact model identity, declared external-artifact identities/digests, lab provenance/evidence, digest-pinned image, normalized runtime configuration, memory contract, and geometry. No production seal or bundle was issued. |
 | 2026-08-11 | Added a maintainer-only release identity service: `model_identity.py` owns the trust schemas, while `model-release` hashes an exact commit and atomically assembles deterministic unreviewed candidates below a protected output boundary. It cannot issue, publish, edit profiles, or change status; no production seal or bundle was issued. |
 | 2026-08-11 | Issued the first reviewed lab identity for the one-node diagnostic `qwen3-1.7b`: exact commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, complete manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, seal `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`, and bundle `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`. Post-issuance `library-hot` activation/launch matched physically; this does not seal the two-node profile or promote the path. |
+| 2026-08-11 | Extended reviewed expected-seal enforcement to replicated HF caches: exact-commit download, full verification after every materialization, rank-local witness fast path with visible rehash-on-drift, exact-snapshot read-only launch, and revision/seal/bundle labels. The issued Qwen canary physically passed full verification, zero-byte unchanged witness, launch labels/read-only view, smoke, and cleanup; exact-revision acquisition and post-copy verification passed deterministically. Unsealed profiles retain legacy behavior; live mount remains unbound; no profile or storage path was promoted. |
