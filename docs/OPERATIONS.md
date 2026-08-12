@@ -386,6 +386,36 @@ after home loss. Do not remove or unmount the home while a running or pinned
 instance depends on it. Home-loss resilience requires an explicit durable
 replica on another failure domain and supported failover.
 
+**Duplicate durable homes:** refresh first, then inspect the persistent
+exact-revision primary state. Pulsar never silently chooses among duplicates:
+
+```bash
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh catalog primary list
+scripts/model-library.sh cleanup-recommend
+
+# Choose one complete home by confirmed rank or stable node ID.
+scripts/model-library.sh catalog primary set '<model_id>@<revision>' --node RANK
+
+# Re-run after selection; it now prints check/remove commands only for extras.
+scripts/model-library.sh cleanup-recommend
+```
+
+The selection is stored atomically in the site-local catalog and survives
+normal refresh. Setting it verifies the catalog rank/node pair against the
+currently confirmed topology. If the selected node no longer reports that
+exact complete revision, the primary is `stale` and resolve/activate fails
+closed; choose another complete home explicitly or repair the selected home.
+Deleting the site catalog also deletes this local policy, so the next refresh
+returns a duplicate to operator-required state rather than reconstructing a
+choice from old `primary` flags.
+
+`catalog primary clear '<model_id>@<revision>'` deliberately removes the
+explicit choice. With duplicate homes this makes the revision unavailable
+until another primary is selected. Primary selection changes future
+resolution; it does not stop a running service, move model bytes, create a
+replica, or authorize deletion.
+
 **Guarded durable-home removal:** inspect first; do not delete the cache path
 manually. Prefer an exact `model_id@revision` query in destructive workflows:
 
@@ -415,13 +445,20 @@ because Docker can restart them later. The exact repository must contain only
 the selected snapshot revision and no ref may point to another revision.
 
 The removal command holds the exclusive lifecycle lock from observation through
-deletion. Supported catalog, activation, launch, readiness, download, and
-fabric commands take its shared form, so they cannot create a new dependency
-between the check and deletion. Execution repeats the repository inspection,
-compares its metadata fingerprint, atomically retires the exact repository, and
-refreshes the catalog. If recursive deletion fails after retirement, stop and
-inspect the plan-bound `.pulsar-removing-*` path reported by the command; do not
-download or manually rename content over it.
+deletion. Catalog refresh and primary mutation also take the exclusive form;
+supported catalog reads, activation, launch, readiness, download, and fabric
+commands take the shared form. They therefore cannot overwrite policy or create
+a new dependency between the check and deletion. Execution repeats the
+repository inspection, compares its metadata fingerprint, atomically retires
+the exact repository, and refreshes the catalog. If recursive deletion fails
+after retirement, stop and inspect the plan-bound `.pulsar-removing-*` path
+reported by the command; do not download or manually rename content over it.
+
+For duplicate cleanup, always pass `--node` for the non-primary home shown by
+`cleanup-recommend`. The selected primary cannot be removed while another
+complete home exists; select the intended survivor first. Before a primary
+exists, no cleanup command is printed and a direct `home remove --node`
+attempt is blocked. No duplicate is ever deleted automatically.
 
 The guard covers Pulsar-managed containers and hot metadata. A manually created
 container, process, bind mount, or open file outside those labels is not

@@ -56,10 +56,21 @@ rank-1 primary selection; neither cache was removed. The artifact therefore
 does not prove the one-durable-home steady state, persistent primary selection,
 bit-identical output, sustained soak, or storage-path promotion.
 
+Persistent exact-revision primary selection was implemented afterward in the
+site-local catalog. Deterministic contracts cover atomic set/clear, refresh
+preservation, stale-selection refusal without auto-election, selection-free
+cleanup refusing to suggest deletion, explicit non-primary commands after
+selection, and selected-primary removal blocking. This changes removal
+targeting, so the disposable-repository physical removal gate must be repeated.
+No existing DeepSeek durable cache was removed and no new physical result
+artifact was created by this implementation change.
+
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
-artifact closes that lifecycle gate without changing model identity, profile
-status, guided defaults, or the Qwen home's retained state.
+artifact closed the then-current lifecycle gate without changing model
+identity, profile status, guided defaults, or the Qwen home's retained state.
+It remains the physical baseline, not evidence for the later
+selected-primary blocker.
 
 The filesystem-backed admission policy is implemented and deterministic tests
 cover default reserve arithmetic, optional hard caps, durable-home zero charge,
@@ -82,7 +93,7 @@ node and path identity.
 | [`qwen3-1.7b-sealed-enforcement-gate-20260811.json`](./qwen3-1.7b-sealed-enforcement-gate-20260811.json) | Post-issuance exact-seal catalog, activation, read-only launch, identity-label, zero-byte witness, smoke, and cleanup proof | Current sealed `library-hot` enforcement PASS; not included in its own issuance bundle and not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
 | [`qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json`](./qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json) | Shipped replicated-cache full verification, zero-byte witness, exact-snapshot read-only launch, identity labels, smoke, and cleanup for the issued Qwen identity | Current sealed replicated enforcement PASS; fresh download/copy covered deterministically but not physically rerun; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
 | `model-library-hot-budget-admission-gate-20260811.json` | Exact all-rank filesystem admission; DeepSeek revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`; capacity only, not model identity | Current hot-budget gate PASS; no model bytes changed; not a promotion | Reviewed; site topology, paths, hosts, node/interface identity, and filesystem identity omitted |
-| `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Current lifecycle gate PASS; no production model was deleted; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
+| `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Historical baseline PASS; no production model was deleted. Persistent-primary added a new selected-primary blocker afterward, so a physical repeat is pending; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
 | `qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json` | Physical durable-home symlink, sealed-hot, witness fallback, exact-snapshot launch, pin/restart, mismatch, and no-follow purge; Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, observed manifest only | Current lifecycle gate PASS; identity remains `legacy-unsealed`; not a promotion | Reviewed; site topology, paths, filesystem identity, and witness IDs omitted |
 | `model-library-promotion-assessment-20260810.json` | Consolidated DeepSeek/Qwen promotion assessment; schema-2 local content digest, not a lab-issued expected seal | Historical assessment; materialization recommendation superseded | Embedded redaction declaration; topology/site fields omitted |
 | `topology-ssh-trust-gate-20260810.json` | Topology-bound SSH alias/key/endpoint gate and Qwen sealed activation | Current gate evidence | Embedded redaction declaration |

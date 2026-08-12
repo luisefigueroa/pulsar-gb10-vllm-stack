@@ -17,6 +17,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import stat
 import sys
@@ -64,6 +65,9 @@ HOT_BUDGET_SCHEMA_VERSION = 1
 HOT_BUDGET_OBSERVATION_KIND = "pulsar-model-library-hot-budget-observation"
 HOT_BUDGET_PLAN_KIND = "pulsar-model-library-hot-budget-plan"
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+UTC_TIMESTAMP_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
+)
 HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -1413,15 +1417,139 @@ def _profile_catalog_status(
     return "expected-unverified"
 
 
+def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
+    """Validate persistent, exact-identity primary selections."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        fail("catalog: primary_selections must be an array")
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            fail(f"catalog: primary_selections[{index}] must be an object")
+        unknown = sorted(
+            set(item).difference({"identity_key", "node_id", "selected_at"})
+        )
+        if unknown:
+            fail(
+                f"catalog: primary_selections[{index}] has unsupported fields "
+                f"{unknown}"
+            )
+        identity = item.get("identity_key")
+        node_id = item.get("node_id")
+        selected_at = item.get("selected_at")
+        if not isinstance(identity, str) or "@" not in identity:
+            fail(
+                f"catalog: primary_selections[{index}] needs an exact identity_key"
+            )
+        model_id, revision = identity.rsplit("@", 1)
+        if (
+            HF_MODEL_ID_RE.fullmatch(model_id) is None
+            or SAFE_REV.fullmatch(revision) is None
+            or revision in {"missing", "unknown"}
+        ):
+            fail(
+                f"catalog: primary_selections[{index}] identity is not an exact "
+                "model revision"
+            )
+        if not isinstance(node_id, str) or not node_id:
+            fail(f"catalog: primary_selections[{index}] needs node_id")
+        if (
+            not isinstance(selected_at, str)
+            or UTC_TIMESTAMP_RE.fullmatch(selected_at) is None
+        ):
+            fail(
+                f"catalog: primary_selections[{index}] selected_at must be a "
+                "millisecond UTC timestamp"
+            )
+        if identity in seen:
+            fail(f"catalog: duplicate primary selection for {identity}")
+        seen.add(identity)
+        normalized.append(
+            {
+                "identity_key": identity,
+                "node_id": node_id,
+                "selected_at": selected_at,
+            }
+        )
+    return sorted(normalized, key=lambda item: item["identity_key"])
+
+
+def _apply_entry_primary_policy(
+    entry: dict[str, Any],
+    selection: dict[str, str] | None,
+) -> None:
+    complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+    for home in entry.get("homes") or []:
+        home["primary"] = False
+
+    if selection is not None:
+        matches = [h for h in complete if h.get("node_id") == selection["node_id"]]
+        if len(matches) > 1:
+            fail(
+                f"catalog: primary node {selection['node_id']} matches multiple homes "
+                f"for {entry['identity_key']}"
+            )
+        if matches:
+            matches[0]["primary"] = True
+            status = "match"
+        else:
+            status = "stale"
+        entry["primary_selection"] = {
+            "mode": "explicit",
+            "status": status,
+            "node_id": selection["node_id"],
+            "selected_at": selection["selected_at"],
+        }
+    elif len(complete) == 1:
+        complete[0]["primary"] = True
+        entry["primary_selection"] = {
+            "mode": "automatic-single-home",
+            "status": "match",
+            "node_id": complete[0]["node_id"],
+        }
+    elif len(complete) > 1:
+        entry["primary_selection"] = {
+            "mode": "operator-required",
+            "status": "missing",
+        }
+    else:
+        entry["primary_selection"] = {
+            "mode": "unavailable",
+            "status": "missing",
+        }
+    entry["has_primary"] = any(h.get("primary") for h in complete)
+
+
+def _catalog_selection_map(catalog: dict[str, Any]) -> dict[str, dict[str, str]]:
+    return {
+        item["identity_key"]: item
+        for item in normalize_primary_selections(catalog.get("primary_selections"))
+    }
+
+
+def _apply_catalog_primary_policies(catalog: dict[str, Any]) -> None:
+    selections = _catalog_selection_map(catalog)
+    for entry in catalog.get("models") or []:
+        _apply_entry_primary_policy(entry, selections.get(entry.get("identity_key")))
+
+
 def build_catalog(
     *,
     topology_id: str,
     homes: list[dict[str, Any]],
     profiles: list[dict[str, Any]],
     primary_overrides: dict[str, str] | None = None,
+    primary_selections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Merge scanned homes with exact profile/seal identity expectations."""
     primary_overrides = primary_overrides or {}
+    selections = {
+        item["identity_key"]: item
+        for item in normalize_primary_selections(primary_selections)
+    }
+    refreshed_at = utc_now()
     by_identity: dict[str, dict[str, Any]] = {}
 
     for home in homes:
@@ -1544,26 +1672,32 @@ def build_catalog(
         override = primary_overrides.get(entry["identity_key"]) or primary_overrides.get(
             entry["model_id"]
         )
-        primary_set = False
         if override:
-            for home in complete_homes:
-                if home["node_id"] == override or str(home["rank"]) == str(override):
-                    home["primary"] = True
-                    primary_set = True
-                    break
-        if not primary_set and len(complete_homes) == 1:
-            complete_homes[0]["primary"] = True
-            primary_set = True
-        if not primary_set and len(complete_homes) > 1:
-            for home in complete_homes:
-                home["primary"] = False
-        entry["has_primary"] = any(h.get("primary") for h in complete_homes)
+            matches = [
+                home
+                for home in complete_homes
+                if home["node_id"] == override or str(home["rank"]) == str(override)
+            ]
+            if len(matches) != 1:
+                fail(
+                    f"build: primary override {override!r} must match exactly one "
+                    f"complete home for {entry['identity_key']}"
+                )
+            selections[entry["identity_key"]] = {
+                "identity_key": entry["identity_key"],
+                "node_id": matches[0]["node_id"],
+                "selected_at": refreshed_at,
+            }
+        _apply_entry_primary_policy(entry, selections.get(entry["identity_key"]))
         models_out.append(entry)
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "refreshed_at": utc_now(),
+        "refreshed_at": refreshed_at,
         "topology_id": topology_id,
+        "primary_selections": sorted(
+            selections.values(), key=lambda item: item["identity_key"]
+        ),
         "models": models_out,
     }
 
@@ -1574,6 +1708,12 @@ def load_catalog(path: str | pathlib.Path) -> dict[str, Any]:
         fail(f"{path}: expected object")
     if data.get("schema_version") != SCHEMA_VERSION:
         fail(f"{path}: unsupported schema_version {data.get('schema_version')!r}")
+    data["primary_selections"] = normalize_primary_selections(
+        data.get("primary_selections")
+    )
+    if not isinstance(data.get("models"), list):
+        fail(f"{path}: models must be an array")
+    _apply_catalog_primary_policies(data)
     return data
 
 
@@ -1618,6 +1758,207 @@ def find_model_entry(
     return None
 
 
+def find_catalog_query_entry(
+    catalog: dict[str, Any],
+    query: str,
+    *,
+    operation: str,
+) -> dict[str, Any]:
+    if "@" in query:
+        entry = find_model_entry(catalog, identity_key=query)
+    elif "/" in query:
+        entry = find_model_entry(catalog, model_id=query)
+    else:
+        entry = find_model_entry(catalog, profile=query)
+    if entry is None:
+        fail(f"{operation}: no catalog entry matching {query!r}")
+    return entry
+
+
+def catalog_primary_records(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    present: set[str] = set()
+    for entry in catalog.get("models") or []:
+        identity = str(entry.get("identity_key") or "")
+        present.add(identity)
+        primary = next(
+            (
+                home
+                for home in entry.get("homes") or []
+                if home.get("state") == "complete" and home.get("primary")
+            ),
+            None,
+        )
+        records.append(
+            {
+                "identity_key": identity,
+                "model_id": entry.get("model_id"),
+                "duplicate": bool(entry.get("duplicate")),
+                "complete_homes": sum(
+                    1
+                    for home in entry.get("homes") or []
+                    if home.get("state") == "complete"
+                ),
+                "selection": entry.get("primary_selection") or {},
+                "primary_home": (
+                    {
+                        "rank": primary.get("rank"),
+                        "node_id": primary.get("node_id"),
+                        "hostname": primary.get("hostname") or "",
+                    }
+                    if primary
+                    else None
+                ),
+            }
+        )
+    for selection in normalize_primary_selections(catalog.get("primary_selections")):
+        if selection["identity_key"] in present:
+            continue
+        records.append(
+            {
+                "identity_key": selection["identity_key"],
+                "model_id": selection["identity_key"].rsplit("@", 1)[0],
+                "duplicate": False,
+                "complete_homes": 0,
+                "selection": {
+                    "mode": "explicit",
+                    "status": "stale",
+                    "node_id": selection["node_id"],
+                    "selected_at": selection["selected_at"],
+                },
+                "primary_home": None,
+            }
+        )
+    return sorted(records, key=lambda item: item["identity_key"])
+
+
+def set_catalog_primary(
+    catalog_path: str | pathlib.Path,
+    query: str,
+    node_selector: str,
+    *,
+    topology_id: str = "",
+    topology_file: str | pathlib.Path | None = None,
+) -> dict[str, Any]:
+    catalog = load_catalog(catalog_path)
+    if topology_id and catalog.get("topology_id") != topology_id:
+        fail("catalog primary: catalog topology is stale; run catalog refresh")
+    entry = find_catalog_query_entry(catalog, query, operation="catalog primary")
+    revision = entry.get("revision")
+    if (
+        not isinstance(revision, str)
+        or SAFE_REV.fullmatch(revision) is None
+        or revision in {"missing", "unknown"}
+    ):
+        fail("catalog primary: entry lacks an exact snapshot revision")
+    complete = [
+        home
+        for home in entry.get("homes") or []
+        if home.get("state") == "complete"
+    ]
+    matches = [
+        home
+        for home in complete
+        if str(home.get("rank")) == node_selector
+        or str(home.get("node_id") or "") == node_selector
+    ]
+    if len(matches) != 1:
+        fail(
+            "catalog primary: --node must match exactly one complete home "
+            f"by rank or node ID (selector={node_selector!r})"
+        )
+    selected = matches[0]
+    if topology_file:
+        topology = load_topology_for_plan(topology_file)
+        if topology.get("topology_id") != topology_id:
+            fail("catalog primary: confirmed topology differs from controller topology")
+        try:
+            selected_rank = int(selected["rank"])
+        except (KeyError, TypeError, ValueError):
+            fail("catalog primary: selected catalog home has an invalid rank")
+        if not isinstance(selected.get("node_id"), str) or not selected["node_id"]:
+            fail("catalog primary: selected catalog home has an invalid node ID")
+        topology_matches = [
+            node
+            for node in topology.get("nodes") or []
+            if int(node.get("rank", -1)) == selected_rank
+            and node.get("node_id") == selected["node_id"]
+        ]
+        if len(topology_matches) != 1:
+            fail(
+                "catalog primary: selected catalog home differs from confirmed "
+                "rank/node identity; run catalog refresh"
+            )
+    selections = _catalog_selection_map(catalog)
+    previous = selections.get(entry["identity_key"])
+    changed = previous is None or previous["node_id"] != selected["node_id"]
+    selected_at = utc_now() if changed else previous["selected_at"]
+    selections[entry["identity_key"]] = {
+        "identity_key": entry["identity_key"],
+        "node_id": selected["node_id"],
+        "selected_at": selected_at,
+    }
+    if changed:
+        catalog["primary_selections"] = sorted(
+            selections.values(), key=lambda item: item["identity_key"]
+        )
+        _apply_catalog_primary_policies(catalog)
+        atomic_write_json(catalog_path, catalog)
+    return {
+        "schema_version": 1,
+        "kind": "pulsar-model-library-primary-selection-result",
+        "action": "set",
+        "changed": changed,
+        "identity_key": entry["identity_key"],
+        "previous_node_id": previous["node_id"] if previous else None,
+        "selection": selections[entry["identity_key"]],
+        "home": {
+            "rank": selected["rank"],
+            "node_id": selected["node_id"],
+            "hostname": selected.get("hostname") or "",
+        },
+    }
+
+
+def clear_catalog_primary(
+    catalog_path: str | pathlib.Path,
+    query: str,
+    *,
+    topology_id: str = "",
+) -> dict[str, Any]:
+    catalog = load_catalog(catalog_path)
+    if topology_id and catalog.get("topology_id") != topology_id:
+        fail("catalog primary: catalog topology is stale; run catalog refresh")
+    selections = _catalog_selection_map(catalog)
+    entry: dict[str, Any] | None = None
+    if "@" in query and query in selections:
+        identity = query
+        entry = find_model_entry(catalog, identity_key=query)
+    else:
+        entry = find_catalog_query_entry(catalog, query, operation="catalog primary")
+        identity = entry["identity_key"]
+    previous = selections.pop(identity, None)
+    if previous is not None:
+        catalog["primary_selections"] = sorted(
+            selections.values(), key=lambda item: item["identity_key"]
+        )
+        _apply_catalog_primary_policies(catalog)
+        atomic_write_json(catalog_path, catalog)
+    return {
+        "schema_version": 1,
+        "kind": "pulsar-model-library-primary-selection-result",
+        "action": "clear",
+        "changed": previous is not None,
+        "identity_key": identity,
+        "previous_node_id": previous["node_id"] if previous else None,
+        "selection": (
+            entry.get("primary_selection")
+            if entry is not None
+            else {"mode": "unavailable", "status": "missing"}
+        ),
+    }
+
+
 def resolve_entry(
     catalog: dict[str, Any] | None,
     *,
@@ -1655,6 +1996,13 @@ def resolve_entry(
             warm_error = f"resolve: {target}: not found in warm catalog"
         else:
             complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+            if (entry.get("primary_selection") or {}).get("status") == "stale":
+                selection = entry["primary_selection"]
+                fail(
+                    f"resolve: {entry['model_id']}: selected primary "
+                    f"{selection.get('node_id')} is stale; run catalog refresh, "
+                    "then explicitly select a complete home"
+                )
             if not complete:
                 warm_error = (
                     f"resolve: {entry['model_id']}: no complete warm home "
@@ -1805,6 +2153,36 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
         if not entry.get("duplicate"):
             continue
         complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+        identity_arg = shlex.quote(entry["identity_key"])
+        primary = next((h for h in complete if h.get("primary")), None)
+        select_commands = []
+        if primary is None:
+            select_commands = [
+                (
+                    "scripts/model-library.sh catalog primary set "
+                    f"{identity_arg} --node {shlex.quote(str(home['rank']))}"
+                )
+                for home in complete
+            ]
+        removal_commands = (
+            [
+                {
+                    "rank": home["rank"],
+                    "check": (
+                        "scripts/model-library.sh home check "
+                        f"{identity_arg} --node {shlex.quote(str(home['rank']))}"
+                    ),
+                    "remove": (
+                        "scripts/model-library.sh home remove "
+                        f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+                    ),
+                }
+                for home in complete
+                if not home.get("primary")
+            ]
+            if primary is not None
+            else []
+        )
         recommendations.append(
             {
                 "model_id": entry["model_id"],
@@ -1820,9 +2198,14 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                     for h in complete
                 ],
+                "selection_status": (
+                    entry.get("primary_selection") or {}
+                ).get("status"),
+                "select_commands": select_commands,
+                "removal_commands": removal_commands,
                 "action": (
-                    "Choose one primary home (node_id or rank) and remove or ignore "
-                    "the other complete copies. Activate refuses until a primary is set."
+                    "Explicitly select one primary home. Inspect each non-primary "
+                    "home, then remove it only with the separate confirmed command."
                 ),
             }
         )
@@ -4676,6 +5059,7 @@ def select_home_removal_target(
         "revision": revision,
         "identity_key": entry["identity_key"],
         "profiles": sorted(entry.get("profiles") or []),
+        "primary_selection": entry.get("primary_selection") or {},
         "home": selected,
         "alternate_homes": alternates,
         "last_durable_home": not bool(alternates),
@@ -5276,6 +5660,36 @@ def plan_home_removal(
                 ),
             }
         )
+    if target["alternate_homes"] and (
+        target["primary_selection"].get("status") != "match"
+        or not any(
+            candidate.get("primary")
+            for candidate in [home, *target["alternate_homes"]]
+        )
+    ):
+        blockers.append(
+            {
+                "kind": "primary-selection-required",
+                "rank": rank,
+                "node_id": home["node_id"],
+                "detail": (
+                    "duplicate removal requires an explicit primary selection; "
+                    "select the intended survivor before removing any home"
+                ),
+            }
+        )
+    if home.get("primary") and target["alternate_homes"]:
+        blockers.append(
+            {
+                "kind": "selected-primary-home",
+                "rank": rank,
+                "node_id": home["node_id"],
+                "detail": (
+                    "this is the selected primary while another complete home exists; "
+                    "select the intended survivor before removing this home"
+                ),
+            }
+        )
     blockers.sort(
         key=lambda item: (
             int(item.get("rank", -1)),
@@ -5575,6 +5989,13 @@ def cmd_build(args: argparse.Namespace) -> int:
             fail("--homes-json must be a JSON array")
         homes = raw
     profiles = load_hf_profiles(args.models_dir)
+    persistent_selections: list[dict[str, str]] = []
+    if args.preserve_primary_from:
+        source = pathlib.Path(args.preserve_primary_from)
+        if source.is_file():
+            persistent_selections = normalize_primary_selections(
+                load_catalog(source).get("primary_selections")
+            )
     primary: dict[str, str] = {}
     if args.primary:
         for item in args.primary:
@@ -5587,6 +6008,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         homes=homes,
         profiles=profiles,
         primary_overrides=primary,
+        primary_selections=persistent_selections,
     )
     if args.output:
         atomic_write_json(args.output, catalog)
@@ -5898,7 +6320,107 @@ def cmd_cleanup_recommend(args: argparse.Namespace) -> int:
                 f"host={home.get('hostname') or '-'} bytes={home.get('bytes')}{primary}"
             )
             print(f"    {home.get('hub_path')}")
+        if rec["select_commands"]:
+            print("  Select one primary (choose exactly one):")
+            for command in rec["select_commands"]:
+                print(f"    {command}")
+        if rec["removal_commands"]:
+            print("  Inspect and explicitly remove each unwanted non-primary home:")
+            for commands in rec["removal_commands"]:
+                print(f"    {commands['check']}")
+                print(f"    {commands['remove']}")
         print(f"  → {rec['action']}\n")
+    return 0
+
+
+def render_catalog_primary_records(
+    records: list[dict[str, Any]],
+    *,
+    width: int | None = None,
+) -> None:
+    if TerminalWriter is None:
+        fail("catalog primary rendering requires scripts/terminal_format.py")
+    term = TerminalWriter(width=width)
+    term.emit("model library primary selections")
+    term.blank()
+    if not records:
+        term.emit("(empty)")
+        return
+    for index, record in enumerate(records):
+        selection = record.get("selection") or {}
+        primary = record.get("primary_home")
+        home = (
+            f"rank {primary['rank']} · node {str(primary['node_id'])[:12]}"
+            if primary
+            else "-"
+        )
+        if index:
+            term.blank()
+        term.field("identity", record["identity_key"])
+        term.field("mode", selection.get("mode") or "-")
+        term.field("status", selection.get("status") or "-")
+        term.field("home", home)
+
+
+def render_catalog_primary_result(
+    result: dict[str, Any],
+    *,
+    width: int | None = None,
+) -> None:
+    if TerminalWriter is None:
+        fail("catalog primary rendering requires scripts/terminal_format.py")
+    term = TerminalWriter(width=width)
+    action = "selected" if result["action"] == "set" else "cleared"
+    suffix = " (unchanged)" if not result["changed"] else ""
+    term.emit(f"catalog primary {action}{suffix}")
+    term.field("identity", result["identity_key"])
+    selection = result.get("selection") or {}
+    term.field("status", selection.get("status") or "-")
+    if result.get("home"):
+        term.field(
+            "home",
+            f"rank {result['home']['rank']} · "
+            f"node {str(result['home']['node_id'])[:12]}",
+        )
+
+
+def cmd_catalog_primary(args: argparse.Namespace) -> int:
+    if args.primary_action == "list":
+        catalog = load_catalog(args.catalog)
+        records = catalog_primary_records(catalog)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "kind": "pulsar-model-library-primary-records",
+                        "primary_records": records,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            render_catalog_primary_records(records)
+        return 0
+    if args.primary_action == "set":
+        result = set_catalog_primary(
+            args.catalog,
+            args.query,
+            args.node,
+            topology_id=args.topology_id,
+            topology_file=args.topology_file,
+        )
+    else:
+        result = clear_catalog_primary(
+            args.catalog,
+            args.query,
+            topology_id=args.topology_id,
+        )
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        render_catalog_primary_result(result)
     return 0
 
 
@@ -6658,6 +7180,11 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--models-dir", required=True)
     build.add_argument("--homes-json", help="JSON array of scanned homes")
     build.add_argument("--output", help="Write catalog.json here")
+    build.add_argument(
+        "--preserve-primary-from",
+        default="",
+        help="Carry exact primary selections forward from an existing catalog",
+    )
     build.add_argument("--primary", action="append", default=[], help="identity_or_model=node_id")
     build.add_argument("--json", action="store_true")
     build.set_defaults(func=cmd_build)
@@ -6834,6 +7361,39 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--catalog", required=True)
     cleanup.add_argument("--json", action="store_true")
     cleanup.set_defaults(func=cmd_cleanup_recommend)
+
+    catalog_primary = sub.add_parser(
+        "catalog-primary",
+        help="List, set, or clear persistent exact-revision primary selections",
+    )
+    primary_actions = catalog_primary.add_subparsers(
+        dest="primary_action",
+        required=True,
+    )
+    primary_list = primary_actions.add_parser("list", help="List primary state")
+    primary_list.add_argument("--catalog", required=True)
+    primary_list.add_argument("--json", action="store_true")
+    primary_list.set_defaults(func=cmd_catalog_primary)
+    primary_set = primary_actions.add_parser(
+        "set",
+        help="Persist one complete home as primary for an exact revision",
+    )
+    primary_set.add_argument("--catalog", required=True)
+    primary_set.add_argument("--topology-id", required=True)
+    primary_set.add_argument("--topology-file", required=True)
+    primary_set.add_argument("--node", required=True)
+    primary_set.add_argument("query")
+    primary_set.add_argument("--json", action="store_true")
+    primary_set.set_defaults(func=cmd_catalog_primary)
+    primary_clear = primary_actions.add_parser(
+        "clear",
+        help="Clear an explicit primary selection",
+    )
+    primary_clear.add_argument("--catalog", required=True)
+    primary_clear.add_argument("--topology-id", required=True)
+    primary_clear.add_argument("query")
+    primary_clear.add_argument("--json", action="store_true")
+    primary_clear.set_defaults(func=cmd_catalog_primary)
 
     plan = sub.add_parser(
         "plan-activate", help="Plan copy/fabric activate into hot staging"

@@ -106,6 +106,13 @@ class HomeRemovalContracts(unittest.TestCase):
             "schema_version": 2,
             "refreshed_at": "2026-08-11T00:00:00.000Z",
             "topology_id": self.topology_id,
+            "primary_selections": [
+                {
+                    "identity_key": f"{self.model_id}@{self.revision}",
+                    "node_id": self.node_id,
+                    "selected_at": "2026-08-11T00:00:00.000Z",
+                }
+            ],
             "models": [
                 {
                     "model_id": self.model_id,
@@ -160,7 +167,12 @@ class HomeRemovalContracts(unittest.TestCase):
             node_id=self.node_id,
         )
 
-    def _plan(self, *, allow_last_home: bool = True) -> dict[str, object]:
+    def _plan(
+        self,
+        *,
+        allow_last_home: bool = True,
+        node_selector: str = "",
+    ) -> dict[str, object]:
         inspection_path = self.root / "inspection.json"
         inspection_path.write_text(
             json.dumps(self._inspection()),
@@ -174,6 +186,7 @@ class HomeRemovalContracts(unittest.TestCase):
             models_dir=self.models_dir,
             inspection_path=inspection_path,
             observations_dir=self.observations,
+            node_selector=node_selector,
             allow_last_home=allow_last_home,
         )
 
@@ -219,6 +232,52 @@ class HomeRemovalContracts(unittest.TestCase):
         eligible = self._plan(allow_last_home=True)
         self.assertEqual(eligible["state"], "eligible")
         self.assertEqual(eligible["blockers"], [])
+
+    def test_selected_primary_with_alternate_must_be_switched_before_removal(
+        self,
+    ) -> None:
+        self._write_catalog(
+            alternate={
+                "rank": 1,
+                "node_id": "node-b",
+                "hostname": "fixture-alternate",
+                "ssh_host": "fixture-alternate",
+                "cache_root": "/alternate/cache",
+                "hub_path": "/alternate/cache/hub/models--Qwen--Qwen3-1.7B",
+                "state": "complete",
+                "bytes": 1,
+                "active": False,
+                "primary": False,
+            }
+        )
+        plan = self._plan()
+        self.assertEqual(plan["state"], "blocked")
+        self.assertIn("selected-primary-home", self._kinds(plan))
+
+    def test_duplicate_removal_requires_primary_even_with_node_selector(
+        self,
+    ) -> None:
+        self._write_catalog(
+            alternate={
+                "rank": 1,
+                "node_id": "node-b",
+                "hostname": "fixture-alternate",
+                "ssh_host": "fixture-alternate",
+                "cache_root": "/alternate/cache",
+                "hub_path": "/alternate/cache/hub/models--Qwen--Qwen3-1.7B",
+                "state": "complete",
+                "bytes": 1,
+                "active": False,
+                "primary": False,
+            }
+        )
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        catalog["primary_selections"] = []
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+        plan = self._plan(node_selector="0")
+        self.assertEqual(plan["state"], "blocked")
+        self.assertIn("primary-selection-required", self._kinds(plan))
 
     def test_ready_and_pinned_hot_views_both_block(self) -> None:
         reference = {

@@ -30,6 +30,11 @@ Usage:
   scripts/model-library.sh catalog refresh [--json] [--local-only]
   scripts/model-library.sh catalog list [--validated] [--json]
   scripts/model-library.sh catalog show <model_id|profile> [--json]
+  scripts/model-library.sh catalog primary list [--json]
+  scripts/model-library.sh catalog primary set <profile|model_id|model_id@revision>
+      --node RANK|NODE_ID [--json]
+  scripts/model-library.sh catalog primary clear <profile|model_id|model_id@revision>
+      [--json]
   scripts/model-library.sh validation-bundle verify <profile> [--json]
   scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
@@ -73,12 +78,15 @@ Notes:
     model, image, runtime, geometry, artifact, and evidence contract matches.
     activate refuses legacy-unsealed profiles unless --allow-unvalidated marks
     an explicit experiment; that flag never bypasses a configured seal mismatch.
-  • Duplicate complete homes refuse resolve until a primary is chosen.
+  • Duplicate complete homes refuse resolve until an exact-revision primary is
+    chosen. The selection persists in the site catalog across refreshes; a
+    missing selected home is stale and fails closed rather than auto-electing.
   • home check/remove probes managed containers and every hot root on all
     confirmed nodes. Any dependent retained view blocks removal, including
     ready, verifying, or pinned hot state. Unobservable nodes fail closed.
     Removal is exact-repository-only, refuses multi-revision hub trees, and
-    needs --allow-last-home before deleting the final durable copy.
+    needs --allow-last-home before deleting the final durable copy. Duplicate
+    removal requires a selected primary and can target only a non-primary home.
   • activate --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -504,6 +512,9 @@ PY
     --homes-json "$tmp"
     --output "$CATALOG_FILE"
   )
+  if [ -f "$CATALOG_FILE" ]; then
+    build_args+=(--preserve-primary-from "$CATALOG_FILE")
+  fi
   if [ "$json" = 1 ]; then
     build_args+=(--json)
   fi
@@ -547,6 +558,59 @@ cmd_catalog_show() {
   else
     python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" "$query"
   fi
+}
+
+cmd_catalog_primary() {
+  local action="${1:-}" query="" node_selector="" json=0
+  [ -n "$action" ] || die "usage: catalog primary <list|set|clear>"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --node)
+        shift
+        [ $# -gt 0 ] || die "--node needs a rank or node ID"
+        node_selector="$1"
+        ;;
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *)
+        [ -z "$query" ] || die "unexpected arg: $1"
+        query="$1"
+        ;;
+    esac
+    shift
+  done
+  require_py
+  ensure_catalog
+  local -a args=(catalog-primary "$action" --catalog "$CATALOG_FILE")
+  case "$action" in
+    list)
+      [ -z "$query" ] || die "catalog primary list takes no query"
+      [ -z "$node_selector" ] || die "catalog primary list does not accept --node"
+      ;;
+    set)
+      [ -n "$query" ] || die "catalog primary set needs a model/profile/identity"
+      [ -n "$node_selector" ] || die "catalog primary set requires --node"
+      load_cluster_topology >/dev/null \
+        || die "catalog primary: confirmed topology required"
+      args+=(
+        --topology-id "$CLUSTER_TOPOLOGY_ID"
+        --topology-file "$CLUSTER_TOPOLOGY_FILE"
+        --node "$node_selector"
+        "$query"
+      )
+      ;;
+    clear)
+      [ -n "$query" ] || die "catalog primary clear needs a model/profile/identity"
+      [ -z "$node_selector" ] || die "catalog primary clear does not accept --node"
+      load_cluster_topology >/dev/null \
+        || die "catalog primary: confirmed topology required"
+      args+=(--topology-id "$CLUSTER_TOPOLOGY_ID" "$query")
+      ;;
+    *) die "usage: catalog primary <list|set|clear>" ;;
+  esac
+  [ "$json" = 0 ] || args+=(--json)
+  python3 "$PY_TOOL" "${args[@]}"
 }
 
 cmd_resolve() {
@@ -2671,9 +2735,9 @@ main() {
   [ $# -ge 1 ] || { usage; exit 2; }
   local cmd="$1"
   shift
-  case "$cmd" in
-    -h|--help|help) ;;
-    home)
+  case "$cmd:${1:-}:${2:-}" in
+    -h:*|--help:*|help:*) ;;
+    home:*|catalog:refresh:*|catalog:primary:set|catalog:primary:clear)
       acquire_model_library_lifecycle_lock exclusive
       ;;
     *)
@@ -2702,6 +2766,7 @@ main() {
         refresh) cmd_catalog_refresh "$@" ;;
         list) cmd_catalog_list "$@" ;;
         show) cmd_catalog_show "$@" ;;
+        primary) cmd_catalog_primary "$@" ;;
         *) usage; exit 2 ;;
       esac
       ;;
