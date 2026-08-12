@@ -7,7 +7,8 @@
 # and only via scripts/down.sh for inventory-proven safe_to_stop managed confs.
 #
 # Narrow test hooks (selftests only):
-#   HOME_WIZARD_CMD / HOME_QUICK_STATUS_CMD / HOME_INVENTORY_CMD
+#   HOME_WIZARD_CMD / HOME_MODELS_CMD / HOME_QUICK_STATUS_CMD
+#   HOME_INVENTORY_CMD
 #   HOME_DOWN_CMD / HOME_DOCTOR_CMD / HOME_STATUS_CMD
 #   HOME_INVENTORY_JSON / HOME_INVENTORY_CMD  (for stop/maintenance lists)
 #   QUICK_STATUS_* forwarded when invoking quick-status
@@ -29,6 +30,14 @@ cmd_wizard() {
     "$HOME_WIZARD_CMD" "$@"
   else
     "$REPO_DIR/wizard.sh" "$@"
+  fi
+}
+
+cmd_models() {
+  if [ -n "${HOME_MODELS_CMD:-}" ]; then
+    "$HOME_MODELS_CMD"
+  else
+    "$REPO_DIR/scripts/model-storage.sh"
   fi
 }
 
@@ -415,6 +424,7 @@ while true; do
     "Current system status" \
     "Serve or switch a model" \
     "Stop a serving model" \
+    "Models & storage" \
     "Maintenance" \
     "Diagnostics" \
     "Exit"); then
@@ -438,6 +448,10 @@ while true; do
       ;;
     "Stop a serving model")
       workflow_stop
+      ;;
+    "Models & storage")
+      log "opening cached model catalog and storage health (read-only)…"
+      cmd_models || warn "model catalog view is unavailable"
       ;;
     "Maintenance")
       workflow_maintenance

@@ -584,9 +584,9 @@ Invalid/stale catalogs, duplicate homes, stale primary selection, prohibited
 runtime views, witness drift/missing state, legacy metadata, and unobservable
 ranks are explicit findings.
 
-The public schema-1 report exposes rank numbers, model/revision identity,
-expected manifest identity when reviewed, primary/duplicate classification,
-runtime source, retention, identity/witness status, active-reference state,
+The public schema-1 report exposes rank numbers, profile aliases,
+model/revision identity, cached refresh time, expected manifest identity when
+reviewed, primary/duplicate classification, runtime source, retention, identity/witness status, active-reference state,
 opaque repair IDs, issue codes, and remediation. It omits hostnames, addresses,
 node/topology identity, absolute paths, filesystem identity, and witness IDs.
 `healthy` and `not-configured` exit zero; `attention` and `unavailable` still
@@ -605,8 +605,11 @@ discoverable and retryable.
 
 Doctor consumes the same report as warnings. These findings do not block
 replicated/default serving, while model-library preparation and destructive
-lifecycle operations retain their fail-closed checks. Current health closes
-supported catalog/hot observability, but container labels still do not carry
+lifecycle operations retain their fail-closed checks. `./pulsar models` and the
+operator-home **Models & storage** entry expose a read-only, width-aware projection of this same contract. The projection labels
+replicated serving as the guided default and the distributed catalog as
+experimental; it offers no refresh, preparation, launch, retention, repair, or
+deletion action. Current health closes supported catalog/hot observability, but container labels still do not carry
 per-rank runtime-source/witness state and unmanaged processes remain outside
 Pulsar's discovery boundary.
 
@@ -767,7 +770,8 @@ blocker changed.
 
 ## 8. Remaining deferred work
 
-- Promotion into the wizard or other guided defaults
+- Model preparation/start integration into the serving wizard or other guided
+  defaults; the read-only operator-home catalog view is implemented
 - Machine-readable qualification dimensions; current scope separation is a
   documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time

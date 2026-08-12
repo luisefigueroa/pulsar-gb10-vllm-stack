@@ -29,6 +29,7 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 |---|---|
 | `./pulsar` | Neutral **operator home** (workflow menu; no preflight on entry) |
 | `./pulsar wizard` | Serve/switch wizard (doctor + preflight; direct shortcut) |
+| `./pulsar models` | Browse cached distributed models and runtime views (read-only, experimental) |
 | `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
 | `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
@@ -50,13 +51,37 @@ Menu (default cursor: status):
 1. **Current system status** — `scripts/quick-status.sh` (read-only)
 2. **Serve or switch a model** — enters `wizard.sh` (its doctor/preflight)
 3. **Stop a serving model** — inventory-safe active managed only; confirm → `down.sh`
-4. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
-5. **Diagnostics** — run doctor, detailed inventory (read-only)
-6. **Exit**
+4. **Models & storage** — cached identity, placement, runtime views, and findings
+   (read-only; distributed catalog is experimental)
+5. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
+6. **Diagnostics** — run doctor, detailed inventory (read-only)
+7. **Exit**
 
 Read-only actions and cancelled subflows return home. Gum Escape/cancel and EOF
 exit cleanly without mutations. `--all` is not offered in interactive stop or
 maintenance; there is no automatic cleanup on doctor or startup.
+
+### Models & storage semantics
+
+`./pulsar models` and Home **Models & storage** call
+`scripts/model-storage.sh`, a read-only interactive projection of the cached
+model-library health report. The view keeps **replicated local model copies**
+visible as the guided serving default and labels the distributed catalog as
+experimental. It shows cached age and topology compatibility, profile and exact
+model/revision/manifest identity, durable-home and primary state, per-rank
+runtime source/retention/identity/witness state, active references, and
+structured findings. Rank labels are generic; site identities and paths stay
+out of the public report.
+
+Browsing and **Recheck catalog health** only run
+`scripts/model-library.sh health --json`. They do not refresh the catalog,
+prepare or move files, start a model, pin or purge hot copies, run repair, or
+delete a durable home. `attention` and `unavailable` reports remain readable;
+invalid health JSON fails closed with no action. Catalog absence or health
+findings do not block replicated serving. Pinning remains a retention choice,
+not durable-home-loss resilience, and catalog/serving health is not model
+qualification or release promotion. Mutating model-library operations remain
+direct CLI workflows in this increment.
 
 ### Quick status semantics
 
