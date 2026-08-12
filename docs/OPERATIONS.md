@@ -358,16 +358,24 @@ recovery are in
 [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 **Library-hot (federated catalog + local hot staging):** experimental path
-aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). Typical
+aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md).
+
+"Prepare model for serving" is the operator-facing term for resolving the exact
+model, creating the durable-home and sealed-hot runtime views, transferring
+non-home bytes, and verifying every rank. Preparation does not start a serving
+container or qualify the model. The older `activate` command remains a
+backward-compatible alias.
+
+Typical
 flow:
 
 ```bash
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list --validated
 # Reviewed sealed profile: no override is accepted or needed.
-scripts/model-library.sh activate <sealed-profile> --backend copy --yes
+scripts/model-library.sh prepare <sealed-profile> --backend copy --yes
 # Profiles without a reviewed seal: explicit experiment only.
-scripts/model-library.sh activate <profile> --backend copy --allow-unvalidated --yes
+scripts/model-library.sh prepare <profile> --backend copy --allow-unvalidated --yes
 scripts/up.sh <profile> --weight-mode library-hot
 # optional after stop:
 scripts/down.sh <profile> --pin-weights   # protect retained hot from purge
@@ -375,7 +383,7 @@ scripts/down.sh <profile> --purge-hot     # free hot disk budget
 ```
 
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
-be fully self-contained. Warm-home activation is deliberately different: the
+be fully self-contained. Warm-home preparation is deliberately different: the
 home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
 cache, and only non-home ranks own sealed-hot copies. Home-rank hot
 materialization is ruled out by
@@ -393,7 +401,7 @@ qualification scope:
 | Check or action | Evidence scope | Claim boundary |
 |---|---|---|
 | `health`, catalog refresh, primary state | Catalog/artifact inventory and policy state | Does not prove that a model can serve correctly |
-| Activation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
+| Preparation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
 | Exact-source launch, health, warmup, completion smoke, owned stop | Serving integration | Does not prove accuracy, determinism, performance, context, or soak |
 | `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe |
 | `STATUS`, wizard exposure, guided/default storage policy | Combined release/promotion | Requires every applicable subsystem gate |
@@ -425,7 +433,7 @@ scripts/model-library.sh cleanup-recommend
 The selection is stored atomically in the site-local catalog and survives
 normal refresh. Setting it verifies the catalog rank/node pair against the
 currently confirmed topology. If the selected node no longer reports that
-exact complete revision, the primary is `stale` and resolve/activate fails
+exact complete revision, the primary is `stale` and resolve/prepare fails
 closed; choose another complete home explicitly or repair the selected home.
 Deleting the site catalog also deletes this local policy, so the next refresh
 returns a duplicate to operator-required state rather than reconstructing a
@@ -498,7 +506,7 @@ the selected snapshot revision and no ref may point to another revision.
 
 The removal command holds the exclusive lifecycle lock from observation through
 deletion. Catalog refresh and primary mutation also take the exclusive form;
-supported catalog reads, activation, launch, readiness, download, and fabric
+supported catalog reads, preparation, launch, readiness, download, and fabric
 commands take the shared form. They therefore cannot overwrite policy or create
 a new dependency between the check and deletion. Execution repeats the
 repository inspection, compares its metadata fingerprint, atomically retires
@@ -522,7 +530,7 @@ accepted accounting is one durable home plus N−1 hot working copies. Hot purge
 must never follow the home symlink target. Defaults and the wizard stay on
 replicated weights until this path is promoted.
 
-Inspect live admission on every confirmed rank before a large activation:
+Inspect live admission on every confirmed rank before a large preparation:
 
 ```bash
 scripts/model-library.sh budget
@@ -531,10 +539,10 @@ scripts/model-library.sh budget --json  # site-local automation; contains node/p
 
 The default preserves user-available filesystem space equal to
 `max(64 GiB, 5% of total capacity)` on each selected rank and has no arbitrary
-hard cap. A warm-home activation charges zero new model bytes on the home rank
+hard cap. A warm-home preparation charges zero new model bytes on the home rank
 and the exact manifest size on each non-home rank; cold stage-only charges every
 selected rank. Existing tracked, untracked, or malformed content below the hot
-root is counted. Activation, pin, and cold stage-only display the all-rank plan
+root is counted. Preparation, pin, and cold stage-only display the all-rank plan
 and refuse before writes when any observation is missing or blocked.
 
 `PULSAR_HOT_BUDGET_BYTES` adds an optional per-rank hard cap.
@@ -557,7 +565,7 @@ scripts/model-library.sh validation-bundle verify <profile>
 scripts/model-library.sh validation-bundle verify <profile> --json
 ```
 
-Catalog schema 2 selects only its immutable commit. Activation full-hashes every
+Catalog schema 2 selects only its immutable commit. Preparation full-hashes every
 rank, compares model/commit/manifest to the expected seal, writes hot schema 3
 with expected and observed provenance, and atomically creates that rank's
 `<instance>/.pulsar/witness.json` before ready is published. A configured
@@ -576,13 +584,13 @@ status, seal ID, and bundle ID; per-rank witness labels remain future work.
 A missing, malformed, or drifted witness prints a message and runs a stable full
 SHA-256 verification. Success atomically refreshes the witness and continues;
 content mismatch or metadata changing during the full pass fails closed and
-does not refresh. Reactivate if the fallback fails. Do not hand-edit
+does not refresh. Prepare the model again if the fallback fails. Do not hand-edit
 `hot.json` or `witness.json`, and do not treat a successful rehash of
 `legacy-unsealed` content as lab validation.
 
 The one-node diagnostic profile `qwen3-1.7b` is the first profile with a
 reviewed seal and validation bundle; the flagship `deepseek-v4-flash` profile
-is the second. Their `library-hot` activation must match without
+is the second. Their `library-hot` preparation must match without
 `--allow-unvalidated`, and ordinary replicated staging/launch enforces the
 same commit/manifest without an override. Profiles without a seal, including
 `qwen3-1.7b-2node`, still require that explicit experimental flag for
@@ -609,7 +617,7 @@ cache. If replicated witness fallback fails, repair or restage with
 accepted for launch or trust. Health may recognize exact historical ownership
 metadata only so the separate guarded removal workflow can retire it safely.
 After upgrading, run `catalog refresh`, then
-reactivate each required profile. Hot schema 3 instances created before witness
+prepare each required profile again. Hot schema 3 instances created before witness
 support remain readable: the first `library-hot` readiness check visibly
 full-verifies and creates the missing rank-local witness. Current unsealed
 profiles without a seal need the explicit experimental `--allow-unvalidated`
@@ -649,31 +657,31 @@ configured but unreadable, flows that **need** cold (warm miss, absolute-path
 conf, explicit `cold *`) fail closed; pure warm-catalog hits never require it.
 See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) §3.
 
-**One-shot NFS/RDMA activate (legacy `--backend fabric` CLI):** ephemeral NFSv4.2/`proto=rdma`
+**One-shot NFS/RDMA preparation (legacy `--backend fabric` CLI):** ephemeral NFSv4.2/`proto=rdma`
 from the catalog primary home over confirmed RoCE rails into hot staging, then
 **release** of mounts/export (not a long-lived mount under vLLM):
 
 ```bash
-scripts/model-library.sh activate <profile> --backend fabric --allow-unvalidated --yes
+scripts/model-library.sh prepare <profile> --backend fabric --allow-unvalidated --yes
 # optional attended sudo:
-scripts/model-library.sh activate <profile> --backend fabric --allow-unvalidated --yes --interactive-sudo
+scripts/model-library.sh prepare <profile> --backend fabric --allow-unvalidated --yes --interactive-sudo
 # measure wall time:
-scripts/model-library.sh activate <profile> --backend fabric --allow-unvalidated --yes --time
+scripts/model-library.sh prepare <profile> --backend fabric --allow-unvalidated --yes --time
 # emergency cleanup of transfer plane:
 scripts/model-library.sh release-transfer <profile> --yes
 ```
 
 No silent fallback to control-path copy. Fabric may only be advertised as the
-fast path when wall-clock activate time beats `--backend copy` on the same
+fast path when wall-clock preparation time beats `--backend copy` on the same
 model/topology (see [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md)).
 
-**Activate A/B (B-gate):**
+**Prepare A/B (B-gate):**
 
 ```bash
 # multi-rank models need a warm primary + confirmed topology; fabric often needs sudo
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh budget  # live all-rank capacity; benchmark uses the same policy
-scripts/model-library.sh bench-activate <profile> --yes [--interactive-sudo] \
+scripts/model-library.sh bench-prepare <profile> --yes [--interactive-sudo] \
   [--tag my-run] [--nodes N] [--output results/model-library/<file>.json]
 ```
 
@@ -684,7 +692,7 @@ and `fabric_claims_fast_path` (true only if fabric is strictly faster). Prefer a
 fabric is local-only and is not a meaningful B-gate. Default output:
 `results/model-library/<profile>-<tag>.json`.
 
-**Activate performance:** the accepted home-rank behavior is a validated
+**Prepare performance:** the accepted home-rank behavior is a validated
 durable-home symlink/view with no second full write; non-home ranks materialize
 in parallel. Current experimental code prefers a symlink but can fall back to
 reflink/copy if symlink creation fails. That fallback is not accepted promotion
@@ -694,7 +702,7 @@ restart when RDMA is already listening. Bench JSON may include `copy_phases`
 and `fabric_phases`; wall-clock is often limited by materialization and setup,
 not raw RoCE line rate.
 
-**SSH-over-RoCE experiment (not product default):** same copy activate
+**SSH-over-RoCE experiment (not product default):** same copy-based preparation
 (rsync + SSH), but SSH targets are topology **RoCE IPs** so bulk TCP rides the
 fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
 `sshd` reachable on fabric IPs, and routes via the confirmed RoCE netdev. The
@@ -711,7 +719,7 @@ scripts/model-library.sh probe-ssh-roce deepseek-v4-flash
 
 # 3) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between).
 #    Stay for the run; no sudo required for pure copy paths. Admission uses the
-#    same all-rank filesystem reserve as normal activation.
+#    same all-rank filesystem reserve as normal preparation.
 scripts/model-library.sh budget
 scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
   --tag "ssh-roce-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -727,7 +735,7 @@ PULSAR_COPY_STREAM_STAGGER_MS=150 \
     --copy-streams 16 --order control-first --tag parallel-control-first
 
 # Manual one-shot over RoCE TCP with the enrolled alias/key identity:
-scripts/model-library.sh activate <profile> --transport ssh-roce \
+scripts/model-library.sh prepare <profile> --transport ssh-roce \
   --backend copy --copy-streams 8 --allow-unvalidated --yes
 ```
 

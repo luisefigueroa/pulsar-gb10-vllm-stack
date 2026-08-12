@@ -20,7 +20,7 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Experimental model library<br/>catalog · identity · activate · hot views"] -. explicit opt-in .-> artifacts
+  library["Experimental model library<br/>catalog · identity · prepare · hot views"] -. explicit opt-in .-> artifacts
   fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
@@ -159,7 +159,7 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 
 ### Fail closed; no silent policy changes
 
-- Partial weights, wrong transport, digest mismatch, stale topology, or incomplete activate/start must **not** report healthy serving.
+- Partial weights, wrong transport, digest mismatch, stale topology, or incomplete preparation/start must **not** report healthy serving.
 - Do **not** silently fall back (e.g. fabric → full N-replica pull, RoCE NFS → TCP/control-LAN NFS, confirmed rail → “any route”). If an alternate path exists, it is an **explicit** operator choice and must be visible in CLI, labels, and docs.
 - Do **not** invent serving geometries (TP/PP/node counts) from “we discovered N machines.” Exact profiles and `STATUS` gates decide what may run; extra confirmed nodes stay idle capacity.
 - Wizard and default paths stay on **promoted** behavior. Experimental features remain opt-in CLI (never surprise defaults).
@@ -168,7 +168,7 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 
 - Treat confirmed topology (`.cluster-topology.json`) as membership truth—not mDNS names alone.
 - Management SSH must use the **confirmed control endpoint** (saved alias for identity/host keys is fine; transport host must not wander onto a RoCE data rail). Reuse shared resolvers; do not reimplement per script.
-- Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library activate / experimental fabric). Do not overload one path without saying so.
+- Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library preparation / experimental fabric). Do not overload one path without saying so.
 - Site-local state (topology, `.weight-fabric/`, future `.model-library/`, hot roots) is gitignored; never commit hostnames, IPs, or node IDs into publishable docs/results without redaction/audit patterns already used for fabric artifacts.
 
 ### Lifecycle ownership
@@ -176,7 +176,7 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 - Launchers own cleanup for containers **they** create (including signal traps on interrupt). Prefer immutable launch IDs and ownership-safe stop (`down.sh` / stack labels)—never broad `docker rm` of unrelated workloads.
 - Destructive ops (purge hot, purge replicas, teardown exports, overwrite configs) are confirmation-gated; refuse when a managed service is still using the resource.
 - Privileged changes require usable sudo policy; support attended `--interactive-sudo` where the project already does. **Never** read, log, transport, or store the operator password, and do not weaken sudoers to automate.
-- All-or-nothing multi-rank steps (activate, cluster start): on failure, roll back partial ranks or leave an explicit incomplete state that launch refuses—not a half-ready service.
+- All-or-nothing multi-rank steps (prepare, cluster start): on failure, roll back partial ranks or leave an explicit incomplete state that launch refuses—not a half-ready service.
 
 ### Claims, status, and artifacts
 
@@ -209,7 +209,7 @@ interpretation as settled without explicit approval and an updated ADR. See
 
 ### Model-library authority and invariants
 
-For catalog, download, activate, launch, pin, purge, or model-validation work,
+For catalog, download, prepare, launch, pin, purge, or model-validation work,
 read `docs/MODEL_LIBRARY_DESIGN.md` and the applicable record under
 `docs/decisions/` before changing behavior. Authority descends from this file,
 to the accepted design and decision records, to current implementation specs,
@@ -217,6 +217,11 @@ operator runbooks, and finally validation ledgers/evidence. Current code or a
 new result does not silently override an accepted architectural decision.
 Use `skills/change-pulsar-model-library/SKILL.md` as the repeatable workflow for
 this work; the skill is procedural and does not outrank these sources.
+
+- Use **prepare model for serving** and **model preparation** in operator-facing
+  language. Preparation resolves, distributes, and verifies model files but does
+  not start a container or establish model qualification. `activate` is a
+  backward-compatible command and internal-schema term, not the product label.
 
 - `STATUS=tested` ultimately binds an immutable validation bundle, not a model
   repository ID alone. Expected identity comes from lab validation; locally
@@ -243,7 +248,7 @@ this work; the skill is procedural and does not outrank these sources.
 ### Operational hygiene
 
 - Prefer atomic writes for site-local JSON/state (write temp + rename).
-- Idempotent setup where practical; incomplete rollback must be explicit and recoverable (`teardown` / purge / re-activate).
+- Idempotent setup where practical; incomplete rollback must be explicit and recoverable (`teardown` / purge / prepare again).
 - Human CLI output remains a product surface (see Command-Line Experience); keep `--json` stable for automation.
 - Scope PRs tightly: one concern per change; do not mix experimental fabric promotion with unrelated refactors.
 

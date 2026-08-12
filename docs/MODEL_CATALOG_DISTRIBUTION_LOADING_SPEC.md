@@ -56,7 +56,7 @@ post-issuance physical `library-hot` enforcement. Flagship
 `deepseek-v4-flash` carries the second reviewed identity and has now passed the
 applicable two-node physical enforcement gate. The lab duplicate was later
 reconciled to one persistent rank-1 durable home, and a clean two-rank repeat
-passed sealed activation, exact launch, completion, cleanup, and return to the
+passed sealed preparation, exact launch, completion, cleanup, and return to the
 one-home steady state. Profiles without a seal
 remain legacy-unsealed, and neither issuance nor gate promotes the
 model-library path.
@@ -174,6 +174,10 @@ that way.
 - **Serve witness**: rank-local schema-1 metadata record created only after a
   stable full SHA-256 verification. It accelerates unchanged launches but is
   never an expected-identity source.
+- **Model preparation**: the user-facing operation that resolves exact identity,
+  creates rank-local runtime views, transfers non-home bytes, and verifies all
+  ranks without starting a serving container. `prepare` is the preferred shell
+  command; `activate` remains a compatibility alias and internal schema term.
 - **Runtime source**: target per-rank classification of `durable-home`,
   `sealed-hot`, or `live-mount`.
 - **Confirmed topology**: a validated site manifest with stable identity and
@@ -929,7 +933,7 @@ absence.
 The final complete durable home is an ordinary blocker unless the operator
 passes `--allow-last-home`; that acknowledgement states that the exact revision
 will become unavailable. `home remove` additionally requires `--yes`. Supported
-catalog, activation, launch, readiness, download, and fabric entrypoints hold a
+catalog, preparation, launch, readiness, download, and fabric entrypoints hold a
 shared lifecycle lock, while both home commands hold the exclusive lock from
 observation through mutation. This prevents a supported command from creating
 a managed reference after the plan is built.
@@ -982,14 +986,14 @@ Model-library catalog schema 2 closes the repository-ID-only trust gap when a
 profile references a reviewed seal: refresh enumerates complete snapshot
 commit directories without using mutable `refs/main`, selects only the
 immutable expected commit, and labels the local home `expected-unverified`.
-Activation inspects that same revision explicitly, computes the observed
+Preparation inspects that same revision explicitly, computes the observed
 complete manifest, requires model/revision/manifest equality, and publishes
 hot schema 3 only after full verification. A configured mismatch cannot be
 bypassed with `--allow-unvalidated`.
 
 Profiles without a seal remain `legacy-unsealed`, including
 `qwen3-1.7b-2node`. Their historical `STATUS=tested*` claim does not
-machine-bless arbitrary content and library activation requires explicit
+machine-bless arbitrary content and library preparation requires explicit
 `--allow-unvalidated`. The one-node diagnostic `qwen3-1.7b` profile is the
 first issued exception and flagship `deepseek-v4-flash` is the second. Sealed
 replicated mode enforces the same expected commit/manifest identity;
@@ -1066,10 +1070,10 @@ promotes any experimental storage path for general users.
 | Three-node concurrent loading/traffic proof | PENDING | Three ranks pass readiness/full integrity, but concurrent three-node promotion evidence remains required. |
 | Restart loop and sustained fabric soak | PENDING | Required before general promotion. |
 | Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
-| One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash activation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
+| One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash preparation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
 | Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection were disclosed conditions of that earlier run; the later one-home gate supersedes only that steady-state limitation. The earlier run by itself is not steady-state storage proof or a promotion. |
 | Persistent primary and guarded reconciliation | PASS, deterministic and three-node physical targeting | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. A disposable physical repeat also proved direct pre-selection refusal, refresh persistence, selected-primary refusal, exact non-primary deletion, sibling preservation, and one-home catalog state. |
-| Flagship DeepSeek one-home steady state | PASS on the real two-node serving geometry | The existing duplicate was reconciled to one persistent rank-1 durable home. Rank 0 then received an eight-stream SSH-over-RoCE sealed-hot copy in 73 seconds; full verification completed in 47 seconds and activation in 120 seconds. Both ranks used zero-byte unchanged witnesses and read-only exact-snapshot mounts; first health, all eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home inventory passed. This closes physical duplicate reconciliation, not strict determinism, sustained soak, or promotion. |
+| Flagship DeepSeek one-home steady state | PASS on the real two-node serving geometry | The existing duplicate was reconciled to one persistent rank-1 durable home. Rank 0 then received an eight-stream SSH-over-RoCE sealed-hot copy in 73 seconds; full verification completed in 47 seconds and preparation in 120 seconds. Both ranks used zero-byte unchanged witnesses and read-only exact-snapshot mounts; first health, all eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home inventory passed. This closes physical duplicate reconciliation, not strict determinism, sustained soak, or promotion. |
 | Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
 | Read-only health and legacy-hot repair | PASS, deterministic and three-node physical | Stable sanitized health schema 1, Doctor warnings, shallow no-hash observations, repair-ID binding, stopped-container/pinned blockers, local and remote removal, atomic no-follow retirement, sibling preservation, preserved-untracked attention, and the affected exact-home removal subset passed. No production content was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
@@ -1144,7 +1148,7 @@ commit, complete manifest ID, validation-bundle ID, issuer, issuance time, and
 repository-relative evidence. Catalog schema 2 stores expected identity and
 observed availability separately. Hot schema 3 stores expected and observed
 seal projections with `match | legacy-unsealed | unvalidated`; file or profile
-seal drift fails activation/launch, and launch passes the exact snapshot path.
+seal drift fails preparation/launch, and launch passes the exact snapshot path.
 Container labels and multi-node startup evidence carry the same identities.
 
 The schema-1 bundle is stored at
@@ -1178,7 +1182,7 @@ default to upstream `main`. Sealed replicated profiles are bound:
 download requests the exact commit, every copied rank is full-verified, and
 launch uses an exact read-only snapshot plus revision/seal/bundle labels.
 Live-mount remains unbound. Rank-local witness schema 1 is implemented for
-`library-hot` and as a distinct replicated-cache witness: activation or
+`library-hot` and as a distinct replicated-cache witness: preparation or
 acquisition full-verifies
 before atomic creation, and launch validates the live profile/controller
 expectation before using it. A metadata match hashes zero model bytes. Missing,
@@ -1281,7 +1285,7 @@ operator first verifies it out of band, updates normal OpenSSH trust, and uses
 `--accept-key-change`; neither setup nor doctor can silently accept it.
 
 The deterministic drift/rotation/collision suite and a 15-binding physical
-three-node check passed on 2026-08-10. A Qwen 1.7B two-node canary then activated
+three-node check passed on 2026-08-10. A Qwen 1.7B two-node canary then prepared
 a 4,079,450,110-byte sealed snapshot with eight SSH-over-RoCE streams in nine
 seconds and full-verified both ranks. See
 `results/model-library/topology-ssh-trust-gate-20260810.json`.
@@ -1301,7 +1305,7 @@ alongside a control-path copy backend:
 
 This removes hard NFS mounts from the runtime. The implementation includes
 federated warm catalog discovery, an optional cold tier, copy and fabric
-activate backends, schema-3 expected/observed full-content hot seals,
+preparation backends, schema-3 expected/observed full-content hot seals,
 transfer-plane release, exact all-rank filesystem admission,
 pin/unpin/purge, and `library-hot` launch/stop hooks.
 Remote serving ranks receive temporary or pinned hot copies, giving up the
@@ -1386,7 +1390,7 @@ repository so one rank's filesystem identity is never distributed to another.
 This path is implemented but experimental and unpromoted. It must continue to
 be evaluated against replicated mode and live fabric rather than being assumed
 to supersede either one. In particular, the one-shot `nfs-rdma` backend cannot claim the fast path
-unless its measured activation wall time beats `ssh-control` on the same model
+unless its measured preparation wall time beats `ssh-control` on the same model
 and topology.
 
 ## 17. Current near-term posture
@@ -1396,7 +1400,7 @@ These points combine current evidence with the accepted architecture:
 1. Keep replicated local HF caches as the guided default.
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
-3. Accept the measured 8-stream SSH-over-RoCE activation and sealed local-hot
+3. Accept the measured 8-stream SSH-over-RoCE preparation and sealed local-hot
    results in the catalog/artifact and serving-integration scopes. Keep it as a
    separate release-promotion candidate; do not guide it until the combined
    gates, including applicable model qualification and soak, pass.
@@ -1583,7 +1587,7 @@ The implementation described here is primarily defined by:
   configuration, manifest, NFS/RDMA lifecycle, verification, and measurement;
 - [`scripts/model-library.sh`](../scripts/model-library.sh) and
   [`scripts/model_library.py`](../scripts/model_library.py) — experimental
-  federated catalog, cold resolution, copy/fabric activation, hot-state,
+  federated catalog, cold resolution, copy/fabric preparation, hot-state,
   pin/purge, release, and benchmark workflows;
 - [`scripts/model_identity.py`](../scripts/model_identity.py) — canonical pure
   profile-contract, validation-bundle, and expected-seal schemas and IDs;
@@ -1594,7 +1598,7 @@ The implementation described here is primarily defined by:
   runbook and trust boundary;
 - [`docs/WEIGHT_FABRIC.md`](./WEIGHT_FABRIC.md) — operator design/runbook;
 - [`docs/MODEL_LIBRARY_DESIGN.md`](./MODEL_LIBRARY_DESIGN.md) — canonical
-  architecture for the experimental library + activate path;
+  architecture for the experimental library + preparation path;
 - [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md)
   — accepted durable-home view and validation-identity decision;
 - [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
@@ -1609,7 +1613,7 @@ The implementation described here is primarily defined by:
 
 The current approach is conservative at the user boundary: profiles are
 validated, topology is confirmed rather than inferred, replicated local caches
-remain the default, and experimental single-copy storage never activates or
+remain the default, and experimental single-copy storage never prepares or
 falls back automatically.
 
 The experimental implementation is substantially stronger than a generic NFS
@@ -1622,7 +1626,7 @@ The separate library-hot implementation now provides federated catalog
 discovery, optional cold resolution, schema-3 expected/observed hot seals,
 content-addressed schema-1 validation-bundle verification, release before
 launch, and pin/purge lifecycle hooks. Counterbalanced DeepSeek trials
-showed that 8-stream SSH-over-RoCE activation was 1.898x the control-path
+showed that 8-stream SSH-over-RoCE preparation was 1.898x the control-path
 median; 16 streams did not improve the median. Integrity, interruption/retry,
 catalog-loss restart, real serving, and 447k-context gates also passed.
 
@@ -1638,7 +1642,7 @@ The flagship DeepSeek identity also passed applicable post-issuance two-node
 physical enforcement. Persistent selection and guarded reconciliation pass
 deterministic contracts and a three-node disposable physical targeting repeat.
 The existing lab duplicate was then reconciled to one persistent durable home,
-and the exact sealed lifecycle passed again from activation through cleanup and
+and the exact sealed lifecycle passed again from preparation through cleanup and
 final one-home inventory. The active-use
 removal guard also passed deterministic and three-node physical checks using
 disposable synthetic repositories. Exact all-rank hot admission is now
@@ -1655,7 +1659,7 @@ retains its owner-recovery and three-node validation work. The accurate product 
 > retain historical legacy-unsealed behavior. Model-library code recognizes
 > reviewed seal/bundles for diagnostic `qwen3-1.7b` and flagship
 > `deepseek-v4-flash`; both have completed their applicable post-issuance
-> physical enforcement gates. Sealed local-hot activation over
+> physical enforcement gates. Sealed local-hot preparation over
 > SSH-over-RoCE remains a measured promotion candidate, and live NFS/RDMA is a
 > separate documented
 > experiment; neither is a promoted default.

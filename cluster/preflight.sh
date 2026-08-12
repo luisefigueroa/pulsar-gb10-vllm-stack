@@ -193,7 +193,7 @@ if [ -n "$PROFILE" ]; then
         --weight-source library-hot >/dev/null; then
       ok "library-hot: ready hot staging for $PROFILE"
     else
-      bad "library-hot not ready — run: scripts/model-library.sh activate $PROFILE --yes"
+      bad "library-hot not ready — run: scripts/model-library.sh prepare $PROFILE --yes"
     fi
   else
     if "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" --weight-source replicated >/dev/null; then

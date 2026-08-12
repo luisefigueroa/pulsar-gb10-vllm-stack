@@ -48,11 +48,11 @@ Usage:
       [--cache-root PATH] [--yes]
   scripts/model-library.sh cold stage-only <profile>
       [--allow-unvalidated] [--yes] [--nodes N]
-  scripts/model-library.sh activate <profile>
+  scripts/model-library.sh prepare <profile>
       [--transport ssh-control|ssh-roce|nfs-rdma] [--backend copy|fabric]
       [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
       [--copy-streams N]
-  scripts/model-library.sh bench-activate <profile> [--tag TAG] [--yes]
+  scripts/model-library.sh bench-prepare <profile> [--tag TAG] [--yes]
       [--interactive-sudo] [--output PATH] [--nodes N]
   scripts/model-library.sh probe-ssh-roce <profile> [--nodes N] [--rail-index N]
   scripts/model-library.sh bench-ssh-roce <profile> [--tag TAG] [--yes]
@@ -79,7 +79,7 @@ Notes:
     catalog list --validated shows present entries with reviewed expected seals.
     Sealed profiles also require a content-addressed validation bundle whose
     model, image, runtime, geometry, artifact, and evidence contract matches.
-    activate refuses legacy-unsealed profiles unless --allow-unvalidated marks
+    prepare refuses legacy-unsealed profiles unless --allow-unvalidated marks
     an explicit experiment; that flag never bypasses a configured seal mismatch.
   • Duplicate complete homes refuse resolve until an exact-revision primary is
     chosen. The selection persists in the site catalog across refreshes; a
@@ -90,16 +90,16 @@ Notes:
     Removal is exact-repository-only, refuses multi-revision hub trees, and
     needs --allow-last-home before deleting the final durable copy. Duplicate
     removal requires a selected primary and can target only a non-primary home.
-  • activate --transport ssh-control|ssh-roce selects rsync SSH over the
+  • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
     (1..16). The current default remains ssh-control with one stream while the
     ssh-roce/8-stream promotion gates are completed.
-  • activate full-verifies every rank and creates a rank-local serve witness.
+  • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails closed.
-  • activate --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
+  • prepare --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
     to fill hot, then releases mounts/export. No silent fallback to copy.
-  • bench-activate runs copy then fabric (purge between), writes a JSON report;
+  • bench-prepare runs copy then fabric (purge between), writes a JSON report;
     fabric_claims_fast_path only if fabric wall time is strictly less than copy.
     Benchmark/probe commands are explicit experiments and permit legacy-unsealed
     profiles, but a configured expected-seal mismatch still fails closed.
@@ -108,18 +108,21 @@ Notes:
     and sshd on fabric IPs. Each report is one ordered pair; repeat both
     --order values before any fast-path decision.
   • pin prevents purge. Cold stage-only hot is self-contained; warm-home
-    activation currently keeps a home-rank symlink and still needs that home.
+    preparation currently keeps a home-rank symlink and still needs that home.
   • health is read-only: it uses the cached catalog, shallow metadata/witness
     observations, and managed-container labels without hashing model bytes.
     Schema-1/2 hot instances are untrusted; removal requires a health-issued
     repair ID, a fresh fail-closed check, and --yes. Pinned removal additionally
     requires --force-unpin. Doctor never repairs automatically.
-  • activate, cold stage-only, pin, and budget observe every selected rank.
+  • prepare, cold stage-only, pin, and budget observe every selected rank.
     The default preserves max(64 GiB, 5% of filesystem capacity) as available
     space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
     PULSAR_HOT_RESERVE_BYTES explicitly overrides the reserve. No auto-eviction
     or capacity fallback occurs.
   • Does not change wizard defaults or --weight-source fabric.
+  • Compatibility: activate and bench-activate remain supported aliases for
+    prepare and bench-prepare. Model preparation does not start a serving
+    container or establish model qualification.
 EOF
 }
 
@@ -239,14 +242,14 @@ inspect_catalog_home() {
   model_id=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
   revision=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
   [ -n "$revision" ] \
-    || die "activate: catalog entry lacks an exact snapshot revision"
+    || die "prepare: catalog entry lacks an exact snapshot revision"
   if ! [[ "$home_rank" =~ ^[0-9]+$ ]] \
       || [ "$home_rank" -ge "${CLUSTER_TOPOLOGY_COUNT:-0}" ]; then
-    die "activate: catalog home rank is outside confirmed topology"
+    die "prepare: catalog home rank is outside confirmed topology"
   fi
   expected_node="${CLUSTER_NODE_IDS[$home_rank]:-}"
   if [ -z "$expected_node" ] || [ "$node_id" != "$expected_node" ]; then
-    die "activate: catalog home identity differs from confirmed topology"
+    die "prepare: catalog home identity differs from confirmed topology"
   fi
   if [ "$home_rank" = 0 ]; then
     python3 "$PY_TOOL" inspect-hub \
@@ -872,7 +875,7 @@ cmd_cold_stage_only() {
   Unpinned restart will need cold again."
 
   # Local controller materialize + stamp (multi-rank stage-only copies hub_dest
-  # via the same rsync path as activate when nodes>1 — rank 0 first).
+  # via the same rsync preparation path when nodes>1 — rank 0 first).
   python3 "$PY_TOOL" "${plan_args[@]}" --execute >/dev/null
 
   if [ "$nodes" -gt 1 ]; then
@@ -1977,7 +1980,7 @@ for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
 ')
 
   library_confirm "$yes" \
-    "Arm ephemeral NFS/RDMA export on home rank $home_rank and mount RoCE clients for library activate?"
+    "Prepare model files using an ephemeral NFS/RDMA export from home rank $home_rank?"
 
   # Owner identity for root_squash mapping
   if [ "$home_rank" = 0 ]; then
@@ -2074,7 +2077,7 @@ cmd_release_transfer() {
     log "no multi-rank fabric transfer plane for this profile (action=$action)"
     return 0
   fi
-  library_confirm "$yes" "Release ephemeral library-activate NFS/RDMA mounts/export for $profile?"
+  library_confirm "$yes" "Release ephemeral model-preparation NFS/RDMA mounts/export for $profile?"
   fabric_release_transfer "$plan"
 }
 
@@ -2118,20 +2121,20 @@ cmd_activate() {
     shift
   done
   [ -n "$profile" ] \
-    || die "usage: activate <profile> [--transport ssh-control|ssh-roce|nfs-rdma]"
+    || die "usage: prepare <profile> [--transport ssh-control|ssh-roce|nfs-rdma]"
   case "$backend" in
     copy|fabric) ;;
-    *) die "activate: --backend must be copy or fabric" ;;
+    *) die "prepare: --backend must be copy or fabric" ;;
   esac
   if [ -n "$transport" ]; then
     case "$transport" in
       ssh-control) expected_backend=copy; requested_mode=control ;;
       ssh-roce) expected_backend=copy; requested_mode=roce ;;
       nfs-rdma) expected_backend=fabric; requested_mode=control ;;
-      *) die "activate: --transport must be ssh-control, ssh-roce, or nfs-rdma" ;;
+      *) die "prepare: --transport must be ssh-control, ssh-roce, or nfs-rdma" ;;
     esac
     if [ "$backend_explicit" = 1 ] && [ "$backend" != "$expected_backend" ]; then
-      die "activate: --transport $transport conflicts with --backend $backend"
+      die "prepare: --transport $transport conflicts with --backend $backend"
     fi
     backend="$expected_backend"
     COPY_SSH_MODE="$requested_mode"
@@ -2145,7 +2148,7 @@ cmd_activate() {
   fi
   validate_copy_stream_settings
   if [ "$backend" != copy ] && [ "$COPY_STREAMS" -ne 1 ]; then
-    die "activate: --copy-streams is only valid with an SSH transport"
+    die "prepare: --copy-streams is only valid with an SSH transport"
   fi
   require_py
   ensure_catalog
@@ -2174,15 +2177,15 @@ cmd_activate() {
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
 
   budget_plan=$(build_hot_budget_plan_from_activation "$plan" activate) \
-    || die "activate: all-rank hot admission failed"
+    || die "prepare: all-rank hot admission failed"
   render_hot_budget_plan_json "$budget_plan"
   hot_budget_plan_is_eligible "$budget_plan" \
-    || die "activate: hot admission is blocked; no bytes were changed"
+    || die "prepare: hot admission is blocked; no bytes were changed"
 
   if [ "$backend" = copy ]; then
-    log "activate $profile action=$action transport=$transport copy_streams=$COPY_STREAMS hot=$instance"
+    log "preparing model files profile=$profile action=$action transport=$transport copy_streams=$COPY_STREAMS hot=$instance"
   else
-    log "activate $profile action=$action transport=$transport hot=$instance"
+    log "preparing model files profile=$profile action=$action transport=$transport hot=$instance"
   fi
 
   if [ "$action" = skip ]; then
@@ -2192,7 +2195,7 @@ cmd_activate() {
         "$CLUSTER_TOPOLOGY_ID" 0 "$expected_validation_json" \
         || die "rank $rank: hot verify failed"
     done
-    log "activate complete (reused hot)"
+    log "model files prepared (reused verified runtime views; model not started)"
     return 0
   fi
 
@@ -2347,7 +2350,7 @@ print("re-run with --yes to execute (no silent fallback to copy)")
 
   # Non-interactive job control gives every asynchronous rank worker its own
   # process group, with the tracked PID as PGID. Cleanup can then terminate
-  # only descendants created by this activation.
+  # only descendants created by this preparation.
   set -m
   rank_jobs_grouped=1
 
@@ -2432,9 +2435,9 @@ print("re-run with --yes to execute (no silent fallback to copy)")
   if [ "$time_it" = 1 ]; then
     end_ts=$(date +%s)
     elapsed=$((end_ts - start_ts))
-    log "activate wall_time_seconds=$elapsed backend=$backend"
+    log "prepare wall_time_seconds=$elapsed backend=$backend"
   fi
-  log "activate complete"
+  log "model files prepared on all serving ranks; model not started"
   printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["instance_dir"]); print(d["hub_dest"])'
 }
 
@@ -2569,8 +2572,8 @@ cmd_budget() {
   hot_budget_plan_is_eligible "$plan"
 }
 
-# Fair cold-ish activate timing: purge hot, run backend.
-# Activate logs go to stderr so command-substitution captures only seconds.
+# Fair cold-ish preparation timing: purge hot, run backend.
+# Preparation logs go to stderr so command-substitution captures only seconds.
 # Optional second arg path: write phase TSV (name\tseconds) for bench JSON.
 timed_activate_backend() {
   local profile="${1:?}" backend="${2:?}" phase_out="${3:-}"
@@ -2582,15 +2585,15 @@ timed_activate_backend() {
   start_ts=$(date +%s.%N 2>/dev/null || date +%s)
   if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
     if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
-      "$0" activate "$profile" --backend "$backend" --allow-unvalidated --yes --interactive-sudo 1>&2; then
+      "$0" prepare "$profile" --backend "$backend" --allow-unvalidated --yes --interactive-sudo 1>&2; then
       rm -f "$phase_tmp"
-      die "timed activate --backend $backend failed"
+      die "timed preparation --backend $backend failed"
     fi
   else
     if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
-      "$0" activate "$profile" --backend "$backend" --allow-unvalidated --yes 1>&2; then
+      "$0" prepare "$profile" --backend "$backend" --allow-unvalidated --yes 1>&2; then
       rm -f "$phase_tmp"
-      die "timed activate --backend $backend failed"
+      die "timed preparation --backend $backend failed"
     fi
   fi
   end_ts=$(date +%s.%N 2>/dev/null || date +%s)
@@ -2653,18 +2656,18 @@ cmd_bench_activate() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: bench-activate <profile> [--tag TAG] [--yes] [--nodes N]"
-  [ "$yes" = 1 ] || die "bench-activate is destructive to hot staging — re-run with --yes"
+  [ -n "$profile" ] || die "usage: bench-prepare <profile> [--tag TAG] [--yes] [--nodes N]"
+  [ "$yes" = 1 ] || die "bench-prepare is destructive to hot staging — re-run with --yes"
   require_py
   ensure_catalog
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
   nodes="${nodes_override:-$NODES}"
   if ! [[ "$nodes" =~ ^[0-9]+$ ]] || [ "$nodes" -lt 1 ]; then
-    die "bench-activate: --nodes must be a positive integer"
+    die "bench-prepare: --nodes must be a positive integer"
   fi
   if [ "$nodes" -gt "$CLUSTER_TOPOLOGY_COUNT" ]; then
-    die "bench-activate: --nodes $nodes exceeds topology count $CLUSTER_TOPOLOGY_COUNT"
+    die "bench-prepare: --nodes $nodes exceeds topology count $CLUSTER_TOPOLOGY_COUNT"
   fi
   [ -n "$tag" ] || tag="activate-bench-$(date -u +%Y%m%dT%H%M%SZ)"
   [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-${tag}.json"
@@ -2678,23 +2681,23 @@ cmd_bench_activate() {
     --backend copy \
     --allow-unvalidated \
     --nodes "$nodes") \
-    || die "bench-activate: plan-activate failed (catalog primary or model identity?)"
+    || die "bench-prepare: preparation plan failed (catalog primary or model identity?)"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
   bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
   topo_id="$CLUSTER_TOPOLOGY_ID"
-  log "bench-activate $profile tag=$tag"
+  log "bench-prepare $profile tag=$tag"
   local copy_phases_file fabric_phases_file copy_phases_json fabric_phases_json
   copy_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-copy-phases.XXXXXX")
   fabric_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-fabric-phases.XXXXXX")
   # shellcheck disable=SC2064
   trap "rm -f '$copy_phases_file' '$fabric_phases_file'" RETURN
 
-  log "running timed copy activate…"
+  log "running timed copy preparation…"
   copy_s=$(timed_activate_backend "$profile" copy "$copy_phases_file")
   log "copy wall_time_seconds=$copy_s"
   copy_phases_json=$(phases_tsv_to_json "$copy_phases_file")
 
-  log "running timed fabric activate…"
+  log "running timed fabric preparation…"
   fabric_s=$(timed_activate_backend "$profile" fabric "$fabric_phases_file")
   log "fabric wall_time_seconds=$fabric_s"
   fabric_phases_json=$(phases_tsv_to_json "$fabric_phases_file")
@@ -2719,7 +2722,7 @@ cmd_bench_activate() {
   if [ "$verdict" = fabric_faster ]; then
     log "B-gate: fabric claims fast path (fabric < copy)"
   else
-    log "B-gate: fabric does NOT claim fast path (verdict=$verdict); keep advertising copy as default activate"
+    log "B-gate: fabric does NOT claim fast path (verdict=$verdict); keep copy as the preparation baseline"
   fi
 }
 
@@ -2760,7 +2763,7 @@ cmd_probe_ssh_roce() {
     --backend copy \
     --allow-unvalidated \
     --nodes "$nodes") \
-    || die "probe-ssh-roce: plan-activate failed"
+    || die "probe-ssh-roce: preparation plan failed"
   home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
   load_copy_ssh_roce_map "$home_rank" "$nodes" "$rail_index"
   log "probe-ssh-roce profile=$profile home_rank=$home_rank nodes=$nodes"
@@ -2898,7 +2901,7 @@ cmd_bench_ssh_roce() {
     --backend copy \
     --allow-unvalidated \
     --nodes "$nodes") \
-    || die "bench-ssh-roce: plan-activate failed"
+    || die "bench-ssh-roce: preparation plan failed"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
   bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
   home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
@@ -2915,7 +2918,7 @@ cmd_bench_ssh_roce() {
   for leg in "${bench_order[@]}"; do
     case "$leg" in
       control)
-        log "running timed CONTROL (mgmt) SSH copy activate…"
+        log "running timed CONTROL (mgmt) SSH preparation…"
         COPY_SSH_MODE=control
         export PULSAR_COPY_SSH_MODE=control
         phase_file="$control_phases_file"
@@ -2923,12 +2926,12 @@ cmd_bench_ssh_roce() {
         log "control wall_time_seconds=$control_s"
         ;;
       ssh_roce)
-        log "running timed SSH-over-RoCE copy activate…"
+        log "running timed SSH-over-RoCE preparation…"
         COPY_SSH_MODE=roce
         export PULSAR_COPY_SSH_MODE=roce
         export PULSAR_FABRIC_RAIL_INDEX="$rail_index"
         phase_file="$roce_phases_file"
-        # Map reloads inside activate; keep the selected rail visible to child.
+        # Map reloads inside preparation; keep the selected rail visible to child.
         roce_s=$(timed_activate_backend "$profile" copy "$phase_file")
         log "ssh_roce wall_time_seconds=$roce_s"
         ;;
@@ -2956,7 +2959,7 @@ cmd_bench_ssh_roce() {
     --control-phases-json "$control_phases_json" \
     --ssh-roce-phases-json "$roce_phases_json" \
     --ssh-roce-map-json "$LIBRARY_SSH_ROCE_MAP_JSON" \
-    --notes "experiment: same rsync activate; control SSH host vs topology RoCE IP (TCP over RoCE NIC, not NFS/RDMA). Product default unchanged." \
+    --notes "experiment: same rsync preparation; control SSH host vs topology RoCE IP (TCP over RoCE NIC, not NFS/RDMA). Product default unchanged." \
     --output "$output"
 
   local verdict
@@ -2985,7 +2988,7 @@ main() {
       ;;
   esac
   case "$cmd" in
-    activate|pin|unpin|purge-hot)
+    prepare|activate|pin|unpin|purge-hot)
       acquire_model_library_hot_lock exclusive
       ;;
     cold)
@@ -3053,8 +3056,8 @@ main() {
         *) usage; exit 2 ;;
       esac
       ;;
-    activate) cmd_activate "$@" ;;
-    bench-activate) cmd_bench_activate "$@" ;;
+    prepare|activate) cmd_activate "$@" ;;
+    bench-prepare|bench-activate) cmd_bench_activate "$@" ;;
     probe-ssh-roce) cmd_probe_ssh_roce "$@" ;;
     bench-ssh-roce) cmd_bench_ssh_roce "$@" ;;
     release-transfer) cmd_release_transfer "$@" ;;

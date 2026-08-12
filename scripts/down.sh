@@ -11,7 +11,7 @@
 #
 # After a successful profile stop, optional library-hot hooks:
 #   --pin-weights   protect retained hot staging from purge; warm-home
-#                   activation may still depend on its durable home symlink
+#                   preparation may still depend on its durable home symlink
 #   --purge-hot     delete hot staging (default is leave hot untouched)
 set -euo pipefail
 SCRIPT_NAME=down

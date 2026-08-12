@@ -11,7 +11,7 @@ Qualification scope and evidence reuse are governed by
 Every artifact has a qualification scope: catalog/artifact, serving integration,
 model qualification, or combined release/promotion. A result remains valid
 within its measured inputs and contract unless a causal dependency invalidates
-it. Catalog health, activation, witness, and lifecycle evidence cannot be
+it. Catalog health, preparation, witness, and lifecycle evidence cannot be
 promoted into accuracy or determinism claims; a model-runtime failure does not
 erase unchanged catalog evidence, but it blocks a combined release claim that
 requires both.
@@ -36,7 +36,7 @@ never publishable evidence.
 Later on 2026-08-11, the one-node diagnostic `qwen3-1.7b` profile became the
 first reviewed lab-issued identity. Its candidate reproduced byte-for-byte,
 the exact snapshot and fresh runtime gates passed privacy review, and the
-issued seal/bundle then passed physical `library-hot` activation, launch,
+issued seal/bundle then passed physical `library-hot` preparation, launch,
 zero-byte witness verification, smoke, and cleanup. This does not alter the
 legacy scope of the earlier two-node artifact, seal `qwen3-1.7b-2node`, or
 promote model-library distribution.
@@ -80,7 +80,7 @@ The existing lab duplicate was subsequently reconciled under explicit operator
 authorization: rank 1 became the persistent primary and the rank-0 redundant
 repository was removed through the guarded home-removal service. Starting from
 that real one-home state, a clean DeepSeek repeat passed eight-stream
-SSH-over-RoCE activation, exact full verification, durable-home/sealed-hot
+SSH-over-RoCE preparation, exact full verification, durable-home/sealed-hot
 placement, zero-byte witnesses, read-only launch, all eight warmup phases,
 completion smoke, owned stop and hot purge, and final healthy one-home
 inventory. This closes the physical steady-state condition; it does not close
@@ -116,28 +116,28 @@ duplicate was changed by this work.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
-| [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE activation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; strict determinism, sustained soak, and promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
+| [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; strict determinism, sustained soak, and promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`model-library-health-legacy-repair-gate-20260812.json`](./model-library-health-legacy-repair-gate-20260812.json) | Three-node read-only health, repair-ID-bound schema-1/2 removal, stopped-container/pinned blockers, no-follow/sibling preservation, and exact disposable-home removal; synthetic data only | Current health/legacy-repair physical PASS; no real cleanup, reconciliation, or storage-path promotion | Reviewed; site topology, paths, hosts, nodes, containers, repair IDs, and filesystem identity omitted |
 | [`model-library-primary-selection-reconciliation-gate-20260812.json`](./model-library-primary-selection-reconciliation-gate-20260812.json) | Three-node persistent exact-revision selection and guarded non-primary reconciliation; disposable synthetic HF-layout repositories only | Current selected-primary targeting PASS; existing DeepSeek duplicate unchanged; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; paired physical enforcement artifact now passes; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |
-| [`deepseek-v4-flash-sealed-enforcement-gate-20260812.json`](./deepseek-v4-flash-sealed-enforcement-gate-20260812.json) | Post-issuance two-node exact-seal activation, full verification, durable-home/sealed-hot placement, read-only launch, identity labels, zero-byte witnesses, smoke, and cleanup | Current flagship sealed `library-hot` enforcement PASS with duplicate-durable-cache/temporary-primary condition disclosed; not steady-state storage proof or a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
+| [`deepseek-v4-flash-sealed-enforcement-gate-20260812.json`](./deepseek-v4-flash-sealed-enforcement-gate-20260812.json) | Post-issuance two-node exact-seal preparation, full verification, durable-home/sealed-hot placement, read-only launch, identity labels, zero-byte witnesses, smoke, and cleanup | Current flagship sealed `library-hot` enforcement PASS with duplicate-durable-cache/temporary-primary condition disclosed; not steady-state storage proof or a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-snapshot-manifest-20260812.json`](./deepseek-v4-flash-snapshot-manifest-20260812.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued DeepSeek revision; 74 files, 166,898,661,074 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
 | [`qwen3-1.7b-release-validation-20260811.json`](./qwen3-1.7b-release-validation-20260811.json) | Reviewed release summary for Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, exact one-node profile, and digest-pinned image | Current first-identity issuance input PASS; not a storage-path promotion | Reviewed; repository-relative evidence only; site identity omitted |
 | [`qwen3-1.7b-snapshot-manifest-20260811.json`](./qwen3-1.7b-snapshot-manifest-20260811.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued Qwen revision; 12 files, 4,079,450,110 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
 | [`qwen3-1.7b-release-identity-20260811-runA.json`](../qwen3-1.7b-release-identity-20260811-runA.json) | Fresh exact-profile greedy capture A for the issued one-node Qwen identity | Current release validation PASS; 30-prompt source capture | Reviewed; prompts/results contain no site identity or secrets |
 | [`qwen3-1.7b-release-identity-20260811-runB.json`](../qwen3-1.7b-release-identity-20260811-runB.json) | Fresh exact-profile greedy capture B for the issued one-node Qwen identity | Current determinism PASS; 30/30 identical to run A | Reviewed; prompts/results contain no site identity or secrets |
 | [`qwen3-1.7b-release-identity-20260811-bench.json`](../qwen3-1.7b-release-identity-20260811-bench.json) | Fresh throughput capture for the issued one-node Qwen identity | Current release performance record; c=1/2/4/8 complete | Reviewed; no site identity or secrets |
-| [`qwen3-1.7b-sealed-enforcement-gate-20260811.json`](./qwen3-1.7b-sealed-enforcement-gate-20260811.json) | Post-issuance exact-seal catalog, activation, read-only launch, identity-label, zero-byte witness, smoke, and cleanup proof | Current sealed `library-hot` enforcement PASS; not included in its own issuance bundle and not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
+| [`qwen3-1.7b-sealed-enforcement-gate-20260811.json`](./qwen3-1.7b-sealed-enforcement-gate-20260811.json) | Post-issuance exact-seal catalog, preparation, read-only launch, identity-label, zero-byte witness, smoke, and cleanup proof | Current sealed `library-hot` enforcement PASS; not included in its own issuance bundle and not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
 | [`qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json`](./qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json) | Shipped replicated-cache full verification, zero-byte witness, exact-snapshot read-only launch, identity labels, smoke, and cleanup for the issued Qwen identity | Current sealed replicated enforcement PASS; fresh download/copy covered deterministically but not physically rerun; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
 | `model-library-hot-budget-admission-gate-20260811.json` | Exact all-rank filesystem admission; DeepSeek revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`; capacity only, not model identity | Current hot-budget gate PASS; no model bytes changed; not a promotion | Reviewed; site topology, paths, hosts, node/interface identity, and filesystem identity omitted |
 | `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Historical baseline PASS for the broader lifecycle matrix; the later selected-primary targeting repeat now also passes; no production model was deleted; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
 | `qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json` | Physical durable-home symlink, sealed-hot, witness fallback, exact-snapshot launch, pin/restart, mismatch, and no-follow purge; Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, observed manifest only | Current lifecycle gate PASS; identity remains `legacy-unsealed`; not a promotion | Reviewed; site topology, paths, filesystem identity, and witness IDs omitted |
 | `model-library-promotion-assessment-20260810.json` | Consolidated DeepSeek/Qwen promotion assessment; schema-2 local content digest, not a lab-issued expected seal | Historical assessment; materialization recommendation superseded | Embedded redaction declaration; topology/site fields omitted |
-| `topology-ssh-trust-gate-20260810.json` | Topology-bound SSH alias/key/endpoint gate and Qwen sealed activation | Current gate evidence | Embedded redaction declaration |
+| `topology-ssh-trust-gate-20260810.json` | Topology-bound SSH alias/key/endpoint gate and Qwen sealed preparation | Current gate evidence | Embedded redaction declaration |
 | `deepseek-v4-flash-ssh-roce8-vs-control8-counterbalanced-20260810.json` | DeepSeek full-model `ssh-control` versus `ssh-roce` performance/traffic proof | Current performance evidence | Embedded redaction declaration |
 | `deepseek-v4-flash-parallel-rsync-roce-8v16-alternating-20260810.json` | DeepSeek 8-versus-16-stream alternating trials | Current stream-selection evidence | Embedded redaction declaration |
 | `deepseek-v4-flash-parallel-rsync-roce-16stream-20260810.json` | Initial variable 16-stream exploration | Historical exploratory evidence | Embedded redaction declaration |
-| `deepseek-v4-flash-dsv4-*.json` and `dsv4-bench-*.log` | Earlier copy versus one-shot NFS/RDMA activation work | Historical/superseded performance evidence | **Pending sanitation:** stable topology IDs and/or absolute workspace paths remain |
+| `deepseek-v4-flash-dsv4-*.json` and `dsv4-bench-*.log` | Earlier copy versus one-shot NFS/RDMA preparation work | Historical/superseded performance evidence | **Pending sanitation:** stable topology IDs and/or absolute workspace paths remain |
 | `codex-fabric-review-20260809.md` | Static review that motivated parallel copy and no home duplication | Historical design evidence; home-view conclusion retained | **Pending sanitation:** absolute local repository links remain |
 
 ## Publication rules
@@ -148,7 +148,7 @@ duplicate was changed by this work.
 - State the exact model revision/manifest or explicitly say when an artifact
   predates lab-issued expected-seal binding.
 - Declare the qualification scope and do not infer model correctness from
-  health, activation, or completion smoke.
+  health, preparation, or completion smoke.
 - Preserve valid cross-release subsystem evidence only when its measured inputs
   and contracts are unchanged; document any causal invalidation explicitly.
 - Mark evidence `current`, `historical`, `superseded`, `failed`, or

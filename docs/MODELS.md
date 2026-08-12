@@ -49,7 +49,7 @@ current live-mount launches remain mutable and are not content-bound.
 `STATUS=tested*` must not be interpreted as validating arbitrary bytes under
 the same repository ID. Do not generate an expected seal from a user cache;
 recover the lab artifact used for the run or revalidate the exact content.
-`library-hot` activation and sealed replicated acquisition both full-verify
+`library-hot` preparation and sealed replicated acquisition both full-verify
 before creating their distinct rank-local serve witnesses. Unchanged launch
 uses the applicable metadata fast path, while drift rehashes. Those mechanisms
 preserve an established identity but cannot turn legacy rows into lab-sealed

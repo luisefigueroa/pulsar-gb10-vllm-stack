@@ -228,7 +228,7 @@ if printf '%s\n' "$dry_output" | grep -Eq 'roceA[23]|mlxB[23]'; then
   exit 1
 fi
 if printf '%s\n' "$dry_output" | grep -q '^  rank 2 '; then
-  echo "FAIL exact two-node profile activated discovered rank 2" >&2
+  echo "FAIL exact two-node profile started discovered rank 2" >&2
   exit 1
 fi
 

@@ -19,7 +19,7 @@ enforcement:
 | Validation (`validate/`, `results/`) | Produces model-qualification evidence for exact model/image/profile/geometry inputs |
 | Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
-| Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, activation, and launch |
+| Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
 
 The Bash entrypoint sources the profile and passes its values to Python. Python
@@ -46,7 +46,7 @@ The reviewed evidence is indexed in
 [results/model-library/README.md](../results/model-library/README.md). A fresh
 candidate reproduced byte-for-byte before publication, the trusted bundle
 verifier returned `match`, and a post-issuance physical `library-hot`
-activation/launch used those exact identities. This narrowly establishes the
+preparation/launch used those exact identities. This narrowly establishes the
 one-node diagnostic claim. It does not seal `qwen3-1.7b-2node`, promote the
 model-library path, or content-bind live-mount and legacy-unsealed replicated
 launches. The sealed replicated path now enforces this issued identity.

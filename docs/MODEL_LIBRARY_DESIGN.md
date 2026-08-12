@@ -1,4 +1,4 @@
-# Model library, activate, and load
+# Model library preparation and serving
 
 > **Authority: canonical model-library architecture.**
 > The storage, identity, dependency, and lifecycle decisions in this document
@@ -31,12 +31,12 @@
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
-| Experimental today | `scripts/model-library.sh` catalog/cold/activate/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; and maintainer-only `scripts/model-release.sh` candidate assembly |
+| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; and maintainer-only `scripts/model-release.sh` candidate assembly |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a tested profile to
 its exact Hugging Face commit. Hot schema 3 records the expected seal,
-validation-bundle ID, and locally observed revision/manifest. Activation
+validation-bundle ID, and locally observed revision/manifest. Preparation
 full-hashes every rank and atomically writes a rank-local witness before
 publishing ready state. Launch first rechecks the live profile or controller
 expectation, then uses the witness when canonical view and file metadata are
@@ -80,7 +80,7 @@ and do not affect validation status.
 
 ## 1. Product requirements (co-equal)
 
-Any library / single-copy / activate design must satisfy all three. Winning only
+Any library / single-copy / preparation design must satisfy all three. Winning only
 a subset is incomplete for multi-node Spark users.
 
 | ID | Requirement | Success looks like |
@@ -112,7 +112,7 @@ library replica of every model.
 ### 1.2 Requirement B — reduce model loading time
 
 Load time = wall-clock to first healthy multi-node service (and useful
-sub-metrics: activate transfer time, time to weights resident).
+sub-metrics: preparation transfer time, time to weights resident).
 
 Levers: bytes per rank, path bandwidth, concurrent multi-rank transfer, warm
 reuse (pins), avoid unnecessary double I/O, non-I/O engine setup.
@@ -126,10 +126,10 @@ must-beat gate; B may yield where needed so A and C remain intact.
 
 | Dimension | Expectation |
 |---|---|
-| Fail-closed correctness | Partial snapshot, wrong transport, digest mismatch, or incomplete activate never reports healthy serving |
+| Fail-closed correctness | Partial snapshot, wrong transport, digest mismatch, or incomplete preparation never reports healthy serving |
 | Deterministic ops | Same config + topology → same checks; no silent environment shortcuts |
-| Lifecycle safety | Interrupted activate/start cleans up; stop is ownership-safe |
-| Fault clarity | Documented outcomes for activate interrupt, home unavailable, link loss during transfer, etc. |
+| Lifecycle safety | Interrupted preparation/start cleans up; stop is ownership-safe |
+| Fault clarity | Documented outcomes for preparation interruption, home unavailable, link loss during transfer, etc. |
 | Honest dependencies | If a mode needs library/home/cold, inventory and docs say so; if independence is claimed, it holds |
 | No silent fallback | Never auto-switch fabric → full N-replica pull (or TCP NFS) without operator-visible choice |
 | Evidence-backed promotion | STATUS/docs change only with reproducible artifacts; failures preserved |
@@ -179,10 +179,10 @@ Do not conflate these three storage/runtime layers:
 | Layer | Question |
 |---|---|
 | Library | How many full trees exist on disk when nothing is running? |
-| Load / activate | What bytes move, over which path, on cold start? |
+| Load / preparation | What bytes move, over which path, on cold start? |
 | Runtime | After ready/healthy, does serving still need library/home/NFS? |
 
-**Product identity:** single-copy (federated) **library** + explicit **activate**
+**Product identity:** single-copy (federated) **library** + explicit **preparation**
 + rank-local runtime views + **purge/pin** policy.
 **Fabric / NFS/RDMA** is a transport, not the long-term product name. Live
 mount under vLLM remains an experiment ([WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md)).
@@ -198,6 +198,11 @@ mount under vLLM remains an experiment ([WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md)).
 - **Transfer** is `preexisting`, `ssh-control`, `ssh-roce`, or `nfs-rdma`.
 - **Runtime source** is `durable-home`, `sealed-hot`, or `live-mount`.
 - **Retention** is `durable`, `ephemeral`, or `pinned`.
+- **Prepare / model preparation** is the user-facing operation that resolves the
+  exact model, creates the required rank-local runtime views, transfers only
+  non-home bytes, and verifies every rank. It does **not** start a serving
+  container or establish model qualification. `activate` remains a
+  backward-compatible CLI and internal-schema term only.
 
 Evidence, labels, and future schemas should record these axes independently.
 In particular, SSH/TCP over a RoCE interface is `ssh-roce`; it is not the live
@@ -286,7 +291,7 @@ awareness and advanced/explicit flows only.
 **Current implementation:** a tested profile without
 `EXPECTED_MODEL_SEAL` is labeled `legacy-unsealed`. A reviewed seal under
 `models/seals/` makes catalog schema 2 select only the declared immutable
-commit and label it `expected-unverified`; activation then computes the observed
+commit and label it `expected-unverified`; preparation then computes the observed
 manifest and must reach `match`. `catalog list --validated` includes only
 entries carrying a reviewed expected seal, never legacy repository-ID-only
 claims. The one-node diagnostic `qwen3-1.7b` profile is the first issued seal and
@@ -298,7 +303,7 @@ legacy-unsealed.
 If more than one home is registered for the **same model identity** (prefer
 **hub id + revision**, not display name alone):
 
-- Detect at catalog refresh / resolve / activate.
+- Detect at catalog refresh / resolve / prepare.
 - **Do not** silently pick a home for serve.
 - `cleanup-recommend` lists homes, nodes, sizes, seal state, and exact
   operator commands. Before a primary exists it prints selection choices and
@@ -320,13 +325,13 @@ Two operator options:
 | **Stage-only** | No — cold → hot for this job only | Saves Spark disk; cold remains sole durable copy |
 
 Stage-only hot is fully materialized, so retaining or pinning it can allow a
-restart without cold. Warm-home activation is different by design: its home
+restart without cold. Warm-home preparation is different by design: its home
 rank uses a zero-copy symlink into the durable HF cache, so retaining that hot
 instance does not make it independent of the durable home.
 
 An atomic same-filesystem move is allowed only as an explicit **adopt** into a
 managed durable root after the observed content matches the expected seal. It
-is never an activation shortcut into purgeable hot storage. Adoption must keep
+is never a preparation shortcut into purgeable hot storage. Adoption must keep
 home removal and rollback behavior explicit.
 
 Cold may use non-hub layouts (e.g. “Official Models/…”). Import/mapping into
@@ -337,13 +342,13 @@ fail-closed on incomplete trees.
 
 Profiles whose `MODEL` is an absolute path under cold remain a first-class
 entry point (check-on-ranks, no HF download)—as today. They share the same
-tier story: cold is optional site storage; multi-node **activate to hot** may
-still apply when the product path is “library + activate” rather than
+tier story: cold is optional site storage; multi-node **preparation into hot staging** may
+still apply when the product path is “library + prepare” rather than
 bind-mount cold on every rank for large models.
 
 ---
 
-## 4. Activate, hot staging, pins, release
+## 4. Model preparation, hot staging, pins, release
 
 ### 4.1 Lifecycle
 
@@ -381,7 +386,7 @@ managed content, still count toward that rank's current owned-hot total.
 
 | State | Non-home disk | Restart contract | Durable-home dependency |
 |---|---|---|---|
-| Unpinned stop | Purged | Re-activate before restart | Required as activation source |
+| Unpinned stop | Purged | Prepare again before restart | Required as preparation source |
 | **Pinned warm-home** | Keep verified hot | No cold, transfer, or catalog refresh | **Still required** |
 | **Pinned cold stage-only** | Keep every staged rank | May be self-contained | No warm home exists |
 | Running warm-home | Sealed hot on non-home ranks | N/A | **Required on its rank** |
@@ -394,7 +399,7 @@ explicit hard cap with `PULSAR_HOT_BUDGET_BYTES` or replace the default reserve
 with `PULSAR_HOT_RESERVE_BYTES`; both values apply independently on every
 selected rank.
 
-Activate, cold stage-only, pin, and budget inventory collect an exact
+Prepare, cold stage-only, pin, and budget inventory collect an exact
 observation from every selected physical rank before mutation. A missing,
 duplicate, unreachable, or blocked rank fails the all-rank barrier before
 model bytes change. Accounting uses filesystem space available to the service
@@ -416,7 +421,7 @@ The accepted warm-home claim is:
 
 - restart without cold storage, a transfer plane, or catalog refresh while the
   durable home and retained non-home hot copies remain valid;
-- unpinned restart re-activates non-home ranks from the durable home;
+- unpinned restart prepares non-home ranks again from the durable home;
 - durable-home loss is service loss for this policy.
 
 Home-loss resilience requires an explicit durable replica on another failure
@@ -455,7 +460,7 @@ verification may atomically refresh the witness; a mismatch never auto-reseals
 the changed content as validated.
 
 **Current implementation:** hot schema 3 carries both the reviewed expected
-seal projection and the observed seal. Activation compares model ID, immutable
+seal projection and the observed seal. Preparation compares model ID, immutable
 commit, and manifest ID, then full-verifies every rank and atomically creates
 that rank's `.pulsar/witness.json` before publishing ready state. Sealed
 replicated acquisition applies the same expected manifest to the exact
@@ -475,7 +480,7 @@ seal. A `legacy-unsealed` path never becomes validated through a witness.
 The seal points one-way to a content-addressed schema-1 validation bundle.
 Profile load verifies the bundle ID, exact primary model projection,
 provenance/evidence parity, declared external-artifact identities/digests, and
-normalized live profile/image/geometry binding before catalog, activation, or launch may use
+normalized live profile/image/geometry binding before catalog, preparation, or launch may use
 the sealed claim. The bundle deliberately omits the seal ID to avoid a hash
 cycle. The one-node diagnostic `qwen3-1.7b` profile carries the first
 reviewed bundle and flagship `deepseek-v4-flash` carries the second. Neither
@@ -488,7 +493,7 @@ The maintainer-only release service now builds the same schema through
 issuance; a reviewed pull request and applicable lab evidence remain the trust
 boundary.
 
-### 4.6 Activate transfers
+### 4.6 Prepare transfers
 
 Transfer moves bytes only to ranks whose runtime source is `sealed-hot`.
 The warm-home rank uses its existing `durable-home` view.
@@ -522,11 +527,11 @@ local durable-storage dependency, not a retained network transfer plane.
 
 | Phase | Required dependency |
 |---|---|
-| Resolve / activate | Expected seal plus the selected durable/cold source |
+| Resolve / prepare | Expected seal plus the selected durable/cold source |
 | Launch after ready + release | Durable home on its rank; sealed hot on non-home ranks |
 | Running inference | Rank files may no longer be read once resident, but declared storage dependencies remain honest |
 | Warm-home restart with pin | Durable home plus pinned non-home hot; no transfer/catalog refresh |
-| Warm-home restart without pin | Durable home plus re-activation |
+| Warm-home restart without pin | Durable home plus preparation again |
 | Cold stage-only restart with complete pin | Pinned staged trees; cold may be unavailable |
 | Restart after durable-home loss | Unsupported without an explicit durable replica/failover policy |
 
@@ -559,7 +564,7 @@ retirement path, removes that path without following managed hot views, and
 then refreshes the catalog.
 
 A repository-local shared/exclusive lifecycle lock closes races among supported
-Pulsar catalog, activation, launch, readiness, download, fabric, and removal
+Pulsar catalog, preparation, launch, readiness, download, fabric, and removal
 commands. Missing topology, unreachable nodes, unavailable Docker, or a
 contradictory observation contract aborts planning. Unreadable or legacy hot
 metadata remains a visible blocker instead of proving absence. This guard
@@ -599,7 +604,7 @@ sibling instances are outside its authority. An incomplete retirement remains
 discoverable and retryable.
 
 Doctor consumes the same report as warnings. These findings do not block
-replicated/default serving, while model-library activation and destructive
+replicated/default serving, while model-library preparation and destructive
 lifecycle operations retain their fail-closed checks. Current health closes
 supported catalog/hot observability, but container labels still do not carry
 per-rank runtime-source/witness state and unmanaged processes remain outside
@@ -611,11 +616,11 @@ Pulsar's discovery boundary.
 
 | Path | Role under this direction |
 |---|---|
-| Replicated `pull-weights` + local launch | **Remains default** until a library+activate path earns promotion |
+| Replicated `pull-weights` + local launch | **Remains default** until a library+prepare path earns promotion |
 | Live `--weight-source fabric` | **Experimental** proof/ops path; long-lived mount under vLLM is **not** the agreed product identity |
 | Site cold path confs | Optional cold tier; keep working |
-| Topology rails and NFS/RDMA helpers | Reused by fabric **activate**; model-library schema-3 hot state carries full SHA-256 observed content plus optional expected-seal provenance, while live-fabric configuration identity remains separate |
-| Materialize-as-only-mechanism drafts | Superseded as the top-level story; activate+hot+pin is the product frame |
+| Topology rails and NFS/RDMA helpers | Reused by fabric **preparation**; model-library schema-3 hot state carries full SHA-256 observed content plus optional expected-seal provenance, while live-fabric configuration identity remains separate |
+| Materialize-as-only-mechanism drafts | Superseded as the top-level story; prepare+hot+pin is the product frame |
 
 ---
 
@@ -636,7 +641,7 @@ Pulsar's discovery boundary.
 7. **Hot and pins are budgeted working sets**, not a replica farm.
 8. **Dependency modes are explicit** — warm-home pinning still needs its
    durable home; home-loss resilience requires another failure domain.
-9. **Activate is first-class and measured** — end-to-end start-to-healthy,
+9. **Prepare is first-class and measured** — end-to-end start-to-healthy,
    integrity, and recovery matter more than peak transport bandwidth.
 10. **Transport is not product identity** — distinguish `ssh-control`,
     `ssh-roce`, one-shot `nfs-rdma`, and live mount.
@@ -644,7 +649,7 @@ Pulsar's discovery boundary.
     geometry, or replica count as a fallback.
 12. **Validated vs present labels protect claim hygiene**; duplicates recommend
     cleanup and never cause silent multi-home serve.
-13. **Prefer boring recovery** — explicit verify, re-activate, and relaunch over
+13. **Prefer boring recovery** — explicit verify, prepare again, and relaunch over
     hidden mount or replica behavior.
 14. **Raw experiments stay local** under gitignored `/experiments/`; durable
     decisions belong in reviewed design/ADR/runbook docs and sanitized evidence.
@@ -685,13 +690,13 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Content-addressed validation-bundle schema and live profile binding are enforced
 [x] Deterministic candidate tooling refuses trusted roots and cannot claim authority
 [x] Repo release provides the first real lab-issued seal and complete validation bundle (`qwen3-1.7b`)
-[x] First sealed one-node profile passes catalog, activation, launch, labels, smoke, and witness evidence
+[x] First sealed one-node profile passes catalog, preparation, launch, labels, smoke, and witness evidence
 [x] Sealed replicated acquisition pins the reviewed commit and full-verifies every materialized rank
 [x] Sealed replicated readiness/launch uses a rank-local witness, exact snapshot, read-only repository view, and identity labels
 [x] The issued flagship `deepseek-v4-flash` seal/bundle passes applicable post-issuance physical identity/lifecycle evidence
-[x] Catalog/activation compare exact model, commit, and manifest
+[x] Catalog/preparation compare exact model, commit, and manifest
 [x] Launch validates witness (or full-verifies drift) and passes exact snapshot path
-[x] Home-rank activation creates the durable-home symlink/view, not a hot copy
+[x] Home-rank preparation creates the durable-home symlink/view, not a hot copy
 [x] Serve-time metadata witness covers the canonical target and exact file set
 [x] Witness drift visibly full-verifies against the expected seal or fails
 [x] Active-use durable-home removal guard passes
@@ -715,7 +720,7 @@ The witness checks above have deterministic control-plane coverage. The
 legacy-unsealed two-node Qwen canary also passed the physical symlink,
 both-rank witness, read-only launch, pin/restart, mismatch, and no-follow purge
 gate on 2026-08-11. The separately issued one-node diagnostic Qwen profile then
-passed catalog resolution, full-hash activation without an override,
+passed catalog resolution, full-hash preparation without an override,
 exact-snapshot read-only launch, identity labels, smoke, cleanup, and a
 zero-byte unchanged witness using the reviewed seal/bundle.
 The non-mutating DeepSeek admission gate then passed exact home-zero/non-home
@@ -738,7 +743,7 @@ refresh preservation, exact non-primary deletion, one-home catalog state, and
 sibling preservation. The two existing DeepSeek durable copies were not removed
 in that disposable gate. The real lab duplicate was subsequently reconciled to
 rank 1 as the one persistent durable home. A clean two-rank repeat then passed
-eight-stream SSH-over-RoCE activation, exact full verification,
+eight-stream SSH-over-RoCE preparation, exact full verification,
 durable-home/sealed-hot placement, zero-byte witnesses, read-only exact-snapshot
 launch, warmup, completion smoke, owned stop, hot purge, and return to one
 durable copy. The separately tracked strict-determinism policy question and
@@ -783,18 +788,18 @@ blocker changed.
 | Date | Decision |
 |---|---|
 | 2026-08-08 | Requirements **A** (storage), **B** (load time), **C** (reliability) co-equal. |
-| 2026-08-08 | Product shape: federated warm library + optional cold + hot staging + pins + activate (copy\|fabric) + release before independent serve. |
-| 2026-08-08 | Temporary hot disk allowed; pins bounded by disk budget. The original generic restart-without-home goal is superseded by ADR 0001 for warm-home activation. |
-| 2026-08-08 | Copy = non-RoCE control-path transfer; fabric = RoCE activate transport; fabric B bar = beat copy. |
+| 2026-08-08 | Product shape: federated warm library + optional cold + hot staging + pins + prepare (copy\|fabric) + release before independent serve. |
+| 2026-08-08 | Temporary hot disk allowed; pins bounded by disk budget. The original generic restart-without-home goal is superseded by ADR 0001 for warm-home preparation. |
+| 2026-08-08 | Copy = non-RoCE control-path transfer; fabric = RoCE preparation transport; fabric B bar = beat copy. |
 | 2026-08-08 | Cold optional; resolve warm → cold? → HF; cold preferred over HF when configured; adopt and stage-only both allowed. |
 | 2026-08-08 | Implemented optional cold tier: scan Official Models + hub layouts, resolve warm→cold fall-through, cold adopt, cold stage-only (`scripts/model-library.sh cold *`). |
 | 2026-08-08 | Scan all hub trees; label validated vs unvalidated; duplicates recommend cleanup tool. |
 | 2026-08-08 | New download placement: most free space + `--node` override (recommended default). |
 | 2026-08-08 | Release after hot verified, before launch (default independence claim). |
 | 2026-08-08 | Persisted as this document; exploratory option-noise archived to `docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`. |
-| 2026-08-08 | Implemented federated catalog refresh/resolve, copy activate, budgeted hot staging, pin/unpin/purge, and `library-hot` launch/stop hooks. |
-| 2026-08-08 | Implemented short-lived NFS/RDMA fabric activate with explicit release; retained live `--weight-source fabric` as a separate experiment. |
-| 2026-08-09 | Added copy-versus-fabric activation measurement and reduced avoidable setup/home-copy cost; fabric remains ineligible for a fast-path claim unless it beats copy. |
+| 2026-08-08 | Implemented federated catalog refresh/resolve, copy preparation, budgeted hot staging, pin/unpin/purge, and `library-hot` launch/stop hooks. |
+| 2026-08-08 | Implemented short-lived NFS/RDMA fabric preparation with explicit release; retained live `--weight-source fabric` as a separate experiment. |
+| 2026-08-09 | Added copy-versus-fabric preparation measurement and reduced avoidable setup/home-copy cost; fabric remains ineligible for a fast-path claim unless it beats copy. |
 | 2026-08-10 | Implemented and physically verified topology schema-2 SSH identity binding across three nodes: exact transport address, stable `HostKeyAlias`, strict enrolled-key verification, pairwise-rail checks, and explicit re-enrollment on key change. |
 | 2026-08-10 | Retired raw exploratory transcripts to gitignored `/experiments/`; only distilled decisions and sanitized evidence belong in publishable history. |
 | 2026-08-10 | Upgraded library-hot to schema-2 full SHA-256 snapshot seals; same-size corruption now fails full verification. |
@@ -803,7 +808,7 @@ blocker changed.
 | 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |
 | 2026-08-12 | **ADR 0002 accepted:** separate catalog/artifact, serving-integration, model-qualification, and release/promotion evidence. Preserve valid subsystem results unless a causal dependency invalidates them; combined promotion still requires every applicable scope. |
 | 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued. |
-| 2026-08-10 | Implemented rank-local serve-witness schema 1: activation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |
+| 2026-08-10 | Implemented rank-local serve-witness schema 1: preparation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |
 | 2026-08-11 | Qwen 1.7B physically passed durable-home symlink, non-home sealed-hot, both-rank witness fallback, exact-snapshot read-only launch, warm-home pin/restart, mismatch fail-closed, and force-unpin no-follow purge. The artifact is `legacy-unsealed`; release identity and promotion remain open. |
 | 2026-08-11 | Guarded durable-home removal probes every confirmed node, blocks all managed hot/container references, serializes supported lifecycle commands, requires explicit last-home acknowledgement, and deletes only an unchanged exact single-revision repository. |
 | 2026-08-11 | The durable-home removal guard passed deterministic tests and a three-node physical gate using disposable synthetic repositories; the real Qwen home and adjacent repository content were preserved. |
@@ -811,7 +816,7 @@ blocker changed.
 | 2026-08-11 | The non-mutating flagship gate inventoried every confirmed rank, then passed on both DeepSeek-selected ranks: 166,898,661,074 bytes on sealed-hot, zero on durable-home, default reserve preserved, one-byte hard cap blocked, and hot ownership unchanged. |
 | 2026-08-11 | Implemented content-addressed validation-bundle schema 1 and fail-closed profile-load verification across exact model identity, declared external-artifact identities/digests, lab provenance/evidence, digest-pinned image, normalized runtime configuration, memory contract, and geometry. No production seal or bundle was issued. |
 | 2026-08-11 | Added a maintainer-only release identity service: `model_identity.py` owns the trust schemas, while `model-release` hashes an exact commit and atomically assembles deterministic unreviewed candidates below a protected output boundary. It cannot issue, publish, edit profiles, or change status; no production seal or bundle was issued. |
-| 2026-08-11 | Issued the first reviewed lab identity for the one-node diagnostic `qwen3-1.7b`: exact commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, complete manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, seal `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`, and bundle `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`. Post-issuance `library-hot` activation/launch matched physically; this does not seal the two-node profile or promote the path. |
+| 2026-08-11 | Issued the first reviewed lab identity for the one-node diagnostic `qwen3-1.7b`: exact commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, complete manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, seal `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`, and bundle `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`. Post-issuance `library-hot` preparation/launch matched physically; this does not seal the two-node profile or promote the path. |
 | 2026-08-11 | Extended reviewed expected-seal enforcement to replicated HF caches: exact-commit download, full verification after every materialization, rank-local witness fast path with visible rehash-on-drift, exact-snapshot read-only launch, and revision/seal/bundle labels. The issued Qwen canary physically passed full verification, zero-byte unchanged witness, launch labels/read-only view, smoke, and cleanup; exact-revision acquisition and post-copy verification passed deterministically. Unsealed profiles retain legacy behavior; live mount remains unbound; no profile or storage path was promoted. |
 | 2026-08-12 | Issued the second reviewed lab identity for flagship `deepseek-v4-flash`: exact GA commit `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, complete manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, seal `1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a`, and bundle `8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`. Candidate reproduction and trusted verification matched; physical enforcement was still pending at issuance and is superseded by the next decision row. Neither storage promotion nor bit-identical output was claimed. |
 | 2026-08-12 | The issued DeepSeek identity passed applicable two-node physical enforcement: rank-local durable-home/sealed-hot views, full SHA-256 verification on both ranks, zero-byte unchanged witnesses, exact read-only snapshot launch with matching identity labels, warmup/smoke, and no-follow cleanup. Duplicate durable caches and temporary primary selection were disclosed, so one-durable-home steady state, persistent primary workflow, promotion, bit-identical output, and sustained soak remain unclaimed. |
@@ -819,4 +824,4 @@ blocker changed.
 | 2026-08-12 | Persistent-primary targeting passed a three-node physical repeat using disposable synthetic HF-layout repositories: direct removal refused before selection, the exact selection survived refresh, selected-primary removal refused, only the non-primary home was deleted, the catalog reached one selected durable home, and an adjacent repository remained intact. The existing DeepSeek duplicate was not changed; promotion, strict determinism, and soak remain open. |
 | 2026-08-12 | Added stable read-only health schema 1, Doctor warning integration, and repair-ID-bound schema-1/2 legacy-hot removal. The service uses cached catalog and metadata observations only; it does not reconcile the existing DeepSeek duplicate or mutate real hot/model state. |
 | 2026-08-12 | Read-only health and guarded legacy-hot removal passed a three-node physical gate with disposable schema-1 instances, including remote repair, stopped-container and pin blockers, no-follow/sibling preservation, preserved-untracked attention, and the exact disposable-home removal subset. No production state was changed. |
-| 2026-08-12 | The existing DeepSeek GA duplicate was reconciled to one persistent rank-1 durable home. A clean physical repeat passed eight-stream SSH-over-RoCE activation to rank 0 sealed-hot, rank-1 durable-home view, full exact-manifest verification, zero-byte witnesses, read-only launch, eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home state. Strict determinism, sustained soak, and promotion remain open. |
+| 2026-08-12 | The existing DeepSeek GA duplicate was reconciled to one persistent rank-1 durable home. A clean physical repeat passed eight-stream SSH-over-RoCE preparation to rank 0 sealed-hot, rank-1 durable-home view, full exact-manifest verification, zero-byte witnesses, read-only launch, eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home state. Strict determinism, sustained soak, and promotion remain open. |
