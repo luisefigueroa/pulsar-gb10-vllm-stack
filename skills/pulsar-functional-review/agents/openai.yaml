@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pulsar Functional Review"
+  short_description: "Review Pulsar operator workflows end to end"
+  default_prompt: "Use $pulsar-functional-review to perform a static functional acceptance review of the current Pulsar repository."
