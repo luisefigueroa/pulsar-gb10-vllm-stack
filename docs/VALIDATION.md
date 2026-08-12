@@ -31,7 +31,7 @@ HISTORICAL / SUPERSEDED markers.
 |---|---|---|
 | Replicated local HF caches | **SHIPPED DEFAULT** | Existing model/profile rows below; wizard and normal CLI use this path |
 | Single authoritative copy over NFSv4.2/RDMA | **PENDING — NOT PROMOTED** | Deterministic config/manifest/route/launcher/benchmark self-tests exist, but physical two/three-node throughput, startup, faults, correctness, long-context, restart, and soak artifacts are still required by `WEIGHT_FABRIC.md` |
-| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **PROMOTION CANDIDATE — NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, topology-bound SSH identity, active-use removal, and exact all-rank admission gates also passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). The earlier two-node Qwen symlink/witness/lifecycle artifact remains `legacy-unsealed`. The one-node diagnostic `qwen3-1.7b` profile carries the first reviewed seal and complete validation bundle and passed post-issuance physical enforcement. The flagship `deepseek-v4-flash` profile now carries the second reviewed identity, closing the issuance half of its gate without promoting the path. Remaining blockers are DeepSeek post-issuance physical identity/lifecycle evidence, the separately tracked strict-determinism policy question, and sustained soak. Sealed replicated caches enforce expected identity; legacy-unsealed replicated and live-mount launches do not. See the [model-library evidence index](../results/model-library/README.md). |
+| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **PROMOTION CANDIDATE — NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, topology-bound SSH identity, active-use removal, and exact all-rank admission gates also passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). The earlier two-node Qwen symlink/witness/lifecycle artifact remains `legacy-unsealed`. The one-node diagnostic `qwen3-1.7b` profile and flagship `deepseek-v4-flash` profile now carry reviewed seals and complete validation bundles, and both passed applicable post-issuance physical enforcement. The DeepSeek run disclosed duplicate durable caches and used a temporary primary selection, so it does not prove the one-durable-home steady state. Remaining blockers are a persistent primary-selection/duplicate-home reconciliation workflow, the separately tracked strict-determinism policy question, and sustained soak. Sealed replicated caches enforce expected identity; legacy-unsealed replicated and live-mount launches do not. See the [model-library evidence index](../results/model-library/README.md). |
 
 The storage experiment does not change any model's `tested` claim until that
 exact storage source independently passes its promotion battery.
@@ -88,10 +88,20 @@ An independent candidate reproduction was byte-identical and the trusted
 verifier returned `match`. Exact-content continuity comes from the 2026-08-10
 full-manifest storage run on this commit. Earlier GA behavior and soak artifacts
 are retained as behavioral lineage because they predate machine-recorded exact
-commit identity. This issuance does not claim bit-identical output or promote
-model-library distribution; the DeepSeek post-issuance physical
-identity/lifecycle gate remains pending. See
-[`deepseek-v4-flash-release-validation-20260812.json`](../results/model-library/deepseek-v4-flash-release-validation-20260812.json).
+commit identity.
+
+The post-issuance two-node gate then selected an existing rank-1 durable home,
+created its symlink view, copied sealed hot to rank 0 with eight SSH-over-RoCE
+streams, and full-verified all 166,898,661,074 logical bytes on each rank.
+Activation took 139 seconds; exact read-only snapshot launch reached first
+health in 424.390 seconds, passed all eight warmup phases and a real completion,
+and retained matching revision/seal/bundle labels. Both ranks used zero-byte
+metadata witnesses before and after launch, and ownership-safe stop/no-follow
+purge preserved the durable snapshots. The site had two pre-existing complete
+durable caches and required a temporary primary selection, so this run does not
+prove the one-durable-home steady state. It does not claim bit-identical output,
+change profile status, or promote model-library distribution. See
+[`deepseek-v4-flash-sealed-enforcement-gate-20260812.json`](../results/model-library/deepseek-v4-flash-sealed-enforcement-gate-20260812.json).
 
 **Security:** API binds `0.0.0.0:8000` without auth — lab network only ([SECURITY.md](../SECURITY.md)).
 

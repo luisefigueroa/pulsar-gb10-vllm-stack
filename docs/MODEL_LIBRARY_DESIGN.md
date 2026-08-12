@@ -22,7 +22,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`; Qwen is physically enforced on `library-hot` and replicated cache, while DeepSeek post-issuance physical enforcement, the strict-determinism policy question, and soak remain pending |
+| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; persistent primary/duplicate-home handling, the strict-determinism policy question, and soak remain pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued 2026-08-12 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -603,7 +603,7 @@ Promotion now requires this identity/lifecycle evidence:
 [x] First sealed one-node profile passes catalog, activation, launch, labels, smoke, and witness evidence
 [x] Sealed replicated acquisition pins the reviewed commit and full-verifies every materialized rank
 [x] Sealed replicated readiness/launch uses a rank-local witness, exact snapshot, read-only repository view, and identity labels
-[ ] The issued flagship `deepseek-v4-flash` seal/bundle passes applicable post-issuance physical identity/lifecycle evidence
+[x] The issued flagship `deepseek-v4-flash` seal/bundle passes applicable post-issuance physical identity/lifecycle evidence
 [x] Catalog/activation compare exact model, commit, and manifest
 [x] Launch validates witness (or full-verifies drift) and passes exact snapshot path
 [x] Home-rank activation creates the durable-home symlink/view, not a hot copy
@@ -636,22 +636,30 @@ manifest accounting, the default filesystem reserve, an explicit hard-cap
 refusal, and unchanged hot ownership. See
 `results/model-library/model-library-hot-budget-admission-gate-20260811.json`.
 The earlier lifecycle, removal, and admission artifacts do not issue or
-retroactively acquire an identity. The DeepSeek issuance closes the identity
-half of the flagship gate; post-issuance physical enforcement, the separately
-tracked strict-determinism policy question, and sustained soak remain. Failed
-or incomplete evidence is not rewritten because an architectural blocker
-changed.
+retroactively acquire an identity. The issued DeepSeek identity subsequently
+passed the applicable two-node physical enforcement gate: durable-home symlink
+on the selected home rank, eight-stream sealed-hot on the other serving rank,
+full verification of the exact manifest on both views, zero-byte unchanged
+witnesses, exact read-only launch with matching labels, smoke, and no-follow
+cleanup. The lab retained two pre-existing complete durable caches and used a
+temporary primary selection, so the result does not prove the one-durable-home
+steady state or a persistent selection workflow. Those implementation gaps,
+the separately tracked strict-determinism policy question, and sustained soak
+remain; no profile or path was promoted. See
+`results/model-library/deepseek-v4-flash-sealed-enforcement-gate-20260812.json`.
+Failed or incomplete evidence is not rewritten because an architectural
+blocker changed.
 
 ---
 
 ## 8. Remaining deferred work
 
 - Promotion into the wizard or other guided defaults
-- Run the applicable post-issuance physical exact-seal enforcement gate for
-  `deepseek-v4-flash` and issue remaining supported profiles over time
+- Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas
-- Destructive duplicate-home cleanup beyond the current recommendation flow
+- Persistent primary selection and operator-confirmed duplicate-home
+  reconciliation; destructive cleanup remains opt-in
 - Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete physical promotion matrix, including time-to-healthy, interruption,
   dependency loss, restart, determinism, and sustained soak
@@ -695,4 +703,5 @@ changed.
 | 2026-08-11 | Added a maintainer-only release identity service: `model_identity.py` owns the trust schemas, while `model-release` hashes an exact commit and atomically assembles deterministic unreviewed candidates below a protected output boundary. It cannot issue, publish, edit profiles, or change status; no production seal or bundle was issued. |
 | 2026-08-11 | Issued the first reviewed lab identity for the one-node diagnostic `qwen3-1.7b`: exact commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, complete manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, seal `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`, and bundle `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`. Post-issuance `library-hot` activation/launch matched physically; this does not seal the two-node profile or promote the path. |
 | 2026-08-11 | Extended reviewed expected-seal enforcement to replicated HF caches: exact-commit download, full verification after every materialization, rank-local witness fast path with visible rehash-on-drift, exact-snapshot read-only launch, and revision/seal/bundle labels. The issued Qwen canary physically passed full verification, zero-byte unchanged witness, launch labels/read-only view, smoke, and cleanup; exact-revision acquisition and post-copy verification passed deterministically. Unsealed profiles retain legacy behavior; live mount remains unbound; no profile or storage path was promoted. |
-| 2026-08-12 | Issued the second reviewed lab identity for flagship `deepseek-v4-flash`: exact GA commit `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, complete manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, seal `1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a`, and bundle `8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`. Candidate reproduction and trusted verification matched; post-issuance physical enforcement remains pending, and neither storage promotion nor bit-identical output is claimed. |
+| 2026-08-12 | Issued the second reviewed lab identity for flagship `deepseek-v4-flash`: exact GA commit `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, complete manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, seal `1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a`, and bundle `8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`. Candidate reproduction and trusted verification matched; physical enforcement was still pending at issuance and is superseded by the next decision row. Neither storage promotion nor bit-identical output was claimed. |
+| 2026-08-12 | The issued DeepSeek identity passed applicable two-node physical enforcement: rank-local durable-home/sealed-hot views, full SHA-256 verification on both ranks, zero-byte unchanged witnesses, exact read-only snapshot launch with matching identity labels, warmup/smoke, and no-follow cleanup. Duplicate durable caches and temporary primary selection were disclosed, so one-durable-home steady state, persistent primary workflow, promotion, bit-identical output, and sustained soak remain unclaimed. |
