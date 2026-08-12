@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only interactive projection for Pulsar model-library health schema 1."""
+"""Interactive projection for Pulsar model-library health schema 1."""
 
 from __future__ import annotations
 
@@ -271,7 +271,7 @@ def render_summary(report: dict[str, Any], width: int | None = None) -> None:
     catalog = report["catalog"]
     term.emit("MODELS & STORAGE")
     term.field("serving", "replicated local model copies · guided default")
-    term.field("catalog", f"{state.replace('-', ' ')} · experimental read-only view")
+    term.field("catalog", f"{state.replace('-', ' ')} · experimental inventory")
     term.field("cached", _status_label(catalog.get("status")))
     if catalog.get("status") == "cached":
         term.field("refreshed", _catalog_age(catalog.get("refreshed_at")))
@@ -285,7 +285,7 @@ def render_summary(report: dict[str, Any], width: int | None = None) -> None:
     term.field("findings", len(report.get("issues") or []))
     term.blank()
     term.emit(
-        "Browsing does not refresh the catalog, move model files, or start a model."
+        "Browsing does not automatically refresh the catalog, move model files, or start a model."
     )
     if state == "not-configured":
         term.emit(
@@ -432,6 +432,31 @@ def render_about(width: int | None = None) -> None:
     )
 
 
+def render_refresh(report: dict[str, Any], width: int | None = None) -> None:
+    term = TerminalWriter(width=width)
+    catalog = report["catalog"]
+    term.emit("REFRESH DISTRIBUTED CATALOG")
+    term.field("cached", _status_label(catalog.get("status")))
+    if catalog.get("status") == "cached":
+        term.field("refreshed", _catalog_age(catalog.get("refreshed_at")))
+        term.field(
+            "topology",
+            "current"
+            if catalog.get("topology_compatible") is True
+            else "stale or unavailable",
+        )
+    term.blank()
+    term.emit(
+        "This rescans durable Hugging Face model homes on every confirmed rank and atomically updates the cached inventory."
+    )
+    term.emit(
+        "It preserves explicit exact-revision primary selections. Incomplete rank or topology observation fails closed."
+    )
+    term.emit(
+        "It does not download, copy, prepare, start, pin, purge, repair, or delete model files. Replicated serving remains the guided default."
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report-file", required=True)
@@ -443,6 +468,7 @@ def build_parser() -> argparse.ArgumentParser:
     detail.add_argument("--index", type=int, required=True)
     sub.add_parser("findings")
     sub.add_parser("about")
+    sub.add_parser("refresh")
     return parser
 
 
@@ -463,6 +489,8 @@ def main(argv: list[str] | None = None) -> int:
             render_findings(report)
         elif args.command == "about":
             render_about()
+        elif args.command == "refresh":
+            render_refresh(report)
         else:
             raise ModelStorageContractError("unsupported renderer command")
     except ModelStorageContractError as exc:

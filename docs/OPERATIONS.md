@@ -29,7 +29,7 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 |---|---|
 | `./pulsar` | Neutral **operator home** (workflow menu; no preflight on entry) |
 | `./pulsar wizard` | Serve/switch wizard (doctor + preflight; direct shortcut) |
-| `./pulsar models` | Browse cached distributed models and runtime views (read-only, experimental) |
+| `./pulsar models` | Browse cached distributed models/runtime views and explicitly refresh catalog inventory (experimental) |
 | `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
 | `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
@@ -486,6 +486,16 @@ the catalog or witness, hashes model bytes, or repairs automatically. Public
 JSON exposes rank numbers and opaque repair IDs but no hosts, addresses, node
 or topology IDs, absolute paths, filesystem identity, or witness IDs. Doctor
 shows the same findings as warnings; they do not block replicated serving.
+
+The interactive **Models & storage** surface (`./pulsar models`) opens this
+cached report without scanning ranks. **Recheck catalog health** remains
+read-only. **Refresh distributed catalog** is a separate action that shows the
+cached age and scope, defaults its confirmation to no, and only then runs the
+same `catalog refresh` command shown above. A successful refresh is followed by
+a new sanitized health report. Missing/stale topology, unreachable ranks, or
+invalid scans fail closed; model files and the replicated serving default are
+not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
+or deletes a model, and it never runs automatically.
 
 Schema-1/2 hot metadata is obsolete and cannot launch. If health marks an
 instance repairable, inspect and remove only by its freshly issued ID:

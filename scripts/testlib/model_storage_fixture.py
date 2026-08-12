@@ -86,6 +86,10 @@ def main() -> int:
     base = healthy()
     write(root / "healthy.json", base)
 
+    refreshed = json.loads(json.dumps(base))
+    refreshed["catalog"]["refreshed_at"] = "2026-08-12T13:00:00.000Z"
+    write(root / "refreshed.json", refreshed)
+
     attention = json.loads(json.dumps(base))
     attention["state"] = "attention"
     attention["catalog"]["topology_compatible"] = False

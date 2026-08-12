@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Read-only interactive model catalog and storage view.
+# Interactive model catalog and storage view.
 #   scripts/model-storage.sh       (also: ./pulsar models)
 #
-# Consumes the stable model-library health schema. It never refreshes the
-# catalog, prepares files, starts a model, or runs lifecycle mutations.
+# Consumes the stable model-library health schema. Browsing is read-only;
+# catalog refresh is a separate, explicit, confirmation-gated action. This
+# workflow never prepares files, starts a model, or runs model-file lifecycle
+# mutations.
 # Test hooks:
 #   MODEL_STORAGE_HEALTH_JSON=path
 #   MODEL_STORAGE_HEALTH_CMD=executable
 #   MODEL_STORAGE_HEALTH_RC=0|1
+#   MODEL_STORAGE_REFRESH_CMD=executable
 set -euo pipefail
 
 # Read dynamically by the sourced logging helpers.
@@ -30,8 +33,10 @@ usage() {
 usage: scripts/model-storage.sh
 
 Browse the cached distributed model catalog and rank-local runtime views.
-This workflow is read-only. It does not refresh the catalog, move model files,
-start a model, or run pin, purge, repair, or durable-home operations.
+Browsing and health rechecks are read-only. An explicit, confirmation-gated
+action can rescan confirmed ranks and update only the cached catalog. This
+workflow does not move model files, start a model, or run pin, purge, repair,
+or durable-home operations.
 
 The promoted serving default remains replicated local model copies.
 EOF
@@ -57,9 +62,19 @@ cmd_health_json() {
   "$REPO_DIR/scripts/model-library.sh" health --json
 }
 
+cmd_catalog_refresh() {
+  if [ -n "${MODEL_STORAGE_REFRESH_CMD:-}" ]; then
+    "$MODEL_STORAGE_REFRESH_CMD" catalog refresh
+    return $?
+  fi
+  "$REPO_DIR/scripts/model-library.sh" catalog refresh
+}
+
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-model-storage.XXXXXX")
 report_file="$work_dir/health.json"
 error_file="$work_dir/health.stderr"
+refresh_output_file="$work_dir/refresh.stdout"
+refresh_error_file="$work_dir/refresh.stderr"
 cleanup() {
   rm -rf "$work_dir"
 }
@@ -104,6 +119,33 @@ pause_back() {
   choose "$header" "Back to models" >/dev/null || true
 }
 
+refresh_catalog() {
+  echo
+  python3 "$RENDERER" --report-file "$report_file" refresh
+  echo
+  if ! confirm "Refresh the distributed catalog now?" no; then
+    log "catalog refresh cancelled; cached catalog and model files were not changed"
+    return 0
+  fi
+
+  : >"$refresh_output_file"
+  : >"$refresh_error_file"
+  log "refreshing the distributed catalog from every confirmed rank…"
+  if ! cmd_catalog_refresh >"$refresh_output_file" 2>"$refresh_error_file"; then
+    warn "catalog refresh did not complete — model files and the serving default were not changed"
+    if [ -s "$refresh_error_file" ]; then
+      sed 's/^/[model-storage] refresh: /' "$refresh_error_file" >&2
+    fi
+    return 0
+  fi
+
+  log "catalog cache updated; checking the refreshed inventory…"
+  if ! collect_health; then
+    warn "catalog refresh completed, but the refreshed health report is unavailable"
+    return 1
+  fi
+}
+
 if ! collect_health; then
   exit 1
 fi
@@ -122,13 +164,14 @@ while true; do
   choices+=(
     "Catalog findings"
     "How model storage works"
+    "Refresh distributed catalog"
     "Recheck catalog health"
     "Back"
   )
 
   choice_index=""
   if ! choice_index=$(choose_index \
-      "Models & storage · read-only" "${choices[@]}"); then
+      "Models & storage" "${choices[@]}"); then
     log "cancelled; no catalog or model state changed"
     exit 0
   fi
@@ -158,12 +201,15 @@ while true; do
       pause_back "Model storage"
       ;;
     2)
+      refresh_catalog
+      ;;
+    3)
       log "rechecking cached catalog and runtime-view health (read-only)…"
       if ! collect_health; then
         exit 1
       fi
       ;;
-    3)
+    4)
       log "back; no catalog or model state changed"
       exit 0
       ;;
