@@ -13,9 +13,10 @@ lab-issued expected model seal, exact commit/manifest comparison, and exact
 snapshot launch. Schema-1 validation bundles additionally bind declared
 external-artifact identities/digests, the digest-pinned image, normalized live
 runtime/memory settings, geometry, provenance, and evidence. The one-node
-diagnostic `qwen3-1.7b` profile is the first issued identity. Every other
-tested profile, including `qwen3-1.7b-2node`, predates that binding and remains
-`legacy-unsealed`. Never create an expected seal or bundle from arbitrary
+diagnostic `qwen3-1.7b` profile is the first issued identity; the flagship
+`deepseek-v4-flash` profile is the second. Profiles without a reviewed seal,
+including `qwen3-1.7b-2node`, remain `legacy-unsealed`. Never create an
+expected seal or bundle from arbitrary
 user-observed cache contents. Recover the exact lab artifact used for the
 historical run or revalidate the intended revision, then follow
 [models/seals/README.md](../models/seals/README.md) in the evidence pull

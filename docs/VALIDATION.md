@@ -31,12 +31,12 @@ HISTORICAL / SUPERSEDED markers.
 |---|---|---|
 | Replicated local HF caches | **SHIPPED DEFAULT** | Existing model/profile rows below; wizard and normal CLI use this path |
 | Single authoritative copy over NFSv4.2/RDMA | **PENDING — NOT PROMOTED** | Deterministic config/manifest/route/launcher/benchmark self-tests exist, but physical two/three-node throughput, startup, faults, correctness, long-context, restart, and soak artifacts are still required by `WEIGHT_FABRIC.md` |
-| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **PROMOTION CANDIDATE — NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, topology-bound SSH identity, active-use removal, and exact all-rank admission gates also passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). The earlier two-node Qwen symlink/witness/lifecycle artifact remains `legacy-unsealed`. The one-node diagnostic `qwen3-1.7b` profile now carries the first reviewed seal and complete validation bundle; a separate post-issuance gate passed exact-seal catalog resolution, full-hash activation without an override, read-only launch, identity labels, smoke, and zero-byte witness verification. This neither seals `qwen3-1.7b-2node` nor promotes the path. Remaining blockers are issuance and applicable physical identity/lifecycle evidence for a promotion-scope multi-node or flagship profile, strict DeepSeek determinism, and sustained soak. Sealed replicated caches now enforce expected identity; legacy-unsealed replicated and live-mount launches do not. See the [model-library evidence index](../results/model-library/README.md). |
+| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **PROMOTION CANDIDATE — NOT PROMOTED** | DeepSeek full-model transfer passed at 1.898x the control-path median with plane and physical-read proof; transfer integrity, interruption/retry, catalog-loss restart, serving, 447k context, topology-bound SSH identity, active-use removal, and exact all-rank admission gates also passed. Home-rank hot materialization is ruled out by [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md). The earlier two-node Qwen symlink/witness/lifecycle artifact remains `legacy-unsealed`. The one-node diagnostic `qwen3-1.7b` profile carries the first reviewed seal and complete validation bundle and passed post-issuance physical enforcement. The flagship `deepseek-v4-flash` profile now carries the second reviewed identity, closing the issuance half of its gate without promoting the path. Remaining blockers are DeepSeek post-issuance physical identity/lifecycle evidence, the separately tracked strict-determinism policy question, and sustained soak. Sealed replicated caches enforce expected identity; legacy-unsealed replicated and live-mount launches do not. See the [model-library evidence index](../results/model-library/README.md). |
 
 The storage experiment does not change any model's `tested` claim until that
 exact storage source independently passes its promotion battery.
 
-### First issued model identity
+### Issued model identities
 
 The one-node diagnostic `qwen3-1.7b` profile now binds:
 
@@ -71,6 +71,27 @@ tests cover exact-revision download and full verification after every copy.
 See
 [`qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json`](../results/model-library/qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json).
 No profile status or storage policy changed.
+
+The flagship `deepseek-v4-flash` profile now additionally binds:
+
+- model commit `7872f01b1d1fe23eabc4c98b48bffcef5a386062`;
+- complete manifest
+  `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`;
+- expected seal
+  `1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a`;
+- validation bundle
+  `8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`;
+  and
+- the digest-pinned PR-41834 image and normalized two-node profile contract.
+
+An independent candidate reproduction was byte-identical and the trusted
+verifier returned `match`. Exact-content continuity comes from the 2026-08-10
+full-manifest storage run on this commit. Earlier GA behavior and soak artifacts
+are retained as behavioral lineage because they predate machine-recorded exact
+commit identity. This issuance does not claim bit-identical output or promote
+model-library distribution; the DeepSeek post-issuance physical
+identity/lifecycle gate remains pending. See
+[`deepseek-v4-flash-release-validation-20260812.json`](../results/model-library/deepseek-v4-flash-release-validation-20260812.json).
 
 **Security:** API binds `0.0.0.0:8000` without auth — lab network only ([SECURITY.md](../SECURITY.md)).
 

@@ -9,8 +9,9 @@ EXPECTED_MODEL_SEAL="seals/<profile>.json"
 
 The reference is relative to `models/` and must resolve inside this directory.
 Only `STATUS=tested*` profiles may reference a seal. The one-node diagnostic
-`qwen3-1.7b` profile carries the first reviewed lab-issued seal. Every other
-tested profile, including `qwen3-1.7b-2node`, remains `legacy-unsealed`.
+`qwen3-1.7b` profile carries the first reviewed lab-issued seal. The flagship
+`deepseek-v4-flash` profile carries the second. Profiles without a reviewed
+seal, including `qwen3-1.7b-2node`, remain `legacy-unsealed`.
 
 ## Issuance rule
 
@@ -90,10 +91,14 @@ including the digest-pinned image and geometry. The issued `qwen3-1.7b` seal is
 `ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94`
 and references validation bundle
 `9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380`.
+The issued `deepseek-v4-flash` seal is
+`1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a`
+and references validation bundle
+`8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`.
 Trusted lab issuance remains a reviewed release activity and is never derived
-from user state. Current expected-seal enforcement is on the experimental
-`library-hot` path; replicated and live-mount launches are not yet bound by
-this identity. See
+from user state. Expected-seal enforcement applies to experimental
+`library-hot` and sealed replicated caches; live-mount launches remain
+unbound. See
 [validation-bundles/README.md](../validation-bundles/README.md) and
 [docs/MODEL_RELEASE.md](../../docs/MODEL_RELEASE.md). The witness is
 only an accelerator for identity previously established by full verification.

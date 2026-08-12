@@ -492,11 +492,12 @@ does not refresh. Reactivate if the fallback fails. Do not hand-edit
 `legacy-unsealed` content as lab validation.
 
 The one-node diagnostic profile `qwen3-1.7b` is the first profile with a
-reviewed seal and validation bundle. Its `library-hot` activation must match
-without `--allow-unvalidated`, and ordinary replicated staging/launch now
-enforces the same commit/manifest without an override. Profiles without a seal,
-including `qwen3-1.7b-2node`, still require that explicit experimental flag
-for `library-hot`. Catalog
+reviewed seal and validation bundle; the flagship `deepseek-v4-flash` profile
+is the second. Their `library-hot` activation must match without
+`--allow-unvalidated`, and ordinary replicated staging/launch enforces the
+same commit/manifest without an override. Profiles without a seal, including
+`qwen3-1.7b-2node`, still require that explicit experimental flag for
+`library-hot`. Catalog
 refresh enumerates complete `snapshots/<revision>` directories directly. A
 sealed profile therefore finds its reviewed commit even when `refs/main` is
 absent or has moved; only the legacy-unsealed experimental selection consults

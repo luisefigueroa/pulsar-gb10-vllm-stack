@@ -192,10 +192,12 @@ uses a symlink view on that rank, and transfers sealed hot copies only to other
 ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
 create a rank-local witness after full verification, use a metadata fast path
 for unchanged launch, and visibly rehash on drift before launching the exact
-snapshot. The diagnostic `qwen3-1.7b` profile now carries the first reviewed
-lab seal and validation bundle; its sealed `library-hot` activation and launch
-reported `identity=match`. Other tested profiles remain legacy-unsealed, and
-this does not promote `library-hot`. Sealed replicated caches now enforce the
+snapshot. The diagnostic `qwen3-1.7b` profile carries the first reviewed lab
+seal and validation bundle; its sealed `library-hot` activation and launch
+reported `identity=match`. The flagship `deepseek-v4-flash` profile carries
+the second issued identity; its post-issuance physical enforcement gate is
+still pending. Profiles without seals remain legacy-unsealed, and this does
+not promote `library-hot`. Sealed replicated caches now enforce the
 reviewed commit/manifest with full verification, a rank-local witness, and
 exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
 paths remain unbound. See

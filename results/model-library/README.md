@@ -40,6 +40,15 @@ after every copy; the physical gate intentionally did not redownload an
 already complete cache. This enforces sealed profiles without retroactively
 sealing legacy profiles or changing a model or storage-path promotion.
 
+On 2026-08-12, the flagship `deepseek-v4-flash` GA profile became the second
+reviewed identity. Its release candidate reproduced byte-for-byte and the
+trusted verifier returned `match` for commit
+`7872f01b1d1fe23eabc4c98b48bffcef5a386062` and manifest
+`27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`.
+The issuance summary distinguishes exact-content continuity from older
+behavioral lineage. It does not claim bit-identical output, promote the storage
+path, or replace the pending post-issuance physical identity/lifecycle gate.
+
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
 artifact closes that lifecycle gate without changing model identity, profile
@@ -55,6 +64,8 @@ node and path identity.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; physical enforcement pending; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |
+| [`deepseek-v4-flash-snapshot-manifest-20260812.json`](./deepseek-v4-flash-snapshot-manifest-20260812.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued DeepSeek revision; 74 files, 166,898,661,074 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
 | [`qwen3-1.7b-release-validation-20260811.json`](./qwen3-1.7b-release-validation-20260811.json) | Reviewed release summary for Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, exact one-node profile, and digest-pinned image | Current first-identity issuance input PASS; not a storage-path promotion | Reviewed; repository-relative evidence only; site identity omitted |
 | [`qwen3-1.7b-snapshot-manifest-20260811.json`](./qwen3-1.7b-snapshot-manifest-20260811.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued Qwen revision; 12 files, 4,079,450,110 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
 | [`qwen3-1.7b-release-identity-20260811-runA.json`](../qwen3-1.7b-release-identity-20260811-runA.json) | Fresh exact-profile greedy capture A for the issued one-node Qwen identity | Current release validation PASS; 30-prompt source capture | Reviewed; prompts/results contain no site identity or secrets |
