@@ -158,6 +158,57 @@ choose() {
   return 1
 }
 
+# choose_index HEADER OPTION...
+# Prints the selected zero-based option index. Unlike choose(), display text is
+# not used as identity, so duplicate or truncated labels remain selectable.
+choose_index() {
+  local header="$1"
+  shift
+  if [ "$#" -eq 0 ]; then
+    return 1
+  fi
+  if [ "$have_gum" = 1 ]; then
+    local indexed=() option out rc selected index=1
+    for option in "$@"; do
+      indexed+=("${index}"$'\t'"${option}")
+      index=$((index + 1))
+    done
+    _ui_gum_choose_style_args
+    set +e
+    out=$(printf '%s\n' "${indexed[@]}" | "$GUM_CMD" choose \
+      "${GUM_CHOOSE_STYLE_ARGS[@]}" \
+      --header "$header")
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ] || [[ "${out:-}" != *$'\t'* ]]; then
+      return 1
+    fi
+    selected=${out%%$'\t'*}
+    if ! [[ "$selected" =~ ^[0-9]+$ ]] \
+        || [ "$selected" -lt 1 ] || [ "$selected" -gt "$#" ]; then
+      return 1
+    fi
+    printf '%s\n' "$((selected - 1))"
+    return 0
+  fi
+
+  echo "$header" >&2
+  local PS3="Select number: "
+  local opt
+  # shellcheck disable=SC2034 # opt is populated and checked by select
+  select opt in "$@"; do
+    if [ -n "${opt:-}" ] && [[ "${REPLY:-}" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$((10#$REPLY - 1))"
+      return 0
+    fi
+    if [ -z "${REPLY:-}" ]; then
+      return 1
+    fi
+    echo "Invalid selection; enter a listed number (or EOF to cancel)." >&2
+  done
+  return 1
+}
+
 # confirm MSG [yes|no]
 # Returns 0 if affirmed, 1 if declined/cancel.
 confirm() {

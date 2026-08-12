@@ -57,6 +57,34 @@ run_view() {
 
 python3 -m unittest scripts.testlib.test_model_storage
 
+plain_index=$(printf '2\n' | env GUM=0 REPO_DIR="$REPO_DIR" bash -c '
+  . "$REPO_DIR/scripts/ui.sh"
+  choose_index "Duplicate choices" "same label" "same label"
+')
+[ "$plain_index" = 1 ]
+echo "OK   plain chooser returns the selected duplicate-label index"
+
+cat >"$STATE/bin/gum-index" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = choose ]
+sed -n '2p'
+SH
+chmod +x "$STATE/bin/gum-index"
+gum_index=$(env -u NO_COLOR \
+  GUM=1 \
+  GUM_BIN="$STATE/bin/gum-index" \
+  PULSAR_COLOR=always \
+  PULSAR_FORCE_GUM=1 \
+  TERM=xterm \
+  REPO_DIR="$REPO_DIR" \
+  bash -c '
+    . "$REPO_DIR/scripts/ui.sh"
+    choose_index "Duplicate choices" "same label" "same label"
+  ')
+[ "$gum_index" = 1 ]
+echo "OK   Gum chooser returns the selected duplicate-label index"
+
 run_view healthy.json 0 $'1\n1\n5\n' "$STATE/healthy.out"
 [ "$VIEW_RC" -eq 0 ]
 assert_contains "$STATE/healthy.out" 'guided default'   "guided replicated default remains visible"
@@ -71,6 +99,24 @@ run_view attention.json 1 $'2\n1\n5\n' "$STATE/attention.out"
 assert_contains "$STATE/attention.out" 'CATALOG FINDINGS'   "attention report remains browsable"
 assert_contains "$STATE/attention.out" 'catalog topology stale'   "structured remediation finding is rendered"
 [ "$(cat "$LOG")" = "--json" ]
+
+run_view attention.json 1 $'1\n1\n5\n' "$STATE/stale-detail.out"
+[ "$VIEW_RC" -eq 0 ]
+assert_contains "$STATE/stale-detail.out" 'placement stale' \
+  "stale topology marks model placement in the menu"
+assert_contains "$STATE/stale-detail.out" 'cached topology is stale' \
+  "stale topology suppresses cached home placement"
+assert_contains "$STATE/stale-detail.out" 'primary.*unavailable.*refresh catalog' \
+  "stale topology suppresses cached primary placement"
+assert_not_contains "$STATE/stale-detail.out" '^home[[:space:]]+node 2' \
+  "stale topology never labels a cached home as a current node"
+
+run_view collision.json 0 $'2\n1\n6\n' "$STATE/collision.out"
+[ "$VIEW_RC" -eq 0 ]
+assert_contains "$STATE/collision.out" '^model[[:space:]]+example/second-model' \
+  "second truncated duplicate label opens the second model"
+assert_not_contains "$STATE/collision.out" '^model[[:space:]]+example/first-model' \
+  "duplicate display text does not fall back to the first model"
 
 run_view not-configured.json 0 $'4\n' "$STATE/absent.out"
 [ "$VIEW_RC" -eq 0 ]

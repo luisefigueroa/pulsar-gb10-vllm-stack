@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import contextlib
 import io
 import unittest
@@ -126,6 +127,40 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertTrue(labels[0].startswith("deepseek-v4-flash"))
         self.assertLessEqual(len(labels[0]), 43)
 
+    def test_stale_topology_never_maps_cached_placement_to_current_nodes(self) -> None:
+        report = healthy_report()
+        report["state"] = "attention"
+        report["catalog"]["topology_compatible"] = False
+        labels = model_storage.model_choice_labels(report, width=80)
+        self.assertIn("placement stale", labels[0])
+        self.assertNotIn("home n2", labels[0])
+
+        output = capture(model_storage.render_detail, report, 0, width=80)
+        catalog_detail = normalized(output.split("Runtime views", 1)[0])
+        prose = normalized(output)
+        self.assertIn("home unavailable · cached topology is stale", catalog_detail)
+        self.assertIn("primary unavailable · refresh catalog", catalog_detail)
+        self.assertNotIn("home node 2", catalog_detail)
+        self.assertNotIn("primary node 2", catalog_detail)
+        self.assertIn("duplicates cached none · topology stale", catalog_detail)
+        self.assertIn("placement cannot be confirmed", prose)
+
+    def test_long_colliding_labels_remain_a_supported_display_case(self) -> None:
+        report = healthy_report()
+        first = report["models"][0]
+        first["profiles"] = [
+            "very-long-model-profile-with-identical-prefix-alpha"
+        ]
+        second = copy.deepcopy(first)
+        second["model_id"] = "example/second-model"
+        second["profiles"] = [
+            "very-long-model-profile-with-identical-prefix-beta"
+        ]
+        second["revision"] = "9" * 40
+        report["models"] = [first, second]
+        labels = model_storage.model_choice_labels(report, width=48)
+        self.assertEqual(labels[0], labels[1])
+
     def test_detail_exposes_exact_identity_views_and_dependency(self) -> None:
         output = capture(
             model_storage.render_detail, healthy_report(), 0, width=48
@@ -141,6 +176,14 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("do not provide durable-home-loss", prose)
         self.assertIn("do not establish model qualification", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
+
+        wide_output = capture(
+            model_storage.render_detail, healthy_report(), 0, width=80
+        )
+        duplicate_line = next(
+            line for line in wide_output.splitlines() if line.startswith("duplicates")
+        )
+        self.assertEqual(duplicate_line, "duplicates none")
 
     def test_findings_show_remediation_without_running_it(self) -> None:
         report = healthy_report()

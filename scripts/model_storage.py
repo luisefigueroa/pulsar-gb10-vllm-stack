@@ -238,6 +238,7 @@ def _truncate(text: str, limit: int) -> str:
 
 def model_choice_labels(report: dict[str, Any], width: int | None = None) -> list[str]:
     limit = max(24, (width or terminal_width()) - 5)
+    placement_current = report["catalog"].get("topology_compatible") is True
     labels: list[str] = []
     for model in sorted_models(report):
         profiles = model.get("profiles") or []
@@ -247,17 +248,20 @@ def model_choice_labels(report: dict[str, Any], width: int | None = None) -> lis
         revision = _safe_text(model.get("revision"))
         revision_text = revision[:12] if revision else "revision unknown"
         homes = model.get("home_ranks") or []
-        if len(homes) == 1:
+        if not placement_current:
+            home_text = "placement stale"
+        elif len(homes) == 1:
             home_text = f"home n{homes[0] + 1}"
         elif homes:
             home_text = f"{len(homes)} homes"
         else:
             home_text = "no home"
-        label = (
+        prefix = (
             f"{_safe_text(name)} · {revision_text} · "
-            f"{_validation_label(model.get('validation'))} · {home_text}"
+            f"{_validation_label(model.get('validation'))}"
         )
-        labels.append(_truncate(label, limit))
+        suffix = f" · {home_text}"
+        labels.append(f"{_truncate(prefix, limit - len(suffix))}{suffix}")
     return labels
 
 
@@ -314,25 +318,34 @@ def render_detail(
     term.field("identity", _validation_label(model.get("validation")))
 
     homes = model.get("home_ranks") or []
-    term.field(
-        "home",
-        ", ".join(_node_label(int(rank)) for rank in homes)
-        if homes
-        else "no complete durable home",
-    )
     primary = model.get("primary") or {}
-    primary_rank = primary.get("rank")
-    primary_text = (
-        f"{_node_label(int(primary_rank))} · "
-        f"{_status_label(primary.get('status'))}"
-        if isinstance(primary_rank, int) and not isinstance(primary_rank, bool)
-        else (
-            f"{_status_label(primary.get('mode'))} · "
-            f"{_status_label(primary.get('status'))}"
+    placement_current = report["catalog"].get("topology_compatible") is True
+    if placement_current:
+        term.field(
+            "home",
+            ", ".join(_node_label(int(rank)) for rank in homes)
+            if homes
+            else "no complete durable home",
         )
-    )
+        primary_rank = primary.get("rank")
+        primary_text = (
+            f"{_node_label(int(primary_rank))} · "
+            f"{_status_label(primary.get('status'))}"
+            if isinstance(primary_rank, int) and not isinstance(primary_rank, bool)
+            else (
+                f"{_status_label(primary.get('mode'))} · "
+                f"{_status_label(primary.get('status'))}"
+            )
+        )
+        duplicate_text = _status_label(model.get("duplicate_home"))
+    else:
+        term.field("home", "unavailable · cached topology is stale")
+        primary_text = "unavailable · refresh catalog"
+        duplicate_text = (
+            f"cached {_status_label(model.get('duplicate_home'))} · topology stale"
+        )
     term.field("primary", primary_text)
-    term.field("duplicates", _status_label(model.get("duplicate_home")))
+    term.field("duplicates", duplicate_text, label_width=11)
 
     term.blank()
     term.emit("Runtime views")
@@ -359,7 +372,11 @@ def render_detail(
         )
 
     term.blank()
-    if homes:
+    if not placement_current:
+        term.emit(
+            "Dependency: durable-home placement cannot be confirmed until the cached catalog is refreshed."
+        )
+    elif homes:
         term.emit(
             "Dependency: the durable home remains authoritative. Prepared non-home copies and pins do not provide durable-home-loss resilience."
         )

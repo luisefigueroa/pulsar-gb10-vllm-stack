@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import pathlib
 import sys
@@ -104,6 +105,23 @@ def main() -> int:
         },
     ]
     write(root / "attention.json", attention)
+
+    collision = healthy()
+    first = collision["models"][0]
+    first["model_id"] = "example/first-model"
+    first["profiles"] = [
+        "very-long-model-profile-with-identical-prefix-alpha"
+    ]
+    first["revision"] = "7" * 40
+    second = copy.deepcopy(first)
+    second["model_id"] = "example/second-model"
+    second["profiles"] = [
+        "very-long-model-profile-with-identical-prefix-beta"
+    ]
+    second["revision"] = "9" * 40
+    collision["models"] = [first, second]
+    collision["hot_instances"] = []
+    write(root / "collision.json", collision)
 
     write(root / "not-configured.json", {
         "schema_version": 1,

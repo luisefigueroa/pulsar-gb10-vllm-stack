@@ -1355,6 +1355,9 @@ rank numbers, profile aliases, cached refresh time, and opaque repair IDs but
 removes all site/path/filesystem/witness identity. Doctor consumes diagnostic
 rows from that projection as warnings, so
 replicated serving remains available.
+Cached home and primary ranks are interpreted only when
+`catalog.topology_compatible=true`. The interactive renderer marks placement
+stale and suppresses cached node mapping until an explicit catalog refresh.
 
 `./pulsar models` and operator-home **Models & storage** now consume that
 public report through `scripts/model-storage.sh` plus the width-aware

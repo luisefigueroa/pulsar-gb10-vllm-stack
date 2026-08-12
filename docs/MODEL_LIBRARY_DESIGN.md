@@ -591,6 +591,9 @@ opaque repair IDs, issue codes, and remediation. It omits hostnames, addresses,
 node/topology identity, absolute paths, filesystem identity, and witness IDs.
 `healthy` and `not-configured` exit zero; `attention` and `unavailable` still
 emit the complete report and exit nonzero.
+Rank-based home and primary placement is meaningful only while
+`catalog.topology_compatible=true`; interactive consumers suppress cached rank
+mapping and require refresh when the confirmed topology has changed.
 
 Historical hot schemas 1 and 2 are ownership evidence only: they are never
 trusted, launchable, or migrated into schema 3. A health-issued repair ID may

@@ -72,6 +72,9 @@ model/revision/manifest identity, durable-home and primary state, per-rank
 runtime source/retention/identity/witness state, active references, and
 structured findings. Rank labels are generic; site identities and paths stay
 out of the public report.
+If the cached catalog no longer matches the confirmed topology, model identity
+remains visible but home and primary node placement is marked stale and hidden
+until the operator explicitly refreshes the catalog.
 
 Browsing and **Recheck catalog health** only run
 `scripts/model-library.sh health --json`. They do not refresh the catalog,

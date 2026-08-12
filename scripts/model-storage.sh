@@ -126,51 +126,49 @@ while true; do
     "Back"
   )
 
-  pick=""
-  if ! pick=$(choose "Models & storage · read-only" "${choices[@]}"); then
+  choice_index=""
+  if ! choice_index=$(choose_index \
+      "Models & storage · read-only" "${choices[@]}"); then
     log "cancelled; no catalog or model state changed"
     exit 0
   fi
 
-  selected_index=-1
-  for index in "${!model_choices[@]}"; do
-    if [ "$pick" = "${model_choices[$index]}" ]; then
-      selected_index="$index"
-      break
-    fi
-  done
-
-  if [ "$selected_index" -ge 0 ]; then
+  model_count=${#model_choices[@]}
+  if [ "$choice_index" -lt "$model_count" ]; then
     echo
     python3 "$RENDERER" --report-file "$report_file" \
-      detail --index "$selected_index"
+      detail --index "$choice_index"
     echo
     pause_back "Model storage detail"
     continue
   fi
 
-  case "$pick" in
-    "Catalog findings")
+  action_index=$((choice_index - model_count))
+  case "$action_index" in
+    0)
       echo
       python3 "$RENDERER" --report-file "$report_file" findings
       echo
       pause_back "Catalog findings"
       ;;
-    "How model storage works")
+    1)
       echo
       python3 "$RENDERER" --report-file "$report_file" about
       echo
       pause_back "Model storage"
       ;;
-    "Recheck catalog health")
+    2)
       log "rechecking cached catalog and runtime-view health (read-only)…"
       if ! collect_health; then
         exit 1
       fi
       ;;
-    "Back"|"")
+    3)
       log "back; no catalog or model state changed"
       exit 0
+      ;;
+    *)
+      die "model-storage chooser returned an invalid index"
       ;;
   esac
 done
