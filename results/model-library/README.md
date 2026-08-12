@@ -5,6 +5,16 @@ experimental federated model-library path. Evidence records measured history;
 it does not override accepted architecture in
 [MODEL_LIBRARY_DESIGN.md](../../docs/MODEL_LIBRARY_DESIGN.md) or
 [ADR 0001](../../docs/decisions/0001-model-library-home-view-and-validation-identity.md).
+Qualification scope and evidence reuse are governed by
+[ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md).
+
+Every artifact has a qualification scope: catalog/artifact, serving integration,
+model qualification, or combined release/promotion. A result remains valid
+within its measured inputs and contract unless a causal dependency invalidates
+it. Catalog health, activation, witness, and lifecycle evidence cannot be
+promoted into accuracy or determinism claims; a model-runtime failure does not
+erase unchanged catalog evidence, but it blocks a combined release claim that
+requires both.
 
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
@@ -137,6 +147,10 @@ duplicate was changed by this work.
   topology IDs, credentials, and other stable site identifiers.
 - State the exact model revision/manifest or explicitly say when an artifact
   predates lab-issued expected-seal binding.
+- Declare the qualification scope and do not infer model correctness from
+  health, activation, or completion smoke.
+- Preserve valid cross-release subsystem evidence only when its measured inputs
+  and contracts are unchanged; document any causal invalidation explicitly.
 - Mark evidence `current`, `historical`, `superseded`, `failed`, or
   `partial`; never delete or rewrite a failure into a pass.
 - A superseding ADR or ledger changes the current decision, not the historical

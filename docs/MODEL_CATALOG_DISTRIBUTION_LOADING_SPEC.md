@@ -5,13 +5,15 @@
 Accepted model-library architecture lives in
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
+Qualification boundaries are governed by
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
 This document describes current code, evidence, and known gaps. Where current
 behavior differs from the accepted target, the difference is labeled as an
 implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-11 |
+| Snapshot date | 2026-08-12 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -874,6 +876,10 @@ After health:
 - the normal multi-node path runs a short/medium, stream/sync warmup suite; or
 - `--skip-warmup` runs one smoke completion only.
 
+Health, warmup, and a completion smoke establish serving integration only.
+They do not qualify model accuracy, determinism, throughput, long context, or
+soak.
+
 Optional startup evidence records profile, model, storage mode, node count,
 topology ID, cache-state label, start/healthy timestamps, and time to first
 health. Live-fabric evidence additionally requires configuration and owner
@@ -1030,6 +1036,13 @@ auditor rejects private field names or exact known private values before a
 bundle is considered shareable.
 
 ## 13. Current validation status
+
+Current documentation interprets results in the four ADR-0002 scopes: catalog
+and artifact service, serving integration, model qualification, and
+release/promotion. The implementation does not yet expose those as
+machine-readable status dimensions. Evidence in one scope remains valid while
+its measured inputs and contracts are unchanged; a failure elsewhere blocks a
+combined claim only when that claim requires both scopes.
 
 The following is the implementation/evidence state as of the snapshot date.
 The Qwen 1.7B two-node `STATUS=tested` row is a historical runtime-profile
@@ -1383,9 +1396,10 @@ These points combine current evidence with the accepted architecture:
 1. Keep replicated local HF caches as the guided default.
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
-3. Treat 8-stream SSH-over-RoCE activation into sealed local hot as a separate
-   promotion candidate. Do not guide it until real release seals, determinism,
-   and soak pass.
+3. Accept the measured 8-stream SSH-over-RoCE activation and sealed local-hot
+   results in the catalog/artifact and serving-integration scopes. Keep it as a
+   separate release-promotion candidate; do not guide it until the combined
+   gates, including applicable model qualification and soak, pass.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
@@ -1472,7 +1486,25 @@ implementation shape and unrelated catalog/live-mount policy.
 
 ## 19. Formal acceptance criteria
 
-### 19.1 Catalog acceptance
+### 19.0 Qualification-boundary acceptance
+
+Before interpreting a result:
+
+- declare whether it proves catalog/artifact behavior, serving integration,
+  model qualification, or combined release/promotion;
+- do not infer accuracy, determinism, performance, context, or soak from health
+  or completion smoke;
+- preserve valid evidence when unrelated subsystem inputs change;
+- demonstrate a causal connection before expanding invalidation across scopes;
+  and
+- require every applicable scope before changing `STATUS`, guided exposure, or
+  a default policy.
+
+The criteria below remain implementation-specific gates within those scopes.
+Current CLI and JSON schemas do not expose a first-class qualification-scope
+field.
+
+### 19.1 Profile catalog acceptance
 
 A profile is valid only if:
 
@@ -1565,6 +1597,8 @@ The implementation described here is primarily defined by:
   architecture for the experimental library + activate path;
 - [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md)
   — accepted durable-home view and validation-identity decision;
+- [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
+  — accepted evidence-scope, causal-invalidation, and promotion-boundary decision;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

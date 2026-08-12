@@ -186,6 +186,27 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
 - Document dependency honesty: if a mode needs owner/home/library after start, inventory and docs say so; if independence is claimed, tests must cover home-down restart.
 
+### Subsystem qualification boundaries
+
+For model distribution and serving work, classify evidence before changing claims:
+
+- **Catalog/artifact service:** exact bytes and identity, placement, transfer, runtime views, retention, repair, and cleanup.
+- **Serving integration:** the selected image mounts and loads the intended exact source, then passes health, warmup, and completion smoke.
+- **Model qualification:** accuracy, determinism, throughput, long context, and soak for the exact model/image/configuration/geometry.
+- **Release/promotion:** every required subsystem result combined for a supported profile, wizard path, or default policy.
+
+A failure in one subsystem does not erase valid evidence from another unless a
+causal connection is demonstrated. It does block any combined claim that
+requires both. Health or completion smoke is integration evidence, never model
+qualification. An image/runtime change invalidates its release bundle and
+applicable integration/model evidence; it does not automatically invalidate
+unchanged catalog mechanics. Preserve failed evidence and state its scope.
+Agents may propose a better boundary or causal model when new evidence warrants
+it, but must not change the accepted policy, promotion requirements, or
+interpretation as settled without explicit approval and an updated ADR. See
+[ADR 0002](docs/decisions/0002-subsystem-qualification-boundaries.md) and
+`docs/REVALIDATE.md`.
+
 ### Model-library authority and invariants
 
 For catalog, download, activate, launch, pin, purge, or model-validation work,

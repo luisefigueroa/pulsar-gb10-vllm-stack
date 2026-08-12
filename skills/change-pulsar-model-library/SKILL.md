@@ -17,7 +17,9 @@ Work from the repository root. Before evaluating or changing behavior:
 1. Read the model-library section of `AGENTS.md`.
 2. Read `docs/MODEL_LIBRARY_DESIGN.md` completely.
 3. Read every applicable accepted or superseding record under
-   `docs/decisions/`, especially ADR 0001 for home views and validation identity.
+   `docs/decisions/`, especially ADR 0001 for home views and validation
+   identity and [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md)
+   for qualification scope and causal invalidation.
 4. Read `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md` when current code,
    schemas, states, or implementation gaps matter.
 5. Read the affected runbooks, validation ledger, revalidation instructions,
@@ -42,6 +44,32 @@ Identify the request before acting:
 
 Separate accepted target architecture, current experimental implementation,
 and immutable historical evidence in every analysis.
+
+## Classify qualification scope
+
+Before choosing tests or changing a claim, classify each affected result:
+
+- **Catalog/artifact service:** exact content/identity, durable placement, transfer, runtime views, retention, repair, and cleanup.
+- **Serving integration:** the selected image and launcher use the intended exact runtime source; health, warmup, completion smoke, and owned stop.
+- **Model qualification:** correctness, determinism, throughput, long context, and soak for exact runtime inputs.
+- **Release/promotion:** the conjunction required for a supported profile, wizard path, or default policy.
+
+Apply [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md):
+a failure does not erase valid evidence from another scope
+without a demonstrated causal connection, but it blocks every combined claim
+that requires the failure to pass. Never treat health or completion smoke as
+model qualification. Do not carry `STATUS=tested` or an old validation bundle
+onto changed model, image, runtime, or geometry inputs merely because generic
+catalog evidence remains reusable.
+
+Build a change-impact statement before running gates:
+
+- model revision/seal changes require catalog identity, integration, and model qualification for release;
+- image, dependency, runtime, or geometry changes require integration and model qualification, not automatic reruns of unchanged catalog mechanics;
+- transfer, witness, metadata, retention, repair, or cleanup changes require affected catalog gates plus integration where runtime views change; expand model qualification only for a new release runtime source or a plausible causal effect; and
+- documentation-only classification changes require docs/control-plane checks and create no physical claim.
+
+When evidence crosses scopes ambiguously, state the hypothesis and choose the smallest safe experiment that can establish or reject the causal link.
 
 ## Challenge accepted decisions constructively
 
@@ -99,7 +127,7 @@ Update the relevant authority and support surfaces together:
 - current behavior or schema: `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md`;
 - operator behavior or dependency: `docs/OPERATIONS.md` and, when applicable,
   `docs/WEIGHT_FABRIC.md`;
-- tested claim or invalidation rule: `docs/VALIDATION.md`, `docs/REVALIDATE.md`,
+- tested claim, qualification scope, or invalidation rule: `docs/VALIDATION.md`, `docs/REVALIDATE.md`,
   and `docs/MODELS.md`;
 - durable evidence status: `results/model-library/README.md`; and
 - cross-agent safety contract: `AGENTS.md`.
@@ -117,13 +145,12 @@ Run validation in proportion to the change:
 3. Run `scripts/selftest.sh` for script, configuration, or agent-guidance
    changes.
 4. Search active guidance for contradictory ownership, identity, pin,
-   resilience, and transport claims; allow old language only in immutable
+   resilience, transport, qualification-scope, smoke, and causal-invalidation claims; allow old language only in immutable
    historical evidence with a current supersession pointer.
 5. Privacy-scan publishable documentation and results for site-specific paths,
    hosts, addresses, node IDs, and topology identifiers.
 6. Follow `docs/REVALIDATE.md` for serving, storage, or promotion changes and
    state plainly which physical gates were or were not run.
 
-In the handoff, distinguish accepted behavior from proposals, identify any
-approved deviation and its ADR, list verification performed, and disclose
+In the handoff, distinguish catalog/artifact, serving-integration, model-qualification, and release/promotion conclusions; distinguish accepted behavior from proposals; identify any approved deviation and its ADR; list verification performed; and disclose
 remaining implementation or hardware-evidence gaps.

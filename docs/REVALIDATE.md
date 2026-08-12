@@ -32,6 +32,39 @@ The standalone bundle verifier is implemented. Maintainer-only
 deterministic unreviewed candidates; trusted publication remains a deliberate
 reviewed repository change. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 
+## Qualification scope and change impact
+
+Revalidation is scoped before commands are chosen. A release bundle still
+binds all of its exact inputs, but reusable subsystem evidence is not erased by
+an unrelated change.
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
+defines four scopes:
+
+| Scope | Typical evidence | What it does not prove |
+|---|---|---|
+| Catalog and artifact service | Seal/manifest match, placement, transfer integrity, witness/lifecycle, retention, repair, cleanup | Runtime correctness or a supported release |
+| Serving integration | Exact-source mount/load, health, warmup, completion smoke, owned stop | Accuracy, determinism, performance, context, or soak |
+| Model qualification | Correctness, determinism, throughput, context, soak for exact runtime inputs | Storage-policy safety outside the tested runtime source |
+| Release and promotion | All required subsystem results bound to one supported profile/policy | Broader geometries, images, revisions, or storage paths |
+
+A failure in one scope blocks every release claim that depends on it, but does
+not invalidate another scope without a demonstrated causal connection. Select
+the smallest complete gate set from this change-impact matrix:
+
+| Changed input or contract | Required revalidation |
+|---|---|
+| Model revision, tokenizer/model code, adapter/draft, or expected seal | Catalog identity/full verification, serving integration, and complete model qualification |
+| Image, dependency, engine flags, memory contract, or geometry | Serving integration and complete model qualification; retain generic catalog mechanics unless the change affects them |
+| Transfer/copy algorithm or admission policy | Affected catalog physical gates and integration smoke; rerun model gates when bytes/runtime views change or evidence indicates a causal execution effect |
+| Manifest, witness, metadata, retention, repair, or cleanup semantics | Affected identity/lifecycle gates and integration smoke when launch views change; no automatic accuracy rerun |
+| Runtime source or mount contract | Catalog/lifecycle and serving integration; complete model qualification before a release claim adopts the new source |
+| Documentation-only policy/classification | Documentation checks and control-plane regression tests; no new physical claim |
+
+Changing an image, model, configuration, or geometry still requires a new
+validation bundle before `STATUS=tested` or a guided release claim can move.
+Preserving unchanged catalog evidence is evidence reuse, not bundle inheritance.
+Health and completion smoke are never substitutes for model qualification.
+
 ## 0. Prep (5 min)
 
 ```bash
@@ -167,9 +200,13 @@ No three-node serving profile is promoted by the current ledger.
 
 ## 7. Experimental single-copy storage (conditional)
 
-Do not inherit replicated-cache validation for `--weight-source fabric` or
-`library-hot`. Follow `WEIGHT_FABRIC.md` and
-`MODEL_LIBRARY_DESIGN.md`, and preserve unique result bundles for:
+Do not inherit **serving integration or model qualification** from the
+replicated-cache path for `--weight-source fabric` or `library-hot`. Generic
+catalog evidence may be reused only when its measured identity, placement,
+transfer, and lifecycle contracts are unchanged. Follow `WEIGHT_FABRIC.md`,
+`MODEL_LIBRARY_DESIGN.md`, and
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
+preserve unique result bundles for the affected scopes:
 
 1. two-node replicated-local and fabric cold I/O/startup A/B;
 2. three-node concurrent loading and interface-counter proof;
@@ -258,12 +295,17 @@ hard-cap refusal, and unchanged hot ownership on both DeepSeek-selected ranks. S
 Repeat it when admission arithmetic, hot-root accounting, selected-rank
 barriers, or hot locking changes.
 
-The path remains experimental if any artifact is absent, even when the same
-model/profile/image is already `tested` with replicated weights.
+Catalog and integration gates may be recorded as accepted in their own scopes.
+The path remains ineligible for guided/default release promotion if any required
+artifact is absent, even when the same model/profile/image is already `tested`
+with replicated weights.
 
 ## 8. Close out
 
-- Update conf `STATUS`/`NOTES` and `docs/VALIDATION.md` with the measured
+- Classify each result as catalog/artifact, serving integration, model
+  qualification, or release/promotion. Update conf `STATUS`/`NOTES` only when
+  the complete release scope passes, and update `docs/VALIDATION.md` with the
+  measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
 - Build the exact manifest and unreviewed documents with
@@ -281,6 +323,8 @@ model/profile/image is already `tested` with replicated weights.
 - Run a current-tree secret/path scan and inspect `git diff` before merge.
 - Merge the pin branch only after every required gate passes.
 
-Anything that fails: the pin does not land. File it in TROUBLESHOOTING.md
-with the failing command and artifact path, keep the old pin, and open an
+Anything required by the release claim that fails means the pin or promotion
+does not land. Preserve successful evidence in its narrower scope, classify the
+failure, and file it in TROUBLESHOOTING.md with the failing command and artifact
+path, keep the old pin, and open an
 upstream issue when the evidence points outside this repository.

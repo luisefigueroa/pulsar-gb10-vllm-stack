@@ -387,6 +387,26 @@ after home loss. Do not remove or unmount the home while a running or pinned
 instance depends on it. Home-loss resilience requires an explicit durable
 replica on another failure domain and supported failover.
 
+**What model-library checks prove:** interpret each operator surface in its own
+qualification scope:
+
+| Check or action | Evidence scope | Claim boundary |
+|---|---|---|
+| `health`, catalog refresh, primary state | Catalog/artifact inventory and policy state | Does not prove that a model can serve correctly |
+| Activation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
+| Exact-source launch, health, warmup, completion smoke, owned stop | Serving integration | Does not prove accuracy, determinism, performance, context, or soak |
+| `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe |
+| `STATUS`, wizard exposure, guided/default storage policy | Combined release/promotion | Requires every applicable subsystem gate |
+
+A runtime qualification failure does not make unchanged catalog bytes,
+placement, transfer, or cleanup unhealthy unless evidence demonstrates that
+connection. It still blocks a release or guided-path claim that requires the
+failed runtime gate. Conversely, catalog health and a successful completion
+never substitute for model qualification. See
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md). No
+command or JSON schema currently stores these scopes as a separate status
+field.
+
 **Duplicate durable homes:** refresh first, then inspect the persistent
 exact-revision primary state. Pulsar never silently chooses among duplicates:
 

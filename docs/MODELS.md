@@ -60,8 +60,12 @@ Maintainers can now assemble deterministic unreviewed candidates with
 row or issue a claim. See [MODEL_RELEASE.md](./MODEL_RELEASE.md),
 [models/seals/README.md](../models/seals/README.md),
 [models/validation-bundles/README.md](../models/validation-bundles/README.md),
-[MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and
-[ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
+[MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md),
+[ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), and
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
+Catalog/artifact or serving-integration evidence does not extend a model
+qualification or `STATUS` claim; combined release claims require every
+applicable scope.
 
 ## Does not fit any currently validated serving profile
 

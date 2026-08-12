@@ -2,9 +2,11 @@
 
 This is the maintainer runbook for producing **unreviewed model release
 candidates**. It implements the candidate-assembly portion of the identity
-design in [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). It is not an
-operator model-download workflow, is not routed through `./pulsar` or the
-wizard, and cannot create a trusted Pulsar validation claim by itself.
+design in [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and the
+qualification boundaries in
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md). It is
+not an operator model-download workflow, is not routed through `./pulsar` or
+the wizard, and cannot create a trusted Pulsar validation claim by itself.
 
 ## System boundary
 
@@ -14,15 +16,16 @@ enforcement:
 | Subsystem | Responsibility |
 |---|---|
 | Profile registry (`models/*.conf`) | Declares the exact runtime configuration to normalize |
-| Validation (`validate/`, `results/`) | Produces evidence for exact model/image/profile/geometry inputs |
+| Validation (`validate/`, `results/`) | Produces model-qualification evidence for exact model/image/profile/geometry inputs |
 | Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, activation, and launch |
+| Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
 
 The Bash entrypoint sources the profile and passes its values to Python. Python
 owns normalization, digests, candidate schemas, atomic writes, and fail-closed
-policy. The service does not acquire model bytes, run validation gates, edit a
-profile, copy documents into `models/seals/` or
+policy. The service does not acquire model bytes, run validation gates,
+qualify a model or storage path, edit a profile, copy documents into `models/seals/` or
 `models/validation-bundles/`, or change `STATUS`.
 
 ## Issued profiles
@@ -63,8 +66,10 @@ reviewed trust roots are:
 Its candidate and an independent reproduction were byte-identical, and the
 trusted bundle verifier returned `match`. The issuance binds the reviewed
 DeepSeek GA content, digest-pinned image, normalized two-node profile, and
-repository evidence. It does not claim bit-identical output, promote the model
-library, or replace the pending post-issuance physical identity/lifecycle gate.
+repository evidence. The later post-issuance and one-home physical gates passed
+in the catalog/artifact and serving-integration scopes. Neither issuance nor
+those gates claim bit-identical output or promote the model library; the
+strict-determinism decision and sustained soak remain separate release blockers.
 
 ## Trust boundary
 
@@ -83,9 +88,11 @@ repository is also allowed. Output below `models/`, elsewhere in the tracked
 repository, at a broad root, or over an existing directory is refused.
 
 Candidate generation proves that the documents are deterministic and
-internally consistent. It does **not** prove that the bytes were used in the
-lab, that the evidence is sufficient or private-data-free, or that maintainers
-approved the claim. Those remain review decisions.
+internally consistent. It does **not** establish catalog acceptance, serving
+integration, model qualification, or release promotion. It also does not prove
+that the bytes were used in the lab, that the evidence is sufficient or
+private-data-free, or that maintainers approved the claim. Those remain review
+decisions.
 
 ## Preconditions
 
@@ -176,9 +183,10 @@ release pull request must receive maintainer review that confirms:
   match the evidence;
 - every referenced artifact exists and passed privacy review;
 - the bundle filename is its `bundle_id` and the seal is reviewed under the
-  profile name; and
-- adding `EXPECTED_MODEL_SEAL` and any `STATUS` change is justified by the
-  applicable revalidation gates.
+  profile name;
+- adding `EXPECTED_MODEL_SEAL` is justified by exact identity evidence; and
+- any `STATUS`, guided-exposure, or default-policy change is justified by every
+  applicable subsystem gate in `REVALIDATE.md`.
 
 Only after that review may the pull request deliberately place the reviewed
 documents under the trusted model directories and update the profile. The
