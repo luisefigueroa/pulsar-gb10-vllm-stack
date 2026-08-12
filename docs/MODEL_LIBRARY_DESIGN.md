@@ -22,7 +22,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; persistent exact-revision primary selection and guarded reconciliation are implemented, while physical one-home reconciliation for the existing DeepSeek duplicate, the strict-determinism policy question, and soak remain pending |
+| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; persistent exact-revision primary selection and guarded reconciliation passed a disposable three-node physical gate, while reconciliation of the existing DeepSeek duplicate, the strict-determinism policy question, and soak remain pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued 2026-08-12 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -459,7 +459,7 @@ the sealed claim. The bundle deliberately omits the seal ID to avoid a hash
 cycle. The one-node diagnostic `qwen3-1.7b` profile carries the first
 reviewed bundle and flagship `deepseek-v4-flash` carries the second. Neither
 issuance promotes this storage path; the DeepSeek post-issuance physical gate
-remains pending.
+passed without resolving its disclosed duplicate durable-cache condition.
 
 The maintainer-only release service now builds the same schema through
 `scripts/model_identity.py`, but its output is explicitly `unreviewed` with
@@ -660,11 +660,15 @@ witnesses, exact read-only launch with matching labels, smoke, and no-follow
 cleanup. The lab retained two pre-existing complete durable caches and used a
 temporary primary selection, so the result does not prove the one-durable-home
 steady state. Persistent exact-revision selection and guarded reconciliation
-were implemented afterward with deterministic tests, but the two existing
-durable copies were not removed and no new physical claim is inferred. That
-site reconciliation, the separately tracked strict-determinism policy question,
-and sustained soak remain; no profile or path was promoted. See
-`results/model-library/deepseek-v4-flash-sealed-enforcement-gate-20260812.json`.
+were implemented afterward, passed deterministic tests, and then passed a
+three-node physical repeat using only disposable synthetic HF-layout
+repositories. The repeat proved pre-selection and selected-primary refusal,
+refresh preservation, exact non-primary deletion, one-home catalog state, and
+sibling preservation. The two existing DeepSeek durable copies were not
+removed. That site reconciliation, the separately tracked strict-determinism
+policy question, and sustained soak remain; no profile or path was promoted.
+See
+`results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`.
 Failed or incomplete evidence is not rewritten because an architectural
 blocker changed.
 
@@ -725,3 +729,4 @@ blocker changed.
 | 2026-08-12 | Issued the second reviewed lab identity for flagship `deepseek-v4-flash`: exact GA commit `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, complete manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, seal `1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a`, and bundle `8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`. Candidate reproduction and trusted verification matched; physical enforcement was still pending at issuance and is superseded by the next decision row. Neither storage promotion nor bit-identical output was claimed. |
 | 2026-08-12 | The issued DeepSeek identity passed applicable two-node physical enforcement: rank-local durable-home/sealed-hot views, full SHA-256 verification on both ranks, zero-byte unchanged witnesses, exact read-only snapshot launch with matching identity labels, warmup/smoke, and no-follow cleanup. Duplicate durable caches and temporary primary selection were disclosed, so one-durable-home steady state, persistent primary workflow, promotion, bit-identical output, and sustained soak remain unclaimed. |
 | 2026-08-12 | Catalog schema 2 gained persistent exact-revision primary selection, refresh preservation, stale-selection fail-closed behavior, and operator-confirmed non-primary reconciliation guidance. Selected-primary removal is blocked until the survivor is changed. Deterministic tests pass; existing DeepSeek duplicate bytes were not removed, so one-home physical steady state remains unclaimed. |
+| 2026-08-12 | Persistent-primary targeting passed a three-node physical repeat using disposable synthetic HF-layout repositories: direct removal refused before selection, the exact selection survived refresh, selected-primary removal refused, only the non-primary home was deleted, the catalog reached one selected durable home, and an adjacent repository remained intact. The existing DeepSeek duplicate was not changed; promotion, strict determinism, and soak remain open. |

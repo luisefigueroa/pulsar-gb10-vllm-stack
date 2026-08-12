@@ -217,9 +217,12 @@ The current guard passed that deterministic and three-node physical gate on
 `results/model-library/model-library-home-removal-guard-20260811.json`.
 Repeat the gate when removal targeting, reference observation, or lifecycle
 locking semantics change. Persistent-primary implementation changes removal
-targeting by adding a selected-primary blocker: its deterministic contracts
-pass, but the disposable-repository physical removal gate must be repeated
-before that new blocker is counted as physical evidence.
+targeting by adding a selected-primary blocker. Its deterministic contracts and
+a three-node disposable-repository physical targeting repeat passed on
+2026-08-12; see
+`results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`.
+Repeat again after any later targeting, observation, or locking change. The
+repeat did not reconcile the existing DeepSeek duplicate or promote the path.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local

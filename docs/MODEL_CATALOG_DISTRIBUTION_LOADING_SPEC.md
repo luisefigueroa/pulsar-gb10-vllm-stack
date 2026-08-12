@@ -1056,8 +1056,8 @@ promotes any experimental storage path for general users.
 | Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
 | One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash activation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
 | Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection remain disclosed implementation conditions; this is not steady-state storage proof or a promotion. |
-| Persistent primary and guarded reconciliation | PASS, deterministic control plane | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. The existing DeepSeek duplicate has not been removed, so physical one-home steady state remains pending. |
-| Durable-home active-use removal guard | Baseline PASS on three-node physical topology; selected-primary repeat pending | Disposable synthetic repositories proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The later selected-primary blocker passes deterministically but needs a physical repeat. No production home was removed. |
+| Persistent primary and guarded reconciliation | PASS, deterministic and three-node physical targeting | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. A disposable physical repeat also proved direct pre-selection refusal, refresh persistence, selected-primary refusal, exact non-primary deletion, sibling preservation, and one-home catalog state. The existing DeepSeek duplicate has not been removed, so its physical one-home steady state remains pending. |
+| Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
 
 The headless boot issue is currently classified as an owner operating-system
@@ -1314,8 +1314,9 @@ full verification, rank-local durable-home/sealed-hot views, exact read-only
 launch, matching labels, zero-byte witnesses, smoke, and cleanup. Its temporary
 primary selection and duplicate durable-cache site condition left one-home
 reconciliation open. Persistent exact-revision primary management and guarded
-non-primary removal guidance were implemented afterward; the existing duplicate
-bytes remain untouched. See the
+non-primary removal guidance were implemented afterward and passed a
+disposable three-node physical targeting repeat; the existing duplicate bytes
+remain untouched. See the
 `results/model-library/` evidence index.
 The production admission policy is implemented: every selected rank reports
 live filesystem capacity and current hot ownership before writes; sealed-hot
@@ -1581,7 +1582,9 @@ The flagship DeepSeek identity also passed applicable post-issuance two-node
 physical enforcement. Its lab inventory contained duplicate durable caches and
 required temporary primary selection, so the artifact still does not prove
 one-home steady state. Persistent selection and guarded reconciliation now pass
-deterministic contracts; the physical duplicate remains. The active-use
+deterministic contracts and a three-node disposable physical targeting repeat;
+the existing
+physical duplicate remains. The active-use
 removal guard also passed deterministic and three-node physical checks using
 disposable synthetic repositories. Exact all-rank hot admission is now
 implemented with a filesystem reserve instead of the obsolete 100 GiB fixed

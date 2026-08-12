@@ -60,17 +60,18 @@ Persistent exact-revision primary selection was implemented afterward in the
 site-local catalog. Deterministic contracts cover atomic set/clear, refresh
 preservation, stale-selection refusal without auto-election, selection-free
 cleanup refusing to suggest deletion, explicit non-primary commands after
-selection, and selected-primary removal blocking. This changes removal
-targeting, so the disposable-repository physical removal gate must be repeated.
-No existing DeepSeek durable cache was removed and no new physical result
-artifact was created by this implementation change.
+selection, and selected-primary removal blocking. A three-node physical repeat
+then used only disposable synthetic HF-layout repositories and passed direct
+pre-selection refusal, selection persistence across refresh, selected-primary
+refusal, exact non-primary deletion, sibling preservation, and one-home catalog
+state. No existing DeepSeek durable cache was removed.
 
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
 artifact closed the then-current lifecycle gate without changing model
 identity, profile status, guided defaults, or the Qwen home's retained state.
-It remains the physical baseline, not evidence for the later
-selected-primary blocker.
+It remains the physical baseline for the broader lifecycle matrix. The later
+selected-primary targeting contract is covered by the 2026-08-12 repeat.
 
 The filesystem-backed admission policy is implemented and deterministic tests
 cover default reserve arithmetic, optional hard caps, durable-home zero charge,
@@ -82,6 +83,7 @@ node and path identity.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| [`model-library-primary-selection-reconciliation-gate-20260812.json`](./model-library-primary-selection-reconciliation-gate-20260812.json) | Three-node persistent exact-revision selection and guarded non-primary reconciliation; disposable synthetic HF-layout repositories only | Current selected-primary targeting PASS; existing DeepSeek duplicate unchanged; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; paired physical enforcement artifact now passes; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |
 | [`deepseek-v4-flash-sealed-enforcement-gate-20260812.json`](./deepseek-v4-flash-sealed-enforcement-gate-20260812.json) | Post-issuance two-node exact-seal activation, full verification, durable-home/sealed-hot placement, read-only launch, identity labels, zero-byte witnesses, smoke, and cleanup | Current flagship sealed `library-hot` enforcement PASS with duplicate-durable-cache/temporary-primary condition disclosed; not steady-state storage proof or a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-snapshot-manifest-20260812.json`](./deepseek-v4-flash-snapshot-manifest-20260812.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued DeepSeek revision; 74 files, 166,898,661,074 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
@@ -93,7 +95,7 @@ node and path identity.
 | [`qwen3-1.7b-sealed-enforcement-gate-20260811.json`](./qwen3-1.7b-sealed-enforcement-gate-20260811.json) | Post-issuance exact-seal catalog, activation, read-only launch, identity-label, zero-byte witness, smoke, and cleanup proof | Current sealed `library-hot` enforcement PASS; not included in its own issuance bundle and not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
 | [`qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json`](./qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json) | Shipped replicated-cache full verification, zero-byte witness, exact-snapshot read-only launch, identity labels, smoke, and cleanup for the issued Qwen identity | Current sealed replicated enforcement PASS; fresh download/copy covered deterministically but not physically rerun; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, and filesystem identity omitted |
 | `model-library-hot-budget-admission-gate-20260811.json` | Exact all-rank filesystem admission; DeepSeek revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`; capacity only, not model identity | Current hot-budget gate PASS; no model bytes changed; not a promotion | Reviewed; site topology, paths, hosts, node/interface identity, and filesystem identity omitted |
-| `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Historical baseline PASS; no production model was deleted. Persistent-primary added a new selected-primary blocker afterward, so a physical repeat is pending; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
+| `model-library-home-removal-guard-20260811.json` | Physical all-node active-use removal guard; disposable synthetic HF-layout repositories only | Historical baseline PASS for the broader lifecycle matrix; the later selected-primary targeting repeat now also passes; no production model was deleted; not a promotion | Reviewed; site topology, paths, node/container identity, and filesystem identity omitted |
 | `qwen3-1.7b-2node-witness-lifecycle-gate-20260811.json` | Physical durable-home symlink, sealed-hot, witness fallback, exact-snapshot launch, pin/restart, mismatch, and no-follow purge; Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, observed manifest only | Current lifecycle gate PASS; identity remains `legacy-unsealed`; not a promotion | Reviewed; site topology, paths, filesystem identity, and witness IDs omitted |
 | `model-library-promotion-assessment-20260810.json` | Consolidated DeepSeek/Qwen promotion assessment; schema-2 local content digest, not a lab-issued expected seal | Historical assessment; materialization recommendation superseded | Embedded redaction declaration; topology/site fields omitted |
 | `topology-ssh-trust-gate-20260810.json` | Topology-bound SSH alias/key/endpoint gate and Qwen sealed activation | Current gate evidence | Embedded redaction declaration |
