@@ -542,8 +542,8 @@ assert_eq "$rc" "0" "pulsar inventory --help → 0"
 echo "=== home no preflight before first choice ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-# Exit immediately (menu item 6)
-run_home $'6\n'
+# Exit immediately (menu item 7)
+run_home $'7\n'
 assert_eq "$LAST_RC" "0" "home exit 0"
 assert_false "no doctor before/on exit" bash -c "test -s '$STATE/logs/doctor.log'"
 assert_false "no inventory before exit-only" bash -c "test -s '$STATE/logs/inventory.log'"
@@ -559,7 +559,7 @@ echo "=== home workflows plain mode ==="
 # Status → Back → Exit
 reset_logs
 seed_inv "$STATE/inv_current" 80 "$(svc_managed qwen3-1.7b running True True)"
-run_home $'1\n4\n6\n'
+run_home $'1\n4\n7\n'
 assert_eq "$LAST_RC" "0" "status then exit"
 assert_file_contains "$STATE/logs/home.combined" "quick-status|managed|read-only" "status showed overview"
 assert_false "status path: no down" bash -c "test -s '$STATE/logs/down.log'"
@@ -569,7 +569,7 @@ assert_false "status path: no full smoke status" bash -c "test -s '$STATE/logs/s
 # Serve/switch → wizard shim → Exit
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-run_home $'2\n6\n'
+run_home $'2\n7\n'
 assert_file_contains "$STATE/logs/wizard.log" "wizard" "serve entered wizard shim"
 assert_false "serve path: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -577,7 +577,7 @@ assert_false "serve path: no down" bash -c "test -s '$STATE/logs/down.log'"
 # exit status in the normal operator view.
 reset_logs
 export WIZARD_FIXTURE_RC=1
-run_home $'2\n6\n'
+run_home $'2\n7\n'
 unset WIZARD_FIXTURE_RC
 assert_file_not_contains "$STATE/logs/home.combined" "wizard exited with status" \
   "home hides technical wizard exit status by default"
@@ -585,8 +585,8 @@ assert_file_not_contains "$STATE/logs/home.combined" "wizard exited with status"
 # Diagnostics doctor → Exit
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-# 5 Diagnostics, 1 Run doctor, 6 Exit (after return)
-run_home $'5\n1\n6\n'
+# 6 Diagnostics, 1 Run doctor, 7 Exit (after return)
+run_home $'6\n1\n7\n'
 assert_file_contains "$STATE/logs/doctor.log" "doctor" "diagnostics ran doctor"
 assert_false "diagnostics: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -696,8 +696,8 @@ with open("$STATE/inv_current", "w") as f:
     json.dump(inv, f, indent=2)
 PY
 
-# Stop: 3, select first (only good-model), decline confirm n, exit 6
-run_home $'3\n1\nn\n6\n'
+# Stop: 3, select first (only good-model), decline confirm n, exit 7
+run_home $'3\n1\nn\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "good-model" "stop lists managed safe"
 assert_file_contains "$STATE/logs/home.combined" "good-model · RUNNING · nodes 1/1" \
   "stop choice is compact and human-readable"
@@ -709,7 +709,7 @@ assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed
 # Confirm stop routes only through down shim
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_managed good-model running True True)"
-run_home $'3\n1\ny\n6\n'
+run_home $'3\n1\ny\n7\n'
 assert_file_contains "$STATE/logs/down.log" "good-model" "confirmed stop → down shim"
 assert_file_not_contains "$STATE/logs/down.log" "docker" "down log has no docker"
 assert_eq "$(grep -c . "$STATE/logs/down.log" || true)" "1" "single down call"
@@ -717,21 +717,21 @@ assert_eq "$(grep -c . "$STATE/logs/down.log" || true)" "1" "single down call"
 # Empty stop list
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_unknown)"
-run_home $'3\n6\n'
+run_home $'3\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "empty stop list message"
 assert_false "empty stop: no down" bash -c "test -s '$STATE/logs/down.log'"
 
 # Incomplete partial excluded
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_partial_2node deepseek-v4-flash True)" ok
-run_home $'3\n6\n'
+run_home $'3\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "partial incomplete excluded"
 assert_false "partial: no down" bash -c "test -s '$STATE/logs/down.log'"
 
 # Worker unreachable 2-node complete excluded
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True)" unreachable
-run_home $'3\n6\n'
+run_home $'3\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "worker-unreach 2-node excluded"
 assert_false "unreach: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -740,7 +740,7 @@ assert_false "unreach: no down" bash -c "test -s '$STATE/logs/down.log'"
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True)" unreachable
 mark_idle_rank2_unreachable "$STATE/inv_current"
-run_home $'3\n1\ny\n6\n'
+run_home $'3\n1\ny\n7\n'
 assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" \
   "idle rank 2 does not hide exact 2-node stop"
 assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
@@ -752,8 +752,8 @@ assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
 echo "=== stale maintenance ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed stale-qwen stale True True)"
-# 4 Maintenance, 1 Clean stale, 1 select conf, n decline, 6 exit
-run_home $'4\n1\n1\nn\n6\n'
+# 5 Maintenance, 1 Clean stale, 1 select conf, n decline, 7 exit
+run_home $'5\n1\n1\nn\n7\n'
 assert_false "stale decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" "stale decline"
 assert_file_contains "$STATE/logs/home.combined" "stale-qwen · STALE · safe_to_stop" \
@@ -761,14 +761,14 @@ assert_file_contains "$STATE/logs/home.combined" "stale-qwen · STALE · safe_to
 
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed stale-qwen stale True True)"
-run_home $'4\n1\n1\ny\n6\n'
+run_home $'5\n1\n1\ny\n7\n'
 assert_file_contains "$STATE/logs/down.log" "stale-qwen" "stale confirm → down"
 assert_file_contains "$STATE/logs/home.combined" "no model memory|nonblocking" "stale messaging"
 
 # Unsafe stale excluded
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed bad-stale stale True False)"
-run_home $'4\n1\n6\n'
+run_home $'5\n1\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible stale" "unsafe stale excluded"
 assert_false "unsafe stale: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -778,7 +778,7 @@ assert_false "unsafe stale: no down" bash -c "test -s '$STATE/logs/down.log'"
 echo "=== inventory observability failures ==="
 reset_logs
 printf '%s\n' 'not-json' >"$STATE/inv_current"
-run_home $'3\n6\n'
+run_home $'3\n7\n'
 assert_eq "$LAST_RC" "0" "home recovers to menu after malformed inventory"
 assert_false "malformed home inventory: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "inventory returned invalid data.*no action was taken" \

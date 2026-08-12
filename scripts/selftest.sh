@@ -63,6 +63,8 @@ run "model library health and legacy-repair contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_health.py"
 run "model library health public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-health.sh"
+run "interactive models and storage" \
+  "$REPO_DIR/scripts/selftest-model-storage.sh"
 run "model library startup-evidence contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_startup_metric.py"
 run "federated model library catalog" "$REPO_DIR/scripts/selftest-model-library.sh"
@@ -141,6 +143,7 @@ run "dispatcher routes home + wizard" bash -c '
   test -x "'"$REPO_DIR"'/pulsar"
   test -x "'"$REPO_DIR"'/scripts/home.sh"
   test -x "'"$REPO_DIR"'/scripts/quick-status.sh"
+  test -x "'"$REPO_DIR"'/scripts/model-storage.sh"
 '
 
 echo "=============================="

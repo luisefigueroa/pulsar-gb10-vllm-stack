@@ -257,13 +257,19 @@ class ModelLibraryHealthContracts(unittest.TestCase):
         self.write_legacy()
         self.write_scan()
         self.write_catalog()
-        encoded = json.dumps(self.health())
+        report = self.health()
+        encoded = json.dumps(report)
         for private in (
             str(self.root), self.node_id, self.topology_id, "private-host-a",
             "192.0.2.10", "/private/cache-a",
         ):
             self.assertNotIn(private, encoded)
         self.assertIn("repair_id", encoded)
+        self.assertEqual(
+            report["catalog"]["refreshed_at"],
+            "2026-01-01T00:00:00.000Z",
+        )
+        self.assertEqual(report["models"][0]["profiles"], ["tiny-profile"])
 
     def test_schema_three_witness_match_missing_and_drift_without_hash(self) -> None:
         model_id = "Fixture/Current"

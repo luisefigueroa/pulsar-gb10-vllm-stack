@@ -5547,6 +5547,11 @@ def build_health_report(
         public_models.append({
             "model_id": entry.get("model_id"),
             "revision": entry.get("revision"),
+            "profiles": sorted(
+                str(profile)
+                for profile in (entry.get("profiles") or [])
+                if profile
+            ),
             "expected_manifest": expected_manifest,
             "validation": entry.get("validation"),
             "home_ranks": sorted(int(home["rank"]) for home in complete),
@@ -5565,7 +5570,11 @@ def build_health_report(
             else "attention" if issues
             else "healthy"
         ),
-        "catalog": {"status": "cached", "topology_compatible": compatible},
+        "catalog": {
+            "status": "cached",
+            "topology_compatible": compatible,
+            "refreshed_at": catalog.get("refreshed_at"),
+        },
         "models": public_models,
         "hot_instances": public_instances,
         "issues": issues,

@@ -2,6 +2,7 @@
 # Root dispatcher for the Pulsar GB10 vLLM stack.
 #   ./pulsar                 → neutral operator home (workflow menu)
 #   ./pulsar wizard          → serve/switch wizard (doctor + preflight)
+#   ./pulsar models          → read-only distributed catalog view
 #   ./pulsar inventory …     → scripts/inventory.sh
 #   ./pulsar start <model>…  → scripts/up.sh
 #   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
@@ -25,6 +26,7 @@ Pulsar GB10 vLLM stack — root dispatcher
 Usage:
   ./pulsar                      Operator home (workflow menu; read-only default)
   ./pulsar wizard               Serve or switch a model (doctor + preflight)
+  ./pulsar models               Browse models & storage (read-only)
   ./pulsar inventory [opts]     Read-only service/memory inventory
   ./pulsar start <model> [args] Start a model (scripts/up.sh)
   ./pulsar stop <model|--all> [--node ID]
@@ -48,6 +50,8 @@ Notes:
   • ./pulsar (no args) opens the neutral home menu. It does not run doctor,
     inventory, or model preflight until you pick a workflow.
   • ./pulsar wizard is the direct serve/switch shortcut (existing guided flow).
+  • ./pulsar models reads cached health only; it never refreshes the catalog,
+    prepares files, starts models, or performs cleanup.
   • Prefer "./pulsar wizard" — not "./ wizard.sh" (space after ./ runs
     directory ./ → "Is a directory"). ./wizard.sh still works directly.
   • Home “Current system status” is a quick read-only overview (API model
@@ -75,6 +79,9 @@ case "$cmd" in
     ;;
   wizard)
     exec "$REPO_DIR/wizard.sh" "$@"
+    ;;
+  models)
+    exec "$REPO_DIR/scripts/model-storage.sh" "$@"
     ;;
   inventory)
     exec "$REPO_DIR/scripts/inventory.sh" "$@"

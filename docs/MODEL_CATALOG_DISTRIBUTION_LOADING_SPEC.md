@@ -1351,9 +1351,22 @@ as obsolete ownership metadata and schema 3 as the current launch contract.
 The merge classifies runtime source, retention, expected identity, witness
 metadata state, duplicate homes, and managed-container references without a
 catalog refresh, witness refresh, or model-byte hashing. Public output retains
-rank numbers and opaque repair IDs but removes all site/path/filesystem/witness
-identity. Doctor consumes diagnostic rows from that projection as warnings, so
+rank numbers, profile aliases, cached refresh time, and opaque repair IDs but
+removes all site/path/filesystem/witness identity. Doctor consumes diagnostic
+rows from that projection as warnings, so
 replicated serving remains available.
+Cached home and primary ranks are interpreted only when
+`catalog.topology_compatible=true`. The interactive renderer marks placement
+stale and suppresses cached node mapping until an explicit catalog refresh.
+
+`./pulsar models` and operator-home **Models & storage** now consume that
+public report through `scripts/model-storage.sh` plus the width-aware
+`scripts/model_storage.py` renderer. They browse cached identity, placement,
+runtime views, and findings and can repeat only the read-only health
+observation. They do not refresh, prepare, launch, pin, purge, repair, or remove
+a home. Replicated copies remain the guided default and the catalog is visibly
+experimental. This is an observability surface, not serving-wizard integration
+or storage-path promotion.
 
 `hot legacy check/remove` is a separate repair service for exact schema-1/2
 instances. The opaque ID binds the observed rank, ownership document, and
