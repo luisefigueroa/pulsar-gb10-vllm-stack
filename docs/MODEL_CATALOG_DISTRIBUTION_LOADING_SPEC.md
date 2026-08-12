@@ -1058,6 +1058,7 @@ promotes any experimental storage path for general users.
 | Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection remain disclosed implementation conditions; this is not steady-state storage proof or a promotion. |
 | Persistent primary and guarded reconciliation | PASS, deterministic and three-node physical targeting | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. A disposable physical repeat also proved direct pre-selection refusal, refresh persistence, selected-primary refusal, exact non-primary deletion, sibling preservation, and one-home catalog state. The existing DeepSeek duplicate has not been removed, so its physical one-home steady state remains pending. |
 | Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
+| Read-only health and legacy-hot repair | PASS, deterministic and three-node physical | Stable sanitized health schema 1, Doctor warnings, shallow no-hash observations, repair-ID binding, stopped-container/pinned blockers, local and remote removal, atomic no-follow retirement, sibling preservation, preserved-untracked attention, and the affected exact-home removal subset passed. No production content was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
 
 The headless boot issue is currently classified as an owner operating-system
@@ -1325,6 +1326,27 @@ preserves max(64 GiB, 5% capacity) without auto-eviction. An explicit hard cap
 and reserve override remain operator policy. Crash recovery, broader garbage
 collection, and per-rank witness/runtime-source inventory still require
 promotion-level hardening.
+
+The current system now provides `model-library.sh health` as a stable,
+read-only schema-1 projection over the cached catalog, exact-revision primary
+state, and shallow rank-local hot metadata. It recognizes hot schemas 1/2 only
+as obsolete ownership metadata and schema 3 as the current launch contract.
+The merge classifies runtime source, retention, expected identity, witness
+metadata state, duplicate homes, and managed-container references without a
+catalog refresh, witness refresh, or model-byte hashing. Public output retains
+rank numbers and opaque repair IDs but removes all site/path/filesystem/witness
+identity. Doctor consumes diagnostic rows from that projection as warnings, so
+replicated serving remains available.
+
+`hot legacy check/remove` is a separate repair service for exact schema-1/2
+instances. The opaque ID binds the observed rank, ownership document, and
+filesystem object. Execution repeats observation and refuses active, pinned
+unless explicitly authorized, malformed, symlinked, current, ambiguous, or
+unobservable targets; it then atomically retires and no-follow deletes only
+the managed instance. It cannot migrate metadata, create a seal or witness,
+select a primary, or remove a durable home. Per-container
+runtime-source/witness labels and unmanaged-process discovery remain
+implementation gaps.
 
 The witness is a separate site-local
 `<instance>/.pulsar/witness.json`; hot schema 3 is unchanged because one

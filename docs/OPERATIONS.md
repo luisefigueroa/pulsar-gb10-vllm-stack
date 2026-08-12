@@ -33,6 +33,7 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 | `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
 | `./pulsar status [model] [--node ID]` | → `scripts/status.sh` (may submit a completion) |
+| `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
 | `./pulsar help` | Concise usage |
 
 **Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
@@ -416,6 +417,37 @@ until another primary is selected. Primary selection changes future
 resolution; it does not stop a running service, move model bytes, create a
 replica, or authorize deletion.
 
+**Catalog health:** use the cached, read-only view before library maintenance:
+
+```bash
+scripts/model-library.sh health
+scripts/model-library.sh health --json
+```
+
+`healthy` and `not-configured` exit zero. `attention` and `unavailable` exit
+nonzero after printing a complete schema-1 report. The command never refreshes
+the catalog or witness, hashes model bytes, or repairs automatically. Public
+JSON exposes rank numbers and opaque repair IDs but no hosts, addresses, node
+or topology IDs, absolute paths, filesystem identity, or witness IDs. Doctor
+shows the same findings as warnings; they do not block replicated serving.
+
+Schema-1/2 hot metadata is obsolete and cannot launch. If health marks an
+instance repairable, inspect and remove only by its freshly issued ID:
+
+```bash
+scripts/model-library.sh hot legacy check <repair-id> --json
+scripts/model-library.sh hot legacy remove <repair-id> --yes
+# Pinned legacy state needs both explicit acknowledgements:
+scripts/model-library.sh hot legacy remove <repair-id> --yes --force-unpin
+```
+
+Check and removal re-observe all confirmed ranks and managed containers. A
+stale/ambiguous ID, current or malformed metadata, symlinked target, stopped or
+running managed reference, or unreachable Docker/SSH fails closed. Removal
+atomically retires one exact hot instance and does not follow embedded symlinks
+or touch sibling instances/durable homes. If retirement is incomplete, rerun
+health and use the rediscovered ID; never rename it over new content.
+
 **Guarded durable-home removal:** inspect first; do not delete the cache path
 manually. Prefer an exact `model_id@revision` query in destructive workflows:
 
@@ -553,8 +585,10 @@ for the lab issuance contract; never derive expected identity from a user
 cache. If replicated witness fallback fails, repair or restage with
 `scripts/pull-weights.sh <profile> --yes`; do not hand-edit the witness.
 
-**Upgrade note:** catalog schema 1 and hot schema 2 state are intentionally not
-accepted by this implementation. After upgrading, run `catalog refresh`, then
+**Upgrade note:** catalog schema 1 and hot schemas 1/2 are intentionally not
+accepted for launch or trust. Health may recognize exact historical ownership
+metadata only so the separate guarded removal workflow can retire it safely.
+After upgrading, run `catalog refresh`, then
 reactivate each required profile. Hot schema 3 instances created before witness
 support remain readable: the first `library-hot` readiness check visibly
 full-verifies and creates the missing rank-local witness. Current unsealed

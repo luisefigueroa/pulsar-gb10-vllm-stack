@@ -63,6 +63,9 @@ Usage:
   scripts/model-library.sh pin <profile>
   scripts/model-library.sh unpin <profile>
   scripts/model-library.sh purge-hot <profile> [--yes] [--force-unpin]
+  scripts/model-library.sh health [--json]
+  scripts/model-library.sh hot legacy check <repair-id> [--json]
+  scripts/model-library.sh hot legacy remove <repair-id> --yes [--force-unpin] [--json]
   scripts/model-library.sh budget [--json]
 
 Notes:
@@ -106,6 +109,11 @@ Notes:
     --order values before any fast-path decision.
   • pin prevents purge. Cold stage-only hot is self-contained; warm-home
     activation currently keeps a home-rank symlink and still needs that home.
+  • health is read-only: it uses the cached catalog, shallow metadata/witness
+    observations, and managed-container labels without hashing model bytes.
+    Schema-1/2 hot instances are untrusted; removal requires a health-issued
+    repair ID, a fresh fail-closed check, and --yes. Pinned removal additionally
+    requires --force-unpin. Doctor never repairs automatically.
   • activate, cold stage-only, pin, and budget observe every selected rank.
     The default preserves max(64 GiB, 5% of filesystem capacity) as available
     space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
@@ -959,16 +967,17 @@ scan_home_hot_references_on_rank() {
 }
 
 collect_managed_container_metadata_on_rank() {
-  local rank="${1:?}" destination="${2:?}" ids id metadata rc host
+  local rank="${1:?}" destination="${2:?}" context="${3:-home removal}"
+  local ids id metadata rc host
   : >"$destination"
   if [ "$rank" = 0 ]; then
     ids=$(list_managed_container_ids_local) \
-      || die "home removal: cannot enumerate managed containers on rank 0"
+      || die "$context: cannot enumerate managed containers on rank 0"
   else
     host="${CLUSTER_NODE_SSH_HOSTS[$rank]:-}"
-    [ -n "$host" ] || die "home removal: rank $rank has no confirmed SSH host"
+    [ -n "$host" ] || die "$context: rank $rank has no confirmed SSH host"
     ids=$(list_managed_container_ids_remote "$host") \
-      || die "home removal: rank $rank is unreachable or Docker is unavailable"
+      || die "$context: rank $rank is unreachable or Docker is unavailable"
   fi
   while IFS= read -r id; do
     [ -n "$id" ] || continue
@@ -982,9 +991,240 @@ collect_managed_container_metadata_on_rank() {
       continue
     fi
     [ "$rc" -eq 0 ] \
-      || die "home removal: rank $rank container metadata became unobservable"
+      || die "$context: rank $rank container metadata became unobservable"
     printf '%s\n' "$metadata" >>"$destination"
   done <<<"$ids"
+}
+
+scan_hot_health_on_rank() {
+  local rank="${1:?}" node_id="${2:?}" command
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" scan-hot-health \
+      --hot-root "$HOT_ROOT" --rank "$rank" --node-id "$node_id"
+    return
+  fi
+  command=$(shell_join_q python3 - scan-hot-health \
+    --hot-root "$HOT_ROOT" --rank "$rank" --node-id "$node_id")
+  ssh_node "$rank" "$command" <"$PY_TOOL"
+}
+
+write_unavailable_hot_scan() {
+  local destination="${1:?}" rank="${2:?}" node_id="${3:?}" detail="${4:?}"
+  python3 -c '
+import json, sys
+print(json.dumps({
+    "schema_version": 1,
+    "kind": "pulsar-model-library-hot-health-scan",
+    "rank": int(sys.argv[1]),
+    "node_id": sys.argv[2],
+    "hot_root": "",
+    "status": "error",
+    "instances": [],
+    "errors": [{"path": "", "detail": sys.argv[3]}],
+}, indent=2, sort_keys=True))
+' "$rank" "$node_id" "$detail" >"$destination"
+}
+
+collect_health_observations() {
+  local destination="${1:?}" rank node_id scan_ok containers_ok
+  load_cluster_topology >/dev/null || return 1
+  [ "$CLUSTER_TOPOLOGY_COUNT" -gt 0 ] || return 1
+  mkdir -p "$destination"
+  for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+    node_id="${CLUSTER_NODE_IDS[$rank]:-}"
+    [ -n "$node_id" ] || return 1
+    scan_ok=1
+    if ! scan_hot_health_on_rank "$rank" "$node_id" \
+        >"$destination/hot-$rank.json" 2>/dev/null; then
+      scan_ok=0
+      write_unavailable_hot_scan \
+        "$destination/hot-$rank.json" "$rank" "$node_id" \
+        "rank hot metadata is unreachable"
+    fi
+    containers_ok=1
+    if ! (collect_managed_container_metadata_on_rank \
+        "$rank" "$destination/containers-$rank.jsonl") >/dev/null 2>&1; then
+      containers_ok=0
+      : >"$destination/containers-$rank.jsonl"
+    fi
+    if [ "$scan_ok" = 1 ] && [ "$containers_ok" = 0 ]; then
+      write_unavailable_hot_scan \
+        "$destination/hot-$rank.json" "$rank" "$node_id" \
+        "managed container metadata is unavailable"
+    fi
+  done
+}
+
+write_unavailable_health_report() {
+  local destination="${1:?}" detail="${2:?}"
+  python3 -c '
+import json, sys
+print(json.dumps({
+    "schema_version": 1,
+    "kind": "pulsar-model-library-health",
+    "state": "unavailable",
+    "catalog": {"status": "unavailable", "topology_compatible": None},
+    "models": [],
+    "hot_instances": [],
+    "issues": [{"code": "observation-unavailable", "detail": sys.argv[1]}],
+}, indent=2, sort_keys=True))
+' "$detail" >"$destination"
+}
+
+build_health_report_file() {
+  local destination="${1:?}" tmp rc=0
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-library-health.XXXXXX")
+  if ! collect_health_observations "$tmp"; then
+    write_unavailable_health_report "$destination" \
+      "confirmed topology is unavailable"
+    rm -rf "$tmp"
+    return 1
+  fi
+  python3 "$PY_TOOL" build-health \
+    --catalog "$CATALOG_FILE" \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --observations-dir "$tmp" >"$destination" || rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+cmd_health() {
+  local json=0 report rc=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) die "unexpected arg: $1" ;;
+    esac
+    shift
+  done
+  require_py
+  report=$(mktemp "${TMPDIR:-/tmp}/pulsar-library-health.XXXXXX.json")
+  trap 'rm -f "$report"' RETURN
+  build_health_report_file "$report" || rc=$?
+  if [ "$json" = 1 ]; then
+    python3 "$PY_TOOL" render-health --report-file "$report" --json || true
+  else
+    python3 "$PY_TOOL" render-health --report-file "$report" || true
+  fi
+  rm -f "$report"
+  trap - RETURN
+  return "$rc"
+}
+
+jsonl_to_array() {
+  local source="${1:?}"
+  python3 -c '
+import json, sys
+values = []
+with open(sys.argv[1], encoding="utf-8") as handle:
+    for raw in handle:
+        if raw.strip():
+            values.append(json.loads(raw))
+print(json.dumps(values, separators=(",", ":")))
+' "$source"
+}
+
+build_legacy_hot_plan() {
+  local repair_id="${1:?}" force_unpin="${2:-0}" tmp rc=0
+  local -a args
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-legacy-hot.XXXXXX")
+  trap 'rm -rf "$tmp"' RETURN
+  collect_health_observations "$tmp" \
+    || die "legacy hot repair: confirmed topology is unavailable"
+  args=(
+    plan-legacy-hot-repair
+    --repair-id "$repair_id"
+    --topology-file "$CLUSTER_TOPOLOGY_FILE"
+    --observations-dir "$tmp"
+  )
+  [ "$force_unpin" = 0 ] || args+=(--force-unpin)
+  python3 "$PY_TOOL" "${args[@]}" || rc=$?
+  rm -rf "$tmp"
+  trap - RETURN
+  return "$rc"
+}
+
+execute_legacy_hot_plan_on_rank() {
+  local plan="${1:?}" rank node_id containers_file containers_json command
+  load_cluster_topology >/dev/null \
+    || die "legacy hot repair: confirmed topology is unavailable"
+  rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rank"])')
+  node_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')
+  [[ "$rank" =~ ^[0-9]+$ ]] \
+    && [ "$rank" -lt "$CLUSTER_TOPOLOGY_COUNT" ] \
+    || die "legacy hot repair: planned rank is outside confirmed topology"
+  [ "${CLUSTER_NODE_IDS[$rank]:-}" = "$node_id" ] \
+    || die "legacy hot repair: planned node differs from confirmed topology"
+  containers_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-legacy-containers.XXXXXX.jsonl")
+  collect_managed_container_metadata_on_rank \
+    "$rank" "$containers_file" "legacy hot repair" \
+    || die "legacy hot repair: managed containers became unobservable"
+  containers_json=$(jsonl_to_array "$containers_file")
+  rm -f "$containers_file"
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" execute-legacy-hot-repair \
+      --plan-json "$plan" --hot-root "$HOT_ROOT" \
+      --rank "$rank" --node-id "$node_id" \
+      --containers-json "$containers_json"
+    return
+  fi
+  command=$(shell_join_q python3 - execute-legacy-hot-repair \
+    --plan-json "$plan" --hot-root "$HOT_ROOT" \
+    --rank "$rank" --node-id "$node_id" \
+    --containers-json "$containers_json")
+  ssh_node "$rank" "$command" <"$PY_TOOL"
+}
+
+cmd_hot() {
+  local section="${1:-}" action="${2:-}" repair_id="${3:-}"
+  local json=0 yes=0 force_unpin=0 plan rc=0 result_file
+  [ "$section" = legacy ] || { usage; return 2; }
+  [ "$action" = check ] || [ "$action" = remove ] \
+    || { usage; return 2; }
+  [ -n "$repair_id" ] \
+    || die "hot legacy $action requires a repair ID from health"
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      --yes) yes=1 ;;
+      --force-unpin) force_unpin=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) die "unexpected arg: $1" ;;
+    esac
+    shift
+  done
+  if [ "$action" = check ]; then
+    [ "$yes" = 0 ] && [ "$force_unpin" = 0 ] \
+      || die "hot legacy check accepts only a repair ID and --json"
+  else
+    [ "$yes" = 1 ] || die "hot legacy remove requires --yes"
+  fi
+  plan=$(build_legacy_hot_plan "$repair_id" "$force_unpin") || rc=$?
+  if [ "$action" = check ] || [ "$rc" -ne 0 ]; then
+    if [ "$json" = 1 ]; then
+      python3 "$PY_TOOL" render-legacy-hot-repair \
+        --plan-json "$plan" --json || true
+    else
+      python3 "$PY_TOOL" render-legacy-hot-repair \
+        --plan-json "$plan" || true
+    fi
+    return "$rc"
+  fi
+  result_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-legacy-result.XXXXXX.json")
+  trap 'rm -f "$result_file"' RETURN
+  execute_legacy_hot_plan_on_rank "$plan" >"$result_file"
+  if [ "$json" = 1 ]; then
+    python3 "$PY_TOOL" render-legacy-hot-result \
+      --result-file "$result_file" --json
+  else
+    python3 "$PY_TOOL" render-legacy-hot-result \
+      --result-file "$result_file"
+  fi
+  rm -f "$result_file"
+  trap - RETURN
 }
 
 build_home_removal_plan() (
@@ -2756,6 +2996,16 @@ main() {
     budget)
       acquire_model_library_hot_lock shared
       ;;
+    health)
+      acquire_model_library_hot_lock shared
+      ;;
+    hot)
+      if [ "${1:-}" = legacy ] && [ "${2:-}" = remove ]; then
+        acquire_model_library_hot_lock exclusive
+      else
+        acquire_model_library_hot_lock shared
+      fi
+      ;;
   esac
   case "$cmd" in
     catalog)
@@ -2811,6 +3061,8 @@ main() {
     pin) cmd_pin "$@" ;;
     unpin) cmd_unpin "$@" ;;
     purge-hot) cmd_purge_hot "$@" ;;
+    health) cmd_health "$@" ;;
+    hot) cmd_hot "$@" ;;
     budget) cmd_budget "$@" ;;
     -h|--help|help) usage ;;
     *) usage; exit 2 ;;
