@@ -49,10 +49,12 @@ profile now requires a content-addressed schema-1 validation bundle matching
 the seal and live profile contract. Shared Python identity code now owns those
 schemas, and candidate tooling can assemble deterministic unreviewed documents
 without access to the trusted directories. The one-node diagnostic
-`qwen3-1.7b` profile now carries the first reviewed seal/bundle and has passed
-post-issuance physical `library-hot` enforcement. Every other tested profile
-remains legacy-unsealed; this does not promote the model-library path. The
-replicated control plane now applies the reviewed seal when a profile has one;
+`qwen3-1.7b` profile carries the first reviewed seal/bundle and has passed
+post-issuance physical `library-hot` enforcement. Flagship
+`deepseek-v4-flash` carries the second reviewed identity; its post-issuance
+physical enforcement gate remains pending. Profiles without a seal remain
+legacy-unsealed, and neither issuance promotes the model-library path. The
+replicated control plane applies the reviewed seal when a profile has one;
 live-mount launches remain unbound.
 
 The model catalog still selects **what to run and how many ranks it needs**.
@@ -954,19 +956,20 @@ complete manifest, requires model/revision/manifest equality, and publishes
 hot schema 3 only after full verification. A configured mismatch cannot be
 bypassed with `--allow-unvalidated`.
 
-Profiles without a seal remain `legacy-unsealed`, including every current
-guided production profile and `qwen3-1.7b-2node`. Their historical
-`STATUS=tested*` claim does not machine-bless arbitrary content and library
-activation requires explicit `--allow-unvalidated`. The one-node diagnostic
-`qwen3-1.7b` profile is the first issued exception and its replicated mode
-now enforces the same expected commit/manifest identity. Absolute-path catalog
-and live-mount paths still have no equivalent reviewed content lock.
-The seal's reviewed validation-bundle ID resolves to a content-addressed
-schema-1 document. Profile load verifies the bundle's exact primary model,
-declared external-artifact identities/digests, provenance/evidence, normalized
-live runtime/memory contract, digest-pinned image, and geometry. The first
-reviewed bundle now binds the exact one-node diagnostic Qwen claim; it does not
-bind any other profile or storage path.
+Profiles without a seal remain `legacy-unsealed`, including
+`qwen3-1.7b-2node`. Their historical `STATUS=tested*` claim does not
+machine-bless arbitrary content and library activation requires explicit
+`--allow-unvalidated`. The one-node diagnostic `qwen3-1.7b` profile is the
+first issued exception and flagship `deepseek-v4-flash` is the second. Sealed
+replicated mode enforces the same expected commit/manifest identity;
+absolute-path catalog and live-mount paths still have no equivalent reviewed
+content lock. The seal's reviewed validation-bundle ID resolves to a
+content-addressed schema-1 document. Profile load verifies the bundle's exact
+primary model, declared external-artifact identities/digests,
+provenance/evidence, normalized live runtime/memory contract, digest-pinned
+image, and geometry. Reviewed bundles bind the exact Qwen diagnostic and
+DeepSeek flagship claims only; other profiles and live-mount storage remain
+unbound.
 
 ### 12.2 Fabric integrity level
 
@@ -1122,8 +1125,12 @@ bundle. They bind exact commit
 `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest
 `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`,
 the digest-pinned image, normalized one-node contract, and reviewed evidence.
-Every other tested profile remains legacy-unsealed, and its ordinary download
-still defaults to upstream `main`. Sealed replicated profiles are now bound:
+The flagship `deepseek-v4-flash` profile carries the second, binding commit
+`7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest
+`27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`,
+the digest-pinned PR-41834 image, normalized two-node contract, and reviewed
+evidence. Profiles without a seal remain legacy-unsealed and ordinarily still
+default to upstream `main`. Sealed replicated profiles are bound:
 download requests the exact commit, every copied rank is full-verified, and
 launch uses an exact read-only snapshot plus revision/seal/bundle labels.
 Live-mount remains unbound. Rank-local witness schema 1 is implemented for
@@ -1272,9 +1279,9 @@ all-rank observation, reference-blocking, lifecycle-lock, drift, and deletion
 coverage. The guard then passed a three-node physical gate using disposable
 synthetic repositories; the real Qwen home was preserved. The one-node
 diagnostic Qwen identity subsequently passed the applicable sealed enforcement
-gate. Remaining promotion work is to issue a multi-node or flagship
-promotion-scope identity and repeat the applicable physical identity/lifecycle
-gate with that profile. See
+gate. The flagship DeepSeek identity is now issued; remaining promotion work
+is to repeat the applicable post-issuance physical identity/lifecycle gate
+with that exact sealed profile. See
 `results/model-library/model-library-home-removal-guard-20260811.json`.
 The production admission policy is implemented: every selected rank reports
 live filesystem capacity and current hot ownership before writes; sealed-hot
@@ -1532,8 +1539,10 @@ witness fast path are implemented. Candidate tooling cannot issue or publish a
 claim. The earlier legacy-unsealed two-node Qwen canary physically passed the
 symlink, both-rank witness, read-only launch, pin/restart, mismatch, and
 no-follow purge lifecycle gate. The separately reviewed one-node Qwen identity
-now closes the first-issuance gate and passed post-issuance physical
-enforcement. The active-use removal guard also passed deterministic and
+closed the first-issuance gate and passed post-issuance physical enforcement.
+The flagship DeepSeek identity now closes the promotion-scope issuance half;
+its post-issuance physical enforcement remains pending. The active-use removal
+guard also passed deterministic and
 three-node physical checks using disposable synthetic repositories. Exact
 all-rank hot admission is now
 implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
@@ -1543,10 +1552,11 @@ refusal, and unchanged hot ownership. Strict DeepSeek determinism and sustained
 soak remain pending. Live NFS/RDMA additionally retains its owner-recovery and
 three-node validation work. The accurate product claim is:
 
-> Replicated model-cache workflows remain promoted and user-facing under the
-> historical profile-validation ledger, but those paths are not yet
-> content-bound by expected seals. Model-library code enforces the first
-> reviewed seal/bundle for the one-node diagnostic `qwen3-1.7b`; every other
-> tested profile remains legacy-unsealed. Sealed local-hot activation over
-> SSH-over-RoCE is still a measured promotion candidate, and live NFS/RDMA is a
-> separate documented experiment; neither is a promoted default.
+> Replicated model-cache workflows remain promoted and user-facing. For sealed
+> profiles they enforce the reviewed exact identity; profiles without a seal
+> retain historical legacy-unsealed behavior. Model-library code recognizes
+> reviewed seal/bundles for diagnostic `qwen3-1.7b` and flagship
+> `deepseek-v4-flash`; only Qwen has completed post-issuance physical
+> enforcement so far. Sealed local-hot activation over SSH-over-RoCE remains a
+> measured promotion candidate, and live NFS/RDMA is a separate documented
+> experiment; neither is a promoted default.

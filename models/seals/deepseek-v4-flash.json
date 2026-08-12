@@ -1,0 +1,34 @@
+{
+  "kind": "pulsar-expected-model-seal",
+  "manifest": {
+    "manifest_id": "27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e",
+    "scheme": "sha256-snapshot-manifest-v1"
+  },
+  "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+  "profile": "deepseek-v4-flash",
+  "provenance": {
+    "evidence": [
+      "results/model-library/deepseek-v4-flash-release-validation-20260812.json",
+      "results/model-library/deepseek-v4-flash-snapshot-manifest-20260812.json",
+      "results/model-library/model-library-promotion-assessment-20260810.json",
+      "results/model-library/deepseek-v4-flash-ssh-roce8-vs-control8-counterbalanced-20260810.json",
+      "results/dsv4-0731-capture.json",
+      "results/dsv4-0731-dspark-capture.json",
+      "results/bench-dsv4-0731-base.json",
+      "results/bench-dsv4-0731-dspark.json",
+      "results/soak-dsv4-0731-150min.json",
+      "results/smoke-dsv4-0731-500kv-20min.json",
+      "results/dsv4-20gb-gates.stdout",
+      "results/needle-dsv4-20gb-447k.log",
+      "results/soak-dsv4-20gb-150min.json",
+      "results/liveness-post-20gb-soak.json"
+    ],
+    "issued_at": "2026-08-12T02:29:17Z",
+    "issuer": "Pulsar GB10 validation lab",
+    "validation_bundle_id": "8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236"
+  },
+  "revision_kind": "huggingface-commit",
+  "schema_version": 1,
+  "seal_id": "1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a",
+  "snapshot_revision": "7872f01b1d1fe23eabc4c98b48bffcef5a386062"
+}

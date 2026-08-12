@@ -25,7 +25,7 @@ policy. The service does not acquire model bytes, run validation gates, edit a
 profile, copy documents into `models/seals/` or
 `models/validation-bundles/`, or change `STATUS`.
 
-## First issued profile
+## Issued profiles
 
 The one-node diagnostic `qwen3-1.7b` profile is the first claim issued through
 this workflow. Its reviewed trust roots are:
@@ -47,6 +47,24 @@ activation/launch used those exact identities. This narrowly establishes the
 one-node diagnostic claim. It does not seal `qwen3-1.7b-2node`, promote the
 model-library path, or content-bind live-mount and legacy-unsealed replicated
 launches. The sealed replicated path now enforces this issued identity.
+
+The flagship `deepseek-v4-flash` profile is the second issued claim. Its
+reviewed trust roots are:
+
+- expected seal
+  `1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a`;
+- validation bundle
+  `8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`;
+- exact model commit
+  `7872f01b1d1fe23eabc4c98b48bffcef5a386062`; and
+- complete manifest
+  `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`.
+
+Its candidate and an independent reproduction were byte-identical, and the
+trusted bundle verifier returned `match`. The issuance binds the reviewed
+DeepSeek GA content, digest-pinned image, normalized two-node profile, and
+repository evidence. It does not claim bit-identical output, promote the model
+library, or replace the pending post-issuance physical identity/lifecycle gate.
 
 ## Trust boundary
 

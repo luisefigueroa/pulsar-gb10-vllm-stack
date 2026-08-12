@@ -9,17 +9,18 @@ file at:
 models/validation-bundles/<validation_bundle_id>.json
 ```
 
-This release contains one reviewed bundle for the diagnostic `qwen3-1.7b`
-profile:
+This release contains reviewed bundles for the diagnostic `qwen3-1.7b`
+profile and the flagship `deepseek-v4-flash` profile:
 
 ```text
 9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380.json
+8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236.json
 ```
 
-Every other tested profile, including `qwen3-1.7b-2node`, remains
+Profiles without a reviewed bundle, including `qwen3-1.7b-2node`, remain
 `legacy-unsealed`. Do not manufacture a bundle from a user's cache to change
-that status. The issued bundle is enforced by `library-hot`; replicated and
-live-mount launch paths are not yet content-bound by it.
+that status. Issued bundles are enforced by `library-hot` and sealed
+replicated caches; live-mount launch remains unbound.
 
 ## Identity and binding
 
