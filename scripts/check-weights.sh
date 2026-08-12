@@ -138,6 +138,14 @@ print(json.dumps({"state":"ok","source":"library-hot","ok":True,
   exit 0
 fi
 
+SEALED_REPLICATED=0
+if [ "$WEIGHT_SOURCE" = replicated ] &&
+    [ "$(model_source_kind)" = hf ] &&
+    [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+  load_replicated_identity_plan "$NAME"
+  SEALED_REPLICATED=1
+fi
+
 weight_tree_state_local() {
   local root="${1:?}" config weight_dir index
   [ -d "$root" ] || { echo missing; return; }
@@ -191,8 +199,12 @@ PY
 
 hf_snapshot_path_local() {
   local hub="${1:?}" ref
-  [ -s "$hub/refs/main" ] || return 3
-  ref=$(tr -d '\r\n' <"$hub/refs/main")
+  if [ "$SEALED_REPLICATED" = 1 ]; then
+    ref="$REPLICATED_REVISION"
+  else
+    [ -s "$hub/refs/main" ] || return 3
+    ref=$(tr -d '\r\n' <"$hub/refs/main")
+  fi
   case "$ref" in
     *[!A-Za-z0-9._-]*|"") return 3 ;;
   esac
@@ -209,8 +221,13 @@ remote_exec() {
 hf_snapshot_path_remote() {
   local host="${1:?}" hub="${2:?}" qhub command
   qhub=$(printf '%q' "$hub")
-  command="hub=$qhub; test -s \"\$hub/refs/main\" || exit 3; "
-  command+="ref=\$(tr -d '\\r\\n' <\"\$hub/refs/main\"); "
+  command="hub=$qhub; "
+  if [ "$SEALED_REPLICATED" = 1 ]; then
+    command+="ref=$(printf '%q' "$REPLICATED_REVISION"); "
+  else
+    command+="test -s \"\$hub/refs/main\" || exit 3; "
+    command+="ref=\$(tr -d '\\r\\n' <\"\$hub/refs/main\"); "
+  fi
   command+="case \"\$ref\" in ''|*[!A-Za-z0-9._-]*) exit 3;; esac; "
   command+="test -d \"\$hub/snapshots/\$ref\" || exit 3; "
   command+="printf '%s\\n' \"\$hub/snapshots/\$ref\""
@@ -348,10 +365,33 @@ for ((rank = 1; rank < NODES; rank++)); do
   fi
 done
 
+if [ "$SEALED_REPLICATED" = 1 ]; then
+  for ((rank = 0; rank < NODES; rank++)); do
+    [ "${rank_states[$rank]}" = ok ] || continue
+    verify_rc=0
+    if [ "$NODES" = 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
+      verify_replicated_identity_remote "$SINGLE_NODE_SSH_HOST" serve >/dev/null ||
+        verify_rc=$?
+    elif [ "$rank" = 0 ]; then
+      verify_replicated_identity_local serve >/dev/null || verify_rc=$?
+    else
+      verify_replicated_identity_remote "${CLUSTER_NODE_SSH_HOSTS[$rank]}" serve >/dev/null ||
+        verify_rc=$?
+    fi
+    if [ "$verify_rc" != 0 ]; then
+      rank_states[$rank]=identity-mismatch
+    fi
+  done
+fi
+
 state=ok
 for ((rank = 0; rank < NODES; rank++)); do
   rank_state="${rank_states[$rank]}"
   [ "$rank_state" = ok ] && continue
+  if [ "$rank_state" = identity-mismatch ]; then
+    state=identity-mismatch
+    continue
+  fi
   if [ "$rank" = 0 ]; then
     state="$rank_state"
   elif [ "$rank_state" = unreachable ]; then
@@ -371,11 +411,32 @@ for ((rank = 0; rank < NODES; rank++)); do
     fi
   fi
 done
+for ((rank = 0; rank < NODES; rank++)); do
+  if [ "${rank_states[$rank]}" = identity-mismatch ]; then
+    state=identity-mismatch
+  fi
+done
 
 path_out="$MODEL"
 [ "$kind" = hf ] && path_out=$(hf_hub_path)
 head_state="${rank_states[0]}"
 worker_state="${rank_states[1]:-n/a}"
+identity_status="unvalidated"
+model_revision=""
+model_seal_id=""
+validation_bundle_id=""
+manifest_id=""
+if [ "$SEALED_REPLICATED" = 1 ]; then
+  identity_status=unverified
+  [ "$state" = ok ] && identity_status=match
+  [ "$state" = identity-mismatch ] && identity_status=mismatch
+  model_revision="$REPLICATED_REVISION"
+  model_seal_id="$REPLICATED_MODEL_SEAL_ID"
+  validation_bundle_id="$REPLICATED_VALIDATION_BUNDLE_ID"
+  manifest_id="$REPLICATED_MANIFEST_ID"
+elif [[ "$STATUS" == tested* ]]; then
+  identity_status=legacy-unsealed
+fi
 
 if [ "$JSON" = 1 ]; then
   states_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-weight-states.XXXXXX")
@@ -385,6 +446,9 @@ if [ "$JSON" = 1 ]; then
   done
   MODEL_V="$NAME" KIND_V="$kind" NODES_V="$NODES" STATE_V="$state" \
   HEAD_V="$head_state" WORKER_V="$worker_state" PATH_V="$path_out" \
+  IDENTITY_V="$identity_status" REVISION_V="$model_revision" \
+  SEAL_V="$model_seal_id" BUNDLE_V="$validation_bundle_id" \
+  MANIFEST_V="$manifest_id" \
   PLACEMENT_INDEX_V="${SINGLE_NODE_INDEX:-}" \
   PLACEMENT_KEY_V="${SINGLE_NODE_KEY:-}" \
   PLACEMENT_ID_V="${SINGLE_NODE_ID:-}" \
@@ -399,7 +463,20 @@ ranks = []
 with open(os.environ["STATES_FILE"], encoding="utf-8") as handle:
     for line in handle:
         rank, state = line.rstrip("\n").split("\t", 1)
-        ranks.append({"rank": int(rank), "state": state, "ok": state == "ok"})
+        identity = os.environ["IDENTITY_V"]
+        if identity in {"match", "mismatch", "unverified"}:
+            if state == "ok":
+                identity = "match"
+            elif state == "identity-mismatch":
+                identity = "mismatch"
+            else:
+                identity = "unverified"
+        ranks.append({
+            "rank": int(rank),
+            "state": state,
+            "ok": state == "ok",
+            "identity_status": identity,
+        })
 placement = None
 if int(os.environ["NODES_V"]) == 1:
     placement = {
@@ -418,6 +495,11 @@ print(json.dumps({
     "state": os.environ["STATE_V"],
     "head": os.environ["HEAD_V"],
     "worker": os.environ["WORKER_V"],
+    "identity_status": os.environ["IDENTITY_V"],
+    "model_revision": os.environ["REVISION_V"] or None,
+    "model_seal_id": os.environ["SEAL_V"] or None,
+    "validation_bundle_id": os.environ["BUNDLE_V"] or None,
+    "manifest_id": os.environ["MANIFEST_V"] or None,
     "placement": placement,
     "ranks": ranks,
     "path": os.environ["PATH_V"],
@@ -430,14 +512,14 @@ else
   done
   if [ "${QUIET:-0}" = 1 ]; then
     [ "$state" = ok ] \
-      && echo "PASS  weights   source=$kind ·${summary}" \
-      || echo "FAIL  weights   state=$state ·${summary}"
+      && echo "PASS  weights   source=$kind · identity=$identity_status ·${summary}" \
+      || echo "FAIL  weights   state=$state · identity=$identity_status ·${summary}"
   else
     [ "$state" = ok ] \
       && title="MODEL FILES READY" || title="MODEL FILES NOT READY"
     [ "$kind" = hf ] \
       && source_display="Hugging Face" || source_display="Local or NFS"
-    fields=("Model" "$NAME" "Source" "$source_display")
+    fields=("Model" "$NAME" "Source" "$source_display" "Identity" "$identity_status")
     for ((rank = 0; rank < NODES; rank++)); do
       if [ "$NODES" -eq 1 ]; then
         node="$SINGLE_NODE_HOSTNAME"
@@ -464,6 +546,7 @@ else
         unreachable) display_state="unreachable" ;;
         unconfigured) display_state="not confirmed" ;;
         nfs-unmounted) display_state="NFS not mounted" ;;
+        identity-mismatch) display_state="identity mismatch" ;;
         *) display_state="${rank_states[$rank]}" ;;
       esac
       [ "$rank" = 0 ] && label="Status" || label=""

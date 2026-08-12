@@ -48,6 +48,7 @@ if [ "$WEIGHT_SOURCE" = fabric ]; then
   exec "$PULSAR_WEIGHT_FABRIC_TOOL" "${fabric_args[@]}"
 fi
 kind=$(model_source_kind)
+SEALED_REPLICATED=0
 TARGET_RANKS=()
 REMOTE_STAGE_RANKS=()
 CHECK_ARGS=()
@@ -81,6 +82,10 @@ Fix:
   3. Re-run: scripts/check-weights.sh $NAME ${CHECK_ARGS[*]:-}
 EOF
   exit 1
+fi
+if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+  load_replicated_identity_plan "$NAME"
+  SEALED_REPLICATED=1
 fi
 
 if command -v hf >/dev/null 2>&1; then
@@ -311,6 +316,9 @@ render_human_section "DOWNLOADING MODEL FILES" \
 
 export HF_HUB_OFFLINE=0
 download_cmd=("$hf_bin" download "$MODEL" --cache-dir "$hub_root")
+if [ "$SEALED_REPLICATED" = 1 ]; then
+  download_cmd+=(--revision "$REPLICATED_REVISION")
+fi
 if [ "$hf_bin" = hf ] && [ "$VERBOSE" != 1 ]; then
   download_cmd+=(--quiet)
 fi
@@ -337,6 +345,12 @@ if [ ! -d "$hub" ]; then
     "Hugging Face completed without creating Pulsar's standard cache location." \
     "Retry with PULSAR_VERBOSE=1 and report the Hugging Face output." \
     "Expected: $hub"
+fi
+
+if [ "$SEALED_REPLICATED" = 1 ]; then
+  if ! verify_replicated_identity_local full >/dev/null; then
+    weight_failure "Verifying downloaded model identity" "The exact downloaded snapshot does not match the reviewed model seal." "Remove the corrupt or unexpected snapshot, then rerun this command."
+  fi
 fi
 
 local_size=$(dir_size_gib "$hub")
@@ -390,6 +404,11 @@ if [ "${#REMOTE_STAGE_RANKS[@]}" -gt 0 ]; then
           "Copying model files to $(node_display "$rank")" \
           "The network copy did not complete." \
           "Check SSH, storage, and network connectivity, then retry with PULSAR_VERBOSE=1 for rsync diagnostics."
+      fi
+    fi
+    if [ "$SEALED_REPLICATED" = 1 ]; then
+      if ! verify_replicated_identity_remote "$host" full >/dev/null; then
+        weight_failure "Verifying model identity on $(node_display "$rank")" "The copied snapshot does not match the reviewed model seal." "Remove the incomplete destination copy on $(node_name "$rank"), then rerun this command."
       fi
     fi
     render_human_section "COPY COMPLETE" \

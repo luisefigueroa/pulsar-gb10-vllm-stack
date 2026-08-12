@@ -28,7 +28,7 @@ esac
 printf '%s' "$rendered" | grep -q redacted
 
 serve_out=$(HF_TOKEN="$SECRET" VLLM_API_KEY="$SECRET" \
-  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run)
+  "$REPO_DIR/serve.sh" qwen3.6-27b-fp8 --dry-run)
 case "$serve_out" in
   *"$SECRET"*)
     echo "serve dry-run disclosed a credential" >&2

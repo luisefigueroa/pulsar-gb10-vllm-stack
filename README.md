@@ -195,7 +195,10 @@ for unchanged launch, and visibly rehash on drift before launching the exact
 snapshot. The diagnostic `qwen3-1.7b` profile now carries the first reviewed
 lab seal and validation bundle; its sealed `library-hot` activation and launch
 reported `identity=match`. Other tested profiles remain legacy-unsealed, and
-this does not promote `library-hot` or bind the replicated/live-mount paths. See
+this does not promote `library-hot`. Sealed replicated caches now enforce the
+reviewed commit/manifest with full verification, a rank-local witness, and
+exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
+paths remain unbound. See
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
 [docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). Maintainers can
 assemble deterministic unreviewed identity candidates through the separate

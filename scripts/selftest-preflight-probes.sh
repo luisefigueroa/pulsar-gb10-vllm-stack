@@ -113,14 +113,14 @@ assert_json_state "$image_out" worker-unreachable \
 
 # A config file alone is not a complete model cache. Require actual non-empty
 # weights and reject interrupted-download markers.
-snapshot="$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/snapshots/test"
+snapshot="$STATE_DIR/hf/hub/models--Qwen--Qwen3.6-27B-FP8/snapshots/test"
 mkdir -p "$snapshot/inference"
 # A nested component config must never replace the model root config.
 printf '{}\n' >"$snapshot/inference/config.json"
 printf '{}\n' >"$snapshot/config.json"
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json)
+  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
@@ -129,14 +129,14 @@ assert_json_state "$weights_out" partial \
 
 printf 'weight-data\n' >"$STATE_DIR/weight-blob"
 ln -s "$STATE_DIR/weight-blob" "$snapshot/model.safetensors"
-mkdir -p "$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs"
-printf 'test' >"$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs/main"
+mkdir -p "$STATE_DIR/hf/hub/models--Qwen--Qwen3.6-27B-FP8/refs"
+printf 'test' >"$STATE_DIR/hf/hub/models--Qwen--Qwen3.6-27B-FP8/refs/main"
 HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json >/dev/null
+  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json >/dev/null
 echo "OK   Hugging Face weight symlinks are accepted"
 
 weights_human=$(COLUMNS=48 HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b)
+  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8)
 printf '%s\n' "$weights_human" | grep -q '^MODEL FILES READY$'
 printf '%s\n' "$weights_human" | grep -q 'this node.*ready'
 if printf '%s\n' "$weights_human" | grep -Eq 'r0=|rank 0|path='; then
@@ -153,7 +153,7 @@ printf '{"weight_map":{"layer":"missing-shard.safetensors"}}\n' \
   >"$snapshot/model.safetensors.index.json"
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json)
+  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
@@ -167,7 +167,7 @@ echo "OK   remote weight verification checks every indexed shard"
 : >"$snapshot/download.incomplete"
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json)
+  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
@@ -177,6 +177,11 @@ rm -f "$snapshot/download.incomplete"
 
 # A nonexistent remote hub is missing, not partial. Preserve the local state
 # when more than one required node is incomplete.
+qwen_snapshot="$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/snapshots/test"
+mkdir -p "$qwen_snapshot" "$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs"
+printf '{}\n' >"$qwen_snapshot/config.json"
+printf 'weight-data\n' >"$qwen_snapshot/model.safetensors"
+printf 'test' >"$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs/main"
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/hf" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \

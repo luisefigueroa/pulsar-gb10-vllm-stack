@@ -45,7 +45,8 @@ candidate reproduced byte-for-byte before publication, the trusted bundle
 verifier returned `match`, and a post-issuance physical `library-hot`
 activation/launch used those exact identities. This narrowly establishes the
 one-node diagnostic claim. It does not seal `qwen3-1.7b-2node`, promote the
-model-library path, or content-bind replicated/live-mount launches.
+model-library path, or content-bind live-mount and legacy-unsealed replicated
+launches. The sealed replicated path now enforces this issued identity.
 
 ## Trust boundary
 

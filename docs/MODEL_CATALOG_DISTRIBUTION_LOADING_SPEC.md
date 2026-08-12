@@ -51,8 +51,9 @@ schemas, and candidate tooling can assemble deterministic unreviewed documents
 without access to the trusted directories. The one-node diagnostic
 `qwen3-1.7b` profile now carries the first reviewed seal/bundle and has passed
 post-issuance physical `library-hot` enforcement. Every other tested profile
-remains legacy-unsealed; this does not promote the path or bind
-replicated/live-mount launches.
+remains legacy-unsealed; this does not promote the model-library path. The
+replicated control plane now applies the reviewed seal when a profile has one;
+live-mount launches remain unbound.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -194,7 +195,7 @@ and reviewed profile changes are trusted.
 
 | Field | Meaning and current rule |
 |---|---|
-| `MODEL` | Required. Normally passed to vLLM as `--model`. A leading `/` classifies an absolute-path catalog model; otherwise it is a Hugging Face repository. `library-hot` launch instead passes the sealed local `snapshots/<revision>` path. |
+| `MODEL` | Required. Normally passed to vLLM as `--model`. A leading `/` classifies an absolute-path catalog model; otherwise it is a Hugging Face repository. `library-hot` and sealed replicated launch instead pass the exact local `snapshots/<revision>` path. |
 | `SERVED_NAME` | API model name. Defaults to the profile ID and may intentionally differ from the repository ID. |
 | `EXPECTED_MODEL_SEAL` | Optional path relative to `models/`, constrained under `models/seals/`. Only `STATUS=tested*` may reference one. The strict seal and every repository-relative evidence path must exist. |
 | Profile filename | Operator-facing launch ID, for example `scripts/up.sh <profile>`. |
@@ -398,8 +399,8 @@ control-endpoint pinning is therefore not yet uniform across the repository.
 | Model origin | Hugging Face repository ID | Operator-managed absolute path | Hugging Face repository ID |
 | Durable copies | One full repository per serving node | Defined by external catalog operator | One authoritative repository on owner; complete client replicas forbidden |
 | Distribution | Controller downloads, then `rsync`s selected repository to remote ranks | Out of scope; mount/provision before Pulsar | Owner-only download; NFS/RDMA export/mount applied explicitly |
-| Container view | Full local HF home, writable; site catalog also mounted read-only | Site catalog mounted read-only | Only selected HF repository mounted read-only at its exact cache location; broader HF home excluded |
-| Cryptographic seal | No | No | Yes, exact revision/file set/sizes/SHA-256 |
+| Container view | Legacy-unsealed: full local HF home, writable. Sealed: selected repository read-only and exact snapshot path | Site catalog mounted read-only | Only selected HF repository mounted read-only at its exact cache location; broader HF home excluded |
+| Cryptographic seal | Yes only when the profile references a reviewed expected seal; otherwise structural legacy behavior | No | Yes, exact revision/file set/sizes/SHA-256 |
 | Cold-start owner dependency | No after local staging | Depends on external catalog | Yes |
 | Steady-state owner dependency | None | Depends on external catalog semantics | Loaded service may continue, but reload/restart and hard-mounted I/O depend on owner |
 | Automatic fallback | Not applicable | None | None; explicit replicated staging and launch required |
@@ -415,12 +416,16 @@ For an HF profile, `scripts/pull-weights.sh` performs this sequence:
 4. Estimate required free disk from `WEIGHTS_GIB`, accounting for an existing
    partial local repository, and require a full-copy allowance on each remote.
 5. Ask for confirmation unless `--yes` was explicitly supplied.
-6. Run `hf download <MODEL> --cache-dir <HF cache>/hub` on the controller with
-   online access enabled for the command.
+6. For a sealed profile, run `hf download <MODEL> --revision <exact commit>`
+   against the standard hub cache; otherwise retain the legacy unpinned
+   download behavior. Online access is enabled only for this command.
 7. Copy the selected `models--publisher--model` repository directory to each
    remote serving rank using `rsync -aH`.
-8. Run the normal per-rank weight check and fail if any rank is missing,
-   partial, unreachable, or unconfirmed.
+8. For a sealed profile, full-verify the complete reviewed manifest on the
+   controller and after every remote materialization, creating a rank-local
+   witness outside the copied repository.
+9. Run the normal per-rank weight check and fail if any rank is missing,
+   partial, unreachable, unconfirmed, or identity-mismatched.
 
 Every serving rank needs the complete repository on disk even though vLLM may
 shard the resident tensors across ranks. Tensor parallelism changes the runtime
@@ -431,7 +436,7 @@ downloads/stages the source repository locally and copies it to that node. The
 controller copy may remain afterward. This is a convenience of the current
 implementation, not a declared cache-retention policy.
 
-The completeness checker verifies:
+For a legacy-unsealed profile, the completeness checker verifies:
 
 - a valid `refs/main` pointing at an existing snapshot directory;
 - no `*.incomplete` marker;
@@ -440,10 +445,12 @@ The completeness checker verifies:
   `gguf`); and
 - if a weight index is present, every referenced shard exists and is non-empty.
 
-It does **not** calculate hashes, prove that every remote rank resolves exactly
-the same revision, reject extra files, or bind the repository to a profile lock
-file. The copy workflow normally produces equivalent trees, but the launch gate
-is a structural completeness check rather than a cryptographic parity check.
+For a sealed profile, the checker ignores mutable `refs/main`, selects the
+reviewed snapshot revision directly, requires the exact logical file set and
+sizes, and consumes a witness that can report `match` without hashing model
+bytes. A missing, malformed, or drifted witness visibly runs full SHA-256
+verification against the reviewed manifest and refreshes only on a stable
+match. Mismatch fails closed.
 
 ### 7.3 Absolute-path catalog workflow
 
@@ -779,7 +786,10 @@ inside the cluster launcher.
 
 **Single-node/default:**
 
-- local Hugging Face home mounted at `/root/.cache/huggingface`;
+- legacy-unsealed HF profiles mount the local Hugging Face home at
+  `/root/.cache/huggingface` and pass the repository ID;
+- sealed HF profiles mount only the selected repository read-only at its normal
+  hub location and pass `snapshots/<reviewed commit>`;
 - configured site catalog root mounted at `/mnt/Models:ro`;
 - offline mode enabled by default;
 - HF token is available to the single-node container when configured; and
@@ -787,8 +797,10 @@ inside the cluster launcher.
 
 **Multi-node replicated/default:**
 
-- each rank's local Hugging Face home mounted at the normal container cache
-  path;
+- legacy-unsealed profiles mount each rank's local Hugging Face home at the
+  normal container cache path;
+- sealed profiles mount only each rank's selected repository read-only and
+  pass the same exact snapshot path on every rank;
 - site catalog root mounted read-only;
 - offline mode enabled by default; and
 - model resolution occurs independently against each rank's local filesystem.
@@ -926,10 +938,12 @@ remain operator responsibility and must be stopped before removal.
 
 ### 12.1 Replicated/catalog integrity level
 
-The default path provides structural presence/completeness checks. It does not
-currently create a cryptographic model lock or publish per-rank digest parity.
-Model repository IDs are present in profiles, but a mutable upstream `main`
-revision is not pinned by the profile or download command.
+The default path is conditional on profile identity. A profile without a
+reviewed seal retains structural presence/completeness checks and mutable
+upstream `main` behavior. A sealed HF profile downloads the exact reviewed
+commit, full-verifies its manifest on every materialized rank, and uses a
+rank-local metadata witness for unchanged readiness and launch. The witness is
+site-local acceleration state, not a signature or trust root.
 
 Model-library catalog schema 2 closes the repository-ID-only trust gap when a
 profile references a reviewed seal: refresh enumerates complete snapshot
@@ -944,8 +958,9 @@ Profiles without a seal remain `legacy-unsealed`, including every current
 guided production profile and `qwen3-1.7b-2node`. Their historical
 `STATUS=tested*` claim does not machine-bless arbitrary content and library
 activation requires explicit `--allow-unvalidated`. The one-node diagnostic
-`qwen3-1.7b` profile is the first issued exception. Replicated mode still has
-no equivalent content lock.
+`qwen3-1.7b` profile is the first issued exception and its replicated mode
+now enforces the same expected commit/manifest identity. Absolute-path catalog
+and live-mount paths still have no equivalent reviewed content lock.
 The seal's reviewed validation-bundle ID resolves to a content-addressed
 schema-1 document. Profile load verifies the bundle's exact primary model,
 declared external-artifact identities/digests, provenance/evidence, normalized
@@ -1107,10 +1122,13 @@ bundle. They bind exact commit
 `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest
 `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`,
 the digest-pinned image, normalized one-node contract, and reviewed evidence.
-Every other tested profile remains legacy-unsealed, and ordinary downloads
-still default to upstream `main`. Replicated and live-mount paths are not yet
-bound by this mechanism. Rank-local witness schema 1 is implemented for
-`library-hot`: activation full-verifies
+Every other tested profile remains legacy-unsealed, and its ordinary download
+still defaults to upstream `main`. Sealed replicated profiles are now bound:
+download requests the exact commit, every copied rank is full-verified, and
+launch uses an exact read-only snapshot plus revision/seal/bundle labels.
+Live-mount remains unbound. Rank-local witness schema 1 is implemented for
+`library-hot` and as a distinct replicated-cache witness: activation or
+acquisition full-verifies
 before atomic creation, and launch validates the live profile/controller
 expectation before using it. A metadata match hashes zero model bytes. Missing,
 malformed, or drifted metadata is reported on stderr, then full-verifies and
@@ -1281,6 +1299,13 @@ mode always hashes and refreshes atomically. The
 `integrity.mode=witness|full`. These site paths and filesystem identifiers
 must never be copied into publishable evidence.
 
+Sealed replicated caches use a separate schema-1 witness under
+`<HF cache>/.pulsar/replicated-witnesses/<profile>/<seal-id>.json`. It uses
+the same canonical-view and per-file metadata contract, but records
+`weight_source=replicated` and `runtime_view=exact-snapshot` rather than
+inventing a model-library runtime source. The witness lives outside the copied
+repository so one rank's filesystem identity is never distributed to another.
+
 This path is implemented but experimental and unpromoted. It must continue to
 be evaluated against replicated mode and live fabric rather than being assumed
 to supersede either one. In particular, the one-shot `nfs-rdma` backend cannot claim the fast path
@@ -1333,10 +1358,12 @@ implementation shape and unrelated catalog/live-mount policy.
 
 ### Distribution and integrity
 
-4. How should legacy replicated caches migrate to expected-seal comparison
-   without deriving trusted identity from arbitrary user-observed content?
-5. Should remote `rsync` use exact mirroring/deletion and revision checks rather
-   than preserving possible extra remote files?
+4. In what order should the remaining legacy replicated profiles receive
+   lab-issued seals and revalidation, without deriving trusted identity from
+   arbitrary user-observed content?
+5. Should remote `rsync` prune stale non-selected snapshots and blobs after the
+   selected revision passes exact-manifest verification, or should cache
+   garbage collection remain a separate policy?
 6. Should a remote one-node placement leave a controller-side staging copy, and
    if so, what retention/garbage-collection policy should govern it?
 7. Is an operator-mounted absolute catalog sufficiently specified, or should

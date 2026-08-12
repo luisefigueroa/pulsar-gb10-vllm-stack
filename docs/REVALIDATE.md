@@ -21,9 +21,11 @@ historical run or revalidate the intended revision, then follow
 [models/seals/README.md](../models/seals/README.md) in the evidence pull
 request. A future mirror may distribute the bytes, but hosting location is not
 validation identity. The rank-local serve witness is implemented for
-`library-hot`: activation creates it only after full verification, while
-unchanged launch uses metadata and drift visibly rehashes before refresh.
-Replicated and live-mount launch paths are not yet content-bound by the seal.
+`library-hot` and sealed replicated caches: activation/acquisition creates it
+only after full verification, while unchanged launch uses metadata and drift
+visibly rehashes before refresh. Sealed replicated download pins the exact
+commit and every materialized rank is verified. Legacy-unsealed replicated
+profiles and live-mount launch remain unbound.
 The standalone bundle verifier is implemented. Maintainer-only
 `scripts/model-release.sh` can hash an exact commit and assemble/verify
 deterministic unreviewed candidates; trusted publication remains a deliberate
