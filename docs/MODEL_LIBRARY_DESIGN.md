@@ -22,7 +22,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; persistent exact-revision primary selection and guarded reconciliation passed a disposable three-node physical gate, while reconciliation of the existing DeepSeek duplicate, the strict-determinism policy question, and soak remain pending |
+| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; the existing DeepSeek duplicate was reconciled to one persistent durable home and the exact sealed lifecycle passed again, while the strict-determinism policy question and soak remain pending |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued 2026-08-12 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decision | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md) |
@@ -704,11 +704,18 @@ were implemented afterward, passed deterministic tests, and then passed a
 three-node physical repeat using only disposable synthetic HF-layout
 repositories. The repeat proved pre-selection and selected-primary refusal,
 refresh preservation, exact non-primary deletion, one-home catalog state, and
-sibling preservation. The two existing DeepSeek durable copies were not
-removed. That site reconciliation, the separately tracked strict-determinism
-policy question, and sustained soak remain; no profile or path was promoted.
+sibling preservation. The two existing DeepSeek durable copies were not removed
+in that disposable gate. The real lab duplicate was subsequently reconciled to
+rank 1 as the one persistent durable home. A clean two-rank repeat then passed
+eight-stream SSH-over-RoCE activation, exact full verification,
+durable-home/sealed-hot placement, zero-byte witnesses, read-only exact-snapshot
+launch, warmup, completion smoke, owned stop, hot purge, and return to one
+durable copy. The separately tracked strict-determinism policy question and
+sustained soak remain; no profile or path was promoted.
 See
-`results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`.
+`results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`
+and
+`results/model-library/deepseek-v4-flash-one-home-gate-20260812.json`.
 Read-only health and repair-ID-bound legacy-hot removal subsequently passed a
 three-node physical gate using only tiny synthetic schema-1 instances. It
 proved every-rank inventory, stopped-container and pinned blockers, local and
@@ -729,9 +736,6 @@ blocker changed.
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Stable public guarantees for machine-readable JSON schemas other than the
   health schema-1 contract
-- Physical reconciliation of the existing DeepSeek duplicate into the
-  one-durable-home steady state; destructive cleanup remains an explicit,
-  operator-confirmed operation
 - Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete physical promotion matrix, including time-to-healthy, interruption,
   dependency loss, restart, determinism, and sustained soak
@@ -781,3 +785,4 @@ blocker changed.
 | 2026-08-12 | Persistent-primary targeting passed a three-node physical repeat using disposable synthetic HF-layout repositories: direct removal refused before selection, the exact selection survived refresh, selected-primary removal refused, only the non-primary home was deleted, the catalog reached one selected durable home, and an adjacent repository remained intact. The existing DeepSeek duplicate was not changed; promotion, strict determinism, and soak remain open. |
 | 2026-08-12 | Added stable read-only health schema 1, Doctor warning integration, and repair-ID-bound schema-1/2 legacy-hot removal. The service uses cached catalog and metadata observations only; it does not reconcile the existing DeepSeek duplicate or mutate real hot/model state. |
 | 2026-08-12 | Read-only health and guarded legacy-hot removal passed a three-node physical gate with disposable schema-1 instances, including remote repair, stopped-container and pin blockers, no-follow/sibling preservation, preserved-untracked attention, and the exact disposable-home removal subset. No production state was changed. |
+| 2026-08-12 | The existing DeepSeek GA duplicate was reconciled to one persistent rank-1 durable home. A clean physical repeat passed eight-stream SSH-over-RoCE activation to rank 0 sealed-hot, rank-1 durable-home view, full exact-manifest verification, zero-byte witnesses, read-only launch, eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home state. Strict determinism, sustained soak, and promotion remain open. |
