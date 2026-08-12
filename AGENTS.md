@@ -202,6 +202,23 @@ commit or push directly to `main`. Land changes only by opening a pull request
 and merging through review—never force-push or fast-path commits onto `main`
 outside that process.
 
+**Automatic publication after completed work:** Completion of a planned unit of
+work is standing authorization to publish that unit. Once its relevant checks
+pass, agents must not wait for a separate commit, push, or pull-request request.
+They must:
+
+1. Stage every change that belongs to the completed unit, including its tests,
+   documentation, and sanitized evidence.
+2. Commit the complete unit with a focused message.
+3. Push the current feature or fix branch to `origin`.
+4. Open a ready-for-review pull request against the default branch.
+
+`Commit all` means all completed **in-scope** work. It never includes unrelated
+user changes, secrets, site-local state, model data, or unsanitized raw evidence.
+If a mixed worktree cannot be separated safely, stop and ask. Do not publish
+known-incomplete or failing work as ready, and do not merge, force-push, or
+bypass review without explicit authorization.
+
 History favors concise imperative subjects, usually Conventional Commit style: `fix(memory): ...`, `feat(serve): ...`, or `docs(patches): ...`. Keep commits focused. Pull requests should explain affected models and hardware paths, link relevant issues, list commands run, and include result artifact paths. Highlight image/config changes and any behavior not validated on physical GB10 hardware. Call out fail-closed behavior, new fallbacks (there should be none silent), and whether hardware validation was run or is still required.
 
 ## Security & Configuration
