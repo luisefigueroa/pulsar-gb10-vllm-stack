@@ -46,8 +46,15 @@ trusted verifier returned `match` for commit
 `7872f01b1d1fe23eabc4c98b48bffcef5a386062` and manifest
 `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`.
 The issuance summary distinguishes exact-content continuity from older
-behavioral lineage. It does not claim bit-identical output, promote the storage
-path, or replace the pending post-issuance physical identity/lifecycle gate.
+behavioral lineage. The issued identity then passed the applicable two-node
+physical `library-hot` gate: rank 1 used the durable-home symlink view, rank 0
+received an eight-stream sealed-hot copy, both views full-verified the exact
+manifest, both pre/post-launch witnesses hashed zero unchanged bytes, and the
+exact read-only snapshot served and cleaned up successfully. The lab catalog
+contained two pre-existing complete durable caches and needed a temporary
+rank-1 primary selection; neither cache was removed. The artifact therefore
+does not prove the one-durable-home steady state, persistent primary selection,
+bit-identical output, sustained soak, or storage-path promotion.
 
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
@@ -64,7 +71,8 @@ node and path identity.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
-| [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; physical enforcement pending; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |
+| [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; paired physical enforcement artifact now passes; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |
+| [`deepseek-v4-flash-sealed-enforcement-gate-20260812.json`](./deepseek-v4-flash-sealed-enforcement-gate-20260812.json) | Post-issuance two-node exact-seal activation, full verification, durable-home/sealed-hot placement, read-only launch, identity labels, zero-byte witnesses, smoke, and cleanup | Current flagship sealed `library-hot` enforcement PASS with duplicate-durable-cache/temporary-primary condition disclosed; not steady-state storage proof or a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-snapshot-manifest-20260812.json`](./deepseek-v4-flash-snapshot-manifest-20260812.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued DeepSeek revision; 74 files, 166,898,661,074 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
 | [`qwen3-1.7b-release-validation-20260811.json`](./qwen3-1.7b-release-validation-20260811.json) | Reviewed release summary for Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, exact one-node profile, and digest-pinned image | Current first-identity issuance input PASS; not a storage-path promotion | Reviewed; repository-relative evidence only; site identity omitted |
 | [`qwen3-1.7b-snapshot-manifest-20260811.json`](./qwen3-1.7b-snapshot-manifest-20260811.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued Qwen revision; 12 files, 4,079,450,110 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |

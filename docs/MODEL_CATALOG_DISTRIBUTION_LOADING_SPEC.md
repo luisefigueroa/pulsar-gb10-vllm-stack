@@ -51,10 +51,12 @@ schemas, and candidate tooling can assemble deterministic unreviewed documents
 without access to the trusted directories. The one-node diagnostic
 `qwen3-1.7b` profile carries the first reviewed seal/bundle and has passed
 post-issuance physical `library-hot` enforcement. Flagship
-`deepseek-v4-flash` carries the second reviewed identity; its post-issuance
-physical enforcement gate remains pending. Profiles without a seal remain
-legacy-unsealed, and neither issuance promotes the model-library path. The
-replicated control plane applies the reviewed seal when a profile has one;
+`deepseek-v4-flash` carries the second reviewed identity and has now passed the
+applicable two-node physical enforcement gate. That run required a temporary
+primary selection because two durable copies already existed, so it does not
+prove the one-durable-home steady state. Profiles without a seal remain
+legacy-unsealed, and neither issuance nor gate promotes the model-library path.
+The replicated control plane applies the reviewed seal when a profile has one;
 live-mount launches remain unbound.
 
 The model catalog still selects **what to run and how many ranks it needs**.
@@ -1029,6 +1031,7 @@ promotes any experimental storage path for general users.
 | Restart loop and sustained fabric soak | PENDING | Required before general promotion. |
 | Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
 | One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash activation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
+| Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection remain disclosed implementation conditions; this is not steady-state storage proof or a promotion. |
 | Durable-home active-use removal guard | PASS on three-node physical topology | Disposable synthetic repositories proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. No production home was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
 
@@ -1279,10 +1282,12 @@ all-rank observation, reference-blocking, lifecycle-lock, drift, and deletion
 coverage. The guard then passed a three-node physical gate using disposable
 synthetic repositories; the real Qwen home was preserved. The one-node
 diagnostic Qwen identity subsequently passed the applicable sealed enforcement
-gate. The flagship DeepSeek identity is now issued; remaining promotion work
-is to repeat the applicable post-issuance physical identity/lifecycle gate
-with that exact sealed profile. See
-`results/model-library/model-library-home-removal-guard-20260811.json`.
+gate. The issued flagship DeepSeek identity then passed the two-node gate with
+full verification, rank-local durable-home/sealed-hot views, exact read-only
+launch, matching labels, zero-byte witnesses, smoke, and cleanup. Its temporary
+primary selection and duplicate durable-cache site condition leave persistent
+primary management and one-home reconciliation open. See the
+`results/model-library/` evidence index.
 The production admission policy is implemented: every selected rank reports
 live filesystem capacity and current hot ownership before writes; sealed-hot
 charges exact manifest bytes, durable-home charges zero, and the default
@@ -1540,23 +1545,25 @@ claim. The earlier legacy-unsealed two-node Qwen canary physically passed the
 symlink, both-rank witness, read-only launch, pin/restart, mismatch, and
 no-follow purge lifecycle gate. The separately reviewed one-node Qwen identity
 closed the first-issuance gate and passed post-issuance physical enforcement.
-The flagship DeepSeek identity now closes the promotion-scope issuance half;
-its post-issuance physical enforcement remains pending. The active-use removal
-guard also passed deterministic and
-three-node physical checks using disposable synthetic repositories. Exact
-all-rank hot admission is now
-implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
-default. The non-mutating flagship capacity artifact passed exact home-zero and
-non-home manifest accounting, default-reserve preservation, explicit hard-cap
-refusal, and unchanged hot ownership. Strict DeepSeek determinism and sustained
-soak remain pending. Live NFS/RDMA additionally retains its owner-recovery and
-three-node validation work. The accurate product claim is:
+The flagship DeepSeek identity also passed applicable post-issuance two-node
+physical enforcement. Its lab inventory contained duplicate durable caches and
+required temporary primary selection, so persistent selection and one-home
+reconciliation remain open. The active-use removal guard also passed
+deterministic and three-node physical checks using disposable synthetic
+repositories. Exact all-rank hot admission is now implemented with a filesystem
+reserve instead of the obsolete 100 GiB fixed default. The non-mutating
+flagship capacity artifact passed exact home-zero and non-home manifest
+accounting, default-reserve preservation, explicit hard-cap refusal, and
+unchanged hot ownership. Persistent primary handling, strict DeepSeek
+determinism, and sustained soak remain pending. Live NFS/RDMA additionally
+retains its owner-recovery and three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing. For sealed
 > profiles they enforce the reviewed exact identity; profiles without a seal
 > retain historical legacy-unsealed behavior. Model-library code recognizes
 > reviewed seal/bundles for diagnostic `qwen3-1.7b` and flagship
-> `deepseek-v4-flash`; only Qwen has completed post-issuance physical
-> enforcement so far. Sealed local-hot activation over SSH-over-RoCE remains a
-> measured promotion candidate, and live NFS/RDMA is a separate documented
+> `deepseek-v4-flash`; both have completed their applicable post-issuance
+> physical enforcement gates. Sealed local-hot activation over
+> SSH-over-RoCE remains a measured promotion candidate, and live NFS/RDMA is a
+> separate documented
 > experiment; neither is a promoted default.
