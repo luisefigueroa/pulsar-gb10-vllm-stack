@@ -52,11 +52,10 @@ without access to the trusted directories. The one-node diagnostic
 `qwen3-1.7b` profile carries the first reviewed seal/bundle and has passed
 post-issuance physical `library-hot` enforcement. Flagship
 `deepseek-v4-flash` carries the second reviewed identity and has now passed the
-applicable two-node physical enforcement gate. That run required a temporary
-primary selection because two durable copies already existed, so it does not
-prove the one-durable-home steady state. The catalog now persists an
-exact-revision primary choice and supplies guarded reconciliation commands, but
-the lab duplicate has not been physically removed. Profiles without a seal
+applicable two-node physical enforcement gate. The lab duplicate was later
+reconciled to one persistent rank-1 durable home, and a clean two-rank repeat
+passed sealed activation, exact launch, completion, cleanup, and return to the
+one-home steady state. Profiles without a seal
 remain legacy-unsealed, and neither issuance nor gate promotes the
 model-library path.
 The replicated control plane applies the reviewed seal when a profile has one;
@@ -1055,8 +1054,9 @@ promotes any experimental storage path for general users.
 | Restart loop and sustained fabric soak | PENDING | Required before general promotion. |
 | Library-hot Qwen witness/lifecycle | PASS with legacy-unsealed scope | Two active ranks passed durable-home symlink versus sealed-hot placement, zero-hash witnesses, both-rank full-verification fallback, exact-snapshot read-only serving, pin/restart, mismatch fail-closed, and no-follow purge. This is not expected-seal evidence or a promotion. |
 | One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash activation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
-| Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection remain disclosed implementation conditions; this is not steady-state storage proof or a promotion. |
-| Persistent primary and guarded reconciliation | PASS, deterministic and three-node physical targeting | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. A disposable physical repeat also proved direct pre-selection refusal, refresh persistence, selected-primary refusal, exact non-primary deletion, sibling preservation, and one-home catalog state. The existing DeepSeek duplicate has not been removed, so its physical one-home steady state remains pending. |
+| Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection were disclosed conditions of that earlier run; the later one-home gate supersedes only that steady-state limitation. The earlier run by itself is not steady-state storage proof or a promotion. |
+| Persistent primary and guarded reconciliation | PASS, deterministic and three-node physical targeting | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. A disposable physical repeat also proved direct pre-selection refusal, refresh persistence, selected-primary refusal, exact non-primary deletion, sibling preservation, and one-home catalog state. |
+| Flagship DeepSeek one-home steady state | PASS on the real two-node serving geometry | The existing duplicate was reconciled to one persistent rank-1 durable home. Rank 0 then received an eight-stream SSH-over-RoCE sealed-hot copy in 73 seconds; full verification completed in 47 seconds and activation in 120 seconds. Both ranks used zero-byte unchanged witnesses and read-only exact-snapshot mounts; first health, all eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home inventory passed. This closes physical duplicate reconciliation, not strict determinism, sustained soak, or promotion. |
 | Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
 | Read-only health and legacy-hot repair | PASS, deterministic and three-node physical | Stable sanitized health schema 1, Doctor warnings, shallow no-hash observations, repair-ID binding, stopped-container/pinned blockers, local and remote removal, atomic no-follow retirement, sibling preservation, preserved-untracked attention, and the affected exact-home removal subset passed. No production content was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
@@ -1601,20 +1601,19 @@ symlink, both-rank witness, read-only launch, pin/restart, mismatch, and
 no-follow purge lifecycle gate. The separately reviewed one-node Qwen identity
 closed the first-issuance gate and passed post-issuance physical enforcement.
 The flagship DeepSeek identity also passed applicable post-issuance two-node
-physical enforcement. Its lab inventory contained duplicate durable caches and
-required temporary primary selection, so the artifact still does not prove
-one-home steady state. Persistent selection and guarded reconciliation now pass
-deterministic contracts and a three-node disposable physical targeting repeat;
-the existing
-physical duplicate remains. The active-use
+physical enforcement. Persistent selection and guarded reconciliation pass
+deterministic contracts and a three-node disposable physical targeting repeat.
+The existing lab duplicate was then reconciled to one persistent durable home,
+and the exact sealed lifecycle passed again from activation through cleanup and
+final one-home inventory. The active-use
 removal guard also passed deterministic and three-node physical checks using
 disposable synthetic repositories. Exact all-rank hot admission is now
 implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
 default. The non-mutating
 flagship capacity artifact passed exact home-zero and non-home manifest
 accounting, default-reserve preservation, explicit hard-cap refusal, and
-unchanged hot ownership. Physical duplicate reconciliation, strict DeepSeek
-determinism, and sustained soak remain pending. Live NFS/RDMA additionally
+unchanged hot ownership. Strict DeepSeek determinism and sustained soak remain
+pending. Live NFS/RDMA additionally
 retains its owner-recovery and three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing. For sealed
