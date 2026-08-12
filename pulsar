@@ -6,6 +6,7 @@
 #   ./pulsar start <model>…  → scripts/up.sh
 #   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
 #   ./pulsar status [model] [--node ID] → scripts/status.sh (optional completion)
+#   ./pulsar doctor [--json] → scripts/doctor.sh
 #   ./pulsar weight-fabric … → experimental single-copy weight workflow
 #   ./pulsar help
 #
@@ -14,6 +15,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOCTOR_SCRIPT="${PULSAR_DOCTOR_SCRIPT:-$REPO_DIR/scripts/doctor.sh}"
 cd "$REPO_DIR"
 
 usage() {
@@ -29,6 +31,7 @@ Usage:
                                 Stop stack-managed service(s)
   ./pulsar status [model] [--node ID]
                                 Probe containers + API (may run a completion)
+  ./pulsar doctor [--json]     Read-only host, cluster, and library diagnostics
   ./pulsar weight-fabric [args]
                                 Experimental single-copy weight workflow
   ./pulsar help                 This message
@@ -86,6 +89,9 @@ case "$cmd" in
     ;;
   status)
     exec "$REPO_DIR/scripts/status.sh" "$@"
+    ;;
+  doctor)
+    exec "$DOCTOR_SCRIPT" "$@"
     ;;
   weight-fabric)
     exec "$REPO_DIR/scripts/weight-fabric.sh" "$@"

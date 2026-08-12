@@ -546,6 +546,44 @@ cannot discover an unmanaged process or container created outside Pulsar
 labels; such use remains an operator responsibility and must be stopped before
 removal.
 
+### 4.10 Read-only health and legacy-hot repair
+
+`scripts/model-library.sh health` is the supported catalog-health service. It
+reads the cached catalog and gathers shallow, no-follow hot metadata plus
+managed-container observations from every confirmed rank under shared
+lifecycle/hot locks. It never refreshes the catalog, refreshes a witness,
+hashes model bytes, follows a runtime-view symlink, or changes state. Catalog
+absence is `not-configured` because replicated weights remain the default.
+Invalid/stale catalogs, duplicate homes, stale primary selection, prohibited
+runtime views, witness drift/missing state, legacy metadata, and unobservable
+ranks are explicit findings.
+
+The public schema-1 report exposes rank numbers, model/revision identity,
+expected manifest identity when reviewed, primary/duplicate classification,
+runtime source, retention, identity/witness status, active-reference state,
+opaque repair IDs, issue codes, and remediation. It omits hostnames, addresses,
+node/topology identity, absolute paths, filesystem identity, and witness IDs.
+`healthy` and `not-configured` exit zero; `attention` and `unavailable` still
+emit the complete report and exit nonzero.
+
+Historical hot schemas 1 and 2 are ownership evidence only: they are never
+trusted, launchable, or migrated into schema 3. A health-issued repair ID may
+be passed to `hot legacy check`; `hot legacy remove ... --yes` repeats rank
+metadata and managed-container observation under the exclusive hot lock before
+mutation. It refuses current, malformed, untracked, symlinked, ambiguous,
+stale, active, or unobservable targets. Pinned state additionally requires
+`--force-unpin`. Eligible removal atomically retires one exact non-symlink
+instance and deletes it without following embedded symlinks; durable homes and
+sibling instances are outside its authority. An incomplete retirement remains
+discoverable and retryable.
+
+Doctor consumes the same report as warnings. These findings do not block
+replicated/default serving, while model-library activation and destructive
+lifecycle operations retain their fail-closed checks. Current health closes
+supported catalog/hot observability, but container labels still do not carry
+per-rank runtime-source/witness state and unmanaged processes remain outside
+Pulsar's discovery boundary.
+
 ---
 
 ## 5. Relationship to current and experimental paths
@@ -628,6 +666,8 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Active-use durable-home removal guard passes
 [x] Serving ranks receive read-only exact-snapshot views in physical launch evidence
 [x] Hot purge and force-unpin no-follow behavior passes the physical gate
+[x] Read-only health inventories cached catalog, primary state, and every confirmed rank
+[x] Legacy schema-1/2 removal is repair-ID-bound, confirmation-gated, and no-follow
 [x] Warm-home pin/restart reports its durable-home dependency honestly
 [x] Exact all-rank admission charges durable-home as zero and sealed-hot by manifest bytes
 [x] Flagship-sized non-home admission preserves the default reserve on every selected rank
@@ -669,6 +709,14 @@ removed. That site reconciliation, the separately tracked strict-determinism
 policy question, and sustained soak remain; no profile or path was promoted.
 See
 `results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`.
+Read-only health and repair-ID-bound legacy-hot removal subsequently passed a
+three-node physical gate using only tiny synthetic schema-1 instances. It
+proved every-rank inventory, stopped-container and pinned blockers, local and
+remote repair, no-follow/sibling preservation, and continued health attention
+for preserved untracked content. The affected exact disposable-home removal
+subset also passed. No real hot entry, durable home, or DeepSeek duplicate was
+changed. See
+`results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
 Failed or incomplete evidence is not rewritten because an architectural
 blocker changed.
 
@@ -679,7 +727,8 @@ blocker changed.
 - Promotion into the wizard or other guided defaults
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
-- Stable public guarantees for machine-readable JSON schemas
+- Stable public guarantees for machine-readable JSON schemas other than the
+  health schema-1 contract
 - Physical reconciliation of the existing DeepSeek duplicate into the
   one-durable-home steady state; destructive cleanup remains an explicit,
   operator-confirmed operation
@@ -730,3 +779,5 @@ blocker changed.
 | 2026-08-12 | The issued DeepSeek identity passed applicable two-node physical enforcement: rank-local durable-home/sealed-hot views, full SHA-256 verification on both ranks, zero-byte unchanged witnesses, exact read-only snapshot launch with matching identity labels, warmup/smoke, and no-follow cleanup. Duplicate durable caches and temporary primary selection were disclosed, so one-durable-home steady state, persistent primary workflow, promotion, bit-identical output, and sustained soak remain unclaimed. |
 | 2026-08-12 | Catalog schema 2 gained persistent exact-revision primary selection, refresh preservation, stale-selection fail-closed behavior, and operator-confirmed non-primary reconciliation guidance. Selected-primary removal is blocked until the survivor is changed. Deterministic tests pass; existing DeepSeek duplicate bytes were not removed, so one-home physical steady state remains unclaimed. |
 | 2026-08-12 | Persistent-primary targeting passed a three-node physical repeat using disposable synthetic HF-layout repositories: direct removal refused before selection, the exact selection survived refresh, selected-primary removal refused, only the non-primary home was deleted, the catalog reached one selected durable home, and an adjacent repository remained intact. The existing DeepSeek duplicate was not changed; promotion, strict determinism, and soak remain open. |
+| 2026-08-12 | Added stable read-only health schema 1, Doctor warning integration, and repair-ID-bound schema-1/2 legacy-hot removal. The service uses cached catalog and metadata observations only; it does not reconcile the existing DeepSeek duplicate or mutate real hot/model state. |
+| 2026-08-12 | Read-only health and guarded legacy-hot removal passed a three-node physical gate with disposable schema-1 instances, including remote repair, stopped-container and pin blockers, no-follow/sibling preservation, preserved-untracked attention, and the exact disposable-home removal subset. No production state was changed. |

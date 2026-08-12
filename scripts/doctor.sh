@@ -285,6 +285,30 @@ else
   record ok topology "no cluster membership confirmed · single-node models remain available"
 fi
 
+[ "$JSON" = 1 ] || echo "[doctor] model library"
+library_report=$(mktemp "${TMPDIR:-/tmp}/pulsar-doctor-library.XXXXXX.json")
+library_rows="${library_report}.rows"
+library_render_rc=0
+"$REPO_DIR/scripts/model-library.sh" health --json \
+  >"$library_report" 2>/dev/null || true
+python3 "$REPO_DIR/scripts/model_library.py" render-health \
+    --report-file "$library_report" --doctor-rows \
+    >"$library_rows" 2>/dev/null || library_render_rc=$?
+# A valid attention/unavailable report emits complete rows and exits 1 by
+# contract. Only malformed rendering (>1) or an empty projection uses fallback.
+if [ "$library_render_rc" -le 1 ] && [ -s "$library_rows" ]; then
+  while IFS=$'\t' read -r library_level library_id library_message; do
+    [ -n "$library_level" ] || continue
+    # Model-library findings are informational to replicated/default serving.
+    [ "$library_level" = ok ] || library_level=warn
+    record "$library_level" "$library_id" "$library_message"
+  done <"$library_rows"
+else
+  record warn model_library \
+    "model-library health is unavailable (replicated weights remain available)"
+fi
+rm -f "$library_report" "$library_rows"
+
 result=pass
 [ "$WARN" = 1 ] && result=pass_with_warnings
 [ "$FAIL" = 1 ] && result=fail

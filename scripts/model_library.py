@@ -64,6 +64,12 @@ HOME_REMOVAL_RESULT_KIND = "pulsar-model-library-home-removal-result"
 HOT_BUDGET_SCHEMA_VERSION = 1
 HOT_BUDGET_OBSERVATION_KIND = "pulsar-model-library-hot-budget-observation"
 HOT_BUDGET_PLAN_KIND = "pulsar-model-library-hot-budget-plan"
+HEALTH_SCHEMA_VERSION = 1
+HEALTH_KIND = "pulsar-model-library-health"
+HOT_HEALTH_SCAN_KIND = "pulsar-model-library-hot-health-scan"
+LEGACY_REPAIR_PLAN_KIND = "pulsar-model-library-legacy-hot-repair-plan"
+LEGACY_REPAIR_RESULT_KIND = "pulsar-model-library-legacy-hot-repair-result"
+LEGACY_HOT_SCHEMA_VERSIONS = {1, 2}
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 UTC_TIMESTAMP_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
@@ -4979,6 +4985,735 @@ def purge_hot_instance(
     shutil.rmtree(instance_dir)
 
 
+def _lstat_kind(path: pathlib.Path) -> tuple[str, os.stat_result | None]:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return "missing", None
+    except OSError:
+        return "unavailable", None
+    if stat.S_ISLNK(metadata.st_mode):
+        return "symlink", metadata
+    if stat.S_ISDIR(metadata.st_mode):
+        return "directory", metadata
+    if stat.S_ISREG(metadata.st_mode):
+        return "file", metadata
+    return "other", metadata
+
+
+def _legacy_stamp_owner(stamp: Any) -> tuple[bool, str]:
+    """Validate historical ownership fields without conferring trust."""
+    if not isinstance(stamp, dict):
+        return False, "metadata is not an object"
+    if stamp.get("schema_version") not in LEGACY_HOT_SCHEMA_VERSIONS:
+        return False, "metadata is not a recognized legacy schema"
+    common_fields = {
+        "schema_version",
+        "state",
+        "profile",
+        "model_id",
+        "revision",
+        "identity_key",
+        "home_node_id",
+        "topology_id",
+        "content_id",
+        "content_digest",
+        "backend",
+        "bytes_logical",
+        "activated_at",
+        "pinned",
+        "budget_bytes_accounted",
+    }
+    allowed_fields = set(common_fields)
+    if stamp["schema_version"] == 2:
+        allowed_fields.update({"integrity", "transport"})
+        if "integrity" not in stamp:
+            return False, "schema-2 integrity ownership field is missing"
+    extra = sorted(set(stamp) - allowed_fields)
+    missing_contract = sorted(common_fields - set(stamp))
+    if extra or missing_contract:
+        return False, (
+            "metadata fields differ from the recognized legacy contract "
+            f"(missing={missing_contract}, extra={extra})"
+        )
+    required = (
+        "profile", "model_id", "revision", "home_node_id", "topology_id",
+        "content_id", "state", "pinned",
+    )
+    missing = [field for field in required if stamp.get(field) in (None, "")]
+    if missing:
+        return False, f"ownership fields missing: {missing}"
+    if not isinstance(stamp.get("pinned"), bool):
+        return False, "pinned ownership field is not boolean"
+    revision = stamp.get("revision")
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        return False, "revision ownership field is unsafe"
+    return True, "recognized legacy ownership metadata"
+
+
+def _legacy_repair_id(
+    *, rank: int, node_id: str, stamp: dict[str, Any], metadata: os.stat_result
+) -> str:
+    return canonical_json_digest({
+        "rank": rank,
+        "node_id": node_id,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "stamp": stamp,
+    })
+
+
+def _legacy_layout_state(instance: pathlib.Path, stamp: dict[str, Any]) -> str:
+    content_id = str(stamp.get("content_id") or "")
+    if instance.name == content_id:
+        return "managed"
+    if instance.name.startswith(f".{content_id}.pulsar-removing-"):
+        return "retiring"
+    return "invalid"
+
+
+def _validate_schema3_hot_metadata(
+    instance: pathlib.Path, stamp: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    required = {
+        "schema_version", "state", "profile", "model_id", "revision",
+        "identity_key", "home_node_id", "topology_id", "content_id",
+        "content_digest", "integrity", "validation", "backend",
+        "bytes_logical", "activated_at", "pinned", "budget_bytes_accounted",
+    }
+    allowed = required | {"transport"}
+    if set(stamp) < required or not set(stamp) <= allowed:
+        missing = sorted(required - set(stamp))
+        extra = sorted(set(stamp) - allowed)
+        fail(f"schema-3 metadata fields differ (missing={missing}, extra={extra})")
+    for field in (
+        "profile", "model_id", "identity_key", "home_node_id", "topology_id",
+        "content_id", "backend", "activated_at",
+    ):
+        if not isinstance(stamp.get(field), str) or not stamp[field]:
+            fail(f"schema-3 {field} is invalid")
+    revision = stamp.get("revision")
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        fail("schema-3 revision is unsafe")
+    if stamp["identity_key"] != f"{stamp['model_id']}@{revision}":
+        fail("schema-3 identity_key differs from model/revision")
+    if instance.name != stamp["content_id"]:
+        fail("schema-3 content_id differs from managed instance layout")
+    digest = stamp.get("content_digest")
+    if not isinstance(digest, str) or SHA256_HEX_RE.fullmatch(digest) is None:
+        fail("schema-3 content_digest is invalid")
+    if stamp.get("state") not in {"ready", "pinned", "verifying"}:
+        fail("schema-3 state is invalid")
+    if not isinstance(stamp.get("pinned"), bool):
+        fail("schema-3 pinned is not boolean")
+    if (stamp["state"] == "pinned") != stamp["pinned"]:
+        fail("schema-3 state and pinned fields differ")
+    for field in ("bytes_logical", "budget_bytes_accounted"):
+        value = stamp.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            fail(f"schema-3 {field} is invalid")
+    if stamp["bytes_logical"] < 1:
+        fail("schema-3 bytes_logical is invalid")
+    if stamp["budget_bytes_accounted"] != stamp["bytes_logical"]:
+        fail("schema-3 budget accounting differs from logical bytes")
+    if "transport" in stamp and (
+        not isinstance(stamp["transport"], str) or not stamp["transport"]
+    ):
+        fail("schema-3 transport is invalid")
+    integrity = stamp.get("integrity")
+    if (
+        not isinstance(integrity, dict)
+        or set(integrity) != {"scheme", "manifest"}
+        or integrity.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME
+    ):
+        fail("schema-3 integrity metadata is invalid")
+    manifest = validate_snapshot_manifest(integrity.get("manifest"))
+    validation = validate_hot_validation(
+        stamp.get("validation"), profile=stamp["profile"], manifest=manifest
+    )
+    if manifest["model_id"] != stamp["model_id"]:
+        fail("schema-3 model_id differs from manifest")
+    if manifest["snapshot_revision"] != revision:
+        fail("schema-3 revision differs from manifest")
+    if manifest["manifest_id"] != digest:
+        fail("schema-3 content_digest differs from manifest")
+    if manifest["total_bytes"] != stamp["bytes_logical"]:
+        fail("schema-3 logical bytes differ from manifest")
+    return manifest, validation
+
+
+def _schema3_hot_health(instance: pathlib.Path, stamp: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "metadata_valid": False,
+        "runtime_source": "unknown",
+        "identity_status": "mismatch",
+        "witness_status": "malformed",
+        "expected_manifest": None,
+        "detail": None,
+    }
+    model_id = stamp.get("model_id")
+    if not isinstance(model_id, str) or not model_id:
+        result["detail"] = "schema-3 model identity is invalid"
+        return result
+    try:
+        manifest, validation = _validate_schema3_hot_metadata(instance, stamp)
+    except ModelLibraryError as exc:
+        result["detail"] = str(exc)
+        return result
+    result["metadata_valid"] = True
+    hub = hot_hub_path(instance, model_id)
+    hub_kind, _ = _lstat_kind(hub)
+    if hub_kind == "symlink":
+        result["runtime_source"] = "durable-home"
+    elif hub_kind == "directory":
+        result["runtime_source"] = "sealed-hot"
+    else:
+        result["detail"] = f"runtime view is {hub_kind}"
+        return result
+    result["expected_manifest"] = manifest["manifest_id"]
+    result["identity_status"] = validation["identity_status"]
+    try:
+        observation = build_stable_hot_witness_observation(
+            stamp, hub=hub, manifest=manifest, validation=validation
+        )
+        try:
+            witness = load_hot_witness(instance)
+        except ModelLibraryError as exc:
+            result["witness_status"] = (
+                "missing" if "missing:" in str(exc) else "malformed"
+            )
+            result["detail"] = str(exc)
+        else:
+            if hot_witness_observation(witness) == observation:
+                result["witness_status"] = "match"
+            else:
+                result["witness_status"] = "drift"
+                result["detail"] = "rank-local metadata differs from the witness"
+    except ModelLibraryError as exc:
+        result["detail"] = str(exc)
+    return result
+
+def scan_hot_health(
+    hot_root: str | pathlib.Path, *, rank: int, node_id: str
+) -> dict[str, Any]:
+    """Shallow, no-follow scan of only the managed two-level hot layout."""
+    root = pathlib.Path(hot_root).expanduser().absolute()
+    instances: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    root_kind, _ = _lstat_kind(root)
+    if root_kind == "missing":
+        return {
+            "schema_version": HEALTH_SCHEMA_VERSION,
+            "kind": HOT_HEALTH_SCAN_KIND,
+            "rank": rank,
+            "node_id": node_id,
+            "hot_root": str(root),
+            "status": "ok",
+            "instances": [],
+            "errors": [],
+        }
+    if root_kind != "directory":
+        errors.append({"path": str(root), "detail": f"hot root is {root_kind}"})
+    else:
+        try:
+            groups = sorted(root.iterdir(), key=lambda item: item.name)
+        except OSError as exc:
+            groups = []
+            errors.append({"path": str(root), "detail": f"cannot list hot root: {exc}"})
+        for group in groups:
+            group_kind, _ = _lstat_kind(group)
+            if group.name.startswith("."):
+                continue
+            if group_kind == "symlink":
+                errors.append({"path": str(group), "detail": "managed group is a symlink"})
+                continue
+            if group_kind != "directory":
+                continue
+            try:
+                children = sorted(group.iterdir(), key=lambda item: item.name)
+            except OSError as exc:
+                errors.append({"path": str(group), "detail": f"cannot list group: {exc}"})
+                continue
+            for instance in children:
+                instance_kind, instance_meta = _lstat_kind(instance)
+                if instance_kind == "symlink":
+                    errors.append({"path": str(instance), "detail": "managed instance is a symlink"})
+                    continue
+                if instance_kind != "directory" or instance_meta is None:
+                    continue
+                metadata_dir = instance / ".pulsar"
+                stamp_path = metadata_dir / "hot.json"
+                metadata_kind, _ = _lstat_kind(metadata_dir)
+                stamp_kind, _ = _lstat_kind(stamp_path)
+                base: dict[str, Any] = {
+                    "rank": rank,
+                    "node_id": node_id,
+                    "instance_dir": str(instance),
+                    "runtime_source": "unknown",
+                    "retention": "ephemeral",
+                    "identity_status": "unknown",
+                    "witness_status": "not-applicable",
+                    "active_reference": False,
+                    "repairable": False,
+                    "repair_id": None,
+                    "layout_state": "invalid",
+                }
+                if metadata_kind == "missing" and stamp_kind == "missing":
+                    base.update({
+                        "metadata_schema": None,
+                        "metadata_status": "untracked",
+                        "detail": "managed-layout directory has no hot metadata",
+                    })
+                    instances.append(base)
+                    continue
+                if metadata_kind != "directory" or stamp_kind != "file":
+                    base.update({
+                        "metadata_schema": None,
+                        "metadata_status": "malformed",
+                        "detail": "metadata directory or hot.json has an unsafe type",
+                    })
+                    instances.append(base)
+                    continue
+                try:
+                    stamp = load_json(stamp_path)
+                except ModelLibraryError as exc:
+                    base.update({"metadata_schema": None, "metadata_status": "malformed", "detail": str(exc)})
+                    instances.append(base)
+                    continue
+                schema = stamp.get("schema_version") if isinstance(stamp, dict) else None
+                base.update({
+                    "metadata_schema": schema,
+                    "profile": stamp.get("profile") if isinstance(stamp, dict) else None,
+                    "model_id": stamp.get("model_id") if isinstance(stamp, dict) else None,
+                    "revision": stamp.get("revision") if isinstance(stamp, dict) else None,
+                    "home_node_id": stamp.get("home_node_id") if isinstance(stamp, dict) else None,
+                    "topology_id": stamp.get("topology_id") if isinstance(stamp, dict) else None,
+                    "state": stamp.get("state") if isinstance(stamp, dict) else None,
+                    "retention": "pinned" if isinstance(stamp, dict) and stamp.get("pinned") is True else "ephemeral",
+                })
+                if schema in LEGACY_HOT_SCHEMA_VERSIONS:
+                    valid_owner, detail = _legacy_stamp_owner(stamp)
+                    base["metadata_status"] = "legacy" if valid_owner else "malformed"
+                    base["detail"] = detail
+                    if valid_owner:
+                        base["layout_state"] = _legacy_layout_state(instance, stamp)
+                        base["repair_id"] = _legacy_repair_id(
+                            rank=rank, node_id=node_id, stamp=stamp, metadata=instance_meta
+                        )
+                        base["repairable"] = base["layout_state"] in {"managed", "retiring"}
+                    instances.append(base)
+                    continue
+                if schema != HOT_SCHEMA_VERSION or not isinstance(stamp, dict):
+                    base.update({"metadata_status": "unsupported", "detail": f"unsupported hot schema {schema!r}"})
+                    instances.append(base)
+                    continue
+                base["metadata_status"] = "current"
+                base["layout_state"] = "managed"
+                schema3 = _schema3_hot_health(instance, stamp)
+                base.update(schema3)
+                if not schema3["metadata_valid"]:
+                    base["metadata_status"] = "malformed"
+                instances.append(base)
+    return {
+        "schema_version": HEALTH_SCHEMA_VERSION,
+        "kind": HOT_HEALTH_SCAN_KIND,
+        "rank": rank,
+        "node_id": node_id,
+        "hot_root": str(root),
+        "status": "ok" if not errors else "error",
+        "instances": instances,
+        "errors": errors,
+    }
+
+
+def _load_container_jsonl(path: pathlib.Path) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line_number, raw in enumerate(handle, start=1):
+                if not raw.strip():
+                    continue
+                value = json.loads(raw)
+                if not isinstance(value, dict):
+                    fail(f"container observation line {line_number} is not an object")
+                values.append(value)
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"cannot read container observations: {exc}")
+    return values
+
+
+def _managed_hot_reference(containers: list[dict[str, Any]], profile: Any) -> bool:
+    for metadata in containers:
+        labels = metadata.get("labels") or {}
+        if not isinstance(labels, dict):
+            return True
+        if str(labels.get("io.pulsar.gb10.managed") or "") != "true":
+            continue
+        source = str(labels.get("io.pulsar.gb10.weight-source") or "")
+        if source not in {"library-hot", "fabric"}:
+            continue
+        observed_profile = str(labels.get("io.pulsar.gb10.conf") or "")
+        if not observed_profile or not profile or observed_profile == profile:
+            return True
+    return False
+
+
+def _load_health_observations(
+    observations_dir: str | pathlib.Path,
+    topology: dict[str, Any],
+) -> list[dict[str, Any]]:
+    directory = pathlib.Path(observations_dir)
+    observed: list[dict[str, Any]] = []
+    nodes = sorted(topology.get("nodes") or [], key=lambda item: int(item["rank"]))
+    for node in nodes:
+        rank = int(node["rank"])
+        node_id = str(node.get("node_id") or "")
+        scan_path = directory / f"hot-{rank}.json"
+        container_path = directory / f"containers-{rank}.jsonl"
+        if not scan_path.is_file() or not container_path.is_file():
+            fail(f"rank {rank} observations are incomplete")
+        scan = load_json(scan_path)
+        if not isinstance(scan, dict) or scan.get("kind") != HOT_HEALTH_SCAN_KIND:
+            fail(f"rank {rank} hot-health scan is invalid")
+        if scan.get("rank") != rank or scan.get("node_id") != node_id:
+            fail(f"rank {rank} observation identity differs from topology")
+        containers = _load_container_jsonl(container_path)
+        for item in scan.get("instances") or []:
+            if isinstance(item, dict):
+                item["active_reference"] = _managed_hot_reference(containers, item.get("profile"))
+        observed.append({"rank": rank, "node_id": node_id, "scan": scan, "containers": containers})
+    return observed
+
+
+
+def _health_issue(
+    code: str,
+    detail: str,
+    *,
+    rank: int | None = None,
+    repair_id: str | None = None,
+    command: str | None = None,
+) -> dict[str, Any]:
+    issue: dict[str, Any] = {"code": code, "detail": detail}
+    if rank is not None:
+        issue["rank"] = rank
+    if repair_id:
+        issue["repair_id"] = repair_id
+    if command:
+        issue["remediation"] = {"command": command}
+    return issue
+
+
+def build_health_report(
+    *,
+    catalog_path: str | pathlib.Path,
+    topology_file: str | pathlib.Path,
+    topology_id: str,
+    observations_dir: str | pathlib.Path,
+) -> dict[str, Any]:
+    try:
+        topology = load_topology_for_plan(topology_file)
+        observations = _load_health_observations(observations_dir, topology)
+    except ModelLibraryError:
+        return {
+            "schema_version": HEALTH_SCHEMA_VERSION,
+            "kind": HEALTH_KIND,
+            "state": "unavailable",
+            "catalog": {"status": "unavailable", "topology_compatible": None},
+            "models": [],
+            "hot_instances": [],
+            "issues": [_health_issue(
+                "observation-unavailable",
+                "confirmed topology or rank observations are invalid",
+            )],
+        }
+    issues: list[dict[str, Any]] = []
+    observation_unavailable = False
+    public_instances: list[dict[str, Any]] = []
+    for observation in observations:
+        rank = observation["rank"]
+        scan = observation["scan"]
+        if scan.get("status") != "ok":
+            observation_unavailable = True
+            issues.append(_health_issue(
+                "rank-hot-unavailable",
+                "managed hot layout could not be observed completely",
+                rank=rank,
+            ))
+        for raw in scan.get("instances") or []:
+            repair_id = raw.get("repair_id") if raw.get("repairable") else None
+            public_instances.append({
+                "rank": rank,
+                "profile": raw.get("profile"),
+                "model_id": raw.get("model_id"),
+                "revision": raw.get("revision"),
+                "metadata_schema": raw.get("metadata_schema"),
+                "metadata_status": raw.get("metadata_status"),
+                "runtime_source": raw.get("runtime_source") or "unknown",
+                "retention": raw.get("retention") or "ephemeral",
+                "identity_status": raw.get("identity_status") or "unknown",
+                "witness_status": raw.get("witness_status") or "not-applicable",
+                "active_reference": bool(raw.get("active_reference")),
+                "repairable": bool(raw.get("repairable")),
+                "repair_id": repair_id,
+            })
+            metadata_status = raw.get("metadata_status")
+            if metadata_status == "legacy":
+                command = (
+                    f"scripts/model-library.sh hot legacy check {repair_id}"
+                    if repair_id else None
+                )
+                issues.append(_health_issue(
+                    "legacy-hot-metadata",
+                    "schema-1/2 hot metadata is obsolete and never launchable",
+                    rank=rank,
+                    repair_id=repair_id,
+                    command=command,
+                ))
+            elif metadata_status != "current":
+                issues.append(_health_issue(
+                    "hot-metadata-untrusted",
+                    "hot metadata is malformed, unsupported, or untracked",
+                    rank=rank,
+                ))
+            if metadata_status == "current":
+                runtime = raw.get("runtime_source")
+                on_home = observation["node_id"] == raw.get("home_node_id")
+                if runtime == "unknown":
+                    issues.append(_health_issue(
+                        "runtime-view-unavailable",
+                        "rank-local runtime view is missing or unsafe",
+                        rank=rank,
+                    ))
+                if on_home and runtime == "sealed-hot":
+                    issues.append(_health_issue("home-rank-materialized", "home rank has a prohibited hot copy", rank=rank))
+                if not on_home and runtime == "durable-home":
+                    issues.append(_health_issue("non-home-symlink", "non-home rank has a prohibited durable-home view", rank=rank))
+                if raw.get("witness_status") != "match":
+                    issues.append(_health_issue("witness-not-current", "serve witness is missing, malformed, or drifted", rank=rank))
+    catalog_file = pathlib.Path(catalog_path)
+    if not catalog_file.is_file():
+        return {
+            "schema_version": HEALTH_SCHEMA_VERSION,
+            "kind": HEALTH_KIND,
+            "state": (
+                "unavailable" if observation_unavailable
+                else "attention" if issues
+                else "not-configured"
+            ),
+            "catalog": {"status": "absent", "topology_compatible": None},
+            "models": [],
+            "hot_instances": public_instances,
+            "issues": issues,
+        }
+    try:
+        catalog = load_catalog(catalog_file)
+    except ModelLibraryError:
+        issues.append(_health_issue(
+            "catalog-invalid",
+            "cached catalog is invalid or unreadable",
+            command="scripts/model-library.sh catalog refresh",
+        ))
+        return {
+            "schema_version": HEALTH_SCHEMA_VERSION,
+            "kind": HEALTH_KIND,
+            "state": "unavailable",
+            "catalog": {"status": "invalid", "topology_compatible": None},
+            "models": [],
+            "hot_instances": public_instances,
+            "issues": issues,
+        }
+    compatible = bool(topology_id and catalog.get("topology_id") == topology_id)
+    if not compatible:
+        issues.append(_health_issue("catalog-topology-stale", "cached catalog differs from confirmed topology", command="scripts/model-library.sh catalog refresh"))
+    public_models: list[dict[str, Any]] = []
+    for entry in catalog.get("models") or []:
+        complete = [home for home in entry.get("homes") or [] if home.get("state") == "complete"]
+        primary = entry.get("primary_selection") or {}
+        duplicate = "none"
+        if len(complete) > 1:
+            duplicate = "redundant" if primary.get("status") == "match" else "unresolved"
+            code = "duplicate-home-redundant" if duplicate == "redundant" else "duplicate-home-unresolved"
+            command = None if duplicate == "redundant" else "scripts/model-library.sh catalog primary set <model> --node <rank>"
+            issues.append(_health_issue(code, "exact revision has multiple durable homes", command=command))
+        if primary.get("status") == "stale":
+            issues.append(_health_issue("primary-selection-stale", "selected primary is no longer a complete home", command="scripts/model-library.sh catalog primary clear <model>"))
+        expected_manifest = None
+        for validation in entry.get("profile_validation") or []:
+            seal = validation.get("expected_model_seal") or {}
+            if seal.get("manifest_id"):
+                expected_manifest = seal["manifest_id"]
+                break
+        public_models.append({
+            "model_id": entry.get("model_id"),
+            "revision": entry.get("revision"),
+            "expected_manifest": expected_manifest,
+            "validation": entry.get("validation"),
+            "home_ranks": sorted(int(home["rank"]) for home in complete),
+            "primary": {
+                "mode": primary.get("mode"),
+                "status": primary.get("status"),
+                "rank": next((int(home["rank"]) for home in complete if home.get("primary")), None),
+            },
+            "duplicate_home": duplicate,
+        })
+    return {
+        "schema_version": HEALTH_SCHEMA_VERSION,
+        "kind": HEALTH_KIND,
+        "state": (
+            "unavailable" if observation_unavailable
+            else "attention" if issues
+            else "healthy"
+        ),
+        "catalog": {"status": "cached", "topology_compatible": compatible},
+        "models": public_models,
+        "hot_instances": public_instances,
+        "issues": issues,
+    }
+
+def _find_legacy_repair_target(
+    observations: list[dict[str, Any]], repair_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for observation in observations:
+        for item in observation["scan"].get("instances") or []:
+            if item.get("repair_id") == repair_id:
+                matches.append((observation, item))
+    if len(matches) != 1:
+        fail("legacy hot repair ID is stale, unknown, or ambiguous; run health again")
+    observation, item = matches[0]
+    if item.get("metadata_schema") not in LEGACY_HOT_SCHEMA_VERSIONS:
+        fail("legacy hot repair refuses current or unrecognized metadata")
+    if item.get("metadata_status") != "legacy" or not item.get("repairable"):
+        fail("legacy hot repair ownership or layout is not safely repairable")
+    return observation, item
+
+
+def build_legacy_repair_plan(
+    *,
+    repair_id: str,
+    topology_file: str | pathlib.Path,
+    observations_dir: str | pathlib.Path,
+    force_unpin: bool = False,
+) -> dict[str, Any]:
+    topology = load_topology_for_plan(topology_file)
+    observations = _load_health_observations(observations_dir, topology)
+    observation, item = _find_legacy_repair_target(observations, repair_id)
+    blockers: list[str] = []
+    if observation["scan"].get("status") != "ok":
+        blockers.append("rank hot layout is not completely observable")
+    if item.get("active_reference"):
+        blockers.append("a managed container references this legacy instance")
+    if item.get("retention") == "pinned" and not force_unpin:
+        blockers.append("legacy instance is pinned; explicit --force-unpin is required")
+    plan: dict[str, Any] = {
+        "schema_version": HEALTH_SCHEMA_VERSION,
+        "kind": LEGACY_REPAIR_PLAN_KIND,
+        "created_at": utc_now(),
+        "repair_id": repair_id,
+        "rank": observation["rank"],
+        "node_id": observation["node_id"],
+        "instance_dir": item["instance_dir"],
+        "metadata_schema": item["metadata_schema"],
+        "profile": item.get("profile"),
+        "model_id": item.get("model_id"),
+        "revision": item.get("revision"),
+        "retention": item.get("retention"),
+        "layout_state": item.get("layout_state"),
+        "force_unpin": bool(force_unpin),
+        "blockers": blockers,
+        "eligible": not blockers,
+    }
+    plan["plan_id"] = canonical_json_digest({
+        key: value for key, value in plan.items()
+        if key not in {"created_at", "plan_id"}
+    })
+    return plan
+
+
+def public_legacy_repair_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value for key, value in plan.items()
+        if key not in {"node_id", "instance_dir", "plan_id"}
+    }
+
+
+def execute_legacy_repair_plan(
+    plan: dict[str, Any],
+    *,
+    hot_root: str | pathlib.Path,
+    rank: int,
+    node_id: str,
+    containers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if plan.get("kind") != LEGACY_REPAIR_PLAN_KIND or plan.get("schema_version") != HEALTH_SCHEMA_VERSION:
+        fail("legacy hot repair plan contract is invalid")
+    expected_plan_id = canonical_json_digest({
+        key: value for key, value in plan.items()
+        if key not in {"created_at", "plan_id"}
+    })
+    if plan.get("plan_id") != expected_plan_id:
+        fail("legacy hot repair plan identity is invalid")
+    if plan.get("rank") != rank or plan.get("node_id") != node_id:
+        fail("legacy hot repair plan targets a different rank")
+    if not plan.get("eligible") or plan.get("blockers"):
+        fail("legacy hot repair plan is blocked")
+    fresh = scan_hot_health(hot_root, rank=rank, node_id=node_id)
+    for item in fresh.get("instances") or []:
+        item["active_reference"] = _managed_hot_reference(containers, item.get("profile"))
+    observation = {"rank": rank, "node_id": node_id, "scan": fresh, "containers": containers}
+    _, item = _find_legacy_repair_target([observation], str(plan["repair_id"]))
+    if item.get("active_reference"):
+        fail("legacy hot repair refused: a managed container now references the instance")
+    if item.get("retention") == "pinned" and not plan.get("force_unpin"):
+        fail("legacy hot repair refused: instance is pinned")
+    target = pathlib.Path(str(item["instance_dir"]))
+    root = pathlib.Path(hot_root).expanduser().absolute()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        fail("legacy hot repair target escapes configured hot root")
+    target_kind, _ = _lstat_kind(target)
+    if target_kind != "directory" or target.parent.parent != root:
+        fail("legacy hot repair target is not an exact managed instance directory")
+    retirement = target
+    if item.get("layout_state") == "managed":
+        retirement = target.with_name(
+            f".{target.name}.pulsar-removing-{str(plan['plan_id'])[:12]}"
+        )
+        retirement_kind, _ = _lstat_kind(retirement)
+        if retirement_kind != "missing":
+            fail("legacy hot retirement target already exists")
+        os.replace(target, retirement)
+        directory_fd = os.open(str(retirement.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    try:
+        shutil.rmtree(retirement)
+    except OSError as exc:
+        fail(
+            "legacy hot retirement is incomplete; health can rediscover it for retry: "
+            f"{exc}"
+        )
+    directory_fd = os.open(str(retirement.parent), os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    return {
+        "schema_version": HEALTH_SCHEMA_VERSION,
+        "kind": LEGACY_REPAIR_RESULT_KIND,
+        "state": "removed",
+        "repair_id": plan["repair_id"],
+        "rank": rank,
+        "metadata_schema": plan["metadata_schema"],
+        "profile": plan.get("profile"),
+        "model_id": plan.get("model_id"),
+        "revision": plan.get("revision"),
+    }
+
 def select_home_removal_target(
     catalog_path: str | pathlib.Path,
     query: str,
@@ -5872,6 +6607,179 @@ def render_catalog_human(catalog: dict[str, Any], *, validated_only: bool = Fals
             f"{complete:>5} {dup:>3}  {profiles}"
         )
 
+
+def _health_exit(report: dict[str, Any]) -> int:
+    return 0 if report.get("state") in {"healthy", "not-configured"} else 1
+
+
+def render_health_report(report: dict[str, Any]) -> None:
+    if report.get("kind") != HEALTH_KIND:
+        fail("health report contract is invalid")
+    if TerminalWriter is None:
+        fail("health rendering requires scripts/terminal_format.py")
+    term = TerminalWriter()
+    state = str(report.get("state") or "unavailable")
+    term.emit(f"model library  {state.upper()}")
+    catalog = report.get("catalog") or {}
+    term.field("catalog", str(catalog.get("status") or "unknown"))
+    term.field("models", len(report.get("models") or []))
+    term.field("hot views", len(report.get("hot_instances") or []))
+    issues = report.get("issues") or []
+    if not issues:
+        term.blank()
+        term.emit("No model-library findings.")
+        return
+    term.blank()
+    term.emit("Findings")
+    for issue in issues:
+        rank = f" · rank {issue['rank']}" if issue.get("rank") is not None else ""
+        term.emit(
+            f"{issue.get('code', 'unknown')}{rank}",
+            initial_indent="  ",
+            subsequent_indent="    ",
+        )
+        term.emit(
+            str(issue.get("detail") or "attention required"),
+            initial_indent="    ",
+            subsequent_indent="    ",
+        )
+        command = (issue.get("remediation") or {}).get("command")
+        if command:
+            term.emit(
+                f"Next: {command}",
+                initial_indent="    ",
+                subsequent_indent="      ",
+            )
+
+
+def cmd_scan_hot_health(args: argparse.Namespace) -> int:
+    result = scan_hot_health(
+        args.hot_root or default_hot_root(), rank=args.rank, node_id=args.node_id
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result.get("status") == "ok" else 1
+
+
+def cmd_build_health(args: argparse.Namespace) -> int:
+    report = build_health_report(
+        catalog_path=args.catalog,
+        topology_file=args.topology_file,
+        topology_id=args.topology_id,
+        observations_dir=args.observations_dir,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return _health_exit(report)
+
+
+def cmd_render_health(args: argparse.Namespace) -> int:
+    report = load_json(args.report_file)
+    if not isinstance(report, dict):
+        fail("health report must be an object")
+    if args.doctor_rows:
+        state = str(report.get("state") or "unavailable")
+        if state == "not-configured":
+            print("ok\tmodel_library\tmodel library not configured; replicated weights remain available")
+        elif state == "healthy":
+            print("ok\tmodel_library\tmodel library catalog and runtime views are healthy")
+        else:
+            for index, issue in enumerate(report.get("issues") or [], start=1):
+                message = str(issue.get("detail") or issue.get("code") or "attention required")
+                command = (issue.get("remediation") or {}).get("command")
+                if command:
+                    message = f"{message} · Next: {command}"
+                print(f"warn\tmodel_library_{index}\t{message}")
+            if not report.get("issues"):
+                print("warn\tmodel_library\tmodel-library health is unavailable")
+    elif args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        render_health_report(report)
+    return _health_exit(report)
+
+
+def cmd_plan_legacy_repair(args: argparse.Namespace) -> int:
+    plan = build_legacy_repair_plan(
+        repair_id=args.repair_id,
+        topology_file=args.topology_file,
+        observations_dir=args.observations_dir,
+        force_unpin=args.force_unpin,
+    )
+    print(json.dumps(plan, indent=2, sort_keys=True))
+    return 0 if plan.get("eligible") else 1
+
+
+def _load_legacy_plan(args: argparse.Namespace) -> dict[str, Any]:
+    if args.plan_file:
+        plan = load_json(args.plan_file)
+    elif args.plan_json:
+        try:
+            plan = json.loads(args.plan_json)
+        except json.JSONDecodeError as exc:
+            fail(f"legacy hot repair plan JSON: {exc}")
+    else:
+        fail("legacy hot repair plan is required")
+    if not isinstance(plan, dict):
+        fail("legacy hot repair plan must be an object")
+    return plan
+
+
+def cmd_render_legacy_repair(args: argparse.Namespace) -> int:
+    plan = _load_legacy_plan(args)
+    public = public_legacy_repair_plan(plan)
+    if args.json:
+        print(json.dumps(public, indent=2, sort_keys=True))
+    else:
+        if TerminalWriter is None:
+            fail("legacy repair rendering requires scripts/terminal_format.py")
+        term = TerminalWriter()
+        state = "ELIGIBLE" if plan.get("eligible") else "BLOCKED"
+        term.emit(f"legacy hot repair  {state}")
+        term.field("repair", str(plan.get("repair_id") or ""))
+        term.field("rank", plan.get("rank"))
+        term.field("schema", plan.get("metadata_schema"))
+        term.field("profile", str(plan.get("profile") or "unknown"))
+        for blocker in plan.get("blockers") or []:
+            term.emit(str(blocker), initial_indent="  ", subsequent_indent="    ")
+        if plan.get("eligible"):
+            term.blank()
+            term.emit("No bytes changed. Removal still requires --yes.")
+    return 0 if plan.get("eligible") else 1
+
+
+def cmd_execute_legacy_repair(args: argparse.Namespace) -> int:
+    try:
+        containers = json.loads(args.containers_json)
+    except json.JSONDecodeError as exc:
+        fail(f"legacy hot container observations: {exc}")
+    if not isinstance(containers, list) or any(not isinstance(item, dict) for item in containers):
+        fail("legacy hot container observations must be an array of objects")
+    result = execute_legacy_repair_plan(
+        _load_legacy_plan(args),
+        hot_root=args.hot_root or default_hot_root(),
+        rank=args.rank,
+        node_id=args.node_id,
+        containers=containers,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_render_legacy_result(args: argparse.Namespace) -> int:
+    result = load_json(args.result_file)
+    if not isinstance(result, dict) or result.get("kind") != LEGACY_REPAIR_RESULT_KIND:
+        fail("legacy hot repair result is invalid")
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        if TerminalWriter is None:
+            fail("legacy repair rendering requires scripts/terminal_format.py")
+        term = TerminalWriter()
+        term.emit("legacy hot repair  REMOVED")
+        term.field("repair", result["repair_id"])
+        term.field("rank", result["rank"])
+        term.field("schema", result["metadata_schema"])
+        term.field("profile", str(result.get("profile") or "unknown"))
+    return 0
 
 def cmd_resolve_home_removal_target(args: argparse.Namespace) -> int:
     target = select_home_removal_target(
@@ -7085,6 +7993,52 @@ def cmd_compare_bench(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pulsar federated model library")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    health_scan = sub.add_parser("scan-hot-health", help="Scan one managed hot root")
+    health_scan.add_argument("--hot-root", default="")
+    health_scan.add_argument("--rank", type=int, required=True)
+    health_scan.add_argument("--node-id", required=True)
+    health_scan.set_defaults(func=cmd_scan_hot_health)
+
+    health_build = sub.add_parser("build-health", help="Merge rank health observations")
+    health_build.add_argument("--catalog", required=True)
+    health_build.add_argument("--topology-file", required=True)
+    health_build.add_argument("--topology-id", required=True)
+    health_build.add_argument("--observations-dir", required=True)
+    health_build.set_defaults(func=cmd_build_health)
+
+    health_render = sub.add_parser("render-health", help="Render a health report")
+    health_render.add_argument("--report-file", required=True)
+    health_render.add_argument("--json", action="store_true")
+    health_render.add_argument("--doctor-rows", action="store_true")
+    health_render.set_defaults(func=cmd_render_health)
+
+    legacy_plan = sub.add_parser("plan-legacy-hot-repair", help="Plan guarded legacy-hot removal")
+    legacy_plan.add_argument("--repair-id", required=True)
+    legacy_plan.add_argument("--topology-file", required=True)
+    legacy_plan.add_argument("--observations-dir", required=True)
+    legacy_plan.add_argument("--force-unpin", action="store_true")
+    legacy_plan.set_defaults(func=cmd_plan_legacy_repair)
+
+    legacy_render = sub.add_parser("render-legacy-hot-repair", help="Render legacy-hot repair plan")
+    legacy_render.add_argument("--plan-file", default="")
+    legacy_render.add_argument("--plan-json", default="")
+    legacy_render.add_argument("--json", action="store_true")
+    legacy_render.set_defaults(func=cmd_render_legacy_repair)
+
+    legacy_execute = sub.add_parser("execute-legacy-hot-repair", help="Execute eligible legacy-hot repair")
+    legacy_execute.add_argument("--plan-file", default="")
+    legacy_execute.add_argument("--plan-json", default="")
+    legacy_execute.add_argument("--hot-root", default="")
+    legacy_execute.add_argument("--rank", type=int, required=True)
+    legacy_execute.add_argument("--node-id", required=True)
+    legacy_execute.add_argument("--containers-json", required=True)
+    legacy_execute.set_defaults(func=cmd_execute_legacy_repair)
+
+    legacy_result = sub.add_parser("render-legacy-hot-result", help="Render legacy-hot repair result")
+    legacy_result.add_argument("--result-file", required=True)
+    legacy_result.add_argument("--json", action="store_true")
+    legacy_result.set_defaults(func=cmd_render_legacy_result)
 
     home_target = sub.add_parser(
         "resolve-home-removal-target",

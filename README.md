@@ -244,8 +244,9 @@ promote a claim and is not exposed through `pulsar`.
 |---|---|
 | `./pulsar` / `./pulsar wizard` | Root dispatcher → guided wizard |
 | `./pulsar inventory` | Read-only managed service + memory inventory |
+| `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
 | `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |
-| `scripts/doctor.sh` | Readiness of this node plus every other confirmed cluster node |
+| `scripts/model-library.sh health [--json]` | Sanitized cached-catalog and rank-local hot metadata health |
 | `scripts/list-models.sh` | Conf catalog |
 | `scripts/check-weights.sh` / `pull-weights.sh` | Artifact completeness / stage every exact rank |
 | `./pulsar weight-fabric` | Experimental single-copy NFS/RDMA lifecycle and evidence |

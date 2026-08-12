@@ -211,6 +211,21 @@ Do not inherit replicated-cache validation for `--weight-source fabric` or
      `max(64 GiB, 5% filesystem capacity)` reserve on every selected rank;
    - an explicit undersized hard cap blocks before mutation; and
    - no automatic eviction, reserve relaxation, or transport fallback occurs.
+10. read-only health and legacy-hot repair on every confirmed physical rank:
+   - use only an isolated disposable hot root with tiny synthetic schema-1/2
+     instances; never target real `/var/tmp/pulsar-hot` or model caches;
+   - health reports every rank, cached-catalog/primary state, legacy metadata,
+     and Docker/SSH loss without hashing or mutation;
+   - stopped managed-container and pinned state block removal;
+   - removal requires a current health-issued ID plus `--yes`, and pinned state
+     additionally requires `--force-unpin`;
+   - stale ID, schema 3, malformed ownership, symlinked root/target, and
+     ambiguous/unobservable targets fail closed;
+   - atomic retirement preserves a sibling instance and an external sentinel
+     reached only through an embedded symlink;
+   - incomplete retirement is rediscovered and retryable; and
+   - the disposable legacy removal unblocks `home check`, followed by an exact
+     disposable-home removal repeat and sibling-preservation proof.
 
 The current guard passed that deterministic and three-node physical gate on
 2026-08-11. See
@@ -223,6 +238,13 @@ a three-node disposable-repository physical targeting repeat passed on
 `results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`.
 Repeat again after any later targeting, observation, or locking change. The
 repeat did not reconcile the existing DeepSeek duplicate or promote the path.
+Health/reference observation and hot-lock behavior changed with the guarded
+legacy repair service. Gate 10 and the affected disposable home-removal subset
+passed a three-node repeat on 2026-08-12. The run proved local and remote
+repair, stopped-container and pinned blockers, no-follow/sibling preservation,
+continued attention for preserved untracked content, and exact disposable-home
+removal. See
+`results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local

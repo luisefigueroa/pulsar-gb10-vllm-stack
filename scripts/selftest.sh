@@ -59,6 +59,10 @@ run "model library persistent-primary contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_primary.py"
 run "model library hot-budget contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_hot_budget.py"
+run "model library health and legacy-repair contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_health.py"
+run "model library health public CLI" \
+  "$REPO_DIR/scripts/selftest-model-library-health.sh"
 run "model library startup-evidence contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_startup_metric.py"
 run "federated model library catalog" "$REPO_DIR/scripts/selftest-model-library.sh"
