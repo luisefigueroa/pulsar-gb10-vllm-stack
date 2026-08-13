@@ -70,11 +70,13 @@ through a read-only repository mount with the same revision/seal/bundle labels.
 The distributed library now has a separate reviewed-profile acquisition
 service: `home add` observes every confirmed rank, allows a one-node profile on
 any confirmed rank while preserving exact multi-node geometry, selects the
-eligible candidate with the most free space unless `--node` overrides it, downloads there
+eligible candidate with the most free space unless `--node` overrides it, and downloads there
 into private same-filesystem staging, rechecks that no home appeared elsewhere,
 full-verifies the expected manifest, and atomically publishes exactly one
 durable HF repository. It neither creates hot copies nor refreshes the catalog,
-so registration remains the operator's explicit next action.
+so registration remains the operator's explicit next action. Target capability
+discovery accepts the CLI on PATH or Pulsar's managed user-venv installation;
+it does not move controller authentication to the selected rank.
 Legacy-unsealed replicated profiles retain their structural `refs/main`
 behavior. Live-mount launches are not yet content-bound by expected seals.
 Issuing or enforcing the DeepSeek flagship identity does not by itself promote
@@ -829,8 +831,6 @@ blocker changed.
 - Model start integration into the serving wizard; cached browsing, explicit
   catalog refresh, one-home acquisition, and explicit experimental preparation
   are implemented, but no guided/default storage policy changed
-- Physical multi-rank acquisition evidence for target-side upstream download,
-  interruption cleanup, publication recheck, and atomic one-home registration
 - Machine-readable qualification dimensions; current scope separation is a
   documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time
@@ -893,3 +893,4 @@ blocker changed.
 | 2026-08-12 | Models & storage gained an explicit confirmation-gated catalog refresh that delegates to the existing atomic all-rank service. Browsing and health rechecks remain read-only; refresh is never automatic and does not prepare, launch, retain, repair, or delete models. |
 | 2026-08-12 | Exact model detail gained confirmation-gated experimental preparation for reviewed-seal tested serving profiles. It delegates to eight-stream SSH-over-RoCE copy with no fallback and re-renders health; it does not launch, expose unvalidated bypass, change replicated defaults, or claim promotion. |
 | 2026-08-13 | Added reviewed-profile `home add`: target-side exact-commit download into plan-owned same-filesystem staging, any-confirmed-rank placement for one-node profiles, exact geometry for multi-node profiles, most-free-space selection with explicit in-geometry override, all-rank duplicate recheck, full expected-manifest verification, and atomic publication of one durable home. Catalog refresh, hot preparation, and launch remain separate; deterministic contracts pass and physical acquisition evidence remains pending. |
+| 2026-08-13 | Reviewed acquisition passed its three-node physical catalog/artifact gate with sealed Qwen 1.7B. Guarded last-home removal, interrupted remote download cleanup, explicit rank-2 acquisition, automatic most-free-space rank-2 acquisition, full reviewed-manifest verification, atomic publication, explicit catalog refresh, and final one-home/no-hot state passed. The gate also closed target discovery for Pulsar's managed HF CLI venv. It did not prepare, launch, qualify, or promote the model or storage path. |

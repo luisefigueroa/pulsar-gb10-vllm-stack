@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "kind": "pulsar-model-library-home-acquisition-physical-gate",
+  "date": "2026-08-13",
+  "status": "pass",
+  "scope": {
+    "qualification": "catalog-artifact",
+    "confirmed_rank_count": 3,
+    "profile": "qwen3-1.7b",
+    "model_id": "Qwen/Qwen3-1.7B",
+    "revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+    "manifest_id": "775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1",
+    "seal_id": "ebe6f19548be033865e6c4055b367ea44e5b8e7225eab93d08cd3d7a6f1f7e94",
+    "validation_bundle_id": "9c5593879b3db1d1665e62d775784489e79aab0033d426a5c3bc324aa5113380",
+    "content_bytes": 4079450110,
+    "production_model_state_changed": true
+  },
+  "preconditions": {
+    "initial_home_count": 1,
+    "initial_home_rank": 1,
+    "initial_hot_instance_count": 0,
+    "managed_container_reference_count": 0,
+    "guarded_last_home_removal_eligible": true,
+    "remote_target_had_managed_hf_cli": true
+  },
+  "procedure": [
+    {
+      "step": 1,
+      "command": "scripts/model-library.sh home remove qwen3-1.7b --node 1 --allow-last-home --yes",
+      "purpose": "Remove the prior final home through the guarded lifecycle service."
+    },
+    {
+      "step": 2,
+      "command": "timeout --signal=INT --kill-after=20s 8s scripts/model-library.sh home add qwen3-1.7b --node 2 --yes",
+      "purpose": "Inject an interrupt after explicit remote target-side download begins."
+    },
+    {
+      "step": 3,
+      "command": "scripts/model-library.sh home add qwen3-1.7b --node 2 --yes --json",
+      "purpose": "Run an end-to-end explicit remote acquisition."
+    },
+    {
+      "step": 4,
+      "command": "scripts/model-library.sh catalog refresh",
+      "purpose": "Register the explicitly acquired home as a separate action."
+    },
+    {
+      "step": 5,
+      "command": "scripts/model-library.sh home remove qwen3-1.7b --node 2 --allow-last-home --yes",
+      "purpose": "Return to no-home state through the guarded lifecycle service."
+    },
+    {
+      "step": 6,
+      "command": "scripts/model-library.sh home add qwen3-1.7b --yes",
+      "purpose": "Run an end-to-end automatic most-free-space acquisition without a node override."
+    },
+    {
+      "step": 7,
+      "command": "scripts/model-library.sh catalog refresh",
+      "purpose": "Register the automatically acquired home as a separate action."
+    }
+  ],
+  "attempts": [
+    {
+      "name": "interrupted-explicit-remote",
+      "selection": "operator-override",
+      "target_rank": 2,
+      "download_started": true,
+      "exit_code": 124,
+      "published": false,
+      "published_home_count_after_attempt": 0,
+      "staging_count_after_attempt": 0,
+      "all_confirmed_ranks_observed_after_attempt": true
+    },
+    {
+      "name": "successful-explicit-remote",
+      "selection": "operator-override",
+      "target_rank": 2,
+      "download_completed": true,
+      "revision_matched": true,
+      "bytes_hashed": 4079450110,
+      "expected_manifest_matched": true,
+      "publication_recheck_rank_count": 3,
+      "atomic_publication_succeeded": true,
+      "catalog_refreshed_by_acquisition": false,
+      "catalog_home_count_before_explicit_refresh": 0,
+      "explicit_catalog_refresh_succeeded": true,
+      "catalog_home_ranks_after_refresh": [
+        2
+      ]
+    },
+    {
+      "name": "successful-automatic-most-free-space",
+      "preceding_guarded_last_home_removal_succeeded": true,
+      "catalog_home_count_before_attempt": 0,
+      "node_override_supplied": false,
+      "selection": "most-free-space",
+      "target_rank": 2,
+      "download_completed": true,
+      "revision_matched": true,
+      "bytes_hashed": 4079450110,
+      "expected_manifest_matched": true,
+      "publication_recheck_rank_count": 3,
+      "atomic_publication_succeeded": true,
+      "catalog_refreshed_by_acquisition": false,
+      "explicit_catalog_refresh_succeeded": true,
+      "catalog_home_ranks_after_refresh": [
+        2
+      ]
+    }
+  ],
+  "checks": {
+    "guarded_last_home_removal_succeeded": true,
+    "catalog_recorded_no_home_after_removal": true,
+    "remote_download_started_in_private_staging": true,
+    "injected_interrupt_returned_nonzero": true,
+    "interrupted_run_published_no_home_on_any_rank": true,
+    "interrupted_run_left_no_plan_owned_staging_on_any_rank": true,
+    "explicit_remote_rank_2_end_to_end_acquisition_succeeded": true,
+    "second_guarded_last_home_removal_succeeded": true,
+    "automatic_rank_2_end_to_end_acquisition_succeeded": true,
+    "exact_reviewed_revision_downloaded": true,
+    "full_expected_manifest_sha256_passed": true,
+    "publication_recheck_observed_every_confirmed_rank": true,
+    "atomic_publication_succeeded": true,
+    "acquisition_reported_catalog_unchanged": true,
+    "catalog_remained_without_home_before_explicit_refresh": true,
+    "explicit_catalog_refresh_succeeded": true,
+    "final_catalog_topology_compatible": true,
+    "final_primary_was_automatic_single_home_rank_2": true,
+    "final_duplicate_home_state_was_none": true,
+    "final_hot_instance_count_was_zero": true,
+    "final_staging_count_was_zero_on_every_rank": true
+  },
+  "final_state": {
+    "catalog_health": "healthy",
+    "durable_home_count": 1,
+    "durable_home_rank": 2,
+    "non_home_durable_copy_count": 0,
+    "hot_instance_count": 0,
+    "model_started": false
+  },
+  "claims": {
+    "catalog_artifact_acquisition": "pass",
+    "serving_integration": "not_run",
+    "model_qualification": "not_run",
+    "release_promotion": "not_claimed",
+    "guided_default_changed": false
+  },
+  "privacy": {
+    "reviewed": true,
+    "hostnames_omitted": true,
+    "ip_addresses_omitted": true,
+    "node_and_topology_ids_omitted": true,
+    "absolute_paths_omitted": true,
+    "plan_and_filesystem_ids_omitted": true
+  },
+  "limitations": [
+    "The interrupt was injected after target-side download progress began; no authentication-failure case was needed because the reviewed model is public.",
+    "The gate did not prepare a runtime view, transfer a non-home hot copy, launch vLLM, or run a completion.",
+    "The gate does not qualify model behavior or promote library-hot, the serving wizard path, or any storage default."
+  ]
+}

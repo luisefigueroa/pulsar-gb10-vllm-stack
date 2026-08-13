@@ -234,6 +234,41 @@ class HomeAcquisitionContracts(unittest.TestCase):
         with self.assertRaisesRegex(model_library.ModelLibraryError, "not eligible"):
             self._plan(node_selector="0")
 
+    def test_managed_hf_cli_venv_is_an_eligible_target_capability(self) -> None:
+        observation = model_library.inspect_home_acquisition_target(
+            self.cache_roots[2],
+            model_id=self.model_id,
+            revision=self.revision,
+            required_content_bytes=self.manifest["total_bytes"],
+            rank=2,
+            node_id=self.node_ids[2],
+            hf_cli="/home/fixture/.hf-cli/venv/bin/hf",
+        )
+        observation["available_bytes"] = 20 * 1024**3
+        observation["eligible"] = True
+        (self.observations / "rank-2.json").write_text(
+            json.dumps(observation), encoding="utf-8"
+        )
+        plan = self._plan(node_selector="2", serving_nodes=1)
+        self.assertEqual(
+            plan["target"]["hf_cli"],
+            "/home/fixture/.hf-cli/venv/bin/hf",
+        )
+
+    def test_unmanaged_absolute_hf_cli_path_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError, "CLI observation"
+        ):
+            model_library.inspect_home_acquisition_target(
+                self.cache_roots[2],
+                model_id=self.model_id,
+                revision=self.revision,
+                required_content_bytes=self.manifest["total_bytes"],
+                rank=2,
+                node_id=self.node_ids[2],
+                hf_cli="/tmp/hf",
+            )
+
     def test_symlinked_managed_hub_root_is_ineligible(self) -> None:
         self.cache_roots[0].mkdir()
         external = self.root / "external-hub"

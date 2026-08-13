@@ -79,7 +79,9 @@ Minimum to serve one model on the box where you run the script:
      Hugging Face model; already-cached and NFS models do not need it.
      Experimental distributed-library `home add` instead requires the CLI,
      upstream access, and any repository authentication on its selected target
-     rank; it never transports credentials from the controller.
+     rank; it never transports credentials from the controller. Acquisition
+     discovers `hf`, `huggingface-cli`, or Pulsar's managed
+     `$HOME/.hf-cli/venv/bin/hf` installation on that target.
    - Hugging Face cache under `$HF_CACHE/hub/models--ORG--NAME`
      (default `HF_CACHE=$HOME/.cache/huggingface`), **or**
    - Use `scripts/pull-weights.sh <profile> --yes` for downloads. It passes

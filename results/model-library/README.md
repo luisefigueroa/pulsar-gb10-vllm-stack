@@ -79,13 +79,17 @@ sealing legacy profiles or changing a model or storage-path promotion.
 On 2026-08-13, the distributed library gained a separate reviewed-profile
 `home add` acquisition service. Deterministic contracts cover every-rank
 observation, automatic and explicit remote one-node placement, exact multi-node
-geometry, most-free-space and exact override placement, missing capability
-and no-fallback behavior, existing/raced home refusal, exact download
+geometry, most-free-space and exact override placement, managed target-CLI
+discovery, missing capability and no-fallback behavior, existing/raced home
+refusal, exact download
 arguments, plan/staging tamper, full-manifest mismatch, owned cleanup, atomic
-publication, confirmation, and JSON separation. No publishable physical result
-artifact exists yet: no real model was downloaded or moved for this change.
-The multi-rank physical gate remains pending and implementation alone is not
-promotion evidence.
+publication, confirmation, and JSON separation. The subsequent three-node
+[physical acquisition gate](./qwen3-1.7b-home-acquisition-gate-20260813.json)
+passed guarded last-home removal, interrupted remote cleanup, explicit and
+automatic rank-2 end-to-end acquisition as distinct recorded attempts,
+reviewed-manifest hashing and atomic publication for each successful attempt,
+explicit refresh, and final one-home/no-hot state. This is catalog/artifact
+evidence only, not serving integration, model qualification, or promotion.
 
 On 2026-08-12, the flagship `deepseek-v4-flash` GA profile became the second
 reviewed identity. Its release candidate reproduced byte-for-byte and the
@@ -174,6 +178,7 @@ duplicate was changed by this work.
 | [`deepseek-v4-flash-sealed-enforcement-gate-20260812.json`](./deepseek-v4-flash-sealed-enforcement-gate-20260812.json) | Post-issuance two-node exact-seal preparation, full verification, durable-home/sealed-hot placement, read-only launch, identity labels, zero-byte witnesses, smoke, and cleanup | Current flagship sealed `library-hot` enforcement PASS with duplicate-durable-cache/temporary-primary condition disclosed; not steady-state storage proof or a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-snapshot-manifest-20260812.json`](./deepseek-v4-flash-snapshot-manifest-20260812.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued DeepSeek revision; 74 files, 166,898,661,074 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
 | [`qwen3-1.7b-release-validation-20260811.json`](./qwen3-1.7b-release-validation-20260811.json) | Reviewed release summary for Qwen revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest `775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`, exact one-node profile, and digest-pinned image | Current first-identity issuance input PASS; not a storage-path promotion | Reviewed; repository-relative evidence only; site identity omitted |
+| [`qwen3-1.7b-home-acquisition-gate-20260813.json`](./qwen3-1.7b-home-acquisition-gate-20260813.json) | Three-node reviewed durable-home acquisition: guarded last-home removal, interrupted remote cleanup, distinct explicit and automatic rank-2 end-to-end runs, full expected-manifest verification, atomic publication, explicit refresh, and final one-home/no-hot inventory | Current catalog/artifact acquisition PASS; serving integration, model qualification, and promotion not run or claimed | Reviewed; reproducible rank-only commands included; site topology, paths, hosts, nodes, plan IDs, and filesystem identity omitted |
 | [`qwen3-1.7b-snapshot-manifest-20260811.json`](./qwen3-1.7b-snapshot-manifest-20260811.json) | Complete `sha256-snapshot-manifest-v1` for the exact issued Qwen revision; 12 files, 4,079,450,110 bytes | Current expected-seal content input PASS | Reviewed; logical snapshot paths and content hashes only |
 | [`qwen3-1.7b-release-identity-20260811-runA.json`](../qwen3-1.7b-release-identity-20260811-runA.json) | Fresh exact-profile greedy capture A for the issued one-node Qwen identity | Current release validation PASS; 30-prompt source capture | Reviewed; prompts/results contain no site identity or secrets |
 | [`qwen3-1.7b-release-identity-20260811-runB.json`](../qwen3-1.7b-release-identity-20260811-runB.json) | Fresh exact-profile greedy capture B for the issued one-node Qwen identity | Current determinism PASS; 30/30 identical to run A | Reviewed; prompts/results contain no site identity or secrets |

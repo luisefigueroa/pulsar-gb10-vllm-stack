@@ -5755,6 +5755,17 @@ def home_acquisition_required_bytes(content_bytes: int) -> int:
     return content_bytes + headroom
 
 
+def valid_home_acquisition_hf_cli(value: Any) -> bool:
+    if value in {"hf", "huggingface-cli", ""}:
+        return True
+    if (
+        not isinstance(value, str)
+        or not pathlib.PurePosixPath(value).is_absolute()
+    ):
+        return False
+    return pathlib.PurePosixPath(value).parts[-4:] == (".hf-cli", "venv", "bin", "hf")
+
+
 def inspect_home_acquisition_target(
     cache_root: str | pathlib.Path,
     *,
@@ -5774,7 +5785,7 @@ def inspect_home_acquisition_target(
         fail("home add: rank is invalid")
     if not isinstance(node_id, str) or not node_id:
         fail("home add: node identity is invalid")
-    if hf_cli not in {"hf", "huggingface-cli", ""}:
+    if not valid_home_acquisition_hf_cli(hf_cli):
         fail("home add: Hugging Face CLI observation is invalid")
 
     cache = pathlib.Path(cache_root).expanduser()
@@ -5961,7 +5972,7 @@ def validate_home_acquisition_plan(plan: Any) -> dict[str, Any]:
         or target["available_bytes"] < plan["required_free_bytes"]
     ):
         fail("home add: acquisition target available space is invalid")
-    if target["hf_cli"] not in {"hf", "huggingface-cli"}:
+    if not target["hf_cli"] or not valid_home_acquisition_hf_cli(target["hf_cli"]):
         fail("home add: acquisition target Hugging Face CLI is invalid")
     if target["rank"] not in serving_ranks:
         fail("home add: durable home is outside the profile serving ranks")
@@ -7463,7 +7474,7 @@ def cmd_render_home_acquisition_plan(args: argparse.Namespace) -> int:
     term.field("revision", plan["revision"])
     term.field("identity", f"reviewed seal · {plan['seal_id'][:12]}")
     term.field("home", f"rank {target['rank']} · {host}")
-    term.field("serving ranks", ", ".join(str(rank) for rank in plan["serving_ranks"]))
+    term.field("serving", ", ".join(str(rank) for rank in plan["serving_ranks"]))
     term.field("placement", str(plan["selection"]).replace("-", " "))
     term.field("content", _human_bytes(plan["content_bytes"]))
     term.field(

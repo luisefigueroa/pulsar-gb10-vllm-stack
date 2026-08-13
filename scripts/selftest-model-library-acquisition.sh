@@ -30,6 +30,7 @@ if printf 'n\n' | COLUMNS=52 env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3-1.7b
   exit 1
 fi
 grep -q 'Add this reviewed model' "$STATE/declined.out"
+grep -Eq '^serving[[:space:]]+0$' "$STATE/declined.out"
 python3 - "$STATE/declined.out" <<'PY'
 import sys
 
@@ -57,6 +58,28 @@ PY
 grep -q -- 'download Qwen/Qwen3-1.7B' "$STATE/hf.log"
 grep -q -- '--revision 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e' "$STATE/hf.log"
 grep -q -- '--cache-dir .*\.pulsar-acquire-' "$STATE/hf.log"
+
+mkdir -p "$STATE/managed-home/.hf-cli/venv/bin"
+cp "$STATE/bin/hf" "$STATE/managed-home/.hf-cli/venv/bin/hf"
+: >"$STATE/managed-hf.log"
+env \
+  "PATH=/usr/bin:/bin" \
+  "HOME=$STATE/managed-home" \
+  "CLUSTER_TOPOLOGY_FILE=$STATE/topology.json" \
+  "HF_CACHE=$STATE/managed-cache" \
+  "PULSAR_MODEL_LIBRARY_PY=$STATE/model_library_wrapper.py" \
+  "MOCK_HF_LOG=$STATE/managed-hf.log" \
+  "$LIBRARY" home add qwen3-1.7b --yes --json \
+  >"$STATE/managed-result.json" 2>"$STATE/managed-result.err"
+python3 - "$STATE/managed-result.json" <<'PY'
+import json
+import sys
+
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "published"
+assert result["rank"] == 0
+PY
+grep -q -- 'download Qwen/Qwen3-1.7B' "$STATE/managed-hf.log"
 
 mkdir -p "$STATE/cache/hub/models--Qwen--Qwen3-1.7B"
 : >"$STATE/hf.log"

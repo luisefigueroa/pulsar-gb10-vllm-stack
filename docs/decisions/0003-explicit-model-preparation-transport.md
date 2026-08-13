@@ -104,9 +104,11 @@ transport, when remote-home-to-remote-target copy is supported, or when
 The first one-home acquisition service has landed as
 `scripts/model-library.sh home add <sealed-profile>`. It performs target-side
 exact-commit download, full expected-manifest verification, and atomic durable
-publication without preparing non-home ranks. This satisfies the onboarding
-implementation trigger but does not change this ADR's preparation transport:
+publication without preparing non-home ranks. Its three-node physical
+catalog/artifact gate subsequently passed remote interruption cleanup, explicit
+and automatic remote placement, full verification, atomic publication, and
+explicit registration. This satisfies the onboarding implementation and
+evidence trigger but does not change this ADR's preparation transport:
 acquisition has no inter-rank model copy, while subsequent multi-rank
 preparation still uses topology-bound eight-stream SSH-over-RoCE with no
-fallback. Physical acquisition evidence and combined release promotion remain
-separate pending gates.
+fallback. Combined release promotion remains a separate pending gate.
