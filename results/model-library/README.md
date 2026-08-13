@@ -104,6 +104,19 @@ completion smoke, owned stop and hot purge, and final healthy one-home
 inventory. This closes the physical steady-state condition; it does not close
 strict determinism, sustained soak, or storage-path promotion.
 
+The next exact-GA repeat then failed the current strict same-boot determinism
+contract. With profile-default DSpark k=5, only 11/30 texts and 4/30 complete
+records were identical between captures. Every current-pair first flip remained
+inside the existing FP-equivalent heuristic, but strict identity still failed,
+and comparison with the preserved GA DSpark capture reported one hard
+disagreement. A forced no-spec diagnostic improved repeatability to 26/30 texts
+and 25/30 complete records without reaching strict identity. Both runs used the
+same reviewed GA revision, seal, image, geometry, and rank-local storage views;
+therefore the current result cannot be dismissed as only a preview/GA profile
+name mix-up. The service remained healthy, no fatal runtime signature appeared,
+and cleanup restored one durable home with no hot instances. Sustained soak was
+not run after this blocking failure.
+
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
 artifact closed the then-current lifecycle gate without changing model
@@ -134,6 +147,7 @@ duplicate was changed by this work.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| [`deepseek-v4-flash-library-hot-determinism-20260812.json`](./deepseek-v4-flash-library-hot-determinism-20260812.json) | Exact sealed DeepSeek GA same-boot strict captures with profile-default DSpark plus forced no-spec diagnostic, standard benchmarks, and clean one-home closeout | Current strict determinism FAIL; no-spec improves but does not eliminate variance; sustained soak and promotion remain blocked | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; strict determinism, sustained soak, and promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`model-library-health-legacy-repair-gate-20260812.json`](./model-library-health-legacy-repair-gate-20260812.json) | Three-node read-only health, repair-ID-bound schema-1/2 removal, stopped-container/pinned blockers, no-follow/sibling preservation, and exact disposable-home removal; synthetic data only | Current health/legacy-repair physical PASS; no real cleanup, reconciliation, or storage-path promotion | Reviewed; site topology, paths, hosts, nodes, containers, repair IDs, and filesystem identity omitted |
 | [`model-library-primary-selection-reconciliation-gate-20260812.json`](./model-library-primary-selection-reconciliation-gate-20260812.json) | Three-node persistent exact-revision selection and guarded non-primary reconciliation; disposable synthetic HF-layout repositories only | Current selected-primary targeting PASS; existing DeepSeek duplicate unchanged; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
