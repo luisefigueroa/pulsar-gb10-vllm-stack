@@ -276,6 +276,7 @@ def preparation_check(
     report: dict[str, Any],
     profiles: dict[str, Any],
     model_index: int,
+    target_ranks_by_profile: dict[str, list[int]] | None = None,
 ) -> dict[str, Any]:
     models = sorted_models(report)
     if model_index < 0 or model_index >= len(models):
@@ -289,14 +290,16 @@ def preparation_check(
     if not model.get("expected_manifest"):
         blockers.append("no reviewed exact model identity is available")
     primary = model.get("primary") or {}
-    if primary.get("status") != "match" or not isinstance(
+    primary_current = primary.get("status") == "match" and isinstance(
         primary.get("rank"), int
-    ):
+    )
+    if not primary_current:
         blockers.append("no current primary durable home is available")
 
     model_profiles = set(model.get("profiles") or [])
     candidates: list[dict[str, Any]] = []
     identity_mismatch = False
+    matched_reviewed_profile = False
     for profile in profiles.get("models") or []:
         if profile.get("id") not in model_profiles:
             continue
@@ -314,12 +317,44 @@ def preparation_check(
         ):
             identity_mismatch = True
             continue
+        matched_reviewed_profile = True
         candidate = {
             "profile": profile["id"],
             "nodes": profile["nodes"],
             "weights_gib": profile.get("weights_gib"),
             "already_prepared": False,
         }
+        target_ranks = (
+            list(target_ranks_by_profile[profile["id"]])
+            if target_ranks_by_profile
+            and profile["id"] in target_ranks_by_profile
+            else (
+                [int(primary["rank"])]
+                if int(profile["nodes"]) == 1
+                and isinstance(primary.get("rank"), int)
+                else list(range(int(profile["nodes"])))
+            )
+        )
+        if len(target_ranks) != int(profile["nodes"]):
+            blockers.append("selected serving placement does not match profile geometry")
+            continue
+        if int(profile["nodes"]) == 1 and target_ranks[0] != primary.get("rank"):
+            blockers.append(
+                "one-node distributed serving must use the durable-home node; "
+                "choose that node or use replicated copies"
+            )
+            continue
+        candidate["target_ranks"] = target_ranks
+        non_home = [rank for rank in target_ranks if rank != primary.get("rank")]
+        candidate["prepare_transport"] = (
+            "ssh-roce" if non_home else "ssh-control"
+        )
+        candidate["transfer"] = (
+            "SSH over confirmed RoCE · 8 streams"
+            if non_home
+            else "none · durable-home local view"
+        )
+        candidate["copy_streams"] = 8 if non_home else 1
         instances = [
             instance
             for instance in model_instances(report, model)
@@ -327,12 +362,18 @@ def preparation_check(
             and instance.get("metadata_status") == "current"
             and instance.get("identity_status") == "match"
             and instance.get("witness_status") == "match"
+            and instance.get("runtime_source")
+            == (
+                "durable-home"
+                if int(instance["rank"]) == primary.get("rank")
+                else "sealed-hot"
+            )
         ]
         candidate["already_prepared"] = {
             int(instance["rank"]) for instance in instances
-        } == set(range(int(profile["nodes"])))
+        } == set(target_ranks)
         candidates.append(candidate)
-    if not candidates:
+    if not candidates and not matched_reviewed_profile:
         if identity_mismatch:
             blockers.append(
                 "trusted profile identity differs from the cached model; "
@@ -351,9 +392,102 @@ def preparation_check(
         "model_id": model["model_id"],
         "revision": model.get("revision"),
         "expected_manifest": model.get("expected_manifest"),
-        "home_rank": primary.get("rank") if not blockers else None,
+        "home_rank": primary.get("rank") if primary_current else None,
         "candidates": sorted(candidates, key=lambda item: item["profile"]),
         "blockers": blockers,
+    }
+
+
+def serving_preparation_check(
+    report: dict[str, Any],
+    profiles: dict[str, Any],
+    profile_id: str,
+    target_rank: int | None = None,
+) -> dict[str, Any]:
+    profile = next(
+        (
+            item
+            for item in profiles.get("models") or []
+            if item.get("id") == profile_id
+        ),
+        None,
+    )
+    if profile is None:
+        raise ModelStorageContractError("selected serving profile is unavailable")
+    nodes = int(profile["nodes"])
+    if nodes == 1:
+        if target_rank is None:
+            raise ModelStorageContractError(
+                "one-node distributed serving requires an exact target rank"
+            )
+        targets = [target_rank]
+    else:
+        if target_rank is not None:
+            raise ModelStorageContractError(
+                "an explicit target rank is valid only for one-node profiles"
+            )
+        targets = list(range(nodes))
+    models = sorted_models(report)
+    indexes = [
+        index
+        for index, model in enumerate(models)
+        if profile_id in (model.get("profiles") or [])
+    ]
+    if len(indexes) != 1:
+        return {
+            "schema_version": 1,
+            "kind": "pulsar-model-serving-preparation-check",
+            "state": "blocked",
+            "profile": profile_id,
+            "target_ranks": targets,
+            "blockers": [
+                "the cached catalog does not contain one exact entry for this profile"
+            ],
+        }
+    check = preparation_check(
+        report,
+        profiles,
+        indexes[0],
+        target_ranks_by_profile={profile_id: targets},
+    )
+    candidate = next(
+        (
+            item
+            for item in check.get("candidates") or []
+            if item.get("profile") == profile_id
+        ),
+        None,
+    )
+    if candidate is None:
+        return {
+            "schema_version": 1,
+            "kind": "pulsar-model-serving-preparation-check",
+            "state": "blocked",
+            "profile": profile_id,
+            "model_id": check.get("model_id"),
+            "revision": check.get("revision"),
+            "expected_manifest": check.get("expected_manifest"),
+            "home_rank": check.get("home_rank"),
+            "target_ranks": targets,
+            "blockers": check.get("blockers") or [
+                "experimental preparation is unavailable"
+            ],
+        }
+    return {
+        "schema_version": 1,
+        "kind": "pulsar-model-serving-preparation-check",
+        "state": "ready" if candidate["already_prepared"] else "needs-preparation",
+        "profile": profile_id,
+        "model_id": check["model_id"],
+        "revision": check.get("revision"),
+        "expected_manifest": check.get("expected_manifest"),
+        "home_rank": check["home_rank"],
+        "target_ranks": targets,
+        "weights_gib": candidate.get("weights_gib"),
+        "prepare_transport": candidate["prepare_transport"],
+        "transfer": candidate["transfer"],
+        "copy_streams": candidate["copy_streams"],
+        "blockers": [],
     }
 
 
@@ -688,7 +822,7 @@ def render_preparation(
     )
     term.field(
         "transfer",
-        "SSH over confirmed RoCE · 8 streams",
+        candidate["transfer"],
         label_width=label_width,
     )
     term.field("fallback", "none", label_width=label_width)
@@ -711,6 +845,53 @@ def render_preparation(
     )
 
 
+def render_serving_preparation(
+    check: dict[str, Any], width: int | None = None
+) -> None:
+    term = TerminalWriter(width=width)
+    term.emit("DISTRIBUTED CATALOG · EXPERIMENTAL")
+    term.field("profile", check.get("profile") or "unknown")
+    if check.get("model_id"):
+        term.field("model", check["model_id"])
+    if check.get("revision"):
+        term.field("revision", check["revision"])
+    if check.get("expected_manifest"):
+        term.field("manifest", check["expected_manifest"])
+    if isinstance(check.get("home_rank"), int):
+        term.field("durable home", _node_label(int(check["home_rank"])))
+    targets = check.get("target_ranks") or []
+    if targets:
+        term.field(
+            "serving nodes",
+            ", ".join(_node_label(int(rank)) for rank in targets),
+        )
+    term.field("readiness", _status_label(check.get("state")))
+    if check.get("transfer"):
+        term.field("transfer", check["transfer"])
+        term.field("fallback", "none")
+    term.blank()
+    if check.get("state") == "blocked":
+        term.emit("Distributed catalog serving is blocked:")
+        for blocker in check.get("blockers") or []:
+            term.emit(
+                blocker,
+                initial_indent="  ",
+                subsequent_indent="  ",
+            )
+        return
+    if check.get("state") == "needs-preparation":
+        term.emit(
+            "The exact runtime views must be prepared and fully verified before the final start confirmation."
+        )
+    else:
+        term.emit(
+            "The selected ranks already have exact, witnessed runtime views ready for launch."
+        )
+    term.emit(
+        "The durable home remains required. This explicit path is not a promoted default and does not establish model qualification."
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report-file", required=True)
@@ -729,9 +910,18 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_profile = sub.add_parser("prepare-profile")
     prepare_profile.add_argument("--index", type=int, required=True)
     prepare_profile.add_argument("--candidate-index", type=int, required=True)
+    prepare_command = sub.add_parser("prepare-command")
+    prepare_command.add_argument("--index", type=int, required=True)
+    prepare_command.add_argument("--candidate-index", type=int, required=True)
     prepare_preview = sub.add_parser("prepare-preview")
     prepare_preview.add_argument("--index", type=int, required=True)
     prepare_preview.add_argument("--candidate-index", type=int, required=True)
+    serving_check = sub.add_parser("serving-check")
+    serving_check.add_argument("--profile", required=True)
+    serving_check.add_argument("--target-rank", type=int)
+    serving_preview = sub.add_parser("serving-preview")
+    serving_preview.add_argument("--profile", required=True)
+    serving_preview.add_argument("--target-rank", type=int)
     return parser
 
 
@@ -765,6 +955,26 @@ def main(argv: list[str] | None = None) -> int:
                 check, args.candidate_index
             )
             print(candidate["profile"])
+        elif args.command == "prepare-command":
+            check = preparation_check(report, profiles, args.index)
+            candidate = selected_preparation_candidate(
+                check, args.candidate_index
+            )
+            target = (
+                str(candidate["target_ranks"][0])
+                if int(candidate["nodes"]) == 1
+                else ""
+            )
+            print(
+                "\t".join(
+                    [
+                        candidate["profile"],
+                        candidate["prepare_transport"],
+                        str(candidate["copy_streams"]),
+                        target,
+                    ]
+                )
+            )
         elif args.command == "prepare-preview":
             render_preparation(
                 report,
@@ -772,6 +982,17 @@ def main(argv: list[str] | None = None) -> int:
                 args.index,
                 args.candidate_index,
             )
+        elif args.command in {"serving-check", "serving-preview"}:
+            check = serving_preparation_check(
+                report,
+                profiles,
+                args.profile,
+                target_rank=args.target_rank,
+            )
+            if args.command == "serving-check":
+                print(json.dumps(check, indent=2, sort_keys=True))
+            else:
+                render_serving_preparation(check)
         else:
             raise ModelStorageContractError("unsupported renderer command")
     except ModelStorageContractError as exc:

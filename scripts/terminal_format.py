@@ -63,7 +63,11 @@ class TerminalWriter:
         indent: int = 0,
         label_width: int = 10,
     ) -> None:
-        prefix = f"{' ' * indent}{str(label):<{label_width}}"
+        label_text = str(label)
+        # label_width is an alignment target, not permission to concatenate a
+        # long label directly with its value.
+        effective_width = max(label_width, len(label_text) + 1)
+        prefix = f"{' ' * indent}{label_text:<{effective_width}}"
         self.emit(value, prefix, " " * len(prefix))
 
     def blank(self) -> None:

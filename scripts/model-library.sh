@@ -53,7 +53,7 @@ Usage:
   scripts/model-library.sh prepare <profile>
       [--transport ssh-control|ssh-roce|nfs-rdma] [--backend copy|fabric]
       [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
-      [--copy-streams N]
+      [--copy-streams N] [--node RANK|NODE_ID]
   scripts/model-library.sh bench-prepare <profile> [--tag TAG] [--yes]
       [--interactive-sudo] [--output PATH] [--nodes N]
   scripts/model-library.sh probe-ssh-roce <profile> [--nodes N] [--rail-index N]
@@ -62,9 +62,10 @@ Usage:
       [--order control-first|roce-first]
       [--copy-streams N]
   scripts/model-library.sh release-transfer <profile> [--yes] [--interactive-sudo]
-  scripts/model-library.sh pin <profile>
-  scripts/model-library.sh unpin <profile>
-  scripts/model-library.sh purge-hot <profile> [--yes] [--force-unpin]
+  scripts/model-library.sh pin <profile> [--node RANK|NODE_ID]
+  scripts/model-library.sh unpin <profile> [--node RANK|NODE_ID]
+  scripts/model-library.sh purge-hot <profile> [--node RANK|NODE_ID]
+      [--yes] [--force-unpin]
   scripts/model-library.sh health [--json]
   scripts/model-library.sh hot legacy check <repair-id> [--json]
   scripts/model-library.sh hot legacy remove <repair-id> --yes [--force-unpin] [--json]
@@ -128,7 +129,7 @@ Notes:
     space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
     PULSAR_HOT_RESERVE_BYTES explicitly overrides the reserve. No auto-eviction
     or capacity fallback occurs.
-  • Does not change wizard defaults or --weight-source fabric.
+  • Does not change the wizard's replicated default or --weight-source fabric.
   • Compatibility: activate and bench-activate remain supported aliases for
     prepare and bench-prepare. Model preparation does not start a serving
     container or establish model qualification.
@@ -403,10 +404,14 @@ for item in d.get("hot_storage_requirements") or []:
 }
 
 build_zero_hot_budget_plan() {
-  local mode="${1:?}" profile="${2:-}" rank_count="${3:?}"
+  local mode="${1:?}" profile="${2:-}" ranks_csv="${3:?}"
   local observations_file expected_ranks="" observation rank rc=0
+  local -a ranks=()
+  IFS=, read -r -a ranks <<<"$ranks_csv"
+  [ "${#ranks[@]}" -gt 0 ] || return 1
   observations_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-hot-budget.XXXXXX")
-  for ((rank = 0; rank < rank_count; rank++)); do
+  for rank in "${ranks[@]}"; do
+    [[ "$rank" =~ ^[0-9]+$ ]] || { rm -f "$observations_file"; return 1; }
     if ! observation=$(hot_budget_observation_on_rank "$rank" "$mode" 0 ""); then
       rm -f "$observations_file"
       return 1
@@ -1656,15 +1661,13 @@ verify_copy_ssh_roce_route() {
 }
 
 load_copy_ssh_roce_map() {
-  local home_rank="${1:?}" nodes="${2:?}" rail_index="${3:-0}"
-  local map ranks_csv r ip control_host netdev expected
+  local home_rank="${1:?}" ranks_csv="${2:?}" rail_index="${3:-0}"
+  local map r ip control_host netdev expected
   require_topology_ssh_trust \
     || die "ssh-roce requires topology-bound SSH identity enrollment"
-  ranks_csv=$(seq -s, 0 $((nodes - 1)))
   map=$(python3 "$PY_TOOL" ssh-roce-map \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --home-rank "$home_rank" \
-    --nodes "$nodes" \
     --ranks "$ranks_csv" \
     --rail-index "$rail_index") \
     || die "ssh-roce-map failed"
@@ -2295,7 +2298,7 @@ cmd_release_transfer() {
 
 cmd_activate() {
   local profile="" backend=copy backend_explicit=0 transport=""
-  local allow_unvalidated=0 yes=0 time_it=0
+  local allow_unvalidated=0 yes=0 time_it=0 node_selector=""
   local plan stamp_json verifying_stamp_json expected_validation_json budget_plan
   local instance hub_source hub_dest home_rank rank source
   local expected_backend requested_mode
@@ -2318,6 +2321,11 @@ cmd_activate() {
         [ $# -ge 2 ] || die "--copy-streams requires a value"
         COPY_STREAMS="$2"
         export PULSAR_COPY_STREAMS="$COPY_STREAMS"
+        shift
+        ;;
+      --node)
+        [ $# -ge 2 ] || die "--node requires a topology rank, node ID, or hostname"
+        node_selector="$2"
         shift
         ;;
       --allow-unvalidated) allow_unvalidated=1 ;;
@@ -2368,6 +2376,15 @@ cmd_activate() {
   load_cluster_topology >/dev/null \
     || die "confirmed topology required"
 
+  local target_rank="" target_ranks_csv needs_bulk_transfer
+  if [ "$NODES" -eq 1 ]; then
+    resolve_single_node_placement "$node_selector" \
+      || die "prepare: cannot resolve physical node placement '$node_selector'"
+    target_rank="$SINGLE_NODE_INDEX"
+  elif [ -n "$node_selector" ]; then
+    die "prepare: --node is only valid for one-node profiles"
+  fi
+
   local plan_flags=(
     --topology-id "$CLUSTER_TOPOLOGY_ID"
     --topology-file "$CLUSTER_TOPOLOGY_FILE"
@@ -2376,6 +2393,7 @@ cmd_activate() {
     --transport "$transport"
     --nodes "$NODES"
   )
+  [ -z "$target_rank" ] || plan_flags+=(--target-rank "$target_rank")
   [ "$allow_unvalidated" = 1 ] && plan_flags+=(--allow-unvalidated)
 
   plan=$(library_plan_activate "$profile" "${plan_flags[@]}")
@@ -2387,6 +2405,7 @@ cmd_activate() {
   stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
   expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
+  target_ranks_csv=$(IFS=,; printf '%s' "${target_ranks[*]}")
 
   budget_plan=$(build_hot_budget_plan_from_activation "$plan" activate) \
     || die "prepare: all-rank hot admission failed"
@@ -2423,8 +2442,19 @@ print(json.dumps(d))
   # Promotion candidate: SSH identity stays on the confirmed control alias;
   # bulk sockets are pinned to confirmed RoCE IPs after live route validation.
   if [ "$transport" = ssh-roce ]; then
-    load_copy_ssh_roce_map "$home_rank" "$NODES" "${PULSAR_FABRIC_RAIL_INDEX:-0}"
-    log "ssh-roce candidate: confirmed identity + RoCE HostName binding"
+    needs_bulk_transfer=$(printf '%s' "$plan" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+home=int(d["home"]["rank"])
+print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
+')
+    if [ "$needs_bulk_transfer" = 1 ]; then
+      load_copy_ssh_roce_map "$home_rank" "$target_ranks_csv" \
+        "${PULSAR_FABRIC_RAIL_INDEX:-0}"
+      log "ssh-roce candidate: confirmed identity + RoCE HostName binding"
+    else
+      log "no non-home transfer is required; preparing the durable-home local view"
+    fi
   fi
 
   if [ "$yes" != 1 ]; then
@@ -2653,37 +2683,105 @@ print("re-run with --yes to execute (no silent fallback to copy)")
   printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["instance_dir"]); print(d["hub_dest"])'
 }
 
-hot_instance_for_profile() {
-  local profile="${1:?}"
-  python3 "$PY_TOOL" find-hot \
+hot_instance_for_profile_on_rank() {
+  local profile="${1:?}" rank="${2:?}" command info stamp
+  if [ "$rank" -eq 0 ]; then
+    python3 "$PY_TOOL" find-hot \
+      --profile "$profile" \
+      --topology-id "${CLUSTER_TOPOLOGY_ID}" \
+      --hot-root "$HOT_ROOT" \
+      --models-dir "$REPO_DIR/models"
+    return
+  fi
+  command=$(shell_join_q python3 - find-hot \
     --profile "$profile" \
-    --topology-id "${CLUSTER_TOPOLOGY_ID}" \
-    --hot-root "$HOT_ROOT" \
-    --models-dir "$REPO_DIR/models"
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --hot-root "$HOT_ROOT")
+  info=$(ssh_node "$rank" "$command" <"$PY_TOOL") || return 1
+  stamp=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
+    || return 1
+  printf '%s' "$stamp" | python3 "$PY_TOOL" validate-hot-stamp \
+    --profile "$profile" --models-dir "$REPO_DIR/models" \
+    --stamp-file /dev/stdin >/dev/null || return 1
+  printf '%s\n' "$info"
+}
+
+resolve_hot_profile_targets() {
+  local profile="${1:?}" node_selector="${2:-}" resolved home_rank rank
+  local -a ranks=()
+  home_rank=""
+  if [ -f "$CATALOG_FILE" ]; then
+    resolved=$(python3 "$PY_TOOL" resolve \
+      --catalog "$CATALOG_FILE" --profile "$profile" \
+      --models-dir "$REPO_DIR/models" --no-cold --json 2>/dev/null) || resolved=""
+    if [ -n "$resolved" ]; then
+      home_rank=$(printf '%s' "$resolved" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["home"]["rank"])') || return 1
+    fi
+  fi
+  if [ "$NODES" -eq 1 ]; then
+    if [ -n "$node_selector" ]; then
+      resolve_single_node_placement "$node_selector" || return 1
+      rank="$SINGLE_NODE_INDEX"
+    elif [ -n "$home_rank" ]; then
+      rank="$home_rank"
+      resolve_single_node_placement "$rank" || return 1
+    else
+      # Cold stage-only and historical hot state may have no warm catalog home;
+      # those existing workflows use the profile's original rank-0 geometry.
+      rank=0
+      resolve_single_node_placement "$rank" || return 1
+    fi
+    [ -z "$home_rank" ] || [ "$rank" = "$home_rank" ] || {
+      warn "$profile: library-hot one-node lifecycle must target durable-home rank $home_rank"
+      return 1
+    }
+    ranks=("$rank")
+  else
+    [ -z "$node_selector" ] || {
+      warn "$profile: --node is only valid for one-node profiles"
+      return 1
+    }
+    for ((rank = 0; rank < NODES; rank++)); do
+      ranks+=("$rank")
+    done
+  fi
+  HOT_TARGET_RANKS=("${ranks[@]}")
+  HOT_TARGET_RANKS_CSV=$(IFS=,; printf '%s' "${ranks[*]}")
 }
 
 cmd_pin() {
-  local profile="" 
+  local profile="" node_selector=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --node)
+        [ $# -ge 2 ] || die "--node requires a topology rank, node ID, or hostname"
+        node_selector="$2"
+        shift
+        ;;
       -h|--help) usage; return 0 ;;
       *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: pin <profile>"
+  [ -n "$profile" ] || die "usage: pin <profile> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank budget_plan
-  info=$(hot_instance_for_profile "$profile")
+  local -a HOT_TARGET_RANKS=()
+  local HOT_TARGET_RANKS_CSV=""
+  resolve_hot_profile_targets "$profile" "$node_selector" \
+    || die "pin: cannot resolve exact library-hot placement"
+  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$NODES") \
+  budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$HOT_TARGET_RANKS_CSV") \
     || die "pin: all-rank hot budget observation failed"
   render_hot_budget_plan_json "$budget_plan"
   hot_budget_plan_is_eligible "$budget_plan" \
     || die "pin: current hot state exceeds policy; nothing was pinned"
-  for ((rank = 0; rank < NODES; rank++)); do
+  for rank in "${HOT_TARGET_RANKS[@]}"; do
     if [ "$rank" = 0 ]; then
       python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --pinned >/dev/null
     else
@@ -2696,22 +2794,31 @@ cmd_pin() {
 }
 
 cmd_unpin() {
-  local profile=""
+  local profile="" node_selector=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --node)
+        [ $# -ge 2 ] || die "--node requires a topology rank, node ID, or hostname"
+        node_selector="$2"
+        shift
+        ;;
       -h|--help) usage; return 0 ;;
       *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: unpin <profile>"
+  [ -n "$profile" ] || die "usage: unpin <profile> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank
-  info=$(hot_instance_for_profile "$profile")
+  local -a HOT_TARGET_RANKS=()
+  local HOT_TARGET_RANKS_CSV=""
+  resolve_hot_profile_targets "$profile" "$node_selector" \
+    || die "unpin: cannot resolve exact library-hot placement"
+  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  for ((rank = 0; rank < NODES; rank++)); do
+  for rank in "${HOT_TARGET_RANKS[@]}"; do
     if [ "$rank" = 0 ]; then
       python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --no-pinned >/dev/null
     else
@@ -2724,25 +2831,35 @@ cmd_unpin() {
 }
 
 cmd_purge_hot() {
-  local profile="" yes=0 force_unpin=0
+  local profile="" yes=0 force_unpin=0 node_selector=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --yes|-y) yes=1 ;;
       --force-unpin) force_unpin=1 ;;
+      --node)
+        [ $# -ge 2 ] || die "--node requires a topology rank, node ID, or hostname"
+        node_selector="$2"
+        shift
+        ;;
       -h|--help) usage; return 0 ;;
       *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: purge-hot <profile> [--yes] [--force-unpin]"
+  [ -n "$profile" ] || die "usage: purge-hot <profile> [--node RANK|NODE_ID] [--yes] [--force-unpin]"
   require_py
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
-  local info instance rank
-  info=$(hot_instance_for_profile "$profile") || die "no hot instance for $profile"
+  local info instance rank command
+  local -a HOT_TARGET_RANKS=()
+  local HOT_TARGET_RANKS_CSV=""
+  resolve_hot_profile_targets "$profile" "$node_selector" \
+    || die "purge-hot: cannot resolve exact library-hot placement"
+  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
+    || die "no hot instance for $profile on the selected serving placement"
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   [ "$yes" = 1 ] || die "purge-hot will delete $instance — re-run with --yes"
-  for ((rank = 0; rank < NODES; rank++)); do
+  for rank in "${HOT_TARGET_RANKS[@]}"; do
     if [ "$rank" = 0 ]; then
       if [ "$force_unpin" = 1 ]; then
         python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --force-unpin
@@ -2750,11 +2867,13 @@ cmd_purge_hot() {
         python3 "$PY_TOOL" purge-hot --instance-dir "$instance"
       fi
     else
+      command=$(shell_join_q python3 - purge-hot --instance-dir "$instance")
       if [ "$force_unpin" = 1 ]; then
-        ssh_node "$rank" "rm -rf $(printf '%q' "$instance")" || true
+        command+=" --force-unpin"
+        ssh_node "$rank" "$command" <"$PY_TOOL" \
+          || die "rank $rank: purge failed"
       else
-        ssh_node "$rank" \
-          "python3 - purge-hot --instance-dir $(printf '%q' "$instance")" \
+        ssh_node "$rank" "$command" \
           <"$PY_TOOL" || die "rank $rank: purge failed (pinned? use --force-unpin)"
       fi
     fi
@@ -2774,7 +2893,9 @@ cmd_budget() {
   done
   require_py
   load_cluster_topology >/dev/null || die "confirmed topology required"
-  plan=$(build_zero_hot_budget_plan inventory "" "$CLUSTER_TOPOLOGY_COUNT") \
+  local inventory_ranks
+  inventory_ranks=$(seq -s, 0 $((CLUSTER_TOPOLOGY_COUNT - 1)))
+  plan=$(build_zero_hot_budget_plan inventory "" "$inventory_ranks") \
     || die "hot budget: all-rank observation failed"
   if [ "$json" = 1 ]; then
     printf '%s\n' "$plan"
@@ -2977,7 +3098,7 @@ cmd_probe_ssh_roce() {
     --nodes "$nodes") \
     || die "probe-ssh-roce: preparation plan failed"
   home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
-  load_copy_ssh_roce_map "$home_rank" "$nodes" "$rail_index"
+  load_copy_ssh_roce_map "$home_rank" "$(seq -s, 0 $((nodes - 1)))" "$rail_index"
   log "probe-ssh-roce profile=$profile home_rank=$home_rank nodes=$nodes"
   printf '%s\n' "$LIBRARY_SSH_ROCE_MAP_JSON" | python3 -c '
 import json,sys

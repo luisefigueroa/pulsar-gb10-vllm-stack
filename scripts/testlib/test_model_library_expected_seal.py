@@ -191,7 +191,12 @@ class ExpectedModelSealContracts(unittest.TestCase):
         self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
         return catalog
 
-    def _plan(self, *, allow_unvalidated: bool = False) -> dict[str, object]:
+    def _plan(
+        self,
+        *,
+        allow_unvalidated: bool = False,
+        target_rank: int | None = None,
+    ) -> dict[str, object]:
         return model_library.plan_activate(
             catalog_path=str(self.catalog_path),
             profile=self.profile,
@@ -201,6 +206,7 @@ class ExpectedModelSealContracts(unittest.TestCase):
             backend="copy",
             allow_unvalidated=allow_unvalidated,
             nodes=1,
+            target_rank=target_rank,
         )
 
     def _materialize_hot(self) -> tuple[dict[str, object], pathlib.Path]:
@@ -234,6 +240,58 @@ class ExpectedModelSealContracts(unittest.TestCase):
             validation["expected_seal"]["manifest_id"],
             validation["observed_seal"]["manifest_id"],
         )
+
+    def test_one_node_target_follows_remote_durable_home(self) -> None:
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        home = catalog["models"][0]["homes"][0]
+        home["rank"] = 2
+        home["node_id"] = "node-c"
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+        plan = self._plan()
+        self.assertEqual(plan["target_ranks"], [2])
+        self.assertEqual(
+            plan["hot_storage_requirements"],
+            [
+                {
+                    "rank": 2,
+                    "runtime_source": "durable-home",
+                    "required_owned_bytes": 0,
+                    "replacing_path": plan["instance_dir"],
+                }
+            ],
+        )
+
+        explicit = self._plan(target_rank=2)
+        self.assertEqual(explicit["target_ranks"], [2])
+
+    def test_one_node_non_home_target_fails_closed(self) -> None:
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        home = catalog["models"][0]["homes"][0]
+        home["rank"] = 2
+        home["node_id"] = "node-c"
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "must run on its durable-home rank",
+        ):
+            self._plan(target_rank=1)
+
+    def test_target_rank_override_is_one_node_only(self) -> None:
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "valid only for one-node profiles",
+        ):
+            model_library.plan_activate(
+                catalog_path=str(self.catalog_path),
+                profile=self.profile,
+                topology_id="topology-sealed",
+                hot_root=str(self.root / "hot"),
+                models_dir=self.models_dir,
+                backend="copy",
+                nodes=2,
+                target_rank=0,
+            )
 
     def test_content_mismatch_cannot_be_overridden(self) -> None:
         weights = self.hub / "snapshots" / self.revision / "model.safetensors"

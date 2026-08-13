@@ -4625,6 +4625,7 @@ def plan_activate(
     transport: str | None = None,
     allow_unvalidated: bool = False,
     nodes: int | None = None,
+    target_rank: int | None = None,
     topology_file: str | None = None,
     rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
     fabric_port: int = DEFAULT_FABRIC_PORT,
@@ -4669,7 +4670,27 @@ def plan_activate(
     )
     cid = hot_content_id(resolved["identity_key"], digest, validation)
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
-    target_ranks = list(range(nodes if nodes is not None else 1))
+    node_count = nodes if nodes is not None else 1
+    if node_count < 1:
+        fail("prepare: nodes must be a positive integer")
+    if target_rank is not None:
+        if node_count != 1:
+            fail("prepare: an explicit target rank is valid only for one-node profiles")
+        if target_rank < 0:
+            fail("prepare: target rank must be non-negative")
+        if target_rank != int(home["rank"]):
+            fail(
+                "prepare: a one-node library-hot service must run on its "
+                "durable-home rank; choose that rank or use replicated weights"
+            )
+        target_ranks = [target_rank]
+    elif node_count == 1:
+        # A one-node library-hot service consumes the durable-home view. The
+        # caller may make that placement explicit, but omission must not
+        # silently turn rank 0 into a non-home sealed-hot service.
+        target_ranks = [int(home["rank"])]
+    else:
+        target_ranks = list(range(node_count))
     hot_storage_requirements = build_hot_storage_requirements(
         target_ranks=target_ranks,
         bytes_logical=bytes_logical,
@@ -8127,6 +8148,7 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
         transport=args.transport or None,
         allow_unvalidated=args.allow_unvalidated,
         nodes=args.nodes,
+        target_rank=args.target_rank,
         topology_file=args.topology_file or None,
         rail_index=args.rail_index,
         fabric_port=args.fabric_port,
@@ -8246,6 +8268,22 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         "stamp": stamp,
     }
     print(json.dumps(out, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_validate_hot_stamp(args: argparse.Namespace) -> int:
+    if args.stamp_json:
+        try:
+            stamp = json.loads(args.stamp_json)
+        except json.JSONDecodeError as exc:
+            fail(f"validate-hot-stamp: {exc}")
+    else:
+        stamp = load_json(args.stamp_file)
+    if not isinstance(stamp, dict):
+        fail("validate-hot-stamp: stamp must be an object")
+    profile_data = load_model_profile(args.models_dir, args.profile)
+    validation = verify_hot_stamp_against_profile(stamp, profile_data)
+    print(json.dumps(validation, indent=2, sort_keys=True))
     return 0
 
 
@@ -9209,6 +9247,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Transfer path: ssh-control, ssh-roce, or nfs-rdma",
     )
     plan.add_argument("--nodes", type=int, default=1)
+    plan.add_argument(
+        "--target-rank",
+        type=int,
+        default=None,
+        help="Exact serving rank for a one-node profile",
+    )
     plan.add_argument("--allow-unvalidated", action="store_true")
     plan.add_argument(
         "--topology-file",
@@ -9261,6 +9305,17 @@ def build_parser() -> argparse.ArgumentParser:
     fh.add_argument("--hot-root", default="")
     fh.add_argument("--models-dir", default="")
     fh.set_defaults(func=cmd_find_hot)
+
+    vhs = sub.add_parser(
+        "validate-hot-stamp",
+        help="Validate a hot ownership document against a trusted profile",
+    )
+    vhs.add_argument("--profile", required=True)
+    vhs.add_argument("--models-dir", required=True)
+    vhs_source = vhs.add_mutually_exclusive_group(required=True)
+    vhs_source.add_argument("--stamp-json")
+    vhs_source.add_argument("--stamp-file")
+    vhs.set_defaults(func=cmd_validate_hot_stamp)
 
     sp = sub.add_parser("set-pinned", help="Set pinned flag on hot stamp")
     sp.add_argument("--instance-dir", required=True)

@@ -94,12 +94,20 @@ new sanitized health report. It does not move model bytes.
 that is associated with the exact catalog entry and carries a reviewed expected
 seal. Before confirmation the view shows the exact model revision and manifest,
 durable-home dependency, serving node count, approximate non-home storage, and
-fixed transfer policy: SSH over the confirmed RoCE plane, eight streams, no
-fallback. Confirmation delegates to:
+fixed transfer policy. Multi-node preparation uses SSH over the confirmed RoCE
+plane, eight streams, and no fallback. Confirmation delegates to:
 
 ```bash
 scripts/model-library.sh prepare <profile> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
+```
+
+A one-node profile instead targets its durable-home rank explicitly and has no
+bulk transfer:
+
+```bash
+scripts/model-library.sh prepare <profile> --node <home-rank-or-node-id> \
+  --backend copy --transport ssh-control --copy-streams 1 --yes
 ```
 
 The preparation service remains authoritative: it rechecks topology and
@@ -110,6 +118,23 @@ state on failure. The interactive surface always obtains fresh health after the
 attempt. It provides no `--allow-unvalidated` route, transport picker, fallback,
 or automatic launch. Success means the artifacts are prepared, not that a model
 was started, qualified, or that `library-hot` was promoted.
+
+### Serving-wizard storage choice
+
+`./pulsar wizard` keeps **Replicated local copies (recommended)** as its first
+storage choice. An eligible reviewed profile also shows **Distributed catalog
+(experimental)**. The latter reads current catalog health, displays exact
+revision/manifest and durable-home dependency, and either proves the selected
+views ready or offers the bounded preparation above. It never refreshes the
+catalog automatically and never falls back to replicated copies. After
+preparation it obtains fresh health and requires exact ready views before the
+normal weight preflight. Starting remains a separate final confirmation.
+
+For one-node catalog serving, select the durable-home node; Pulsar refuses a
+non-home rank rather than creating a second hot copy. Preparation uses
+`ssh-control` with one stream as a no-bulk-transfer local-view operation. For
+multi-node profiles, non-home copies use `ssh-roce` with eight streams. Neither
+case promotes `library-hot` or changes model qualification.
 
 ### Quick status semantics
 
@@ -128,7 +153,12 @@ Stop lists only **active** services with `ownership=managed`, `safe_to_stop=true
 and proven complete ownership. Unknown, legacy, mismatch, incomplete/unproven,
 foreign GPU, and any remote-unobservable multi-node services are excluded. After
 selection, final confirmation is required; only `scripts/down.sh <conf>` runs
-(revalidates labels/IDs). Decline → no mutation.
+(revalidates labels/IDs). Decline → no mutation. When the stopped service's
+labels prove `weight-source=library-hot`, ordinary stop purges unpinned prepared
+views. `--pin-weights` explicitly retains them and is used for a confirmed
+same-profile restart; the durable home is still required. `--purge-hot`
+explicitly removes pinned state as well. Replicated services do not invoke
+model-library cleanup.
 
 Maintenance “Clean stale stack-managed containers” lists only **stale** +
 `safe_to_stop` managed entries, explains they are nonblocking, requires
@@ -650,8 +680,9 @@ discoverable by this contract and remains the operator's responsibility.
 Hot trees live under `PULSAR_HOT_ROOT` (default `/var/tmp/pulsar-hot`), not as
 durable N copies in every node’s HF cache. For a warm-home N-rank service the
 accepted accounting is one durable home plus N−1 hot working copies. Hot purge
-must never follow the home symlink target. Defaults and the wizard stay on
-replicated weights until this path is promoted.
+must never follow the home symlink target. Defaults stay on replicated weights;
+the wizard's catalog path is a separately labeled explicit experiment, not a
+promoted default.
 
 Inspect live admission on every confirmed rank before a large preparation:
 
