@@ -77,6 +77,9 @@ Minimum to serve one model on the box where you run the script:
 3. **Weights on disk** (default `HF_HUB_OFFLINE=1` — no surprise downloads)
    - The `hf` CLI is required on this node only when downloading an uncached
      Hugging Face model; already-cached and NFS models do not need it.
+     Experimental distributed-library `home add` instead requires the CLI,
+     upstream access, and any repository authentication on its selected target
+     rank; it never transports credentials from the controller.
    - Hugging Face cache under `$HF_CACHE/hub/models--ORG--NAME`
      (default `HF_CACHE=$HOME/.cache/huggingface`), **or**
    - Use `scripts/pull-weights.sh <profile> --yes` for downloads. It passes
@@ -229,10 +232,19 @@ scripts/pull-weights.sh deepseek-v4-flash --yes
 
 # Optional: expose raw Hugging Face and rsync diagnostics.
 PULSAR_VERBOSE=1 scripts/pull-weights.sh deepseek-v4-flash --yes
+
+# Explicit experimental distributed library: one reviewed durable home only.
+scripts/model-library.sh home add <sealed-profile> --yes
+scripts/model-library.sh catalog refresh
 ```
 
 The normal view uses width-aware Pulsar sections instead of streaming
 third-party progress renderers. `PULSAR_VERBOSE=1` is intended for diagnosis.
+`home add` defaults to the eligible current serving rank with the most free
+space; `--node RANK|NODE_ID` is an exact in-geometry override and does not fall
+back. It uses
+same-filesystem private staging and full expected-manifest verification before
+atomic publication. The replicated flow remains the guided default.
 
 NFS-catalog models (e.g. Laguna) expect the path already present under
 `MODELS_NFS` as referenced in the conf.

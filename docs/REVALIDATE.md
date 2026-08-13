@@ -285,6 +285,24 @@ durable home separately before running preparation.
     - repeat physical preparation only if the underlying identity, topology,
       admission, transfer, rollback, witness, or lifecycle contract changes.
       Pure UI delegation may reuse matching physical service evidence.
+12. reviewed durable-home acquisition when download, placement, staging, or
+    publication behavior changes:
+    - every confirmed rank is observed and exact rank/node identity is bound;
+    - only a sealed profile and immutable reviewed commit are accepted;
+    - automatic placement chooses the eligible most-free-space serving rank,
+      preserving one home plus N−1 hot copies, and an explicit ineligible or
+      out-of-geometry `--node` fails without fallback;
+    - target-side Hugging Face CLI, authentication/egress, and capacity failure
+      leave no published home;
+    - download occurs in plan-owned same-filesystem staging and interruption or
+      verification failure removes only that staging tree;
+    - an existing repository before download or one appearing on any rank
+      during download blocks publication;
+    - full expected-manifest SHA-256 verification precedes the atomic rename;
+    - one exact durable home is visible after explicit catalog refresh, with no
+      non-home durable repository or hot copy created; and
+    - the result states that catalog refresh, preparation, launch, model
+      qualification, and release promotion did not occur.
 
 The current guard passed that deterministic and three-node physical gate on
 2026-08-11. See
@@ -304,6 +322,11 @@ repair, stopped-container and pinned blockers, no-follow/sibling preservation,
 continued attention for preserved untracked content, and exact disposable-home
 removal. See
 `results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
+
+Gate 12 has deterministic Python and thin public-CLI coverage. Its physical
+multi-rank target-side download, interruption cleanup, duplicate recheck, and
+atomic publication repeat is still pending; do not treat implementation alone
+as storage-path promotion evidence.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local

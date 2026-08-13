@@ -20,12 +20,14 @@ model preparation. It is not enough to promote `library-hot`, replace the
 replicated guided default, or waive the failed DeepSeek strict-determinism gate
 and remaining release work.
 
-The implementation also has an important onboarding boundary: catalog refresh
+At the time of this decision, the implementation also had an important
+onboarding boundary: catalog refresh
 only inventories existing durable homes, and preparation requires an eligible
 primary home. Pulsar does not yet provide a general command that downloads one
 exact Hugging Face revision directly to one selected durable home. The existing
 `pull-weights.sh` workflow intentionally creates the replicated layout used by
-the guided path.
+the guided path. The implementation note below records the later acquisition
+service without rewriting this decision's original context.
 
 ## Decision
 
@@ -67,8 +69,9 @@ complete durable-home acquisition workflow exists.
 
 - **Treat catalog refresh as model acquisition.** Refresh is read-only with
   respect to model bytes and cannot create the durable home preparation needs.
-- **Replace the fresh-cluster replicated quick start now.** That would document
-  a workflow the current implementation cannot complete from an empty cluster.
+- **Replace the fresh-cluster replicated quick start now.** At decision time,
+  that would have documented a workflow the implementation could not complete
+  from an empty cluster.
 - **Fall back automatically to control-network SSH.** This would hide the
   selected data plane and invalidate the transfer claim.
 - **Use sixteen streams by default.** Alternating full-model trials showed no
@@ -95,3 +98,15 @@ Revisit this policy when a supported one-home acquisition service lands, when
 new counterbalanced full-model evidence supports a different stream count or
 transport, when remote-home-to-remote-target copy is supported, or when
 `library-hot` completes its combined release-promotion gates.
+
+## Implementation note — 2026-08-13
+
+The first one-home acquisition service has landed as
+`scripts/model-library.sh home add <sealed-profile>`. It performs target-side
+exact-commit download, full expected-manifest verification, and atomic durable
+publication without preparing non-home ranks. This satisfies the onboarding
+implementation trigger but does not change this ADR's preparation transport:
+acquisition has no inter-rank model copy, while subsequent multi-rank
+preparation still uses topology-bound eight-stream SSH-over-RoCE with no
+fallback. Physical acquisition evidence and combined release promotion remain
+separate pending gates.

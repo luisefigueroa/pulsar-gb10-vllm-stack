@@ -262,9 +262,19 @@ scripts/model-library.sh prepare <multi-rank-sealed-profile> \
 
 Catalog refresh inventories existing homes; it does not download a model or
 create the required durable home. The replicated quick start above therefore
-remains the truthful fresh-cluster workflow. A reviewed single-rank profile has
-no non-home target and therefore uses no RoCE copy; prepare that local runtime
-view with `--transport ssh-control` instead. See
+remains the guided fresh-cluster workflow. An operator deliberately using the
+experimental distributed library can now create exactly one reviewed home,
+then explicitly register and prepare it:
+
+```bash
+scripts/model-library.sh home add <sealed-profile> --yes
+scripts/model-library.sh catalog refresh
+```
+
+The selected target rank downloads and full-verifies the exact reviewed commit;
+this does not create hot copies, start serving, or promote the path. A reviewed
+single-rank profile has no non-home target and therefore uses no RoCE copy;
+prepare that local runtime view with `--transport ssh-control` instead. See
 [ADR 0003](docs/decisions/0003-explicit-model-preparation-transport.md).
 Maintainers can
 assemble deterministic unreviewed identity candidates through the separate

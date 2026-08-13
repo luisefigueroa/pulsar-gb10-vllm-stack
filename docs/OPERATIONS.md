@@ -455,9 +455,31 @@ examples remain in the advanced transport sections below.
 
 Catalog refresh inventories existing durable homes; it does not download model
 bytes or create a primary home. Preparation therefore requires an eligible
-exact home to exist already. On a fresh cluster, keep using the replicated
-`pull-weights.sh` workflow unless the operator has separately established a
-managed home (for example, by explicitly adopting a compatible cold source).
+exact home to exist already. The guided fresh-cluster path remains replicated
+`pull-weights.sh`. An operator deliberately using the experimental distributed
+library can now establish one reviewed home separately:
+
+```bash
+# Optional --node RANK|NODE_ID overrides most-free-space placement.
+scripts/model-library.sh home add <sealed-profile> --yes
+# Registration remains explicit; home add never refreshes automatically.
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh catalog show <sealed-profile>
+```
+
+`home add` inspects every confirmed rank and refuses existing repository paths,
+unobservable nodes, insufficient capacity, missing target-side Hugging Face
+CLI, or an ineligible/out-of-geometry explicit node. Automatic placement is
+limited to the current profile serving ranks so preparation retains the one
+home plus N−1 hot-copy contract. The chosen rank needs upstream access and
+its own Hugging Face authentication when the repository is gated. It downloads
+the exact reviewed commit into a private directory on the destination
+filesystem, repeats the cluster-wide duplicate check, full-verifies the lab
+manifest, and atomically publishes one durable HF repository. It never copies
+through the controller, chooses a second node after failure, creates hot data,
+prepares a view, launches, or changes validation status. Download/verification
+failure removes only the current plan's staging directory. If cleanup reports
+incomplete, inspect that exact `.pulsar-acquire-*` directory before retrying.
 
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the
@@ -478,6 +500,7 @@ qualification scope:
 | Check or action | Evidence scope | Claim boundary |
 |---|---|---|
 | `health`, catalog refresh, primary state | Catalog/artifact inventory and policy state | Does not prove that a model can serve correctly |
+| `home add` exact download, verification, and publication | Catalog/artifact acquisition | Does not prepare a runtime view, qualify the model, or promote the storage path |
 | Preparation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
 | Exact-source launch, health, warmup, completion smoke, owned stop | Serving integration | Does not prove accuracy, determinism, performance, context, or soak |
 | `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe |
@@ -600,10 +623,11 @@ because Docker can restart them later. The exact repository must contain only
 the selected snapshot revision and no ref may point to another revision.
 
 The removal command holds the exclusive lifecycle lock from observation through
-deletion. Catalog refresh and primary mutation also take the exclusive form;
-supported catalog reads, preparation, launch, readiness, download, and fabric
-commands take the shared form. They therefore cannot overwrite policy or create
-a new dependency between the check and deletion. Execution repeats the
+deletion. Catalog refresh, primary mutation, and `home add` also take the
+exclusive form; supported catalog reads, preparation, launch, readiness,
+replicated download, and fabric commands take the shared form. They therefore
+cannot overwrite policy or create a new dependency between the check and
+deletion. Execution repeats the
 repository inspection, compares its metadata fingerprint, atomically retires
 the exact repository, and refreshes the catalog. If recursive deletion fails
 after retirement, stop and inspect the plan-bound `.pulsar-removing-*` path

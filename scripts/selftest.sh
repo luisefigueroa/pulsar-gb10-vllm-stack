@@ -55,6 +55,10 @@ run "model release identity and candidate contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_release.py"
 run "model library durable-home removal contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_home_removal.py"
+run "model library durable-home acquisition contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_home_acquisition.py"
+run "model library durable-home acquisition public CLI" \
+  "$REPO_DIR/scripts/selftest-model-library-acquisition.sh"
 run "model library persistent-primary contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_primary.py"
 run "model library hot-budget contracts" \

@@ -232,6 +232,13 @@ this work; the skill is procedural and does not outrank these sources.
 - The default library policy is one durable home per exact model revision.
   The home rank uses that durable tree through a validated symlink or equivalent
   rank-local view; **do not materialize a second hot copy on the home rank**.
+- Reviewed upstream acquisition creates exactly one durable home: observe every
+  confirmed rank, download the immutable commit on the selected target into
+  same-filesystem private staging, recheck absence elsewhere, full-verify the
+  expected seal, then publish atomically. The home must be one of the current
+  profile's serving ranks so active storage remains one home plus N−1 hot
+  copies. Do not silently choose another node,
+  create a controller copy, refresh the catalog, prepare hot views, or launch.
 - Only non-home ranks receive temporary or pinned sealed-hot copies. Symlinks
   and bind mounts are runtime views, not extra ownership or resilience.
 - Full content verification happens at trust boundaries. A serve-time metadata

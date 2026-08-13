@@ -76,6 +76,17 @@ after every copy; the physical gate intentionally did not redownload an
 already complete cache. This enforces sealed profiles without retroactively
 sealing legacy profiles or changing a model or storage-path promotion.
 
+On 2026-08-13, the distributed library gained a separate reviewed-profile
+`home add` acquisition service. Deterministic contracts cover every-rank
+observation, serving-geometry-bound most-free-space and exact override
+placement, missing capability
+and no-fallback behavior, existing/raced home refusal, exact download
+arguments, plan/staging tamper, full-manifest mismatch, owned cleanup, atomic
+publication, confirmation, and JSON separation. No publishable physical result
+artifact exists yet: no real model was downloaded or moved for this change.
+The multi-rank physical gate remains pending and implementation alone is not
+promotion evidence.
+
 On 2026-08-12, the flagship `deepseek-v4-flash` GA profile became the second
 reviewed identity. Its release candidate reproduced byte-for-byte and the
 trusted verifier returned `match` for commit
