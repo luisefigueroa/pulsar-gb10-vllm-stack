@@ -316,8 +316,11 @@ eviction, policy relaxation, or transfer fallback.
 - speculative-decoding state and whether it is default-on;
 - first-run candidate flag;
 - family, variant, and family recommendation;
-- topology class and minimum rail count; and
-- serving or diagnostic purpose.
+- topology class and minimum rail count;
+- serving or diagnostic purpose;
+- estimated weight GiB when declared; and
+- whether the trusted profile declares a reviewed expected model seal; and,
+  when it does, that seal's model ID, exact revision, and manifest ID.
 
 It intentionally does not return the full image, engine arguments, memory
 budgets, notes, or executable profile body. Consumers requiring launch details
@@ -803,6 +806,34 @@ invalid profile identity, or a failed scan aborts the refresh. The interaction
 does not download or copy bytes, prepare runtime views, start serving, or run
 pin, purge, repair, or durable-home deletion. After success it obtains a fresh
 health report rather than rendering private catalog paths or node identities.
+
+### 9.7 Interactive experimental preparation
+
+From an exact entry in **Models & storage**, Pulsar offers **Prepare for
+experimental serving** only when all of the following sanitized eligibility
+inputs agree: current cached topology, a matching primary durable home, an exact
+expected manifest, and a tested Hugging Face serving profile that declares a
+reviewed seal. The interface uses the profile's trusted node count and declared
+weight estimate for its preview. It never derives eligibility from locally
+observed bytes alone.
+
+The preview shows profile, exact model/revision/manifest, home rank, node count,
+approximate storage on every non-home rank, durable-home dependency, and the
+fixed policy. Confirmation defaults to no. Acceptance invokes exactly:
+
+```text
+scripts/model-library.sh prepare <profile> --backend copy \
+  --transport ssh-roce --copy-streams 8 --yes
+```
+
+There is no interactive transport selection, fallback, or
+`--allow-unvalidated` path. The preparation service repeats authoritative
+identity, topology, primary, capacity, and all-rank verification immediately
+around mutation; the UI's eligibility result is not an authorization token or
+substitute for those checks. After either success or failure the UI reads fresh
+health. It never starts a model. Preparation success is catalog/artifact state,
+not model qualification, release promotion, or a change to the replicated
+guided default. Pin, purge, repair, and home deletion stay outside this surface.
 
 ## 10. Launch and loading specification
 
@@ -1382,10 +1413,14 @@ runtime views, and findings and can repeat the read-only health observation.
 A distinct **Refresh distributed catalog** action first explains its scope,
 requires confirmation, calls the existing atomic `catalog refresh` service,
 and renders a newly collected sanitized health report. It never refreshes on
-entry or health recheck. It does not prepare, launch, pin, purge, repair, or
-remove a home. Replicated copies remain the guided default and the catalog is
-visibly experimental. This is inventory management, not serving-wizard
-integration or storage-path promotion.
+entry or health recheck. From exact model detail, a second explicit action
+offers preparation only for reviewed-seal tested serving profiles. It delegates
+to fixed eight-stream SSH-over-RoCE copy with no fallback, then re-reads health;
+the existing model-library service owns full verification, capacity admission,
+all-rank completion, and rollback. No unvalidated bypass or launch is exposed.
+Pin, purge, repair, and home removal remain separate. Replicated copies remain
+the guided default and the catalog is visibly experimental. This is bounded
+artifact preparation, not serving-wizard integration or storage-path promotion.
 
 `hot legacy check/remove` is a separate repair service for exact schema-1/2
 instances. The opaque ID binds the observed rank, ownership document, and
@@ -1645,8 +1680,8 @@ The implementation described here is primarily defined by:
 
 The current approach is conservative at the user boundary: profiles are
 validated, topology is confirmed rather than inferred, replicated local caches
-remain the default, and experimental single-copy storage never prepares or
-falls back automatically.
+remain the default, and experimental single-copy storage is never selected,
+prepared, or used as a fallback automatically.
 
 The experimental implementation is substantially stronger than a generic NFS
 mount: it binds topology, owner, rail, export scope, mount options, manifest,

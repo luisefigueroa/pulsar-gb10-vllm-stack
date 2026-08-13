@@ -86,6 +86,10 @@ def main() -> int:
     base = healthy()
     write(root / "healthy.json", base)
 
+    unprepared = json.loads(json.dumps(base))
+    unprepared["hot_instances"] = []
+    write(root / "unprepared.json", unprepared)
+
     refreshed = json.loads(json.dumps(base))
     refreshed["catalog"]["refreshed_at"] = "2026-08-12T13:00:00.000Z"
     write(root / "refreshed.json", refreshed)
@@ -157,6 +161,35 @@ def main() -> int:
     })
 
     (root / "invalid.json").write_text("not-json\n", encoding="utf-8")
+    write(root / "profiles.json", {
+        "models": [
+            {
+                "id": "deepseek-v4-flash",
+                "status": "tested",
+                "nodes": 2,
+                "source": "hf",
+                "purpose": "serving",
+                "weights_gib": 167.0,
+                "reviewed_identity": True,
+                "reviewed_model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "reviewed_revision": REVISION,
+                "reviewed_manifest": MANIFEST,
+            },
+            {
+                "id": "legacy-serving",
+                "status": "tested",
+                "nodes": 2,
+                "source": "hf",
+                "purpose": "serving",
+                "weights_gib": 10.0,
+                "reviewed_identity": False,
+                "reviewed_model_id": None,
+                "reviewed_revision": None,
+                "reviewed_manifest": None,
+            },
+        ]
+    })
+    (root / "invalid-profiles.json").write_text("not-json\n", encoding="utf-8")
     return 0
 
 

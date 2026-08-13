@@ -2,7 +2,7 @@
 # Root dispatcher for the Pulsar GB10 vLLM stack.
 #   ./pulsar                 → neutral operator home (workflow menu)
 #   ./pulsar wizard          → serve/switch wizard (doctor + preflight)
-#   ./pulsar models          → distributed catalog view + explicit refresh
+#   ./pulsar models          → catalog view + explicit refresh/preparation
 #   ./pulsar inventory …     → scripts/inventory.sh
 #   ./pulsar start <model>…  → scripts/up.sh
 #   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
@@ -26,7 +26,7 @@ Pulsar GB10 vLLM stack — root dispatcher
 Usage:
   ./pulsar                      Operator home (workflow menu; read-only default)
   ./pulsar wizard               Serve or switch a model (doctor + preflight)
-  ./pulsar models               Browse models & storage; refresh explicitly
+  ./pulsar models               Browse storage; refresh or prepare explicitly
   ./pulsar inventory [opts]     Read-only service/memory inventory
   ./pulsar start <model> [args] Start a model (scripts/up.sh)
   ./pulsar stop <model|--all> [--node ID]
@@ -50,8 +50,10 @@ Notes:
   • ./pulsar (no args) opens the neutral home menu. It does not run doctor,
     inventory, or model preflight until you pick a workflow.
   • ./pulsar wizard is the direct serve/switch shortcut (existing guided flow).
-  • ./pulsar models opens cached health without scanning. Catalog refresh is a
-    separate confirmed action; it never prepares, starts, or cleans models.
+  • ./pulsar models opens cached health without scanning. Catalog refresh and
+    experimental preparation are separate confirmed actions. Preparation is
+    limited to reviewed profiles, uses 8-stream SSH-over-RoCE with no fallback,
+    and never starts serving. Replicated copies remain the guided default.
   • Prefer "./pulsar wizard" — not "./ wizard.sh" (space after ./ runs
     directory ./ → "Is a directory"). ./wizard.sh still works directly.
   • Home “Current system status” is a quick read-only overview (API model

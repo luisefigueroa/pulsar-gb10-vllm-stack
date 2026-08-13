@@ -15,6 +15,37 @@ REVISION = "7" * 40
 MANIFEST = "8" * 64
 
 
+def serving_profiles() -> dict[str, object]:
+    return {
+        "models": [
+            {
+                "id": "deepseek-v4-flash",
+                "status": "tested",
+                "nodes": 2,
+                "source": "hf",
+                "purpose": "serving",
+                "weights_gib": 167.0,
+                "reviewed_identity": True,
+                "reviewed_model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "reviewed_revision": REVISION,
+                "reviewed_manifest": MANIFEST,
+            },
+            {
+                "id": "legacy-serving",
+                "status": "tested",
+                "nodes": 2,
+                "source": "hf",
+                "purpose": "serving",
+                "weights_gib": 10.0,
+                "reviewed_identity": False,
+                "reviewed_model_id": None,
+                "reviewed_revision": None,
+                "reviewed_manifest": None,
+            },
+        ]
+    }
+
+
 def healthy_report() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -110,6 +141,13 @@ class ModelStorageContracts(unittest.TestCase):
         with self.assertRaises(model_storage.ModelStorageContractError):
             model_storage.validate_report(invalid)
 
+        profiles = serving_profiles()
+        self.assertIs(model_storage.validate_profiles(profiles), profiles)
+        invalid_profiles = serving_profiles()
+        invalid_profiles["models"][0]["reviewed_identity"] = "yes"
+        with self.assertRaises(model_storage.ModelStorageContractError):
+            model_storage.validate_profiles(invalid_profiles)
+
     def test_summary_keeps_default_and_claim_boundary_visible(self) -> None:
         output = capture(model_storage.render_summary, healthy_report(), width=48)
         prose = normalized(output)
@@ -135,7 +173,13 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("placement stale", labels[0])
         self.assertNotIn("home n2", labels[0])
 
-        output = capture(model_storage.render_detail, report, 0, width=80)
+        output = capture(
+            model_storage.render_detail,
+            report,
+            serving_profiles(),
+            0,
+            width=80,
+        )
         catalog_detail = normalized(output.split("Runtime views", 1)[0])
         prose = normalized(output)
         self.assertIn("home unavailable · cached topology is stale", catalog_detail)
@@ -163,7 +207,11 @@ class ModelStorageContracts(unittest.TestCase):
 
     def test_detail_exposes_exact_identity_views_and_dependency(self) -> None:
         output = capture(
-            model_storage.render_detail, healthy_report(), 0, width=48
+            model_storage.render_detail,
+            healthy_report(),
+            serving_profiles(),
+            0,
+            width=48,
         )
         prose = normalized(output)
         compact = "".join(output.split())
@@ -178,7 +226,11 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
         wide_output = capture(
-            model_storage.render_detail, healthy_report(), 0, width=80
+            model_storage.render_detail,
+            healthy_report(),
+            serving_profiles(),
+            0,
+            width=80,
         )
         duplicate_line = next(
             line for line in wide_output.splitlines() if line.startswith("duplicates")
@@ -241,6 +293,69 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("fails closed", prose)
         self.assertIn("does not download, copy, prepare, start", prose)
         self.assertIn("guided default", prose)
+        self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
+
+    def test_preparation_check_allows_only_current_reviewed_serving_profile(self) -> None:
+        report = healthy_report()
+        check = model_storage.preparation_check(
+            report, serving_profiles(), 0
+        )
+        self.assertEqual(check["state"], "available")
+        self.assertEqual(
+            [item["profile"] for item in check["candidates"]],
+            ["deepseek-v4-flash"],
+        )
+        self.assertTrue(check["candidates"][0]["already_prepared"])
+        self.assertNotIn("legacy-serving", str(check))
+
+        report["hot_instances"] = []
+        check = model_storage.preparation_check(
+            report, serving_profiles(), 0
+        )
+        self.assertFalse(check["candidates"][0]["already_prepared"])
+
+    def test_preparation_check_blocks_stale_or_unsealed_identity(self) -> None:
+        report = healthy_report()
+        report["catalog"]["topology_compatible"] = False
+        stale = model_storage.preparation_check(
+            report, serving_profiles(), 0
+        )
+        self.assertEqual(stale["state"], "blocked")
+        self.assertIn("refresh the catalog", " ".join(stale["blockers"]))
+
+        report = healthy_report()
+        report["models"][0]["expected_manifest"] = None
+        unsealed = model_storage.preparation_check(
+            report, serving_profiles(), 0
+        )
+        self.assertEqual(unsealed["state"], "blocked")
+        self.assertIn("reviewed exact model identity", " ".join(unsealed["blockers"]))
+
+        profiles = serving_profiles()
+        profiles["models"][0]["reviewed_revision"] = "9" * 40
+        mismatch = model_storage.preparation_check(
+            healthy_report(), profiles, 0
+        )
+        self.assertEqual(mismatch["state"], "blocked")
+        self.assertIn("differs from the cached model", " ".join(mismatch["blockers"]))
+
+    def test_preparation_preview_exposes_policy_and_claim_boundaries(self) -> None:
+        output = capture(
+            model_storage.render_preparation,
+            healthy_report(),
+            serving_profiles(),
+            0,
+            0,
+            width=48,
+        )
+        prose = normalized(output)
+        self.assertIn("PREPARE FOR EXPERIMENTAL SERVING", output)
+        self.assertIn("SSH over confirmed RoCE · 8 streams", prose)
+        self.assertIn("fallback none", prose)
+        self.assertIn("167 GiB on each non-home", prose)
+        self.assertIn("full-verify the durable home", prose)
+        self.assertIn("does not start a model", prose)
+        self.assertIn("does not qualify or promote", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
 

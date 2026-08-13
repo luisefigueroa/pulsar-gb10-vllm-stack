@@ -25,6 +25,15 @@ health report. The physical health/repair artifact indexed below remains the
 applicable underlying rank-observation evidence; this UI integration is not a
 storage-path promotion.
 
+The subsequent experimental-preparation wiring reuses the exact physically
+measured eight-stream SSH-over-RoCE preparation service. Deterministic contracts
+prove reviewed-profile eligibility, exact revision/manifest disclosure,
+default-no confirmation, fixed no-fallback argv, no unvalidated bypass, fresh
+health after either outcome, and no launch/promotion claim. It changes no
+identity, admission, transfer, rollback, witness, or lifecycle algorithm, so it
+adds no separate physical artifact. The flagship one-home lifecycle artifact
+below remains the applicable physical preparation evidence.
+
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
 measurements and other failed/pending gates remain valid and are not rewritten.
