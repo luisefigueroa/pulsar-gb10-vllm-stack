@@ -357,11 +357,15 @@ removal. See
 
 Gate 13 has deterministic Python and thin public-CLI coverage plus the physical
 Qwen acquisition artifact cited above. Gate 12 has deterministic wizard,
-placement, and lifecycle coverage. Existing physical Qwen and DeepSeek
-artifacts remain applicable only to their recorded catalog/serving placements;
-the new remote one-node wizard path needs its own serving-integration repeat
-before that placement receives a physical claim. Neither gate promotes the
-storage path.
+placement, and lifecycle coverage. Its production two-node DeepSeek wizard
+flow passed physically on 2026-08-13, including explicit source selection,
+separate preparation and launch confirmations, fresh exact readiness,
+read-only exact-snapshot serving, warmup, completion, interactive owned stop,
+unpinned purge, and return to one durable home; see
+`results/model-library/deepseek-v4-flash-serving-wizard-gate-20260813.json`.
+The new remote one-node wizard path still needs its own serving-integration
+repeat before that placement receives a physical claim. Neither gate promotes
+the storage path or supplies model-qualification evidence.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local
