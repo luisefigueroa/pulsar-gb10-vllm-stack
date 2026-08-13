@@ -36,11 +36,24 @@ storage-path promotion.
 The subsequent experimental-preparation wiring reuses the exact physically
 measured eight-stream SSH-over-RoCE preparation service. Deterministic contracts
 prove reviewed-profile eligibility, exact revision/manifest disclosure,
-default-no confirmation, fixed no-fallback argv, no unvalidated bypass, fresh
-health after either outcome, and no launch/promotion claim. It changes no
-identity, admission, transfer, rollback, witness, or lifecycle algorithm, so it
+default-no confirmation, fixed no-fallback argv (eight-stream SSH-over-RoCE for
+non-home copies; one-stream `ssh-control` for a home-only view), no unvalidated
+bypass, fresh health after either outcome, and no launch/promotion claim. It
+changes no identity, admission, transfer, rollback, witness, or lifecycle algorithm, so it
 adds no separate physical artifact. The flagship one-home lifecycle artifact
 below remains the applicable physical preparation evidence.
+
+The serving wizard subsequently gained a separate experimental storage-source
+choice. Deterministic scenarios prove that replicated remains first/recommended,
+blocked catalog health cannot fall through silently, optional preparation uses
+the fixed eight-stream SSH-over-RoCE policy, fresh exact readiness is required,
+and launch remains separately confirmed. One-node catalog serving is bound to
+the durable-home rank; ordinary stop purges unpinned views while explicit pin
+retains them without adding home-loss resilience. This adds orchestration, not
+a new measurement. Existing Qwen and DeepSeek artifacts remain valid only for
+their recorded placements. In particular, the new remote one-node wizard path
+still needs a physical serving-integration repeat before it can make a physical
+claim, and none of this changes the failed determinism or promotion status.
 
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its

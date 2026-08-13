@@ -734,9 +734,10 @@ run discovery and explicitly write confirmed topology
   → health, warmup, and validation
 ```
 
-The wizard states that each serving node reads its own durable copy and that
-single-copy storage is an experimental CLI opt-in. It does not ask for an
-owner and never switches to fabric automatically.
+Replicated copies remain the first and recommended wizard choice. For an
+eligible reviewed profile, the wizard may instead offer the distributed
+catalog as an explicitly labeled experimental source. It never selects that
+source automatically and never falls back between the two policies.
 
 ### 9.3 Absolute-path site catalog
 
@@ -822,12 +823,16 @@ observed bytes alone.
 
 The preview shows profile, exact model/revision/manifest, home rank, node count,
 approximate storage on every non-home rank, durable-home dependency, and the
-fixed policy. Confirmation defaults to no. Acceptance invokes exactly:
+fixed policy. Confirmation defaults to no. Multi-node acceptance invokes
+exactly:
 
 ```text
 scripts/model-library.sh prepare <profile> --backend copy \
   --transport ssh-roce --copy-streams 8 --yes
 ```
+
+One-node acceptance targets the durable-home rank with `ssh-control` and one
+stream; because the runtime view is local to that rank, no bulk transfer occurs.
 
 There is no interactive transport selection, fallback, or
 `--allow-unvalidated` path. The preparation service repeats authoritative
@@ -837,6 +842,31 @@ substitute for those checks. After either success or failure the UI reads fresh
 health. It never starts a model. Preparation success is catalog/artifact state,
 not model qualification, release promotion, or a change to the replicated
 guided default. Pin, purge, repair, and home deletion stay outside this surface.
+
+### 9.8 Experimental catalog serving in the wizard
+
+The serving wizard exposes the catalog only for a tested Hugging Face serving
+profile with reviewed identity. Replicated local copies remain the first,
+recommended selection. Choosing **distributed catalog (experimental)** reads
+the current health report and displays the exact model revision and manifest,
+durable-home and target ranks, runtime-view readiness, transfer policy, and
+absence of fallback. Stale topology, unresolved primary state, identity
+mismatch, or incomplete observations block the experimental path while leaving
+replicated serving available only as a separate operator choice.
+
+If views are absent, the wizard offers the same bounded preparation described
+above behind a default-no confirmation. A successful command is not trusted as
+ready by itself: the wizard collects fresh health and requires exact ready
+views on every selected rank. Weight preflight and launch then receive
+`--weight-source library-hot`; launch remains behind the ordinary separate
+start/replace confirmation. Preparation never implies model qualification or
+release promotion.
+
+For a one-node profile, the durable-home rank is the only valid catalog serving
+rank and preparation creates no second hot copy or bulk transfer. A different
+physical rank remains available through the replicated policy. Multi-node
+profiles use their exact first `NODES` ranks; non-home ranks use the accepted
+eight-stream SSH-over-RoCE copy policy with no fallback.
 
 ## 10. Launch and loading specification
 
@@ -960,6 +990,9 @@ incompletely loaded service still depends on the configured source.
 - Results from failed runs are preserved when safe, not overwritten as passes.
 - Durable-home deletion is a distinct confirmation-gated operation; hot purge
   never implies permission to delete durable storage.
+- Stopping an observed `library-hot` service purges unpinned prepared views by
+  default. `--pin-weights` retains them explicitly and still depends on the
+  durable home; explicit `--purge-hot` may remove a pin.
 
 ### 11.2 Durable-home removal
 
@@ -1446,10 +1479,12 @@ entry or health recheck. From exact model detail, a second explicit action
 offers preparation only for reviewed-seal tested serving profiles. It delegates
 to fixed eight-stream SSH-over-RoCE copy with no fallback, then re-reads health;
 the existing model-library service owns full verification, capacity admission,
-all-rank completion, and rollback. No unvalidated bypass or launch is exposed.
-Pin, purge, repair, and home removal remain separate. Replicated copies remain
-the guided default and the catalog is visibly experimental. This is bounded
-artifact preparation, not serving-wizard integration or storage-path promotion.
+all-rank completion, and rollback. No unvalidated bypass or launch is exposed
+from **Models & storage**. Pin, purge, repair, and home removal remain separate.
+Replicated copies remain the guided default and the catalog is visibly
+experimental. The serving wizard now consumes the resulting readiness contract
+as a separate explicit source choice and delegates launch only after its final
+confirmation; that orchestration is not a storage-path promotion.
 
 `hot legacy check/remove` is a separate repair service for exact schema-1/2
 instances. The opaque ID binds the observed rank, ownership document, and
@@ -1498,10 +1533,11 @@ These points combine current evidence with the accepted architecture:
    gates pass.
 3. Accept the measured 8-stream SSH-over-RoCE preparation and sealed local-hot
    results in the catalog/artifact and serving-integration scopes. Keep it as a
-   separate release-promotion candidate; do not guide it until the combined
-   gates, including applicable model qualification and soak, pass. When the
-   current interactive experimental action is explicitly selected, use that
-   fixed transport/stream policy with no fallback. Catalog refresh still does
+   separate release-promotion candidate; do not make it the recommended or
+   automatic path until the combined gates, including applicable model
+   qualification and soak, pass. When an interactive experimental action is
+   explicitly selected, use that fixed transport/stream policy with no
+   fallback. Catalog refresh still does
    not acquire a missing durable home; the separate reviewed-profile
    `home add` service now does so without changing the guided default.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
@@ -1571,21 +1607,18 @@ implementation shape and unrelated catalog/live-mount policy.
 
 ### Product workflow and operations
 
-14. If exposed in the wizard, what evidence should drive owner recommendation:
-    existing complete copy, free disk, boot reliability, thermal role, or
-    operator preference?
-15. Should a three-node topology let the user select any two-node serving pair
+14. Should a three-node topology let the user select any two-node serving pair
     and a separate storage owner, or is deterministic first-N placement safer?
-16. Is connected-display-at-boot an acceptable declared owner policy, or must
+15. Is connected-display-at-boot an acceptable declared owner policy, or must
     fabric promotion require a validated headless boot configuration?
-17. Which promotion gates are essential for a feature preview versus general
+16. Which promotion gates are essential for a feature preview versus general
     availability?
 
 ### Alternative architecture
 
-18. Does transfer-then-materialize offer a materially better resilience model,
+17. Does transfer-then-materialize offer a materially better resilience model,
     or does it merely reproduce replication with more machinery?
-19. Are checkpoint-native per-rank shards, object storage, NVMe-oF, or another
+18. Are checkpoint-native per-rank shards, object storage, NVMe-oF, or another
     mechanism a better long-term fit than either current mode?
 
 ## 19. Formal acceptance criteria
@@ -1671,7 +1704,8 @@ The implementation described here is primarily defined by:
 - [`scripts/lib.sh`](../scripts/lib.sh) — profile, status, placement, memory,
   SSH, and lifecycle contracts;
 - [`scripts/list-models.sh`](../scripts/list-models.sh) — catalog views;
-- [`wizard.sh`](../wizard.sh) — guided replicated workflow;
+- [`wizard.sh`](../wizard.sh) — guided replicated workflow plus explicit,
+  experimental reviewed-profile `library-hot` selection;
 - [`scripts/pull-weights.sh`](../scripts/pull-weights.sh) and
   [`scripts/check-weights.sh`](../scripts/check-weights.sh) — default
   preparation/readiness;

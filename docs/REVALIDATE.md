@@ -278,14 +278,36 @@ durable home separately before running preparation.
     - the preview names exact revision/manifest, durable-home dependency,
       approximate non-home storage, and the selected transfer policy;
     - confirmation defaults to no and decline invokes no mutation;
-    - acceptance delegates exactly to reviewed-profile eight-stream
-      SSH-over-RoCE copy with no fallback or `--allow-unvalidated`;
+    - multi-node acceptance delegates exactly to reviewed-profile eight-stream
+      SSH-over-RoCE copy; one-node acceptance targets the durable-home rank with
+      `ssh-control`, one stream, and no bulk transfer; neither path has fallback
+      or `--allow-unvalidated`;
     - success and failure both trigger fresh health, never claim launch or
       promotion, and preserve service diagnostics; and
     - repeat physical preparation only if the underlying identity, topology,
       admission, transfer, rollback, witness, or lifecycle contract changes.
       Pure UI delegation may reuse matching physical service evidence.
-12. reviewed durable-home acquisition when download, placement, staging, or
+12. serving-wizard catalog delegation when source selection, placement,
+    readiness, restart, or stop-retention behavior changes:
+    - replicated weights remain the first/default choice and never invoke
+      catalog health, preparation, or hot cleanup;
+    - the experimental choice discloses exact revision/manifest,
+      durable-home dependency, selected ranks, transfer policy, and no fallback;
+    - stale or invalid health blocks the catalog path but may offer replicated
+      only as a separate operator choice;
+    - successful preparation is followed by fresh health and exact all-rank
+      readiness before `--weight-source library-hot` reaches weight preflight
+      or launch;
+    - preparation and launch retain separate confirmations, and failed or
+      incomplete preparation cannot launch;
+    - one-node catalog preparation and launch use the durable-home rank; a
+      non-home choice fails closed instead of creating a second hot copy;
+    - confirmed same-source restart pins before stop, ordinary stop purges only
+      unpinned views, and explicit pin remains durable-home dependent; and
+    - repeat physical serving integration when the selected placement or
+      runtime-resolution algorithm changes. Existing evidence may be reused
+      only for the exact placement and contract it measured.
+13. reviewed durable-home acquisition when download, placement, staging, or
     publication behavior changes:
     - every confirmed rank is observed and exact rank/node identity is bound;
     - only a sealed profile and immutable reviewed commit are accepted;
@@ -333,10 +355,13 @@ continued attention for preserved untracked content, and exact disposable-home
 removal. See
 `results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
 
-Gate 12 has deterministic Python and thin public-CLI coverage. Its physical
-multi-rank target-side download, interruption cleanup, duplicate recheck, and
-atomic publication repeat is still pending; do not treat implementation alone
-as storage-path promotion evidence.
+Gate 13 has deterministic Python and thin public-CLI coverage plus the physical
+Qwen acquisition artifact cited above. Gate 12 has deterministic wizard,
+placement, and lifecycle coverage. Existing physical Qwen and DeepSeek
+artifacts remain applicable only to their recorded catalog/serving placements;
+the new remote one-node wizard path needs its own serving-integration repeat
+before that placement receives a physical claim. Neither gate promotes the
+storage path.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local

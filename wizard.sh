@@ -15,6 +15,7 @@
 #   WIZARD_SKIP_WEIGHTS=1          skip weight presence
 #   WIZARD_SKIP_IMAGE=1            skip image presence
 #   WIZARD_SKIP_FABRIC_PROMPT=1    skip topology discovery prompt
+#   WIZARD_SKIP_STORAGE_PROMPT=1   force replicated policy in legacy UI tests
 #   WIZARD_TOPOLOGY_NODES=N         test-only confirmed capacity override
 #   WIZARD_INVENTORY_JSON=path     fixed inventory JSON (or cmd below)
 #   WIZARD_INVENTORY_CMD=path      executable receiving no args → inventory JSON
@@ -25,6 +26,8 @@
 #   WIZARD_LIST_MODELS_JSON=path   fixed list-models --validated --json
 #   WIZARD_CHECK_WEIGHTS_CMD=path  executable: <model> --json
 #   WIZARD_PULL_WEIGHTS_CMD=path   executable: <model> --yes
+#   WIZARD_MODEL_LIBRARY_HEALTH_CMD=path  executable: --json
+#   WIZARD_MODEL_LIBRARY_PREPARE_CMD=path executable: prepare <model> ...
 #   WIZARD_UP_CMD / WIZARD_DOWN_CMD / WIZARD_STATUS_CMD / WIZARD_DOCTOR_CMD
 #   GUM=0                          plain numbered menus (stdin-driven)
 set -euo pipefail
@@ -37,6 +40,10 @@ SCRIPT_NAME=wizard
 # Shared Gum/plain menus + palette policy (scripts/ui.sh)
 # shellcheck disable=SC1091
 . "$REPO_DIR/scripts/ui.sh"
+
+WIZARD_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard.XXXXXX")
+trap 'rm -rf "$WIZARD_WORK_DIR"' EXIT INT TERM
+MODEL_STORAGE_RENDERER="$REPO_DIR/scripts/model_storage.py"
 
 # ---------------------------------------------------------------------------
 # Injectable command paths (test hooks)
@@ -87,6 +94,22 @@ cmd_pull_weights() {
     "$WIZARD_PULL_WEIGHTS_CMD" "$@"
   else
     "$REPO_DIR/scripts/pull-weights.sh" "$@"
+  fi
+}
+
+cmd_model_library_health() {
+  if [ -n "${WIZARD_MODEL_LIBRARY_HEALTH_CMD:-}" ]; then
+    "$WIZARD_MODEL_LIBRARY_HEALTH_CMD" --json
+  else
+    "$REPO_DIR/scripts/model-library.sh" health --json
+  fi
+}
+
+cmd_model_library_prepare() {
+  if [ -n "${WIZARD_MODEL_LIBRARY_PREPARE_CMD:-}" ]; then
+    "$WIZARD_MODEL_LIBRARY_PREPARE_CMD" "$@"
+  else
+    "$REPO_DIR/scripts/model-library.sh" "$@"
   fi
 }
 
@@ -178,6 +201,188 @@ reset_placement_state() {
   PLACEMENT_REMOTE=0
   PLACEMENT_AWARE=0
   PLACEMENT_ARGS=()
+}
+
+adopt_resolved_single_node_placement() {
+  PLACEMENT_NODE_KEY="$SINGLE_NODE_KEY"
+  PLACEMENT_NODE_ID="$SINGLE_NODE_ID"
+  PLACEMENT_HOSTNAME="$SINGLE_NODE_HOSTNAME"
+  PLACEMENT_CONTROL_IP="$SINGLE_NODE_CONTROL_IP"
+  PLACEMENT_REMOTE="$SINGLE_NODE_REMOTE"
+  PLACEMENT_SELECTOR="${SINGLE_NODE_ID:-$SINGLE_NODE_KEY}"
+  PLACEMENT_AWARE=1
+  PLACEMENT_ARGS=(--node "$PLACEMENT_SELECTOR")
+}
+
+WEIGHT_SOURCE=replicated
+WEIGHT_ARGS=()
+LIBRARY_CHECK_JSON=""
+
+reset_weight_source() {
+  WEIGHT_SOURCE=replicated
+  WEIGHT_ARGS=()
+  LIBRARY_CHECK_JSON=""
+}
+
+collect_library_serving_check() {
+  local health_file="$WIZARD_WORK_DIR/library-health.json"
+  local profiles_file="$WIZARD_WORK_DIR/library-profiles.json"
+  local health_rc=0
+  local -a target_args=()
+  : >"$health_file"
+  set +e
+  cmd_model_library_health >"$health_file"
+  health_rc=$?
+  set -e
+  case "$health_rc" in
+    0|1) ;;
+    *)
+      warn "distributed catalog health is unavailable (status $health_rc)"
+      return 1
+      ;;
+  esac
+  cmd_list_models_json >"$profiles_file" \
+    || { warn "validated serving-profile metadata is unavailable"; return 1; }
+  if [ "$NODES" -eq 1 ]; then
+    target_args=(--target-rank "$SINGLE_NODE_INDEX")
+  fi
+  LIBRARY_CHECK_JSON=$(python3 "$MODEL_STORAGE_RENDERER" \
+    --report-file "$health_file" \
+    --profiles-file "$profiles_file" \
+    serving-check --profile "$NAME" "${target_args[@]}") || return 1
+}
+
+render_library_serving_check() {
+  local health_file="$WIZARD_WORK_DIR/library-health.json"
+  local profiles_file="$WIZARD_WORK_DIR/library-profiles.json"
+  local -a target_args=()
+  [ "$NODES" -ne 1 ] || target_args=(--target-rank "$SINGLE_NODE_INDEX")
+  python3 "$MODEL_STORAGE_RENDERER" \
+    --report-file "$health_file" \
+    --profiles-file "$profiles_file" \
+    serving-preview --profile "$NAME" "${target_args[@]}"
+}
+
+choose_replicated_or_leave() {
+  local pick
+  pick=$(choose "Distributed catalog is not being used — what next?" \
+    "Use replicated local copies (recommended)" \
+    "Choose another model" \
+    "Exit")
+  case "$pick" in
+    Use*) reset_weight_source; return 0 ;;
+    Choose*) return 2 ;;
+    *) exit 0 ;;
+  esac
+}
+
+select_weight_source() {
+  reset_weight_source
+  [ "$(model_source_kind)" = hf ] || return 0
+  if [ "${WIZARD_SKIP_STORAGE_PROMPT:-0}" = 1 ]; then
+    return 0
+  fi
+  if [ -z "${EXPECTED_MODEL_SEAL:-}" ] || [ "$standalone_capacity" = 1 ]; then
+    render_human_section "WEIGHT STORAGE" \
+      "Mode" "replicated local copies · guided default" \
+      "Catalog" "unavailable for this profile or standalone placement"
+    return 0
+  fi
+
+  local choice state transport streams target_rank home_rank prepare_rc=0
+  local -a node_args=()
+  render_human_section "WEIGHT STORAGE" \
+    "Default" "replicated local copies on every serving node" \
+    "Optional" "distributed catalog · experimental · explicit" \
+    "Fallback" "none; the selected policy must pass its own checks"
+  choice=$(choose "Choose model storage for $NAME" \
+    "Replicated local copies (recommended)" \
+    "Distributed catalog (experimental)" \
+    "Choose another model")
+  case "$choice" in
+    Replicated*) return 0 ;;
+    Choose*) return 2 ;;
+  esac
+
+  if ! collect_library_serving_check; then
+    warn "distributed catalog readiness could not be established"
+    choose_replicated_or_leave
+    return $?
+  fi
+  echo
+  render_library_serving_check
+  state=$(json_field "$LIBRARY_CHECK_JSON" state)
+  if [ "$state" = blocked ]; then
+    home_rank=$(json_field "$LIBRARY_CHECK_JSON" home_rank)
+    if [ "$NODES" -eq 1 ] && [[ "$home_rank" =~ ^[0-9]+$ ]] \
+        && [ "$home_rank" != "$SINGLE_NODE_INDEX" ]; then
+      choice=$(choose "Catalog serving must use the durable-home node — what next?" \
+        "Use the durable-home node for this experimental service" \
+        "Use replicated local copies on the selected node (recommended)" \
+        "Choose another model" \
+        "Exit")
+      case "$choice" in
+        Use\ the\ durable-home*)
+          resolve_single_node_placement "$home_rank" \
+            || die "the catalog durable-home node is no longer a valid confirmed placement"
+          adopt_resolved_single_node_placement
+          log "selected durable-home node for experimental catalog serving: $PLACEMENT_HOSTNAME"
+          collect_library_serving_check \
+            || die "catalog readiness became unavailable after changing placement"
+          echo
+          render_library_serving_check
+          state=$(json_field "$LIBRARY_CHECK_JSON" state)
+          ;;
+        Use\ replicated*) reset_weight_source; return 0 ;;
+        Choose*) return 2 ;;
+        *) exit 0 ;;
+      esac
+    fi
+  fi
+  if [ "$state" = blocked ]; then
+    choose_replicated_or_leave
+    return $?
+  fi
+  if [ "$state" = needs-preparation ]; then
+    if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
+      log "experimental preparation declined; no model files were changed"
+      choose_replicated_or_leave
+      return $?
+    fi
+    transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)
+    streams=$(json_field "$LIBRARY_CHECK_JSON" copy_streams)
+    target_rank=""
+    if [ "$NODES" -eq 1 ]; then
+      target_rank="$PLACEMENT_SELECTOR"
+      [ -n "$target_rank" ] || target_rank="$SINGLE_NODE_INDEX"
+      node_args=(--node "$target_rank")
+    fi
+    log "preparing exact experimental runtime views; serving is not started yet…"
+    set +e
+    cmd_model_library_prepare prepare "$NAME" \
+      --backend copy --transport "$transport" --copy-streams "$streams" \
+      "${node_args[@]}" --yes
+    prepare_rc=$?
+    set -e
+    if [ "$prepare_rc" -ne 0 ]; then
+      warn "model preparation failed (status $prepare_rc); serving was not started"
+      choose_replicated_or_leave
+      return $?
+    fi
+    if ! collect_library_serving_check; then
+      die "preparation returned success, but current catalog readiness is unavailable; model was not started"
+    fi
+    state=$(json_field "$LIBRARY_CHECK_JSON" state)
+    if [ "$state" != ready ]; then
+      echo
+      render_library_serving_check
+      die "preparation did not publish exact ready views on every selected rank; model was not started"
+    fi
+  fi
+  WEIGHT_SOURCE=library-hot
+  WEIGHT_ARGS=(--weight-source library-hot)
+  log "selected distributed catalog storage (experimental; no fallback)"
+  return 0
 }
 
 placement_api_base() {
@@ -393,6 +598,15 @@ PY
   PLACEMENT_SELECTOR="$PLACEMENT_NODE_ID"
   PLACEMENT_AWARE=1
   PLACEMENT_ARGS=(--node "$PLACEMENT_SELECTOR")
+  SINGLE_NODE_INDEX=$(placement_index_for_role "$PLACEMENT_NODE_KEY") \
+    || die "selected physical-node role is invalid"
+  SINGLE_NODE_KEY="$PLACEMENT_NODE_KEY"
+  SINGLE_NODE_ID="$PLACEMENT_NODE_ID"
+  SINGLE_NODE_HOSTNAME="$PLACEMENT_HOSTNAME"
+  SINGLE_NODE_SSH_HOST="${ssh_hosts[$best]}"
+  SINGLE_NODE_CONTROL_IP="$PLACEMENT_CONTROL_IP"
+  SINGLE_NODE_REMOTE="$PLACEMENT_REMOTE"
+  SINGLE_NODE_TOPOLOGY_ID="${CLUSTER_TOPOLOGY_ID:-}"
   log "selected node: $PLACEMENT_HOSTNAME"
   log "node-id: $PLACEMENT_NODE_ID"
 }
@@ -488,6 +702,8 @@ def emit(name, val):
     print(f"{name}={shlex.quote(str(val))}")
 
 emit("same_running", d.get("same_complete_running"))
+emit("same_weight_source", d.get("same_weight_source") or "unknown")
+emit("same_weight_source_matches", d.get("same_weight_source_matches"))
 emit("worker_unreach", d.get("worker_unreachable"))
 emit("partial_remote_unreach", d.get("partial_remote_unreachable"))
 emit("has_unmanaged", d.get("has_unmanaged_gpu"))
@@ -754,6 +970,7 @@ analyze_inventory() {
   local out
   out=$(
     INV_JSON="$inv" NAME="$NAME" PORT="$PORT" NODES="$NODES" \
+      WEIGHT_SOURCE="$WEIGHT_SOURCE" \
       TARGET_NODE_KEY="$PLACEMENT_NODE_KEY" SERVED_NAME="$SERVED_NAME" \
       python3 - <<'PY'
 import json
@@ -761,6 +978,7 @@ import os
 
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 name = os.environ["NAME"]
+selected_weight_source = os.environ.get("WEIGHT_SOURCE") or "replicated"
 port = int(os.environ.get("PORT") or 8000)
 target_count = int(os.environ.get("NODES") or 1)
 selected_node = os.environ.get("TARGET_NODE_KEY") or "head"
@@ -955,6 +1173,12 @@ print(json.dumps({
     "same_complete_running": same is not None,
     "same_conf": (same or {}).get("conf") if same else None,
     "same_safe": bool(same and same.get("safe_to_stop")),
+    "same_weight_source": (same or {}).get("weight_source") if same else None,
+    "same_weight_source_matches": bool(
+        same
+        and (same.get("weight_source") or "replicated")
+        == selected_weight_source
+    ),
     "stale_same": stale_same is not None,
     "stale_same_safe": bool(stale_same and stale_same.get("safe_to_stop")),
     "stale_same_name_blocks": bool(
@@ -1031,9 +1255,9 @@ prompt_spec_decode() {
 final_confirm_start() {
   local msg
   if [ "${#PENDING_STOP[@]}" -gt 0 ]; then
-    msg="Stop ${PENDING_STOP[*]}, recheck, then start $NAME on $PLACEMENT_HOSTNAME?"
+    msg="Stop ${PENDING_STOP[*]}, recheck, then start $NAME on $PLACEMENT_HOSTNAME with $WEIGHT_SOURCE weights?"
   else
-    msg="Start $NAME on $PLACEMENT_HOSTNAME?"
+    msg="Start $NAME on $PLACEMENT_HOSTNAME with $WEIGHT_SOURCE weights?"
   fi
   confirm "$msg"
 }
@@ -1047,6 +1271,10 @@ execute_pending_stops() {
     down_args=()
     if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
       down_args=("${PLACEMENT_ARGS[@]}")
+    fi
+    if [ "$conf" = "$NAME" ] && [ "$WEIGHT_SOURCE" = library-hot ]; then
+      down_args+=(--pin-weights)
+      log "retaining exact prepared views for this confirmed restart; the durable home remains required"
     fi
     if ! cmd_down "$conf" "${down_args[@]}"; then
       die "stop failed for $conf — no further mutations; inspect with ./pulsar inventory"
@@ -1074,6 +1302,7 @@ offer_restart_previous() {
     Restart*)
       NAME="$prev"
       load_conf "$NAME"
+      reset_weight_source
       if [ "$NODES" -gt 1 ]; then
         reset_placement_state
       fi
@@ -1215,7 +1444,8 @@ plan_selected_model() {
     analyze_inventory "$inv"
     analysis="$ANALYZE_JSON"
 
-    local same_running worker_unreach partial_remote_unreach has_unmanaged
+    local same_running same_weight_source same_weight_source_matches
+    local worker_unreach partial_remote_unreach has_unmanaged
     local others_safe partial_safe stale_same port_unknown
     local unknown_ids legacy_ids mismatch_ids others_unsafe partial_unsafe
     local stale_safe
@@ -1224,7 +1454,14 @@ plan_selected_model() {
 
     # ----- same profile running (complete managed) -----
     if [ "$same_running" = "True" ]; then
-      if api_serves_selected; then
+      if [ "$same_weight_source_matches" != "True" ]; then
+        log "selected profile is running with weights=$same_weight_source, not $WEIGHT_SOURCE"
+        pick=$(choose "Same model uses another storage policy — what next?" \
+          "Restart with $WEIGHT_SOURCE weights (stop after final confirm)" \
+          "Keep current service and exit" \
+          "Show status" \
+          "Choose another model")
+      elif api_serves_selected; then
         log "selected profile $NAME is already running and API healthy"
         pick=$(choose "Same model already serving — what next?" \
           "Keep running (recommended)" \
@@ -1244,6 +1481,9 @@ plan_selected_model() {
           log "keeping $NAME running; no containers changed"
           exit 0
           ;;
+        Restart\ with*)
+          PENDING_STOP=("$NAME")
+          ;;
         Restart*)
           PENDING_STOP=("$NAME")
           prompt_spec_decode
@@ -1257,14 +1497,14 @@ plan_selected_model() {
           if [ "$prc" = 2 ]; then return 2; fi
           if [ "$prc" = 10 ]; then return 10; fi
           if [ "$prc" != 0 ]; then exit 1; fi
-          if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
+          if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
             warn "launch failed after restart of $NAME"
             pick=$(choose "Launch failed — what next?" \
               "Retry start $NAME from current config" \
               "Exit stopped")
             case "$pick" in
               Retry*)
-                cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes || die "retry launch failed"
+                cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes || die "retry launch failed"
                 ;;
               *) log "exiting stopped"; exit 1 ;;
             esac
@@ -1507,7 +1747,7 @@ plan_selected_model() {
     if [ "$prc" != 0 ]; then exit 1; fi
 
     log "launching $NAME…"
-    if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
+    if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
       warn "launch failed for $NAME"
       if [ -n "${PREVIOUS_PROFILE:-}" ] && [ "${PREVIOUS_PROFILE}" != "$NAME" ]; then
         local rc=0
@@ -1636,22 +1876,25 @@ for model in models:
   fi
   echo
   render_model_selection
-  if [ "$(model_source_kind)" = hf ]; then
-    render_human_section "WEIGHT STORAGE" \
-      "Mode" "replicated local caches · validated wizard default" \
-      "Cold start" "each serving node reads its own durable copy" \
-      "Single copy" "experimental CLI opt-in · never automatic"
-  fi
 
   if status_requires_force; then
     die "$NAME status=$STATUS is not ship-default (need tested*). Not offered for guided start; use scripts/up.sh --force only if you mean it."
   fi
 
+  source_rc=0
+  select_weight_source || source_rc=$?
+  if [ "$source_rc" = 2 ]; then
+    log "choose another model — returning to selection"
+    continue
+  fi
+  [ "$source_rc" = 0 ] || exit "$source_rc"
+
   if [ "${WIZARD_SKIP_WEIGHTS:-0}" != 1 ]; then
     log "checking weights…"
     weights_json=""
     weights_rc=0
-    weights_json=$(cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json) || weights_rc=$?
+    weights_json=$(cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" \
+      "${WEIGHT_ARGS[@]}" --json) || weights_rc=$?
     if [ "$weights_rc" != 0 ]; then
       if ! probe_json_has_state "$weights_json"; then
         die "weight preflight returned invalid data — no download or launch attempted"
@@ -1663,6 +1906,9 @@ for model in models:
           die "one or more cluster nodes required by this model are unreachable — cannot verify weights"
           ;;
       esac
+      if [ "$WEIGHT_SOURCE" = library-hot ]; then
+        die "distributed catalog views are not ready on the selected ranks; no replicated fallback was attempted"
+      fi
       kind=$(model_source_kind)
       if [ "$kind" = hf ]; then
         if [ -z "${WIZARD_PULL_WEIGHTS_CMD:-}" ] \

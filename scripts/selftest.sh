@@ -75,6 +75,10 @@ run "federated model library catalog" "$REPO_DIR/scripts/selftest-model-library.
 run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
 run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
 run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
+run "wizard experimental model-library serving" \
+  "$REPO_DIR/scripts/selftest-wizard-model-library.sh"
+run "library-hot stop retention policy" \
+  python3 "$REPO_DIR/scripts/testlib/test_down_hot_policy.py"
 run "operator home + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "model catalog scopes" bash -c '

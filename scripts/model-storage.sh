@@ -88,13 +88,19 @@ cmd_profiles_json() {
 
 cmd_prepare_model() {
   local profile="${1:?profile required}"
+  local transport="${2:?transport required}" streams="${3:?streams required}"
+  local target_rank="${4:-}"
+  local -a node_args=()
+  [ -z "$target_rank" ] || node_args=(--node "$target_rank")
   if [ -n "${MODEL_STORAGE_PREPARE_CMD:-}" ]; then
     "$MODEL_STORAGE_PREPARE_CMD" prepare "$profile" \
-      --backend copy --transport ssh-roce --copy-streams 8 --yes
+      --backend copy --transport "$transport" --copy-streams "$streams" \
+      "${node_args[@]}" --yes
     return $?
   fi
   "$REPO_DIR/scripts/model-library.sh" prepare "$profile" \
-    --backend copy --transport ssh-roce --copy-streams 8 --yes
+    --backend copy --transport "$transport" --copy-streams "$streams" \
+    "${node_args[@]}" --yes
 }
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-model-storage.XXXXXX")
@@ -204,9 +210,11 @@ refresh_catalog() {
 }
 
 prepare_model() {
-  local model_index="${1:?}" candidate_index="${2:?}" profile prepare_rc=0
-  profile=$(render prepare-profile --index "$model_index" \
+  local model_index="${1:?}" candidate_index="${2:?}" command_fields
+  local profile transport streams target_rank prepare_rc=0
+  command_fields=$(render prepare-command --index "$model_index" \
     --candidate-index "$candidate_index")
+  IFS=$'\t' read -r profile transport streams target_rank <<<"$command_fields"
   echo
   render prepare-preview --index "$model_index" \
     --candidate-index "$candidate_index"
@@ -218,7 +226,7 @@ prepare_model() {
 
   log "starting experimental model preparation; this does not start serving…"
   set +e
-  cmd_prepare_model "$profile"
+  cmd_prepare_model "$profile" "$transport" "$streams" "$target_rank"
   prepare_rc=$?
   set -e
   if [ "$prepare_rc" -ne 0 ]; then

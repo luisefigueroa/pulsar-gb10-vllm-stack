@@ -845,13 +845,22 @@ resolve_single_node_placement() {
             || [ "$selector" = "${CLUSTER_NODE_SSH_HOSTS[$rank]:-}" ] \
             || [ "$selector" = "${CLUSTER_NODE_CONTROL_IPS[$rank]:-}" ] \
             || [ "$selector" = "$(single_node_key_for_index "$rank")" ]; then
-          [ "$index" -eq -1 ] || {
+          { [ "$index" -eq -1 ] || [ "$index" -eq "$rank" ]; } || {
             warn "node selector '$selector' is ambiguous in the confirmed topology"
             return 1
           }
           index="$rank"
         fi
       done
+      if [[ "$selector" =~ ^[0-9]+$ ]] \
+          && [ "${#selector}" -le "${#CLUSTER_TOPOLOGY_COUNT}" ] \
+          && [ "$selector" -lt "$CLUSTER_TOPOLOGY_COUNT" ]; then
+        { [ "$index" -eq -1 ] || [ "$index" -eq "$selector" ]; } || {
+          warn "node selector '$selector' is ambiguous in the confirmed topology"
+          return 1
+        }
+        index="$selector"
+      fi
       ;;
   esac
 
@@ -1006,19 +1015,69 @@ verify_replicated_identity_selected_node() {
 # LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
 # LIBRARY_HOT_VALIDATION_JSON, and pinned state.
 # Requires load_conf + load_cluster_topology (or single-node topology id).
+library_hot_info_for_profile() {
+  local profile="${1:?profile required}" topology_id info stamp_json instance
+  local expected_validation_json command rank
+  topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
+  [ -n "$topology_id" ] || return 1
+  [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || return 1
+
+  if [ "${NODES:-1}" -eq 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
+    rank="${SINGLE_NODE_INDEX:?remote single-node rank is unresolved}"
+    command=$(shell_join_q python3 - find-hot \
+      --profile "$profile" \
+      --topology-id "$topology_id" \
+      --hot-root "$PULSAR_HOT_ROOT")
+    info=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") \
+      || return 1
+    stamp_json=$(printf '%s' "$info" | python3 -c \
+      'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
+      || return 1
+    expected_validation_json=$(printf '%s' "$stamp_json" | \
+      python3 "$PULSAR_MODEL_LIBRARY_PY" validate-hot-stamp \
+        --profile "$profile" \
+        --models-dir "$REPO_DIR/models" \
+        --stamp-file /dev/stdin | \
+      python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))') \
+      || return 1
+    instance=$(printf '%s' "$info" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
+      || return 1
+    command=$(shell_join_q python3 - verify-hot \
+      --instance-dir "$instance" \
+      --profile "$profile" \
+      --topology-id "$topology_id" \
+      --expected-validation-json "$expected_validation_json" \
+      --serve-time-witness)
+    ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null \
+      || return 1
+  else
+    info=$(python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
+      --profile "$profile" \
+      --topology-id "$topology_id" \
+      --hot-root "$PULSAR_HOT_ROOT" \
+      --models-dir "$REPO_DIR/models") || return 1
+    instance=$(printf '%s' "$info" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
+      || return 1
+    python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
+      --instance-dir "$instance" \
+      --profile "$profile" \
+      --topology-id "$topology_id" \
+      --models-dir "$REPO_DIR/models" \
+      --serve-time-witness >/dev/null || return 1
+  fi
+  printf '%s\n' "$info"
+}
+
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
   local topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] \
     || die "library-hot requires confirmed topology (scripts/detect-fabric.sh --write-topology)"
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
-  info=$(
-    python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
-      --profile "$profile" \
-      --topology-id "$topology_id" \
-      --hot-root "$PULSAR_HOT_ROOT" \
-      --models-dir "$REPO_DIR/models"
-  ) || die "library-hot: model files are not prepared for $profile — run: scripts/model-library.sh prepare $profile --yes"
+  info=$(library_hot_info_for_profile "$profile") \
+    || die "library-hot: model files are not prepared or valid on the selected rank for $profile — run preparation for that placement"
   LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \
@@ -1049,13 +1108,6 @@ resolve_library_hot_for_profile() {
     'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
   LIBRARY_HOT_PINNED=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print("1" if json.load(sys.stdin)["stamp"].get("pinned") else "0")')
-  python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
-    --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
-    --profile "$profile" \
-    --topology-id "$topology_id" \
-    --models-dir "$REPO_DIR/models" \
-    --serve-time-witness >/dev/null \
-    || die "library-hot: hot instance failed verify for $profile"
   [ -n "$LIBRARY_HOT_CONTENT_ID" ] \
     && [ -n "$LIBRARY_HOT_CONTENT_DIGEST" ] \
     && [ -n "$LIBRARY_HOT_TRANSPORT" ] \
@@ -1215,6 +1267,19 @@ conf = str(labels.get(sys.argv[2], "") or "")
 rank = str(labels.get(sys.argv[3], "") or "")
 print("\t".join([cid, name, managed, conf, rank]))
 ' "$PULSAR_MANAGED_LABEL" "$PULSAR_CONF_LABEL" "$PULSAR_RANK_LABEL"
+}
+
+# Return the declared model-weight source from ownership metadata. Historical
+# managed containers without the label are the replicated compatibility path;
+# malformed JSON is an observation failure.
+container_weight_source_field() {
+  local metadata="${1:?}"
+  printf '%s' "$metadata" | python3 -c '
+import json, sys
+labels = json.load(sys.stdin).get("labels") or {}
+value = str(labels.get(sys.argv[1], "") or "")
+print(value or "replicated")
+' "$PULSAR_WEIGHT_SOURCE_LABEL"
 }
 
 # Exactly managed="true" (launchers/inventory); never 1/yes/TRUE.

@@ -81,13 +81,7 @@ fi
 if [ "$WEIGHT_SOURCE" = library-hot ]; then
   load_cluster_topology >/dev/null 2>&1 \
     || die "library-hot requires confirmed topology"
-  if ! hot_info=$(
-    python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
-      --profile "$NAME" \
-      --topology-id "$CLUSTER_TOPOLOGY_ID" \
-      --hot-root "$PULSAR_HOT_ROOT" \
-      --models-dir "$REPO_DIR/models" 2>/dev/null
-  ); then
+  if ! hot_info=$(library_hot_info_for_profile "$NAME"); then
     if [ "$JSON" = 1 ]; then
       printf '%s\n' '{"state":"missing","source":"library-hot","ok":false}'
     elif [ "${QUIET:-0}" = 1 ]; then
@@ -98,21 +92,6 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
     exit 1
   fi
   instance=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  if ! python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
-      --instance-dir "$instance" \
-      --profile "$NAME" \
-      --topology-id "$CLUSTER_TOPOLOGY_ID" \
-      --models-dir "$REPO_DIR/models" \
-      --serve-time-witness >/dev/null; then
-    if [ "$JSON" = 1 ]; then
-      printf '%s\n' '{"state":"invalid","source":"library-hot","ok":false}'
-    elif [ "${QUIET:-0}" = 1 ]; then
-      echo "FAIL  weights   source=library-hot · hot invalid"
-    else
-      echo "library-hot: hot instance failed verify" >&2
-    fi
-    exit 1
-  fi
   if [ "$JSON" = 1 ]; then
     printf '%s\n' "$hot_info" | python3 -c '
 import json,sys

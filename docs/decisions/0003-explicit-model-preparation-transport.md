@@ -112,3 +112,12 @@ evidence trigger but does not change this ADR's preparation transport:
 acquisition has no inter-rank model copy, while subsequent multi-rank
 preparation still uses topology-bound eight-stream SSH-over-RoCE with no
 fallback. Combined release promotion remains a separate pending gate.
+
+The serving wizard now consumes this fixed policy after a user explicitly
+chooses **distributed catalog (experimental)**. The preparation action itself
+still starts nothing. After fresh health proves every exact runtime view ready,
+the wizard may pass `--weight-source library-hot` to the existing launcher only
+after its separate final start/replace confirmation. Replicated weights remain
+the first and recommended choice. One-node profiles run from their selected
+durable-home rank with no bulk transfer; this does not expand the ADR to a
+remote-home-to-non-home relay.

@@ -358,6 +358,63 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("does not qualify or promote", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
+    def test_serving_check_requires_exact_ready_views(self) -> None:
+        ready = model_storage.serving_preparation_check(
+            healthy_report(), serving_profiles(), "deepseek-v4-flash"
+        )
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(ready["target_ranks"], [0, 1])
+        self.assertEqual(ready["prepare_transport"], "ssh-roce")
+        self.assertEqual(ready["copy_streams"], 8)
+
+        report = healthy_report()
+        report["hot_instances"] = report["hot_instances"][:1]
+        missing = model_storage.serving_preparation_check(
+            report, serving_profiles(), "deepseek-v4-flash"
+        )
+        self.assertEqual(missing["state"], "needs-preparation")
+
+    def test_one_node_serving_check_requires_the_home_rank(self) -> None:
+        profiles = serving_profiles()
+        profile = copy.deepcopy(profiles["models"][0])
+        profile["id"] = "one-node-sealed"
+        profile["nodes"] = 1
+        profiles["models"] = [profile]
+        report = healthy_report()
+        report["models"][0]["profiles"] = ["one-node-sealed"]
+        report["hot_instances"] = [{
+            **report["hot_instances"][1],
+            "profile": "one-node-sealed",
+        }]
+
+        ready = model_storage.serving_preparation_check(
+            report, profiles, "one-node-sealed", target_rank=1
+        )
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(ready["transfer"], "none · durable-home local view")
+        self.assertEqual(ready["prepare_transport"], "ssh-control")
+        self.assertEqual(ready["copy_streams"], 1)
+
+        blocked = model_storage.serving_preparation_check(
+            report, profiles, "one-node-sealed", target_rank=0
+        )
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertEqual(blocked["home_rank"], 1)
+        self.assertIn("durable-home node", " ".join(blocked["blockers"]))
+
+    def test_serving_preview_preserves_experimental_claim_boundary(self) -> None:
+        check = model_storage.serving_preparation_check(
+            healthy_report(), serving_profiles(), "deepseek-v4-flash"
+        )
+        output = capture(model_storage.render_serving_preparation, check, width=48)
+        prose = normalized(output)
+        self.assertIn("DISTRIBUTED CATALOG · EXPERIMENTAL", output)
+        self.assertIn("exact, witnessed runtime views", prose)
+        self.assertIn("durable home remains required", prose)
+        self.assertIn("not a promoted default", prose)
+        self.assertIn("does not establish model qualification", prose)
+        self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

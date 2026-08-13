@@ -654,7 +654,9 @@ catalog as experimental.
 An exact model detail may also offer **Prepare for experimental serving** when
 the catalog mapping is current and the matching tested serving profile carries
 a reviewed expected seal. This is a separate default-no mutation, fixed to the
-accepted eight-stream SSH-over-RoCE copy policy with no fallback. The
+accepted eight-stream SSH-over-RoCE copy policy for non-home ranks with no
+fallback. A one-node home-only view uses `ssh-control` with one stream and no
+bulk transfer. The
 interactive layer shows exact revision/manifest identity, durable-home
 dependency, serving ranks, and an approximate non-home storage requirement,
 then delegates to the existing preparation service. That service remains the
@@ -663,6 +665,24 @@ primary checks, rollback, and witness publication. The interaction never adds
 `--allow-unvalidated`, starts serving, changes the replicated guided default, or
 claims model qualification or storage-path promotion. Retention, repair, purge,
 and durable-home removal remain separate direct-CLI operations.
+
+The serving wizard is a distinct consumer of the same readiness contract. For
+an eligible reviewed profile it offers replicated weights first and an
+explicit **distributed catalog (experimental)** choice second. The wizard
+shows exact revision/manifest identity, durable-home dependency, selected
+ranks, fixed transfer policy, and no-fallback behavior. It may invoke the same
+preparation service after a default-no confirmation, but it re-reads health and
+requires every selected runtime view to be exact and ready before setting
+`--weight-source library-hot`. Container launch remains behind the wizard's
+separate final confirmation. A one-node catalog service is placed on its
+durable-home rank and uses that local view; multi-node preparation uses the
+exact profile ranks and creates sealed-hot copies only on non-home ranks.
+
+On stop, an observed `library-hot` service purges unpinned prepared views by
+default. `--pin-weights` is the explicit retention choice; a confirmed restart
+pins before stopping so the same views remain available. Pinning does not copy
+or protect the durable home. Explicit `--purge-hot` may remove a pin, while
+durable-home deletion remains a separate direct-CLI workflow.
 
 Current health closes supported catalog/hot observability, but container labels still do not carry
 per-rank runtime-source/witness state and unmanaged processes remain outside
@@ -828,9 +848,9 @@ blocker changed.
 
 ## 8. Remaining deferred work
 
-- Model start integration into the serving wizard; cached browsing, explicit
-  catalog refresh, one-home acquisition, and explicit experimental preparation
-  are implemented, but no guided/default storage policy changed
+- Physical serving-integration repeat for the new remote one-node wizard path;
+  deterministic orchestration is implemented, while existing one-node and
+  flagship artifacts cover only their recorded placements
 - Machine-readable qualification dimensions; current scope separation is a
   documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time
@@ -894,3 +914,4 @@ blocker changed.
 | 2026-08-12 | Exact model detail gained confirmation-gated experimental preparation for reviewed-seal tested serving profiles. It delegates to eight-stream SSH-over-RoCE copy with no fallback and re-renders health; it does not launch, expose unvalidated bypass, change replicated defaults, or claim promotion. |
 | 2026-08-13 | Added reviewed-profile `home add`: target-side exact-commit download into plan-owned same-filesystem staging, any-confirmed-rank placement for one-node profiles, exact geometry for multi-node profiles, most-free-space selection with explicit in-geometry override, all-rank duplicate recheck, full expected-manifest verification, and atomic publication of one durable home. Catalog refresh, hot preparation, and launch remain separate; deterministic contracts pass and physical acquisition evidence remains pending. |
 | 2026-08-13 | Reviewed acquisition passed its three-node physical catalog/artifact gate with sealed Qwen 1.7B. Guarded last-home removal, interrupted remote download cleanup, explicit rank-2 acquisition, automatic most-free-space rank-2 acquisition, full reviewed-manifest verification, atomic publication, explicit catalog refresh, and final one-home/no-hot state passed. The gate also closed target discovery for Pulsar's managed HF CLI venv. It did not prepare, launch, qualify, or promote the model or storage path. |
+| 2026-08-13 | The serving wizard gained an explicit experimental distributed-catalog choice for eligible reviewed profiles while preserving replicated weights as the first/default option. Readiness is rechecked after optional preparation, launch remains separately confirmed, one-node catalog serving is constrained to its durable-home rank, and stop purges unpinned hot views by default while explicit pin retains them. Deterministic contracts pass; no new physical, model-qualification, or promotion claim is made. |
