@@ -43,9 +43,13 @@ for an eligible reviewed profile, Pulsar uses this fixed policy:
 The corresponding command is:
 
 ```bash
-scripts/model-library.sh prepare <sealed-profile> \
+scripts/model-library.sh prepare <multi-rank-sealed-profile> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
 ```
+
+A reviewed single-rank profile has no non-home copy and is therefore outside
+this RoCE transfer policy. Its local durable-home runtime view is prepared with
+the copy backend's `ssh-control` path; no bulk SSH transfer occurs.
 
 `ssh-control` remains available for explicit diagnostics, comparison, and
 maintainer-directed experiments. One-shot `nfs-rdma` transfer and long-lived

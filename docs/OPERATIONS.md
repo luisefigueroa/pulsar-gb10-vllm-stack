@@ -422,8 +422,7 @@ non-home bytes, and verifying every rank. Preparation does not start a serving
 container or qualify the model. The older `activate` command remains a
 backward-compatible alias.
 
-Typical
-flow:
+Typical reviewed multi-rank flow:
 
 ```bash
 # Required before topology-bound SSH-over-RoCE preparation.
@@ -431,18 +430,28 @@ scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list --validated
-# Reviewed sealed profile: no override is accepted or needed.
-scripts/model-library.sh prepare <sealed-profile> \
+# Reviewed multi-rank sealed profile: no override is accepted or needed.
+scripts/model-library.sh prepare <multi-rank-sealed-profile> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
-# Profiles without a reviewed seal: explicit experiment only.
-scripts/model-library.sh prepare <profile> \
-  --backend copy --transport ssh-roce --copy-streams 8 \
-  --allow-unvalidated --yes
-scripts/up.sh <profile> --weight-mode library-hot
+scripts/up.sh <multi-rank-sealed-profile> --weight-mode library-hot
 # optional after stop:
-scripts/down.sh <profile> --pin-weights   # protect retained hot from purge
-scripts/down.sh <profile> --purge-hot     # free hot disk budget
+scripts/down.sh <multi-rank-sealed-profile> --pin-weights  # retain non-home hot
+scripts/down.sh <multi-rank-sealed-profile> --purge-hot    # free hot disk budget
 ```
+
+A reviewed single-rank profile has no non-home target and therefore no RoCE
+transfer. Prepare only its local durable-home runtime view:
+
+```bash
+scripts/model-library.sh prepare <single-rank-sealed-profile> \
+  --backend copy --transport ssh-control --yes
+```
+
+Legacy-unsealed profiles are outside ADR 0003's fixed transport and stream
+policy. Their low-level `--allow-unvalidated` path remains available only for a
+deliberate experiment; choose and record its transport and stream count as
+experiment inputs rather than inheriting the reviewed-profile recipe. Explicit
+examples remain in the advanced transport sections below.
 
 Catalog refresh inventories existing durable homes; it does not download model
 bytes or create a primary home. Preparation therefore requires an eligible
@@ -707,7 +716,7 @@ prepare each required profile again. Hot schema 3 instances created before witne
 support remain readable: the first `library-hot` readiness check visibly
 full-verifies and creates the missing rank-local witness. Current unsealed
 profiles without a seal need the explicit experimental `--allow-unvalidated`
-flag shown above.
+flag shown in the advanced transport sections below.
 Do not hand-edit or relabel old site-local state into the new schemas.
 
 **Optional cold archive:** shared/local fill tier (conventionally

@@ -256,13 +256,15 @@ check SSH trust first, then use the exact preparation command:
 scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare <sealed-profile> \
+scripts/model-library.sh prepare <multi-rank-sealed-profile> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
 ```
 
 Catalog refresh inventories existing homes; it does not download a model or
 create the required durable home. The replicated quick start above therefore
-remains the truthful fresh-cluster workflow. See
+remains the truthful fresh-cluster workflow. A reviewed single-rank profile has
+no non-home target and therefore uses no RoCE copy; prepare that local runtime
+view with `--transport ssh-control` instead. See
 [ADR 0003](docs/decisions/0003-explicit-model-preparation-transport.md).
 Maintainers can
 assemble deterministic unreviewed identity candidates through the separate
