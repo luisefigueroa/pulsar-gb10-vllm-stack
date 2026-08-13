@@ -67,6 +67,14 @@ profile. Sealed replicated profiles now request the exact commit during
 download, full-verify the controller copy and every copied rank, create a
 rank-local witness outside the copied repository, and launch the exact snapshot
 through a read-only repository mount with the same revision/seal/bundle labels.
+The distributed library now has a separate reviewed-profile acquisition
+service: `home add` observes every confirmed rank, allows a one-node profile on
+any confirmed rank while preserving exact multi-node geometry, selects the
+eligible candidate with the most free space unless `--node` overrides it, downloads there
+into private same-filesystem staging, rechecks that no home appeared elsewhere,
+full-verifies the expected manifest, and atomically publishes exactly one
+durable HF repository. It neither creates hot copies nor refreshes the catalog,
+so registration remains the operator's explicit next action.
 Legacy-unsealed replicated profiles retain their structural `refs/main`
 behavior. Live-mount launches are not yet content-bound by expected seals.
 Issuing or enforcing the DeepSeek flagship identity does not by itself promote
@@ -279,6 +287,21 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
 - **New downloads (recommended placement):** node with **most free space** on
   the HF cache filesystem among writable confirmed nodes; operator override
   `--node <id>`.
+- **Implemented acquisition boundary:** `home add <sealed-profile>` accepts
+  only a reviewed expected seal and exact commit. Every confirmed rank must be
+  observable. A one-node profile may establish its sole serving placement on
+  any confirmed rank; automatic placement chooses the eligible rank with the
+  most free space, while `--node` binds an exact remote or local placement.
+  Multi-node placement remains limited to the profile's exact serving ranks so
+  active storage remains one durable home plus N−1 hot copies. An existing
+  repository path anywhere blocks duplicate creation; an explicit ineligible
+  or out-of-geometry `--node` fails without choosing another rank. The
+  chosen rank must have a Hugging Face CLI, sufficient space for the complete
+  manifest plus staging headroom, and upstream access/authentication. Download
+  failure removes only plan-owned private staging. Before publication Pulsar
+  repeats the all-rank no-home check, performs full SHA-256 verification, and
+  atomically renames the repository into its durable HF home. Catalog refresh,
+  hot preparation, launch, and fallback are separate actions.
 - Catalog entries are **labeled**:
 
 | Label | Meaning |
@@ -480,6 +503,9 @@ under stable metadata, and atomically refreshes the witness only on success.
 Launch then passes the exact snapshot path through a read-only repository view.
 For `identity_status=match`, that manifest is bound to the lab-issued expected
 seal. A `legacy-unsealed` path never becomes validated through a witness.
+`home add` also uses this reviewed manifest as its publication gate. It hashes
+the private target-rank staging tree before a same-filesystem rename; it does
+not create a serve witness because no runtime view has been prepared yet.
 The seal points one-way to a content-addressed schema-1 validation bundle.
 Profile load verifies the bundle ID, exact primary model projection,
 provenance/evidence parity, declared external-artifact identities/digests, and
@@ -801,8 +827,10 @@ blocker changed.
 ## 8. Remaining deferred work
 
 - Model start integration into the serving wizard; cached browsing, explicit
-  catalog refresh, and explicit experimental preparation are implemented, but
-  no guided/default storage policy changed
+  catalog refresh, one-home acquisition, and explicit experimental preparation
+  are implemented, but no guided/default storage policy changed
+- Physical multi-rank acquisition evidence for target-side upstream download,
+  interruption cleanup, publication recheck, and atomic one-home registration
 - Machine-readable qualification dimensions; current scope separation is a
   documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time
@@ -864,3 +892,4 @@ blocker changed.
 | 2026-08-12 | The exact reviewed DeepSeek GA identity failed the strict same-boot `library-hot` determinism gate. Profile-default DSpark k=5 produced 11/30 exact texts and 4/30 identical records; a forced no-spec diagnostic improved to 26/30 and 25/30 but still failed strict identity. Exact seal, image, geometry, and runtime views were held constant, the clean one-home state was restored, and no fatal runtime signature appeared. Preserve this failed evidence; do not attribute the current result only to the retired preview profile, run sustained soak as if the blocker passed, or promote the path without an explicit determinism-policy decision and new evidence. |
 | 2026-08-12 | Models & storage gained an explicit confirmation-gated catalog refresh that delegates to the existing atomic all-rank service. Browsing and health rechecks remain read-only; refresh is never automatic and does not prepare, launch, retain, repair, or delete models. |
 | 2026-08-12 | Exact model detail gained confirmation-gated experimental preparation for reviewed-seal tested serving profiles. It delegates to eight-stream SSH-over-RoCE copy with no fallback and re-renders health; it does not launch, expose unvalidated bypass, change replicated defaults, or claim promotion. |
+| 2026-08-13 | Added reviewed-profile `home add`: target-side exact-commit download into plan-owned same-filesystem staging, any-confirmed-rank placement for one-node profiles, exact geometry for multi-node profiles, most-free-space selection with explicit in-geometry override, all-rank duplicate recheck, full expected-manifest verification, and atomic publication of one durable home. Catalog refresh, hot preparation, and launch remain separate; deterministic contracts pass and physical acquisition evidence remains pending. |

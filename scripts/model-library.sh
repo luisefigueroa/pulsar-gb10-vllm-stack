@@ -38,6 +38,8 @@ Usage:
   scripts/model-library.sh validation-bundle verify <profile> [--json]
   scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
+  scripts/model-library.sh home add <sealed-profile>
+      [--node RANK|NODE_ID] [--yes] [--json]
   scripts/model-library.sh home check <profile|model_id|model_id@revision>
       [--node RANK|NODE_ID] [--allow-last-home] [--json]
   scripts/model-library.sh home remove <profile|model_id|model_id@revision>
@@ -90,6 +92,13 @@ Notes:
     Removal is exact-repository-only, refuses multi-revision hub trees, and
     needs --allow-last-home before deleting the final durable copy. Duplicate
     removal requires a selected primary and can target only a non-primary home.
+  • home add downloads one exact reviewed revision directly on one selected
+    serving rank. For a one-node profile, that rank may be any confirmed rank;
+    for multi-node profiles it remains in the exact profile geometry. With no
+    --node override, the eligible serving rank with the most free space is
+    selected. Download uses private same-filesystem staging;
+    full SHA-256 verification precedes atomic durable-home publication. It
+    creates no hot copies, starts nothing, and never refreshes the catalog.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -1312,6 +1321,205 @@ execute_home_removal_on_rank() {
     --plan-json "$plan" --rank "$rank" --node-id "$node_id")
   ssh_node "$rank" "$command" <"$PY_TOOL"
 }
+
+run_model_library_on_rank() {
+  local rank="${1:?rank required}" command
+  shift
+  if [ "$rank" = 0 ]; then
+    python3 "$PY_TOOL" "$@"
+    return
+  fi
+  command=$(shell_join_q python3 - "$@")
+  ssh_node "$rank" "$command" <"$PY_TOOL"
+}
+
+home_acquisition_rank_environment() {
+  local rank="${1:?rank required}" command
+  if [ "$rank" = 0 ]; then
+    local hf_cli=""
+    if command -v hf >/dev/null 2>&1; then
+      hf_cli=hf
+    elif command -v huggingface-cli >/dev/null 2>&1; then
+      hf_cli=huggingface-cli
+    fi
+    printf '%s\t%s\n' "$HF_CACHE" "$hf_cli"
+    return
+  fi
+  # The confirmed remote shell, not this controller shell, expands these vars.
+  # shellcheck disable=SC2016
+  command='cache_root=${HF_CACHE:-$HOME/.cache/huggingface}; hf_cli=""; '
+  command+='if command -v hf >/dev/null 2>&1; then hf_cli=hf; '
+  command+='elif command -v huggingface-cli >/dev/null 2>&1; then hf_cli=huggingface-cli; fi; '
+  # shellcheck disable=SC2016
+  command+='printf "%s\t%s\n" "$cache_root" "$hf_cli"'
+  ssh_node "$rank" "$command"
+}
+
+collect_home_acquisition_observations() {
+  local output_dir="${1:?}" model_id="${2:?}" revision="${3:?}"
+  local content_bytes="${4:?}" rank node_id cache_root hf_cli observation
+  mkdir -p "$output_dir"
+  for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+    node_id="${CLUSTER_NODE_IDS[$rank]:-}"
+    [ -n "$node_id" ] || die "home add: rank $rank lacks a node ID"
+    IFS=$'\t' read -r cache_root hf_cli < <(home_acquisition_rank_environment "$rank")
+    [ -n "$cache_root" ] || die "home add: rank $rank cache root is unobservable"
+    observation=$(run_model_library_on_rank "$rank" \
+      inspect-home-acquisition-target \
+      --cache-root "$cache_root" \
+      --model-id "$model_id" \
+      --revision "$revision" \
+      --required-content-bytes "$content_bytes" \
+      --rank "$rank" \
+      --node-id "$node_id" \
+      --hf-cli "${hf_cli:-}") \
+      || die "home add: rank $rank acquisition target is unobservable"
+    printf '%s\n' "$observation" >"$output_dir/rank-$rank.json"
+  done
+}
+
+download_home_acquisition_on_rank() {
+  local rank="${1:?}" hf_cli="${2:?}" staging_root="${3:?}"
+  local model_id="${4:?}" revision="${5:?}" command
+  local -a args=("$hf_cli" download "$model_id" --cache-dir "$staging_root" --revision "$revision")
+  [ "$hf_cli" != hf ] || args+=(--quiet)
+  if [ "$rank" = 0 ]; then
+    HF_HUB_OFFLINE=0 "${args[@]}" >&2
+    return
+  fi
+  command="export HF_HUB_OFFLINE=0; $(shell_join_q "${args[@]}")"
+  ssh_node "$rank" "$command" >&2
+}
+
+cmd_home_add() (
+  set -euo pipefail
+  local profile="" node_selector="" yes=0 json=0
+  local tmp identity_plan_b64 content_bytes revision model_id
+  local plan plan_b64
+  local target_rank target_node target_hf staging_json staging_root result_file
+  local cleanup_needed=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --node)
+        shift
+        [ $# -gt 0 ] || die "--node needs a rank or node ID"
+        node_selector="$1"
+        ;;
+      --yes|-y) yes=1 ;;
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$profile" ] \
+    || die "usage: home add <sealed-profile> [--node RANK|NODE_ID] [--yes] [--json]"
+  [ "$json" = 0 ] || [ "$yes" = 1 ] \
+    || die "home add --json requires --yes so stdout remains one result document"
+  require_py
+  load_cluster_topology >/dev/null \
+    || die "home add: confirmed topology required"
+  load_conf "$profile"
+  [ "$(model_source_kind)" = hf ] \
+    || die "home add: $profile is not a Hugging Face model profile"
+  [ -n "${EXPECTED_MODEL_SEAL:-}" ] \
+    || die "home add: $profile has no reviewed expected model seal"
+  load_replicated_identity_plan "$profile"
+  identity_plan_b64="$REPLICATED_PLAN_B64"
+  revision="$REPLICATED_REVISION"
+  model_id="$MODEL"
+  content_bytes=$(python3 "$PY_TOOL" replicated-plan \
+    --models-dir "$REPO_DIR/models" --profile "$profile" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["manifest"]["total_bytes"])')
+
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-add.XXXXXX")
+  result_file="$tmp/result.json"
+  # Invoked indirectly by the EXIT trap below.
+  # shellcheck disable=SC2317
+  cleanup_home_add() {
+    if [ "$cleanup_needed" = 1 ] && [ -n "${staging_root:-}" ]; then
+      run_model_library_on_rank "$target_rank" \
+        cleanup-home-acquisition-staging \
+        --plan-b64 "$plan_b64" \
+        --staging-root "$staging_root" \
+        --rank "$target_rank" \
+        --node-id "$target_node" >/dev/null 2>&1 \
+        || log "rank $target_rank: incomplete acquisition staging requires manual inspection" >&2
+    fi
+    rm -rf "$tmp"
+  }
+  trap cleanup_home_add EXIT
+  trap 'exit 130' INT TERM
+
+  collect_home_acquisition_observations \
+    "$tmp" "$model_id" "$revision" "$content_bytes"
+
+  local -a plan_args=(
+    plan-home-acquisition
+    --identity-plan-b64 "$identity_plan_b64"
+    --topology-file "$CLUSTER_TOPOLOGY_FILE"
+    --topology-id "$CLUSTER_TOPOLOGY_ID"
+    --observations-dir "$tmp"
+    --serving-nodes "$NODES"
+  )
+  [ -z "$node_selector" ] || plan_args+=(--node "$node_selector")
+  plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
+  plan_b64=$(printf '%s' "$plan" | base64 -w 0)
+  target_rank=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["rank"])')
+  target_node=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["node_id"])')
+  target_hf=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["hf_cli"])')
+
+  if [ "$json" = 0 ]; then
+    python3 "$PY_TOOL" render-home-acquisition-plan --plan-b64 "$plan_b64"
+    library_confirm "$yes" "Add this reviewed model to the library?"
+  fi
+
+  staging_json=$(run_model_library_on_rank "$target_rank" \
+    create-home-acquisition-staging \
+    --plan-b64 "$plan_b64" \
+    --rank "$target_rank" \
+    --node-id "$target_node") \
+    || die "home add: could not create plan-owned staging on rank $target_rank"
+  staging_root=$(printf '%s' "$staging_json" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["staging_root"])')
+  cleanup_needed=1
+
+  log "rank $target_rank: downloading exact revision $revision into private staging" >&2
+  download_home_acquisition_on_rank \
+    "$target_rank" "$target_hf" "$staging_root" "$model_id" "$revision" \
+    || die "home add: Hugging Face download failed; private staging cleanup was attempted"
+  collect_home_acquisition_observations \
+    "$tmp/recheck" "$model_id" "$revision" "$content_bytes"
+  python3 "$PY_TOOL" recheck-home-acquisition-publication \
+    --plan-b64 "$plan_b64" \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --observations-dir "$tmp/recheck" >/dev/null \
+    || die "home add: one-home publication recheck failed; private staging cleanup was attempted"
+  log "rank $target_rank: full-verifying reviewed manifest before publication" >&2
+  run_model_library_on_rank "$target_rank" \
+    execute-home-acquisition \
+    --plan-b64 "$plan_b64" \
+    --identity-plan-b64 "$identity_plan_b64" \
+    --staging-root "$staging_root" \
+    --rank "$target_rank" \
+    --node-id "$target_node" \
+    --workers "${PULSAR_INTEGRITY_WORKERS:-8}" >"$result_file" \
+    || die "home add: verification or atomic publication failed; private staging cleanup was attempted"
+  cleanup_needed=0
+
+  if [ "$json" = 1 ]; then
+    python3 "$PY_TOOL" render-home-acquisition-result \
+      --result-file "$result_file" --json
+  else
+    python3 "$PY_TOOL" render-home-acquisition-result \
+      --result-file "$result_file"
+  fi
+)
 
 cmd_home_check() {
   local query="" node_selector="" allow_last_home=0 json=0 plan state
@@ -3039,6 +3247,7 @@ main() {
       local home_sub="$1"
       shift
       case "$home_sub" in
+        add) cmd_home_add "$@" ;;
         check) cmd_home_check "$@" ;;
         remove) cmd_home_remove "$@" ;;
         *) usage; exit 2 ;;

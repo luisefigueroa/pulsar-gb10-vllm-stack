@@ -61,6 +61,15 @@ SNAPSHOT_INTEGRITY_SCHEME = "sha256-snapshot-manifest-v1"
 HOME_REMOVAL_PLAN_SCHEMA_VERSION = 1
 HOME_REMOVAL_PLAN_KIND = "pulsar-model-library-home-removal-plan"
 HOME_REMOVAL_RESULT_KIND = "pulsar-model-library-home-removal-result"
+HOME_ACQUISITION_SCHEMA_VERSION = 1
+HOME_ACQUISITION_OBSERVATION_KIND = (
+    "pulsar-model-library-home-acquisition-observation"
+)
+HOME_ACQUISITION_PLAN_KIND = "pulsar-model-library-home-acquisition-plan"
+HOME_ACQUISITION_RECHECK_KIND = "pulsar-model-library-home-acquisition-recheck"
+HOME_ACQUISITION_MARKER_KIND = "pulsar-model-library-home-acquisition-marker"
+HOME_ACQUISITION_RESULT_KIND = "pulsar-model-library-home-acquisition-result"
+HOME_ACQUISITION_MIN_HEADROOM_BYTES = 5 * 1024**3
 HOT_BUDGET_SCHEMA_VERSION = 1
 HOT_BUDGET_OBSERVATION_KIND = "pulsar-model-library-hot-budget-observation"
 HOT_BUDGET_PLAN_KIND = "pulsar-model-library-hot-budget-plan"
@@ -5723,6 +5732,596 @@ def execute_legacy_repair_plan(
         "revision": plan.get("revision"),
     }
 
+
+def _nearest_existing_path(path: pathlib.Path) -> pathlib.Path:
+    candidate = path
+    while not candidate.exists():
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    return candidate
+
+
+def home_acquisition_required_bytes(content_bytes: int) -> int:
+    if isinstance(content_bytes, bool) or not isinstance(content_bytes, int):
+        fail("home add: expected content size must be an integer")
+    if content_bytes <= 0:
+        fail("home add: expected content size must be positive")
+    headroom = max(
+        HOME_ACQUISITION_MIN_HEADROOM_BYTES,
+        (content_bytes + 9) // 10,
+    )
+    return content_bytes + headroom
+
+
+def inspect_home_acquisition_target(
+    cache_root: str | pathlib.Path,
+    *,
+    model_id: str,
+    revision: str,
+    required_content_bytes: int,
+    rank: int,
+    node_id: str,
+    hf_cli: str,
+) -> dict[str, Any]:
+    """Inspect one rank without creating a repository or staging tree."""
+    if HF_MODEL_ID_RE.fullmatch(model_id) is None:
+        fail("home add: model_id is invalid")
+    if SAFE_REV.fullmatch(revision) is None:
+        fail("home add: revision is invalid")
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank < 0:
+        fail("home add: rank is invalid")
+    if not isinstance(node_id, str) or not node_id:
+        fail("home add: node identity is invalid")
+    if hf_cli not in {"hf", "huggingface-cli", ""}:
+        fail("home add: Hugging Face CLI observation is invalid")
+
+    cache = pathlib.Path(cache_root).expanduser()
+    if not cache.is_absolute():
+        fail("home add: cache root must be absolute")
+    hub_root = cache / "hub"
+    target = hub_root / model_id_to_hub_dirname(model_id)
+    hub_kind, _ = _lstat_kind(hub_root)
+    target_kind, _ = _lstat_kind(target)
+    if hub_kind not in {"missing", "directory"}:
+        target_state = "invalid"
+        detail = f"managed hub root is an unsupported {hub_kind}"
+    elif target_kind == "missing":
+        target_state = "absent"
+        detail = "exact repository path is available"
+    elif target_kind == "directory":
+        target_state = "occupied"
+        detail = (
+            "repository path already exists; refresh the catalog or reconcile "
+            "the existing tree before adding another home"
+        )
+    else:
+        target_state = "invalid"
+        detail = f"repository path is an unsupported {target_kind}"
+
+    probe = _nearest_existing_path(hub_root)
+    try:
+        available = shutil.disk_usage(probe).free
+    except OSError as exc:
+        fail(f"home add: cannot inspect cache filesystem: {exc}")
+    writable = probe.is_dir() and os.access(probe, os.W_OK | os.X_OK)
+    required = home_acquisition_required_bytes(required_content_bytes)
+    eligible = (
+        target_state == "absent"
+        and writable
+        and bool(hf_cli)
+        and available >= required
+    )
+    if target_state == "absent" and not hf_cli:
+        detail = "Hugging Face CLI is not installed on this rank"
+    elif target_state == "absent" and not writable:
+        detail = "Hugging Face cache filesystem is not writable"
+    elif target_state == "absent" and available < required:
+        detail = "insufficient free space for verified same-filesystem staging"
+
+    return {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_OBSERVATION_KIND,
+        "rank": rank,
+        "node_id": node_id,
+        "cache_root": str(cache),
+        "hub_root": str(hub_root),
+        "target_hub": str(target),
+        "model_id": model_id,
+        "revision": revision,
+        "required_content_bytes": required_content_bytes,
+        "required_free_bytes": required,
+        "available_bytes": available,
+        "writable": writable,
+        "hf_cli": hf_cli or None,
+        "target_state": target_state,
+        "eligible": eligible,
+        "detail": detail,
+    }
+
+
+def _load_home_acquisition_observations(
+    observations_dir: str | pathlib.Path,
+    topology: dict[str, Any],
+    *,
+    model_id: str,
+    revision: str,
+    required_content_bytes: int,
+) -> list[dict[str, Any]]:
+    root = pathlib.Path(observations_dir)
+    nodes = sorted(topology.get("nodes") or [], key=lambda item: int(item["rank"]))
+    observations: list[dict[str, Any]] = []
+    for node in nodes:
+        rank = int(node["rank"])
+        observation = load_json(root / f"rank-{rank}.json")
+        if not isinstance(observation, dict):
+            fail(f"home add: rank {rank} observation is not an object")
+        expected = {
+            "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+            "kind": HOME_ACQUISITION_OBSERVATION_KIND,
+            "rank": rank,
+            "node_id": node.get("node_id"),
+            "model_id": model_id,
+            "revision": revision,
+            "required_content_bytes": required_content_bytes,
+        }
+        for field, value in expected.items():
+            if observation.get(field) != value:
+                fail(f"home add: rank {rank} observation {field} is stale")
+        observations.append(observation)
+    if len(observations) != len(nodes):
+        fail("home add: not every confirmed rank was observed")
+    return observations
+
+
+def home_acquisition_plan_id(plan: dict[str, Any]) -> str:
+    return canonical_json_digest(
+        {
+            key: value
+            for key, value in plan.items()
+            if key not in {"plan_id", "created_at"}
+        }
+    )
+
+
+def validate_home_acquisition_plan(plan: Any) -> dict[str, Any]:
+    if not isinstance(plan, dict):
+        fail("home add: acquisition plan must be an object")
+    required = {
+        "schema_version", "kind", "created_at", "topology_id", "profile",
+        "model_id", "revision", "manifest_id", "seal_id",
+        "validation_bundle_id", "file_count", "content_bytes",
+        "required_free_bytes", "serving_ranks", "selection", "target", "plan_id",
+    }
+    if set(plan) != required:
+        fail("home add: acquisition plan fields are invalid")
+    if plan.get("schema_version") != HOME_ACQUISITION_SCHEMA_VERSION:
+        fail("home add: acquisition plan schema is unsupported")
+    if plan.get("kind") != HOME_ACQUISITION_PLAN_KIND:
+        fail("home add: acquisition plan kind is invalid")
+    for field in (
+        "topology_id", "profile", "model_id", "revision", "manifest_id",
+        "seal_id", "validation_bundle_id",
+    ):
+        if not isinstance(plan.get(field), str) or not plan[field]:
+            fail(f"home add: acquisition plan {field} is invalid")
+    if HF_MODEL_ID_RE.fullmatch(plan["model_id"]) is None:
+        fail("home add: acquisition plan model is invalid")
+    if SAFE_REV.fullmatch(plan["revision"]) is None:
+        fail("home add: acquisition plan revision is invalid")
+    for field in ("manifest_id", "seal_id", "validation_bundle_id"):
+        if SHA256_HEX_RE.fullmatch(plan[field]) is None:
+            fail(f"home add: acquisition plan {field} is invalid")
+    for field in ("file_count", "content_bytes", "required_free_bytes"):
+        if (
+            isinstance(plan.get(field), bool)
+            or not isinstance(plan.get(field), int)
+            or plan[field] <= 0
+        ):
+            fail(f"home add: acquisition plan {field} is invalid")
+    if plan["required_free_bytes"] != home_acquisition_required_bytes(
+        plan["content_bytes"]
+    ):
+        fail("home add: acquisition plan storage requirement changed")
+    if plan.get("selection") not in {"most-free-space", "operator-override"}:
+        fail("home add: acquisition plan selection policy is invalid")
+    serving_ranks = plan.get("serving_ranks")
+    if (
+        not isinstance(serving_ranks, list)
+        or not serving_ranks
+        or any(
+            isinstance(rank, bool) or not isinstance(rank, int) or rank < 0
+            for rank in serving_ranks
+        )
+        or serving_ranks != sorted(set(serving_ranks))
+    ):
+        fail("home add: acquisition serving ranks are invalid")
+    target = plan.get("target")
+    target_fields = {
+        "rank", "node_id", "hostname", "cache_root", "hub_root",
+        "target_hub", "available_bytes", "hf_cli",
+    }
+    if not isinstance(target, dict) or set(target) != target_fields:
+        fail("home add: acquisition target fields are invalid")
+    if (
+        isinstance(target.get("rank"), bool)
+        or not isinstance(target.get("rank"), int)
+        or target["rank"] < 0
+    ):
+        fail("home add: acquisition target rank is invalid")
+    for field in ("node_id", "cache_root", "hub_root", "target_hub", "hf_cli"):
+        if not isinstance(target.get(field), str) or not target[field]:
+            fail(f"home add: acquisition target {field} is invalid")
+    if not isinstance(target.get("hostname"), str):
+        fail("home add: acquisition target hostname is invalid")
+    if (
+        isinstance(target.get("available_bytes"), bool)
+        or not isinstance(target.get("available_bytes"), int)
+        or target["available_bytes"] < plan["required_free_bytes"]
+    ):
+        fail("home add: acquisition target available space is invalid")
+    if target["hf_cli"] not in {"hf", "huggingface-cli"}:
+        fail("home add: acquisition target Hugging Face CLI is invalid")
+    if target["rank"] not in serving_ranks:
+        fail("home add: durable home is outside the profile serving ranks")
+    cache = pathlib.Path(target["cache_root"])
+    hub_root = pathlib.Path(target["hub_root"])
+    target_hub = pathlib.Path(target["target_hub"])
+    if not cache.is_absolute() or hub_root != cache / "hub":
+        fail("home add: acquisition cache layout is invalid")
+    if target_hub != hub_root / model_id_to_hub_dirname(plan["model_id"]):
+        fail("home add: acquisition repository path is invalid")
+    if plan.get("plan_id") != home_acquisition_plan_id(plan):
+        fail("home add: acquisition plan identity mismatch")
+    return plan
+
+
+def plan_home_acquisition(
+    *,
+    identity_plan: dict[str, Any],
+    topology_file: str | pathlib.Path,
+    topology_id: str,
+    observations_dir: str | pathlib.Path,
+    serving_nodes: int,
+    node_selector: str = "",
+) -> dict[str, Any]:
+    identity = validate_replicated_verification_plan(identity_plan)
+    topology = load_topology_for_plan(topology_file)
+    if topology.get("topology_id") != topology_id:
+        fail("home add: loaded topology differs from controller topology")
+    topology_ranks = sorted(int(node["rank"]) for node in topology.get("nodes") or [])
+    if (
+        isinstance(serving_nodes, bool)
+        or not isinstance(serving_nodes, int)
+        or serving_nodes < 1
+        or serving_nodes > len(topology_ranks)
+        or (
+            serving_nodes > 1
+            and topology_ranks[:serving_nodes] != list(range(serving_nodes))
+        )
+    ):
+        fail("home add: profile serving geometry exceeds confirmed contiguous ranks")
+    candidate_ranks = (
+        topology_ranks if serving_nodes == 1 else list(range(serving_nodes))
+    )
+    manifest = identity["manifest"]
+    observations = _load_home_acquisition_observations(
+        observations_dir,
+        topology,
+        model_id=identity["model_id"],
+        revision=identity["snapshot_revision"],
+        required_content_bytes=manifest["total_bytes"],
+    )
+    occupied = [item for item in observations if item.get("target_state") != "absent"]
+    if occupied:
+        ranks = ", ".join(str(item["rank"]) for item in occupied)
+        fail(
+            "home add: repository path already exists on confirmed rank(s) "
+            f"{ranks}; run catalog refresh and reconcile existing content"
+        )
+    eligible = [
+        item
+        for item in observations
+        if item.get("eligible") and item["rank"] in candidate_ranks
+    ]
+    if node_selector:
+        matches = [
+            item
+            for item in observations
+            if str(item["rank"]) == node_selector
+            or item.get("node_id") == node_selector
+        ]
+        if len(matches) != 1:
+            fail("home add: --node must match exactly one confirmed rank or node ID")
+        selected = matches[0]
+        if selected["rank"] not in candidate_ranks:
+            fail("home add: selected rank is outside the profile serving geometry")
+        if not selected.get("eligible"):
+            fail(
+                f"home add: selected rank {selected['rank']} is not eligible: "
+                f"{selected.get('detail') or 'target check failed'}"
+            )
+        selection = "operator-override"
+    else:
+        if not eligible:
+            details = "; ".join(
+                f"rank {item['rank']}: {item.get('detail') or 'not eligible'}"
+                for item in observations
+            )
+            fail(f"home add: no eligible durable-home rank ({details})")
+        selected = sorted(
+            eligible,
+            key=lambda item: (-int(item["available_bytes"]), int(item["rank"])),
+        )[0]
+        selection = "most-free-space"
+    serving_ranks = (
+        [int(selected["rank"])]
+        if serving_nodes == 1
+        else candidate_ranks
+    )
+    topology_node = next(
+        node
+        for node in topology.get("nodes") or []
+        if int(node["rank"]) == int(selected["rank"])
+    )
+    expected = identity["validation"]["expected_seal"]
+    plan: dict[str, Any] = {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_PLAN_KIND,
+        "created_at": utc_now(),
+        "topology_id": topology_id,
+        "profile": identity["profile"],
+        "model_id": identity["model_id"],
+        "revision": identity["snapshot_revision"],
+        "manifest_id": manifest["manifest_id"],
+        "seal_id": expected["seal_id"],
+        "validation_bundle_id": expected["validation_bundle_id"],
+        "file_count": manifest["file_count"],
+        "content_bytes": manifest["total_bytes"],
+        "required_free_bytes": selected["required_free_bytes"],
+        "serving_ranks": serving_ranks,
+        "selection": selection,
+        "target": {
+            "rank": selected["rank"],
+            "node_id": selected["node_id"],
+            "hostname": topology_node.get("hostname") or "",
+            "cache_root": selected["cache_root"],
+            "hub_root": selected["hub_root"],
+            "target_hub": selected["target_hub"],
+            "available_bytes": selected["available_bytes"],
+            "hf_cli": selected["hf_cli"],
+        },
+    }
+    plan["plan_id"] = home_acquisition_plan_id(plan)
+    return validate_home_acquisition_plan(plan)
+
+
+def recheck_home_acquisition_publication(
+    plan: dict[str, Any],
+    *,
+    topology_file: str | pathlib.Path,
+    topology_id: str,
+    observations_dir: str | pathlib.Path,
+) -> dict[str, Any]:
+    plan = validate_home_acquisition_plan(plan)
+    topology = load_topology_for_plan(topology_file)
+    if topology.get("topology_id") != topology_id or plan["topology_id"] != topology_id:
+        fail("home add: confirmed topology changed before publication")
+    observations = _load_home_acquisition_observations(
+        observations_dir,
+        topology,
+        model_id=plan["model_id"],
+        revision=plan["revision"],
+        required_content_bytes=plan["content_bytes"],
+    )
+    occupied = [item for item in observations if item.get("target_state") != "absent"]
+    if occupied:
+        ranks = ", ".join(str(item["rank"]) for item in occupied)
+        fail(
+            "home add: repository path appeared on confirmed rank(s) "
+            f"{ranks} during download; refusing duplicate-home publication"
+        )
+    selected = [
+        item
+        for item in observations
+        if item["rank"] == plan["target"]["rank"]
+        and item["node_id"] == plan["target"]["node_id"]
+        and item["target_hub"] == plan["target"]["target_hub"]
+    ]
+    if len(selected) != 1:
+        fail("home add: selected durable-home target changed before publication")
+    return {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_RECHECK_KIND,
+        "state": "publication-clear",
+        "plan_id": plan["plan_id"],
+        "observed_ranks": len(observations),
+    }
+
+
+def _validate_home_acquisition_execution_node(
+    plan: dict[str, Any], *, rank: int, node_id: str
+) -> dict[str, Any]:
+    plan = validate_home_acquisition_plan(plan)
+    target = plan["target"]
+    if target["rank"] != rank or target["node_id"] != node_id:
+        fail("home add: execution node differs from the acquisition plan")
+    return plan
+
+
+def create_home_acquisition_staging(
+    plan: dict[str, Any], *, rank: int, node_id: str
+) -> dict[str, Any]:
+    plan = _validate_home_acquisition_execution_node(plan, rank=rank, node_id=node_id)
+    target = plan["target"]
+    hub_root = pathlib.Path(target["hub_root"])
+    target_hub = pathlib.Path(target["target_hub"])
+    if _lstat_kind(target_hub)[0] != "missing":
+        fail("home add: durable repository appeared after the guard check")
+    hub_root.mkdir(parents=True, exist_ok=True)
+    if _lstat_kind(hub_root)[0] != "directory":
+        fail("home add: managed hub root is not an exact directory")
+    staging = pathlib.Path(
+        tempfile.mkdtemp(prefix=".pulsar-acquire-", dir=str(hub_root))
+    )
+    marker = {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_MARKER_KIND,
+        "plan_id": plan["plan_id"],
+        "rank": rank,
+        "node_id": node_id,
+        "created_at": utc_now(),
+    }
+    atomic_write_json(staging / ".pulsar-home-acquisition.json", marker)
+    return {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_MARKER_KIND,
+        "plan_id": plan["plan_id"],
+        "rank": rank,
+        "node_id": node_id,
+        "staging_root": str(staging),
+    }
+
+
+def _validate_home_acquisition_staging(
+    plan: dict[str, Any], staging_root: str | pathlib.Path
+) -> pathlib.Path:
+    hub_root = pathlib.Path(plan["target"]["hub_root"])
+    staging = pathlib.Path(staging_root)
+    if (
+        not staging.is_absolute()
+        or staging.parent != hub_root
+        or not staging.name.startswith(".pulsar-acquire-")
+    ):
+        fail("home add: staging root is outside the managed hub root")
+    if _lstat_kind(staging)[0] != "directory":
+        fail("home add: staging root is not an exact directory")
+    marker = load_json(staging / ".pulsar-home-acquisition.json")
+    expected = {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_MARKER_KIND,
+        "plan_id": plan["plan_id"],
+        "rank": plan["target"]["rank"],
+        "node_id": plan["target"]["node_id"],
+    }
+    if not isinstance(marker, dict) or any(
+        marker.get(field) != value for field, value in expected.items()
+    ):
+        fail("home add: staging ownership marker does not match the plan")
+    return staging
+
+
+def cleanup_home_acquisition_staging(
+    plan: dict[str, Any],
+    *,
+    staging_root: str | pathlib.Path,
+    rank: int,
+    node_id: str,
+) -> dict[str, Any]:
+    plan = _validate_home_acquisition_execution_node(plan, rank=rank, node_id=node_id)
+    staging = _validate_home_acquisition_staging(plan, staging_root)
+    shutil.rmtree(staging)
+    parent_fd = os.open(staging.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+    return {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_RESULT_KIND,
+        "state": "staging-removed",
+        "plan_id": plan["plan_id"],
+        "rank": rank,
+    }
+
+
+def execute_home_acquisition(
+    plan: dict[str, Any],
+    *,
+    identity_plan: dict[str, Any],
+    staging_root: str | pathlib.Path,
+    rank: int,
+    node_id: str,
+    workers: int | None = None,
+) -> dict[str, Any]:
+    plan = _validate_home_acquisition_execution_node(plan, rank=rank, node_id=node_id)
+    identity = validate_replicated_verification_plan(identity_plan)
+    expected = identity["validation"]["expected_seal"]
+    identity_fields = {
+        "profile": identity["profile"],
+        "model_id": identity["model_id"],
+        "revision": identity["snapshot_revision"],
+        "manifest_id": identity["manifest"]["manifest_id"],
+        "seal_id": expected["seal_id"],
+        "validation_bundle_id": expected["validation_bundle_id"],
+    }
+    for field, value in identity_fields.items():
+        if plan.get(field) != value:
+            fail(f"home add: reviewed identity {field} differs from the plan")
+    staging = _validate_home_acquisition_staging(plan, staging_root)
+    staged_hub = staging / model_id_to_hub_dirname(plan["model_id"])
+    if _lstat_kind(staged_hub)[0] != "directory":
+        fail("home add: Hugging Face download did not create the expected repository")
+    target_hub = pathlib.Path(plan["target"]["target_hub"])
+    if _lstat_kind(target_hub)[0] != "missing":
+        fail("home add: durable repository appeared before publication")
+
+    before = build_stable_replicated_witness_observation(identity, hub=staged_hub)
+    verification = verify_snapshot_manifest(
+        staged_hub,
+        identity["manifest"],
+        metadata_only=False,
+        workers=workers,
+    )
+    after = build_stable_replicated_witness_observation(identity, hub=staged_hub)
+    if before != after:
+        fail("home add: staged model metadata changed during full verification")
+    if _lstat_kind(target_hub)[0] != "missing":
+        fail("home add: durable repository appeared during verification")
+
+    try:
+        os.rename(staged_hub, target_hub)
+        parent_fd = os.open(target_hub.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError as exc:
+        fail(f"home add: atomic durable-home publication failed: {exc}")
+    verify_snapshot_manifest(target_hub, identity["manifest"], metadata_only=True)
+
+    cleanup_state = "removed"
+    try:
+        shutil.rmtree(staging)
+        parent_fd = os.open(staging.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError:
+        cleanup_state = "incomplete"
+    return {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_RESULT_KIND,
+        "state": "published",
+        "published_at": utc_now(),
+        "plan_id": plan["plan_id"],
+        "profile": plan["profile"],
+        "model_id": plan["model_id"],
+        "revision": plan["revision"],
+        "manifest_id": plan["manifest_id"],
+        "seal_id": plan["seal_id"],
+        "validation_bundle_id": plan["validation_bundle_id"],
+        "rank": rank,
+        "node_id": node_id,
+        "content_bytes": plan["content_bytes"],
+        "bytes_hashed": verification["bytes_hashed"],
+        "staging_cleanup": cleanup_state,
+        "catalog_refreshed": False,
+    }
+
+
 def select_home_removal_target(
     catalog_path: str | pathlib.Path,
     query: str,
@@ -6797,6 +7396,150 @@ def cmd_resolve_home_removal_target(args: argparse.Namespace) -> int:
         node_selector=args.node,
     )
     print(json.dumps(target, indent=2, sort_keys=True))
+    return 0
+
+
+def _decode_json_document_b64(value: str, *, label: str) -> dict[str, Any]:
+    try:
+        document = json.loads(base64.urlsafe_b64decode(value.encode("ascii")))
+    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"{label}: encoded JSON is invalid: {exc}")
+    if not isinstance(document, dict):
+        fail(f"{label}: document must be an object")
+    return document
+
+
+def cmd_inspect_home_acquisition_target(args: argparse.Namespace) -> int:
+    result = inspect_home_acquisition_target(
+        args.cache_root,
+        model_id=args.model_id,
+        revision=args.revision,
+        required_content_bytes=args.required_content_bytes,
+        rank=args.rank,
+        node_id=args.node_id,
+        hf_cli=args.hf_cli,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_plan_home_acquisition(args: argparse.Namespace) -> int:
+    plan = plan_home_acquisition(
+        identity_plan=decode_replicated_verification_plan(args.identity_plan_b64),
+        topology_file=args.topology_file,
+        topology_id=args.topology_id,
+        observations_dir=args.observations_dir,
+        serving_nodes=args.serving_nodes,
+        node_selector=args.node,
+    )
+    print(json.dumps(plan, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_recheck_home_acquisition_publication(args: argparse.Namespace) -> int:
+    plan = _decode_json_document_b64(args.plan_b64, label="home add plan")
+    result = recheck_home_acquisition_publication(
+        plan,
+        topology_file=args.topology_file,
+        topology_id=args.topology_id,
+        observations_dir=args.observations_dir,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_render_home_acquisition_plan(args: argparse.Namespace) -> int:
+    plan = validate_home_acquisition_plan(
+        _decode_json_document_b64(args.plan_b64, label="home add plan")
+    )
+    if TerminalWriter is None:
+        fail("home add rendering requires scripts/terminal_format.py")
+    target = plan["target"]
+    host = target.get("hostname") or f"rank {target['rank']}"
+    term = TerminalWriter()
+    term.emit("add model to distributed library")
+    term.field("model", plan["model_id"])
+    term.field("profile", plan["profile"])
+    term.field("revision", plan["revision"])
+    term.field("identity", f"reviewed seal · {plan['seal_id'][:12]}")
+    term.field("home", f"rank {target['rank']} · {host}")
+    term.field("serving ranks", ", ".join(str(rank) for rank in plan["serving_ranks"]))
+    term.field("placement", str(plan["selection"]).replace("-", " "))
+    term.field("content", _human_bytes(plan["content_bytes"]))
+    term.field(
+        "space",
+        f"{_human_bytes(target['available_bytes'])} free · "
+        f"{_human_bytes(plan['required_free_bytes'])} required",
+    )
+    term.blank()
+    term.emit("The selected rank downloads the exact reviewed commit into private staging.")
+    term.emit("Pulsar full-verifies SHA-256 before atomically publishing one durable home.")
+    term.emit("No hot copy is created, no model is started, and the catalog is not refreshed.")
+    return 0
+
+
+def cmd_create_home_acquisition_staging(args: argparse.Namespace) -> int:
+    plan = _decode_json_document_b64(args.plan_b64, label="home add plan")
+    result = create_home_acquisition_staging(
+        plan,
+        rank=args.rank,
+        node_id=args.node_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_cleanup_home_acquisition_staging(args: argparse.Namespace) -> int:
+    plan = _decode_json_document_b64(args.plan_b64, label="home add plan")
+    result = cleanup_home_acquisition_staging(
+        plan,
+        staging_root=args.staging_root,
+        rank=args.rank,
+        node_id=args.node_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_execute_home_acquisition(args: argparse.Namespace) -> int:
+    plan = _decode_json_document_b64(args.plan_b64, label="home add plan")
+    result = execute_home_acquisition(
+        plan,
+        identity_plan=decode_replicated_verification_plan(args.identity_plan_b64),
+        staging_root=args.staging_root,
+        rank=args.rank,
+        node_id=args.node_id,
+        workers=args.workers,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_render_home_acquisition_result(args: argparse.Namespace) -> int:
+    result = load_json(args.result_file)
+    if (
+        not isinstance(result, dict)
+        or result.get("kind") != HOME_ACQUISITION_RESULT_KIND
+        or result.get("state") != "published"
+    ):
+        fail("home add: result document is invalid")
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if TerminalWriter is None:
+        fail("home add rendering requires scripts/terminal_format.py")
+    term = TerminalWriter()
+    term.emit("distributed library home  READY")
+    term.field("model", result["model_id"])
+    term.field("revision", result["revision"])
+    term.field("home", f"rank {result['rank']}")
+    term.field("identity", f"reviewed seal · {result['seal_id'][:12]}")
+    term.field("verified", f"{_human_bytes(result['bytes_hashed'])} SHA-256")
+    term.field("catalog", "unchanged · explicit refresh required")
+    if result.get("staging_cleanup") != "removed":
+        term.field("warning", "private staging cleanup is incomplete")
+    term.blank()
+    term.emit("Next: scripts/model-library.sh catalog refresh")
     return 0
 
 
@@ -8048,6 +8791,87 @@ def build_parser() -> argparse.ArgumentParser:
     legacy_result.add_argument("--result-file", required=True)
     legacy_result.add_argument("--json", action="store_true")
     legacy_result.set_defaults(func=cmd_render_legacy_result)
+
+    acquisition_inspect = sub.add_parser(
+        "inspect-home-acquisition-target",
+        help="Inspect one rank for exact reviewed durable-home acquisition",
+    )
+    acquisition_inspect.add_argument("--cache-root", required=True)
+    acquisition_inspect.add_argument("--model-id", required=True)
+    acquisition_inspect.add_argument("--revision", required=True)
+    acquisition_inspect.add_argument("--required-content-bytes", type=int, required=True)
+    acquisition_inspect.add_argument("--rank", type=int, required=True)
+    acquisition_inspect.add_argument("--node-id", required=True)
+    acquisition_inspect.add_argument("--hf-cli", default="")
+    acquisition_inspect.set_defaults(func=cmd_inspect_home_acquisition_target)
+
+    acquisition_plan = sub.add_parser(
+        "plan-home-acquisition",
+        help="Select one eligible rank for a reviewed durable home",
+    )
+    acquisition_plan.add_argument("--identity-plan-b64", required=True)
+    acquisition_plan.add_argument("--topology-file", required=True)
+    acquisition_plan.add_argument("--topology-id", required=True)
+    acquisition_plan.add_argument("--observations-dir", required=True)
+    acquisition_plan.add_argument("--serving-nodes", type=int, required=True)
+    acquisition_plan.add_argument("--node", default="")
+    acquisition_plan.set_defaults(func=cmd_plan_home_acquisition)
+
+    acquisition_recheck = sub.add_parser(
+        "recheck-home-acquisition-publication",
+        help="Recheck every confirmed rank before one-home publication",
+    )
+    acquisition_recheck.add_argument("--plan-b64", required=True)
+    acquisition_recheck.add_argument("--topology-file", required=True)
+    acquisition_recheck.add_argument("--topology-id", required=True)
+    acquisition_recheck.add_argument("--observations-dir", required=True)
+    acquisition_recheck.set_defaults(func=cmd_recheck_home_acquisition_publication)
+
+    acquisition_render = sub.add_parser(
+        "render-home-acquisition-plan",
+        help="Render a reviewed durable-home acquisition plan",
+    )
+    acquisition_render.add_argument("--plan-b64", required=True)
+    acquisition_render.set_defaults(func=cmd_render_home_acquisition_plan)
+
+    acquisition_create = sub.add_parser(
+        "create-home-acquisition-staging",
+        help="Create plan-owned same-filesystem acquisition staging",
+    )
+    acquisition_create.add_argument("--plan-b64", required=True)
+    acquisition_create.add_argument("--rank", type=int, required=True)
+    acquisition_create.add_argument("--node-id", required=True)
+    acquisition_create.set_defaults(func=cmd_create_home_acquisition_staging)
+
+    acquisition_cleanup = sub.add_parser(
+        "cleanup-home-acquisition-staging",
+        help="Remove one plan-owned incomplete acquisition staging tree",
+    )
+    acquisition_cleanup.add_argument("--plan-b64", required=True)
+    acquisition_cleanup.add_argument("--staging-root", required=True)
+    acquisition_cleanup.add_argument("--rank", type=int, required=True)
+    acquisition_cleanup.add_argument("--node-id", required=True)
+    acquisition_cleanup.set_defaults(func=cmd_cleanup_home_acquisition_staging)
+
+    acquisition_execute = sub.add_parser(
+        "execute-home-acquisition",
+        help="Verify and atomically publish one reviewed durable home",
+    )
+    acquisition_execute.add_argument("--plan-b64", required=True)
+    acquisition_execute.add_argument("--identity-plan-b64", required=True)
+    acquisition_execute.add_argument("--staging-root", required=True)
+    acquisition_execute.add_argument("--rank", type=int, required=True)
+    acquisition_execute.add_argument("--node-id", required=True)
+    acquisition_execute.add_argument("--workers", type=int)
+    acquisition_execute.set_defaults(func=cmd_execute_home_acquisition)
+
+    acquisition_result = sub.add_parser(
+        "render-home-acquisition-result",
+        help="Render a completed durable-home acquisition",
+    )
+    acquisition_result.add_argument("--result-file", required=True)
+    acquisition_result.add_argument("--json", action="store_true")
+    acquisition_result.set_defaults(func=cmd_render_home_acquisition_result)
 
     home_target = sub.add_parser(
         "resolve-home-removal-target",

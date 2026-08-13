@@ -1410,6 +1410,27 @@ Cached home and primary ranks are interpreted only when
 `catalog.topology_compatible=true`. The interactive renderer marks placement
 stale and suppresses cached node mapping until an explicit catalog refresh.
 
+The current system also provides a distinct durable-home acquisition service:
+`scripts/model-library.sh home add <sealed-profile>`. It accepts no unvalidated
+bypass. The Bash boundary observes the Hugging Face cache environment and CLI
+availability on every confirmed rank; Python validates the reviewed identity,
+capacity, exact rank/node mapping, one-home state, and placement decision. For
+a one-node profile, every confirmed rank is a candidate serving placement; the
+selected home rank becomes that profile's sole serving rank. Multi-node
+candidates remain the exact contiguous profile ranks. With no override the
+eligible candidate with the most free space is selected; `--node` is exact,
+must remain in the applicable geometry, and never falls back. The selected rank
+downloads the immutable commit
+into a plan-owned private cache below the final hub filesystem. After download,
+Pulsar repeats the all-rank target-absence check, full-hashes the expected
+manifest under stable metadata, and atomically renames only the repository into
+its durable HF location. A failed download or verification removes only the
+owned staging tree; an existing or raced repository path fails closed. The
+command does not create hot content, prepare a runtime view, issue a witness,
+start serving, alter status, or refresh the catalog. Deterministic Python and
+thin public-CLI contracts pass; physical multi-rank acquisition evidence is
+still pending, so this closes the implementation gap but not release promotion.
+
 `./pulsar models` and operator-home **Models & storage** now consume that
 public report through `scripts/model-storage.sh` plus the width-aware
 `scripts/model_storage.py` renderer. They browse cached identity, placement,
@@ -1476,8 +1497,9 @@ These points combine current evidence with the accepted architecture:
    separate release-promotion candidate; do not guide it until the combined
    gates, including applicable model qualification and soak, pass. When the
    current interactive experimental action is explicitly selected, use that
-   fixed transport/stream policy with no fallback; catalog refresh still does
-   not acquire a missing durable home.
+   fixed transport/stream policy with no fallback. Catalog refresh still does
+   not acquire a missing durable home; the separate reviewed-profile
+   `home add` service now does so without changing the guided default.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
