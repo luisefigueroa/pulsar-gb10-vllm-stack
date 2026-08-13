@@ -1426,10 +1426,14 @@ Pulsar repeats the all-rank target-absence check, full-hashes the expected
 manifest under stable metadata, and atomically renames only the repository into
 its durable HF location. A failed download or verification removes only the
 owned staging tree; an existing or raced repository path fails closed. The
-command does not create hot content, prepare a runtime view, issue a witness,
-start serving, alter status, or refresh the catalog. Deterministic Python and
-thin public-CLI contracts pass; physical multi-rank acquisition evidence is
-still pending, so this closes the implementation gap but not release promotion.
+command discovers `hf`, `huggingface-cli`, or Pulsar's managed user-venv CLI on
+the selected target. It does not create hot content, prepare a runtime view,
+issue a witness, start serving, alter status, or refresh the catalog.
+Deterministic Python and thin public-CLI contracts pass. The three-node physical
+catalog/artifact gate also passed target-side exact download, interruption
+cleanup, explicit and automatic remote placement, full verification, atomic
+publication, explicit refresh, and final one-home state. This closes the
+acquisition evidence gap but not serving integration or release promotion.
 
 `./pulsar models` and operator-home **Models & storage** now consume that
 public report through `scripts/model-storage.sh` plus the width-aware

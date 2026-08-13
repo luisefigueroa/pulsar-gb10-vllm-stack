@@ -474,7 +474,9 @@ any confirmed rank as its sole serving placement; without `--node`, the most-
 free-space eligible rank is selected. Multi-node placement remains limited to
 the profile's exact serving ranks so preparation retains the one-home plus N−1
 hot-copy contract. The chosen rank needs upstream access and
-its own Hugging Face authentication when the repository is gated. It downloads
+its own Hugging Face authentication when the repository is gated. Pulsar checks
+the target's PATH and its managed `$HOME/.hf-cli/venv/bin/hf` installation. It
+downloads
 the exact reviewed commit into a private directory on the destination
 filesystem, repeats the cluster-wide duplicate check, full-verifies the lab
 manifest, and atomically publishes one durable HF repository. It never copies

@@ -306,6 +306,14 @@ durable home separately before running preparation.
     - the result states that catalog refresh, preparation, launch, model
       qualification, and release promotion did not occur.
 
+The reviewed acquisition contract passed this three-node physical gate on
+2026-08-13 using the sealed `qwen3-1.7b` profile. The run proved guarded removal
+of the prior final home, interrupted remote staging cleanup, explicit remote
+placement, automatic most-free-space remote placement, full reviewed-manifest
+verification, atomic publication, explicit catalog refresh, and a final
+one-home/no-hot state. See
+`results/model-library/qwen3-1.7b-home-acquisition-gate-20260813.json`.
+
 The current guard passed that deterministic and three-node physical gate on
 2026-08-11. See
 `results/model-library/model-library-home-removal-guard-20260811.json`.

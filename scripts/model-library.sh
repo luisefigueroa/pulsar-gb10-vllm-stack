@@ -1341,6 +1341,8 @@ home_acquisition_rank_environment() {
       hf_cli=hf
     elif command -v huggingface-cli >/dev/null 2>&1; then
       hf_cli=huggingface-cli
+    elif [ -x "$HOME/.hf-cli/venv/bin/hf" ]; then
+      hf_cli="$HOME/.hf-cli/venv/bin/hf"
     fi
     printf '%s\t%s\n' "$HF_CACHE" "$hf_cli"
     return
@@ -1350,6 +1352,8 @@ home_acquisition_rank_environment() {
   command='cache_root=${HF_CACHE:-$HOME/.cache/huggingface}; hf_cli=""; '
   command+='if command -v hf >/dev/null 2>&1; then hf_cli=hf; '
   command+='elif command -v huggingface-cli >/dev/null 2>&1; then hf_cli=huggingface-cli; fi; '
+  command+='if [ -z "$hf_cli" ] && [ -x "$HOME/.hf-cli/venv/bin/hf" ]; '
+  command+='then hf_cli="$HOME/.hf-cli/venv/bin/hf"; fi; '
   # shellcheck disable=SC2016
   command+='printf "%s\t%s\n" "$cache_root" "$hf_cli"'
   ssh_node "$rank" "$command"
