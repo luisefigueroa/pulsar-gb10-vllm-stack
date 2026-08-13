@@ -264,6 +264,21 @@ preserve unique result bundles for the affected scopes:
    - incomplete retirement is rediscovered and retryable; and
    - the disposable legacy removal unblocks `home check`, followed by an exact
      disposable-home removal repeat and sibling-preservation proof.
+11. interactive model-storage delegation when its eligibility or command
+    contract changes:
+    - browsing and health recheck remain mutation-free;
+    - stale topology, missing expected identity, missing primary, unsealed
+      profile metadata, and invalid profile JSON suppress preparation;
+    - the preview names exact revision/manifest, durable-home dependency,
+      approximate non-home storage, and the selected transfer policy;
+    - confirmation defaults to no and decline invokes no mutation;
+    - acceptance delegates exactly to reviewed-profile eight-stream
+      SSH-over-RoCE copy with no fallback or `--allow-unvalidated`;
+    - success and failure both trigger fresh health, never claim launch or
+      promotion, and preserve service diagnostics; and
+    - repeat physical preparation only if the underlying identity, topology,
+      admission, transfer, rollback, witness, or lifecycle contract changes.
+      Pure UI delegation may reuse matching physical service evidence.
 
 The current guard passed that deterministic and three-node physical gate on
 2026-08-11. See

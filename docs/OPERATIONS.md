@@ -29,7 +29,7 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 |---|---|
 | `./pulsar` | Neutral **operator home** (workflow menu; no preflight on entry) |
 | `./pulsar wizard` | Serve/switch wizard (doctor + preflight; direct shortcut) |
-| `./pulsar models` | Browse cached distributed models/runtime views and explicitly refresh catalog inventory (experimental) |
+| `./pulsar models` | Browse cached models/runtime views; explicitly refresh or prepare reviewed models (experimental) |
 | `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
 | `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
@@ -52,7 +52,7 @@ Menu (default cursor: status):
 2. **Serve or switch a model** — enters `wizard.sh` (its doctor/preflight)
 3. **Stop a serving model** — inventory-safe active managed only; confirm → `down.sh`
 4. **Models & storage** — cached identity, placement, runtime views, and findings
-   (read-only; distributed catalog is experimental)
+   (browsing is read-only; refresh/preparation are explicit and experimental)
 5. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
 6. **Diagnostics** — run doctor, detailed inventory (read-only)
 7. **Exit**
@@ -64,8 +64,8 @@ maintenance; there is no automatic cleanup on doctor or startup.
 ### Models & storage semantics
 
 `./pulsar models` and Home **Models & storage** call
-`scripts/model-storage.sh`, a read-only interactive projection of the cached
-model-library health report. The view keeps **replicated local model copies**
+`scripts/model-storage.sh`, an interactive projection of the cached
+model-library health report. Browsing keeps **replicated local model copies**
 visible as the guided serving default and labels the distributed catalog as
 experimental. It shows cached age and topology compatibility, profile and exact
 model/revision/manifest identity, durable-home and primary state, per-rank
@@ -84,7 +84,32 @@ invalid health JSON fails closed with no action. Catalog absence or health
 findings do not block replicated serving. Pinning remains a retention choice,
 not durable-home-loss resilience, and catalog/serving health is not model
 qualification or release promotion. Mutating model-library operations remain
-direct CLI workflows in this increment.
+direct CLI workflows except for the two bounded actions described below.
+
+**Refresh distributed catalog** is a separate default-no confirmation. It
+delegates to the atomic all-confirmed-rank catalog refresh and then obtains a
+new sanitized health report. It does not move model bytes.
+
+**Prepare for experimental serving** appears only for a tested serving profile
+that is associated with the exact catalog entry and carries a reviewed expected
+seal. Before confirmation the view shows the exact model revision and manifest,
+durable-home dependency, serving node count, approximate non-home storage, and
+fixed transfer policy: SSH over the confirmed RoCE plane, eight streams, no
+fallback. Confirmation delegates to:
+
+```bash
+scripts/model-library.sh prepare <profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
+```
+
+The preparation service remains authoritative: it rechecks topology and
+primary placement, full-verifies the expected seal, performs exact all-rank
+storage admission, creates only non-home sealed-hot copies, publishes witnesses
+only after the all-rank barrier, and rolls back or leaves explicit incomplete
+state on failure. The interactive surface always obtains fresh health after the
+attempt. It provides no `--allow-unvalidated` route, transport picker, fallback,
+or automatic launch. Success means the artifacts are prepared, not that a model
+was started, qualified, or that `library-hot` was promoted.
 
 ### Quick status semantics
 
@@ -496,6 +521,14 @@ a new sanitized health report. Missing/stale topology, unreachable ranks, or
 invalid scans fail closed; model files and the replicated serving default are
 not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
 or deletes a model, and it never runs automatically.
+
+From an exact model detail, **Prepare for experimental serving** is a second
+separate default-no action. It is offered only for reviewed-seal tested serving
+profiles and delegates to the fixed eight-stream SSH-over-RoCE preparation
+command documented above. The service revalidates exact identity, topology,
+capacity, and all-rank completion; there is no fallback. The action does not
+launch or promote the model. Pin, purge, repair, and durable-home removal remain
+direct CLI operations.
 
 Schema-1/2 hot metadata is obsolete and cannot launch. If health marks an
 instance repairable, inspect and remove only by its freshly issued ID:

@@ -616,8 +616,22 @@ existing all-confirmed-rank refresh service, preserves exact-revision primary
 selections, and then renders a new sanitized health report. Refresh is never
 automatic; incomplete topology or rank observation fails closed. The
 projection labels replicated serving as the guided default and the distributed
-catalog as experimental; it offers no preparation, launch, retention, repair,
-or deletion action. Current health closes supported catalog/hot observability, but container labels still do not carry
+catalog as experimental.
+
+An exact model detail may also offer **Prepare for experimental serving** when
+the catalog mapping is current and the matching tested serving profile carries
+a reviewed expected seal. This is a separate default-no mutation, fixed to the
+accepted eight-stream SSH-over-RoCE copy policy with no fallback. The
+interactive layer shows exact revision/manifest identity, durable-home
+dependency, serving ranks, and an approximate non-home storage requirement,
+then delegates to the existing preparation service. That service remains the
+authority for full verification, exact all-rank storage admission, topology and
+primary checks, rollback, and witness publication. The interaction never adds
+`--allow-unvalidated`, starts serving, changes the replicated guided default, or
+claims model qualification or storage-path promotion. Retention, repair, purge,
+and durable-home removal remain separate direct-CLI operations.
+
+Current health closes supported catalog/hot observability, but container labels still do not carry
 per-rank runtime-source/witness state and unmanaged processes remain outside
 Pulsar's discovery boundary.
 
@@ -778,8 +792,9 @@ blocker changed.
 
 ## 8. Remaining deferred work
 
-- Model preparation/start integration into the serving wizard or other guided
-  defaults; cached browsing and explicit catalog refresh are implemented
+- Model start integration into the serving wizard; cached browsing, explicit
+  catalog refresh, and explicit experimental preparation are implemented, but
+  no guided/default storage policy changed
 - Machine-readable qualification dimensions; current scope separation is a
   documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time
@@ -838,3 +853,4 @@ blocker changed.
 | 2026-08-12 | Read-only health and guarded legacy-hot removal passed a three-node physical gate with disposable schema-1 instances, including remote repair, stopped-container and pin blockers, no-follow/sibling preservation, preserved-untracked attention, and the exact disposable-home removal subset. No production state was changed. |
 | 2026-08-12 | The existing DeepSeek GA duplicate was reconciled to one persistent rank-1 durable home. A clean physical repeat passed eight-stream SSH-over-RoCE preparation to rank 0 sealed-hot, rank-1 durable-home view, full exact-manifest verification, zero-byte witnesses, read-only launch, eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home state. Strict determinism, sustained soak, and promotion remain open. |
 | 2026-08-12 | Models & storage gained an explicit confirmation-gated catalog refresh that delegates to the existing atomic all-rank service. Browsing and health rechecks remain read-only; refresh is never automatic and does not prepare, launch, retain, repair, or delete models. |
+| 2026-08-12 | Exact model detail gained confirmation-gated experimental preparation for reviewed-seal tested serving profiles. It delegates to eight-stream SSH-over-RoCE copy with no fallback and re-renders health; it does not launch, expose unvalidated bypass, change replicated defaults, or claim promotion. |

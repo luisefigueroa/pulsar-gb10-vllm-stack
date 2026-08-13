@@ -450,7 +450,7 @@ while true; do
       workflow_stop
       ;;
     "Models & storage")
-      log "opening cached model catalog and storage health (read-only)…"
+      log "opening model storage; browsing is read-only and mutations require explicit confirmation…"
       cmd_models || warn "model catalog view is unavailable"
       ;;
     "Maintenance")

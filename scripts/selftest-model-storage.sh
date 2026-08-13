@@ -10,6 +10,8 @@ python3 "$REPO_DIR/scripts/testlib/model_storage_fixture.py" "$STATE/reports"
 VIEW="$REPO_DIR/scripts/model-storage.sh"
 LOG="$STATE/health.log"
 REFRESH_LOG="$STATE/refresh.log"
+PROFILES_LOG="$STATE/profiles.log"
+PREPARE_LOG="$STATE/prepare.log"
 
 assert_contains() {
   local file="$1" pattern="$2" message="$3"
@@ -55,24 +57,57 @@ fi
 SH
 chmod +x "$STATE/bin/catalog-refresh"
 
+cat >"$STATE/bin/profiles-json" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$PROFILES_LOG"
+cat "$PROFILES_REPORT"
+SH
+chmod +x "$STATE/bin/profiles-json"
+
+cat >"$STATE/bin/prepare-model" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$PREPARE_LOG"
+if [ "${PREPARE_RC:-0}" -ne 0 ]; then
+  echo "fixture preparation failed" >&2
+  exit "$PREPARE_RC"
+fi
+if [ -n "${PREPARE_RESULT:-}" ]; then
+  cp "$PREPARE_RESULT" "$HEALTH_REPORT"
+fi
+SH
+chmod +x "$STATE/bin/prepare-model"
+
 run_view() {
   local report="$1" rc="$2" input="$3" output="$4"
   local refresh_rc="${5:-0}" refresh_result="${6:-}"
+  local prepare_rc="${7:-0}" prepare_result="${8:-}"
+  local profiles_report="${9:-$STATE/reports/profiles.json}"
   local active_report="$STATE/current-health.json"
   cp "$STATE/reports/$report" "$active_report"
   : >"$LOG"
   : >"$REFRESH_LOG"
+  : >"$PROFILES_LOG"
+  : >"$PREPARE_LOG"
   set +e
   printf '%s' "$input" | env \
     GUM=0 \
     MODEL_STORAGE_HEALTH_CMD="$STATE/bin/health-json" \
     MODEL_STORAGE_REFRESH_CMD="$STATE/bin/catalog-refresh" \
+    MODEL_STORAGE_PROFILES_CMD="$STATE/bin/profiles-json" \
+    MODEL_STORAGE_PREPARE_CMD="$STATE/bin/prepare-model" \
     HEALTH_LOG="$LOG" \
     HEALTH_REPORT="$active_report" \
     HEALTH_RC="$rc" \
     REFRESH_LOG="$REFRESH_LOG" \
     REFRESH_RC="$refresh_rc" \
     REFRESH_RESULT="$refresh_result" \
+    PROFILES_LOG="$PROFILES_LOG" \
+    PROFILES_REPORT="$profiles_report" \
+    PREPARE_LOG="$PREPARE_LOG" \
+    PREPARE_RC="$prepare_rc" \
+    PREPARE_RESULT="$prepare_result" \
     "$VIEW" >"$output" 2>&1
   VIEW_RC=$?
   set -e
@@ -108,7 +143,7 @@ gum_index=$(env -u NO_COLOR \
 [ "$gum_index" = 1 ]
 echo "OK   Gum chooser returns the selected duplicate-label index"
 
-run_view healthy.json 0 $'1\n1\n6\n' "$STATE/healthy.out"
+run_view healthy.json 0 $'1\n2\n6\n' "$STATE/healthy.out"
 [ "$VIEW_RC" -eq 0 ]
 assert_contains "$STATE/healthy.out" 'guided default'   "guided replicated default remains visible"
 assert_contains "$STATE/healthy.out" 'experimental inventory'   "catalog view is visibly experimental"
@@ -116,8 +151,51 @@ assert_contains "$STATE/healthy.out" 'MODEL STORAGE DETAIL'   "exact-model detai
 assert_contains "$STATE/healthy.out" 'durable home|durable-home'   "durable-home dependency is visible"
 [ "$(wc -l <"$LOG")" -eq 1 ]
 [ "$(cat "$LOG")" = "--json" ]
+[ "$(cat "$PROFILES_LOG")" = "--validated --serving --json" ]
 [ ! -s "$REFRESH_LOG" ]
+[ ! -s "$PREPARE_LOG" ]
 echo "OK   browsing never refreshes the catalog automatically"
+echo "OK   ordinary browsing never prepares model files"
+
+run_view unprepared.json 0 $'1\n1\nn\n6\n' "$STATE/prepare-decline.out"
+[ "$VIEW_RC" -eq 0 ]
+[ ! -s "$PREPARE_LOG" ]
+assert_contains "$STATE/prepare-decline.out" 'PREPARE FOR EXPERIMENTAL SERVING' \
+  "preparation is visibly experimental before confirmation"
+assert_contains "$STATE/prepare-decline.out" 'SSH over confirmed RoCE.*8 streams' \
+  "preparation preview exposes the fixed transfer policy"
+assert_contains "$STATE/prepare-decline.out" 'fallback[[:space:]]+none' \
+  "preparation preview promises no silent transfer fallback"
+assert_contains "$STATE/prepare-decline.out" '167 GiB on each non-home' \
+  "preparation preview estimates non-home storage"
+assert_contains "$STATE/prepare-decline.out" 'does not start a model' \
+  "preparation preview preserves the launch boundary"
+echo "OK   declined confirmation leaves model files unchanged"
+
+run_view unprepared.json 0 $'1\n1\ny\n6\n' "$STATE/prepare-success.out" 0 "" 0 \
+  "$STATE/reports/healthy.json"
+[ "$VIEW_RC" -eq 0 ]
+[ "$(cat "$PREPARE_LOG")" = \
+  "prepare deepseek-v4-flash --backend copy --transport ssh-roce --copy-streams 8 --yes" ]
+[ "$(wc -l <"$LOG")" -eq 2 ]
+assert_contains "$STATE/prepare-success.out" 'model files prepared and verified' \
+  "successful preparation reports verified model files"
+assert_contains "$STATE/prepare-success.out" 'serving was not started' \
+  "successful preparation never claims launch"
+assert_contains "$STATE/prepare-success.out" 'views[[:space:]]+2' \
+  "successful preparation re-renders current runtime-view count"
+assert_not_contains "$PREPARE_LOG" 'allow-unvalidated' \
+  "interactive preparation cannot bypass reviewed identity"
+
+run_view unprepared.json 0 $'1\n1\ny\n6\n' "$STATE/prepare-failure.out" 0 "" 1
+[ "$VIEW_RC" -eq 0 ]
+[ "$(wc -l <"$LOG")" -eq 2 ]
+assert_contains "$STATE/prepare-failure.out" 'model preparation did not complete' \
+  "failed preparation never claims success"
+assert_contains "$STATE/prepare-failure.out" 'fixture preparation failed' \
+  "failed preparation preserves service diagnostics"
+assert_contains "$STATE/prepare-failure.out" 'serving was not started' \
+  "failed preparation preserves the launch boundary"
 
 run_view attention.json 1 $'2\n1\n6\n' "$STATE/attention.out"
 [ "$VIEW_RC" -eq 0 ]
@@ -135,6 +213,9 @@ assert_contains "$STATE/stale-detail.out" 'primary.*unavailable.*refresh catalog
   "stale topology suppresses cached primary placement"
 assert_not_contains "$STATE/stale-detail.out" '^home[[:space:]]+node 2' \
   "stale topology never labels a cached home as a current node"
+[ ! -s "$PREPARE_LOG" ]
+assert_contains "$STATE/stale-detail.out" 'Preparation blocked' \
+  "stale topology disables experimental preparation"
 
 run_view collision.json 0 $'2\n1\n7\n' "$STATE/collision.out"
 [ "$VIEW_RC" -eq 0 ]
@@ -206,6 +287,16 @@ run_view healthy.json 2 '' "$STATE/unexpected-rc.out"
 assert_contains "$STATE/unexpected-rc.out" 'failed with status 2.*no catalog action was taken' \
   "unexpected health-service failures fail closed"
 
+run_view unprepared.json 0 $'1\n1\n6\n' "$STATE/invalid-profiles.out" 0 "" 0 "" \
+  "$STATE/reports/invalid-profiles.json"
+[ "$VIEW_RC" -eq 0 ]
+[ ! -s "$PREPARE_LOG" ]
+assert_contains "$STATE/invalid-profiles.out" \
+  'serving-profile catalog is invalid.*preparation is disabled' \
+  "invalid serving-profile metadata disables preparation"
+assert_contains "$STATE/invalid-profiles.out" 'MODEL STORAGE DETAIL' \
+  "invalid serving-profile metadata does not block browsing"
+
 run_view healthy.json 0 $'6\n' "$STATE/narrow.out"
 [ "$VIEW_RC" -eq 0 ]
 COLUMNS=48 python3 "$REPO_DIR/scripts/model_storage.py" \
@@ -223,16 +314,21 @@ printf '6\n' | env \
   GUM=0 \
   MODEL_STORAGE_HEALTH_CMD="$STATE/bin/health-json" \
   MODEL_STORAGE_REFRESH_CMD="$STATE/bin/catalog-refresh" \
+  MODEL_STORAGE_PROFILES_CMD="$STATE/bin/profiles-json" \
+  MODEL_STORAGE_PREPARE_CMD="$STATE/bin/prepare-model" \
   HEALTH_LOG="$LOG" \
   HEALTH_REPORT="$STATE/reports/healthy.json" \
   HEALTH_RC=0 \
+  PROFILES_LOG="$PROFILES_LOG" \
+  PROFILES_REPORT="$STATE/reports/profiles.json" \
+  PREPARE_LOG="$PREPARE_LOG" \
   "$REPO_DIR/pulsar" models >"$STATE/dispatcher.out" 2>&1
 assert_contains "$STATE/dispatcher.out" 'MODELS & STORAGE'   "./pulsar models routes to model storage"
 "$REPO_DIR/pulsar" help >"$STATE/help.out"
-assert_contains "$STATE/help.out" 'Catalog refresh is a' \
+assert_contains "$STATE/help.out" 'Catalog refresh and' \
   "dispatcher help introduces catalog refresh"
-assert_contains "$STATE/help.out" 'separate confirmed action' \
-  "dispatcher help describes refresh as explicit"
+assert_contains "$STATE/help.out" 'separate confirmed actions' \
+  "dispatcher help describes refresh and preparation as explicit"
 assert_not_contains "$STATE/help.out" 'models reads cached health only' \
   "dispatcher help does not claim model storage is read-only"
 
@@ -240,13 +336,19 @@ cat >"$STATE/bin/models-cmd" <<SH
 #!/usr/bin/env bash
 exec env GUM=0 \
   MODEL_STORAGE_HEALTH_CMD="$STATE/bin/health-json" \
+  MODEL_STORAGE_PROFILES_CMD="$STATE/bin/profiles-json" \
+  MODEL_STORAGE_PREPARE_CMD="$STATE/bin/prepare-model" \
   HEALTH_LOG="$LOG" \
   HEALTH_REPORT="$STATE/reports/healthy.json" \
   HEALTH_RC=0 \
+  PROFILES_LOG="$PROFILES_LOG" \
+  PROFILES_REPORT="$STATE/reports/profiles.json" \
+  PREPARE_LOG="$PREPARE_LOG" \
   "$VIEW"
 SH
 chmod +x "$STATE/bin/models-cmd"
 : >"$LOG"
+: >"$PREPARE_LOG"
 printf '4\n6\n7\n' | env \
   GUM=0 \
   HOME_MODELS_CMD="$STATE/bin/models-cmd" \
@@ -258,5 +360,6 @@ printf '4\n6\n7\n' | env \
 assert_contains "$STATE/home.out" 'Models & storage'   "operator home exposes the model-storage subsystem"
 assert_contains "$STATE/home.out" 'guided default'   "home route preserves serving-policy context"
 assert_not_contains "$LOG" 'refresh|prepare|start|pin|purge|remove'   "ordinary browsing invokes no lifecycle mutation"
+[ ! -s "$PREPARE_LOG" ]
 
 echo "model-storage selftest PASS"

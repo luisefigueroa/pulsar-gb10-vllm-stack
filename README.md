@@ -111,7 +111,7 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 
 # Operator home (neutral workflow menu — no doctor/preflight until you pick)
 ./pulsar
-# Browse cached distributed model identity and placement (read-only; experimental)
+# Browse model storage; optional refresh/preparation is explicit and experimental
 ./pulsar models
 # Direct serve/switch wizard (doctor + preflight; not the no-arg home)
 ./pulsar wizard
@@ -129,8 +129,12 @@ Diagnostics, Exit. Models & storage browses cached exact identity,
 durable-home/runtime placement, and findings; it labels the distributed catalog
 experimental. Browsing and health rechecks are read-only. A separate,
 confirmation-gated refresh can rescan confirmed ranks and update only the
-cached catalog; it never runs automatically and does not prepare, launch, or
-clean model state.
+cached catalog; it never runs automatically. A second confirmed action can
+prepare only a tested serving profile with reviewed identity using eight-stream
+SSH-over-RoCE and no fallback. It verifies and budgets rank-local views but does
+not start serving, qualify the model, promote the storage path, or change the
+replicated guided default. Retention, cleanup, repair, and durable-home removal
+remain separate direct-CLI workflows.
 Home is read-only by default; it does not run doctor/inventory until you choose.
 Quick status is a focused overview (inventory + `/v1/models` advertisement only —
 **not** an inference smoke). Full completion smoke is optional and explicit.

@@ -146,6 +146,73 @@ def load_report(path: str | pathlib.Path) -> dict[str, Any]:
     return validate_report(value)
 
 
+def validate_profiles(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict) or not isinstance(value.get("models"), list):
+        raise ModelStorageContractError("serving profiles must contain a models array")
+    for index, profile in enumerate(value["models"]):
+        if not isinstance(profile, dict):
+            raise ModelStorageContractError(
+                f"serving profiles[{index}] must be an object"
+            )
+        for field in ("id", "status", "source", "purpose"):
+            if not isinstance(profile.get(field), str) or not profile[field]:
+                raise ModelStorageContractError(
+                    f"serving profiles[{index}] {field} is invalid"
+                )
+        nodes = profile.get("nodes")
+        if (
+            not isinstance(nodes, int)
+            or isinstance(nodes, bool)
+            or nodes < 1
+        ):
+            raise ModelStorageContractError(
+                f"serving profiles[{index}] nodes is invalid"
+            )
+        if not isinstance(profile.get("reviewed_identity"), bool):
+            raise ModelStorageContractError(
+                f"serving profiles[{index}] reviewed_identity is invalid"
+            )
+        for field in (
+            "reviewed_model_id",
+            "reviewed_revision",
+            "reviewed_manifest",
+        ):
+            identity_value = profile.get(field)
+            if identity_value is not None and (
+                not isinstance(identity_value, str) or not identity_value
+            ):
+                raise ModelStorageContractError(
+                    f"serving profiles[{index}] {field} is invalid"
+                )
+            if profile["reviewed_identity"] and not identity_value:
+                raise ModelStorageContractError(
+                    f"serving profiles[{index}] {field} is required"
+                )
+        weights = profile.get("weights_gib")
+        if weights is not None and (
+            isinstance(weights, bool)
+            or not isinstance(weights, (int, float))
+            or weights <= 0
+        ):
+            raise ModelStorageContractError(
+                f"serving profiles[{index}] weights_gib is invalid"
+            )
+    return value
+
+
+def load_profiles(path: str | pathlib.Path | None) -> dict[str, Any]:
+    if not path:
+        return {"models": []}
+    try:
+        with pathlib.Path(path).open(encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelStorageContractError(
+            f"cannot read serving profiles: {exc}"
+        ) from exc
+    return validate_profiles(value)
+
+
 def _safe_text(value: object) -> str:
     return " ".join(str(value or "").split())
 
@@ -203,6 +270,91 @@ def model_instances(
         ],
         key=lambda instance: int(instance["rank"]),
     )
+
+
+def preparation_check(
+    report: dict[str, Any],
+    profiles: dict[str, Any],
+    model_index: int,
+) -> dict[str, Any]:
+    models = sorted_models(report)
+    if model_index < 0 or model_index >= len(models):
+        raise ModelStorageContractError("model selection is out of range")
+    model = models[model_index]
+    blockers: list[str] = []
+    if report.get("state") == "unavailable":
+        blockers.append("catalog or rank observation is unavailable")
+    if report["catalog"].get("topology_compatible") is not True:
+        blockers.append("cached topology is stale; refresh the catalog")
+    if not model.get("expected_manifest"):
+        blockers.append("no reviewed exact model identity is available")
+    primary = model.get("primary") or {}
+    if primary.get("status") != "match" or not isinstance(
+        primary.get("rank"), int
+    ):
+        blockers.append("no current primary durable home is available")
+
+    model_profiles = set(model.get("profiles") or [])
+    candidates: list[dict[str, Any]] = []
+    identity_mismatch = False
+    for profile in profiles.get("models") or []:
+        if profile.get("id") not in model_profiles:
+            continue
+        if not str(profile.get("status") or "").startswith("tested"):
+            continue
+        if profile.get("purpose") != "serving" or profile.get("source") != "hf":
+            continue
+        if not profile.get("reviewed_identity"):
+            continue
+        if (
+            profile.get("reviewed_model_id") != model.get("model_id")
+            or profile.get("reviewed_revision") != model.get("revision")
+            or profile.get("reviewed_manifest")
+            != model.get("expected_manifest")
+        ):
+            identity_mismatch = True
+            continue
+        candidate = {
+            "profile": profile["id"],
+            "nodes": profile["nodes"],
+            "weights_gib": profile.get("weights_gib"),
+            "already_prepared": False,
+        }
+        instances = [
+            instance
+            for instance in model_instances(report, model)
+            if instance.get("profile") == profile["id"]
+            and instance.get("metadata_status") == "current"
+            and instance.get("identity_status") == "match"
+            and instance.get("witness_status") == "match"
+        ]
+        candidate["already_prepared"] = {
+            int(instance["rank"]) for instance in instances
+        } == set(range(int(profile["nodes"])))
+        candidates.append(candidate)
+    if not candidates:
+        if identity_mismatch:
+            blockers.append(
+                "trusted profile identity differs from the cached model; "
+                "refresh the catalog"
+            )
+        else:
+            blockers.append(
+                "no tested serving profile with a reviewed seal is available"
+            )
+    if blockers:
+        candidates = []
+    return {
+        "schema_version": 1,
+        "kind": "pulsar-model-preparation-check",
+        "state": "available" if candidates else "blocked",
+        "model_id": model["model_id"],
+        "revision": model.get("revision"),
+        "expected_manifest": model.get("expected_manifest"),
+        "home_rank": primary.get("rank") if not blockers else None,
+        "candidates": sorted(candidates, key=lambda item: item["profile"]),
+        "blockers": blockers,
+    }
 
 
 def _catalog_age(value: object, now: dt.datetime | None = None) -> str:
@@ -299,7 +451,10 @@ def render_summary(report: dict[str, Any], width: int | None = None) -> None:
 
 
 def render_detail(
-    report: dict[str, Any], index: int, width: int | None = None
+    report: dict[str, Any],
+    profiles: dict[str, Any],
+    index: int,
+    width: int | None = None,
 ) -> None:
     models = sorted_models(report)
     if index < 0 or index >= len(models):
@@ -388,6 +543,39 @@ def render_detail(
         "Claim boundary: catalog identity and runtime views do not establish model qualification or storage-path promotion."
     )
 
+    check = preparation_check(report, profiles, index)
+    term.blank()
+    term.emit("Experimental preparation")
+    if check["state"] == "available":
+        for candidate in check["candidates"]:
+            state = (
+                "prepared; verify or rebuild"
+                if candidate["already_prepared"]
+                else "available"
+            )
+            term.emit(
+                f"{candidate['profile']} · {candidate['nodes']} node(s) · {state}",
+                initial_indent="  ",
+                subsequent_indent="    ",
+            )
+        term.emit(
+            "Preparation is explicit and does not start serving.",
+            initial_indent="  ",
+            subsequent_indent="  ",
+        )
+    else:
+        term.emit(
+            "Preparation blocked:",
+            initial_indent="  ",
+            subsequent_indent="  ",
+        )
+        for blocker in check["blockers"]:
+            term.emit(
+                blocker,
+                initial_indent="  ",
+                subsequent_indent="  ",
+            )
+
 
 def render_findings(report: dict[str, Any], width: int | None = None) -> None:
     term = TerminalWriter(width=width)
@@ -457,9 +645,76 @@ def render_refresh(report: dict[str, Any], width: int | None = None) -> None:
     )
 
 
+def prepare_choice_labels(check: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for candidate in check.get("candidates") or []:
+        verb = "Verify" if candidate.get("already_prepared") else "Prepare"
+        labels.append(
+            f"{verb} {candidate['profile']} for experimental serving"
+        )
+    return labels
+
+
+def selected_preparation_candidate(
+    check: dict[str, Any], candidate_index: int
+) -> dict[str, Any]:
+    candidates = check.get("candidates") or []
+    if candidate_index < 0 or candidate_index >= len(candidates):
+        raise ModelStorageContractError("preparation selection is out of range")
+    return candidates[candidate_index]
+
+
+def render_preparation(
+    report: dict[str, Any],
+    profiles: dict[str, Any],
+    model_index: int,
+    candidate_index: int,
+    width: int | None = None,
+) -> None:
+    check = preparation_check(report, profiles, model_index)
+    candidate = selected_preparation_candidate(check, candidate_index)
+    term = TerminalWriter(width=width)
+    term.emit("PREPARE FOR EXPERIMENTAL SERVING")
+    term.field("profile", candidate["profile"])
+    term.field("model", check["model_id"])
+    term.field("revision", check.get("revision") or "unknown")
+    term.field("manifest", check.get("expected_manifest") or "unavailable")
+    label_width = 14
+    term.field("serving nodes", candidate["nodes"], label_width=label_width)
+    term.field(
+        "durable home",
+        _node_label(int(check["home_rank"])),
+        label_width=label_width,
+    )
+    term.field(
+        "transfer",
+        "SSH over confirmed RoCE · 8 streams",
+        label_width=label_width,
+    )
+    term.field("fallback", "none", label_width=label_width)
+    weights = candidate.get("weights_gib")
+    term.field(
+        "hot storage",
+        (
+            f"about {weights:g} GiB on each non-home serving node"
+            if weights is not None
+            else "one complete sealed copy on each non-home serving node"
+        ),
+        label_width=label_width,
+    )
+    term.blank()
+    term.emit(
+        "The preparation service will full-verify the durable home, check exact live capacity on every serving node, transfer only non-home bytes, and publish ready views only after every rank verifies."
+    )
+    term.emit(
+        "This does not start a model. The home remains required, and successful preparation does not qualify or promote this storage path."
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report-file", required=True)
+    parser.add_argument("--profiles-file", default="")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("validate")
     sub.add_parser("summary")
@@ -469,6 +724,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("findings")
     sub.add_parser("about")
     sub.add_parser("refresh")
+    prepare_choices = sub.add_parser("prepare-choices")
+    prepare_choices.add_argument("--index", type=int, required=True)
+    prepare_profile = sub.add_parser("prepare-profile")
+    prepare_profile.add_argument("--index", type=int, required=True)
+    prepare_profile.add_argument("--candidate-index", type=int, required=True)
+    prepare_preview = sub.add_parser("prepare-preview")
+    prepare_preview.add_argument("--index", type=int, required=True)
+    prepare_preview.add_argument("--candidate-index", type=int, required=True)
     return parser
 
 
@@ -476,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         report = load_report(args.report_file)
+        profiles = load_profiles(args.profiles_file)
         if args.command == "validate":
             return 0
         if args.command == "summary":
@@ -484,13 +748,30 @@ def main(argv: list[str] | None = None) -> int:
             for label in model_choice_labels(report):
                 print(label)
         elif args.command == "detail":
-            render_detail(report, args.index)
+            render_detail(report, profiles, args.index)
         elif args.command == "findings":
             render_findings(report)
         elif args.command == "about":
             render_about()
         elif args.command == "refresh":
             render_refresh(report)
+        elif args.command == "prepare-choices":
+            check = preparation_check(report, profiles, args.index)
+            for label in prepare_choice_labels(check):
+                print(label)
+        elif args.command == "prepare-profile":
+            check = preparation_check(report, profiles, args.index)
+            candidate = selected_preparation_candidate(
+                check, args.candidate_index
+            )
+            print(candidate["profile"])
+        elif args.command == "prepare-preview":
+            render_preparation(
+                report,
+                profiles,
+                args.index,
+                args.candidate_index,
+            )
         else:
             raise ModelStorageContractError("unsupported renderer command")
     except ModelStorageContractError as exc:

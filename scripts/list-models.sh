@@ -58,11 +58,21 @@ for conf in "$REPO_DIR"/models/*.conf; do
         spec="optional"
       fi
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    reviewed_identity=0 reviewed_model_id="" reviewed_revision=""
+    reviewed_manifest=""
+    if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+      reviewed_identity=1
+      identity_fields=$(printf '%s' "$PROFILE_VALIDATION_BUNDLE_JSON" | \
+        python3 -c 'import json,sys; s=json.load(sys.stdin)["expected_model_seal"]; print("\t".join((s["model_id"],s["snapshot_revision"],s["manifest_id"])))')
+      IFS=$'\t' read -r reviewed_model_id reviewed_revision reviewed_manifest \
+        <<<"$identity_fields"
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$name" "$STATUS" "$NODES" "$src" "$SERVED_NAME" "$spec" \
       "${FIRST_RUN_CANDIDATE:-0}" "$PROFILE_FAMILY" "$VARIANT_LABEL" \
       "$FAMILY_RECOMMENDED" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
-      "$PROFILE_PURPOSE"
+      "$PROFILE_PURPOSE" "${WEIGHTS_GIB:-}" "$reviewed_identity" \
+      "$reviewed_model_id" "$reviewed_revision" "$reviewed_manifest"
   ) >>"$tmp" || true
 done
 
@@ -79,7 +89,7 @@ with open("$tmp") as f:
         if not line:
             continue
         p = line.split("\\t")
-        while len(p) < 13:
+        while len(p) < 18:
             p.append("")
         rows.append({
             "id": p[0],
@@ -96,6 +106,11 @@ with open("$tmp") as f:
             "topology_class": p[10],
             "min_rails_per_pair": int(p[11] or 0),
             "purpose": p[12] or "serving",
+            "weights_gib": float(p[13]) if p[13] else None,
+            "reviewed_identity": p[14] == "1",
+            "reviewed_model_id": p[15] or None,
+            "reviewed_revision": p[16] or None,
+            "reviewed_manifest": p[17] or None,
         })
 print(json.dumps({"models": rows}, indent=2))
 PY
