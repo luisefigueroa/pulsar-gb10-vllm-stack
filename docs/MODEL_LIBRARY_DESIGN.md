@@ -24,7 +24,7 @@
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; the existing DeepSeek duplicate was reconciled to one persistent durable home and the exact sealed lifecycle passed again, while the strict-determinism policy question and soak remain pending |
+| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; the existing DeepSeek duplicate was reconciled to one persistent durable home and the exact sealed lifecycle passed again. The exact-GA strict determinism gate subsequently failed; sustained soak was not run and promotion is blocked under the current contract. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md) |
@@ -771,8 +771,11 @@ rank 1 as the one persistent durable home. A clean two-rank repeat then passed
 eight-stream SSH-over-RoCE preparation, exact full verification,
 durable-home/sealed-hot placement, zero-byte witnesses, read-only exact-snapshot
 launch, warmup, completion smoke, owned stop, hot purge, and return to one
-durable copy. The separately tracked strict-determinism policy question and
-sustained soak remain; no profile or path was promoted.
+durable copy. The subsequent exact-GA same-boot strict-determinism gate failed:
+profile-default DSpark k=5 produced 11/30 exact texts and 4/30 fully identical
+records, while a forced no-spec diagnostic improved to 26/30 and 25/30 without
+passing strict identity. Sustained soak was not run; no profile or path was
+promoted.
 See
 `results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`
 and
@@ -852,5 +855,6 @@ blocker changed.
 | 2026-08-12 | Added stable read-only health schema 1, Doctor warning integration, and repair-ID-bound schema-1/2 legacy-hot removal. The service uses cached catalog and metadata observations only; it does not reconcile the existing DeepSeek duplicate or mutate real hot/model state. |
 | 2026-08-12 | Read-only health and guarded legacy-hot removal passed a three-node physical gate with disposable schema-1 instances, including remote repair, stopped-container and pin blockers, no-follow/sibling preservation, preserved-untracked attention, and the exact disposable-home removal subset. No production state was changed. |
 | 2026-08-12 | The existing DeepSeek GA duplicate was reconciled to one persistent rank-1 durable home. A clean physical repeat passed eight-stream SSH-over-RoCE preparation to rank 0 sealed-hot, rank-1 durable-home view, full exact-manifest verification, zero-byte witnesses, read-only launch, eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home state. Strict determinism, sustained soak, and promotion remain open. |
+| 2026-08-12 | The exact reviewed DeepSeek GA identity failed the strict same-boot `library-hot` determinism gate. Profile-default DSpark k=5 produced 11/30 exact texts and 4/30 identical records; a forced no-spec diagnostic improved to 26/30 and 25/30 but still failed strict identity. Exact seal, image, geometry, and runtime views were held constant, the clean one-home state was restored, and no fatal runtime signature appeared. Preserve this failed evidence; do not attribute the current result only to the retired preview profile, run sustained soak as if the blocker passed, or promote the path without an explicit determinism-policy decision and new evidence. |
 | 2026-08-12 | Models & storage gained an explicit confirmation-gated catalog refresh that delegates to the existing atomic all-rank service. Browsing and health rechecks remain read-only; refresh is never automatic and does not prepare, launch, retain, repair, or delete models. |
 | 2026-08-12 | Exact model detail gained confirmation-gated experimental preparation for reviewed-seal tested serving profiles. It delegates to eight-stream SSH-over-RoCE copy with no fallback and re-renders health; it does not launch, expose unvalidated bypass, change replicated defaults, or claim promotion. |
