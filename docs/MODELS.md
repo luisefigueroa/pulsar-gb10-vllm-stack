@@ -11,6 +11,12 @@ three-node profile currently has `STATUS=tested*`. Statements such as “3 nodes
 would fit” are weight arithmetic only, not correctness, stability, context, or
 performance validation.
 
+For reviewed profiles whose existing durable home is prepared through the
+explicit experimental model-library action, ADR 0003 fixes non-home transfer
+to topology-bound eight-stream SSH-over-RoCE with no fallback. This is a
+distribution policy, not a model-support or release claim; it does not change
+any status in the table or the replicated guided default.
+
 ## Exact profiles and recorded candidates
 
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
@@ -62,7 +68,8 @@ row or issue a claim. See [MODEL_RELEASE.md](./MODEL_RELEASE.md),
 [models/validation-bundles/README.md](../models/validation-bundles/README.md),
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md),
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), and
-[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
+[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 Catalog/artifact or serving-integration evidence does not extend a model
 qualification or `STATUS` claim; combined release claims require every
 applicable scope.

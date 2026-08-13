@@ -7,6 +7,9 @@ Accepted model-library architecture lives in
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 Qualification boundaries are governed by
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
+[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md)
+governs the fixed transport policy used only after an operator explicitly
+selects experimental reviewed-profile preparation.
 This document describes current code, evidence, and known gaps. Where current
 behavior differs from the accepted target, the difference is labeled as an
 implementation gap rather than presented as a competing decision.
@@ -1471,7 +1474,10 @@ These points combine current evidence with the accepted architecture:
 3. Accept the measured 8-stream SSH-over-RoCE preparation and sealed local-hot
    results in the catalog/artifact and serving-integration scopes. Keep it as a
    separate release-promotion candidate; do not guide it until the combined
-   gates, including applicable model qualification and soak, pass.
+   gates, including applicable model qualification and soak, pass. When the
+   current interactive experimental action is explicitly selected, use that
+   fixed transport/stream policy with no fallback; catalog refresh still does
+   not acquire a missing durable home.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
@@ -1671,6 +1677,8 @@ The implementation described here is primarily defined by:
   — accepted durable-home view and validation-identity decision;
 - [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
   — accepted evidence-scope, causal-invalidation, and promotion-boundary decision;
+- [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md)
+  — accepted no-fallback transport policy for explicit experimental preparation;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

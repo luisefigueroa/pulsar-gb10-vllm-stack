@@ -241,6 +241,11 @@ this work; the skill is procedural and does not outrank these sources.
 - Warm-home pinning retains non-home hot copies but still requires the durable
   home. Home-loss resilience and extra durable replicas are separate, explicit
   policies on distinct failure domains.
+- When an operator explicitly chooses experimental reviewed-profile model
+  preparation, use topology-bound `ssh-roce` copy with eight streams and no
+  automatic fallback, as recorded in ADR 0003. This transport policy does not
+  create a missing durable home, promote `library-hot`, or change the replicated
+  guided default.
 - Preserve historical evidence and mark it superseded rather than rewriting it.
   A contract change must update the canonical design, implementation spec,
   operations, validation ledger, and evidence index together.

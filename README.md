@@ -247,7 +247,24 @@ reviewed commit/manifest with full verification, a rank-local witness, and
 exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
 paths remain unbound. See
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
-[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). Maintainers can
+[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). For an existing
+eligible primary home, the explicit experimental preparation policy is
+topology-bound SSH-over-RoCE with eight streams and no fallback. Enroll and
+check SSH trust first, then use the exact preparation command:
+
+```bash
+scripts/topology-ssh-trust.sh enroll
+scripts/topology-ssh-trust.sh check
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh prepare <sealed-profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
+```
+
+Catalog refresh inventories existing homes; it does not download a model or
+create the required durable home. The replicated quick start above therefore
+remains the truthful fresh-cluster workflow. See
+[ADR 0003](docs/decisions/0003-explicit-model-preparation-transport.md).
+Maintainers can
 assemble deterministic unreviewed identity candidates through the separate
 [model release runbook](docs/MODEL_RELEASE.md); that tool cannot issue or
 promote a claim and is not exposed through `pulsar`.
@@ -401,7 +418,7 @@ no leaks, no thermal throttling anywhere).
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
 | `patches/pr41834-dspark-opt/` | **DEPRECATED** DSpark draft-path A/B (perf-neutral; obsolete after vllm #49731). Not on default build path — see that dir’s README |
-| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **decisions/** (accepted rationale), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
+| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **decisions/** (accepted rationale, including ADR 0003's explicit experimental transfer policy), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.

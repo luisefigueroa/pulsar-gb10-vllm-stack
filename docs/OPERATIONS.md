@@ -411,7 +411,10 @@ recovery are in
 [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 **Library-hot (federated catalog + local hot staging):** experimental path
-aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md).
+aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). The fixed
+transport policy for an explicitly selected reviewed-profile preparation is
+recorded in
+[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 
 "Prepare model for serving" is the operator-facing term for resolving the exact
 model, creating the durable-home and sealed-hot runtime views, transferring
@@ -423,17 +426,29 @@ Typical
 flow:
 
 ```bash
+# Required before topology-bound SSH-over-RoCE preparation.
+scripts/topology-ssh-trust.sh enroll
+scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list --validated
 # Reviewed sealed profile: no override is accepted or needed.
-scripts/model-library.sh prepare <sealed-profile> --backend copy --yes
+scripts/model-library.sh prepare <sealed-profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
 # Profiles without a reviewed seal: explicit experiment only.
-scripts/model-library.sh prepare <profile> --backend copy --allow-unvalidated --yes
+scripts/model-library.sh prepare <profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 \
+  --allow-unvalidated --yes
 scripts/up.sh <profile> --weight-mode library-hot
 # optional after stop:
 scripts/down.sh <profile> --pin-weights   # protect retained hot from purge
 scripts/down.sh <profile> --purge-hot     # free hot disk budget
 ```
+
+Catalog refresh inventories existing durable homes; it does not download model
+bytes or create a primary home. Preparation therefore requires an eligible
+exact home to exist already. On a fresh cluster, keep using the replicated
+`pull-weights.sh` workflow unless the operator has separately established a
+managed home (for example, by explicitly adopting a compatible cold source).
 
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the
@@ -773,12 +788,15 @@ restart when RDMA is already listening. Bench JSON may include `copy_phases`
 and `fabric_phases`; wall-clock is often limited by materialization and setup,
 not raw RoCE line rate.
 
-**SSH-over-RoCE experiment (not product default):** same copy-based preparation
-(rsync + SSH), but SSH targets are topology **RoCE IPs** so bulk TCP rides the
+**SSH-over-RoCE policy for experimental preparation:** the same copy-based
+preparation (rsync + SSH) targets topology **RoCE IPs** so bulk TCP rides the
 fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
 `sshd` reachable on fabric IPs, and routes via the confirmed RoCE netdev. The
 transport IP is never a separate trust identity: strict checking always uses
-the saved alias and enrolled key. Product default remains replicated caches.
+the saved alias and enrolled key. The interactive reviewed-profile action is
+fixed to eight streams with no fallback by ADR 0003. Low-level benchmark and
+diagnostic commands may still select other transports/stream counts
+explicitly; the replicated guided default remains unchanged.
 
 ```bash
 # 1) Enroll exact control/RoCE identity while idle, then verify it
