@@ -469,9 +469,11 @@ scripts/model-library.sh catalog show <sealed-profile>
 
 `home add` inspects every confirmed rank and refuses existing repository paths,
 unobservable nodes, insufficient capacity, missing target-side Hugging Face
-CLI, or an ineligible/out-of-geometry explicit node. Automatic placement is
-limited to the current profile serving ranks so preparation retains the one
-home plus N−1 hot-copy contract. The chosen rank needs upstream access and
+CLI, or an ineligible/out-of-geometry explicit node. A one-node profile may use
+any confirmed rank as its sole serving placement; without `--node`, the most-
+free-space eligible rank is selected. Multi-node placement remains limited to
+the profile's exact serving ranks so preparation retains the one-home plus N−1
+hot-copy contract. The chosen rank needs upstream access and
 its own Hugging Face authentication when the repository is gated. It downloads
 the exact reviewed commit into a private directory on the destination
 filesystem, repeats the cluster-wide duplicate check, full-verifies the lab

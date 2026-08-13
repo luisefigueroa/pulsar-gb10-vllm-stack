@@ -93,8 +93,10 @@ Notes:
     needs --allow-last-home before deleting the final durable copy. Duplicate
     removal requires a selected primary and can target only a non-primary home.
   • home add downloads one exact reviewed revision directly on one selected
-    serving rank. With no --node override, the eligible serving rank with the
-    most free space is selected. Download uses private same-filesystem staging;
+    serving rank. For a one-node profile, that rank may be any confirmed rank;
+    for multi-node profiles it remains in the exact profile geometry. With no
+    --node override, the eligible serving rank with the most free space is
+    selected. Download uses private same-filesystem staging;
     full SHA-256 verification precedes atomic durable-home publication. It
     creates no hot copies, starts nothing, and never refreshes the catalog.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the

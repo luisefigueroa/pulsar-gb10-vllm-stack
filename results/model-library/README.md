@@ -78,8 +78,8 @@ sealing legacy profiles or changing a model or storage-path promotion.
 
 On 2026-08-13, the distributed library gained a separate reviewed-profile
 `home add` acquisition service. Deterministic contracts cover every-rank
-observation, serving-geometry-bound most-free-space and exact override
-placement, missing capability
+observation, automatic and explicit remote one-node placement, exact multi-node
+geometry, most-free-space and exact override placement, missing capability
 and no-fallback behavior, existing/raced home refusal, exact download
 arguments, plan/staging tamper, full-manifest mismatch, owned cleanup, atomic
 publication, confirmation, and JSON separation. No publishable physical result

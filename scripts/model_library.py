@@ -5995,10 +5995,16 @@ def plan_home_acquisition(
         isinstance(serving_nodes, bool)
         or not isinstance(serving_nodes, int)
         or serving_nodes < 1
-        or topology_ranks[:serving_nodes] != list(range(serving_nodes))
+        or serving_nodes > len(topology_ranks)
+        or (
+            serving_nodes > 1
+            and topology_ranks[:serving_nodes] != list(range(serving_nodes))
+        )
     ):
         fail("home add: profile serving geometry exceeds confirmed contiguous ranks")
-    serving_ranks = list(range(serving_nodes))
+    candidate_ranks = (
+        topology_ranks if serving_nodes == 1 else list(range(serving_nodes))
+    )
     manifest = identity["manifest"]
     observations = _load_home_acquisition_observations(
         observations_dir,
@@ -6017,7 +6023,7 @@ def plan_home_acquisition(
     eligible = [
         item
         for item in observations
-        if item.get("eligible") and item["rank"] in serving_ranks
+        if item.get("eligible") and item["rank"] in candidate_ranks
     ]
     if node_selector:
         matches = [
@@ -6029,7 +6035,7 @@ def plan_home_acquisition(
         if len(matches) != 1:
             fail("home add: --node must match exactly one confirmed rank or node ID")
         selected = matches[0]
-        if selected["rank"] not in serving_ranks:
+        if selected["rank"] not in candidate_ranks:
             fail("home add: selected rank is outside the profile serving geometry")
         if not selected.get("eligible"):
             fail(
@@ -6049,6 +6055,11 @@ def plan_home_acquisition(
             key=lambda item: (-int(item["available_bytes"]), int(item["rank"])),
         )[0]
         selection = "most-free-space"
+    serving_ranks = (
+        [int(selected["rank"])]
+        if serving_nodes == 1
+        else candidate_ranks
+    )
     topology_node = next(
         node
         for node in topology.get("nodes") or []

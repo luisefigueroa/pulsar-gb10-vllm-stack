@@ -24,7 +24,7 @@ class HomeAcquisitionContracts(unittest.TestCase):
         self.profile = "sealed-fixture"
         self.model_id = "Fixture/Sealed-Model"
         self.revision = "a" * 40
-        self.node_ids = ["node-a", "node-b"]
+        self.node_ids = ["node-a", "node-b", "node-c"]
         self.source_hub = self.root / "source" / model_library.model_id_to_hub_dirname(
             self.model_id
         )
@@ -85,23 +85,25 @@ class HomeAcquisitionContracts(unittest.TestCase):
             ],
             "links": [
                 {
-                    "ranks": [0, 1],
+                    "ranks": [left, right],
                     "rails": [
                         {
                             "network": "198.51.100.0/24",
                             "a": {
                                 "hca": "roce0",
                                 "netdev": "fabric0",
-                                "ip": "198.51.100.10",
+                                "ip": f"198.51.100.{10 + left}",
                             },
                             "b": {
                                 "hca": "roce0",
                                 "netdev": "fabric0",
-                                "ip": "198.51.100.11",
+                                "ip": f"198.51.100.{10 + right}",
                             },
                         }
                     ],
                 }
+                for left in range(len(self.node_ids))
+                for right in range(left + 1, len(self.node_ids))
             ],
             "validation": {
                 "class": "single" if len(self.node_ids) == 1 else "roce-full-mesh",
@@ -116,7 +118,9 @@ class HomeAcquisitionContracts(unittest.TestCase):
         self.topology_path.write_text(json.dumps(topology), encoding="utf-8")
         self.observations = self.root / "observations"
         self.observations.mkdir()
-        self.cache_roots = [self.root / f"cache-{rank}" for rank in range(2)]
+        self.cache_roots = [
+            self.root / f"cache-{rank}" for rank in range(len(self.node_ids))
+        ]
         self._write_observations()
 
     def _write_hub(self, hub: pathlib.Path, *, weights: bytes = b"fixture-weights") -> None:
@@ -142,7 +146,7 @@ class HomeAcquisitionContracts(unittest.TestCase):
         )
 
     def _write_observations(self, *, most_free_rank: int = 1) -> None:
-        for rank in range(2):
+        for rank in range(len(self.node_ids)):
             observation = self._observation(rank)
             observation["available_bytes"] = 20 * 1024**3 + (
                 1024**3 if rank == most_free_rank else 0
@@ -193,12 +197,20 @@ class HomeAcquisitionContracts(unittest.TestCase):
         with self.assertRaisesRegex(model_library.ModelLibraryError, "exactly one"):
             self._plan(node_selector="missing")
 
-    def test_home_must_participate_in_current_profile_geometry(self) -> None:
+    def test_one_node_profile_automatically_selects_any_confirmed_rank(self) -> None:
         plan = self._plan(serving_nodes=1)
-        self.assertEqual(plan["serving_ranks"], [0])
-        self.assertEqual(plan["target"]["rank"], 0)
+        self.assertEqual(plan["serving_ranks"], [1])
+        self.assertEqual(plan["target"]["rank"], 1)
+
+    def test_one_node_profile_accepts_explicit_remote_placement(self) -> None:
+        plan = self._plan(node_selector="2", serving_nodes=1)
+        self.assertEqual(plan["selection"], "operator-override")
+        self.assertEqual(plan["serving_ranks"], [2])
+        self.assertEqual(plan["target"]["node_id"], self.node_ids[2])
+
+    def test_multi_node_home_must_remain_in_contiguous_serving_geometry(self) -> None:
         with self.assertRaisesRegex(model_library.ModelLibraryError, "serving geometry"):
-            self._plan(node_selector="1", serving_nodes=1)
+            self._plan(node_selector="2", serving_nodes=2)
 
     def test_existing_repository_anywhere_blocks_duplicate_home(self) -> None:
         occupied = (

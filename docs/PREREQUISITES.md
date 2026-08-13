@@ -240,9 +240,10 @@ scripts/model-library.sh catalog refresh
 
 The normal view uses width-aware Pulsar sections instead of streaming
 third-party progress renderers. `PULSAR_VERBOSE=1` is intended for diagnosis.
-`home add` defaults to the eligible current serving rank with the most free
-space; `--node RANK|NODE_ID` is an exact in-geometry override and does not fall
-back. It uses
+For a one-node profile, `home add` defaults to the eligible confirmed rank with
+the most free space and `--node RANK|NODE_ID` may select any exact confirmed
+rank. Multi-node profiles remain limited to their exact serving geometry. An
+explicit override never falls back. The command uses
 same-filesystem private staging and full expected-manifest verification before
 atomic publication. The replicated flow remains the guided default.
 

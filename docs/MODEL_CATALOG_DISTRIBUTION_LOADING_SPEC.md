@@ -1414,10 +1414,13 @@ The current system also provides a distinct durable-home acquisition service:
 `scripts/model-library.sh home add <sealed-profile>`. It accepts no unvalidated
 bypass. The Bash boundary observes the Hugging Face cache environment and CLI
 availability on every confirmed rank; Python validates the reviewed identity,
-capacity, exact rank/node mapping, one-home state, and placement decision. With
-no override the eligible current serving rank with the most free space is
-selected; `--node` is exact, must remain in that geometry, and never falls
-back. The selected rank downloads the immutable commit
+capacity, exact rank/node mapping, one-home state, and placement decision. For
+a one-node profile, every confirmed rank is a candidate serving placement; the
+selected home rank becomes that profile's sole serving rank. Multi-node
+candidates remain the exact contiguous profile ranks. With no override the
+eligible candidate with the most free space is selected; `--node` is exact,
+must remain in the applicable geometry, and never falls back. The selected rank
+downloads the immutable commit
 into a plan-owned private cache below the final hub filesystem. After download,
 Pulsar repeats the all-rank target-absence check, full-hashes the expected
 manifest under stable metadata, and atomically renames only the repository into

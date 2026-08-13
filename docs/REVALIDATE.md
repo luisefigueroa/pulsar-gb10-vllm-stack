@@ -289,9 +289,11 @@ durable home separately before running preparation.
     publication behavior changes:
     - every confirmed rank is observed and exact rank/node identity is bound;
     - only a sealed profile and immutable reviewed commit are accepted;
-    - automatic placement chooses the eligible most-free-space serving rank,
-      preserving one home plus N−1 hot copies, and an explicit ineligible or
-      out-of-geometry `--node` fails without fallback;
+    - automatic placement chooses the eligible most-free-space serving rank;
+      one-node profiles may select any confirmed rank while multi-node profiles
+      remain in their exact geometry, preserving one home plus N−1 hot copies,
+      and an explicit ineligible or out-of-geometry `--node` fails without
+      fallback;
     - target-side Hugging Face CLI, authentication/egress, and capacity failure
       leave no published home;
     - download occurs in plan-owned same-filesystem staging and interruption or
