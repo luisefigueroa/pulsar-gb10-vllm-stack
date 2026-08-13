@@ -209,6 +209,12 @@ transfer, and lifecycle contracts are unchanged. Follow `WEIGHT_FABRIC.md`,
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
 preserve unique result bundles for the affected scopes:
 
+When the reviewed-profile interactive experiment is the subject of the gate,
+[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md) fixes its
+copy policy to topology-bound `ssh-roce` with eight streams and no fallback.
+Catalog refresh is not model acquisition; establish and verify the exact
+durable home separately before running preparation.
+
 1. two-node replicated-local and fabric cold I/O/startup A/B;
 2. three-node concurrent loading and interface-counter proof;
 3. deterministic/correctness/long-context gates on the healthy fabric service;

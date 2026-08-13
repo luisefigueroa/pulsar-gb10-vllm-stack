@@ -14,7 +14,9 @@ This document uses **live NFS/RDMA** for that long-lived runtime dependency.
 Do not conflate it with model-library one-shot `nfs-rdma` transfer followed by
 release, or with `ssh-roce` (rsync over SSH/TCP pinned to a confirmed RoCE
 endpoint). Those are separate transfer/runtime combinations governed by
-[MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md).
+[MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). ADR 0003 fixes
+eight-stream `ssh-roce` only for the explicitly selected reviewed-profile
+preparation action; it does not promote this live fabric or `library-hot`.
 
 ## Chosen architecture
 
@@ -85,7 +87,7 @@ bytes rather than assuming one network read per checkpoint byte.
 | Application-level streaming/sharding | Deferred. It would modify or wrap vLLM/PyTorch loading and must reproduce SafeTensors indexing, failure recovery, and per-format correctness. |
 | Third-party streamed loaders | Deferred until their GB10/aarch64 dependencies, cache semantics, licensing, and vLLM image integration are validated. vLLM's supported loader surface is described in its [load configuration](https://docs.vllm.ai/en/stable/api/vllm/config/load/). |
 | GPUDirect Storage | Not the baseline. NVIDIA documents DGX Spark GDS as compatibility mode, and the current vLLM/SafeTensors path does not invoke cuFile. Do not load `nvidia-fs` merely for this feature. See the [DGX Spark hardware guide](https://docs.nvidia.com/dgx/dgx-spark/hardware.html) and [GDS release notes](https://docs.nvidia.com/gpudirect-storage/release-notes/index.html). |
-| Federated library + prepare + rank-local views | **Implemented, experimental, and not promoted.** The model-library path scans federated durable homes, keeps the home rank on a validated symlink/view, and materializes sealed hot only on non-home ranks via `ssh-control`, `ssh-roce`, or short-lived `nfs-rdma`. It is operationally distinct from this long-lived live mount. See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md), [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), and [OPERATIONS.md](./OPERATIONS.md). Historical exploration: [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md). This document remains the live NFS/RDMA **experiment** runbook. |
+| Federated library + prepare + rank-local views | **Implemented, experimental, and not promoted.** The model-library path scans federated durable homes, keeps the home rank on a validated symlink/view, and materializes sealed hot only on non-home ranks via `ssh-control`, `ssh-roce`, or short-lived `nfs-rdma`. For the explicit reviewed-profile interactive action, [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md) fixes `ssh-roce` with eight streams and no fallback. It is operationally distinct from this long-lived live mount. See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md), [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), and [OPERATIONS.md](./OPERATIONS.md). Historical exploration: [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md). This document remains the live NFS/RDMA **experiment** runbook. |
 
 The vLLM distributed-filesystem guidance also expects every node to see a
 shared model path; this design supplies that path while keeping inference

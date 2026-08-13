@@ -411,7 +411,10 @@ recovery are in
 [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 **Library-hot (federated catalog + local hot staging):** experimental path
-aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md).
+aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). The fixed
+transport policy for an explicitly selected reviewed-profile preparation is
+recorded in
+[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 
 "Prepare model for serving" is the operator-facing term for resolving the exact
 model, creating the durable-home and sealed-hot runtime views, transferring
@@ -419,21 +422,42 @@ non-home bytes, and verifying every rank. Preparation does not start a serving
 container or qualify the model. The older `activate` command remains a
 backward-compatible alias.
 
-Typical
-flow:
+Typical reviewed multi-rank flow:
 
 ```bash
+# Required before topology-bound SSH-over-RoCE preparation.
+scripts/topology-ssh-trust.sh enroll
+scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list --validated
-# Reviewed sealed profile: no override is accepted or needed.
-scripts/model-library.sh prepare <sealed-profile> --backend copy --yes
-# Profiles without a reviewed seal: explicit experiment only.
-scripts/model-library.sh prepare <profile> --backend copy --allow-unvalidated --yes
-scripts/up.sh <profile> --weight-mode library-hot
+# Reviewed multi-rank sealed profile: no override is accepted or needed.
+scripts/model-library.sh prepare <multi-rank-sealed-profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
+scripts/up.sh <multi-rank-sealed-profile> --weight-mode library-hot
 # optional after stop:
-scripts/down.sh <profile> --pin-weights   # protect retained hot from purge
-scripts/down.sh <profile> --purge-hot     # free hot disk budget
+scripts/down.sh <multi-rank-sealed-profile> --pin-weights  # retain non-home hot
+scripts/down.sh <multi-rank-sealed-profile> --purge-hot    # free hot disk budget
 ```
+
+A reviewed single-rank profile has no non-home target and therefore no RoCE
+transfer. Prepare only its local durable-home runtime view:
+
+```bash
+scripts/model-library.sh prepare <single-rank-sealed-profile> \
+  --backend copy --transport ssh-control --yes
+```
+
+Legacy-unsealed profiles are outside ADR 0003's fixed transport and stream
+policy. Their low-level `--allow-unvalidated` path remains available only for a
+deliberate experiment; choose and record its transport and stream count as
+experiment inputs rather than inheriting the reviewed-profile recipe. Explicit
+examples remain in the advanced transport sections below.
+
+Catalog refresh inventories existing durable homes; it does not download model
+bytes or create a primary home. Preparation therefore requires an eligible
+exact home to exist already. On a fresh cluster, keep using the replicated
+`pull-weights.sh` workflow unless the operator has separately established a
+managed home (for example, by explicitly adopting a compatible cold source).
 
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the
@@ -692,7 +716,7 @@ prepare each required profile again. Hot schema 3 instances created before witne
 support remain readable: the first `library-hot` readiness check visibly
 full-verifies and creates the missing rank-local witness. Current unsealed
 profiles without a seal need the explicit experimental `--allow-unvalidated`
-flag shown above.
+flag shown in the advanced transport sections below.
 Do not hand-edit or relabel old site-local state into the new schemas.
 
 **Optional cold archive:** shared/local fill tier (conventionally
@@ -773,12 +797,15 @@ restart when RDMA is already listening. Bench JSON may include `copy_phases`
 and `fabric_phases`; wall-clock is often limited by materialization and setup,
 not raw RoCE line rate.
 
-**SSH-over-RoCE experiment (not product default):** same copy-based preparation
-(rsync + SSH), but SSH targets are topology **RoCE IPs** so bulk TCP rides the
+**SSH-over-RoCE policy for experimental preparation:** the same copy-based
+preparation (rsync + SSH) targets topology **RoCE IPs** so bulk TCP rides the
 fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
 `sshd` reachable on fabric IPs, and routes via the confirmed RoCE netdev. The
 transport IP is never a separate trust identity: strict checking always uses
-the saved alias and enrolled key. Product default remains replicated caches.
+the saved alias and enrolled key. The interactive reviewed-profile action is
+fixed to eight streams with no fallback by ADR 0003. Low-level benchmark and
+diagnostic commands may still select other transports/stream counts
+explicitly; the replicated guided default remains unchanged.
 
 ```bash
 # 1) Enroll exact control/RoCE identity while idle, then verify it

@@ -7,6 +7,9 @@ it does not override accepted architecture in
 [ADR 0001](../../docs/decisions/0001-model-library-home-view-and-validation-identity.md).
 Qualification scope and evidence reuse are governed by
 [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md).
+[ADR 0003](../../docs/decisions/0003-explicit-model-preparation-transport.md)
+records the current no-fallback eight-stream SSH-over-RoCE policy for an
+explicitly selected reviewed-profile experimental preparation.
 
 Every artifact has a qualification scope: catalog/artifact, serving integration,
 model qualification, or combined release/promotion. A result remains valid
@@ -15,6 +18,11 @@ it. Catalog health, preparation, witness, and lifecycle evidence cannot be
 promoted into accuracy or determinism claims; a model-runtime failure does not
 erase unchanged catalog evidence, but it blocks a combined release claim that
 requires both.
+
+ADR 0003 selects a transfer policy within the accepted catalog/artifact scope;
+it does not reinterpret the failed DeepSeek determinism artifact, establish a
+missing durable home, promote `library-hot`, or change the replicated guided
+default. Historical transport comparisons retain their recorded outcomes.
 
 The interactive **Models & storage** catalog-refresh wiring added on 2026-08-12
 reuses the existing atomic all-rank refresh contract and adds no physical

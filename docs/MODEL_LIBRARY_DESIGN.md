@@ -20,6 +20,9 @@
 > [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 > Qualification scope and evidence reuse are governed by
 > [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
+> The transport policy for an explicitly selected experimental preparation is
+> recorded in
+> [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 
 | Field | Value |
 |---|---|
@@ -27,7 +30,7 @@
 | Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; the existing DeepSeek duplicate was reconciled to one persistent durable home and the exact sealed lifecycle passed again. The exact-GA strict determinism gate subsequently failed; sustained soak was not run and promotion is blocked under the current contract. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md) |
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
@@ -500,14 +503,16 @@ The warm-home rank uses its existing `durable-home` view.
 
 | Transfer | Current CLI shape | Network/path claim | Promotion role |
 |---|---|---|---|
-| `ssh-control` | copy backend over confirmed control SSH | Management LAN | Baseline |
-| `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Candidate fast path |
+| `ssh-control` | copy backend over confirmed control SSH | Management LAN | Baseline, diagnostic, and explicit comparison path |
+| `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Fixed eight-stream policy for the explicit interactive experiment; still unpromoted as a storage path |
 | `nfs-rdma` | fabric backend, then release | Short-lived NFSv4.2/RDMA transfer plane | Separate candidate |
 | `live-mount` | `--weight-source fabric` | Long-lived NFSv4.2/RDMA runtime dependency | Separate experiment |
 
 Neither transfer replaces NCCL inference traffic. No candidate may silently
 fall back to control transfer, TCP NFS, replicated pulls, or a different
-runtime source.
+runtime source. ADR 0003 chooses `ssh-roce` with eight streams only after an
+operator explicitly selects experimental preparation and an eligible durable
+home already exists; it does not alter the replicated guided default.
 
 ### 4.7 Release timing
 
@@ -837,6 +842,7 @@ blocker changed.
 | 2026-08-10 | **No promotion:** keep replicated guided defaults. SSH identity passed; production hot-budget policy, strict DeepSeek determinism, and sustained soak remain open. |
 | 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |
 | 2026-08-12 | **ADR 0002 accepted:** separate catalog/artifact, serving-integration, model-qualification, and release/promotion evidence. Preserve valid subsystem results unless a causal dependency invalidates them; combined promotion still requires every applicable scope. |
+| 2026-08-13 | **ADR 0003 accepted:** when an operator explicitly selects reviewed-profile experimental preparation, use topology-bound eight-stream SSH-over-RoCE with no fallback. Catalog refresh does not create the required durable home, the replicated fresh-cluster/guided path remains unchanged, and transport selection does not promote `library-hot` or waive model/release gates. |
 | 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued. |
 | 2026-08-10 | Implemented rank-local serve-witness schema 1: preparation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |
 | 2026-08-11 | Qwen 1.7B physically passed durable-home symlink, non-home sealed-hot, both-rank witness fallback, exact-snapshot read-only launch, warm-home pin/restart, mismatch fail-closed, and force-unpin no-follow purge. The artifact is `legacy-unsealed`; release identity and promotion remain open. |
