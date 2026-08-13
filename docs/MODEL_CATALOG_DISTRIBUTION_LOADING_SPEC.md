@@ -788,6 +788,22 @@ scripts/up.sh qwen3-1.7b-2node --weight-source fabric
 This keeps storage and multi-node plumbing experiments from being presented as
 user workload recommendations.
 
+### 9.6 Interactive catalog refresh
+
+`./pulsar models` and operator-home **Models & storage** open the cached,
+sanitized health view without scanning ranks. **Recheck catalog health** repeats
+that read-only observation. **Refresh distributed catalog** is separate: it
+shows the cached age and scope, requires an explicit confirmation, then invokes
+`scripts/model-library.sh catalog refresh`.
+
+The service scans durable Hugging Face homes on every confirmed rank, preserves
+explicit exact-revision primary selections, and atomically replaces the cache
+only after a complete build. Missing or stale topology, an unreachable rank,
+invalid profile identity, or a failed scan aborts the refresh. The interaction
+does not download or copy bytes, prepare runtime views, start serving, or run
+pin, purge, repair, or durable-home deletion. After success it obtains a fresh
+health report rather than rendering private catalog paths or node identities.
+
 ## 10. Launch and loading specification
 
 ### 10.1 Preflight order
@@ -1362,11 +1378,14 @@ stale and suppresses cached node mapping until an explicit catalog refresh.
 `./pulsar models` and operator-home **Models & storage** now consume that
 public report through `scripts/model-storage.sh` plus the width-aware
 `scripts/model_storage.py` renderer. They browse cached identity, placement,
-runtime views, and findings and can repeat only the read-only health
-observation. They do not refresh, prepare, launch, pin, purge, repair, or remove
-a home. Replicated copies remain the guided default and the catalog is visibly
-experimental. This is an observability surface, not serving-wizard integration
-or storage-path promotion.
+runtime views, and findings and can repeat the read-only health observation.
+A distinct **Refresh distributed catalog** action first explains its scope,
+requires confirmation, calls the existing atomic `catalog refresh` service,
+and renders a newly collected sanitized health report. It never refreshes on
+entry or health recheck. It does not prepare, launch, pin, purge, repair, or
+remove a home. Replicated copies remain the guided default and the catalog is
+visibly experimental. This is inventory management, not serving-wizard
+integration or storage-path promotion.
 
 `hot legacy check/remove` is a separate repair service for exact schema-1/2
 instances. The opaque ID binds the observed rank, ownership document, and

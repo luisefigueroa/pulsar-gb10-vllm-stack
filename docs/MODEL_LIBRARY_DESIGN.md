@@ -609,10 +609,15 @@ discoverable and retryable.
 Doctor consumes the same report as warnings. These findings do not block
 replicated/default serving, while model-library preparation and destructive
 lifecycle operations retain their fail-closed checks. `./pulsar models` and the
-operator-home **Models & storage** entry expose a read-only, width-aware projection of this same contract. The projection labels
-replicated serving as the guided default and the distributed catalog as
-experimental; it offers no refresh, preparation, launch, retention, repair, or
-deletion action. Current health closes supported catalog/hot observability, but container labels still do not carry
+operator-home **Models & storage** entry expose a width-aware projection of
+this same contract. Browsing and health rechecks are read-only. A separate,
+confirmation-gated **Refresh distributed catalog** action delegates to the
+existing all-confirmed-rank refresh service, preserves exact-revision primary
+selections, and then renders a new sanitized health report. Refresh is never
+automatic; incomplete topology or rank observation fails closed. The
+projection labels replicated serving as the guided default and the distributed
+catalog as experimental; it offers no preparation, launch, retention, repair,
+or deletion action. Current health closes supported catalog/hot observability, but container labels still do not carry
 per-rank runtime-source/witness state and unmanaged processes remain outside
 Pulsar's discovery boundary.
 
@@ -774,7 +779,7 @@ blocker changed.
 ## 8. Remaining deferred work
 
 - Model preparation/start integration into the serving wizard or other guided
-  defaults; the read-only operator-home catalog view is implemented
+  defaults; cached browsing and explicit catalog refresh are implemented
 - Machine-readable qualification dimensions; current scope separation is a
   documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time
@@ -832,3 +837,4 @@ blocker changed.
 | 2026-08-12 | Added stable read-only health schema 1, Doctor warning integration, and repair-ID-bound schema-1/2 legacy-hot removal. The service uses cached catalog and metadata observations only; it does not reconcile the existing DeepSeek duplicate or mutate real hot/model state. |
 | 2026-08-12 | Read-only health and guarded legacy-hot removal passed a three-node physical gate with disposable schema-1 instances, including remote repair, stopped-container and pin blockers, no-follow/sibling preservation, preserved-untracked attention, and the exact disposable-home removal subset. No production state was changed. |
 | 2026-08-12 | The existing DeepSeek GA duplicate was reconciled to one persistent rank-1 durable home. A clean physical repeat passed eight-stream SSH-over-RoCE preparation to rank 0 sealed-hot, rank-1 durable-home view, full exact-manifest verification, zero-byte witnesses, read-only launch, eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home state. Strict determinism, sustained soak, and promotion remain open. |
+| 2026-08-12 | Models & storage gained an explicit confirmation-gated catalog refresh that delegates to the existing atomic all-rank service. Browsing and health rechecks remain read-only; refresh is never automatic and does not prepare, launch, retain, repair, or delete models. |

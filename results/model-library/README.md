@@ -16,6 +16,15 @@ promoted into accuracy or determinism claims; a model-runtime failure does not
 erase unchanged catalog evidence, but it blocks a combined release claim that
 requires both.
 
+The interactive **Models & storage** catalog-refresh wiring added on 2026-08-12
+reuses the existing atomic all-rank refresh contract and adds no physical
+measurement artifact. Deterministic renderer and shell scenarios prove that
+browsing never refreshes automatically, confirmation is required, failures do
+not claim success, and a successful refresh is followed by a new sanitized
+health report. The physical health/repair artifact indexed below remains the
+applicable underlying rank-observation evidence; this UI integration is not a
+storage-path promotion.
+
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
 measurements and other failed/pending gates remain valid and are not rewritten.

@@ -57,6 +57,7 @@ the smallest complete gate set from this change-impact matrix:
 | Image, dependency, engine flags, memory contract, or geometry | Serving integration and complete model qualification; retain generic catalog mechanics unless the change affects them |
 | Transfer/copy algorithm or admission policy | Affected catalog physical gates and integration smoke; rerun model gates when bytes/runtime views change or evidence indicates a causal execution effect |
 | Manifest, witness, metadata, retention, repair, or cleanup semantics | Affected identity/lifecycle gates and integration smoke when launch views change; no automatic accuracy rerun |
+| Interactive catalog/health orchestration with unchanged scan and schema semantics | Focused renderer/shell contracts plus full control-plane selftest; no new physical or model-qualification claim |
 | Runtime source or mount contract | Catalog/lifecycle and serving integration; complete model qualification before a release claim adopts the new source |
 | Documentation-only policy/classification | Documentation checks and control-plane regression tests; no new physical claim |
 

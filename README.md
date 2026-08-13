@@ -125,9 +125,12 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 
 **Operator home (`./pulsar`):** workflow menu — Current system status (default),
 Serve or switch a model, Stop a serving model, Models & storage, Maintenance,
-Diagnostics, Exit. Models & storage is a read-only view of cached exact identity,
+Diagnostics, Exit. Models & storage browses cached exact identity,
 durable-home/runtime placement, and findings; it labels the distributed catalog
-experimental and does not refresh, prepare, launch, or clean model state.
+experimental. Browsing and health rechecks are read-only. A separate,
+confirmation-gated refresh can rescan confirmed ranks and update only the
+cached catalog; it never runs automatically and does not prepare, launch, or
+clean model state.
 Home is read-only by default; it does not run doctor/inventory until you choose.
 Quick status is a focused overview (inventory + `/v1/models` advertisement only —
 **not** an inference smoke). Full completion smoke is optional and explicit.
@@ -251,7 +254,7 @@ promote a claim and is not exposed through `pulsar`.
 |---|---|
 | `./pulsar` | Root dispatcher → operator home |
 | `./pulsar wizard` | Guided serve/switch wizard |
-| `./pulsar models` | Read-only cached distributed model identity, placement, and findings |
+| `./pulsar models` | Cached distributed model identity, placement, findings, and explicit catalog refresh |
 | `./pulsar inventory` | Read-only managed service + memory inventory |
 | `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
 | `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |

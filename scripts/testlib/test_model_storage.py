@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Renderer and contract tests for the read-only Models & storage experience."""
+"""Renderer and contract tests for the Models & storage experience."""
 
 from __future__ import annotations
 
@@ -116,8 +116,8 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("MODELS & STORAGE", output)
         self.assertIn("replicated local model copies", prose)
         self.assertIn("guided default", prose)
-        self.assertIn("experimental read-only", prose)
-        self.assertIn("does not refresh", prose)
+        self.assertIn("experimental inventory", prose)
+        self.assertIn("does not automatically refresh", prose)
         self.assertIn("start a model", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
@@ -228,6 +228,20 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("only on non-home", prose)
         self.assertIn("still requires the durable home", prose)
         self.assertIn("remain experimental", prose)
+
+    def test_refresh_preview_is_explicit_bounded_and_width_aware(self) -> None:
+        output = capture(
+            model_storage.render_refresh, healthy_report(), width=48
+        )
+        prose = normalized(output)
+        self.assertIn("REFRESH DISTRIBUTED CATALOG", output)
+        self.assertIn("every confirmed rank", prose)
+        self.assertIn("atomically updates the cached inventory", prose)
+        self.assertIn("preserves explicit exact-revision primary selections", prose)
+        self.assertIn("fails closed", prose)
+        self.assertIn("does not download, copy, prepare, start", prose)
+        self.assertIn("guided default", prose)
+        self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
 
 if __name__ == "__main__":
