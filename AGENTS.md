@@ -20,20 +20,22 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Experimental model library<br/>catalog · identity · prepare · hot views"] -. explicit opt-in .-> artifacts
+  library["Standard model preparation<br/>catalog · identity · SSH/RoCE · hot views"] --> artifacts
   fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
 
   classDef experimental stroke-dasharray: 5 5;
-  class library,fabric experimental;
+  class fabric experimental;
 ```
 
-Solid arrows show the promoted control and evidence flow. Dashed arrows are
-explicit experimental weight paths; neither is a silent fallback or wizard
-default. Control SSH, inference NCCL/RoCE, and weight transfer remain distinct
-data planes even when they involve the same machines.
+Solid arrows show the accepted control and evidence flow. The dashed live
+fabric arrow is an explicit experiment and never a silent fallback. Standard
+model preparation copies non-home weights with topology-bound SSH over RoCE;
+the wizard still using replicated caches is a documented implementation gap.
+Control SSH, inference NCCL/RoCE, and weight transfer remain distinct data
+planes even when they involve the same machines.
 
 ## Build, Test, and Development Commands
 
@@ -241,6 +243,10 @@ this work; the skill is procedural and does not outrank these sources.
 - Warm-home pinning retains non-home hot copies but still requires the durable
   home. Home-loss resilience and extra durable replicas are separate, explicit
   policies on distinct failure domains.
+- The standard non-home transfer is topology-bound SSH over a confirmed RoCE
+  endpoint. It fails closed and has no automatic control-LAN, replicated-cache,
+  or NFS fallback. Replicated caches are an explicit compatibility path; live
+  NFS/RDMA remains a separate experiment. See ADR 0003.
 - Preserve historical evidence and mark it superseded rather than rewriting it.
   A contract change must update the canonical design, implementation spec,
   operations, validation ledger, and evidence index together.

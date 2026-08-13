@@ -7,6 +7,8 @@ Accepted model-library architecture lives in
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 Qualification boundaries are governed by
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
+[ADR 0003](./decisions/0003-ssh-over-roce-model-preparation-standard.md)
+standardizes the model-copying transport.
 This document describes current code, evidence, and known gaps. Where current
 behavior differs from the accepted target, the difference is labeled as an
 implementation gap rather than presented as a competing decision.
@@ -16,9 +18,10 @@ implementation gap rather than presented as a competing decision.
 | Snapshot date | 2026-08-12 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
-| Promoted storage path | Replicated local Hugging Face caches |
+| Standard preparation path | One durable home plus sealed non-home hot copied over topology-bound SSH-over-RoCE |
 | Additional catalog path | Operator-mounted absolute paths, conventionally under `/mnt/Models` |
-| Experimental storage paths | Federated durable home plus sealed local hot, and a distinct live NFSv4.2/RPC-RDMA owner path |
+| Compatibility / implementation gap | Replicated local Hugging Face caches remain selected by the wizard and some staging surfaces |
+| Experimental storage paths | One-shot NFS/RDMA transfer and a distinct live NFSv4.2/RPC-RDMA owner path |
 | Document status | Descriptive current-system specification; not a promotion or architecture claim |
 
 This document is intentionally self-contained. It describes what the current
@@ -33,9 +36,9 @@ This snapshot supports review of five implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
-2. the promoted replicated distribution path;
-3. the experimental live NFS/RDMA single-copy path; and
-4. the experimental transfer-then-load model-library path; and
+2. the replicated compatibility distribution path;
+3. the experimental live NFS/RDMA single-copy path;
+4. the standard transfer-then-load model-library path; and
 5. the maintainer-only release identity and candidate-assembly service.
 
 The accepted model-library direction is no longer an open peer-review question:
@@ -58,13 +61,13 @@ applicable two-node physical enforcement gate. The lab duplicate was later
 reconciled to one persistent rank-1 durable home, and a clean two-rank repeat
 passed sealed preparation, exact launch, completion, cleanup, and return to the
 one-home steady state. Profiles without a seal
-remain legacy-unsealed, and neither issuance nor gate promotes the
-model-library path.
+remain legacy-unsealed. Standardizing the transport does not qualify an
+unsealed profile or alter exact model-release gates.
 The replicated control plane applies the reviewed seal when a profile has one;
 live-mount launches remain unbound.
 
 The model catalog still selects **what to run and how many ranks it needs**.
-The guided replicated path has no storage owner. A live NFS/RDMA owner exists
+The replicated compatibility path has no storage owner. A live NFS/RDMA owner exists
 only in its explicit advanced workflow; a model-library **home** is durable
 placement and is not necessarily rank 0 or a live export owner.
 
@@ -161,9 +164,9 @@ that way.
   catalog code may also call this node an owner; the canonical term is home.
 - **Owner**: the one serving node running the authoritative live export in
   experimental NFS/RDMA fabric mode.
-- **Replicated mode**: the default launch mode, in which Pulsar does not use the
-  weight-fabric configuration. For HF profiles every serving node is expected
-  to have a complete local repository.
+- **Replicated mode**: a compatibility launch mode, still selected by the
+  wizard and some staging surfaces as a current implementation gap. For HF
+  profiles every serving node is expected to have a complete local repository.
 - **Fabric mode**: explicit experimental launch mode in which cold model reads
   use a live NFS/RDMA view of the owner's repository.
 - **Sealed snapshot**: a resolved Hugging Face revision plus an exact file list,
@@ -420,7 +423,7 @@ control-endpoint pinning is therefore not yet uniform across the repository.
 
 | Property | Replicated HF cache | Absolute-path catalog | Experimental live fabric |
 |---|---|---|---|
-| Guided default | Yes | Yes when a validated profile already references it | No |
+| Guided/default UI today | Yes (implementation gap) | Yes when a validated profile already references it | No |
 | Model origin | Hugging Face repository ID | Operator-managed absolute path | Hugging Face repository ID |
 | Durable copies | One full repository per serving node | Defined by external catalog operator | One authoritative repository on owner; complete client replicas forbidden |
 | Distribution | Controller downloads, then `rsync`s selected repository to remote ranks | Out of scope; mount/provision before Pulsar | Owner-only download; NFS/RDMA export/mount applied explicitly |
@@ -429,9 +432,9 @@ control-endpoint pinning is therefore not yet uniform across the repository.
 | Cold-start owner dependency | No after local staging | Depends on external catalog | Yes |
 | Steady-state owner dependency | None | Depends on external catalog semantics | Loaded service may continue, but reload/restart and hard-mounted I/O depend on owner |
 | Automatic fallback | Not applicable | None | None; explicit replicated staging and launch required |
-| Current status | Promoted | Per-profile validation | Experimental |
+| Current status | Compatibility; current wizard behavior | Per-profile validation | Experimental |
 
-### 7.2 Default replicated Hugging Face workflow
+### 7.2 Replicated Hugging Face compatibility workflow
 
 For an HF profile, `scripts/pull-weights.sh` performs this sequence:
 
@@ -1055,7 +1058,7 @@ promotes any experimental storage path for general users.
 
 | Gate | Current result | Interpretation |
 |---|---|---|
-| Replicated local cache workflow | PASS / promoted default | Used by wizard and serving workflows. |
+| Replicated local cache workflow | PASS / compatibility | Still used by wizard and serving workflows pending ADR 0003 alignment. |
 | Schema-2 model-repository export | PASS on physical hardware | Exact subtree, root-squash mapping, client/container readability, sibling/token exclusion. |
 | Two-node cold fabric read | PASS, 2.11 logical GiB/s | Same 4,079,450,110-byte sealed canary snapshot on both ranks with symmetric HCA traffic. |
 | Two-node cold replicated read | PASS, 4.84 logical GiB/s | Fabric delivered about 43.6% of replicated throughput; maximum-rank read took about 2.29× as long. This is storage I/O, not startup or inference. |
@@ -1364,9 +1367,9 @@ public report through `scripts/model-storage.sh` plus the width-aware
 `scripts/model_storage.py` renderer. They browse cached identity, placement,
 runtime views, and findings and can repeat only the read-only health
 observation. They do not refresh, prepare, launch, pin, purge, repair, or remove
-a home. Replicated copies remain the guided default and the catalog is visibly
-experimental. This is an observability surface, not serving-wizard integration
-or storage-path promotion.
+a home. Replicated copies remain the wizard's current implementation while the
+catalog underpins standard SSH-over-RoCE preparation. This is an observability
+surface, not yet serving-wizard integration.
 
 `hot legacy check/remove` is a separate repair service for exact schema-1/2
 instances. The opaque ID binds the observed rank, ownership document, and
@@ -1400,9 +1403,10 @@ the same canonical-view and per-file metadata contract, but records
 inventing a model-library runtime source. The witness lives outside the copied
 repository so one rank's filesystem identity is never distributed to another.
 
-This path is implemented but experimental and unpromoted. It must continue to
-be evaluated against replicated mode and live fabric rather than being assumed
-to supersede either one. In particular, the one-shot `nfs-rdma` backend cannot claim the fast path
+This path is implemented and its topology-bound `ssh-roce` transport is the
+standard model-copying policy under ADR 0003. Replicated mode is an explicit
+compatibility path and live fabric remains a separate experiment; neither is a
+mandatory onboarding comparison. The one-shot `nfs-rdma` backend cannot claim the fast path
 unless its measured preparation wall time beats `ssh-control` on the same model
 and topology.
 
@@ -1410,13 +1414,13 @@ and topology.
 
 These points combine current evidence with the accepted architecture:
 
-1. Keep replicated local HF caches as the guided default.
+1. Use one durable home plus sealed non-home hot views copied through
+   topology-bound, eight-stream SSH-over-RoCE as the standard onboarding path.
 2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
    gates pass.
 3. Accept the measured 8-stream SSH-over-RoCE preparation and sealed local-hot
-   results in the catalog/artifact and serving-integration scopes. Keep it as a
-   separate release-promotion candidate; do not guide it until the combined
-   gates, including applicable model qualification and soak, pass.
+   results in the catalog/artifact and serving-integration scopes. Keep exact
+   model qualification and release claims gated independently.
 4. Preserve the durable-home symlink/view on the home rank; do not add routine
    home-rank hot materialization.
 5. Transfer and retain sealed hot only on non-home ranks. Warm-home pins still
@@ -1667,12 +1671,12 @@ unchanged hot ownership. Strict DeepSeek determinism and sustained soak remain
 pending. Live NFS/RDMA additionally
 retains its owner-recovery and three-node validation work. The accurate product claim is:
 
-> Replicated model-cache workflows remain promoted and user-facing. For sealed
+> Replicated model-cache workflows remain user-facing compatibility behavior
+> while wizard alignment is pending. For sealed
 > profiles they enforce the reviewed exact identity; profiles without a seal
 > retain historical legacy-unsealed behavior. Model-library code recognizes
 > reviewed seal/bundles for diagnostic `qwen3-1.7b` and flagship
 > `deepseek-v4-flash`; both have completed their applicable post-issuance
 > physical enforcement gates. Sealed local-hot preparation over
-> SSH-over-RoCE remains a measured promotion candidate, and live NFS/RDMA is a
-> separate documented
-> experiment; neither is a promoted default.
+> SSH-over-RoCE is the standard preparation transport under ADR 0003. Live
+> NFS/RDMA remains a separate documented experiment.

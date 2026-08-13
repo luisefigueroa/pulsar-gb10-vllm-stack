@@ -1,12 +1,14 @@
 # Model-library evidence index
 
 This directory contains sanitized or pending-publication evidence for the
-experimental federated model-library path. Evidence records measured history;
+federated model-library path. Evidence records measured history;
 it does not override accepted architecture in
 [MODEL_LIBRARY_DESIGN.md](../../docs/MODEL_LIBRARY_DESIGN.md) or
 [ADR 0001](../../docs/decisions/0001-model-library-home-view-and-validation-identity.md).
 Qualification scope and evidence reuse are governed by
 [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md).
+The later decision to standardize SSH-over-RoCE preparation is recorded in
+[ADR 0003](../../docs/decisions/0003-ssh-over-roce-model-preparation-standard.md).
 
 Every artifact has a qualification scope: catalog/artifact, serving integration,
 model qualification, or combined release/promotion. A result remains valid
@@ -15,6 +17,13 @@ it. Catalog health, preparation, witness, and lifecycle evidence cannot be
 promoted into accuracy or determinism claims; a model-runtime failure does not
 erase unchanged catalog evidence, but it blocks a combined release claim that
 requires both.
+
+ADR 0003 changes the current policy interpretation, not the recorded outcome
+of any artifact below. The accepted catalog and serving-integration evidence
+supports SSH-over-RoCE as the standard copy transport. Missing strict
+determinism or sustained-soak evidence still limits the corresponding exact
+model/release claim; it does not make replicated caches or live NFS mandatory
+onboarding comparisons.
 
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its

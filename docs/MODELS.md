@@ -1,5 +1,13 @@
 # Model support matrix — currently validated profiles (2026-08-12)
 
+New multi-node Hugging Face models are prepared from one durable home to
+sealed-hot non-home views with topology-bound, eight-stream SSH-over-RoCE, as
+defined by [ADR 0003](./decisions/0003-ssh-over-roce-model-preparation-standard.md).
+Replicated caches are a compatibility path and remain in some current wizard
+flows pending implementation alignment. Storage standardization does not waive
+the exact model, image, configuration, geometry, accuracy, determinism,
+performance, long-context, or soak gates below.
+
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
 weights + KV, **~200-210 GiB across both**. "Active GB/tok" drives the decode

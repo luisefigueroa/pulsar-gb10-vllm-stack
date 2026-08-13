@@ -3,9 +3,9 @@
 > **Authority: canonical model-library architecture.**
 > The storage, identity, dependency, and lifecycle decisions in this document
 > are normative for future implementation. Sections explicitly labeled
-> **current implementation** describe the unpromoted experiment and do not
-> override the accepted target. Replicated local caches remain the guided
-> default until every promotion gate passes. Operator commands and current
+> **current implementation** describe implementation status and do not
+> override the accepted target. SSH-over-RoCE is the standard model-copying
+> transport; replicated caches are a compatibility path. Operator commands and current
 > limitations are documented in [OPERATIONS.md](./OPERATIONS.md); the distinct
 > live NFS/RDMA path remains documented in
 > [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
@@ -20,18 +20,21 @@
 > [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 > Qualification scope and evidence reuse are governed by
 > [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
+> The standard preparation transport is recorded in
+> [ADR 0003](./decisions/0003-ssh-over-roce-model-preparation-standard.md).
 
 | Field | Value |
 |---|---|
-| Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not promoted); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement; the existing DeepSeek duplicate was reconciled to one persistent durable home and the exact sealed lifecycle passed again, while the strict-determinism policy question and soak remain pending |
+| Authority | Accepted architecture; standard transfer policy is SSH-over-RoCE |
+| Status | Model-library preparation is the standard onboarding path; reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement. Wizard alignment remains an implementation gap; exact model qualification is still evidence-gated. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-ssh-over-roce-model-preparation-standard.md) |
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
-| Default today | Replicated local Hugging Face caches |
-| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; and maintainer-only `scripts/model-release.sh` candidate assembly |
+| Standard onboarding | One durable home plus non-home sealed-hot views copied with topology-bound, eight-stream SSH-over-RoCE |
+| Compatibility / implementation gap | Replicated caches remain available and are still selected by the wizard and some ordinary staging surfaces pending a separate runtime change |
+| Experimental today | `--weight-source fabric` live NFSv4.2/RDMA, one-shot `nfs-rdma`, and maintainer-only `scripts/model-release.sh` candidate assembly |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a tested profile to
@@ -498,14 +501,14 @@ boundary.
 Transfer moves bytes only to ranks whose runtime source is `sealed-hot`.
 The warm-home rank uses its existing `durable-home` view.
 
-| Transfer | Current CLI shape | Network/path claim | Promotion role |
+| Transfer | Current CLI shape | Network/path claim | Policy role |
 |---|---|---|---|
-| `ssh-control` | copy backend over confirmed control SSH | Management LAN | Baseline |
-| `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Candidate fast path |
+| `ssh-control` | copy backend over confirmed control SSH | Management LAN | Diagnostic/comparison only |
+| `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Standard non-home transfer; eight streams for the validated large-model path |
 | `nfs-rdma` | fabric backend, then release | Short-lived NFSv4.2/RDMA transfer plane | Separate candidate |
 | `live-mount` | `--weight-source fabric` | Long-lived NFSv4.2/RDMA runtime dependency | Separate experiment |
 
-Neither transfer replaces NCCL inference traffic. No candidate may silently
+Neither transfer replaces NCCL inference traffic. No transfer may silently
 fall back to control transfer, TCP NFS, replicated pulls, or a different
 runtime source.
 
@@ -579,7 +582,7 @@ reads the cached catalog and gathers shallow, no-follow hot metadata plus
 managed-container observations from every confirmed rank under shared
 lifecycle/hot locks. It never refreshes the catalog, refreshes a witness,
 hashes model bytes, follows a runtime-view symlink, or changes state. Catalog
-absence is `not-configured` because replicated weights remain the default.
+absence is `not-configured` because the library has not yet been initialized.
 Invalid/stale catalogs, duplicate homes, stale primary selection, prohibited
 runtime views, witness drift/missing state, legacy metadata, and unobservable
 ranks are explicit findings.
@@ -606,12 +609,12 @@ instance and deletes it without following embedded symlinks; durable homes and
 sibling instances are outside its authority. An incomplete retirement remains
 discoverable and retryable.
 
-Doctor consumes the same report as warnings. These findings do not block
-replicated/default serving, while model-library preparation and destructive
+Doctor consumes the same report as warnings. These findings do not block the
+explicit replicated compatibility path, while model-library preparation and destructive
 lifecycle operations retain their fail-closed checks. `./pulsar models` and the
-operator-home **Models & storage** entry expose a read-only, width-aware projection of this same contract. The projection labels
-replicated serving as the guided default and the distributed catalog as
-experimental; it offers no refresh, preparation, launch, retention, repair, or
+operator-home **Models & storage** entry expose a read-only, width-aware projection of this same contract. The projection reports
+the current wizard's replicated implementation gap and the standard distributed
+catalog path; it offers no refresh, preparation, launch, retention, repair, or
 deletion action. Current health closes supported catalog/hot observability, but container labels still do not carry
 per-rank runtime-source/witness state and unmanaged processes remain outside
 Pulsar's discovery boundary.
@@ -622,7 +625,7 @@ Pulsar's discovery boundary.
 
 | Path | Role under this direction |
 |---|---|
-| Replicated `pull-weights` + local launch | **Remains default** until a library+prepare path earns promotion |
+| Replicated `pull-weights` + local launch | Explicit compatibility and rollback path; still used by wizard pending implementation alignment |
 | Live `--weight-source fabric` | **Experimental** proof/ops path; long-lived mount under vLLM is **not** the agreed product identity |
 | Site cold path confs | Optional cold tier; keep working |
 | Topology rails and NFS/RDMA helpers | Reused by fabric **preparation**; model-library schema-3 hot state carries full SHA-256 observed content plus optional expected-seal provenance, while live-fabric configuration identity remains separate |
@@ -814,6 +817,7 @@ blocker changed.
 | 2026-08-10 | **No promotion:** keep replicated guided defaults. SSH identity passed; production hot-budget policy, strict DeepSeek determinism, and sustained soak remain open. |
 | 2026-08-10 | **ADR 0001 accepted:** rule out home-rank hot materialization. Use a validated durable-home symlink/view, sealed hot only on non-home ranks, lab-issued expected identity, and a serve-time metadata witness backed by full verification. |
 | 2026-08-12 | **ADR 0002 accepted:** separate catalog/artifact, serving-integration, model-qualification, and release/promotion evidence. Preserve valid subsystem results unless a causal dependency invalidates them; combined promotion still requires every applicable scope. |
+| 2026-08-12 | **ADR 0003 accepted:** standardize topology-bound, eight-stream SSH-over-RoCE for non-home model copying. Replicated caches remain compatibility behavior and live NFS/RDMA remains experimental; wizard alignment is a separate implementation change. |
 | 2026-08-10 | Implemented catalog schema 2 and hot schema 3 expected-seal enforcement: reviewed seal reference, exact immutable commit selection, expected-versus-observed manifest comparison, seal-bound hot identity, exact snapshot launch path, labels/startup provenance, and non-overridable mismatch. No real profile seal was issued. |
 | 2026-08-10 | Implemented rank-local serve-witness schema 1: preparation full-verifies before atomic witness creation; unchanged launch hashes zero model bytes; missing/invalid/drifted metadata visibly falls back to full SHA-256 and refreshes only on a stable match. |
 | 2026-08-11 | Qwen 1.7B physically passed durable-home symlink, non-home sealed-hot, both-rank witness fallback, exact-snapshot read-only launch, warm-home pin/restart, mismatch fail-closed, and force-unpin no-follow purge. The artifact is `legacy-unsealed`; release identity and promotion remain open. |

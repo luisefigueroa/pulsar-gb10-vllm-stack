@@ -1,8 +1,10 @@
 # Experimental single-copy weight fabric
 
-> **Not promoted.** Replicated local Hugging Face caches remain the default.
-> This path is an explicit `--weight-source fabric` experiment until every
+> **Not promoted.** This long-lived live NFS/RDMA path is an explicit
+> `--weight-source fabric` experiment until every
 > physical-hardware gate in this document has a reproducible artifact.
+> Standard model copying instead uses model-library preparation over
+> topology-bound SSH-over-RoCE; replicated caches are a compatibility path.
 
 This feature keeps one authoritative model repository on a selected DGX Spark
 and presents it read-only to the other selected Sparks over a confirmed
@@ -85,7 +87,7 @@ bytes rather than assuming one network read per checkpoint byte.
 | Application-level streaming/sharding | Deferred. It would modify or wrap vLLM/PyTorch loading and must reproduce SafeTensors indexing, failure recovery, and per-format correctness. |
 | Third-party streamed loaders | Deferred until their GB10/aarch64 dependencies, cache semantics, licensing, and vLLM image integration are validated. vLLM's supported loader surface is described in its [load configuration](https://docs.vllm.ai/en/stable/api/vllm/config/load/). |
 | GPUDirect Storage | Not the baseline. NVIDIA documents DGX Spark GDS as compatibility mode, and the current vLLM/SafeTensors path does not invoke cuFile. Do not load `nvidia-fs` merely for this feature. See the [DGX Spark hardware guide](https://docs.nvidia.com/dgx/dgx-spark/hardware.html) and [GDS release notes](https://docs.nvidia.com/gpudirect-storage/release-notes/index.html). |
-| Federated library + prepare + rank-local views | **Implemented, experimental, and not promoted.** The model-library path scans federated durable homes, keeps the home rank on a validated symlink/view, and materializes sealed hot only on non-home ranks via `ssh-control`, `ssh-roce`, or short-lived `nfs-rdma`. It is operationally distinct from this long-lived live mount. See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md), [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), and [OPERATIONS.md](./OPERATIONS.md). Historical exploration: [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md). This document remains the live NFS/RDMA **experiment** runbook. |
+| Federated library + prepare + rank-local views | **Standard model-copying path.** The model-library scans federated durable homes, keeps the home rank on a validated symlink/view, and materializes sealed hot only on non-home ranks using topology-bound `ssh-roce`. `ssh-control` remains diagnostic; short-lived `nfs-rdma` remains experimental. This is operationally distinct from the long-lived live mount documented here. See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md), [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), [ADR 0003](./decisions/0003-ssh-over-roce-model-preparation-standard.md), and [OPERATIONS.md](./OPERATIONS.md). |
 
 The vLLM distributed-filesystem guidance also expects every node to see a
 shared model path; this design supplies that path while keeping inference
@@ -216,7 +218,8 @@ scripts/status.sh qwen3-1.7b-2node
 scripts/down.sh qwen3-1.7b-2node
 ```
 
-The wizard remains on the validated replicated default. It tells the operator
+The wizard still uses replicated caches as a current implementation gap. It
+tells the operator
 that missing Hugging Face weights will be copied to every serving rank; it
 does not select or fall back to fabric mode. Use the CLI above for this
 experiment.
@@ -235,9 +238,10 @@ scripts/weight-fabric.sh teardown qwen3-1.7b-2node \
 removes only this configuration's export and mount state; it preserves the
 authoritative model and site-local config.
 
-## Explicit replicated fallback
+## Explicit replicated compatibility path
 
-Replicated weights remain the default and require no fabric config at launch:
+Replicated weights require no fabric config at launch and remain available for
+compatibility and rollback:
 
 ```bash
 scripts/pull-weights.sh qwen3-1.7b-2node \

@@ -198,15 +198,30 @@ PP combination:
 
 No three-node serving profile is promoted by the current ledger.
 
-## 7. Experimental single-copy storage (conditional)
+## 7. Standard SSH-over-RoCE preparation and optional live storage
 
-Do not inherit **serving integration or model qualification** from the
-replicated-cache path for `--weight-source fabric` or `library-hot`. Generic
-catalog evidence may be reused only when its measured identity, placement,
-transfer, and lifecycle contracts are unchanged. Follow `WEIGHT_FABRIC.md`,
-`MODEL_LIBRARY_DESIGN.md`, and
-[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
-preserve unique result bundles for the affected scopes:
+For a new multi-node Hugging Face model, validate the standard `library-hot`
+preparation path: one durable home, a validated home-rank view, topology-bound
+eight-stream SSH-over-RoCE transfer to non-home ranks, full expected-seal
+verification on every rank, read-only exact-snapshot launch, health/warmup/
+completion smoke, interruption and retry, witness drift fallback, admission,
+pin/restart dependency, owned cleanup, and return to the intended one-home
+state. Prove that bulk traffic used the confirmed RoCE endpoint and that no
+control-LAN, replicated-cache, or NFS fallback occurred. See
+[ADR 0003](./decisions/0003-ssh-over-roce-model-preparation-standard.md).
+
+Do not inherit **model qualification** merely because preparation and serving
+integration pass. Accuracy, determinism, throughput, long context, and soak
+remain exact model/image/configuration/geometry gates. Replicated-cache
+comparison is required only when that compatibility path is part of the
+release; it is not a prerequisite for standard onboarding.
+
+The following additional matrix applies to the optional long-lived
+`--weight-source fabric` experiment. Generic catalog evidence may be reused
+only when its measured identity, placement, transfer, and lifecycle contracts
+are unchanged. Follow `WEIGHT_FABRIC.md`, `MODEL_LIBRARY_DESIGN.md`,
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and preserve
+unique result bundles for the affected scopes:
 
 1. two-node replicated-local and fabric cold I/O/startup A/B;
 2. three-node concurrent loading and interface-counter proof;
@@ -215,6 +230,11 @@ preserve unique result bundles for the affected scopes:
    soak recovery;
 5. exact expected-versus-observed model seal and revision binding;
 6. proof that non-home clients retain no complete durable model cache;
+
+For changes to the standard library lifecycle, repeat the affected portions of
+the following established lifecycle/admission matrix rather than rerunning
+unrelated live-NFS comparisons:
+
 7. for library-hot, preparation-created witness plus unchanged-launch fast-path,
    metadata-drift full-verify/fail-closed behavior on every rank, no-follow
    purge, and honest durable-home pin/restart dependency.

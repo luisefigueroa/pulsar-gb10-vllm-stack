@@ -52,7 +52,7 @@ Menu (default cursor: status):
 2. **Serve or switch a model** — enters `wizard.sh` (its doctor/preflight)
 3. **Stop a serving model** — inventory-safe active managed only; confirm → `down.sh`
 4. **Models & storage** — cached identity, placement, runtime views, and findings
-   (read-only; distributed catalog is experimental)
+   (read-only distributed identity and placement)
 5. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
 6. **Diagnostics** — run doctor, detailed inventory (read-only)
 7. **Exit**
@@ -385,8 +385,10 @@ artifacts, destructive replica cleanup, owner/link fault semantics, and
 recovery are in
 [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
-**Library-hot (federated catalog + local hot staging):** experimental path
-aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md).
+**Library-hot (federated catalog + local hot staging):** standard model
+preparation path aligned with
+[MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and
+[ADR 0003](./decisions/0003-ssh-over-roce-model-preparation-standard.md).
 
 "Prepare model for serving" is the operator-facing term for resolving the exact
 model, creating the durable-home and sealed-hot runtime views, transferring
@@ -401,9 +403,12 @@ flow:
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list --validated
 # Reviewed sealed profile: no override is accepted or needed.
-scripts/model-library.sh prepare <sealed-profile> --backend copy --yes
+scripts/model-library.sh prepare <sealed-profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
 # Profiles without a reviewed seal: explicit experiment only.
-scripts/model-library.sh prepare <profile> --backend copy --allow-unvalidated --yes
+scripts/model-library.sh prepare <profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 \
+  --allow-unvalidated --yes
 scripts/up.sh <profile> --weight-mode library-hot
 # optional after stop:
 scripts/down.sh <profile> --pin-weights   # protect retained hot from purge
@@ -555,8 +560,9 @@ discoverable by this contract and remains the operator's responsibility.
 Hot trees live under `PULSAR_HOT_ROOT` (default `/var/tmp/pulsar-hot`), not as
 durable N copies in every node’s HF cache. For a warm-home N-rank service the
 accepted accounting is one durable home plus N−1 hot working copies. Hot purge
-must never follow the home symlink target. Defaults and the wizard stay on
-replicated weights until this path is promoted.
+must never follow the home symlink target. The wizard still uses replicated
+weights as an implementation gap; new-model onboarding uses the explicit
+standard SSH-over-RoCE preparation flow until the UI is aligned.
 
 Inspect live admission on every confirmed rank before a large preparation:
 
@@ -730,12 +736,15 @@ restart when RDMA is already listening. Bench JSON may include `copy_phases`
 and `fabric_phases`; wall-clock is often limited by materialization and setup,
 not raw RoCE line rate.
 
-**SSH-over-RoCE experiment (not product default):** same copy-based preparation
-(rsync + SSH), but SSH targets are topology **RoCE IPs** so bulk TCP rides the
+**Standard SSH-over-RoCE preparation:** copy-based preparation (rsync + SSH)
+targets topology **RoCE IPs** so bulk TCP rides the
 fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
 `sshd` reachable on fabric IPs, and routes via the confirmed RoCE netdev. The
 transport IP is never a separate trust identity: strict checking always uses
-the saved alias and enrolled key. Product default remains replicated caches.
+the saved alias and enrolled key. There is no automatic fallback to control
+SSH, replicated caches, or NFS. The wizard and some ordinary staging commands
+still select replicated caches; treat that as an implementation gap and use
+the explicit preparation command above for new-model onboarding.
 
 ```bash
 # 1) Enroll exact control/RoCE identity while idle, then verify it

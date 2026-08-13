@@ -36,20 +36,22 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Experimental model library<br/>catalog · identity · prepare · hot views"] -. explicit opt-in .-> artifacts
+  library["Standard model preparation<br/>catalog · identity · SSH/RoCE · hot views"] --> artifacts
   fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
 
   classDef experimental stroke-dasharray: 5 5;
-  class library,fabric experimental;
+  class fabric experimental;
 ```
 
-Solid arrows show the promoted control and evidence flow. Dashed arrows are
-explicit experimental weight paths; neither is a silent fallback or wizard
-default. Control SSH, inference NCCL/RoCE, and weight transfer remain distinct
-data planes even when they involve the same machines.
+Solid arrows show the accepted control and evidence flow. The dashed live
+fabric arrow is an explicit experiment and never a silent fallback. Standard
+model preparation copies non-home weights with topology-bound SSH over RoCE;
+the wizard still using replicated caches is a documented implementation gap.
+Control SSH, inference NCCL/RoCE, and weight transfer remain distinct data
+planes even when they involve the same machines.
 
 ## What sets this stack apart
 
@@ -111,7 +113,7 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 
 # Operator home (neutral workflow menu — no doctor/preflight until you pick)
 ./pulsar
-# Browse cached distributed model identity and placement (read-only; experimental)
+# Browse cached distributed model identity and placement (read-only)
 ./pulsar models
 # Direct serve/switch wizard (doctor + preflight; not the no-arg home)
 ./pulsar wizard
@@ -126,8 +128,8 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 **Operator home (`./pulsar`):** workflow menu — Current system status (default),
 Serve or switch a model, Stop a serving model, Models & storage, Maintenance,
 Diagnostics, Exit. Models & storage is a read-only view of cached exact identity,
-durable-home/runtime placement, and findings; it labels the distributed catalog
-experimental and does not refresh, prepare, launch, or clean model state.
+durable-home/runtime placement, and findings; it does not refresh, prepare,
+launch, or clean model state.
 Home is read-only by default; it does not run doctor/inventory until you choose.
 Quick status is a focused overview (inventory + `/v1/models` advertisement only —
 **not** an inference smoke). Full completion smoke is optional and explicit.
@@ -201,12 +203,15 @@ scripts/detect-fabric.sh --write-topology
 # Optional runtime/path/auth overrides only; topology is not stored in .env.
 cp .env.example .env
 
-# Pull/stage the qualified digest and weights to every node used by the profile.
+# Pull/stage the qualified digest, then prepare one durable home and sealed-hot
+# non-home views over the confirmed RoCE plane.
 scripts/sync-image.sh deepseek-v4-flash --pull --yes
-scripts/pull-weights.sh deepseek-v4-flash --yes
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh prepare deepseek-v4-flash \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
 
 scripts/doctor.sh
-scripts/up.sh deepseek-v4-flash                  # exact NODES=2, DSpark k=5
+scripts/up.sh deepseek-v4-flash --weight-mode library-hot  # exact NODES=2, DSpark k=5
 # rollback: scripts/up.sh deepseek-v4-flash --no-spec-decode
 # dry-run checks only: scripts/up.sh deepseek-v4-flash --dry-run
 
@@ -218,14 +223,22 @@ The wizard offers only exact `STATUS=tested*` profiles that fit confirmed
 capacity. No three-node profile is promoted today. Smoke served name:
 `deepseek-v4-flash`; cold load can take ~10+ minutes.
 
-**Experimental storage research:** replicated local Hugging Face caches remain
-the default. A separate, unpromoted NFSv4.2/RDMA path can keep one
+**Model preparation and storage:** the standard multi-node onboarding path
+keeps one durable home and copies sealed-hot views to non-home ranks with
+topology-bound, eight-stream SSH over the confirmed RoCE plane. Use
+`scripts/model-library.sh prepare <sealed-profile> --backend copy --transport ssh-roce --copy-streams 8 --yes`,
+then launch with `--weight-mode library-hot`. Exact verification is mandatory
+and there is no automatic control-LAN, replicated, or NFS fallback. The wizard
+and some ordinary staging surfaces still select replicated caches; that is a
+current implementation gap, while replicated mode remains an explicit
+compatibility/rollback option.
+
+A separate, unpromoted NFSv4.2/RDMA path can keep one
 authoritative copy, mount exact clients read-only over confirmed RoCE rails,
 seal it with SHA-256 manifests, and benchmark two or three storage consumers.
 It requires explicit `--weight-source fabric`; the wizard never selects it or
-falls back to it. A distinct `library-hot` candidate keeps one durable home,
-uses a symlink view on that rank, and transfers sealed hot copies only to other
-ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
+falls back to it. The standard `library-hot` path enforces reviewed exact
+commit/manifest seals,
 create a rank-local witness after full verification, use a metadata fast path
 for unchanged launch, and visibly rehash on drift before launching the exact
 snapshot. The diagnostic `qwen3-1.7b` profile carries the first reviewed lab
@@ -233,14 +246,16 @@ seal and validation bundle; its sealed `library-hot` preparation and launch
 reported `identity=match`. The flagship `deepseek-v4-flash` profile carries
 the second issued identity; its post-issuance physical enforcement and
 one-home lifecycle gates passed in the catalog and serving-integration scopes.
-Strict determinism and sustained-soak requirements still block storage-path
-promotion. Profiles without seals remain legacy-unsealed, and this does
-not promote `library-hot`. Sealed replicated caches now enforce the
+Strict determinism and sustained-soak requirements remain model/release gates;
+standardizing transfer mechanics does not waive them. Profiles without seals
+remain legacy-unsealed. Sealed replicated caches enforce the
 reviewed commit/manifest with full verification, a rank-local witness, and
 exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
 paths remain unbound. See
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
-[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). Maintainers can
+[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md), with the policy
+decision in [ADR 0003](docs/decisions/0003-ssh-over-roce-model-preparation-standard.md).
+Maintainers can
 assemble deterministic unreviewed identity candidates through the separate
 [model release runbook](docs/MODEL_RELEASE.md); that tool cannot issue or
 promote a claim and is not exposed through `pulsar`.
