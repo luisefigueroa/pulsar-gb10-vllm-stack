@@ -849,8 +849,9 @@ blocker changed.
 ## 8. Remaining deferred work
 
 - Physical serving-integration repeat for the new remote one-node wizard path;
-  deterministic orchestration is implemented, while existing one-node and
-  flagship artifacts cover only their recorded placements
+  deterministic orchestration is implemented and the production two-node
+  DeepSeek wizard path has passed physically, while existing one-node evidence
+  does not exercise this new remote interactive placement
 - Machine-readable qualification dimensions; current scope separation is a
   documentation and evidence-interpretation contract
 - Issue remaining supported profiles over time
@@ -915,3 +916,4 @@ blocker changed.
 | 2026-08-13 | Added reviewed-profile `home add`: target-side exact-commit download into plan-owned same-filesystem staging, any-confirmed-rank placement for one-node profiles, exact geometry for multi-node profiles, most-free-space selection with explicit in-geometry override, all-rank duplicate recheck, full expected-manifest verification, and atomic publication of one durable home. Catalog refresh, hot preparation, and launch remain separate; deterministic contracts pass and physical acquisition evidence remains pending. |
 | 2026-08-13 | Reviewed acquisition passed its three-node physical catalog/artifact gate with sealed Qwen 1.7B. Guarded last-home removal, interrupted remote download cleanup, explicit rank-2 acquisition, automatic most-free-space rank-2 acquisition, full reviewed-manifest verification, atomic publication, explicit catalog refresh, and final one-home/no-hot state passed. The gate also closed target discovery for Pulsar's managed HF CLI venv. It did not prepare, launch, qualify, or promote the model or storage path. |
 | 2026-08-13 | The serving wizard gained an explicit experimental distributed-catalog choice for eligible reviewed profiles while preserving replicated weights as the first/default option. Readiness is rechecked after optional preparation, launch remains separately confirmed, one-node catalog serving is constrained to its durable-home rank, and stop purges unpinned hot views by default while explicit pin retains them. Deterministic contracts pass; no new physical, model-qualification, or promotion claim is made. |
+| 2026-08-13 | The production two-node serving wizard passed its physical DeepSeek catalog integration gate from a clean one-home state: explicit experimental selection, separate preparation and launch confirmations, eight-stream SSH-over-RoCE, fresh exact readiness, read-only exact-snapshot serving, eight warmup phases, completion, interactive owned stop, unpinned purge, and return to one durable home. This is serving-integration evidence only; remote one-node placement, failed strict determinism, sustained soak, and promotion remain open. |

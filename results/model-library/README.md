@@ -49,11 +49,16 @@ blocked catalog health cannot fall through silently, optional preparation uses
 the fixed eight-stream SSH-over-RoCE policy, fresh exact readiness is required,
 and launch remains separately confirmed. One-node catalog serving is bound to
 the durable-home rank; ordinary stop purges unpinned views while explicit pin
-retains them without adding home-loss resilience. This adds orchestration, not
-a new measurement. Existing Qwen and DeepSeek artifacts remain valid only for
-their recorded placements. In particular, the new remote one-node wizard path
-still needs a physical serving-integration repeat before it can make a physical
-claim, and none of this changes the failed determinism or promotion status.
+retains them without adding home-loss resilience. The production wizard then
+passed a physical two-node DeepSeek serving-integration gate from a clean
+one-home/no-hot state: explicit experimental selection, separately confirmed
+preparation and launch, fresh exact readiness, eight-stream SSH-over-RoCE,
+read-only exact-snapshot serving, eight warmup phases, completion smoke, and
+the interactive ordinary-stop purge all passed. The run returned to one
+durable home with no hot instances. The new remote one-node wizard path still
+needs its own physical serving-integration repeat before that placement can
+make a physical claim, and none of this changes the failed determinism or
+promotion status.
 
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
@@ -183,6 +188,7 @@ duplicate was changed by this work.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| [`deepseek-v4-flash-serving-wizard-gate-20260813.json`](./deepseek-v4-flash-serving-wizard-gate-20260813.json) | Production interactive serving-wizard and operator-home stop flow for the exact sealed DeepSeek GA profile: explicit experimental choice, fixed preparation, exact readiness, read-only launch, warmup, completion, owned stop, purge, and one-home closeout | Current two-node serving-integration PASS; remote one-node wizard placement, model qualification, and storage-path promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`deepseek-v4-flash-library-hot-determinism-20260812.json`](./deepseek-v4-flash-library-hot-determinism-20260812.json) | Exact sealed DeepSeek GA same-boot strict captures with profile-default DSpark plus forced no-spec diagnostic, standard benchmarks, and clean one-home closeout | Current strict determinism FAIL; no-spec improves but does not eliminate variance; sustained soak and promotion remain blocked | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; strict determinism, sustained soak, and promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`model-library-health-legacy-repair-gate-20260812.json`](./model-library-health-legacy-repair-gate-20260812.json) | Three-node read-only health, repair-ID-bound schema-1/2 removal, stopped-container/pinned blockers, no-follow/sibling preservation, and exact disposable-home removal; synthetic data only | Current health/legacy-repair physical PASS; no real cleanup, reconciliation, or storage-path promotion | Reviewed; site topology, paths, hosts, nodes, containers, repair IDs, and filesystem identity omitted |
