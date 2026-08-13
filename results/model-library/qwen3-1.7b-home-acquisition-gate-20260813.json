@@ -23,6 +23,92 @@
     "guarded_last_home_removal_eligible": true,
     "remote_target_had_managed_hf_cli": true
   },
+  "procedure": [
+    {
+      "step": 1,
+      "command": "scripts/model-library.sh home remove qwen3-1.7b --node 1 --allow-last-home --yes",
+      "purpose": "Remove the prior final home through the guarded lifecycle service."
+    },
+    {
+      "step": 2,
+      "command": "timeout --signal=INT --kill-after=20s 8s scripts/model-library.sh home add qwen3-1.7b --node 2 --yes",
+      "purpose": "Inject an interrupt after explicit remote target-side download begins."
+    },
+    {
+      "step": 3,
+      "command": "scripts/model-library.sh home add qwen3-1.7b --node 2 --yes --json",
+      "purpose": "Run an end-to-end explicit remote acquisition."
+    },
+    {
+      "step": 4,
+      "command": "scripts/model-library.sh catalog refresh",
+      "purpose": "Register the explicitly acquired home as a separate action."
+    },
+    {
+      "step": 5,
+      "command": "scripts/model-library.sh home remove qwen3-1.7b --node 2 --allow-last-home --yes",
+      "purpose": "Return to no-home state through the guarded lifecycle service."
+    },
+    {
+      "step": 6,
+      "command": "scripts/model-library.sh home add qwen3-1.7b --yes",
+      "purpose": "Run an end-to-end automatic most-free-space acquisition without a node override."
+    },
+    {
+      "step": 7,
+      "command": "scripts/model-library.sh catalog refresh",
+      "purpose": "Register the automatically acquired home as a separate action."
+    }
+  ],
+  "attempts": [
+    {
+      "name": "interrupted-explicit-remote",
+      "selection": "operator-override",
+      "target_rank": 2,
+      "download_started": true,
+      "exit_code": 124,
+      "published": false,
+      "published_home_count_after_attempt": 0,
+      "staging_count_after_attempt": 0,
+      "all_confirmed_ranks_observed_after_attempt": true
+    },
+    {
+      "name": "successful-explicit-remote",
+      "selection": "operator-override",
+      "target_rank": 2,
+      "download_completed": true,
+      "revision_matched": true,
+      "bytes_hashed": 4079450110,
+      "expected_manifest_matched": true,
+      "publication_recheck_rank_count": 3,
+      "atomic_publication_succeeded": true,
+      "catalog_refreshed_by_acquisition": false,
+      "catalog_home_count_before_explicit_refresh": 0,
+      "explicit_catalog_refresh_succeeded": true,
+      "catalog_home_ranks_after_refresh": [
+        2
+      ]
+    },
+    {
+      "name": "successful-automatic-most-free-space",
+      "preceding_guarded_last_home_removal_succeeded": true,
+      "catalog_home_count_before_attempt": 0,
+      "node_override_supplied": false,
+      "selection": "most-free-space",
+      "target_rank": 2,
+      "download_completed": true,
+      "revision_matched": true,
+      "bytes_hashed": 4079450110,
+      "expected_manifest_matched": true,
+      "publication_recheck_rank_count": 3,
+      "atomic_publication_succeeded": true,
+      "catalog_refreshed_by_acquisition": false,
+      "explicit_catalog_refresh_succeeded": true,
+      "catalog_home_ranks_after_refresh": [
+        2
+      ]
+    }
+  ],
   "checks": {
     "guarded_last_home_removal_succeeded": true,
     "catalog_recorded_no_home_after_removal": true,
@@ -30,8 +116,9 @@
     "injected_interrupt_returned_nonzero": true,
     "interrupted_run_published_no_home_on_any_rank": true,
     "interrupted_run_left_no_plan_owned_staging_on_any_rank": true,
-    "explicit_remote_rank_2_acquisition_succeeded": true,
-    "automatic_most_free_space_selected_rank_2": true,
+    "explicit_remote_rank_2_end_to_end_acquisition_succeeded": true,
+    "second_guarded_last_home_removal_succeeded": true,
+    "automatic_rank_2_end_to_end_acquisition_succeeded": true,
     "exact_reviewed_revision_downloaded": true,
     "full_expected_manifest_sha256_passed": true,
     "publication_recheck_observed_every_confirmed_rank": true,
