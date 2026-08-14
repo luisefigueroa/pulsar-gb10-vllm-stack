@@ -67,10 +67,11 @@ the smallest complete gate set from this change-impact matrix:
 
 | Changed input or contract | Required revalidation |
 |---|---|
-| Model revision, tokenizer/model code, adapter/draft, or expected seal | New Model Serving Release; catalog identity/full verification, serving integration, and complete model qualification |
+| Model Artifact Set content or identity: model revision/snapshot manifest, tokenizer/model code, adapter/draft, or another behavior-affecting artifact | New Model Serving Release; catalog identity/full verification, serving integration, and complete model qualification |
+| Expected-seal or schema-1 bundle trust metadata only, with the Model Artifact Set and every other release input unchanged | Same Model Serving Release; issue and verify the required new schema-1 artifact IDs and cross-links, review provenance/evidence/privacy, and refresh or reprepare current hot state when its legacy identity changes. Reassess the validation decision when its evidence or review basis changes, but do not automatically rerun model qualification |
 | Image, dependency, engine flags, memory contract, or geometry | New Model Serving Release; serving integration and complete model qualification; retain generic catalog mechanics unless the change affects them |
 | Transfer/copy algorithm or admission policy | Same release when it still converges on the identical verified `local-verified-readonly` runtime-access contract; rerun affected catalog physical gates and integration smoke, and model gates only when runtime inputs change or evidence shows a causal execution effect |
-| Manifest, witness, metadata, retention, repair, or cleanup semantics | Affected identity/lifecycle gates and integration smoke when launch views change; no automatic accuracy rerun |
+| Catalog-manifest, witness, metadata, retention, repair, or cleanup semantics | Affected identity/lifecycle gates and integration smoke when launch views change; no automatic accuracy rerun |
 | Interactive catalog/health orchestration with unchanged scan and schema semantics | Focused renderer/shell contracts plus full control-plane selftest; no new physical or model-qualification claim |
 | Runtime model-access contract | New Model Serving Release when the access contract changes (for example local verified bytes to a live remote dependency); catalog/lifecycle, serving integration, and complete model qualification |
 | Documentation-only policy/classification | Documentation checks and control-plane regression tests; no new physical claim |

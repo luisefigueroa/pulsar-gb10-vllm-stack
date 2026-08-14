@@ -72,8 +72,14 @@ calculation.
    `identity_status=match` before it can publish ready hot state.
 
 A configured model, commit, or manifest mismatch cannot be bypassed with
-`--allow-unvalidated`. Changing a seal creates a distinct hot identity; prior
-hot state is not silently relabeled.
+`--allow-unvalidated`. Under current schema-1 enforcement, changing any seal
+creates a distinct hot identity; prior hot state is not silently relabeled.
+That legacy hot identity is not the Model Serving Release identity. A seal
+change that alters only review, provenance, evidence, or issuance metadata
+retains the same Model Serving Release when its four-part tuple is unchanged;
+it requires new schema-1 IDs and cross-link verification, plus refresh or
+repreparation of affected hot state, but does not by itself require complete
+model requalification. A content-changing seal update creates a new release.
 
 ## Current implementation boundary
 
