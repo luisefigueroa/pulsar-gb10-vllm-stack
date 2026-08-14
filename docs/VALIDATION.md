@@ -151,7 +151,7 @@ change profile status, or promote model-library distribution. See
 | Laguna-S-2.1-NVFP4 | gsm8k 5-shot, 200 samples | **RECORDED** | **0.820 strict** / 0.45 flexible (must use `tokenized_requests=False` — see TROUBLESHOOTING for the 0.055 false reading) |
 | Nemotron-3-Nano NVFP4 | gsm8k 5-shot, 200 samples | **RECORDED** | **0.830 strict** / 0.465 flexible |
 | Nemotron-3-Super NVFP4 | gsm8k 5-shot, 200 samples | **RECORDED** | **0.940 strict** / 0.95 flexible |
-| DeepSeek-V4-Flash (2-node TP=2) | gsm8k 5-shot, 200 samples | **RECORDED** | **0.970 strict / 0.970 flexible** — best in fleet |
+| DeepSeek-V4-Flash-**0731** (2-node TP=2) | gsm8k 5-shot, 200 samples | **RECORDED** | **0.935 strict** (±0.018); 20 GB geometry **0.925** ±0.019 (same band). Pre-0731 / sparkrun **0.970** is HISTORICAL — see the 0731 battery and 20 GB sections below |
 
 ## Determinism
 
@@ -250,7 +250,8 @@ for serving decisions.**
 
 | Config | Duration | Errors | Mem growth | Thermal | Status |
 |---|---|---|---|---|---|
-| Flagship 2-node (deepseek-v4-flash) | **150 min @ c=8, 3403 requests** | **0** (and 0 NCCL timeouts) | none (decile-averaged availability flat on both nodes; raw values fluctuate ~2 GiB with page cache) | node1 max 79 C, node2 steady 66 C, SM >=2392 both (no throttle) | **PASS** — cluster still healthy at end |
+| Flagship 2-node (`deepseek-v4-flash`, **20 GB/rank**) | **150 min @ c=5, 3201 requests** | **0** | see 20 GB/rank section below | see 20 GB/rank section below | **PASS** — canonical ship soak (`results/soak-dsv4-20gb-150min.json`) |
+| Flagship 2-node (pre-20 GB geometry) | **150 min @ c=8, 3403 requests** | **0** (and 0 NCCL timeouts) | none (decile-averaged availability flat on both nodes; raw values fluctuate ~2 GiB with page cache) | node1 max 79 C, node2 steady 66 C, SM >=2392 both (no throttle) | **HISTORICAL** — superseded by 20 GB / c=5 (`results/soak-dsv4-2node.json`) |
 | Primary 1-node (laguna) | **150 min @ c=4, 1873 requests** | **0** | none (-0.5 decile drift = availability slightly up) | 82 C max, SM >=2379 (no throttle) | **PASS** — server still healthy at end |
 | qwen3.6-27b-fp8 smoke | 20 min @ c=8 | **0** | -0.09 GiB (noise) | 80 C max, SM >=2353 (no throttle) | **PASS** |
 | nemotron-3-nano smoke | 15 min @ c=16 (1120 requests) | **0** | +0.03 GiB | 70 C max, SM >=2392 | **PASS** (+ needle 3/3 @124K after soak) |

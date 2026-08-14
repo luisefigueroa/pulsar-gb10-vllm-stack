@@ -84,9 +84,10 @@ number is promoted to a larger world size without remeasurement.
 - `--max-num-seqs`: dense models keep per-stream decode acceptable up to
   ~8-16 concurrent (bandwidth divides across streams); MoE models batch
   better (expert reads amortize). Numbers per model in results/bench-*.
-- `--max-num-batched-tokens 8192` bounds prefill chunks so decode latency
-  stays stable under mixed load (validated value from the production
-  DeepSeek deployment).
+- `--max-num-batched-tokens 16384` is the current flagship DeepSeek value
+  (20 GB/rank KV, `max-num-seqs 5`, long-session prefills). `8192` was
+  the prior soaked 10 GB / `max-num-seqs 8` geometry — do not treat it as
+  today's production default.
 - Cold-start discipline for benchmarks: warm up at EACH concurrency level
   (Triton JITs per batch shape; cold numbers are ~100x artifacts).
   validate/bench_serve.py does this automatically.

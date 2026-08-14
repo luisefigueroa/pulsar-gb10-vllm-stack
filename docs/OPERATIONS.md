@@ -337,7 +337,7 @@ recommended fast path default-on with confirm).
 | qwen3-1.7b | ~2 min |
 | qwen 27B / nano | ~4-9 min |
 | laguna (NFS weights) | ~11 min |
-| deepseek-v4-flash (160 GB, both nodes) | ~12-15 min |
+| deepseek-v4-flash (167 GB, both nodes) | ~12-15 min |
 
 `--health-start-period` is 900 s for this reason. Watch
 `docker logs -f` for `Loading weights took ...` before suspecting a hang.
