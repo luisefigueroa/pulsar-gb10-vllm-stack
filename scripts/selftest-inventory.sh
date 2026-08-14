@@ -123,6 +123,9 @@ snap = {
         "io.pulsar.gb10.managed": "true",
         "io.pulsar.gb10.conf": "qwen3-1.7b-2node",
         "io.pulsar.gb10.rank": "0",
+        "io.pulsar.gb10.weight-source": "replicated",
+        "io.pulsar.gb10.launch-contract": "d" * 64,
+        "io.pulsar.gb10.spec-decode": "off",
       },
       "host_pids": [1001, 1002],
     },
@@ -138,6 +141,9 @@ snap = {
         "io.pulsar.gb10.managed": "true",
         "io.pulsar.gb10.conf": "qwen3-1.7b-2node",
         "io.pulsar.gb10.rank": "1",
+        "io.pulsar.gb10.weight-source": "replicated",
+        "io.pulsar.gb10.launch-contract": "d" * 64,
+        "io.pulsar.gb10.spec-decode": "off",
       },
       "host_pids": [2001],
     },
@@ -162,6 +168,24 @@ assert_eq "$(py_get "$out" 'chr(44).join(d["services"][0]["observed_ranks"])')" 
 assert_eq "$(py_get "$out" 'd["services"][0]["ranks"][0]["gpu_memory"]["measured_mib"]')" "9000" "healthy: gpu mem correlated"
 assert_eq "$(py_get "$out" 'd["services"][0]["estimated_footprint_gib_per_rank"]')" "10.0" "healthy: profile footprint"
 assert_eq "$(py_get "$out" 'len(d.get("unmanaged_gpu_processes") or [])')" "0" "healthy: no unmanaged GPU"
+assert_eq "$(py_get "$out" 'd["services"][0]["weight_source"]')" "replicated" "healthy: weight source aggregated"
+assert_eq "$(py_get "$out" 'd["services"][0]["launch_contract_id"]')" "$(printf 'd%.0s' {1..64})" "healthy: launch contract aggregated"
+assert_eq "$(py_get "$out" 'd["services"][0]["spec_decode"]')" "off" "healthy: spec state aggregated"
+
+body_mixed_contract=$(BODY="$body" python3 - <<PY
+import json
+import os
+
+snap = json.loads(os.environ["BODY"])
+del snap["containers"][1]["labels"]["io.pulsar.gb10.launch-contract"]
+print(json.dumps(snap))
+PY
+)
+out=$(run_fixture "mixed-launch-contract" "$body_mixed_contract")
+assert_eq "$(py_get "$out" 'd["services"][0]["launch_contract_id"] is None')" \
+  "True" "mixed contract: aggregate is unavailable"
+assert_eq "$(py_get "$out" 'any("lack launch contract" in x for x in d["services"][0]["reasons"])')" \
+  "True" "mixed contract: missing rank label is visible"
 
 # Extra confirmed capacity must not affect an exact two-rank service.
 # The compatibility worker status aggregates all remotes and is deliberately

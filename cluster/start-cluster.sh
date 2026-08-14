@@ -55,6 +55,8 @@ if [ "$WEIGHT_SOURCE" = library-hot ]; then
   acquire_model_library_hot_lock shared
 fi
 resolve_spec_decode "$SPEC_MODE"
+LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
+SPEC_DECODE_STATE=$([ "$SPEC_DECODE_ENABLED" = 1 ] && printf on || printf off)
 if status_requires_force && [ "$FORCE" != 1 ]; then
   echo "$MODEL_NAME status=$STATUS — refuse start without --force (allowlist: tested*)" >&2
   exit 1
@@ -203,6 +205,8 @@ build_docker_cmd() {
     --label "${PULSAR_WORLD_SIZE_LABEL}=${NODES}"
     --label "${PULSAR_TOPOLOGY_LABEL}=${CLUSTER_TOPOLOGY_ID}"
     --label "${PULSAR_NODE_ID_LABEL}=${node_id}"
+    --label "${PULSAR_LAUNCH_CONTRACT_LABEL}=${LAUNCH_CONTRACT_ID}"
+    --label "${PULSAR_SPEC_DECODE_LABEL}=${SPEC_DECODE_STATE}"
     --network host
     --ipc host
     --gpus all

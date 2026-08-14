@@ -302,6 +302,13 @@ durable home separately before running preparation.
       incomplete preparation cannot launch;
     - one-node catalog preparation and launch use the durable-home rank; a
       non-home choice fails closed instead of creating a second hot copy;
+    - a replacement snapshots the exact live launch contract, physical placement,
+      source, spec state, and library identity/runtime/retention before stop;
+      ephemeral catalog views are pinned until confirmed replacement or exact
+      rollback, while incomplete, ambiguous, legacy-unlabeled, or drifted state
+      fails before mutation;
+    - failed launch and interrupted-wizard recovery restore only the saved source,
+      placement, and spec state, and remove transaction state only after success;
     - confirmed same-source restart pins before stop, ordinary stop purges only
       unpinned views, and explicit pin remains durable-home dependent; and
     - repeat physical serving integration when the selected placement or
@@ -364,7 +371,13 @@ read-only exact-snapshot serving, warmup, completion, interactive owned stop,
 unpinned purge, and return to one durable home; see
 `results/model-library/deepseek-v4-flash-serving-wizard-gate-20260813.json`.
 The new remote one-node wizard path still needs its own serving-integration
-repeat before that placement receives a physical claim. Neither gate promotes
+repeat before that placement receives a physical claim. The short-lived exact
+replacement transaction has deterministic Python, inventory, replicated-switch,
+and catalog rollback coverage. Because it changes pre-stop retention and
+failed-launch recovery, repeat a physical two-node `library-hot` replacement
+failure/rollback plus interrupted recovery before claiming that new failure
+path on DGX hardware. Existing successful-launch and model-qualification
+evidence is not relabeled as that result. Neither gate promotes
 the storage path or supplies model-qualification evidence.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology

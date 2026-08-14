@@ -5,6 +5,8 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WIZARD_FIXTURE_TOOL="$REPO_DIR/scripts/testlib/wizard_replacement_fixture.py"
+export WIZARD_FIXTURE_TOOL
 STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard-library-selftest.XXXXXX")
 trap 'rm -rf "$STATE"' EXIT
 mkdir -p "$STATE/bin" "$STATE/reports" "$STATE/logs"
@@ -232,6 +234,16 @@ for name, value in (("one-profiles.json", one_profiles), ("one-health.json", one
         handle.write("\n")
 PY
 
+CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf deepseek-v4-flash; loaded_launch_contract_id' _ "$REPO_DIR")
+python3 "$WIZARD_FIXTURE_TOOL" seed-running \
+  --inventory "$STATE/inventory.json.running" \
+  --empty-inventory "$STATE/inventory.json" \
+  --topology "$STATE/topology.json" \
+  --health "$STATE/reports/healthy.json" \
+  --active-health "$STATE/reports/healthy-active.json" \
+  --contract-id "$CONTRACT_ID"
+cp "$STATE/inventory.json.running" "$STATE/inventory.json.running-template"
+
 cat >"$STATE/bin/health" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -248,7 +260,20 @@ if [ "${PREPARE_RC:-0}" -ne 0 ]; then
   echo "fixture preparation failed" >&2
   exit "$PREPARE_RC"
 fi
-cp "$PREPARE_RESULT" "$HEALTH_REPORT"
+case "${1:-}" in
+  prepare)
+    cp "$PREPARE_RESULT" "$HEALTH_REPORT"
+    ;;
+  pin|unpin)
+    retention=$([ "$1" = pin ] && echo pinned || echo ephemeral)
+    python3 "$WIZARD_FIXTURE_TOOL" mutate-health \
+      --path "$HEALTH_REPORT" --retention "$retention"
+    ;;
+  purge-hot)
+    python3 "$WIZARD_FIXTURE_TOOL" mutate-health \
+      --path "$HEALTH_REPORT" --purge
+    ;;
+esac
 SH
 
 cat >"$STATE/bin/weights" <<'SH'
@@ -262,6 +287,12 @@ cat >"$STATE/bin/up" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$UP_LOG"
+if [ -f "${UP_FAIL_ONCE:-}" ]; then
+  rm -f "$UP_FAIL_ONCE"
+  exit 1
+fi
+python3 "$WIZARD_FIXTURE_TOOL" mutate-health \
+  --path "$HEALTH_REPORT" --active true
 SH
 
 cat >"$STATE/bin/status" <<'SH'
@@ -275,6 +306,8 @@ cat >"$STATE/bin/down" <<'SH'
 set -euo pipefail
 printf '%s\n' "$*" >>"$DOWN_LOG"
 cp "$EMPTY_INVENTORY" "$CURRENT_INVENTORY"
+python3 "$WIZARD_FIXTURE_TOOL" mutate-health \
+  --path "$HEALTH_REPORT" --active false
 SH
 
 chmod +x "$STATE/bin/health" "$STATE/bin/prepare" "$STATE/bin/weights" \
@@ -306,7 +339,10 @@ run_wizard() {
   local initial_report="$1" health_rc="$2" prepare_rc="$3" input="$4"
   local inventory_report="${5:-$STATE/inventory.json}"
   local profiles_report="${6:-$STATE/reports/profiles.json}"
+  local fail_up_once="${7:-0}"
   cp "$STATE/reports/$initial_report" "$STATE/current-health.json"
+  rm -f "$STATE/replacement-transaction.json" "$STATE/up-fail-once"
+  [ "$fail_up_once" != 1 ] || touch "$STATE/up-fail-once"
   : >"$STATE/logs/health.log"
   : >"$STATE/logs/prepare.log"
   : >"$STATE/logs/weights.log"
@@ -327,6 +363,7 @@ run_wizard() {
     WIZARD_MEMORY_RC=0 \
     WIZARD_MODEL_LIBRARY_HEALTH_CMD="$STATE/bin/health" \
     WIZARD_MODEL_LIBRARY_PREPARE_CMD="$STATE/bin/prepare" \
+    WIZARD_REPLACEMENT_TRANSACTION_FILE="$STATE/replacement-transaction.json" \
     WIZARD_CHECK_WEIGHTS_CMD="$STATE/bin/weights" \
     WIZARD_UP_CMD="$STATE/bin/up" \
     WIZARD_DOWN_CMD="$STATE/bin/down" \
@@ -339,6 +376,7 @@ run_wizard() {
     PREPARE_LOG="$STATE/logs/prepare.log" \
     WEIGHTS_LOG="$STATE/logs/weights.log" \
     UP_LOG="$STATE/logs/up.log" \
+    UP_FAIL_ONCE="$STATE/up-fail-once" \
     DOWN_LOG="$STATE/logs/down.log" \
     EMPTY_INVENTORY="$STATE/inventory.json" \
     CURRENT_INVENTORY="$inventory_report" \
@@ -392,7 +430,8 @@ assert_contains "$STATE/logs/output.log" 'preparation failed' \
 assert_empty "$STATE/logs/up.log" "preparation failure cannot launch"
 
 echo "=== confirmed experimental restart retains prepared views ==="
-run_wizard healthy.json 0 0 $'1\n2\n1\n\ny\n' \
+cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.running"
+run_wizard healthy-active.json 0 0 $'1\n2\n1\n\ny\n' \
   "$STATE/inventory.json.running"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/down.log" \
@@ -401,6 +440,24 @@ assert_contains "$STATE/logs/down.log" \
 assert_contains "$STATE/logs/up.log" \
   '^deepseek-v4-flash --weight-source library-hot --yes$' \
   "restart preserves the explicit experimental source"
+
+echo "=== failed replacement restores exact catalog contract ==="
+cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.rollback"
+run_wizard healthy-active.json 0 0 $'1\n2\n1\n\ny\n1\ny\n' \
+  "$STATE/inventory.json.rollback" "$STATE/reports/profiles.json" 1
+[ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
+assert_contains "$STATE/logs/output.log" \
+  'Restore previous exact service|planning exact rollback' \
+  "launch failure offers the captured service contract"
+assert_contains "$STATE/logs/up.log" \
+  '^deepseek-v4-flash --weight-source library-hot --spec-decode --yes$' \
+  "rollback preserves catalog source and speculative-decode state"
+assert_contains "$STATE/logs/prepare.log" '^pin deepseek-v4-flash$' \
+  "ephemeral catalog views are pinned before stop"
+assert_contains "$STATE/logs/prepare.log" '^unpin deepseek-v4-flash$' \
+  "confirmed rollback restores the original unpinned policy"
+[ ! -e "$STATE/replacement-transaction.json" ] \
+  || { echo "FAIL confirmed rollback left transaction state" >&2; exit 1; }
 
 echo "=== one-node catalog serving explicitly moves to durable home ==="
 run_wizard one-health.json 0 0 $'1\n1\n2\n1\ny\n' \

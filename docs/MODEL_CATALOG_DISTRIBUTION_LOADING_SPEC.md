@@ -881,6 +881,29 @@ physical rank remains available through the replicated policy. Multi-node
 profiles use their exact first `NODES` ranks; non-home ranks use the accepted
 eight-stream SSH-over-RoCE copy policy with no fallback.
 
+Replacement is transactional rather than a second persistent service registry.
+Immediately before one complete running service is stopped, the wizard reads
+fresh inventory and writes a mode-0600 site-local snapshot containing the
+profile, opaque effective launch-contract digest, actual speculative-decode
+state, exact topology/node placement, and observed weight source. For
+`library-hot`, the snapshot also binds the revision, expected seal and manifest,
+content/home identity, per-rank `durable-home`/`sealed-hot` runtime source, and
+original retention. An ephemeral view is pinned before `down.sh` runs. The
+record contains no argv, credentials, hostnames, addresses, or filesystem
+paths.
+
+A failed target launch can restore only from this snapshot. Current profile
+values must still hash to the captured launch contract, the physical topology
+must be identical, and catalog runtime views must retain exact identity and
+witness state. No profile-default, replicated-source, or placement fallback is
+allowed. Incomplete/partial services, multiple running stop targets, old
+services without the new labels, stale topology, missing views, or retention
+failure block automatic replacement before stop. The transaction survives wizard exit/interruption and is detected on the next
+run. It is removed after a confirmed rollback plus retention restoration, or
+after successful replacement; any old-view cleanup failure after successful
+replacement is reported with direct model-library remediation. It is recovery
+state, not append-only audit evidence or historical service state.
+
 ## 10. Launch and loading specification
 
 ### 10.1 Preflight order
@@ -1173,7 +1196,7 @@ promotes any experimental storage path for general users.
 | Flagship DeepSeek strict `library-hot` determinism | FAIL on the exact reviewed GA identity | With profile-default DSpark k=5, same-boot captures produced 11/30 exact texts and 4/30 identical records; the strict gate failed. A forced no-spec diagnostic improved to 26/30 exact texts and 25/30 identical records but still failed strict identity. Both runs used the same exact seal, image, geometry, and durable-home/sealed-hot views. The result blocks promotion under the current contract and shows that a preview/GA naming mix-up cannot explain away the current variance. Sustained soak was not run. |
 | Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
 | Read-only health and legacy-hot repair | PASS, deterministic and three-node physical | Stable sanitized health schema 1, Doctor warnings, shallow no-hash observations, repair-ID binding, stopped-container/pinned blockers, local and remote removal, atomic no-follow retirement, sibling preservation, preserved-untracked attention, and the affected exact-home removal subset passed. No production content was removed. |
-| Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. |
+| Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. The exact wizard replacement transaction passes deterministic capture, drift/refusal, catalog retention, failed-launch rollback, and recovery contracts; its physical DGX failure-path repeat remains pending. |
 
 The headless boot issue is currently classified as an owner operating-system
 boot-policy problem, not loss of model bytes or failed NFS recovery. That
@@ -1510,9 +1533,12 @@ filesystem object. Execution repeats observation and refuses active, pinned
 unless explicitly authorized, malformed, symlinked, current, ambiguous, or
 unobservable targets; it then atomically retires and no-follow deletes only
 the managed instance. It cannot migrate metadata, create a seal or witness,
-select a primary, or remove a durable home. Per-container
-runtime-source/witness labels and unmanaged-process discovery remain
-implementation gaps.
+select a primary, or remove a durable home. Per-container runtime-source and
+witness labels remain an implementation gap for
+general inventory. The replacement transaction obtains those facts from the
+read-only model-library health service and cross-checks container revision,
+seal, bundle, content, and home labels. Unmanaged-process discovery also remains
+outside catalog ownership.
 
 The witness is a separate site-local
 `<instance>/.pulsar/witness.json`; hot schema 3 is unchanged because one

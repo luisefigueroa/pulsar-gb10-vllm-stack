@@ -1576,6 +1576,10 @@ if printf '%s\n' "$dry" | grep -Fq -- \
 fi
 printf '%s\n' "$dry" | grep -Fq -- \
   '--label io.pulsar.gb10.weight-source=fabric'
+printf '%s\n' "$dry" | grep -Eq -- \
+  '--label io\.pulsar\.gb10\.launch-contract=[0-9a-f]{64}'
+printf '%s\n' "$dry" | grep -Fq -- \
+  '--label io.pulsar.gb10.spec-decode=off'
 printf '%s\n' "$dry" | grep -Fq -- \
   '--label io.pulsar.gb10.weight-owner=fixture-node-0'
 config_id=$(python3 -c \

@@ -84,7 +84,19 @@ printf '%s\n' "$launch" | grep -Fq -- "$hub:/root/.cache/huggingface/hub/models-
 printf '%s\n' "$launch" | grep -Fq -- "io.pulsar.gb10.model-revision=$revision"
 printf '%s\n' "$launch" | grep -Fq -- "io.pulsar.gb10.model-seal=$seal"
 printf '%s\n' "$launch" | grep -Fq -- "io.pulsar.gb10.validation-bundle=$bundle"
-echo "OK   sealed launch uses exact path, read-only cache, and identity labels"
+printf '%s\n' "$launch" | grep -Eq -- 'io\.pulsar\.gb10\.launch-contract=[0-9a-f]{64}'
+printf '%s\n' "$launch" | grep -Fq -- "io.pulsar.gb10.spec-decode=off"
+echo "OK   sealed launch uses exact path, read-only cache, identity, and rollback-contract labels"
+
+contract_for_env() {
+  env "${common_env[@]}" "$@" bash -c '. "$1/scripts/lib.sh"; load_conf qwen3-1.7b; loaded_launch_contract_id' _ "$REPO_DIR"
+}
+contract_default=$(contract_for_env)
+contract_cache=$(contract_for_env HF_CACHE="$STATE_DIR/another-cache")
+contract_master=$(contract_for_env MASTER_PORT=29501)
+[ "$contract_default" != "$contract_cache" ]
+[ "$contract_default" != "$contract_master" ]
+echo "OK   rollback launch contract binds cache root and cluster rendezvous port"
 
 set +e
 mismatch=$(env "${common_env[@]}" REPLICATED_VERIFY_MODE=fail "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json 2>/dev/null)

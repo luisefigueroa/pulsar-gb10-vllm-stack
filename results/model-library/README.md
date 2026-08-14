@@ -60,6 +60,15 @@ needs its own physical serving-integration repeat before that placement can
 make a physical claim, and none of this changes the failed determinism or
 promotion status.
 
+Wizard replacement is now a short-lived fail-closed transaction rather than a
+restart reconstructed from current defaults. Deterministic contracts cover
+capture of the exact live launch contract, placement, storage source,
+speculative-decode state, catalog identity/runtime views, temporary retention,
+exact failed-launch rollback, and interrupted recovery. A physical two-node
+`library-hot` failed-replacement/rollback and interruption repeat remains
+pending; the earlier successful-launch artifact is not relabeled as that
+evidence and no storage-path or model promotion claim changes.
+
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
 measurements and other failed/pending gates remain valid and are not rewritten.

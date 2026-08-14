@@ -198,10 +198,19 @@ print(json.dumps({
 " >"$path"
 }
 
+QWEN_CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf qwen3-1.7b; loaded_launch_contract_id' _ "$REPO_DIR")
+NEMOTRON_CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf nemotron-3-nano-30b-nvfp4; loaded_launch_contract_id' _ "$REPO_DIR")
+
 svc_managed() {
   # conf state complete safe [port]
   # complete/safe: True|False (Python)
   local conf="$1" state="$2" complete="$3" safe="$4" port="${5:-8000}"
+  local contract_id
+  case "$conf" in
+    qwen3-1.7b) contract_id="$QWEN_CONTRACT_ID" ;;
+    nemotron-3-nano-30b-nvfp4) contract_id="$NEMOTRON_CONTRACT_ID" ;;
+    *) echo "svc_managed: missing contract for $conf" >&2; return 1 ;;
+  esac
   local running="True" stale="False"
   [ "$state" = "stale" ] && running="False" && stale="True"
   [ "$state" = "stopped" ] && running="False"
@@ -222,6 +231,13 @@ print(json.dumps({
   'complete': $complete,
   'observability': 'complete' if $complete else 'partial',
   'api_port': $port,
+  'weight_source': 'replicated',
+  'launch_contract_id': '$contract_id',
+  'spec_decode': 'off',
+  'model_revision': None,
+  'model_seal_id': None,
+  'validation_bundle_id': None,
+  'model_identity_status': None,
   'estimated_footprint_gib_per_rank': 12.0,
   'reasons': [],
   'ranks': [{
@@ -230,7 +246,14 @@ print(json.dumps({
     'container_id_short': 'aaaaaaaaaaaa', 'image': 'vllm/vllm-openai:v0.26.0',
     'running': $running, 'stale': $stale, 'status': '$state',
     'ownership': 'managed', 'safe_to_stop': $safe,
-    'labels': {'io.pulsar.gb10.managed': 'true', 'io.pulsar.gb10.conf': '$conf', 'io.pulsar.gb10.rank': 'single'},
+    'labels': {
+      'io.pulsar.gb10.managed': 'true',
+      'io.pulsar.gb10.conf': '$conf',
+      'io.pulsar.gb10.rank': 'single',
+      'io.pulsar.gb10.weight-source': 'replicated',
+      'io.pulsar.gb10.launch-contract': '$contract_id',
+      'io.pulsar.gb10.spec-decode': 'off',
+    },
     'api_port': $port, 'mem_available_gib': 50.0, 'mem_status': 'ok', 'mem_source': 'fixture',
     'gpu_memory': {'measured_mib': 8000, 'status': 'ok', 'source': 'fixture'},
     'estimated_footprint_gib_per_rank': 12.0, 'reasons': [],
@@ -519,6 +542,7 @@ wizard_env() {
   export WIZARD_LIST_MODELS_JSON="$STATE/models.json"
   export WIZARD_INVENTORY_CMD="$SHIM/inv-cmd"
   export WIZARD_CHECK_MEMORY_CMD="$SHIM/mem-cmd"
+  export WIZARD_REPLACEMENT_TRANSACTION_FILE="$STATE/replacement-transaction.json"
   export WIZARD_CHECK_WEIGHTS_CMD="$SHIM/weights-cmd"
   export WIZARD_PULL_WEIGHTS_CMD="$SHIM/pull-weights-cmd"
   export WIZARD_DOWN_CMD="$SHIM/down-cmd"
@@ -534,6 +558,7 @@ reset_logs() {
     "$STATE/mem_after_stop" "$STATE/inv_fail" "$STATE/inv_invalid" \
     "$STATE/weights.json" "$STATE/weights.rc" "$STATE/pull-weights.rc" \
     "$STATE/no-topology.json" "$STATE/invalid-topology.json" \
+    "$STATE/replacement-transaction.json" \
     2>/dev/null || true
   rm -rf "$STATE/mem_by_model"
   mkdir -p "$STATE/logs" "$STATE/mem_by_model"
@@ -841,9 +866,10 @@ export MEM_AFTER_STOP_RC=0
 export WIZARD_API_HEALTHY=0
 # model=1, stop partial=1, spec default yes (confirm y), final y
 run_wizard $'1\n1\ny\ny\n'
-assert_eq "$LAST_RC" "0" "partial cleanup exit 0"
-assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" "partial: down partial conf"
-assert_file_contains "$STATE/logs/up.log" "deepseek-v4-flash" "partial: up after cleanup"
+assert_eq "$LAST_RC" "1" "partial replacement fails closed without exact rollback state"
+assert_false "partial: running incomplete service is not stopped" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "partial: target is not started" bash -c "test -s '$STATE/logs/up.log'"
+assert_file_contains "$STATE/logs/wizard.combined" "cannot be captured exactly|incomplete or unobservable" "partial: remediation explains unavailable automatic rollback"
 
 # ---------------------------------------------------------------------------
 # 9) Worker unreachable refusal
@@ -955,8 +981,9 @@ down_lines=$(grep -c . "$STATE/logs/down.log" || true)
 assert_eq "$down_lines" "1" "still-fail restart: single down (no extra stops)"
 assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" "still-fail restart: up previous conf"
 assert_file_not_contains "$STATE/logs/up.log" "qwen3-1.7b" "still-fail restart: never up failed target"
-assert_file_contains "$STATE/logs/wizard.combined" "Restart previous profile from current config|current profile defaults" "still-fail restart: explicit restart messaging"
-assert_file_contains "$STATE/logs/wizard.combined" "planning restart of previous profile" "still-fail restart: planned not auto"
+assert_file_contains "$STATE/logs/wizard.combined" "Restore previous exact service|previous exact service contract" "still-fail restart: exact rollback messaging"
+assert_file_contains "$STATE/logs/wizard.combined" "planning exact rollback of previous service" "still-fail restart: planned not auto"
+assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4 --no-spec-decode --yes" "still-fail restart: captured spec state is explicit"
 assert_false "still-fail restart: no docker rm in wizard" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill' "$STATE/logs/wizard.combined"
 
 # ---------------------------------------------------------------------------
@@ -1016,7 +1043,8 @@ up_order=$(tr '\n' ' ' <"$STATE/logs/up.log")
 assert_true "launch-fail restart: up order target then previous" bash -c \
   "printf '%s' \"\$0\" | grep -q 'qwen3-1.7b.*nemotron-3-nano-30b-nvfp4'" "$up_order"
 assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail restart: reported failure"
-assert_file_contains "$STATE/logs/wizard.combined" "planning restart of previous profile|current profile defaults" "launch-fail restart: explicit selection path"
+assert_file_contains "$STATE/logs/wizard.combined" "planning exact rollback of previous service" "launch-fail restart: exact selection path"
+assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4 --no-spec-decode --yes" "launch-fail restart: captured spec state is explicit"
 assert_false "launch-fail restart: no docker mutation language" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill|kill -9' "$STATE/logs/wizard.combined"
 
 # ---------------------------------------------------------------------------

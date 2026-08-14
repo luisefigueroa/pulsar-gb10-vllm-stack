@@ -74,6 +74,8 @@ run "model library startup-evidence contracts" \
 run "federated model library catalog" "$REPO_DIR/scripts/selftest-model-library.sh"
 run "inventory classifier" "$REPO_DIR/scripts/selftest-inventory.sh"
 run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
+run "serving replacement transaction contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_replacement_transaction.py"
 run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
 run "wizard experimental model-library serving" \
   "$REPO_DIR/scripts/selftest-wizard-model-library.sh"
