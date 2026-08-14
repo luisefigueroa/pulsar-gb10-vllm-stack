@@ -1,11 +1,14 @@
 # UNSUPPORTED. Not an operator path.
 # Canonical launch is `./pulsar start <profile>` (or `./serve.sh <profile>`).
-# This file does not apply Pulsar ownership labels, does not read
-# VLLM_IMAGE_MAINLINE or VLLM_API_KEY, and names the container `vllm-server`.
-# Home, wizard, and down.sh will not manage it. Do not use it for lab serving.
+# This historical sketch does not load a profile or enforce STATUS/placement,
+# exact revision/seal identity, read-only runtime views, preflight gates, or
+# Pulsar ownership/launch/topology labels. It also ignores VLLM_IMAGE_MAINLINE
+# and VLLM_API_KEY and names the container `vllm-server`.
+# Home, wizard, and down.sh will not manage it. Its shared GPU/IPC/health
+# settings do not make it equivalent to a Pulsar-managed launch.
 #
-# Historical single-node compose sketch only. Multi-node serving lives in
-# cluster/. Prefer `./pulsar start`.
+# Multi-node serving lives in cluster/. Do not use this file for lab serving;
+# use `./pulsar start`.
 services:
   vllm:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.26.0}

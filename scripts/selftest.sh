@@ -25,6 +25,8 @@ run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
+run "Docker Compose remains an unsupported historical sketch" \
+  "$REPO_DIR/scripts/selftest-compose-unsupported.sh"
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 run "terminal formatting" "$REPO_DIR/scripts/selftest-terminal-format.sh"
 run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"

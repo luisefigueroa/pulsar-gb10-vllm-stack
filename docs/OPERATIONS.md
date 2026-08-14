@@ -330,8 +330,11 @@ opaque launch digest records auth presence and supported runtime overrides.
   confirmed nodes and proceeds only when it proves one unique placement.
 - Single node low-level: `./serve.sh <name> -d`. Do **not** `docker rm -f` by
   name unless inventory proves ownership — prefer `./pulsar stop <name>`.
-  `docker-compose.yml` is unsupported: no stack labels, ignores
-  `VLLM_API_KEY` / `VLLM_IMAGE_MAINLINE`. Do not use it for lab serving.
+  `docker-compose.yml` is an unsupported historical sketch, not an equivalent
+  operator path. It bypasses profile/`STATUS`/placement gates, exact
+  revision/seal identity, read-only runtime views, preflight, and Pulsar
+  ownership/launch/topology labels; home, wizard, and `down.sh` will not manage
+  it. Do not use it for lab serving.
 - Multi-node exact profile: `cluster/preflight.sh <name>` then
   `cluster/start-cluster.sh <name>`. **ALWAYS `cluster/stop-cluster.sh <name>`
   or `./pulsar stop <name>` before relaunch** — a surviving cluster node can
