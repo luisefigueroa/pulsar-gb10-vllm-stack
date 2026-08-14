@@ -43,11 +43,13 @@ build below). Stock `v0.26.0` livelocks under multi-node load for this model
 | `vllm/vllm-openai:v0.26.0` | `sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52` | mainline: Qwen, Nemotron, Laguna, and small canaries |
 | `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | `sha256:260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2` | **DeepSeek-V4-Flash flagship and Inkling-Small-NVFP4** |
 
-Digest-pin discipline: tags are mutable; `Dockerfile` FROMs the digest. When
-bumping, re-run the validation suite (docs/VALIDATION.md) before changing the
-pin — and `rm -rf ~/.cache/vllm` + the Triton cache on every exact active rank after any
-image change (stale Triton cache is a known silent-corruption source on
-sm_121, vllm#41871).
+Digest-pin discipline: tags are mutable; `Dockerfile` FROMs the digest, and
+`qwen3-1.7b` plus the issued bundles pin that same digest. Most other
+mainline serving confs inherit `VLLM_IMAGE_MAINLINE` (`vllm/vllm-openai:v0.26.0`
+**tag**) at launch. When bumping, re-run the validation suite
+(docs/VALIDATION.md) before changing the pin — and `rm -rf ~/.cache/vllm` +
+the Triton cache on every exact active rank after any image change (stale
+Triton cache is a known silent-corruption source on sm_121, vllm#41871).
 
 ## Building the overlay (optional metadata wrapper)
 

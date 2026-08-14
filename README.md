@@ -75,10 +75,11 @@ data planes even when they involve the same machines.
    bit-identity via `VLLM_BATCH_INVARIANT=1`), quantization justified
    against a BF16 control, needle tests at every claimed context length,
    and 1-vs-2-node eval-score parity.
-4. **Provenance that gets cheaper over time.** Digest-pinned official
-   images everywhere possible; the PR exception is published as a
-   digest-pinned image built cleanly from a public PR head proposed for main —
-   no private fork lineage. Upstream is
+4. **Provenance that gets cheaper over time.** The overlay `Dockerfile` and
+   sealed canary pin official-image **digests**; most mainline serving
+   profiles still launch the mutable `v0.26.0` **tag**. The PR exception is
+   published as a digest-pinned image built cleanly from a public PR head
+   proposed for main — no private fork lineage. Upstream is
    already absorbing our delta (vllm #49731 merged the same draft-head
    optimization we carried as a patch, one day after we wrote it).
 5. **Cluster operations as first-class deliverables.** Discovery verifies
@@ -89,7 +90,9 @@ data planes even when they involve the same machines.
 ## Quick start
 
 **Run these on a DGX Spark (head node), not a laptop.**  
-Stack needs Docker + NVIDIA Container Toolkit on GB10 (aarch64). Full host
+Stack needs Docker + NVIDIA Container Toolkit on GB10 (aarch64).
+`scripts/pull-weights.sh` also needs `hf` or `huggingface-cli` on PATH
+before it will download (or restage) a Hugging Face repository. Full host
 checklist: [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
 
 ### Single-node quick start — first token
@@ -105,6 +108,7 @@ scripts/doctor.sh
 scripts/list-models.sh --validated --serving
 
 # First serving model: download weights if needed, then serve
+# Requires hf or huggingface-cli on PATH (see PREREQUISITES.md)
 scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 ./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
 # equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
@@ -310,7 +314,7 @@ All servers speak the OpenAI API on :8000. Per-model flags live in
 
 | Image | What it is | Serves |
 |---|---|---|
-| `vllm/vllm-openai:v0.26.0` (digest-pinned in `Dockerfile`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Qwen, Nemotron, Laguna, and small canaries |
+| `vllm/vllm-openai:v0.26.0` (runtime **tag**; digest pinned in `Dockerfile` and `qwen3-1.7b`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Qwen, Nemotron, Laguna, and small canaries |
 | `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | **Published arm64 source build of vLLM PR #41834 HEAD** (see below); immutable digest is pinned in model confs | DeepSeek-V4-Flash flagship and Inkling-Small-NVFP4 |
 
 ### The PR #41834 image (the only "patch" in the stack)

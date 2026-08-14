@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is an operations and validation stack for serving vLLM on one or two NVIDIA DGX Spark GB10 systems. Entry points are `serve.sh` and `wizard.sh`; higher-level lifecycle commands live in `scripts/`, while `cluster/` contains two-node launch, stop, and preflight tooling. Model profiles are shell-style files under `models/`. Python benchmarks and correctness checks live in `validate/`, with measured artifacts in `results/` and hardware probes in `bench/`. Keep operational explanations in `docs/`; deprecated experimental overlays belong in `patches/`.
+This repository is an operations and validation stack for serving vLLM on NVIDIA DGX Spark GB10 systems. The preferred operator entry is `./pulsar` (home, wizard, start/stop/status). `serve.sh` and `cluster/*` are the low-level launchers. The control plane confirms an N-node topology; serving evidence currently validates one- and two-node geometries only. Model profiles are shell-style files under `models/`. Python benchmarks and correctness checks live in `validate/`, with measured artifacts in `results/` and hardware probes in `bench/`. Keep operational explanations in `docs/`; deprecated experimental overlays belong in `patches/`.
 
 ### Pulsar subsystem map
 
@@ -39,7 +39,7 @@ data planes even when they involve the same machines.
 
 - `scripts/selftest.sh` runs control-plane tests and Python syntax checks without requiring Docker.
 - `scripts/doctor.sh` verifies GPU, Docker, port, cache, and optional worker readiness on GB10 hardware.
-- `scripts/list-models.sh --validated` lists profiles approved for use.
+- `scripts/list-models.sh --validated --serving` lists wizard/operator ship profiles (`STATUS=tested*` and `PROFILE_PURPOSE=serving`). `--validated` alone also includes diagnostic canaries.
 - `scripts/up.sh qwen3-1.7b --dry-run` exercises launch checks without starting a server.
 - `validate/run-gates.sh <served-name> --tag <label>` runs determinism captures, throughput benchmarks, and optional baseline/needle gates against an already-running server.
 - `docker build -t vllm-gb10:v0.26.0 .` builds the optional metadata overlay; see `docs/BUILD.md` before changing image pins.
@@ -169,7 +169,7 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 - Treat confirmed topology (`.cluster-topology.json`) as membership truth—not mDNS names alone.
 - Management SSH must use the **confirmed control endpoint** (saved alias for identity/host keys is fine; transport host must not wander onto a RoCE data rail). Reuse shared resolvers; do not reimplement per script.
 - Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library preparation / experimental fabric). Do not overload one path without saying so.
-- Site-local state (topology, `.weight-fabric/`, future `.model-library/`, hot roots) is gitignored; never commit hostnames, IPs, or node IDs into publishable docs/results without redaction/audit patterns already used for fabric artifacts.
+- Site-local state (`.cluster-topology.json`, `.weight-fabric/`, `.model-library/`, hot roots) is gitignored; never commit hostnames, IPs, or node IDs into publishable docs/results without redaction/audit patterns already used for fabric artifacts.
 
 ### Lifecycle ownership
 
@@ -223,9 +223,12 @@ this work; the skill is procedural and does not outrank these sources.
   not start a container or establish model qualification. `activate` is a
   backward-compatible command and internal-schema term, not the product label.
 
-- `STATUS=tested` ultimately binds an immutable validation bundle, not a model
-  repository ID alone. Expected identity comes from lab validation; locally
-  observed content can match that identity but cannot create or replace it.
+- For **reviewed** identities, `STATUS=tested` ultimately binds an immutable
+  validation bundle, not a model repository ID alone. Only issued seals
+  (`qwen3-1.7b`, `deepseek-v4-flash` today) have that bundle. Other
+  `tested` serving profiles remain `legacy-unsealed`. Expected identity
+  comes from lab validation; locally observed content can match that
+  identity but cannot create or replace it.
 - A deterministic release candidate has no authority by itself. Trusted
   issuance remains a reviewed change that binds lab evidence; candidate tools
   must fail if output claims review/promotion or targets trusted directories.
