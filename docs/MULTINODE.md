@@ -132,7 +132,21 @@ those same confirmed pair links. `--weight-source fabric` pins each NFS/RDMA
 client to one recorded RoCE rail and rejects TCP/control-LAN mounts; it does not
 change NCCL selection or the vLLM world size. A two-rank profile may configure
 a third storage-visible node for loading benchmarks without inventing TP=3.
-Replicated local caches remain the default. See `WEIGHT_FABRIC.md`.
+Replicated local caches remain the default. The wizard never selects fabric.
+See `WEIGHT_FABRIC.md`.
+
+A distinct experimental path is federated catalog serving (`library-hot`):
+one durable home, a symlink/view on that rank, and sealed-hot copies only on
+non-home ranks. It is not a live NFS/RDMA mount. The wizard may offer it as a
+labeled second choice for a reviewed sealed profile; it never selects it
+automatically and never falls back to or from fabric or replicated copies.
+Typical CLI: enroll SSH trust, `scripts/model-library.sh home add` if no home
+exists, `catalog refresh`,
+`prepare --backend copy --transport ssh-roce --copy-streams 8`, then
+`scripts/up.sh <profile> --weight-source library-hot`. See
+[OPERATIONS.md](./OPERATIONS.md) and
+[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
+This does not promote the path.
 
 ## Launcher: native `--nnodes`, not Ray
 
@@ -206,7 +220,7 @@ cluster/start-cluster.sh deepseek-v4-flash
 cluster/stop-cluster.sh deepseek-v4-flash
 ```
 
-The optional single-copy storage lifecycle is deliberately outside the wizard:
+The live-fabric storage lifecycle is deliberately outside the wizard:
 
 ```bash
 scripts/weight-fabric.sh show <profile>
@@ -214,7 +228,8 @@ scripts/up.sh <profile> --weight-source fabric
 ```
 
 Use `WEIGHT_FABRIC.md` for setup, teardown, integrity, benchmark, and failure
-recovery requirements.
+recovery. The experimental catalog/`library-hot` path above is separate; the
+wizard may offer it only as an explicit labeled choice.
 
 Always tear down a multi-node service before relaunching. A surviving remote
 rank can retain rendezvous state or RDMA resources and make the next launch

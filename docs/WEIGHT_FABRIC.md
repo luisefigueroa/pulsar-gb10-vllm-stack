@@ -27,12 +27,15 @@ The initial GB10 implementation uses Linux NFSv4.2 over RPC/RDMA:
 2. A site-local config in `.weight-fabric/` binds the profile, model, owner,
    serving-node count, optional storage-node count, topology ID, and one
    deterministic rail per owner/client pair.
-3. The owner exports its Hugging Face cache read-only. The export ACL contains
+3. The owner exports only the selected Hugging Face repository
+   (`hub/models--publisher--model/`) read-only. The export ACL contains
    only the exact client RoCE IPs and uses `root_squash`; it is never writable
-   or exported to the control subnet.
+   or exported to the control subnet. Schema-1 full-home export is
+   teardown-only.
 4. Clients use a hard, read-only NFSv4.2 mount with `proto=rdma` and port
-   `20049`. The launcher bind-mounts the configured cache root read-only into
-   each container.
+   `20049`. The launcher bind-mounts **only that repository** read-only at
+   `/root/.cache/huggingface/hub/models--…`. It does not mount the owner's
+   full Hugging Face home.
 5. A sealed manifest fixes the Hugging Face `refs/main` revision, complete
    logical file set, byte sizes, and SHA-256 for every snapshot file. Launch
    checks validate topology identity, route, mount source/options, manifest
