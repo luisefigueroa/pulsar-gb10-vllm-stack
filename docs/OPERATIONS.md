@@ -35,6 +35,7 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
 | `./pulsar status [model] [--node ID]` | → `scripts/status.sh` (may submit a completion) |
 | `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
+| `./pulsar weight-fabric [args]` | Experimental single-copy NFS/RDMA workflow → `scripts/weight-fabric.sh` |
 | `./pulsar help` | Concise usage |
 
 **Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
@@ -311,6 +312,8 @@ recommended fast path default-on with confirm).
   confirmed nodes and proceeds only when it proves one unique placement.
 - Single node low-level: `./serve.sh <name> -d`. Do **not** `docker rm -f` by
   name unless inventory proves ownership — prefer `./pulsar stop <name>`.
+  `docker-compose.yml` is unsupported: no stack labels, ignores
+  `VLLM_API_KEY` / `VLLM_IMAGE_MAINLINE`. Do not use it for lab serving.
 - Multi-node exact profile: `cluster/preflight.sh <name>` then
   `cluster/start-cluster.sh <name>`. **ALWAYS `cluster/stop-cluster.sh <name>`
   or `./pulsar stop <name>` before relaunch** — a surviving cluster node can

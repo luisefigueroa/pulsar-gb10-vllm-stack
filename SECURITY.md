@@ -21,9 +21,12 @@ multi-tenant SaaS:
   clients use the same key as `Authorization: Bearer <key>`. Prefer the
   environment variable to a command-line secret; dry-run launch output
   redacts API and Hugging Face credentials.
-- Cluster scripts expect **key-based SSH** from head → worker. Keep those
-  keys offline from the git tree; use a local `.env` for `HEAD_IP` /
-  `WORKER_IP` and related fabric settings (see `.env.example`).
+- Cluster scripts expect **key-based SSH** from rank 0 to every other
+  confirmed rank. Membership is `.cluster-topology.json` from
+  `scripts/detect-fabric.sh --write-topology`, not `.env`. Enroll control
+  endpoints with `scripts/topology-ssh-trust.sh`. Keep host keys offline
+  from the git tree. `HEAD_IP` / `WORKER_IP` in `.env` are a deprecated
+  two-node compatibility path only (see `.env.example`).
   Worker calls use BatchMode, bounded connection/liveness settings, and an
   SSH option terminator before the validated host value.
 - Never commit `.env`, tokens, or host-specific overlays. `.gitignore`

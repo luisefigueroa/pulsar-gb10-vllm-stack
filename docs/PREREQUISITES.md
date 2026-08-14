@@ -311,6 +311,7 @@ not permission to serve an unmeasured geometry.
 | [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, preparation/hot/pin policy; experiment not promoted |
 | [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: validated home symlink, non-home hot only, expected seal and serve-time witness |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |
+| [decisions/0003-explicit-model-preparation-transport.md](./decisions/0003-explicit-model-preparation-transport.md) | Accepted rationale: explicit reviewed-profile preparation uses topology-bound eight-stream SSH-over-RoCE with no fallback |
 | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) | Descriptive current implementation, evidence boundaries, and known gaps |
 | [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Maintainer-only exact-manifest and unreviewed release-candidate workflow; no issuance authority |
 | [models/seals/README.md](../models/seals/README.md) | Reviewed expected-seal schema, lab issuance boundary, and current migration status |
