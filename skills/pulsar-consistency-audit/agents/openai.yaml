@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pulsar Consistency Audit"
+  short_description: "Audit doctrine, code, docs, tests, and evidence"
+  default_prompt: "Use $pulsar-consistency-audit to audit this repository for prioritized consistency gaps."

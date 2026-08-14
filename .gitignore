@@ -39,3 +39,7 @@ COPILOT.md
 .agents/
 PROMPT.md
 .hermes/
+
+# Repository-owned agent workflows are product documentation and stay tracked.
+!/skills/
+!/skills/**
