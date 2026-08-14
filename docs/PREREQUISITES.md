@@ -108,9 +108,12 @@ Minimum to serve one model on the box where you run the script:
 cp .env.example .env   # optional for single-node path overrides
 ./serve.sh --list
 ./serve.sh laguna-s-2.1-nvfp4 -d    # detach; API on :8000
+# Preferred equivalent: ./pulsar start laguna-s-2.1-nvfp4
 # Lab network only — do not expose :8000 without auth (SECURITY.md)
 curl -fsS http://127.0.0.1:8000/v1/models
-docker rm -f vllm-laguna-s-2.1-nvfp4
+./pulsar stop laguna-s-2.1-nvfp4
+# Do not docker rm -f by name; home/wizard/down.sh only stop labeled,
+# ownership-proven containers.
 ```
 
 Cold load can take minutes (DeepSeek ~12–15 min). Watch `docker logs -f`

@@ -79,10 +79,16 @@ A sealed `library-hot` profile is different: catalog refresh discovers complete
 snapshot directories directly and selects `snapshot_revision` from the reviewed
 seal, so it does not require or trust `refs/main`. The exact sealed snapshot
 must still exist and match its manifest.
-`scripts/check-weights.sh` (used by wizard/up) requires `refs/main` to resolve
-to a snapshot, a non-empty config and weight file, no `.incomplete` marker,
-and no locally indexed missing/empty shard. It checks every exact active rank for multi-node profiles. A missing ref is therefore reported as `partial` before launch;
-repair the ref or rerun `scripts/pull-weights.sh <model> --yes`.
+`scripts/check-weights.sh` (used by wizard/up) still requires a non-empty
+config and weight file, no `.incomplete` marker, and no locally indexed
+missing/empty shard on every exact active rank. How it resolves the snapshot
+depends on the path:
+- **Legacy-unsealed replicated HF** needs `refs/main` to name a snapshot.
+  A missing ref is `partial`; restore the intended revision or rerun
+  `scripts/pull-weights.sh <model> --yes`.
+- **Sealed replicated** profiles resolve the reviewed commit directly and
+  ignore `refs/main`.
+- **`library-hot`** never consults `refs/main`.
 
 ## Download completed but Pulsar cannot find the cache
 
@@ -125,9 +131,12 @@ resolves the registry reference. Prefer the script over a bare save/load pipe.
 **Cause:** a leftover remote-rank container from a previous run still holds the
 master port / RDMA state; the new rank 0 blocks forever in torch.distributed
 rendezvous.
-**Fix:** `cluster/stop-cluster.sh` before every start (start-cluster.sh
-also removes same-name containers). `cluster/preflight.sh` fails on any
-stale `vllm-cluster-*` container for exactly this reason.
+**Fix:** `cluster/stop-cluster.sh <name>` (or `./pulsar stop <name>`) before
+every start. `stop-cluster.sh` requires `<name>` or `--all`. Default
+`start-cluster.sh` runs preflight first; leftover `vllm-cluster-*`
+containers fail that gate and are **not** removed on the default path.
+Ownership-gated cleanup inside `start-cluster.sh` is reached only with
+`--skip-preflight`. Required action is stop, then start.
 
 ## NCCL silently uses TCP instead of RDMA in containers
 
