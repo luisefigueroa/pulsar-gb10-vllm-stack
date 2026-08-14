@@ -10,6 +10,27 @@ fail() {
   exit 1
 }
 
+contains_compose_recommendation() {
+  local line lower
+  local compose_ref='docker[[:space:]-]compose(\.ya?ml)?'
+  local negative='unsupported|historical[^.;]{0,40}sketch|do[[:space:]]+not[[:space:]]+(use|run|start|recommend)|not[[:space:]]+(a[[:space:]]+|the[[:space:]]+)?(supported|canonical|equivalent|preferred|recommended)'
+  local command="${compose_ref}[[:space:]]+(up|run|start)([[:space:]]|$)"
+  local directive="(use|prefer|run|launch|start)[[:space:]]+(the[[:space:]]+)?${compose_ref}"
+  local forward_claim="${compose_ref}[^.;]{0,80}(is|as)[[:space:]]+(a[[:space:]]+|the[[:space:]]+)?(supported|canonical|equivalent|preferred|recommended)([[:space:][:punct:]]|$)"
+  local reverse_claim="(supported|canonical|equivalent|preferred|recommended)[^.;]{0,40}${compose_ref}"
+
+  while IFS= read -r line; do
+    lower=${line,,}
+    [[ $lower =~ $compose_ref ]] || continue
+    [[ $lower =~ $negative ]] && continue
+    if [[ $lower =~ $command ]] || [[ $lower =~ $directive ]] \
+        || [[ $lower =~ $forward_claim ]] || [[ $lower =~ $reverse_claim ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 first_nonempty=$(awk 'NF { print; exit }' docker-compose.yml)
 [ "$first_nonempty" = "# UNSUPPORTED. Not an operator path." ] \
   || fail "docker-compose.yml must lead with the unsupported classification"
@@ -46,8 +67,21 @@ grep -Fq '# managed profile, identity, placement, preflight, and lifecycle contr
   .env.example \
   || fail ".env.example must describe the managed contracts Compose bypasses"
 
-if grep -Eqi 'docker[ -]compose|docker-compose' README.md AGENTS.md; then
+if contains_compose_recommendation < <(sed -n 'p' README.md AGENTS.md); then
   fail "primary operator guidance must not advertise the historical Compose sketch"
+fi
+
+if contains_compose_recommendation \
+    <<< 'Docker Compose is unsupported; use ./pulsar start <profile> instead.'; then
+  fail "an explicit negative Compose warning must remain allowed"
+fi
+if ! contains_compose_recommendation \
+    <<< 'Run docker compose up for the supported single-node service.'; then
+  fail "a Docker Compose launch recommendation must be rejected"
+fi
+if ! contains_compose_recommendation \
+    <<< 'Docker Compose is equivalent to ./pulsar start <profile>.'; then
+  fail "a positive Docker Compose equivalence claim must be rejected"
 fi
 
 echo "compose unsupported contract selftest OK"
