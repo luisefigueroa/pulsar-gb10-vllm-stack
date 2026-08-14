@@ -16,7 +16,7 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-13 |
+| Snapshot date | 2026-08-14 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -460,7 +460,11 @@ For an HF profile, `scripts/pull-weights.sh` performs this sequence:
    against the standard hub cache; otherwise retain the legacy unpinned
    download behavior. Online access is enabled only for this command.
 7. Copy the selected `models--publisher--model` repository directory to each
-   remote serving rank using `rsync -aH`.
+   remote serving rank using `rsync -aH`. The rsync subprocess receives the
+   same shared SSH binary and confirmed-topology options as the surrounding
+   remote directory and verification calls, so the saved alias remains the
+   node identity while schema 2 pins transport to its confirmed control
+   endpoint. There is no alternate endpoint or transport fallback.
 8. For a sealed profile, full-verify the complete reviewed manifest on the
    controller and after every remote materialization, creating a rank-local
    witness outside the copied repository.

@@ -750,6 +750,12 @@ _pulsar_configure_topology_ssh() {
   PULSAR_TOPOLOGY_SSH_CONFIGURED=1
 }
 
+# Build the remote-shell command consumed by rsync from the same injectable
+# SSH binary and confirmed-topology options used by direct SSH callers.
+pulsar_rsync_remote_shell() {
+  shell_join_q "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}"
+}
+
 ssh_node() {
   local rank="${1:?rank required}"
   shift
