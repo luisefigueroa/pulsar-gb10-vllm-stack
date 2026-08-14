@@ -170,6 +170,12 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 - Management SSH must use the **confirmed control endpoint** (saved alias for identity/host keys is fine; transport host must not wander onto a RoCE data rail). Reuse shared resolvers; do not reimplement per script.
 - Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library preparation / experimental fabric). Do not overload one path without saying so.
 - Site-local state (`.cluster-topology.json`, `.weight-fabric/`, `.model-library/`, hot roots) is gitignored; never commit hostnames, IPs, or node IDs into publishable docs/results without redaction/audit patterns already used for fabric artifacts.
+- In static hardware and measurement documentation, identify physical systems as
+  `Node A`, `Node B`, and so on. Use generic rank labels such as `rank 0` and
+  `rank 1` only when the runtime role itself matters; ranks are not durable
+  hardware identities. Safety guidance may describe prohibited site identity
+  generically, but must not quote stable site hostnames or durable topology
+  identity.
 
 ### Lifecycle ownership
 

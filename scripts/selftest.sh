@@ -27,6 +27,8 @@ run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
 run "Docker Compose remains an unsupported historical sketch" \
   "$REPO_DIR/scripts/selftest-compose-unsupported.sh"
+run "publishable documentation privacy" \
+  "$REPO_DIR/scripts/selftest-docs-privacy.sh"
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 run "terminal formatting" "$REPO_DIR/scripts/selftest-terminal-format.sh"
 run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"

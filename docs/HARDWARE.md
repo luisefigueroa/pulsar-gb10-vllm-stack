@@ -7,9 +7,8 @@ results must not be extrapolated to a larger rank count.
 
 ## Nodes
 
-| | dgx-spark-1 | dgx-spark-2 |
+| | Node A | Node B |
 |---|---|---|
-| Hostname / role | dgx-spark-1 (head, example) | dgx-spark-2 (worker, example) |
 | SoC | NVIDIA GB10 (Grace-Blackwell superchip) | identical |
 | CPU | 20-core ARM (10x Cortex-X925 @ 3.9 GHz + 10x Cortex-A725 @ 2.8 GHz), aarch64 | identical |
 | GPU | GB10, compute capability **12.1** (`sm_121`) | identical |
@@ -26,7 +25,7 @@ image used for Step 0 measurements bundles **NCCL 2.28.3 + CUDA 13.0.1**.
 GB10's unified LPDDR5X is the decode bottleneck. Measured with 2 GiB buffers,
 median of 20 iters (`bench/membw.py`, PyTorch 26.06 container):
 
-| Test | dgx-spark-1 | dgx-spark-2 |
+| Test | Node A | Node B |
 |---|---|---|
 | D2D copy (read+write) | 223.9 GB/s | 224.1 GB/s |
 | Read-only reduction | 240.5 GB/s | 239.0 GB/s |
