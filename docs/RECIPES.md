@@ -1,11 +1,12 @@
 # Recipes — every flag, verbatim, for the best measured results
 
-These are the COMPLETE effective launch commands (rendered from
-`./serve.sh <name> --dry-run` / `cluster/start-cluster.sh <name> --dry-run`,
-not hand-transcribed). Day-to-day operators can use `./pulsar start <name>`
-(or `./pulsar wizard` for a guided single- or multi-node model switch).
-`models/*.conf` remain the source of truth; this page exists so a recipe
-survives outside the tooling. Numbers: docs/VALIDATION.md.
+Engine flags below come from `models/*.conf`. Day-to-day operators should
+launch with `./pulsar start <name>` (or `./pulsar wizard` for a guided
+single- or multi-node model switch) and stop with `./pulsar stop <name>`.
+Do not paste a raw unlabeled `docker run`: launchers attach stack ownership
+labels, and home/wizard/`down.sh` will refuse unlabeled containers.
+`models/*.conf` remain the source of truth; this page exists so the measured
+flag set survives outside the tooling. Numbers: docs/VALIDATION.md.
 
 Shared doctrine baked into every recipe:
 - `--ipc=host --ulimit memlock=-1 --ulimit stack=67108864` (SHM + RDMA verbs)
@@ -83,21 +84,14 @@ needle 3/3 @447K (VALIDATION.md).
 
 ## Primary single-node: Laguna-S-2.1-NVFP4 — 19.5 tok/s c=1, full 256K ctx
 
-```bash
-docker run --name vllm-laguna-s-2.1-nvfp4 -d --gpus all --ipc=host \
-  --ulimit memlock=-1 --ulimit stack=67108864 -p 8000:8000 \
-  -v ~/.cache/huggingface:/root/.cache/huggingface \
-  -v /mnt/Models:/mnt/Models:ro \
-  -e HF_HUB_OFFLINE=1 -e VLLM_LOGGING_LEVEL=INFO \
-  --health-cmd 'curl -fs http://localhost:8000/health || exit 1' \
-  --health-interval 30s --health-timeout 5s --health-retries 3 \
-  --health-start-period 900s \
-  vllm/vllm-openai:v0.26.0 \
-  --model '/mnt/Models/Official Models/poolside/Laguna-S-2.1-NVFP4' \
-  --served-model-name laguna-s-2.1 --host 0.0.0.0 --port 8000 \
-  --gpu-memory-utilization 0.80 \
-  --max-model-len 262144 --max-num-seqs 4 \
-  --moe-backend marlin
+Preferred: `./pulsar start laguna-s-2.1-nvfp4` (or `./serve.sh laguna-s-2.1-nvfp4 -d`).
+Stop with `./pulsar stop laguna-s-2.1-nvfp4`. Engine args on
+`vllm/vllm-openai:v0.26.0` (NFS catalog path):
+```
+--model '/mnt/Models/Official Models/poolside/Laguna-S-2.1-NVFP4'
+--served-model-name laguna-s-2.1 --gpu-memory-utilization 0.80
+--max-model-len 262144 --max-num-seqs 4
+--moe-backend marlin
 ```
 
 Load-bearing: `--moe-backend marlin` (NVFP4 MoE via CUTLASS is silently
@@ -107,8 +101,8 @@ with a fresh A/B if you care. lm-eval needs `tokenized_requests=False`.
 
 ## Nemotron-3-Super-120B-A12B-NVFP4 — 16.2 tok/s c=1, 113 agg @ c=32
 
-Engine args on `vllm/vllm-openai:v0.26.0` (docker plumbing as Laguna, HF-id
-model):
+Preferred: `./pulsar start nemotron-3-super-120b-nvfp4`. Engine args on
+`vllm/vllm-openai:v0.26.0` (HF-id model):
 ```
 --model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
 --served-model-name nemotron-3-super --gpu-memory-utilization 0.85

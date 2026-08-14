@@ -348,8 +348,9 @@ recommended fast path default-on with confirm).
 2. ~5 min later: `sample_tokens RPC timed out` → engine dead; `/health`
    finally fails; container still shows "Up" (API alive, engine dead).
 3. **There is no recovery.** Do not wait for one:
-   `cluster/stop-cluster.sh && cluster/preflight.sh <name> && cluster/start-cluster.sh <name>`
-   (~15 min back to serving).
+   `cluster/stop-cluster.sh <name> && cluster/preflight.sh <name> && cluster/start-cluster.sh <name>`
+   (or `./pulsar stop <name>` then the same preflight and start; ~15 min
+   back to serving). `stop-cluster.sh` requires `<name>` or `--all`.
 
 If a hang does NOT follow a node event, walk TROUBLESHOOTING.md (multi-cause
 `sample_tokens` RPC timeout tree) before restarting in a loop.
