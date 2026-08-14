@@ -375,6 +375,7 @@ if [ "${#REMOTE_STAGE_RANKS[@]}" -gt 0 ]; then
   if [ -n "${RSYNC_BWLIMIT:-}" ]; then
     rsync_opts+=(--bwlimit="$RSYNC_BWLIMIT")
   fi
+  rsync_remote_shell=$(pulsar_rsync_remote_shell)
   for rank in "${REMOTE_STAGE_RANKS[@]}"; do
     host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
     echo
@@ -391,7 +392,8 @@ if [ "${#REMOTE_STAGE_RANKS[@]}" -gt 0 ]; then
         "Check SSH access and cache permissions on $(node_name "$rank"), then retry."
     fi
     if [ "$VERBOSE" = 1 ]; then
-      if ! rsync "${rsync_opts[@]}" "$hub/" "$host:$remote_hub/"; then
+      if ! rsync "${rsync_opts[@]}" -e "$rsync_remote_shell" \
+          "$hub/" "$host:$remote_hub/"; then
         weight_failure \
           "Copying model files to $(node_display "$rank")" \
           "The network copy did not complete." \
@@ -399,7 +401,8 @@ if [ "${#REMOTE_STAGE_RANKS[@]}" -gt 0 ]; then
       fi
     else
       copy_output=""
-      if ! copy_output=$(rsync "${rsync_opts[@]}" "$hub/" "$host:$remote_hub/" 2>&1); then
+      if ! copy_output=$(rsync "${rsync_opts[@]}" -e "$rsync_remote_shell" \
+          "$hub/" "$host:$remote_hub/" 2>&1); then
         weight_failure \
           "Copying model files to $(node_display "$rank")" \
           "The network copy did not complete." \
