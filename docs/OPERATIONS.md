@@ -933,7 +933,8 @@ rethink one-shot `nfs-rdma` versus `ssh-roce` (copy over RoCE TCP).
 ## Expected steady-state numbers (alert if far off)
 
 Flagship under load (DSpark default-on): ~27 tok/s rollback/base /
-**~43–48 tok/s** default single-stream; ~105 tok/s aggregate at c=8 base path; node temps
+**~43–48 tok/s** default single-stream on the **0731 benches** (no 20 GB
+throughput re-run in `results/`); ~105 tok/s aggregate at c=8 base path; node temps
 ≤81–84 C, SM clock ≥2380 MHz. Memory
 available fluctuates ±2 GiB with page cache — only a monotonic decline over
 hours is a leak signal (none observed in 150-min soaks).

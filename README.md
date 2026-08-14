@@ -55,8 +55,8 @@ data planes even when they involve the same machines.
 
 1. **Multi-node is real, measured, and root-caused — not "wired but
    untested".** A 284B flagship serves TP=2 across the RoCE link at
-   48 tok/s single-stream (spec-decode fast path; 27 base) with CUDA
-   graphs on, soaked 150 min / 0 errors. The interconnect is characterized
+   48 tok/s single-stream on the 0731 DSpark benches (27 base; no 20 GB
+   tok/s re-run) with CUDA graphs on, soaked 150 min / 0 errors at 20 GB. The interconnect is characterized
    to physics (PCIe-x4-capped ~21 GB/s, 25 µs all-reduce floor), the
    official-image cross-node CUDA-graph hang that went unsolved for days in
    prior art is root-caused with its workaround, and node-loss semantics
@@ -375,11 +375,11 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
 
 | Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
-| **deepseek-v4-flash** (2-node TP=2, PR-41834; **0731, DSpark, 20 GB/rank KV → 652k**) | **27.15** base (68%) / **43–48** DSpark | 104 @ c=8 | 0.935 | 3/3 @ **447K** | **150 min @ c=5, 3201 req, 0 err** (20 GB canonical) |
-| laguna-s-2.1-nvfp4 (1-node, NFS catalog) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K | 150 min, 1873 req, 0 err |
+| **deepseek-v4-flash** (2-node TP=2, PR-41834; **0731, DSpark, 20 GB/rank KV → 652k**) | **27.15** base (68%) / **43–48** DSpark (**0731 benches**; no 20 GB tok/s re-run) | 104 @ c=8 (0731) | 0.935 (0731 battery; 20 GB gsm8k not re-run) | 3/3 @ **447K** (`results/needle-dsv4-20gb-447k.log`) | **150 min @ c=5, 3201 req, 0 err** (20 GB canonical) |
+| laguna-s-2.1-nvfp4 (1-node, NFS catalog) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K (ledger; no `results/` needle file) | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |
-| nemotron-3-nano-30b-nvfp4 | 61.9 (86%) | 399 @ c=16 | 0.830 | 3/3 @ 124K | 15 min clean |
-| qwen3.6-27b-fp8 (GDN hybrid, 1-node only) | 8.0 (94%) | 93 @ c=16 | 0.615 | 3/3 @ 121K | 20 min clean |
+| nemotron-3-nano-30b-nvfp4 | 61.9 (86%) | 399 @ c=16 | 0.830 | 3/3 @ 124K (ledger; no `results/` needle file) | 15 min clean |
+| qwen3.6-27b-fp8 (GDN hybrid, 1-node only) | 8.0 (94%) | 93 @ c=16 | 0.615 | 3/3 @ 121K (ledger; no `results/` needle file) | 20 min clean |
 
 Roofline = 240 GB/s measured bandwidth / active-bytes-per-token; it predicts
 within 6–21% for every model. The big catalog models (V4-Pro 865 GB,

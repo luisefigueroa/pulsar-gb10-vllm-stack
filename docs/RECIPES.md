@@ -125,7 +125,7 @@ Under corrected metering: **+47% c=1** — opt in with
 --moe-backend marlin
 ```
 Env: `VLLM_MARLIN_USE_ATOMIC_ADD=1` in the Nano conf. Fastest model on the
-box; needle 3/3 @124K.
+box; ledger records needle 3/3 @124K (no `results/` needle artifact).
 
 ## Qwen3.6-27B-FP8 — 8.0 tok/s c=1 (94% of roofline)
 

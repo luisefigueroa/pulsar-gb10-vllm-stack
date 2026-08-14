@@ -1778,7 +1778,13 @@ content-addressed schema-1 validation-bundle verification, release before
 launch, and pin/purge lifecycle hooks. Counterbalanced DeepSeek trials
 showed that 8-stream SSH-over-RoCE preparation was 1.898x the control-path
 median; 16 streams did not improve the median. Integrity, interruption/retry,
-catalog-loss restart, real serving, and 447k-context gates also passed.
+and real serving have applicable later catalog/integration evidence.
+Catalog-loss restart (legacy-unsealed `qwen3-1.7b-2node`) and `library-hot`
+447k-context are 2026-08-10 historical measurements in
+`results/model-library/model-library-promotion-assessment-20260810.json`
+(schema-2, pre-issuance). They are not current sealed-path gates. The
+replicated 20 GB flagship later recorded 447k at
+`results/needle-dsv4-20gb-447k.log`.
 
 Those wins are not a promotion. The durable-home symlink,
 expected-seal/exact-revision enforcement, validation-bundle/live-profile
