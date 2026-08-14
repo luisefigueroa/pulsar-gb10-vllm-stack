@@ -212,8 +212,7 @@ duplicate was changed by this work.
 | `deepseek-v4-flash-ssh-roce8-vs-control8-counterbalanced-20260810.json` | DeepSeek full-model `ssh-control` versus `ssh-roce` performance/traffic proof | Current performance evidence | Embedded redaction declaration |
 | `deepseek-v4-flash-parallel-rsync-roce-8v16-alternating-20260810.json` | DeepSeek 8-versus-16-stream alternating trials | Current stream-selection evidence | Embedded redaction declaration |
 | `deepseek-v4-flash-parallel-rsync-roce-16stream-20260810.json` | Initial variable 16-stream exploration | Historical exploratory evidence | Embedded redaction declaration |
-| `deepseek-v4-flash-dsv4-*.json` and `dsv4-bench-*.log` | Earlier copy versus one-shot NFS/RDMA preparation work | Historical/superseded performance evidence | **Pending sanitation:** stable topology IDs and/or absolute workspace paths remain |
-| `codex-fabric-review-20260809.md` | Static review that motivated parallel copy and no home duplication | Historical design evidence; home-view conclusion retained | **Pending sanitation:** absolute local repository links remain |
+| *(omitted)* | Earlier copy-versus-NFS/RDMA bench JSON/logs (`deepseek-v4-flash-dsv4-*.json`, `dsv4-bench-*.log`) and `codex-fabric-review-20260809.md` | Never published: pending-sanitation drafts with site paths or topology IDs. Not in this tree. Home-view conclusion is ADR 0001, not those files. | **Unpublished — omitted** |
 
 ## Publication rules
 

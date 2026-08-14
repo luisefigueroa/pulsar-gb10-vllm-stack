@@ -13,7 +13,8 @@ do not quote them as today's geometry or spec-decode verdicts.
 | `qwen27b-tp2-2node.json` | (absent — engine hung before capture completed; see VALIDATION) |
 | `laguna-*.json` | Laguna determinism (FLASHINFER-path noise isolation), 2-node eager parity. DFlash: historical FAIL under the broken meter; corrected +13% optional in `bench-laguna-dflash-natural-fixed.json` |
 | `super-*.json`, `nano-*.json` | Nemotron captures + MTP A/B |
-| `dsv4-*.json`, `*-0731*`, `*-20gb*` | flagship captures and 0731 / 20 GB geometry gates. Canonical soak: `soak-dsv4-20gb-150min.json` (c=5, 3201 req). Pre-20 GB soaks remain historical |
+| `dsv4-*.json`, `*-0731*`, `*-20gb*` | flagship captures and 0731 / 20 GB geometry gates. Canonical soak: `soak-dsv4-20gb-150min.json` (c=5, 3201 req). Pre-20 GB soaks remain historical. gsm8k 0.925 lives in `lm-eval-dsv4-0731-500kv/` (10 GB / 500K), not the 20 GB section |
+| `needle-dsv4-20gb-447k.log` | only shipped needle transcript: 20 GB DeepSeek 3/3 @447K. Qwen 27B / Laguna / Nano needle PASS rows in VALIDATION.md have no `results/` file |
 | `bench-*.json` | concurrency sweeps (validate/bench_serve.py, warmup per level) |
 | `weight-fabric/<tag>/` | experimental live NFS/RDMA storage bundles: public provenance/manifest, rank I/O/CPU/memory, interface counters, integrity, traffic proof, and privacy audit |
 | `model-library/` | federated-library preparation, SSH-over-RoCE, topology trust, seals/bundles, and current/superseded evidence index (`model-library/README.md`) |
