@@ -170,8 +170,20 @@ else
 fi
 
 if [ ! -e "$HF_CACHE" ] && [ ! -L "$HF_CACHE" ]; then
-  record warn hf_cache \
-    "HF_CACHE missing ($HF_CACHE) · create it before downloading or serving Hugging Face models"
+  hf_cache_ancestor="$HF_CACHE"
+  while [ ! -e "$hf_cache_ancestor" ] && [ ! -L "$hf_cache_ancestor" ]; do
+    hf_cache_parent=$(dirname -- "$hf_cache_ancestor")
+    [ "$hf_cache_parent" != "$hf_cache_ancestor" ] || break
+    hf_cache_ancestor="$hf_cache_parent"
+  done
+  if [ -d "$hf_cache_ancestor" ] \
+      && [ -w "$hf_cache_ancestor" ] && [ -x "$hf_cache_ancestor" ]; then
+    record warn hf_cache \
+      "HF_CACHE missing ($HF_CACHE) · create it before downloading or serving Hugging Face models"
+  else
+    record fail hf_cache \
+      "HF_CACHE cannot be created ($HF_CACHE) · nearest existing path is not a writable, searchable directory: $hf_cache_ancestor"
+  fi
 elif [ ! -d "$HF_CACHE" ]; then
   record fail hf_cache "HF_CACHE is not a directory: $HF_CACHE"
 elif [ ! -r "$HF_CACHE" ] || [ ! -w "$HF_CACHE" ] || [ ! -x "$HF_CACHE" ]; then

@@ -52,6 +52,35 @@ env "${BASE_ENV[@]}" HF_CACHE="$missing" "$DOCTOR" \
 grep -Fq "HF_CACHE missing" "$STATE/missing.human"
 [ ! -e "$STATE/missing-parent" ]
 
+ancestor_file="$STATE/ancestor-file"
+printf 'preserve\n' >"$ancestor_file"
+run_json "$ancestor_file/cache" "$STATE/ancestor-file.json" 1
+assert_cache_row "$STATE/ancestor-file.json" fail \
+  "nearest existing path is not a writable, searchable directory"
+[ "$(cat "$ancestor_file")" = preserve ]
+
+unwritable_ancestor="$STATE/unwritable-ancestor"
+mkdir "$unwritable_ancestor"
+chmod 500 "$unwritable_ancestor"
+if [ ! -w "$unwritable_ancestor" ]; then
+  run_json "$unwritable_ancestor/cache" "$STATE/unwritable-ancestor.json" 1
+  assert_cache_row "$STATE/unwritable-ancestor.json" fail \
+    "nearest existing path is not a writable, searchable directory"
+  [ ! -e "$unwritable_ancestor/cache" ]
+fi
+chmod 700 "$unwritable_ancestor"
+
+unsearchable_ancestor="$STATE/unsearchable-ancestor"
+mkdir "$unsearchable_ancestor"
+chmod 600 "$unsearchable_ancestor"
+if [ ! -x "$unsearchable_ancestor" ]; then
+  run_json "$unsearchable_ancestor/cache" "$STATE/unsearchable-ancestor.json" 1
+  assert_cache_row "$STATE/unsearchable-ancestor.json" fail \
+    "nearest existing path is not a writable, searchable directory"
+  [ ! -e "$unsearchable_ancestor/cache" ]
+fi
+chmod 700 "$unsearchable_ancestor"
+
 ready="$STATE/ready"
 mkdir "$ready"
 run_json "$ready" "$STATE/ready.json" 0
