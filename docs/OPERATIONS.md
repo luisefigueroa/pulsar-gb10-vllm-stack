@@ -38,6 +38,22 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 | `./pulsar weight-fabric [args]` | Experimental single-copy NFS/RDMA workflow → `scripts/weight-fabric.sh` |
 | `./pulsar help` | Concise usage |
 
+### Model Serving Release policy versus current commands
+
+[ADR 0004](./decisions/0004-model-serving-release-validation.md) defines a
+Model Serving Release as the immutable exact-model + serving-recipe +
+runtime/image + supported-hardware-geometry tuple and introduces explicit
+validation-decision statuses. The current operator commands do not implement
+that schema or status model yet: `STATUS=tested*` and `--validated` retain their
+legacy allowlist meaning, and existing reviewed seals/bundles are not
+automatically `Validated`.
+
+The planned supervised skill is `pulsar-model-onboarding`. It will compose
+available acquisition, distribution, verification, launch, test, evidence, and
+cleanup subsystems, including explicitly selected Experimental ones. It does
+not exist in the current command surface, and it will not have seal issuance,
+validation-decision, or promotion authority.
+
 **Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
 `./` with `wizard.sh` as an argument, yielding `-bash: ./: Is a directory`.
 Use `./pulsar wizard` or `./wizard.sh`.
@@ -981,9 +997,11 @@ hours is a leak signal (none observed in 150-min soaks).
 - Built-in API probes and Python validators honor `VLLM_API_KEY` / `API_KEY`.
   Dry-run command rendering redacts HF and API credentials. Prefer environment
   configuration over putting secrets in shell history.
-- Rollback after a failed switch: restart the previous conf from **current**
-  profile defaults (`models/<conf>.conf`), not a snapshot of prior CLI flags.
-  Example: `./pulsar start deepseek-v4-flash` or wizard “Restart previous
-  profile from current config”.
+- Wizard rollback after a failed switch uses only the exact launch contract
+  captured immediately before stop, including effective flags, placement,
+  storage source, and speculative-decode state. If that contract is incomplete,
+  drifted, or cannot be retained, automatic replacement is refused before
+  stop. A later direct `./pulsar start <profile>` uses current profile defaults
+  and is a new manual launch, not exact rollback.
 - Never run a GDN hybrid (qwen3.6-27b) cross-node.
 - After any image change: clear `~/.cache/vllm` + Triton cache on every exact active rank, then run docs/REVALIDATE.md before calling it production.

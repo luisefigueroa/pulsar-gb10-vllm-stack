@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-08-13
+- Amended by:
+  [ADR 0004](./0004-model-serving-release-validation.md)
 
 ## Context
 
@@ -97,7 +99,7 @@ complete durable-home acquisition workflow exists.
 Revisit this policy when a supported one-home acquisition service lands, when
 new counterbalanced full-model evidence supports a different stream count or
 transport, when remote-home-to-remote-target copy is supported, or when
-`library-hot` completes its combined release-promotion gates.
+the bounded `library-hot` subsystem completes its initial GA closure.
 
 ## Implementation note — 2026-08-13
 
@@ -121,3 +123,13 @@ after its separate final start/replace confirmation. Replicated weights remain
 the first and recommended choice. One-node profiles run from their selected
 durable-home rank with no bulk transfer; this does not expand the ADR to a
 remote-home-to-non-home relay.
+
+## Interpretation note — 2026-08-14
+
+ADR 0004 separates distribution-subsystem maturity from Model Serving Release
+status. Transfer remains run provenance when it converges on the same exact
+verified `local-verified-readonly` runtime-access contract. The DeepSeek strict
+same-boot failure still blocks `Validated` for that exact release, but it is not
+a catalog/distribution failure and no longer blocks the separately scoped
+initial two-rank `library-hot` GA closure. Passing that closure will not make
+the path a guided default or waive release-specific qualification.

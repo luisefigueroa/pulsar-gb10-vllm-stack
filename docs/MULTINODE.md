@@ -12,6 +12,11 @@ profiles marked `STATUS=tested*` in `models/`. There is no promoted three-node
 profile. Finding three nodes therefore does not make the wizard invent TP=3,
 PP=3, or any other unmeasured launch.
 
+This page uses `STATUS=tested*` and the `--validated` CLI in their current
+legacy allowlist sense. They do not yet implement the `Validated` Model Serving
+Release status accepted in
+[ADR 0004](./decisions/0004-model-serving-release-validation.md).
+
 ## Two independent gates
 
 | Gate | What it proves | What it does not prove |
@@ -32,9 +37,9 @@ geometry or weaken topology checks.
 
 ## Idle capacity and one-node placement
 
-A confirmed node may host a validated one-node profile even when it is not rank
-0 and other confirmed nodes are busy with an exact multi-node service. The
-wizard recommends an idle node that passes the profile's cold-start memory
+A confirmed node may host a legacy-allowlisted one-node profile even when it is
+not rank 0 and other confirmed nodes are busy with an exact multi-node service.
+The wizard recommends an idle node that passes the profile's cold-start memory
 policy; operators can select the same immutable target directly with
 `--node <node-id>` on `pulsar start`, `status`, and `stop`.
 

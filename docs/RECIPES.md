@@ -144,7 +144,8 @@ unsupported.
 - **Canaries**: `qwen3-1.7b` (E2E smoke, ~2 min to healthy) and
   `qwen3-1.7b-2node` (multi-node plumbing check, TP=2 mp backend).
   They are hidden from the serving wizard; list them with
-  `scripts/list-models.sh --validated --diagnostic`.
+  `scripts/list-models.sh --validated --diagnostic` (`--validated` is the
+  current legacy `STATUS=tested*` filter, not yet the ADR 0004 release status).
 - **Bit-exact reproducibility run** (standard-attention models only): add
   `-e VLLM_BATCH_INVARIANT=1` → greedy outputs identical across nodes AND
   boots (30/30 verified). Not for production throughput paths.

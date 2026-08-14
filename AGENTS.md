@@ -187,6 +187,22 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 ### Claims, status, and artifacts
 
 - Priority order for product decisions: **stability > accuracy > throughput > latency.**
+- A **Model Serving Release** is the immutable combination of exact model
+  identity, serving recipe, runtime/image identity, and supported hardware
+  geometry defined by
+  [ADR 0004](docs/decisions/0004-model-serving-release-validation.md). Any
+  change to one of those four parts creates a new release; validation does not
+  transfer across release IDs.
+- The target decision statuses are `Untested`, `Testing incomplete`,
+  `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
+  `Superseded`. `Validated` requires every frozen release-specific criterion
+  across stability, accuracy, throughput, and latency, plus reviewed
+  provenance/security and strict same-boot reproducibility. FP-equivalent
+  output does not satisfy the strict gate.
+- Current `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles
+  are legacy implementation contracts until the ADR 0004 schema/status
+  migration lands. Do not automatically relabel an existing profile or bundle
+  `Validated`.
 - `STATUS` / `docs/VALIDATION.md` / wizard allowlists change only with reproducible evidence. Preserve failed and partial runs; do not rewrite failures as passes.
 - Selftests prove control-plane contracts; they do **not** replace physical gates for serving or storage claims (`docs/REVALIDATE.md`).
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
@@ -204,13 +220,15 @@ For model distribution and serving work, classify evidence before changing claim
 A failure in one subsystem does not erase valid evidence from another unless a
 causal connection is demonstrated. It does block any combined claim that
 requires both. Health or completion smoke is integration evidence, never model
-qualification. An image/runtime change invalidates its release bundle and
-applicable integration/model evidence; it does not automatically invalidate
+qualification. An image/runtime change creates a new Model Serving Release and
+invalidates applicable integration/model evidence; in the current schema it
+also requires a new validation bundle. It does not automatically invalidate
 unchanged catalog mechanics. Preserve failed evidence and state its scope.
 Agents may propose a better boundary or causal model when new evidence warrants
 it, but must not change the accepted policy, promotion requirements, or
 interpretation as settled without explicit approval and an updated ADR. See
-[ADR 0002](docs/decisions/0002-subsystem-qualification-boundaries.md) and
+[ADR 0002](docs/decisions/0002-subsystem-qualification-boundaries.md),
+[ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and
 `docs/REVALIDATE.md`.
 
 ### Model-library authority and invariants
@@ -229,12 +247,14 @@ this work; the skill is procedural and does not outrank these sources.
   not start a container or establish model qualification. `activate` is a
   backward-compatible command and internal-schema term, not the product label.
 
-- For **reviewed** identities, `STATUS=tested` ultimately binds an immutable
-  validation bundle, not a model repository ID alone. Only issued seals
-  (`qwen3-1.7b`, `deepseek-v4-flash` today) have that bundle. Other
-  `tested` serving profiles remain `legacy-unsealed`. Expected identity
-  comes from lab validation; locally observed content can match that
-  identity but cannot create or replace it.
+- In the **current implementation**, a reviewed `STATUS=tested` identity binds
+  a schema-1 validation bundle, not a model repository ID alone. Only issued
+  seals (`qwen3-1.7b`, `deepseek-v4-flash` today) have that bundle. Other
+  `tested` serving profiles remain `legacy-unsealed`. Expected identity comes
+  from lab validation; locally observed content can match that identity but
+  cannot create or replace it. Under the target ADR 0004 model, a separate
+  release descriptor owns the release ID while bundles bind contracts and run
+  evidence and reviewed decisions assign status.
 - A deterministic release candidate has no authority by itself. Trusted
   issuance remains a reviewed change that binds lab evidence; candidate tools
   must fail if output claims review/promotion or targets trusted directories.
@@ -262,6 +282,11 @@ this work; the skill is procedural and does not outrank these sources.
   automatic fallback, as recorded in ADR 0003. This transport policy does not
   create a missing durable home, promote `library-hot`, or change the replicated
   guided default.
+- Distribution transport is run provenance, not Model Serving Release
+  identity. Experimental distribution subsystems are allowed when explicitly
+  selected, but qualification starts only after exact content and the intended
+  runtime-access contract verify on every serving rank. A failure before that
+  barrier is failed preparation and leaves the release `Untested`.
 - Preserve historical evidence and mark it superseded rather than rewriting it.
   A contract change must update the canonical design, implementation spec,
   operations, validation ledger, and evidence index together.
