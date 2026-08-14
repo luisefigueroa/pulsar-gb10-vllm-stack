@@ -426,8 +426,10 @@ Enrollment writes the gitignored `.cluster-ssh-config` alongside the topology.
 The shared loader rejects schema 2 if that generated config is missing or
 stale. `doctor` reports the selected endpoint, expected/observed node identity
 and key fingerprints, and drift class. It is read-only: it never rewrites
-topology or OpenSSH trust and never accepts a replacement key. Use this
-remediation policy:
+topology or OpenSSH trust, never accepts a replacement key, and never creates
+or changes `HF_CACHE`. A missing cache is a warning because NFS-backed models
+do not require it; an existing wrong-type or inaccessible cache is blocking.
+Model download or preparation owns cache creation. Use this remediation policy:
 
 | Doctor finding | Safe response |
 |---|---|

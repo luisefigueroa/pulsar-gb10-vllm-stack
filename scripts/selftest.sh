@@ -67,6 +67,8 @@ run "model library health and legacy-repair contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_health.py"
 run "model library health public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-health.sh"
+run "doctor Hugging Face cache remains read-only" \
+  "$REPO_DIR/scripts/selftest-doctor-cache.sh"
 run "interactive models and storage" \
   "$REPO_DIR/scripts/selftest-model-storage.sh"
 run "model library startup-evidence contracts" \

@@ -228,6 +228,9 @@ prove per-rank HCAs or an N-node mesh. Migrate with `--write-topology`.
 
 Copy `.env.example` to override `HF_CACHE`, `MODELS_NFS`, image pins,
 auth, or discovery candidate hints. Confirmed membership is not stored there.
+Doctor only inspects `HF_CACHE`; it never creates or modifies the path. A
+missing cache is reported as a warning, while model download or preparation
+creates the path when the selected workflow requires it.
 
 ### Weight acquisition (common cases)
 
