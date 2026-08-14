@@ -20,6 +20,17 @@ contains_stable_lab_name() {
   esac
 }
 
+contains_stable_lab_path() {
+  local path
+
+  for path in "$@"; do
+    if [[ $path =~ $PATTERN ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 test_root=$(mktemp -d)
 trap 'rm -rf -- "$test_root"' EXIT
 
@@ -41,9 +52,29 @@ if contains_stable_lab_name "$test_root/allowed.md"; then
   fail "generic node/rank labels or safety guidance were rejected"
 fi
 
+contains_stable_lab_path "results/dgx-spark-7/README.md" \
+  || fail "stable numeric lab hostname path fixture was not rejected"
+
+if contains_stable_lab_path \
+  "docs/Node-A.md" \
+  "results/rank-0/README.md" \
+  "docs/dgx-spark-N.md"; then
+  fail "generic node/rank paths were rejected"
+fi
+
 cd "$REPO_DIR"
 mapfile -d '' -t markdown_files < <(git ls-files -z -- '*.md')
 ((${#markdown_files[@]} > 0)) || fail "no versioned Markdown files found"
+
+if contains_stable_lab_path "${markdown_files[@]}"; then
+  echo "Publishable Markdown path contains a stable lab hostname:" >&2
+  for path in "${markdown_files[@]}"; do
+    if [[ $path =~ $PATTERN ]]; then
+      printf '  %q\n' "$path" >&2
+    fi
+  done
+  exit 1
+fi
 
 if contains_stable_lab_name "${markdown_files[@]}"; then
   echo "Publishable Markdown contains a stable lab hostname:" >&2
