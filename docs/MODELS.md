@@ -1,4 +1,12 @@
-# Model support matrix — currently validated profiles (2026-08-13)
+# Model support matrix — current legacy tested profiles (2026-08-14)
+
+This table reports the implementation's existing `STATUS=tested*`, reviewed
+seal, and `legacy-unsealed` contracts. It does **not** assign the Model Serving
+Release statuses accepted in
+[ADR 0004](./decisions/0004-model-serving-release-validation.md). In
+particular, no row is automatically `Validated`: that future status belongs to
+one immutable model + serving-recipe + runtime/image + supported-geometry tuple
+after every frozen criterion and review requirement passes.
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
@@ -67,14 +75,15 @@ row or issue a claim. See [MODEL_RELEASE.md](./MODEL_RELEASE.md),
 [models/seals/README.md](../models/seals/README.md),
 [models/validation-bundles/README.md](../models/validation-bundles/README.md),
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md),
-[ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), and
-[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
-[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
+[ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md),
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md),
+[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md), and
+[ADR 0004](./decisions/0004-model-serving-release-validation.md).
 Catalog/artifact or serving-integration evidence does not extend a model
 qualification or `STATUS` claim; combined release claims require every
 applicable scope.
 
-## Does not fit any currently validated serving profile
+## Does not fit any current legacy tested serving profile
 
 Weights alone vs ~210 GiB total budget — these are not close, and no
 quantized variants exist in the catalog:

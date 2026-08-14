@@ -13,6 +13,14 @@ Only `STATUS=tested*` profiles may reference a seal. The one-node diagnostic
 `deepseek-v4-flash` profile carries the second. Profiles without a reviewed
 seal, including `qwen3-1.7b-2node`, remain `legacy-unsealed`.
 
+An expected-model seal establishes reviewed **model-content identity**. It does
+not by itself identify or validate the complete Model Serving Release defined
+by [ADR 0004](../../docs/decisions/0004-model-serving-release-validation.md),
+which also includes the serving recipe, runtime/image identity, and supported
+hardware geometry. Existing seals and their schema-1 bundle links remain
+immutable during the release/status migration and are not automatically
+relabeled `Validated`.
+
 ## Issuance rule
 
 A seal is issued from the exact artifact used by the Pulsar lab validation
@@ -103,3 +111,8 @@ unbound. See
 [docs/MODEL_RELEASE.md](../../docs/MODEL_RELEASE.md). The witness is
 only an accelerator for identity previously established by full verification.
 It is never a seal issuer.
+
+The target ADR 0004 object model adds a release descriptor and reviewed
+validation decision alongside this content trust root. Candidate tooling and
+local content verification may demonstrate a match, but neither can assign a
+Model Serving Release status.

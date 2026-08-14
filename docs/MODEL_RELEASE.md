@@ -8,6 +8,15 @@ qualification boundaries in
 not an operator model-download workflow, is not routed through `./pulsar` or
 the wizard, and cannot create a trusted Pulsar validation claim by itself.
 
+**Current-schema warning:** this tool predates the Model Serving Release object
+model accepted in
+[ADR 0004](./decisions/0004-model-serving-release-validation.md). It assembles
+schema-1 validation-bundle and expected-seal candidates, whose IDs include
+evidence and issuance metadata. It does not yet create the separate ADR 0004
+release descriptor, frozen Validation Contract, run records, or validation
+decision, and its bundle ID must not be presented as a Model Serving Release
+ID. Existing candidates and issued artifacts remain immutable.
+
 ## System boundary
 
 The release identity service sits between lab validation and model-library
@@ -27,6 +36,12 @@ owns normalization, digests, candidate schemas, atomic writes, and fail-closed
 policy. The service does not acquire model bytes, run validation gates,
 qualify a model or storage path, edit a profile, copy documents into `models/seals/` or
 `models/validation-bundles/`, or change `STATUS`.
+
+Under ADR 0004, the future supervised operator workflow is the separate
+`pulsar-model-onboarding` skill. It may compose acquisition, distribution,
+verification, launch, tests, and evidence capture—including explicitly selected
+Experimental subsystems—but it will not inherit trusted issuance, validation,
+or promotion authority from this maintainer tool.
 
 ## Issued profiles
 
@@ -93,6 +108,11 @@ integration, model qualification, or release promotion. It also does not prove
 that the bytes were used in the lab, that the evidence is sufficient or
 private-data-free, or that maintainers approved the claim. Those remain review
 decisions.
+
+Even a candidate whose behavioral gates pass remains `Testing incomplete`
+under ADR 0004 until every required gate and provenance/security review is
+complete and a reviewed validation decision exists. The current tooling does
+not assign that status in machine-readable form.
 
 ## Preconditions
 

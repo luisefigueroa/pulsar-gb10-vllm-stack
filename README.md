@@ -104,7 +104,7 @@ docker pull vllm/vllm-openai:v0.26.0
 # Host sanity (GPU, docker, port, cache)
 scripts/doctor.sh
 
-# List validated serving profiles (ID is the conf name; SERVED_NAME is the API id)
+# List the current legacy serving allowlist (ID is the conf name)
 scripts/list-models.sh --validated --serving
 
 # First serving model: download weights if needed, then serve
@@ -229,6 +229,11 @@ The wizard offers only exact `STATUS=tested*` profiles that fit confirmed
 capacity. No three-node profile is promoted today. Smoke served name:
 `deepseek-v4-flash`; cold load can take ~10+ minutes.
 
+`--validated` is the current CLI's legacy name for that `STATUS=tested*`
+allowlist. It does not yet report the Model Serving Release statuses defined by
+[ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and no
+existing profile is automatically relabeled `Validated`.
+
 **Experimental storage research:** replicated local Hugging Face caches remain
 the default. A separate, unpromoted NFSv4.2/RDMA path can keep one
 authoritative copy, mount exact clients read-only over confirmed RoCE rails,
@@ -244,9 +249,15 @@ seal and validation bundle; its sealed `library-hot` preparation and launch
 reported `identity=match`. The flagship `deepseek-v4-flash` profile carries
 the second issued identity; its post-issuance physical enforcement and
 one-home lifecycle gates passed in the catalog and serving-integration scopes.
-Strict determinism and sustained-soak requirements still block storage-path
-promotion. Profiles without seals remain legacy-unsealed, and this does
-not promote `library-hot`. Sealed replicated caches now enforce the
+The exact DeepSeek Model Serving Release failed strict same-boot determinism and
+did not run the remaining soak, so it cannot be called `Validated`; that result
+does not invalidate the distribution subsystem. Initial reviewed two-rank
+`library-hot` GA still requires one closure task covering fail-closed home view,
+sustained serving/restart, forced replacement failure with exact rollback,
+identity re-verification, cleanup, and one-home closeout. Remote one-rank
+placement is outside that initial GA scope, and `library-hot` remains neither
+GA nor a promoted default today. Profiles without seals remain
+legacy-unsealed. Sealed replicated caches now enforce the
 reviewed commit/manifest with full verification, a rank-local witness, and
 exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
 paths remain unbound. See
@@ -279,7 +290,8 @@ The selected target rank downloads and full-verifies the exact reviewed commit;
 this does not create hot copies, start serving, or promote the path. A reviewed
 single-rank profile has no non-home target and therefore uses no RoCE copy;
 prepare that local runtime view with `--transport ssh-control` instead. See
-[ADR 0003](docs/decisions/0003-explicit-model-preparation-transport.md).
+[ADR 0003](docs/decisions/0003-explicit-model-preparation-transport.md) and
+[ADR 0004](docs/decisions/0004-model-serving-release-validation.md).
 Maintainers can
 assemble deterministic unreviewed identity candidates through the separate
 [model release runbook](docs/MODEL_RELEASE.md); that tool cannot issue or
@@ -427,14 +439,14 @@ no leaks, no thermal throttling anywhere).
 |---|---|
 | `models/*.conf` | one validated flag set per model; statuses earned by runs |
 | `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
-| `models/validation-bundles/` | content-addressed exact model/runtime/image/geometry/evidence claims |
+| `models/validation-bundles/` | current schema-1 combined model/runtime/image/geometry/evidence claims; not the future Model Serving Release ID |
 | `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
 | `patches/pr41834-dspark-opt/` | **DEPRECATED** DSpark draft-path A/B (perf-neutral; obsolete after vllm #49731). Not on default build path — see that dir’s README |
-| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **decisions/** (accepted rationale, including ADR 0003's explicit experimental transfer policy), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
+| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **decisions/** (accepted rationale, including ADR 0004's Model Serving Release policy), MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC (current implementation), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.

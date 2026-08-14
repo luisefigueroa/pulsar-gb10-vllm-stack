@@ -10,6 +10,9 @@ Qualification boundaries are governed by
 [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md)
 governs the fixed transport policy used only after an operator explicitly
 selects experimental reviewed-profile preparation.
+[ADR 0004](./decisions/0004-model-serving-release-validation.md) defines the
+target Model Serving Release identity, validation-contract, evidence, decision,
+and status model.
 This document describes current code, evidence, and known gaps. Where current
 behavior differs from the accepted target, the difference is labeled as an
 implementation gap rather than presented as a competing decision.
@@ -65,6 +68,14 @@ remain legacy-unsealed, and neither issuance nor gate promotes the
 model-library path.
 The replicated control plane applies the reviewed seal when a profile has one;
 live-mount launches remain unbound.
+
+ADR 0004 is accepted policy but is not implemented by the current identity
+schemas or CLI. Schema-1 bundles still combine serving inputs, evidence, and
+issuance metadata; `STATUS=tested*` still controls launch eligibility; and
+`--validated` retains its legacy command meaning. No current profile or bundle
+is automatically assigned the new `Validated` status. The future separate
+release descriptor, frozen Validation Contract, run records, evidence bundle,
+and validation decision are implementation gaps.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -384,6 +395,8 @@ If no topology manifest or legacy topology exists and the user declines
 discovery, the wizard treats the local machine as standalone capacity 1. It
 does not create a topology manifest and does not claim cluster membership or a
 confirmed node identity. Only validated one-node serving profiles are offered.
+Here, `validated` is the current UI's legacy `STATUS=tested*` allowlist term,
+not an ADR 0004 validation decision.
 
 The user sees the equivalent of:
 
@@ -719,7 +732,7 @@ clone repository
   → run ./pulsar wizard
   → doctor checks local prerequisites
   → decline cluster discovery
-  → see only validated one-node serving profiles
+  → see only legacy-allowlisted one-node serving profiles
   → choose model and local placement
   → check/download HF weights or verify absolute catalog path
   → check/sync image
@@ -1192,8 +1205,8 @@ promotes any experimental storage path for general users.
 | One-node Qwen issued identity | PASS with sealed diagnostic scope | Reviewed exact commit/manifest, digest-pinned image, normalized profile, and lab evidence produced the first seal/bundle. Post-issuance `library-hot` catalog, full-hash preparation, read-only launch, identity labels, smoke, zero-byte witness, and cleanup all matched. This does not seal the two-node profile or promote the path. |
 | Flagship DeepSeek issued identity | PASS with sealed two-node scope | The exact reviewed revision/manifest/seal/bundle full-verified on durable-home and sealed-hot views, launched through read-only exact snapshots with matching labels, used zero-byte unchanged witnesses on both ranks, served a completion, and cleaned up without following the home view. Duplicate durable caches and temporary primary selection were disclosed conditions of that earlier run; the later one-home gate supersedes only that steady-state limitation. The earlier run by itself is not steady-state storage proof or a promotion. |
 | Persistent primary and guarded reconciliation | PASS, deterministic and three-node physical targeting | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. A disposable physical repeat also proved direct pre-selection refusal, refresh persistence, selected-primary refusal, exact non-primary deletion, sibling preservation, and one-home catalog state. |
-| Flagship DeepSeek one-home steady state | PASS on the real two-node serving geometry | The existing duplicate was reconciled to one persistent rank-1 durable home. Rank 0 then received an eight-stream SSH-over-RoCE sealed-hot copy in 73 seconds; full verification completed in 47 seconds and preparation in 120 seconds. Both ranks used zero-byte unchanged witnesses and read-only exact-snapshot mounts; first health, all eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home inventory passed. This closes physical duplicate reconciliation, not strict determinism, sustained soak, or promotion. |
-| Flagship DeepSeek strict `library-hot` determinism | FAIL on the exact reviewed GA identity | With profile-default DSpark k=5, same-boot captures produced 11/30 exact texts and 4/30 identical records; the strict gate failed. A forced no-spec diagnostic improved to 26/30 exact texts and 25/30 identical records but still failed strict identity. Both runs used the same exact seal, image, geometry, and durable-home/sealed-hot views. The result blocks promotion under the current contract and shows that a preview/GA naming mix-up cannot explain away the current variance. Sustained soak was not run. |
+| Flagship DeepSeek one-home steady state | PASS on the real two-node serving geometry | The existing duplicate was reconciled to one persistent rank-1 durable home. Rank 0 then received an eight-stream SSH-over-RoCE sealed-hot copy in 73 seconds; full verification completed in 47 seconds and preparation in 120 seconds. Both ranks used zero-byte unchanged witnesses and read-only exact-snapshot mounts; first health, all eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home inventory passed. This closes physical duplicate reconciliation, not strict determinism, sustained soak, or guided/default promotion. |
+| Flagship DeepSeek strict `library-hot` determinism | FAIL on the exact reviewed GA identity | With profile-default DSpark k=5, same-boot captures produced 11/30 exact texts and 4/30 identical records; the strict gate failed. A forced no-spec diagnostic improved to 26/30 exact texts and 25/30 identical records but still failed strict identity. Both runs used the same exact seal, image, geometry, and durable-home/sealed-hot views. The result blocks `Validated` for this Model Serving Release and shows that a preview/GA naming mix-up cannot explain away the current variance. It does not block the separate distribution-subsystem GA closure. Sustained soak was not run. |
 | Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
 | Read-only health and legacy-hot repair | PASS, deterministic and three-node physical | Stable sanitized health schema 1, Doctor warnings, shallow no-hash observations, repair-ID binding, stopped-container/pinned blockers, local and remote removal, atomic no-follow retirement, sibling preservation, preserved-untracked attention, and the affected exact-home removal subset passed. No production content was removed. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. The exact wizard replacement transaction passes deterministic capture, drift/refusal, catalog retention, failed-launch rollback, and recovery contracts; its physical DGX failure-path repeat remains pending. |
@@ -1606,10 +1619,12 @@ These points combine current evidence with the accepted architecture:
 
 ## 18. Remaining implementation questions
 
-The architectural questions about immutable validation identity, full content
-seals, home-rank materialization, and the standalone validation-bundle
-representation are answered by ADR 0001 and the content-addressed schema-1
-contract under `models/validation-bundles/`. The remaining questions concern
+The architectural questions about full content seals and home-rank
+materialization are answered by ADR 0001. Schema-1 validation bundles implement
+the current combined binding, while ADR 0004 now answers the target identity
+question by separating the Model Serving Release descriptor, frozen contract,
+run records, evidence bundle, and reviewed decision. That migration is accepted
+work, not an open policy question. The remaining questions concern
 implementation shape and unrelated catalog/live-mount policy.
 
 ### Catalog and release identity
@@ -1655,8 +1670,8 @@ implementation shape and unrelated catalog/live-mount policy.
     and a separate storage owner, or is deterministic first-N placement safer?
 15. Is connected-display-at-boot an acceptable declared owner policy, or must
     fabric promotion require a validated headless boot configuration?
-16. Which promotion gates are essential for a feature preview versus general
-    availability?
+16. After the bounded two-rank `library-hot` GA closure fixed by ADR 0004, what
+    additional product-policy gates should control guided/default promotion?
 
 ### Alternative architecture
 
@@ -1783,6 +1798,9 @@ The implementation described here is primarily defined by:
   — accepted evidence-scope, causal-invalidation, and promotion-boundary decision;
 - [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md)
   — accepted no-fallback transport policy for explicit experimental preparation;
+- [ADR 0004](./decisions/0004-model-serving-release-validation.md)
+  — accepted Model Serving Release identity, evidence, status, onboarding, and
+  subsystem-GA boundaries; machine implementation pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and
@@ -1791,10 +1809,11 @@ The implementation described here is primarily defined by:
 
 ## 21. Bottom line
 
-The current approach is conservative at the user boundary: profiles are
-validated, topology is confirmed rather than inferred, replicated local caches
-remain the default, and experimental single-copy storage is never selected,
-prepared, or used as a fallback automatically.
+The current approach is conservative at the user boundary: profiles are gated
+by the legacy `STATUS=tested*` contract, topology is confirmed rather than
+inferred, replicated local caches remain the default, and experimental
+single-copy storage is never selected, prepared, or used as a fallback
+automatically.
 
 The experimental implementation is substantially stronger than a generic NFS
 mount: it binds topology, owner, rail, export scope, mount options, manifest,
@@ -1837,8 +1856,13 @@ default. The non-mutating
 flagship capacity artifact passed exact home-zero and non-home manifest
 accounting, default-reserve preservation, explicit hard-cap refusal, and
 unchanged hot ownership. The exact-GA strict DeepSeek determinism gate failed;
-sustained soak was not run and promotion remains blocked under the current
-contract. Live NFS/RDMA additionally
+sustained soak was not run, so that exact Model Serving Release cannot be
+called `Validated`. Under ADR 0004 this does not invalidate the distribution
+subsystem or block its bounded initial two-rank GA closure. That closure still
+must remove the home-rank reflink/copy fallback and physically prove sustained
+serving/restart, forced replacement failure with exact rollback, identity
+re-verification, cleanup, and one-home closeout. Remote one-rank placement is
+outside the initial GA scope. Live NFS/RDMA additionally
 retains its owner-recovery and three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing. For sealed
@@ -1847,6 +1871,7 @@ retains its owner-recovery and three-node validation work. The accurate product 
 > reviewed seal/bundles for diagnostic `qwen3-1.7b` and flagship
 > `deepseek-v4-flash`; both have completed their applicable post-issuance
 > physical enforcement gates. Sealed local-hot preparation over
-> SSH-over-RoCE remains a measured promotion candidate, and live NFS/RDMA is a
-> separate documented
-> experiment; neither is a promoted default.
+> SSH-over-RoCE remains a measured subsystem approaching its bounded GA closure,
+> and live NFS/RDMA is a separate documented experiment. Neither is a promoted
+> default, and no current profile has been automatically relabeled with the new
+> Model Serving Release statuses.

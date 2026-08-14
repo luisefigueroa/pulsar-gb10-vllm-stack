@@ -10,6 +10,10 @@ Qualification scope and evidence reuse are governed by
 [ADR 0003](../../docs/decisions/0003-explicit-model-preparation-transport.md)
 records the current no-fallback eight-stream SSH-over-RoCE policy for an
 explicitly selected reviewed-profile experimental preparation.
+[ADR 0004](../../docs/decisions/0004-model-serving-release-validation.md)
+defines the immutable Model Serving Release subject, frozen validation
+contracts, decision statuses, and the separation between distribution
+provenance and release identity.
 
 Every artifact has a qualification scope: catalog/artifact, serving integration,
 model qualification, or combined release/promotion. A result remains valid
@@ -18,6 +22,13 @@ it. Catalog health, preparation, witness, and lifecycle evidence cannot be
 promoted into accuracy or determinism claims; a model-runtime failure does not
 erase unchanged catalog evidence, but it blocks a combined release claim that
 requires both.
+
+ADR 0004 is accepted policy, not retroactive artifact relabeling. Existing
+schema-1 bundles, seals, PASS/FAIL rows, and `STATUS=tested*` claims keep their
+recorded implementation meaning. None is automatically `Validated`. A future
+release descriptor will identify the exact model + serving-recipe +
+runtime/image + supported-geometry tuple separately from its contract, run
+records, evidence bundle, and reviewed decision.
 
 ADR 0003 selects a transfer policy within the accepted catalog/artifact scope;
 it does not reinterpret the failed DeepSeek determinism artifact, establish a
@@ -152,7 +163,7 @@ SSH-over-RoCE preparation, exact full verification, durable-home/sealed-hot
 placement, zero-byte witnesses, read-only launch, all eight warmup phases,
 completion smoke, owned stop and hot purge, and final healthy one-home
 inventory. This closes the physical steady-state condition; it does not close
-strict determinism, sustained soak, or storage-path promotion.
+strict determinism, sustained soak, or guided/default storage-path promotion.
 
 The next exact-GA repeat then failed the current strict same-boot determinism
 contract. With profile-default DSpark k=5, only 11/30 texts and 4/30 complete
@@ -166,6 +177,12 @@ therefore the current result cannot be dismissed as only a preview/GA profile
 name mix-up. The service remained healthy, no fatal runtime signature appeared,
 and cleanup restored one durable home with no hot instances. Sustained soak was
 not run after this blocking failure.
+
+Under ADR 0004 this failure blocks `Validated` for that exact Model Serving
+Release. It does not invalidate the already measured catalog/artifact or
+serving-integration behavior and does not block the separately scoped initial
+two-rank `library-hot` subsystem GA closure. Remote one-rank placement remains
+outside that initial GA scope.
 
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
@@ -198,8 +215,8 @@ duplicate was changed by this work.
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
 | [`deepseek-v4-flash-serving-wizard-gate-20260813.json`](./deepseek-v4-flash-serving-wizard-gate-20260813.json) | Production interactive serving-wizard and operator-home stop flow for the exact sealed DeepSeek GA profile: explicit experimental choice, fixed preparation, exact readiness, read-only launch, warmup, completion, owned stop, purge, and one-home closeout | Current two-node serving-integration PASS; remote one-node wizard placement, model qualification, and storage-path promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
-| [`deepseek-v4-flash-library-hot-determinism-20260812.json`](./deepseek-v4-flash-library-hot-determinism-20260812.json) | Exact sealed DeepSeek GA same-boot strict captures with profile-default DSpark plus forced no-spec diagnostic, standard benchmarks, and clean one-home closeout | Current strict determinism FAIL; no-spec improves but does not eliminate variance; sustained soak and promotion remain blocked | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
-| [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; strict determinism, sustained soak, and promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
+| [`deepseek-v4-flash-library-hot-determinism-20260812.json`](./deepseek-v4-flash-library-hot-determinism-20260812.json) | Exact sealed DeepSeek GA same-boot strict captures with profile-default DSpark plus forced no-spec diagnostic, standard benchmarks, and clean one-home closeout | Current strict determinism FAIL; no-spec improves but does not eliminate variance; `Validated` is blocked for this exact release while subsystem GA remains separate | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
+| [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; release qualification and guided/default promotion remain open; subsystem GA closure is separate | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`model-library-health-legacy-repair-gate-20260812.json`](./model-library-health-legacy-repair-gate-20260812.json) | Three-node read-only health, repair-ID-bound schema-1/2 removal, stopped-container/pinned blockers, no-follow/sibling preservation, and exact disposable-home removal; synthetic data only | Current health/legacy-repair physical PASS; no real cleanup, reconciliation, or storage-path promotion | Reviewed; site topology, paths, hosts, nodes, containers, repair IDs, and filesystem identity omitted |
 | [`model-library-primary-selection-reconciliation-gate-20260812.json`](./model-library-primary-selection-reconciliation-gate-20260812.json) | Three-node persistent exact-revision selection and guarded non-primary reconciliation; disposable synthetic HF-layout repositories only | Current selected-primary targeting PASS; existing DeepSeek duplicate unchanged; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; paired physical enforcement artifact now passes; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |
@@ -234,6 +251,8 @@ duplicate was changed by this work.
   health, preparation, or completion smoke.
 - Preserve valid cross-release subsystem evidence only when its measured inputs
   and contracts are unchanged; document any causal invalidation explicitly.
+- Never transfer a validation status to a changed Model Serving Release. Reused
+  subsystem evidence is linked scope evidence, not an inherited release pass.
 - Mark evidence `current`, `historical`, `superseded`, `failed`, or
   `partial`; never delete or rewrite a failure into a pass.
 - A superseding ADR or ledger changes the current decision, not the historical

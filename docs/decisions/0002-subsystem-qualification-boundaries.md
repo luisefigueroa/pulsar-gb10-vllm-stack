@@ -5,6 +5,8 @@
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decision:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md)
+- **Amended by:**
+  [ADR 0004](./0004-model-serving-release-validation.md)
 
 ## Context
 
@@ -58,10 +60,15 @@ A change invalidates the scopes whose inputs or contracts it changes:
 - documentation-only classification changes require documentation and
   control-plane regression checks, not new hardware claims.
 
-The validation bundle remains the immutable release binding for an exact model,
-image, configuration, geometry, and evidence set. Reusing generic catalog
-evidence does not carry an old bundle or `STATUS=tested` claim onto changed
-runtime inputs; a new release binding still requires every applicable gate.
+At acceptance, the schema-1 validation bundle was the combined immutable
+binding for an exact model, image, configuration, geometry, and evidence set.
+ADR 0004 supersedes that object model for future issuance: a release descriptor
+identifies the immutable Model Serving Release, a validation bundle binds its
+frozen contract and run evidence, and a reviewed validation decision assigns
+status. Existing schema-1 bundles remain immutable legacy artifacts. Reusing
+generic catalog evidence does not carry an old bundle, release decision, or
+`STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
+still requires every applicable gate.
 
 Failed, partial, and superseded evidence remains immutable. Later conclusions
 change its current interpretation and scope, not its recorded outcome.
@@ -99,12 +106,14 @@ still requires the combined release and promotion gates.
   unchanged, reducing unnecessary physical reruns.
 - Change reviews must identify the causal impact before expanding the
   revalidation scope.
-- Current CLI status fields and machine-readable schemas are unchanged; this
-  decision governs interpretation until a separate implementation adopts
-  first-class qualification dimensions.
+- Current CLI status fields and machine-readable schemas are unchanged. ADR
+  0004 now defines the first-class qualification model, but its schema and
+  status migration remains pending.
 
 ## Revisit triggers
 
-Revisit this decision if Pulsar introduces machine-readable qualification
-dimensions, changes the meaning of profile `STATUS`, or adopts a release model
-where subsystem services have independently versioned compatibility contracts.
+ADR 0004 resolves the first two original revisit triggers by defining the
+target machine-readable qualification dimensions and status model. Revisit the
+scope boundaries again if implementation reveals a causal dependency not
+represented here or subsystem services adopt independently versioned
+compatibility contracts.

@@ -1,12 +1,16 @@
-# Revalidation runbook — after any validation-bundle input changes
+# Revalidation runbook — after any Model Serving Release input changes
 
 An image pin bump is the recurring event on this stack (upstream release or PR
 #41834 rebase/merge), but it is not the only invalidation trigger. A model
 revision/manifest, tokenizer or model code, draft/adapter, normalized profile
 runtime configuration, resolved image digest, or serving geometry/topology
-class change invalidates the applicable validation bundle. Nothing keeps its
-`tested` status across such a change without new evidence. This is the public,
-repository-relative sequence; expect roughly half a day, mostly machine time.
+class change creates a new **Model Serving Release** under
+[ADR 0004](./decisions/0004-model-serving-release-validation.md). No prior
+release status transfers across that change. In the current implementation,
+the same change invalidates the applicable schema-1 validation bundle and
+nothing keeps its `STATUS=tested*` serving eligibility without new evidence.
+This is the public, repository-relative sequence; expect roughly half a day,
+mostly machine time.
 
 Model-library catalog schema 2 and hot schema 3 now enforce a reviewed
 lab-issued expected model seal, exact commit/manifest comparison, and exact
@@ -32,11 +36,21 @@ The standalone bundle verifier is implemented. Maintainer-only
 deterministic unreviewed candidates; trusted publication remains a deliberate
 reviewed repository change. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 
+**Policy versus implementation:** ADR 0004 defines a separate release
+descriptor, frozen Validation Contract, immutable run records, evidence bundle,
+reviewed validation decision, and the statuses `Untested`, `Testing incomplete`,
+`Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
+`Superseded`. Those schemas and CLI/status semantics are not implemented yet.
+Existing bundles, seals, profiles, and historical evidence remain unchanged and
+must not be automatically relabeled `Validated`.
+
 ## Qualification scope and change impact
 
 Revalidation is scoped before commands are chosen. A release bundle still
-binds all of its exact inputs, but reusable subsystem evidence is not erased by
-an unrelated change.
+binds all of its exact inputs in the current schema. In the target model, a
+release descriptor binds the four-part identity while the Validation Contract,
+run records, evidence bundle, and reviewed decision remain separate. Reusable
+subsystem evidence is not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
 
@@ -53,18 +67,39 @@ the smallest complete gate set from this change-impact matrix:
 
 | Changed input or contract | Required revalidation |
 |---|---|
-| Model revision, tokenizer/model code, adapter/draft, or expected seal | Catalog identity/full verification, serving integration, and complete model qualification |
-| Image, dependency, engine flags, memory contract, or geometry | Serving integration and complete model qualification; retain generic catalog mechanics unless the change affects them |
-| Transfer/copy algorithm or admission policy | Affected catalog physical gates and integration smoke; rerun model gates when bytes/runtime views change or evidence indicates a causal execution effect |
+| Model revision, tokenizer/model code, adapter/draft, or expected seal | New Model Serving Release; catalog identity/full verification, serving integration, and complete model qualification |
+| Image, dependency, engine flags, memory contract, or geometry | New Model Serving Release; serving integration and complete model qualification; retain generic catalog mechanics unless the change affects them |
+| Transfer/copy algorithm or admission policy | Same release when it still converges on the identical verified `local-verified-readonly` runtime-access contract; rerun affected catalog physical gates and integration smoke, and model gates only when runtime inputs change or evidence shows a causal execution effect |
 | Manifest, witness, metadata, retention, repair, or cleanup semantics | Affected identity/lifecycle gates and integration smoke when launch views change; no automatic accuracy rerun |
 | Interactive catalog/health orchestration with unchanged scan and schema semantics | Focused renderer/shell contracts plus full control-plane selftest; no new physical or model-qualification claim |
-| Runtime source or mount contract | Catalog/lifecycle and serving integration; complete model qualification before a release claim adopts the new source |
+| Runtime model-access contract | New Model Serving Release when the access contract changes (for example local verified bytes to a live remote dependency); catalog/lifecycle, serving integration, and complete model qualification |
 | Documentation-only policy/classification | Documentation checks and control-plane regression tests; no new physical claim |
 
-Changing an image, model, configuration, or geometry still requires a new
-validation bundle before `STATUS=tested` or a guided release claim can move.
-Preserving unchanged catalog evidence is evidence reuse, not bundle inheritance.
-Health and completion smoke are never substitutes for model qualification.
+Changing an image, model, configuration, or geometry requires a new release
+descriptor and validation decision under ADR 0004 and a new schema-1 bundle
+under the current implementation before `STATUS=tested` or a guided claim can
+move. Preserving unchanged catalog evidence is scoped evidence reuse, not
+release-status or bundle inheritance. Health and completion smoke are never
+substitutes for model qualification.
+
+## Validation contract and status rules
+
+Freeze the two-layer Validation Contract before testing. Repository-wide rules
+require stability, accuracy, throughput, latency, strict same-boot
+reproducibility, provenance/security review, and immutable evidence. The
+release-specific layer declares the actual workloads, protocols, thresholds,
+sample sizes, context/soak conditions, and any comparable predecessor.
+
+FP-equivalent output does not pass strict same-boot reproducibility. Automatic
+latency or throughput regression budgets are valid only against a named
+predecessor measured with the identical protocol and supported hardware
+geometry; otherwise the relative gate is `N/A` and absolute release-specific
+criteria still apply. Record every attempt, including interrupted, failed, and
+inconclusive runs. A pre-qualification acquisition or distribution failure
+leaves the release `Untested`; a completed criterion failure is
+`Tested—criteria not met`; noisy or insufficient evidence is
+`Tested—inconclusive`; missing gates or review is `Testing incomplete`; and
+only a complete reviewed pass is `Validated`.
 
 ## 0. Prep (5 min)
 
@@ -400,18 +435,21 @@ with replicated weights.
 ## 8. Close out
 
 - Classify each result as catalog/artifact, serving integration, model
-  qualification, or release/promotion. Update conf `STATUS`/`NOTES` only when
-  the complete release scope passes, and update `docs/VALIDATION.md` with the
-  measured
+  qualification, or release/promotion. Assign the ADR 0004 decision status from
+  the frozen contract without hiding failures or missing evidence. Until the
+  status migration is implemented, update conf `STATUS`/`NOTES` only under its
+  current legacy contract and only when the complete serving-eligibility scope
+  passes. Update `docs/VALIDATION.md` with the measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
 - Build the exact manifest and unreviewed documents with
   `scripts/model-release.sh manifest` and `assemble`, then run
   `verify-candidate` against the final profile. Candidate output is not a
   trusted claim and stays outside `models/`.
-- Review provenance, evidence privacy, exact inputs, and reproducibility. Only
-  then publish the complete lab-reviewed validation bundle and expected seal
-  in the same evidence pull request and add the profile
+- Review provenance, evidence privacy, exact inputs, the frozen contract, and
+  reproducibility. Only then publish the complete lab-reviewed current-schema
+  validation bundle and expected seal in the same evidence pull request and add
+  the profile
   `EXPECTED_MODEL_SEAL` reference. Run
   `scripts/model-library.sh validation-bundle verify <profile>` before merge.
   Never promote a locally observed user seal or bundle into expected identity.
@@ -420,8 +458,10 @@ with replicated weights.
 - Run a current-tree secret/path scan and inspect `git diff` before merge.
 - Merge the pin branch only after every required gate passes.
 
-Anything required by the release claim that fails means the pin or promotion
-does not land. Preserve successful evidence in its narrower scope, classify the
-failure, and file it in TROUBLESHOOTING.md with the failing command and artifact
-path, keep the old pin, and open an
+Anything required by a `Validated` claim that fails prevents that decision.
+Record `Tested—criteria not met`, `Tested—inconclusive`, or
+`Testing incomplete` as applicable; do not invent `Tested—meets criteria`.
+Preserve successful evidence in its narrower scope, classify the failure, and
+file it in TROUBLESHOOTING.md with the failing command and artifact path, keep
+the old pin, and open an
 upstream issue when the evidence points outside this repository.

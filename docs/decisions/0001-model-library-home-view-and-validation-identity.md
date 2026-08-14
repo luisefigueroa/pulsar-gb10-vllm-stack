@@ -5,6 +5,8 @@
 - **Scope:** Federated model library, library-hot preparation, pin/restart, and
   model validation identity
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
+- **Amended by:**
+  [ADR 0004](./0004-model-serving-release-validation.md)
 
 ## Context
 
@@ -34,9 +36,10 @@ the bytes are the ones used for Pulsar's lab validation claim.
 4. Validated identity originates in the lab. The expected seal binds model ID,
    exact commit/revision, complete snapshot manifest ID, and provenance. A
    locally computed observed seal may match it but cannot replace or create it.
-5. The validation bundle additionally binds behavior-affecting external model
-   artifacts, normalized profile/runtime configuration, resolved container
-   image digest, serving geometry/topology class, and evidence references.
+5. In the current schema, the validation bundle additionally binds
+   behavior-affecting external model artifacts, normalized profile/runtime
+   configuration, resolved container image digest, serving geometry/topology
+   class, and evidence references.
 6. Full SHA-256 verification establishes trust at lab sealing, adoption or
    download, each non-home materialization, and after detected drift. A fast
    serve-time witness may be used only after full verification and must bind
@@ -50,7 +53,8 @@ the bytes are the ones used for Pulsar's lab validation claim.
    Home removal remains a separate confirmed lifecycle operation.
 
 Hosting is not identity. A future Hugging Face mirror may distribute the sealed
-bytes, but the release validation bundle remains the authority.
+bytes, but locally observed or mirrored content cannot create the reviewed
+authority.
 
 ## Rejected alternatives
 
@@ -87,3 +91,11 @@ failover, adopts an explicit multi-home durable-replica policy, or gains
 filesystem-backed immutability such as fs-verity that materially changes the
 identity and lifecycle tradeoffs. Any revision requires a new ADR and physical
 evidence; current implementation convenience is not sufficient.
+
+## Interpretation note — 2026-08-14
+
+ADR 0004 keeps this expected-versus-observed model-content trust boundary and
+supersedes only the combined release-object interpretation. A future release
+descriptor owns the stable Model Serving Release ID; the Validation Contract,
+run records, validation bundle, and reviewed validation decision are separate.
+Existing schema-1 bundles and seals remain immutable legacy artifacts.

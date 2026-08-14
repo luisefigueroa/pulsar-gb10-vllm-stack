@@ -11,6 +11,11 @@ supports larger confirmed GB10 topologies, but a node count is serveable only
 when an exact `STATUS=tested*` profile has earned that claim. Hostnames are not
 part of cluster qualification. Host NCCL is not required; images provide it.
 
+Here, `STATUS=tested*` is the current implementation's legacy serving gate. It
+is not the `Validated` Model Serving Release decision defined by
+[ADR 0004](./decisions/0004-model-serving-release-validation.md); that schema
+and status migration is still pending.
+
 ---
 
 ## Quick checks
@@ -312,9 +317,10 @@ not permission to serve an unmeasured geometry.
 | [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
 | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Experimental one-copy NFS/RDMA design, operations, faults, and gates |
 | [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, preparation/hot/pin policy; experiment not promoted |
-| [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: validated home symlink, non-home hot only, expected seal and serve-time witness |
+| [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: reviewed exact-content home symlink, non-home hot only, expected seal and serve-time witness |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |
 | [decisions/0003-explicit-model-preparation-transport.md](./decisions/0003-explicit-model-preparation-transport.md) | Accepted rationale: explicit reviewed-profile preparation uses topology-bound eight-stream SSH-over-RoCE with no fallback |
+| [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; machine implementation pending |
 | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) | Descriptive current implementation, evidence boundaries, and known gaps |
 | [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Maintainer-only exact-manifest and unreviewed release-candidate workflow; no issuance authority |
 | [models/seals/README.md](../models/seals/README.md) | Reviewed expected-seal schema, lab issuance boundary, and current migration status |
