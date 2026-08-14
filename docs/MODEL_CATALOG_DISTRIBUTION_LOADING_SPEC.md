@@ -11,8 +11,8 @@ Qualification boundaries are governed by
 governs the fixed transport policy used only after an operator explicitly
 selects experimental reviewed-profile preparation.
 [ADR 0004](./decisions/0004-model-serving-release-validation.md) defines the
-target Model Serving Release identity, validation-contract, evidence, decision,
-and status model.
+Model Serving Release identity, validation-contract, evidence, decision, and
+status model.
 This document describes current code, evidence, and known gaps. Where current
 behavior differs from the accepted target, the difference is labeled as an
 implementation gap rather than presented as a competing decision.
@@ -35,14 +35,16 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of five implementation areas:
+This snapshot supports review of six implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
 2. the promoted replicated distribution path;
-3. the experimental live NFS/RDMA single-copy path; and
-4. the experimental transfer-then-load model-library path; and
-5. the maintainer-only release identity and candidate-assembly service.
+3. the experimental live NFS/RDMA single-copy path;
+4. the experimental transfer-then-load model-library path;
+5. the maintainer-only legacy release identity and candidate-assembly service;
+   and
+6. the pure ADR 0004 release-descriptor and Validation Contract schemas.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -69,13 +71,17 @@ model-library path.
 The replicated control plane applies the reviewed seal when a profile has one;
 live-mount launches remain unbound.
 
-ADR 0004 is accepted policy but is not implemented by the current identity
-schemas or CLI. Schema-1 bundles still combine serving inputs, evidence, and
-issuance metadata; `STATUS=tested*` still controls launch eligibility; and
-`--validated` retains its legacy command meaning. No current profile or bundle
-is automatically assigned the new `Validated` status. The future separate
-release descriptor, frozen Validation Contract, run records, evidence bundle,
-and validation decision are implementation gaps.
+ADR 0004 stage 1 is implemented by `scripts/model_serving_release.py`: pure
+builders and fail-closed validators own the separate release descriptor and
+frozen Validation Contract, with fixed-ID fixtures under `scripts/testlib/`.
+The module has no I/O or issuance authority, and no operator or serving path
+consumes these objects yet. Schema-1 bundles still combine serving inputs,
+evidence, and issuance metadata; `STATUS=tested*` still controls launch
+eligibility; and `--validated` retains its legacy command meaning. No current
+profile or bundle is automatically assigned the new `Validated` status. Run
+records, new evidence bundles, validation decisions, persistence/cross-links,
+status projection, and serving-eligibility migration remain implementation
+gaps.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -1621,11 +1627,12 @@ These points combine current evidence with the accepted architecture:
 
 The architectural questions about full content seals and home-rank
 materialization are answered by ADR 0001. Schema-1 validation bundles implement
-the current combined binding, while ADR 0004 now answers the target identity
-question by separating the Model Serving Release descriptor, frozen contract,
-run records, evidence bundle, and reviewed decision. That migration is accepted
-work, not an open policy question. The remaining questions concern
-implementation shape and unrelated catalog/live-mount policy.
+the current combined binding. ADR 0004 answers the replacement object model,
+and its release-descriptor and frozen-contract schemas are implemented. Run
+records, evidence bundles, decisions, persistence/status projection, and
+serving migration remain accepted work rather than open policy questions. The
+remaining questions concern that implementation shape and unrelated
+catalog/live-mount policy.
 
 ### Catalog and release identity
 
@@ -1784,6 +1791,13 @@ The implementation described here is primarily defined by:
   pin/purge, release, and benchmark workflows;
 - [`scripts/model_identity.py`](../scripts/model_identity.py) — canonical pure
   profile-contract, validation-bundle, and expected-seal schemas and IDs;
+- [`scripts/model_serving_release.py`](../scripts/model_serving_release.py) —
+  pure ADR 0004 Model Serving Release and frozen Validation Contract schemas,
+  normalization, IDs, and fail-closed cross-checks;
+- [`scripts/testlib/model_serving_release_fixture.py`](../scripts/testlib/model_serving_release_fixture.py)
+  and [`scripts/testlib/test_model_serving_release.py`](../scripts/testlib/test_model_serving_release.py)
+  — fixed-ID fixtures, mutation contracts, privacy checks, and legacy
+  non-regression coverage;
 - [`scripts/model-release.sh`](../scripts/model-release.sh) and
   [`scripts/model_release.py`](../scripts/model_release.py) — maintainer-only
   exact-manifest and untrusted release-candidate assembly/verification;
@@ -1800,7 +1814,8 @@ The implementation described here is primarily defined by:
   — accepted no-fallback transport policy for explicit experimental preparation;
 - [ADR 0004](./decisions/0004-model-serving-release-validation.md)
   — accepted Model Serving Release identity, evidence, status, onboarding, and
-  subsystem-GA boundaries; machine implementation pending;
+  subsystem-GA boundaries; descriptor/contract schemas implemented, later
+  records, decisions, status, and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

@@ -118,7 +118,10 @@ unbound. See
 only an accelerator for identity previously established by full verification.
 It is never a seal issuer.
 
-The target ADR 0004 object model adds a release descriptor and reviewed
-validation decision alongside this content trust root. Candidate tooling and
-local content verification may demonstrate a match, but neither can assign a
-Model Serving Release status.
+ADR 0004 stage 1 adds a separate pure release descriptor and frozen Validation
+Contract alongside this content trust root. Neither is issued or referenced by
+the current seal path. Run records, new evidence bundles, reviewed validation
+decisions, and status/serving projection remain pending. Candidate tooling,
+schema builders, and local content verification may demonstrate internal
+consistency or a content match, but none can assign a Model Serving Release
+status.

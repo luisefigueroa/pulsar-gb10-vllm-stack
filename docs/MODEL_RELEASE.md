@@ -12,10 +12,11 @@ the wizard, and cannot create a trusted Pulsar validation claim by itself.
 model accepted in
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). It assembles
 schema-1 validation-bundle and expected-seal candidates, whose IDs include
-evidence and issuance metadata. It does not yet create the separate ADR 0004
-release descriptor, frozen Validation Contract, run records, or validation
-decision, and its bundle ID must not be presented as a Model Serving Release
-ID. Existing candidates and issued artifacts remain immutable.
+evidence and issuance metadata. It does not create the separate ADR 0004
+release descriptor or frozen Validation Contract now implemented as pure
+schemas in `scripts/model_serving_release.py`; nor does it create run records
+or validation decisions. Its bundle ID must not be presented as a Model Serving
+Release ID. Existing candidates and issued artifacts remain immutable.
 
 ## System boundary
 
@@ -27,6 +28,7 @@ enforcement:
 | Profile registry (`models/*.conf`) | Declares the exact runtime configuration to normalize |
 | Validation (`validate/`, `results/`) | Produces model-qualification evidence for exact model/image/profile/geometry inputs |
 | Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
+| ADR 0004 schema (`scripts/model_serving_release.py`) | Owns pure release-descriptor and frozen Validation Contract schema version 1; performs no I/O, issuance, or status assignment |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
@@ -36,6 +38,35 @@ owns normalization, digests, candidate schemas, atomic writes, and fail-closed
 policy. The service does not acquire model bytes, run validation gates,
 qualify a model or storage path, edit a profile, copy documents into `models/seals/` or
 `models/validation-bundles/`, or change `STATUS`.
+
+## Model Serving Release schema boundary
+
+The ADR 0004 stage-1 library can build and validate two in-memory or externally
+loaded JSON-compatible objects:
+
+| Object | Included | Deliberately excluded |
+|---|---|---|
+| Model Serving Release descriptor | Complete content-addressed Model Artifact Set; normalized vLLM recipe and runtime-access contract; image digest and host-compatibility envelope; privacy-safe supported geometry; four-part `release_id` | Status, evidence, reviewer, timestamps, transport, placement, and exact site topology |
+| Frozen Validation Contract | `release_id`; fixed repository invariants; release-specific workloads, protocols, sample sizes, thresholds, context/soak conditions, and comparable-predecessor rule; `contract_id` | Observed results, run records, reviewer disposition, issuance metadata, and validation status |
+
+The descriptor cross-checks recipe TP/PP against the declared geometry. The
+recipe stores only behavior-affecting, non-secret environment entries;
+credential and deployment/placement environment names are rejected rather than
+hashed into a release descriptor. TP/PP, GPU memory utilization, speculative
+decoding, artifact use, and access contract are structured fields and cannot be
+repeated ambiguously in the remaining ordered engine arguments. The
+contract requires stability, accuracy, throughput, latency, exact same-boot
+reproducibility, reviewed provenance/security, serving integration, and
+physical-geometry criteria. A relative latency/throughput budget is valid only
+when it binds a named predecessor, the exact benchmark protocol IDs, and the
+same supported-geometry ID; otherwise it is `N/A` and absolute criteria remain.
+
+The fixed deterministic fixture and mutation suite are
+`scripts/testlib/model_serving_release_fixture.py` and
+`scripts/testlib/test_model_serving_release.py`. They prove schema and hashing
+contracts only. They do not prove physical behavior, issue a release, create a
+reviewed decision, or alter the current serving path. There is intentionally no
+operator CLI or trusted output directory for these objects in stage 1.
 
 Under ADR 0004, the future supervised operator workflow is the separate
 `pulsar-model-onboarding` skill. It may compose acquisition, distribution,

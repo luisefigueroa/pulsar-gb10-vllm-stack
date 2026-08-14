@@ -40,17 +40,22 @@ reviewed repository change. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 descriptor, frozen Validation Contract, immutable run records, evidence bundle,
 reviewed validation decision, and the statuses `Untested`, `Testing incomplete`,
 `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
-`Superseded`. Those schemas and CLI/status semantics are not implemented yet.
-Existing bundles, seals, profiles, and historical evidence remain unchanged and
-must not be automatically relabeled `Validated`.
+`Superseded`. The pure release-descriptor and frozen-contract schemas are now
+implemented in `scripts/model_serving_release.py`, with deterministic fixtures
+and fail-closed tests. They perform no evidence capture, persistence, issuance,
+decision, profile update, or serving gate. Run-record/evidence/decision schemas,
+CLI orchestration, status projection, and serving migration remain pending.
+Existing bundles, seals, profiles, and historical evidence remain unchanged
+and must not be automatically relabeled `Validated`.
 
 ## Qualification scope and change impact
 
 Revalidation is scoped before commands are chosen. A release bundle still
-binds all of its exact inputs in the current schema. In the target model, a
-release descriptor binds the four-part identity while the Validation Contract,
-run records, evidence bundle, and reviewed decision remain separate. Reusable
-subsystem evidence is not erased by an unrelated change.
+binds all of its exact inputs in the current serving schema. In the ADR 0004
+model, the implemented release descriptor binds the four-part identity and the
+implemented Validation Contract freezes criteria; pending run records, evidence
+bundles, and reviewed decisions remain separate. Reusable subsystem evidence is
+not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
 
@@ -76,12 +81,14 @@ the smallest complete gate set from this change-impact matrix:
 | Runtime model-access contract | New Model Serving Release when the access contract changes (for example local verified bytes to a live remote dependency); catalog/lifecycle, serving integration, and complete model qualification |
 | Documentation-only policy/classification | Documentation checks and control-plane regression tests; no new physical claim |
 
-Changing an image, model, configuration, or geometry requires a new release
-descriptor and validation decision under ADR 0004 and a new schema-1 bundle
-under the current implementation before `STATUS=tested` or a guided claim can
-move. Preserving unchanged catalog evidence is scoped evidence reuse, not
-release-status or bundle inheritance. Health and completion smoke are never
-substitutes for model qualification.
+Changing an image, model, configuration, or geometry creates a new release ID
+and requires a newly frozen contract and reviewed decision under ADR 0004. The
+stage-1 library can build and validate the descriptor and contract, but no
+current operator or serving path persists or consumes them. A new schema-1
+bundle is still required by the current serving implementation before
+`STATUS=tested` or a guided claim can move. Preserving unchanged catalog
+evidence is scoped evidence reuse, not release-status or bundle inheritance.
+Health and completion smoke are never substitutes for model qualification.
 
 ## Validation contract and status rules
 
@@ -90,6 +97,12 @@ require stability, accuracy, throughput, latency, strict same-boot
 reproducibility, provenance/security review, and immutable evidence. The
 release-specific layer declares the actual workloads, protocols, thresholds,
 sample sizes, context/soak conditions, and any comparable predecessor.
+
+`scripts/model_serving_release.py` now enforces that frozen shape and its
+release cross-links, including recipe/geometry consistency and privacy-safe
+descriptor fields. `scripts/testlib/test_model_serving_release.py` verifies the
+schema contract during `scripts/selftest.sh`; it does not collect a run or
+establish that any physical criterion passed.
 
 FP-equivalent output does not pass strict same-boot reproducibility. Automatic
 latency or throughput regression budgets are valid only against a named

@@ -2,8 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
-- **Implementation status:** Policy accepted; machine-readable release,
-  contract, run-record, decision, and status migration are not yet implemented
+- **Implementation status:** Policy accepted; release-descriptor and frozen
+  Validation Contract schemas implemented; run records, evidence bundles,
+  decisions, status projection, and serving-eligibility migration pending
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -71,7 +72,7 @@ addresses, serial numbers, node IDs, and durable topology identifiers belong
 only in protected run evidence and never in a release descriptor. Equivalent
 physical nodes may instantiate the same release.
 
-The future release ID is:
+The release ID is:
 
 ```text
 sha256(
@@ -161,7 +162,7 @@ edited to add it.
 
 ### 4. Identity, evidence, and authority are separate objects
 
-The target machine-readable model has five immutable object roles:
+The machine-readable model has five immutable object roles:
 
 | Object | Responsibility |
 |---|---|
@@ -178,11 +179,12 @@ relabeling their history.
 
 Existing schema-1 validation bundles and expected-model seals remain immutable.
 They are legacy combined identity/evidence artifacts and are not rehashed,
-rewritten, or automatically converted. A staged implementation will add a
-separate release descriptor and validation-decision schema, then link new
-evidence to them. Existing `STATUS=tested*`, `--validated`, reviewed seals, and
-legacy-unsealed behavior retain their current implementation meaning until that
-migration lands. No existing profile is automatically relabeled `Validated`.
+rewritten, or automatically converted. The first implementation stage adds a
+separate release descriptor and frozen Validation Contract; later stages add
+run records, evidence bundles, validation decisions, and their cross-links.
+Existing `STATUS=tested*`, `--validated`, reviewed seals, and legacy-unsealed
+behavior retain their current implementation meaning until that migration
+lands. No existing profile is automatically relabeled `Validated`.
 
 ### 5. Distribution is preparation provenance, not release status
 
@@ -259,10 +261,22 @@ affected Model Serving Release.
 
 ## Staged implementation
 
+Stage 1 is implemented by `scripts/model_serving_release.py`. It provides pure
+builders and fail-closed validators for the release descriptor and frozen
+Validation Contract, including deterministic IDs, privacy-safe geometry,
+recipe/geometry parallelism consistency, strict same-boot exactness, reviewed
+provenance requirements, and comparable-predecessor protocol/geometry binding.
+The fixed-ID fixture and adversarial contracts live under `scripts/testlib/`.
+This code performs no filesystem or network I/O, emits no reviewed artifact,
+assigns no status, changes no profile, and grants no serving eligibility.
+Control-plane selftests establish only these schema contracts; no physical DGX
+claim follows from them.
+
 Implement this decision in focused, reviewable units:
 
-1. add canonical release-descriptor identity and Validation Contract schemas in
-   Python with deterministic fixtures, without modifying schema-1 artifacts;
+1. **Implemented:** add canonical release-descriptor identity and Validation
+   Contract schemas in Python with deterministic fixtures, without modifying
+   schema-1 artifacts;
 2. add immutable attempt/run records, evidence bundles, and validation decisions
    with fail-closed cross-link verification and explicit supersession;
 3. project the new statuses into catalog and operator surfaces, then migrate

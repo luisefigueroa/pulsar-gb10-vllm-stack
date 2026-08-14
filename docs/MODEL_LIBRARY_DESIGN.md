@@ -92,11 +92,23 @@ documents only under an untrusted output boundary. Candidates declare no
 authority, cannot write the reviewed model directories, cannot edit profiles,
 and do not affect validation status.
 
-**Accepted target not yet implemented:** ADR 0004 separates the immutable
-Model Serving Release descriptor from its frozen Validation Contract, run
-records, validation bundle, and reviewed validation decision. Existing
+`scripts/model_serving_release.py` now owns ADR 0004 release-descriptor and
+frozen Validation Contract schema version 1. The pure module normalizes and
+validates the four-part release tuple, hashes only that tuple into the stable
+release ID, cross-checks recipe parallelism against supported geometry, and
+freezes mandatory criteria without results or issuance metadata. It also
+enforces exact same-boot comparison, reviewed provenance, privacy-safe
+extensible parameters, and predecessor/protocol/geometry binding for relative
+performance budgets. Fixed-ID fixtures and fail-closed tests are under
+`scripts/testlib/`.
+
+**Current implementation boundary:** these two schemas are library contracts,
+not issued releases or status records. No operator CLI writes them, no profile
+references them, and no serving gate consumes them yet. Run records, the new
+evidence-bundle and validation-decision schemas, cross-link persistence,
+status projection, and serving-eligibility migration remain pending. Existing
 schema-1 bundles and `STATUS=tested*` behavior remain unchanged legacy
-contracts during migration; no current profile is automatically `Validated`.
+contracts; no current profile is automatically `Validated`.
 
 ---
 
@@ -261,10 +273,11 @@ invariants plus release-specific workloads and thresholds. `Validated`
 requires satisfactory stability, accuracy, throughput, and latency results,
 mandatory provenance/security review, and strict same-boot reproducibility.
 FP-equivalent output is diagnostic evidence and does not satisfy the strict
-gate. The full status vocabulary and target object model are defined by
-[ADR 0004](./decisions/0004-model-serving-release-validation.md). Current
-`STATUS=tested*` and schema-1 bundle behavior remains the implementation until
-that migration lands. Catalog recording has no minimum validation status: the
+gate. The full status vocabulary and object model are defined by
+[ADR 0004](./decisions/0004-model-serving-release-validation.md). Its release
+and contract schemas are implemented, while current `STATUS=tested*` and
+schema-1 bundle behavior remains the serving/status implementation until that
+migration lands. Catalog recording has no minimum validation status: the
 release remains visible with its actual label, while serving eligibility is a
 separate gate.
 
@@ -507,10 +520,10 @@ profile/runtime configuration, resolved image digest, geometry/topology class,
 and evidence. Hosting location—including a future mirror—is distribution
 metadata, not identity.
 
-ADR 0004's target schema separates those roles. A release descriptor owns the
-stable Model Serving Release ID; a frozen Validation Contract declares the
-gates; run records preserve every attempt; a validation bundle references the
-contract and evidence; and a reviewed validation decision assigns status.
+ADR 0004's implemented first-stage schemas separate the first two roles. A
+release descriptor owns the stable Model Serving Release ID, and a frozen
+Validation Contract declares the gates. The pending stages add run records,
+new evidence bundles, reviewed validation decisions, and status projection.
 Existing schema-1 bundles remain immutable legacy combined artifacts and are
 not converted in place.
 
@@ -940,16 +953,17 @@ affected Model Serving Release and its frozen Validation Contract.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Machine-readable Model Serving Release descriptor, Validation Contract, run
-  record, validation-bundle, validation-decision, and status migration defined
-  by ADR 0004; current schema-1 bundles and `STATUS=tested*` remain legacy
-  implementation contracts
+- Immutable run-record, new validation-bundle, validation-decision,
+  persistence/cross-link, status-projection, and serving-eligibility stages
+  defined by ADR 0004. Release-descriptor and frozen Validation Contract schema
+  version 1 are implemented; current schema-1 bundles and `STATUS=tested*`
+  remain legacy implementation contracts
 - Initial reviewed two-rank `library-hot` GA closure in section 7.1; remote
   one-rank placement remains outside the initial GA scope
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
-- Stable public guarantees for machine-readable JSON schemas other than the
-  health schema-1 contract
+- Stable persistence and CLI guarantees for machine-readable JSON objects
+  beyond the pure ADR 0004 release/contract validators and health schema 1
 - Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete the remaining guided/default promotion matrix after bounded
   subsystem GA, without treating a subsystem pass as Model Serving Release
@@ -1011,4 +1025,5 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-13 | The serving wizard gained an explicit experimental distributed-catalog choice for eligible reviewed profiles while preserving replicated weights as the first/default option. Readiness is rechecked after optional preparation, launch remains separately confirmed, one-node catalog serving is constrained to its durable-home rank, and stop purges unpinned hot views by default while explicit pin retains them. Deterministic contracts pass; no new physical, model-qualification, or promotion claim is made. |
 | 2026-08-13 | The production two-node serving wizard passed its physical DeepSeek catalog integration gate from a clean one-home state: explicit experimental selection, separate preparation and launch confirmations, eight-stream SSH-over-RoCE, fresh exact readiness, read-only exact-snapshot serving, eight warmup phases, completion, interactive owned stop, unpinned purge, and return to one durable home. This is serving-integration evidence only; remote one-node placement, release-specific strict determinism/soak, and guided/default promotion remain open. |
 | 2026-08-14 | Wizard replacement became a short-lived fail-closed transaction. New launch labels bind the operational launch contract and actual speculative-decode state; inventory plus catalog health capture exact placement, storage source, revision identity, runtime sources, and retention before stop. Ephemeral catalog views are pinned until replacement or exact rollback succeeds. Deterministic contracts pass; the physical failed-replacement/rollback repeat remains pending and no storage-path or model promotion claim changes. |
-| 2026-08-14 | **ADR 0004 accepted:** name the immutable model/artifact + serving-recipe + runtime/image + supported-geometry tuple a **Model Serving Release**; separate its future release descriptor from frozen contracts, run records, evidence bundles, and reviewed decisions; adopt `Untested`, `Testing incomplete`, `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and `Superseded`; require strict same-boot reproducibility and reviewed provenance/security for `Validated`; and treat transfer as run provenance after a full pre-qualification verification barrier. Existing schema-1 artifacts and `STATUS=tested*` are not relabeled. The future supervised skill is `pulsar-model-onboarding`. Initial `library-hot` GA is scoped to the reviewed two-rank path and depends on the section 7.1 closure task, not on the DeepSeek release's strict-determinism result. |
+| 2026-08-14 | **ADR 0004 accepted:** name the immutable model/artifact + serving-recipe + runtime/image + supported-geometry tuple a **Model Serving Release**; separate its release descriptor from frozen contracts, run records, evidence bundles, and reviewed decisions; adopt `Untested`, `Testing incomplete`, `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and `Superseded`; require strict same-boot reproducibility and reviewed provenance/security for `Validated`; and treat transfer as run provenance after a full pre-qualification verification barrier. Existing schema-1 artifacts and `STATUS=tested*` are not relabeled. The future supervised skill is `pulsar-model-onboarding`. Initial `library-hot` GA is scoped to the reviewed two-rank path and depends on the section 7.1 closure task, not on the DeepSeek release's strict-determinism result. |
+| 2026-08-14 | Implemented ADR 0004 stage 1 as pure Python release-descriptor and frozen Validation Contract schemas with fixed deterministic IDs and fail-closed tests. The release ID hashes exactly the Model Artifact Set, normalized serving recipe/access contract, digest-pinned runtime compatibility envelope, and privacy-safe supported geometry. Contract checks require all core/prerequisite dimensions, exact same-boot equality, reviewed provenance, and protocol/geometry-bound relative budgets. Legacy schema-1 artifacts and serving/status behavior are unchanged; no physical qualification or `Validated` decision was produced. |
