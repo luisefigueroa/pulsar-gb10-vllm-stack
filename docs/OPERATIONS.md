@@ -448,10 +448,10 @@ recorded in
 [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 
 "Prepare model for serving" is the operator-facing term for resolving the exact
-model, creating the durable-home and sealed-hot runtime views, transferring
-non-home bytes, and verifying every rank. Preparation does not start a serving
-container or qualify the model. The older `activate` command remains a
-backward-compatible alias.
+model, creating rank-local runtime views from an **existing** durable home,
+transferring only non-home bytes, and verifying every rank. Preparation does
+not create the durable home, start a serving container, or qualify the model.
+The older `activate` command remains a backward-compatible alias.
 
 Typical reviewed multi-rank flow:
 

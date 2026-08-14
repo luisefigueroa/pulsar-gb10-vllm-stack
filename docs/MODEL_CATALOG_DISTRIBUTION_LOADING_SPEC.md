@@ -16,7 +16,7 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-12 |
+| Snapshot date | 2026-08-13 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -85,7 +85,7 @@ Pulsar separates five kinds of state:
 | Validation bundle | `models/validation-bundles/<bundle_id>.json` required by a sealed profile | Yes | Content-addressed binding of exact models/artifacts, normalized live profile, digest-pinned image, geometry, and evidence |
 | Validation evidence | `results/` plus `docs/VALIDATION.md` | Yes when publishable | Reproducible support for status and promotion claims |
 
-The current system supports three practical storage origins:
+The current system supports four practical storage origins:
 
 1. **Hugging Face repository, replicated locally.** The controller downloads
    one complete repository to its standard cache and copies it with `rsync` to
@@ -93,15 +93,23 @@ The current system supports three practical storage origins:
 2. **Absolute-path site catalog.** A profile whose `MODEL` begins with `/` is
    treated as an already-mounted local or NFS catalog path. Pulsar checks it on
    every rank but never downloads or copies it.
-3. **Hugging Face repository, single-copy live fabric.** One serving rank is
+3. **Hugging Face repository, federated home plus sealed-hot (`library-hot`).**
+   One durable home per exact revision; the home rank uses a symlink/view, and
+   only non-home ranks receive sealed-hot copies. Acquisition is explicit
+   `home add`; preparation does not create the home. Launch uses
+   `--weight-source library-hot`. Experimental and not promoted; the wizard
+   may offer it only as a labeled second choice.
+4. **Hugging Face repository, single-copy live fabric.** One serving rank is
    explicitly configured as owner. Only the selected model repository subtree
    is exported to exact client RoCE addresses. Clients hard-mount it read-only
    with NFSv4.2/RDMA, and each vLLM container receives only that exact repository
-   at the expected Hugging Face cache path. This remains experimental.
+   at the expected Hugging Face cache path. This remains experimental and
+   outside the wizard.
 
 There is a naming mismatch worth reviewing. Catalog output calls model origins
-`hf` or `nfs`, while launch accepts `--weight-source replicated|fabric`.
-`replicated` currently means “not the experimental fabric mode”; it can include
+`hf` or `nfs`, while launch accepts
+`--weight-source replicated|fabric|library-hot`.
+`replicated` currently means “not fabric or library-hot”; it can include
 an absolute-path catalog profile and therefore does not always mean physically
 replicated bytes. A future interface should probably describe origin,
 distribution, and runtime mount as separate axes.
@@ -115,6 +123,7 @@ flowchart TD
     S{"Weight path"}
     R["Replicated HF repository\none complete local copy per serving rank"]
     C["Operator-mounted catalog path\npre-existing on every serving rank"]
+    L["Experimental library-hot\ndurable home + sealed-hot views"]
     F["Experimental single-copy fabric\none owner, read-only NFS/RDMA clients"]
     G["Fail-closed preflight\nstatus, topology, image, weights, memory, network"]
     V["vLLM containers\nlocal rank 0 API plus remote headless ranks"]
@@ -124,6 +133,7 @@ flowchart TD
     T --> G
     S --> R --> G
     S --> C --> G
+    S --> L --> G
     S --> F --> G
     G --> V --> E
 ```
@@ -132,7 +142,7 @@ The system has three network planes that must not be conflated:
 
 | Plane | Current role |
 |---|---|
-| Control | SSH, orchestration, Docker commands, inventory, and fault control. Weight-fabric and inventory operations retain a stable SSH/host-key alias but pin the connection to the topology's recorded control address. Some default launch/staging commands still use the saved alias directly; see the limitations section. |
+| Control | SSH, orchestration, Docker commands, inventory, and fault control. Schema 2 callers pass the stable alias; the generated `.cluster-ssh-config` pins `HostName` to the confirmed control address for cluster, image, inventory, weight, and model-library SSH. |
 | Inference data | NCCL/Gloo/vLLM distributed traffic. Multi-node profiles require a verified RoCE full mesh and select the confirmed HCAs/interfaces. |
 | Weight storage | Local filesystem in replicated/catalog mode; a selected RoCE rail carrying NFS/RDMA in experimental fabric mode. |
 
@@ -403,11 +413,10 @@ memory, and image presence are rechecked before mutation.
 
 The shared confirmed-endpoint helper uses the saved alias for user configuration
 and host-key identity but forces the connection endpoint to the saved control
-address. Weight-fabric and inventory operations use this helper, preventing
-name-resolution drift from silently moving their management traffic onto a
-RoCE rail that a fault test may take down. Core cluster launch, preflight,
-image sync, and replicated weight staging still invoke the saved alias directly;
-control-endpoint pinning is therefore not yet uniform across the repository.
+address. The generated `.cluster-ssh-config` is added to every normal cluster,
+image, inventory, weight, and model-library SSH caller. Schema 1 keeps ordinary
+OpenSSH trust. Schema 2 fails closed if that generated config is missing or
+stale. See §15.10.
 
 ### 6.3 Placement rules
 
@@ -424,18 +433,18 @@ control-endpoint pinning is therefore not yet uniform across the repository.
 
 ### 7.1 Comparison
 
-| Property | Replicated HF cache | Absolute-path catalog | Experimental live fabric |
-|---|---|---|---|
-| Guided default | Yes | Yes when a validated profile already references it | No |
-| Model origin | Hugging Face repository ID | Operator-managed absolute path | Hugging Face repository ID |
-| Durable copies | One full repository per serving node | Defined by external catalog operator | One authoritative repository on owner; complete client replicas forbidden |
-| Distribution | Controller downloads, then `rsync`s selected repository to remote ranks | Out of scope; mount/provision before Pulsar | Owner-only download; NFS/RDMA export/mount applied explicitly |
-| Container view | Legacy-unsealed: full local HF home, writable. Sealed: selected repository read-only and exact snapshot path | Site catalog mounted read-only | Only selected HF repository mounted read-only at its exact cache location; broader HF home excluded |
-| Cryptographic seal | Yes only when the profile references a reviewed expected seal; otherwise structural legacy behavior | No | Yes, exact revision/file set/sizes/SHA-256 |
-| Cold-start owner dependency | No after local staging | Depends on external catalog | Yes |
-| Steady-state owner dependency | None | Depends on external catalog semantics | Loaded service may continue, but reload/restart and hard-mounted I/O depend on owner |
-| Automatic fallback | Not applicable | None | None; explicit replicated staging and launch required |
-| Current status | Promoted | Per-profile validation | Experimental |
+| Property | Replicated HF cache | Absolute-path catalog | Experimental library-hot | Experimental live fabric |
+|---|---|---|---|---|
+| Guided default | Yes | Yes when a validated profile already references it | No; wizard second choice only | No; CLI only |
+| Model origin | Hugging Face repository ID | Operator-managed absolute path | Hugging Face repository ID (reviewed revision) | Hugging Face repository ID |
+| Durable copies | One full repository per serving node | Defined by external catalog operator | One durable home; sealed-hot only on non-home ranks | One authoritative repository on owner; complete client replicas forbidden |
+| Distribution | Controller downloads, then `rsync`s selected repository to remote ranks | Out of scope; mount/provision before Pulsar | Explicit `home add`; prepare copies non-home ranks | Owner-only download; NFS/RDMA export/mount applied explicitly |
+| Container view | Legacy-unsealed: full local HF home, writable. Sealed: selected repository read-only and exact snapshot path | Site catalog mounted read-only | Exact snapshot read-only; home rank uses a durable-home view | Only selected HF repository mounted read-only at its exact cache location; broader HF home excluded |
+| Cryptographic seal | Yes only when the profile references a reviewed expected seal; otherwise structural legacy behavior | No | Yes; reviewed expected seal required for promoted prepare | Yes, exact revision/file set/sizes/SHA-256 of locally observed owner bytes |
+| Cold-start home/owner dependency | No after local staging | Depends on external catalog | Yes; durable home required | Yes |
+| Steady-state home/owner dependency | None | Depends on external catalog semantics | Home still required; pin retains hot copies but is not home-loss resilience | Loaded service may continue, but reload/restart and hard-mounted I/O depend on owner |
+| Automatic fallback | Not applicable | None | None | None; explicit replicated staging and launch required |
+| Current status | Promoted | Per-profile validation | Experimental, not promoted | Experimental |
 
 ### 7.2 Default replicated Hugging Face workflow
 
@@ -1374,7 +1383,7 @@ a 4,079,450,110-byte sealed snapshot with eight SSH-over-RoCE streams in nine
 seconds and full-verified both ranks. See
 `results/model-library/topology-ssh-trust-gate-20260810.json`.
 
-## 16. Implemented experiment: transfer then materialize
+## 16. Implemented experiment: prepare + sealed-hot
 
 The model-library experiment implements NFS/RDMA as a one-shot transfer plane
 alongside a control-path copy backend:
@@ -1395,9 +1404,14 @@ pin/unpin/purge, and `library-hot` launch/stop hooks.
 Remote serving ranks receive temporary or pinned hot copies, giving up the
 strict “one physical copy” property while staged.
 
-Accepted architecture and current behavior both use a warm-home symlink into
-the durable HF cache. This is not a materialization gap: routine home-rank hot
-copying is prohibited. The control plane now binds that view to an optional
+Accepted architecture requires a warm-home symlink (or equivalent zero-copy
+view) into the durable HF cache; routine home-rank hot copying is prohibited
+([ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md)).
+Current experimental code prefers a symlink but can fall back to
+reflink/copy if symlink creation fails. That fallback is **not** accepted
+promotion behavior: the promoted path must fail closed when the durable-home
+view cannot be established. See [OPERATIONS.md](./OPERATIONS.md).
+The control plane now binds that view to an optional
 reviewed expected seal, full-verifies it, creates a rank-local metadata witness,
 launches the same exact revision, and exposes seal/bundle identity in labels and
 startup evidence. The witness binds the canonical hub and snapshot paths,
@@ -1616,7 +1630,7 @@ implementation shape and unrelated catalog/live-mount policy.
 
 ### Alternative architecture
 
-17. Does transfer-then-materialize offer a materially better resilience model,
+17. Does prepare + sealed-hot offer a materially better resilience model,
     or does it merely reproduce replication with more machinery?
 18. Are checkpoint-native per-rank shards, object storage, NVMe-oF, or another
     mechanism a better long-term fit than either current mode?

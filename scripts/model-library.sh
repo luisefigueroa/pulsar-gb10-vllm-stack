@@ -103,8 +103,9 @@ Notes:
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
-    (1..16). The current default remains ssh-control with one stream while the
-    ssh-roce/8-stream promotion gates are completed.
+    (1..16). The low-level CLI default remains ssh-control with one stream
+    (ADR 0003 compatibility). Interactive reviewed preparation is fixed at
+    ssh-roce / 8 streams with no fallback; that does not promote library-hot.
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails closed.
   • prepare --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE

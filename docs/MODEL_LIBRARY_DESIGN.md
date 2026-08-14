@@ -249,22 +249,28 @@ storage path, wizard choice, or default policy. See
 | **Warm catalog** | Federated durable homes: complete model trees in the **default HF location on any Spark** | **Yes** (core library) | Per-node `$HF_CACHE` / hub layout |
 | **Cold storage** | Shared or local **archive**; preferred **before Hugging Face download** when warm misses | **Optional** | Configurable path (conventionally `/mnt/Models` / `MODELS_NFS`) |
 | **Hot staging** | Per-job (or pinned) working trees on ranks for load/serve/restart | Yes when ranks need a local tree | e.g. budgeted staging root outside durable HF home |
-| **Origin** | Upstream download | Last resort when allowed | Hugging Face Hub |
+| **Origin** | Upstream download | Separate acquisition, not a resolve step | Hugging Face Hub via `home add` or replicated `pull-weights.sh` |
 
 ### 3.1 Resolve order
+
+Current `resolve` / catalog lookup does **not** download from Hugging Face:
 
 ```text
 1. Warm catalog — complete home on any confirmed Spark
 2. Cold storage — only if configured and available
-3. Hugging Face — if allowed / reachable
-4. Else fail closed with an explicit reason
+3. Else fail closed with an explicit reason
 ```
+
+Hub acquisition is a separate command: experimental
+`scripts/model-library.sh home add` creates exactly one reviewed durable home;
+the guided replicated path uses `scripts/pull-weights.sh`. Neither is a
+silent resolve fallback.
 
 | Cold config | Behavior |
 |---|---|
 | Unset / empty | Skip tier 2; no error; no mount required |
 | Set but unavailable | Fail only when a flow needs cold (e.g. cold-path conf or explicit cold resolve); do not break pure HF-id flows that never need cold |
-| Set and healthy | Prefer over HF download when warm misses |
+| Set and healthy | Prefer cold as the fill source when warm misses; do not auto-download during resolve |
 
 Cold is **not** the default multi-node runtime filesystem. It is an optional
 **fill / archive** tier.
