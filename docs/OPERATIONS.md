@@ -292,15 +292,33 @@ a short target summary (not raw JSON). Decision highlights:
    summarized and left alone.
 6. **Memory WARN** after cleanup — shows free/footprint/need; explicit continue
    allowed. **Memory FAIL** — no launch, no continue-anyway. If a previous
-   profile was stopped, offer restart from **current** `models/<conf>.conf`
-   defaults, choose another, or exit stopped.
-7. **Launch fails after replacement** — report failure; offer restart previous
-   from current config or exit stopped. No auto-restart loop.
+   service was transactionally stopped, offer restoration of its exact captured
+   contract, choose another model, or exit stopped with recovery state retained.
+7. **Launch fails after replacement** — report failure; offer the same exact
+   rollback. Profile defaults, storage source, and placement are never guessed.
+   There is no auto-restart loop.
 
 **Stops are always deferred** until after the final start/replace confirmation.
+Immediately before stopping one running service, the wizard requires complete
+fresh inventory plus current launch-contract/spec labels. It records exact
+placement and weight policy in a short-lived site-local transaction. A
+`library-hot` service additionally requires matching health identity/runtime
+views; ephemeral views are pinned before stop. Multiple running stop targets,
+partial services, old unlabeled services, drift, or failed retention leave the
+service running and make automatic replacement unavailable. To adopt an older
+managed service, stop it explicitly after reviewing `./pulsar inventory`, then
+start it once with the current Pulsar release.
+
 After any stop, inventory + cold memory preflight run again (never assume
-reclaim). Speculative-decode prompt defaults are unchanged (flagship
-recommended fast path default-on with confirm).
+reclaim). If the wizard exits or is interrupted, the next `./pulsar wizard`
+detects the unfinished transaction. It restores only when the saved contract is
+still exact; ambiguous live state is left untouched with remediation to inspect
+or explicitly stop the new service before retrying. A confirmed rollback keeps
+the record until temporary retention is restored. A successful replacement
+closes the rollback record; any failure to release or purge the previous hot
+view is reported with a direct model-library remediation command. The record is
+not permanent history. Credentials and container argv are never stored; the
+opaque launch digest records auth presence and supported runtime overrides.
 
 ## Start / stop
 

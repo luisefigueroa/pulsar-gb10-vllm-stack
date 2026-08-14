@@ -684,10 +684,24 @@ separate final confirmation. A one-node catalog service is placed on its
 durable-home rank and uses that local view; multi-node preparation uses the
 exact profile ranks and creates sealed-hot copies only on non-home ranks.
 
-On stop, an observed `library-hot` service purges unpinned prepared views by
-default. `--pin-weights` is the explicit retention choice; a confirmed restart
-pins before stopping so the same views remain available. Pinning does not copy
-or protect the durable home. Explicit `--purge-hot` may remove a pin, while
+On an ordinary stop, an observed `library-hot` service purges unpinned
+prepared views by default. `--pin-weights` is the explicit retention choice.
+A wizard replacement is a bounded transaction: immediately before stopping one
+complete observable service, Pulsar snapshots its effective launch contract,
+exact physical placement, weight policy, speculative-decode state, and, for
+`library-hot`, exact revision/seal/manifest, per-rank runtime sources, and
+retention. Ephemeral catalog views are temporarily pinned before stop. A failed
+replacement may restore only that captured contract; it never reconstructs from
+current profile defaults or silently switches storage source or placement.
+Incomplete, multi-service, legacy-unlabeled, drifted, or unretainable state
+makes automatic replacement unavailable before stop.
+
+The site-local transaction is short-lived recovery state, not a served-model
+registry or audit history. It remains across wizard exit or interruption and is
+removed after the replacement is running, or after the exact rollback is
+confirmed and temporary retention is restored. A successful replacement closes
+the rollback transaction even if old-view unpin/purge needs visible direct
+remediation. Pinning still does not copy or protect the durable home. Explicit `--purge-hot` may remove a pin, while
 durable-home deletion remains a separate direct-CLI workflow.
 
 Current health closes supported catalog/hot observability, but container labels still do not carry
@@ -923,3 +937,4 @@ blocker changed.
 | 2026-08-13 | Reviewed acquisition passed its three-node physical catalog/artifact gate with sealed Qwen 1.7B. Guarded last-home removal, interrupted remote download cleanup, explicit rank-2 acquisition, automatic most-free-space rank-2 acquisition, full reviewed-manifest verification, atomic publication, explicit catalog refresh, and final one-home/no-hot state passed. The gate also closed target discovery for Pulsar's managed HF CLI venv. It did not prepare, launch, qualify, or promote the model or storage path. |
 | 2026-08-13 | The serving wizard gained an explicit experimental distributed-catalog choice for eligible reviewed profiles while preserving replicated weights as the first/default option. Readiness is rechecked after optional preparation, launch remains separately confirmed, one-node catalog serving is constrained to its durable-home rank, and stop purges unpinned hot views by default while explicit pin retains them. Deterministic contracts pass; no new physical, model-qualification, or promotion claim is made. |
 | 2026-08-13 | The production two-node serving wizard passed its physical DeepSeek catalog integration gate from a clean one-home state: explicit experimental selection, separate preparation and launch confirmations, eight-stream SSH-over-RoCE, fresh exact readiness, read-only exact-snapshot serving, eight warmup phases, completion, interactive owned stop, unpinned purge, and return to one durable home. This is serving-integration evidence only; remote one-node placement, failed strict determinism, sustained soak, and promotion remain open. |
+| 2026-08-14 | Wizard replacement became a short-lived fail-closed transaction. New launch labels bind the operational launch contract and actual speculative-decode state; inventory plus catalog health capture exact placement, storage source, revision identity, runtime sources, and retention before stop. Ephemeral catalog views are pinned until replacement or exact rollback succeeds. Deterministic contracts pass; the physical failed-replacement/rollback repeat remains pending and no storage-path or model promotion claim changes. |

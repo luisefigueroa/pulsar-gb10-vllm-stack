@@ -44,6 +44,11 @@ SCRIPT_NAME=wizard
 WIZARD_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard.XXXXXX")
 trap 'rm -rf "$WIZARD_WORK_DIR"' EXIT INT TERM
 MODEL_STORAGE_RENDERER="$REPO_DIR/scripts/model_storage.py"
+REPLACEMENT_TRANSACTION_TOOL="$REPO_DIR/scripts/replacement_transaction.py"
+REPLACEMENT_TRANSACTION_FILE="${WIZARD_REPLACEMENT_TRANSACTION_FILE:-$REPO_DIR/.model-library/replacement-transactions/wizard.json}"
+ROLLBACK_ACTIVE=0
+TRANSACTION_PREVIOUS_PROFILE=""
+TRANSACTION_SOURCE=""
 
 # ---------------------------------------------------------------------------
 # Injectable command paths (test hooks)
@@ -110,6 +115,14 @@ cmd_model_library_prepare() {
     "$WIZARD_MODEL_LIBRARY_PREPARE_CMD" "$@"
   else
     "$REPO_DIR/scripts/model-library.sh" "$@"
+  fi
+}
+
+cmd_replacement_transaction() {
+  if [ -n "${WIZARD_REPLACEMENT_TRANSACTION_CMD:-}" ]; then
+    "$WIZARD_REPLACEMENT_TRANSACTION_CMD" "$@"
+  else
+    python3 "$REPLACEMENT_TRANSACTION_TOOL" "$@"
   fi
 }
 
@@ -1236,10 +1249,15 @@ PENDING_STOP=()           # confs scheduled to stop after final confirm
 reset_plan_state() {
   PENDING_STOP=()
   ACCEPT=()
-  SPEC_ARGS=()
+  if [ "$ROLLBACK_ACTIVE" = 0 ]; then
+    SPEC_ARGS=()
+  fi
 }
 
 prompt_spec_decode() {
+  if [ "$ROLLBACK_ACTIVE" = 1 ]; then
+    return 0
+  fi
   SPEC_ARGS=()
   if has_spec_args; then
     if [ "${RECOMMENDED_SPEC}" = "1" ]; then
@@ -1262,61 +1280,283 @@ final_confirm_start() {
   confirm "$msg"
 }
 
-execute_pending_stops() {
-  local conf
-  local -a down_args=()
-  STOPPED_CONFS=()
-  for conf in "${PENDING_STOP[@]}"; do
-    log "stopping stack-managed conf=$conf (ownership revalidated by down.sh)…"
-    down_args=()
-    if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
-      down_args=("${PLACEMENT_ARGS[@]}")
+collect_transaction_health() {
+  local destination="${1:?health destination required}" rc=0
+  set +e
+  cmd_model_library_health >"$destination"
+  rc=$?
+  set -e
+  case "$rc" in
+    0|1) ;;
+    *) die "model-library health is unavailable; the running service was not stopped" ;;
+  esac
+}
+
+load_transaction_summary() {
+  local -a fields=()
+  mapfile -t fields < <(cmd_replacement_transaction show \
+    --path "$REPLACEMENT_TRANSACTION_FILE" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+s = d["previous_service"]
+w = s["weight"]
+p = s["placement"]
+print(s["profile"])
+print(w["source"])
+print("1" if d["temporary_retention"]["required"] else "0")
+print(p["mode"])
+print((p["ranks"][0].get("node_id") or "") if p["nodes"] == 1 else "")
+print(s["spec_decode"])
+')
+  [ "${#fields[@]}" -eq 6 ] || die "replacement transaction is incomplete"
+  TRANSACTION_PREVIOUS_PROFILE="${fields[0]}"
+  TRANSACTION_SOURCE="${fields[1]}"
+  TRANSACTION_TEMP_PIN="${fields[2]}"
+  TRANSACTION_PLACEMENT_MODE="${fields[3]}"
+  TRANSACTION_NODE_ID="${fields[4]}"
+  TRANSACTION_SPEC_DECODE="${fields[5]}"
+}
+
+transaction_node_args() {
+  TRANSACTION_NODE_ARGS=()
+  if [ "$TRANSACTION_PLACEMENT_MODE" = confirmed-node ]; then
+    [ -n "$TRANSACTION_NODE_ID" ] || die "saved one-node placement has no node identity"
+    TRANSACTION_NODE_ARGS=(--node "$TRANSACTION_NODE_ID")
+  fi
+}
+
+capture_running_service_transaction() {
+  local conf="${1:?profile required}" inventory="$2"
+  local inventory_file="$WIZARD_WORK_DIR/replacement-inventory.json"
+  local health_file="$WIZARD_WORK_DIR/replacement-health.json"
+  local contract_id source
+  printf '%s\n' "$inventory" >"$inventory_file"
+  contract_id=$(launch_contract_id_for_profile "$conf")
+  source=$(INV_FILE="$inventory_file" PROFILE="$conf" python3 -c '
+import json, os
+with open(os.environ["INV_FILE"], encoding="utf-8") as f:
+    inv = json.load(f)
+items = [s for s in inv.get("services", []) if s.get("conf") == os.environ["PROFILE"] and s.get("state") == "running"]
+print(items[0].get("weight_source") or "" if len(items) == 1 else "")
+')
+  local -a health_args=()
+  if [ "$source" = library-hot ]; then
+    collect_transaction_health "$health_file"
+    health_args=(--library-health "$health_file")
+  fi
+  if ! cmd_replacement_transaction capture \
+      --inventory "$inventory_file" "${health_args[@]}" \
+      --profile "$conf" --launch-contract-id "$contract_id" \
+      --output "$REPLACEMENT_TRANSACTION_FILE" >/dev/null; then
+    die "the running service contract cannot be captured exactly; it remains running. Restart it once with current Pulsar labels or use direct lifecycle commands after reviewing ./pulsar inventory"
+  fi
+  load_transaction_summary
+  transaction_node_args
+  if [ "$TRANSACTION_TEMP_PIN" = 1 ]; then
+    log "temporarily pinning the exact prepared views until replacement or rollback is confirmed…"
+    if ! cmd_model_library_prepare pin "$conf" "${TRANSACTION_NODE_ARGS[@]}"; then
+      die "temporary rollback retention failed; the running service remains active and the transaction record was retained"
     fi
-    if [ "$conf" = "$NAME" ] && [ "$WEIGHT_SOURCE" = library-hot ]; then
+  fi
+  cmd_replacement_transaction phase \
+    --path "$REPLACEMENT_TRANSACTION_FILE" --to retained >/dev/null
+}
+
+running_pending_services() {
+  local inventory="$1"
+  shift
+  INV_JSON="$inventory" PENDING=$(IFS=,; printf '%s' "$*") python3 -c '
+import json, os
+inv = json.loads(os.environ["INV_JSON"])
+wanted = set(filter(None, os.environ.get("PENDING", "").split(",")))
+values = sorted({
+    s.get("conf")
+    for s in inv.get("services", [])
+    if s.get("conf") in wanted
+    and any(rank.get("running") is True for rank in s.get("ranks", []))
+})
+if values:
+    print("\n".join(values))
+'
+}
+
+execute_pending_stops() {
+  local conf inventory
+  local -a running=() down_args=()
+  STOPPED_CONFS=()
+  collect_inventory_json_or_die inventory
+  mapfile -t running < <(running_pending_services "$inventory" "${PENDING_STOP[@]}")
+  if [ "${#running[@]}" -gt 1 ]; then
+    die "replacement would stop multiple running services; automatic rollback is unavailable and no service was stopped"
+  fi
+  if [ "${#running[@]}" -eq 1 ]; then
+    [ "${#PENDING_STOP[@]}" -eq 1 ] \
+      || die "replacement mixes running and stale services; no service was stopped"
+    conf="${running[0]}"
+    capture_running_service_transaction "$conf" "$inventory"
+    log "stopping stack-managed conf=$conf from its captured placement…"
+    down_args=("${TRANSACTION_NODE_ARGS[@]}")
+    if [ "$TRANSACTION_SOURCE" = library-hot ]; then
       down_args+=(--pin-weights)
-      log "retaining exact prepared views for this confirmed restart; the durable home remains required"
+      log "prepared views remain retained until replacement or exact rollback succeeds"
     fi
     if ! cmd_down "$conf" "${down_args[@]}"; then
-      die "stop failed for $conf — no further mutations; inspect with ./pulsar inventory"
+      die "stop failed for $conf; transaction and any temporary pin were retained for recovery"
     fi
+    cmd_replacement_transaction phase \
+      --path "$REPLACEMENT_TRANSACTION_FILE" --to stopped >/dev/null
     STOPPED_CONFS+=("$conf")
     PREVIOUS_PROFILE="$conf"
-  done
+  else
+    for conf in "${PENDING_STOP[@]}"; do
+      down_args=()
+      if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
+        down_args=("${PLACEMENT_ARGS[@]}")
+      fi
+      log "removing stale stack-managed conf=$conf (ownership revalidated by down.sh)…"
+      cmd_down "$conf" "${down_args[@]}" \
+        || die "stale cleanup failed for $conf; inspect with ./pulsar inventory"
+    done
+  fi
   PENDING_STOP=()
 }
 
-offer_restart_previous() {
-  # After hard fail or launch fail when a previous profile was stopped.
-  local prev="${PREVIOUS_PROFILE:-}"
-  if [ -z "$prev" ]; then
+prepare_exact_rollback() {
+  local health_file="$WIZARD_WORK_DIR/rollback-health.json" contract_id inventory
+  local inventory_file="$WIZARD_WORK_DIR/rollback-inventory.json"
+  local -a health_args=()
+  load_transaction_summary
+  NAME="$TRANSACTION_PREVIOUS_PROFILE"
+  load_conf "$NAME"
+  contract_id=$(loaded_launch_contract_id)
+  collect_inventory_json_or_die inventory
+  printf '%s\n' "$inventory" >"$inventory_file"
+  if [ "$TRANSACTION_SOURCE" = library-hot ]; then
+    collect_transaction_health "$health_file"
+    health_args=(--library-health "$health_file")
+  fi
+  cmd_replacement_transaction verify-rollback \
+    --path "$REPLACEMENT_TRANSACTION_FILE" \
+    --launch-contract-id "$contract_id" --inventory "$inventory_file" \
+    "${health_args[@]}" >/dev/null \
+    || die "the captured service contract cannot be restored exactly; transaction and retained views were preserved"
+
+  reset_weight_source
+  if [ "$TRANSACTION_SOURCE" = library-hot ]; then
+    WEIGHT_SOURCE=library-hot
+    WEIGHT_ARGS=(--weight-source library-hot)
+  fi
+  case "$TRANSACTION_SPEC_DECODE" in
+    on) SPEC_ARGS=(--spec-decode) ;;
+    off) SPEC_ARGS=(--no-spec-decode) ;;
+    *) die "saved speculative-decode state is invalid" ;;
+  esac
+  case "$TRANSACTION_PLACEMENT_MODE" in
+    standalone-local)
+      reset_placement_state
+      ;;
+    confirmed-node)
+      resolve_single_node_placement "$TRANSACTION_NODE_ID" \
+        || die "the captured physical node is no longer in confirmed topology"
+      adopt_resolved_single_node_placement
+      ;;
+    exact-topology)
+      reset_placement_state
+      ;;
+    *) die "saved placement mode is unsupported" ;;
+  esac
+  ROLLBACK_ACTIVE=1
+  STOPPED_CONFS=()
+}
+
+finalize_replacement_transaction() {
+  local outcome="${1:?outcome required}" cleanup_rc=0 node_hint=""
+  [ -f "$REPLACEMENT_TRANSACTION_FILE" ] || return 0
+  load_transaction_summary
+  transaction_node_args
+  [ -z "$TRANSACTION_NODE_ID" ] || node_hint=" --node $TRANSACTION_NODE_ID"
+  if [ "$TRANSACTION_SOURCE" = library-hot ] && [ "$TRANSACTION_TEMP_PIN" = 1 ]; then
+    log "restoring unpinned retention policy for the previous service…"
+    if ! cmd_model_library_prepare unpin "$TRANSACTION_PREVIOUS_PROFILE" \
+        "${TRANSACTION_NODE_ARGS[@]}"; then
+      warn "temporary rollback retention could not be released"
+      warn "remediation: scripts/model-library.sh unpin $TRANSACTION_PREVIOUS_PROFILE$node_hint"
+      cleanup_rc=1
+    elif [ "$outcome" = replacement ] \
+        && { [ "$NAME" != "$TRANSACTION_PREVIOUS_PROFILE" ] \
+          || [ "$WEIGHT_SOURCE" != library-hot ]; }; then
+      if ! cmd_model_library_prepare purge-hot "$TRANSACTION_PREVIOUS_PROFILE" \
+          "${TRANSACTION_NODE_ARGS[@]}" --yes; then
+        warn "the previous unpinned hot view could not be purged"
+        warn "remediation: scripts/model-library.sh purge-hot $TRANSACTION_PREVIOUS_PROFILE$node_hint --yes"
+        cleanup_rc=1
+      fi
+    fi
+  fi
+  if [ "$outcome" = rollback ] && [ "$cleanup_rc" -ne 0 ]; then
     return 1
   fi
-  log "previous managed profile was stopped: $prev"
-  log "restart uses current profile defaults from models/${prev}.conf (not a snapshot of prior runtime flags)"
+  cmd_replacement_transaction complete \
+    --path "$REPLACEMENT_TRANSACTION_FILE" --outcome "$outcome" >/dev/null
+  PREVIOUS_PROFILE=""
+  TRANSACTION_PREVIOUS_PROFILE=""
+  ROLLBACK_ACTIVE=0
+  return "$cleanup_rc"
+}
+
+offer_restart_previous() {
+  local prev="${PREVIOUS_PROFILE:-}"
+  [ -n "$prev" ] && [ -f "$REPLACEMENT_TRANSACTION_FILE" ] || return 1
+  log "previous exact service contract is retained: $prev"
   local pick
   pick=$(choose "Previous service stopped — what next?" \
-    "Restart previous profile from current config ($prev)" \
+    "Restore previous exact service ($prev)" \
     "Choose another model" \
-    "Exit stopped")
+    "Exit stopped (keep recovery transaction)")
   case "$pick" in
-    Restart*)
-      NAME="$prev"
-      load_conf "$NAME"
-      reset_weight_source
-      if [ "$NODES" -gt 1 ]; then
-        reset_placement_state
-      fi
-      PREVIOUS_PROFILE=""
-      STOPPED_CONFS=()
-      return 0
-      ;;
-    Choose*)
-      return 2
-      ;;
+    Restore*) prepare_exact_rollback; return 0 ;;
+    Choose*) return 2 ;;
     *)
-      log "exiting with previous service stopped (conf=$prev)"
+      log "exiting stopped; exact rollback state and any temporary pin remain available"
       exit 0
       ;;
+  esac
+}
+
+recover_replacement_transaction() {
+  [ -f "$REPLACEMENT_TRANSACTION_FILE" ] || return 0
+  local inventory inventory_file="$WIZARD_WORK_DIR/recovery-inventory.json"
+  local result state
+  warn "an unfinished serving replacement transaction was found"
+  collect_inventory_json_or_die inventory
+  printf '%s\n' "$inventory" >"$inventory_file"
+  if ! result=$(cmd_replacement_transaction recovery-state \
+      --path "$REPLACEMENT_TRANSACTION_FILE" --inventory "$inventory_file"); then
+    warn "replacement recovery is ambiguous; no lifecycle action was taken"
+    log "remediation: inspect ./pulsar inventory"
+    die "resolve partial or newly running managed services directly, then rerun ./pulsar wizard"
+  fi
+  state=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+  load_transaction_summary
+  PREVIOUS_PROFILE="$TRANSACTION_PREVIOUS_PROFILE"
+  case "$state" in
+    previous-running)
+      log "the exact previous service is already running; closing the recovered transaction"
+      NAME="$TRANSACTION_PREVIOUS_PROFILE"
+      finalize_replacement_transaction rollback \
+        || die "the previous service is running, but temporary retention cleanup is incomplete"
+      return 0
+      ;;
+    stopped)
+      local rc=0
+      offer_restart_previous || rc=$?
+      case "$rc" in
+        0) return 10 ;;
+        2) return 0 ;;
+        *) die "replacement recovery selection failed" ;;
+      esac
+      ;;
+    *) die "replacement recovery state is unsupported" ;;
   esac
 }
 
@@ -1499,17 +1739,15 @@ plan_selected_model() {
           if [ "$prc" != 0 ]; then exit 1; fi
           if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
             warn "launch failed after restart of $NAME"
-            pick=$(choose "Launch failed — what next?" \
-              "Retry start $NAME from current config" \
-              "Exit stopped")
-            case "$pick" in
-              Retry*)
-                cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes || die "retry launch failed"
-                ;;
-              *) log "exiting stopped"; exit 1 ;;
-            esac
+            local rc=0
+            offer_restart_previous || rc=$?
+            if [ "$rc" = 0 ]; then return 10; fi
+            if [ "$rc" = 2 ]; then return 2; fi
+            exit 1
           fi
           cmd_status "$NAME" "${PLACEMENT_ARGS[@]}" || true
+          finalize_replacement_transaction replacement \
+            || die "replacement is running; previous-view cleanup needs the direct remediation shown above"
           exit 0
           ;;
         Show*)
@@ -1749,7 +1987,7 @@ plan_selected_model() {
     log "launching $NAME…"
     if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
       warn "launch failed for $NAME"
-      if [ -n "${PREVIOUS_PROFILE:-}" ] && [ "${PREVIOUS_PROFILE}" != "$NAME" ]; then
+      if [ -n "${PREVIOUS_PROFILE:-}" ] && [ -f "$REPLACEMENT_TRANSACTION_FILE" ]; then
         local rc=0
         offer_restart_previous || rc=$?
         if [ "$rc" = 0 ]; then return 10; fi
@@ -1765,6 +2003,10 @@ plan_selected_model() {
       esac
     fi
     cmd_status "$NAME" "${PLACEMENT_ARGS[@]}" || true
+    local outcome=replacement
+    [ "$ROLLBACK_ACTIVE" = 0 ] || outcome=rollback
+    finalize_replacement_transaction "$outcome" \
+      || die "$outcome is running, but transaction cleanup is incomplete; rerun ./pulsar wizard"
     exit 0
   done
 }
@@ -1815,6 +2057,18 @@ else
   topology_context="${topology_capacity} confirmed nodes available"
   log "$topology_capacity confirmed nodes available · exact validated profiles only"
 fi
+
+recovery_rc=0
+recover_replacement_transaction || recovery_rc=$?
+while [ "$recovery_rc" = 10 ]; do
+  log "planning exact rollback of previous service $NAME"
+  recovery_rc=0
+  plan_selected_model || recovery_rc=$?
+done
+case "$recovery_rc" in
+  0|2) ;;
+  *) exit "$recovery_rc" ;;
+esac
 
 # Selection loop: "Choose another model" returns here without re-running doctor.
 while true; do
@@ -1983,8 +2237,8 @@ for model in models:
     continue
   fi
   if [ "$plan_rc" = 10 ]; then
-    # Restart previous profile from current config: re-enter plan with new NAME
-    log "planning restart of previous profile $NAME from current config defaults"
+    # Exact captured contract is already loaded; re-enter the ordinary gates.
+    log "planning exact rollback of previous service $NAME"
     plan_rc=0
     plan_selected_model || plan_rc=$?
     if [ "$plan_rc" = 2 ]; then

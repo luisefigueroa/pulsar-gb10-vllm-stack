@@ -224,6 +224,12 @@ owned_keys = (
     "io.pulsar.gb10.weight-source",
     "io.pulsar.gb10.weight-owner",
     "io.pulsar.gb10.weight-config",
+    "io.pulsar.gb10.model-revision",
+    "io.pulsar.gb10.model-seal",
+    "io.pulsar.gb10.validation-bundle",
+    "io.pulsar.gb10.model-identity-status",
+    "io.pulsar.gb10.launch-contract",
+    "io.pulsar.gb10.spec-decode",
 )
 labels = {k: labels_all[k] for k in owned_keys if k in labels_all and labels_all[k] is not None}
 
@@ -547,6 +553,12 @@ NODE_ID_KEY = "io.pulsar.gb10.node-id"
 WEIGHT_SOURCE_KEY = "io.pulsar.gb10.weight-source"
 WEIGHT_OWNER_KEY = "io.pulsar.gb10.weight-owner"
 WEIGHT_CONFIG_KEY = "io.pulsar.gb10.weight-config"
+MODEL_REVISION_KEY = "io.pulsar.gb10.model-revision"
+MODEL_SEAL_KEY = "io.pulsar.gb10.model-seal"
+VALIDATION_BUNDLE_KEY = "io.pulsar.gb10.validation-bundle"
+MODEL_IDENTITY_STATUS_KEY = "io.pulsar.gb10.model-identity-status"
+LAUNCH_CONTRACT_KEY = "io.pulsar.gb10.launch-contract"
+SPEC_DECODE_KEY = "io.pulsar.gb10.spec-decode"
 
 with open(os.environ["SNAP_PATH"], encoding="utf-8") as _sf:
     snap = json.load(_sf)
@@ -595,6 +607,12 @@ def filter_labels(labels):
         WEIGHT_SOURCE_KEY,
         WEIGHT_OWNER_KEY,
         WEIGHT_CONFIG_KEY,
+        MODEL_REVISION_KEY,
+        MODEL_SEAL_KEY,
+        VALIDATION_BUNDLE_KEY,
+        MODEL_IDENTITY_STATUS_KEY,
+        LAUNCH_CONTRACT_KEY,
+        SPEC_DECODE_KEY,
     ):
         if k in labels and labels[k] is not None:
             out[k] = str(labels[k])
@@ -1019,39 +1037,73 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
             if tagged not in reasons:
                 reasons.append(tagged)
 
-    weight_sources = {
-        str((r.get("labels") or {}).get(WEIGHT_SOURCE_KEY) or "")
-        for r in ranks_list
-        if (r.get("labels") or {}).get(WEIGHT_SOURCE_KEY)
-    }
-    weight_owners = {
-        str((r.get("labels") or {}).get(WEIGHT_OWNER_KEY) or "")
-        for r in ranks_list
-        if (r.get("labels") or {}).get(WEIGHT_OWNER_KEY)
-    }
-    weight_configs = {
-        str((r.get("labels") or {}).get(WEIGHT_CONFIG_KEY) or "")
-        for r in ranks_list
-        if (r.get("labels") or {}).get(WEIGHT_CONFIG_KEY)
-    }
-    weight_source = (
-        next(iter(weight_sources)) if len(weight_sources) == 1
-        else ("mixed" if weight_sources else None)
+    def uniform_label(label_key):
+        raw = [
+            str((r.get("labels") or {}).get(label_key) or "")
+            for r in ranks_list
+        ]
+        values = {value for value in raw if value}
+        missing = any(not value for value in raw)
+        uniform = next(iter(values)) if len(values) == 1 and not missing else None
+        return uniform, values, missing
+
+    weight_source, weight_sources, weight_source_missing = uniform_label(
+        WEIGHT_SOURCE_KEY
     )
-    weight_owner = (
-        next(iter(weight_owners)) if len(weight_owners) == 1 else None
+    weight_owner, weight_owners, weight_owner_missing = uniform_label(
+        WEIGHT_OWNER_KEY
     )
-    weight_config = (
-        next(iter(weight_configs)) if len(weight_configs) == 1 else None
+    weight_config, weight_configs, weight_config_missing = uniform_label(
+        WEIGHT_CONFIG_KEY
     )
-    if weight_source == "fabric" and (
-        len(weight_owners) != 1 or len(weight_configs) != 1
-    ):
-        reasons.append(
-            "single-copy weight provenance labels are missing or inconsistent"
-        )
+    launch_contract_id, launch_contracts, launch_contract_missing = uniform_label(
+        LAUNCH_CONTRACT_KEY
+    )
+    spec_decode, spec_decode_states, spec_decode_missing = uniform_label(
+        SPEC_DECODE_KEY
+    )
+    model_revision, model_revisions, model_revision_missing = uniform_label(
+        MODEL_REVISION_KEY
+    )
+    model_seal_id, model_seals, model_seal_missing = uniform_label(
+        MODEL_SEAL_KEY
+    )
+    validation_bundle_id, validation_bundles, validation_bundle_missing = uniform_label(
+        VALIDATION_BUNDLE_KEY
+    )
+    model_identity_status, identity_states, identity_missing = uniform_label(
+        MODEL_IDENTITY_STATUS_KEY
+    )
+    contract_fields = (
+        ("launch contract", launch_contracts, launch_contract_missing, True),
+        ("speculative-decode state", spec_decode_states, spec_decode_missing, True),
+        ("model revision", model_revisions, model_revision_missing, False),
+        ("model seal", model_seals, model_seal_missing, False),
+        ("validation bundle", validation_bundles, validation_bundle_missing, False),
+        ("model identity status", identity_states, identity_missing, False),
+    )
+    if len(weight_sources) > 1:
+        weight_source = "mixed"
+    elif weight_source_missing and weight_sources:
+        weight_source = "mixed"
+    if weight_source_missing:
+        reasons.append("one or more ranks lack weight source")
     if len(weight_sources) > 1:
         reasons.append("ranks disagree on weight source")
+    if weight_source in {"fabric", "library-hot"} and (
+        weight_owner_missing
+        or weight_config_missing
+        or len(weight_owners) != 1
+        or len(weight_configs) != 1
+    ):
+        weight_owner = None
+        weight_config = None
+        reasons.append("weight provenance labels are missing or inconsistent")
+    for label, values, missing, required in contract_fields:
+        if len(values) > 1:
+            reasons.append(f"ranks disagree on {label}")
+        elif missing and (required or values):
+            reasons.append(f"one or more ranks lack {label}")
 
     state = "running"
     any_running = any(r["running"] for r in ranks_list)
@@ -1209,6 +1261,12 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
         "weight_source": weight_source,
         "weight_owner_node_id": weight_owner,
         "weight_configuration_id": weight_config,
+        "launch_contract_id": launch_contract_id,
+        "spec_decode": spec_decode,
+        "model_revision": model_revision,
+        "model_seal_id": model_seal_id,
+        "validation_bundle_id": validation_bundle_id,
+        "model_identity_status": model_identity_status,
         "estimated_footprint_gib_per_rank": est,
         "reasons": reasons,
         "ranks": rank_entries,

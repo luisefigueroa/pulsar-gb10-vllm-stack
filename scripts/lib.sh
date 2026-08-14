@@ -323,6 +323,45 @@ append_loaded_profile_contract_args() {
   done
 }
 
+loaded_launch_contract_id() {
+  local api_auth=off
+  local -a args=()
+  [ -z "${VLLM_API_KEY:-${API_KEY:-}}" ] || api_auth=on
+  append_loaded_profile_contract_args args
+  args+=(
+    "--extra-env=${EXTRA_ENV:-}"
+    "--vllm-extra-args=${VLLM_EXTRA_ARGS:-}"
+    "--hf-cache=${HF_CACHE:-}"
+    "--master-port=${MASTER_PORT:-29500}"
+    "--models-nfs=${MODELS_NFS:-}"
+    "--hf-hub-offline=${HF_HUB_OFFLINE:-1}"
+    "--vllm-logging-level=${VLLM_LOGGING_LEVEL:-INFO}"
+    "--restart-policy=${RESTART_POLICY:-no}"
+    "--health-start-period=${HEALTH_START_PERIOD:-900s}"
+    "--nccl-ib-qps=${NCCL_IB_QPS_PER_CONNECTION:-}"
+    "--nccl-debug=${NCCL_DEBUG:-}"
+    "--api-auth=$api_auth"
+  )
+  python3 -c '
+import hashlib
+import json
+import sys
+raw = json.dumps(sys.argv[1:], ensure_ascii=False, separators=(",", ":")).encode()
+print(hashlib.sha256(raw).hexdigest())
+' "${args[@]}"
+}
+
+launch_contract_id_for_profile() {
+  local profile="${1:?profile required}"
+  (
+    set -euo pipefail
+    # shellcheck disable=SC1091
+    . "$REPO_DIR/scripts/lib.sh"
+    load_conf "$profile"
+    loaded_launch_contract_id
+  )
+}
+
 validate_loaded_profile_bundle() {
   local tool output
   local -a args
@@ -938,6 +977,8 @@ PULSAR_MODEL_REVISION_LABEL="io.pulsar.gb10.model-revision"
 PULSAR_MODEL_SEAL_LABEL="io.pulsar.gb10.model-seal"
 PULSAR_VALIDATION_BUNDLE_LABEL="io.pulsar.gb10.validation-bundle"
 PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
+PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
+PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
 # Load the controller-reviewed plan for a sealed profile. Unsealed profiles do
 # not call this path and retain the structural replicated-cache behavior.

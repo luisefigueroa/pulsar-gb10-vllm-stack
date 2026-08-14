@@ -89,6 +89,8 @@ if [ -n "$PORT_OVERRIDE" ]; then
   PORT="$PORT_OVERRIDE"
 fi
 resolve_spec_decode "$SPEC_MODE"
+LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
+SPEC_DECODE_STATE=$([ "$SPEC_DECODE_ENABLED" = 1 ] && printf on || printf off)
 
 if status_requires_force && [ "$FORCE" != 1 ]; then
   echo "$MODEL_NAME status=$STATUS — refuse serve without --force (allowlist: tested*)" >&2
@@ -137,6 +139,8 @@ CMD=(docker run --name "$CONTAINER" ${DETACH:+$DETACH}
   --label "${PULSAR_CONF_LABEL}=${MODEL_NAME}"
   --label "${PULSAR_RANK_LABEL}=single"
   --label "${PULSAR_WEIGHT_SOURCE_LABEL}=${WEIGHT_SOURCE}"
+  --label "${PULSAR_LAUNCH_CONTRACT_LABEL}=${LAUNCH_CONTRACT_ID}"
+  --label "${PULSAR_SPEC_DECODE_LABEL}=${SPEC_DECODE_STATE}"
   --gpus all
   --ipc=host
   --ulimit memlock=-1 --ulimit stack=67108864
