@@ -169,11 +169,17 @@ else
   record warn port "cannot probe port $port (no ss/lsof)"
 fi
 
-mkdir -p "$HF_CACHE" 2>/dev/null || true
-if [ -w "$HF_CACHE" ] || mkdir -p "$HF_CACHE" 2>/dev/null; then
-  record ok hf_cache "HF_CACHE writable ($HF_CACHE)"
+if [ ! -e "$HF_CACHE" ] && [ ! -L "$HF_CACHE" ]; then
+  record warn hf_cache \
+    "HF_CACHE missing ($HF_CACHE) · create it before downloading or serving Hugging Face models"
+elif [ ! -d "$HF_CACHE" ]; then
+  record fail hf_cache "HF_CACHE is not a directory: $HF_CACHE"
+elif [ ! -r "$HF_CACHE" ] || [ ! -w "$HF_CACHE" ] || [ ! -x "$HF_CACHE" ]; then
+  record fail hf_cache \
+    "HF_CACHE permissions do not allow read, write, and directory access: $HF_CACHE"
 else
-  record fail hf_cache "HF_CACHE not writable: $HF_CACHE"
+  hf_cache_free=$(disk_free_gib "$HF_CACHE")
+  record ok hf_cache "HF_CACHE ready · ${hf_cache_free} GiB free ($HF_CACHE)"
 fi
 
 if [ -d "$MODELS_NFS" ]; then
