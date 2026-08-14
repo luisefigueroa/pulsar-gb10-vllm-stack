@@ -62,12 +62,13 @@ A change invalidates the scopes whose inputs or contracts it changes:
 
 At acceptance, the schema-1 validation bundle was the combined immutable
 binding for an exact model, image, configuration, geometry, and evidence set.
-ADR 0004 supersedes that object model for future issuance: a release descriptor
-identifies the immutable Model Serving Release, a validation bundle binds its
-frozen contract and run evidence, and a reviewed validation decision assigns
-status. Existing schema-1 bundles remain immutable legacy artifacts. Reusing
-generic catalog evidence does not carry an old bundle, release decision, or
-`STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
+ADR 0004 supersedes that object model for future issuance: the implemented
+release descriptor identifies the immutable Model Serving Release and the
+implemented frozen Validation Contract declares its gates. Pending run records
+and evidence bundles bind observed evidence, and a reviewed validation decision
+assigns status. Existing schema-1 bundles remain immutable legacy artifacts.
+Reusing generic catalog evidence does not carry an old bundle, release decision,
+or `STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
 still requires every applicable gate.
 
 Failed, partial, and superseded evidence remains immutable. Later conclusions

@@ -79,6 +79,9 @@ language for new features without an explicit decision.
   explicitly unreviewed candidates under gitignored
   `experiments/release-candidates/` (or an explicit path outside the repo); it
   must not write trust roots, edit profiles, or change validation status.
+  `scripts/model_serving_release.py` separately owns ADR 0004 release and
+  contract schema version 1. Keep it pure and non-issuing; later persistence
+  layers must validate through it rather than duplicating its identity rules.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -199,10 +202,12 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
   across stability, accuracy, throughput, and latency, plus reviewed
   provenance/security and strict same-boot reproducibility. FP-equivalent
   output does not satisfy the strict gate.
-- Current `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles
-  are legacy implementation contracts until the ADR 0004 schema/status
-  migration lands. Do not automatically relabel an existing profile or bundle
-  `Validated`.
+- `scripts/model_serving_release.py` owns the pure ADR 0004 release-descriptor
+  and frozen Validation Contract schemas. It does not issue reviewed objects,
+  record results, assign status, or change serving eligibility. Current
+  `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles remain
+  legacy implementation contracts until the decision/status migration lands.
+  Do not automatically relabel an existing profile or bundle `Validated`.
 - `STATUS` / `docs/VALIDATION.md` / wizard allowlists change only with reproducible evidence. Preserve failed and partial runs; do not rewrite failures as passes.
 - Selftests prove control-plane contracts; they do **not** replace physical gates for serving or storage claims (`docs/REVALIDATE.md`).
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
@@ -252,9 +257,10 @@ this work; the skill is procedural and does not outrank these sources.
   seals (`qwen3-1.7b`, `deepseek-v4-flash` today) have that bundle. Other
   `tested` serving profiles remain `legacy-unsealed`. Expected identity comes
   from lab validation; locally observed content can match that identity but
-  cannot create or replace it. Under the target ADR 0004 model, a separate
-  release descriptor owns the release ID while bundles bind contracts and run
-  evidence and reviewed decisions assign status.
+  cannot create or replace it. Under ADR 0004, the implemented separate release
+  descriptor owns the release ID and the implemented Validation Contract freezes
+  its criteria. Run records, new evidence bundles, reviewed decisions, and
+  status/serving projection remain pending.
 - A deterministic release candidate has no authority by itself. Trusted
   issuance remains a reviewed change that binds lab evidence; candidate tools
   must fail if output claims review/promotion or targets trusted directories.

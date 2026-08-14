@@ -17,10 +17,13 @@ decision statuses `Untested`, `Testing incomplete`,
 `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
 `Superseded`. This ledger still records the current implementation's
 `STATUS=tested*`, schema-1 bundles, and PASS/FAIL gate history. None of those
-records is automatically relabeled `Validated`; the new machine schemas and
-status enforcement are pending. Strict same-boot exactness remains mandatory
-for a future `Validated` decision, and FP-equivalent output remains diagnostic
-rather than a strict pass.
+records is automatically relabeled `Validated`. Release-descriptor and frozen
+Validation Contract schema version 1 are implemented as pure Python contracts;
+run records, new evidence bundles, decisions, status enforcement, and serving
+migration remain pending. Strict same-boot exactness remains mandatory for a
+future `Validated` decision, and FP-equivalent output remains diagnostic rather
+than a strict pass. The deterministic schema selftests are control-plane
+evidence only and add no physical or model-qualification result to this ledger.
 
 ### Qualification scopes
 

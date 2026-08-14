@@ -1,0 +1,520 @@
+#!/usr/bin/env python3
+"""Contracts for Model Serving Release and frozen Validation Contract schemas."""
+
+from __future__ import annotations
+
+import copy
+import json
+import pathlib
+import sys
+import unittest
+from typing import Any
+
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from scripts import model_identity, model_serving_release  # noqa: E402
+from scripts.testlib import model_serving_release_fixture as fixture  # noqa: E402
+
+
+def rebuild_recipe(
+    recipe: dict[str, Any],
+    **changes: Any,
+) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "artifact_bindings": recipe["artifact_bindings"],
+        "engine_args": recipe["engine_args"],
+        "container_env": recipe["container_env"],
+        "gpu_memory_utilization": recipe["gpu_memory_utilization"],
+        "spec_decode_args": recipe["speculative_decoding"]["arguments"],
+        "spec_decode_enabled_by_default": recipe["speculative_decoding"][
+            "enabled_by_default"
+        ],
+        "model_access_contract": recipe["model_access_contract"],
+        "tensor_parallel_size": recipe["parallelism"]["tensor_parallel_size"],
+        "pipeline_parallel_size": recipe["parallelism"][
+            "pipeline_parallel_size"
+        ],
+        "weights_ram_gib": recipe["memory_policy"]["weights_ram_gib"],
+        "kv_gib": recipe["memory_policy"]["kv_gib"],
+        "overhead_gib": recipe["memory_policy"]["overhead_gib"],
+        "mem_min_free_gib": recipe["memory_policy"]["mem_min_free_gib"],
+        "engine": recipe["engine"],
+    }
+    values.update(changes)
+    return model_serving_release.build_serving_recipe(**values)
+
+
+class ModelServingReleaseSchemaTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.release = fixture.build_release()
+        self.contract = fixture.build_contract(release=self.release)
+
+    def test_fixture_has_frozen_deterministic_identities(self) -> None:
+        self.assertEqual(self.release["release_id"], fixture.EXPECTED_RELEASE_ID)
+        self.assertEqual(self.contract["contract_id"], fixture.EXPECTED_CONTRACT_ID)
+        self.assertEqual(
+            set(model_serving_release.model_serving_release_identity(self.release)),
+            {
+                "model_artifact_set",
+                "serving_recipe",
+                "runtime_image_identity",
+                "supported_hardware_geometry",
+            },
+        )
+
+    def test_documents_survive_canonical_json_round_trip(self) -> None:
+        release = json.loads(
+            json.dumps(self.release, sort_keys=True, separators=(",", ":"))
+        )
+        contract = json.loads(
+            json.dumps(self.contract, sort_keys=True, separators=(",", ":"))
+        )
+        self.assertEqual(
+            model_serving_release.validate_model_serving_release(release),
+            self.release,
+        )
+        self.assertEqual(
+            model_serving_release.validate_validation_contract(
+                contract,
+                expected_release=release,
+            ),
+            self.contract,
+        )
+
+    def test_builders_normalize_set_like_inputs_and_decimals(self) -> None:
+        artifacts = model_serving_release.build_model_artifact_set(
+            list(reversed(fixture.model_artifacts()))
+        )
+        recipe = rebuild_recipe(
+            self.release["serving_recipe"],
+            artifact_bindings=list(
+                reversed(self.release["serving_recipe"]["artifact_bindings"])
+            ),
+            container_env=list(
+                reversed(self.release["serving_recipe"]["container_env"])
+            ),
+            gpu_memory_utilization="0.8000",
+            weights_ram_gib="40.00",
+            kv_gib="20.0",
+        )
+        rebuilt = fixture.build_release(artifact_set=artifacts, recipe=recipe)
+        contract = fixture.build_contract(
+            release=rebuilt,
+            release_criteria=list(reversed(fixture.criteria())),
+        )
+        self.assertEqual(rebuilt, self.release)
+        self.assertEqual(contract, self.contract)
+        self.assertEqual(recipe["gpu_memory_utilization"], "0.8")
+        self.assertEqual(recipe["memory_policy"]["weights_ram_gib"], "40")
+        self.assertEqual(
+            contract["release_criteria"]["context_requirement"]["depths"],
+            ["0.05", "0.5", "0.95"],
+        )
+
+    def test_each_release_tuple_part_changes_the_release_id(self) -> None:
+        artifacts_input = fixture.model_artifacts()
+        artifacts_input[2]["manifest"]["manifest_id"] = "1" * 64
+        changed_artifacts = fixture.build_release(
+            artifact_set=model_serving_release.build_model_artifact_set(
+                artifacts_input
+            )
+        )
+
+        changed_recipe = fixture.build_release(
+            recipe=fixture.build_recipe(
+                engine_args=[
+                    "--max-model-len",
+                    "65536",
+                    "--distributed-executor-backend",
+                    "mp",
+                ]
+            )
+        )
+        changed_runtime = fixture.build_release(
+            runtime=fixture.build_runtime(
+                image_reference="mirror.invalid/vllm@sha256:" + ("1" * 64)
+            )
+        )
+        changed_geometry = fixture.build_release(
+            geometry=fixture.build_geometry(
+                hardware_class="nvidia-dgx-spark-gb10-revision-b"
+            )
+        )
+
+        ids = {
+            changed_artifacts["release_id"],
+            changed_recipe["release_id"],
+            changed_runtime["release_id"],
+            changed_geometry["release_id"],
+        }
+        self.assertEqual(len(ids), 4)
+        self.assertNotIn(self.release["release_id"], ids)
+
+    def test_engine_argument_order_is_identity_but_registry_name_is_not(self) -> None:
+        args = list(self.release["serving_recipe"]["engine_args"])
+        args[0], args[2] = args[2], args[0]
+        reordered = fixture.build_release(
+            recipe=rebuild_recipe(self.release["serving_recipe"], engine_args=args)
+        )
+        self.assertNotEqual(reordered["release_id"], self.release["release_id"])
+
+        alternate_reference = fixture.build_runtime(
+            image_reference="another.invalid/renamed@sha256:" + ("f" * 64)
+        )
+        self.assertEqual(
+            alternate_reference,
+            self.release["runtime_image_identity"],
+        )
+        self.assertEqual(
+            fixture.build_release(runtime=alternate_reference)["release_id"],
+            self.release["release_id"],
+        )
+
+    def test_runtime_access_contract_is_release_identity(self) -> None:
+        remote = fixture.build_release(
+            recipe=fixture.build_recipe(model_access_contract="live-remote-readonly")
+        )
+        self.assertNotEqual(remote["release_id"], self.release["release_id"])
+
+    def test_recipe_parallelism_must_match_supported_geometry(self) -> None:
+        recipe = fixture.build_recipe(tensor_parallel_size=1)
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "tensor parallelism differs",
+        ):
+            fixture.build_release(recipe=recipe)
+
+    def test_structured_engine_flags_cannot_be_duplicated(self) -> None:
+        for arguments in (
+            ["--gpu-memory-utilization", "0.8"],
+            ["-tp", "2"],
+            ["--speculative-model=draft"],
+        ):
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "repeats structured field",
+                ):
+                    fixture.build_recipe(engine_args=arguments)
+
+    def test_recipe_environment_rejects_credentials_and_placement(self) -> None:
+        for item in ("VLLM_API_KEY=secret", "HF_HOME=/private/cache"):
+            with self.subTest(item=item):
+                recipe = self.release["serving_recipe"]
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "credential or deployment-only",
+                ):
+                    rebuild_recipe(recipe, container_env=[item])
+
+    def test_persisted_documents_require_canonical_decimal_strings(self) -> None:
+        for value in ("0.80", 1):
+            with self.subTest(value=value):
+                release = copy.deepcopy(self.release)
+                release["serving_recipe"]["gpu_memory_utilization"] = value
+                release["release_id"] = (
+                    model_serving_release.model_serving_release_id(release)
+                )
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "not canonical",
+                ):
+                    model_serving_release.validate_model_serving_release(release)
+
+    def test_release_rejects_status_evidence_and_site_specific_fields(self) -> None:
+        for field, value in (
+            ("status", "Validated"),
+            ("evidence", ["results/example.json"]),
+            ("reviewer", "fixture-reviewer"),
+            ("issued_at", "2026-08-14T00:00:00Z"),
+            ("distribution_transport", "ssh-roce"),
+            ("physical_placement", {"rank": 0}),
+        ):
+            with self.subTest(field=field):
+                release = copy.deepcopy(self.release)
+                release[field] = value
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "fields differ",
+                ):
+                    model_serving_release.validate_model_serving_release(release)
+
+        release = copy.deepcopy(self.release)
+        release["supported_hardware_geometry"]["node_ids"] = ["rank-a", "rank-b"]
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "fields differ",
+        ):
+            model_serving_release.validate_model_serving_release(release)
+
+    def test_contract_has_criteria_not_results_or_issuance(self) -> None:
+        self.assertNotIn("status", self.contract)
+        self.assertNotIn("evidence", self.contract)
+        self.assertNotIn("reviewer", self.contract)
+        self.assertNotIn("issued_at", self.contract)
+        self.assertEqual(self.contract["release_id"], self.release["release_id"])
+
+    def test_contract_fails_closed_when_any_required_dimension_is_missing(self) -> None:
+        for dimension in model_serving_release.VALIDATION_DIMENSIONS:
+            with self.subTest(dimension=dimension):
+                incomplete = [
+                    item
+                    for item in fixture.criteria()
+                    if item["dimension"] != dimension
+                ]
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "missing required dimensions",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=incomplete,
+                    )
+
+    def test_strict_same_boot_cannot_be_relaxed_to_fp_equivalence(self) -> None:
+        for field, value in (
+            ("comparison", "fp-equivalent"),
+            ("fp_equivalent_satisfies", True),
+        ):
+            with self.subTest(field=field):
+                criteria = fixture.criteria()
+                strict = next(
+                    item
+                    for item in criteria
+                    if item["dimension"] == "strict-same-boot"
+                )
+                strict["protocol"]["parameters"][field] = value
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "strict-same-boot",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                    )
+
+        criteria = fixture.criteria()
+        strict = next(
+            item for item in criteria if item["dimension"] == "strict-same-boot"
+        )
+        strict["thresholds"][0]["value"] = "0.99"
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "exact_match_rate",
+        ):
+            fixture.build_contract(
+                release=self.release,
+                release_criteria=criteria,
+            )
+
+    def test_provenance_security_requires_reviewed_pass(self) -> None:
+        for mutation in ("parameter", "threshold"):
+            with self.subTest(mutation=mutation):
+                criteria = fixture.criteria()
+                provenance = next(
+                    item
+                    for item in criteria
+                    if item["dimension"] == "provenance-security"
+                )
+                if mutation == "parameter":
+                    provenance["protocol"]["parameters"][
+                        "reviewed_issuance_required"
+                    ] = False
+                else:
+                    provenance["thresholds"][0]["value"] = "pending"
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "provenance-security",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                    )
+
+    def test_no_predecessor_keeps_absolute_performance_required(self) -> None:
+        relative = self.contract["release_criteria"]["relative_performance"]
+        self.assertEqual(relative, model_serving_release.no_comparable_predecessor())
+        dimensions = {
+            item["dimension"]
+            for item in self.contract["release_criteria"]["criteria"]
+        }
+        self.assertIn("throughput", dimensions)
+        self.assertIn("latency", dimensions)
+
+    def test_relative_budgets_bind_predecessor_protocol_and_geometry(self) -> None:
+        criteria = fixture.criteria()
+        throughput = next(
+            item for item in criteria if item["dimension"] == "throughput"
+        )
+        latency = next(item for item in criteria if item["dimension"] == "latency")
+        relative = model_serving_release.build_relative_performance_requirement(
+            release=self.release,
+            predecessor_release_id="1" * 64,
+            throughput_criterion=throughput,
+            latency_criterion=latency,
+            throughput_max_regression_percent="5.00",
+            latency_max_regression_percent="10.0",
+        )
+        contract = fixture.build_contract(
+            release=self.release,
+            release_criteria=criteria,
+            relative_performance=relative,
+        )
+        observed = contract["release_criteria"]["relative_performance"]
+        self.assertEqual(observed["throughput"]["maximum_regression_percent"], "5")
+        self.assertEqual(observed["latency"]["maximum_regression_percent"], "10")
+        self.assertEqual(
+            observed["supported_hardware_geometry_id"],
+            model_serving_release.supported_hardware_geometry_id(
+                self.release["supported_hardware_geometry"]
+            ),
+        )
+
+        bad_protocol = copy.deepcopy(contract)
+        bad_protocol["release_criteria"]["relative_performance"]["throughput"][
+            "benchmark_protocol_id"
+        ] = "2" * 64
+        bad_protocol["contract_id"] = model_serving_release.validation_contract_id(
+            bad_protocol
+        )
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "protocol identity mismatch",
+        ):
+            model_serving_release.validate_validation_contract(
+                bad_protocol,
+                expected_release=self.release,
+            )
+
+        bad_geometry = copy.deepcopy(relative)
+        bad_geometry["supported_hardware_geometry_id"] = "3" * 64
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "geometry mismatch",
+        ):
+            fixture.build_contract(
+                release=self.release,
+                release_criteria=criteria,
+                relative_performance=bad_geometry,
+            )
+
+    def test_protocol_identity_excludes_pass_threshold(self) -> None:
+        criterion = next(
+            item for item in fixture.criteria() if item["dimension"] == "throughput"
+        )
+        changed_threshold = copy.deepcopy(criterion)
+        changed_threshold["thresholds"][0]["value"] = "25"
+        self.assertEqual(
+            model_serving_release.benchmark_protocol_id(criterion),
+            model_serving_release.benchmark_protocol_id(changed_threshold),
+        )
+
+    def test_context_and_soak_references_are_checked(self) -> None:
+        bad_context = copy.deepcopy(self.contract)
+        bad_context["release_criteria"]["context_requirement"]["criterion_ids"] = [
+            "missing-criterion"
+        ]
+        bad_context["contract_id"] = model_serving_release.validation_contract_id(
+            bad_context
+        )
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "references unknown criterion",
+        ):
+            model_serving_release.validate_validation_contract(
+                bad_context,
+                expected_release=self.release,
+            )
+
+        bad_soak = copy.deepcopy(self.contract)
+        bad_soak["release_criteria"]["soak_requirement"]["criterion_id"] = (
+            "latency-ttft"
+        )
+        bad_soak["contract_id"] = model_serving_release.validation_contract_id(
+            bad_soak
+        )
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "must reference stability",
+        ):
+            model_serving_release.validate_validation_contract(
+                bad_soak,
+                expected_release=self.release,
+            )
+
+    def test_extensible_parameters_reject_floats_and_private_keys(self) -> None:
+        for field, value, message in (
+            ("temperature", 0.0, "not floats"),
+            ("host", "private-node", "private field"),
+            ("mount_path", "/private/model", "private field"),
+        ):
+            with self.subTest(field=field):
+                criteria = fixture.criteria()
+                criteria[0]["protocol"]["parameters"][field] = value
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    message,
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                    )
+
+    def test_contract_changes_never_change_release_identity(self) -> None:
+        criteria = fixture.criteria()
+        accuracy = next(
+            item for item in criteria if item["dimension"] == "accuracy"
+        )
+        accuracy["thresholds"][0]["value"] = "0.75"
+        changed = fixture.build_contract(
+            release=self.release,
+            release_criteria=criteria,
+        )
+        self.assertNotEqual(changed["contract_id"], self.contract["contract_id"])
+        self.assertEqual(changed["release_id"], self.release["release_id"])
+
+    def test_builder_type_errors_fail_as_schema_errors(self) -> None:
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "contain only objects",
+        ):
+            model_serving_release.build_model_artifact_set(
+                [None]  # type: ignore[list-item]
+            )
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "required_kernel_features must be strings",
+        ):
+            model_serving_release.build_runtime_image_identity(
+                image_reference="registry.invalid/x@sha256:" + ("f" * 64),
+                architecture="aarch64",
+                driver_abi_family="fixture",
+                driver_abi_range="1",
+                container_runtime_family="docker",
+                container_runtime_range="1",
+                required_container_capabilities=["gpu"],
+                kernel_range="1",
+                required_kernel_features=[1],  # type: ignore[list-item]
+            )
+
+    def test_published_schema_one_artifacts_remain_valid_unchanged(self) -> None:
+        seals = sorted((REPO_ROOT / "models" / "seals").glob("*.json"))
+        bundles = sorted(
+            (REPO_ROOT / "models" / "validation-bundles").glob("*.json")
+        )
+        self.assertTrue(seals)
+        self.assertTrue(bundles)
+        for path in seals:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(document["schema_version"], 1)
+            model_identity.validate_expected_model_seal(document)
+        for path in bundles:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(document["schema_version"], 1)
+            model_identity.validate_validation_bundle(document)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
