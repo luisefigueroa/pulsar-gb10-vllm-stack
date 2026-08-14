@@ -35,7 +35,7 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of six implementation areas:
+This snapshot supports review of seven implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
@@ -43,8 +43,9 @@ This snapshot supports review of six implementation areas:
 3. the experimental live NFS/RDMA single-copy path;
 4. the experimental transfer-then-load model-library path;
 5. the maintainer-only legacy release identity and candidate-assembly service;
-   and
-6. the pure ADR 0004 release-descriptor and Validation Contract schemas.
+6. the pure ADR 0004 release-descriptor and Validation Contract schemas; and
+7. the pure ADR 0004 immutable run-record, evidence-bundle, and reviewed
+   validation-decision schemas.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -78,10 +79,22 @@ The module has no I/O or issuance authority, and no operator or serving path
 consumes these objects yet. Schema-1 bundles still combine serving inputs,
 evidence, and issuance metadata; `STATUS=tested*` still controls launch
 eligibility; and `--validated` retains its legacy command meaning. No current
-profile or bundle is automatically assigned the new `Validated` status. Run
-records, new evidence bundles, validation decisions, persistence/cross-links,
-status projection, and serving-eligibility migration remain implementation
-gaps.
+profile or bundle is automatically assigned the new `Validated` status.
+
+ADR 0004 stage 2 is implemented by `scripts/model_validation_evidence.py`.
+Content-addressed evidence references, immutable attempt/run records, new
+validation bundles, and reviewed validation decisions now have pure schema
+version 1. The validators bind the exact release, frozen contract, run and
+artifact sets, rank-relative observed environment, preparation provenance,
+commands, completion condition, measured criteria, privacy/review disposition,
+required context and soak observations, comparable-predecessor measurements,
+and backward supersession links. Criterion results are recomputed from frozen
+thresholds and every applicable contract requirement, including automatic
+relative throughput/latency budgets. The explicit reviewer-selected status
+fails if it differs from the derived result. The module has no I/O; its review
+fields are a schema shape, not proof that repository review or physical behavior
+occurred. Evidence capture/persistence, trusted publication, status projection,
+and serving-eligibility migration remain implementation gaps.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -1628,11 +1641,12 @@ These points combine current evidence with the accepted architecture:
 The architectural questions about full content seals and home-rank
 materialization are answered by ADR 0001. Schema-1 validation bundles implement
 the current combined binding. ADR 0004 answers the replacement object model,
-and its release-descriptor and frozen-contract schemas are implemented. Run
-records, evidence bundles, decisions, persistence/status projection, and
-serving migration remain accepted work rather than open policy questions. The
-remaining questions concern that implementation shape and unrelated
-catalog/live-mount policy.
+and its release-descriptor, frozen-contract, immutable run-record,
+evidence-bundle, and reviewed-decision schemas are implemented as pure
+contracts. Evidence capture/persistence, trusted publication, status
+projection, and serving migration remain accepted work rather than open policy
+questions. The remaining questions concern that implementation shape and
+unrelated catalog/live-mount policy.
 
 ### Catalog and release identity
 
@@ -1798,6 +1812,14 @@ The implementation described here is primarily defined by:
   and [`scripts/testlib/test_model_serving_release.py`](../scripts/testlib/test_model_serving_release.py)
   — fixed-ID fixtures, mutation contracts, privacy checks, and legacy
   non-regression coverage;
+- [`scripts/model_validation_evidence.py`](../scripts/model_validation_evidence.py)
+  — pure ADR 0004 evidence-artifact, run-record, validation-bundle, reviewed
+  decision, status-derivation, and supersession schemas;
+- [`scripts/testlib/model_validation_evidence_fixture.py`](../scripts/testlib/model_validation_evidence_fixture.py)
+  and [`scripts/testlib/test_model_validation_evidence.py`](../scripts/testlib/test_model_validation_evidence.py)
+  — fixed-ID evidence fixtures plus cross-link, status, threshold,
+  context/soak/relative-budget, privacy, same-boot, experimental-provenance, and
+  supersession adversarial contracts;
 - [`scripts/model-release.sh`](../scripts/model-release.sh) and
   [`scripts/model_release.py`](../scripts/model_release.py) — maintainer-only
   exact-manifest and untrusted release-candidate assembly/verification;
@@ -1814,8 +1836,9 @@ The implementation described here is primarily defined by:
   — accepted no-fallback transport policy for explicit experimental preparation;
 - [ADR 0004](./decisions/0004-model-serving-release-validation.md)
   — accepted Model Serving Release identity, evidence, status, onboarding, and
-  subsystem-GA boundaries; descriptor/contract schemas implemented, later
-  records, decisions, status, and serving migration pending;
+  subsystem-GA boundaries; descriptor, contract, run, bundle, and decision
+  schemas implemented, with capture/persistence, trusted publication, status
+  projection, and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

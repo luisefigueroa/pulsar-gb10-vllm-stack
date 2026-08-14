@@ -2,9 +2,11 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
-- **Implementation status:** Policy accepted; release-descriptor and frozen
-  Validation Contract schemas implemented; run records, evidence bundles,
-  decisions, status projection, and serving-eligibility migration pending
+- **Implementation status:** Policy accepted; release-descriptor, frozen
+  Validation Contract, immutable run-record, evidence-bundle, and reviewed
+  validation-decision schemas implemented; evidence capture/persistence,
+  trusted publication, catalog/operator status projection, and
+  serving-eligibility migration pending
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -160,6 +162,13 @@ is `Validated`; otherwise the status states why validation was not reached.
 new superseding decision carries the lineage link; the earlier record is not
 edited to add it.
 
+The schema stores the new decision's reviewed base outcome (`Untested`,
+`Testing incomplete`, `Tested—criteria not met`, `Tested—inconclusive`, or
+`Validated`) and its backward supersession links. `Superseded` is projected as
+the earlier decision's effective lifecycle status when a later reviewed
+decision names it. This preserves the earlier outcome byte-for-byte while
+making its non-current state machine-readable.
+
 ### 4. Identity, evidence, and authority are separate objects
 
 The machine-readable model has five immutable object roles:
@@ -272,13 +281,43 @@ assigns no status, changes no profile, and grants no serving eligibility.
 Control-plane selftests establish only these schema contracts; no physical DGX
 claim follows from them.
 
+Stage 2 is implemented by `scripts/model_validation_evidence.py`. It provides
+pure builders and fail-closed validators for content-addressed evidence
+references, immutable attempt/run records, Model Serving Release validation
+bundles, and reviewed validation decisions. A run binds one release and frozen
+contract to exact timestamps, completion condition, rank-relative observed
+hardware/runtime versions, opaque boot/launch identities, commands, selected
+subsystem maturity and distribution provenance, the pre-qualification
+verification barrier, criterion measurements, and content-addressed evidence.
+Bundles require the exact immutable run and artifact sets. Decisions explicitly
+record the reviewer-selected status but independently recompute criterion
+dispositions from frozen thresholds, required context depths/token minimums,
+soak duration/concurrency/error limits, and applicable predecessor-relative
+throughput/latency budgets in the selected run records; a mismatch fails.
+Missing required evidence remains incomplete, inconclusive evidence remains
+inconclusive, and a conclusive requirement miss fails. Strict evidence cannot
+span live server boots, bundles reject reused attempt identities, and review
+timestamps cannot precede their evidence or the decisions they supersede.
+Incomplete privacy or provenance review cannot become `Validated`, and a failed
+distribution before the qualification barrier derives `Untested`. Experimental
+subsystem use is recorded but does not cap the result. Later decisions carry
+immutable backward supersession links, and effective `Superseded` projection
+does not mutate the prior decision.
+
+Stage 2 still performs no command execution, evidence capture, filesystem or
+network I/O, trusted publication, catalog update, profile edit, or serving
+gate. A syntactically valid review block or `Validated` fixture is not proof
+that repository review or physical qualification occurred. No current release
+received an ADR 0004 decision from this implementation unit.
+
 Implement this decision in focused, reviewable units:
 
 1. **Implemented:** add canonical release-descriptor identity and Validation
    Contract schemas in Python with deterministic fixtures, without modifying
    schema-1 artifacts;
-2. add immutable attempt/run records, evidence bundles, and validation decisions
-   with fail-closed cross-link verification and explicit supersession;
+2. **Implemented:** add immutable attempt/run records, evidence bundles, and
+   validation decisions with fail-closed cross-link verification, independent
+   status derivation, and explicit supersession;
 3. project the new statuses into catalog and operator surfaces, then migrate
    serving eligibility only through explicit reviewed decisions—never by
    converting `STATUS=tested*` automatically;

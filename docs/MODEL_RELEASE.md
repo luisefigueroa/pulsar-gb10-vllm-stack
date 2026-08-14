@@ -14,9 +14,11 @@ model accepted in
 schema-1 validation-bundle and expected-seal candidates, whose IDs include
 evidence and issuance metadata. It does not create the separate ADR 0004
 release descriptor or frozen Validation Contract now implemented as pure
-schemas in `scripts/model_serving_release.py`; nor does it create run records
-or validation decisions. Its bundle ID must not be presented as a Model Serving
-Release ID. Existing candidates and issued artifacts remain immutable.
+schemas in `scripts/model_serving_release.py`; nor does it create the immutable
+run records, new validation bundles, or reviewed decisions whose pure schemas
+are implemented in `scripts/model_validation_evidence.py`. Its bundle ID must
+not be presented as a Model Serving Release ID. Existing candidates and issued
+artifacts remain immutable.
 
 ## System boundary
 
@@ -29,6 +31,7 @@ enforcement:
 | Validation (`validate/`, `results/`) | Produces model-qualification evidence for exact model/image/profile/geometry inputs |
 | Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns pure release-descriptor and frozen Validation Contract schema version 1; performs no I/O, issuance, or status assignment |
+| ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns pure evidence-artifact, immutable run-record, new validation-bundle, reviewed-decision, status-derivation, and supersession schema version 1; performs no capture, persistence, or trusted issuance |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
@@ -49,6 +52,15 @@ loaded JSON-compatible objects:
 | Model Serving Release descriptor | Complete content-addressed Model Artifact Set; normalized vLLM recipe and runtime-access contract; image digest and host-compatibility envelope; privacy-safe supported geometry; four-part `release_id` | Status, evidence, reviewer, timestamps, transport, placement, and exact site topology |
 | Frozen Validation Contract | `release_id`; fixed repository invariants; release-specific workloads, protocols, sample sizes, thresholds, context/soak conditions, and comparable-predecessor rule; `contract_id` | Observed results, run records, reviewer disposition, issuance metadata, and validation status |
 
+The stage-2 library adds the three remaining immutable roles plus
+content-addressed evidence references:
+
+| Object | Included | Deliberately excluded |
+|---|---|---|
+| Run record | Exact release/contract IDs, unique attempt identity and timestamps, completion condition, rank-relative observed hardware/runtime and opaque boot/launch IDs, commands, preparation transport/subsystem provenance, full-verification barrier, criterion measurements, required context/soak observations, applicable comparable-predecessor measurements, and evidence IDs; `run_record_id` | Trusted review, profile status, and serving eligibility |
+| ADR 0004 validation bundle | Exact release/contract IDs, immutable run IDs, content-addressed artifact descriptors and privacy state, review-evidence IDs, qualification-started fact, and criterion coverage; `bundle_id` | Reviewer authority, final status, profile mutation, and legacy schema-1 seal/bundle identity |
+| Validation decision | Exact release/contract/bundle IDs, every criterion disposition and selected supporting run, provenance/security/privacy review, explicit reviewer-selected base status, repository-review metadata, and backward supersession links; `decision_id` | Proof that the named review actually occurred, trusted placement/publication, catalog projection, and serving authorization |
+
 The descriptor cross-checks recipe TP/PP against the declared geometry. The
 recipe stores only behavior-affecting, non-secret environment entries;
 credential and deployment/placement environment names are rejected rather than
@@ -67,6 +79,23 @@ The fixed deterministic fixture and mutation suite are
 contracts only. They do not prove physical behavior, issue a release, create a
 reviewed decision, or alter the current serving path. There is intentionally no
 operator CLI or trusted output directory for these objects in stage 1.
+
+`scripts/testlib/model_validation_evidence_fixture.py` and
+`scripts/testlib/test_model_validation_evidence.py` fix the stage-2 IDs and
+exercise threshold/sample/protocol tamper, release/contract/run/artifact
+cross-links, required context and soak conditions, automatic relative
+throughput/latency budgets, experimental distribution provenance, the
+pre-qualification barrier, privacy state, exact same-boot selection, independent
+status derivation, and immutable supersession. A later decision stores its normal
+reviewed outcome and points backward; readers project the older decision as
+`Superseded` without changing the older bytes. These remain control-plane
+schema tests, not evidence capture or physical qualification.
+
+No current CLI captures or persists the new objects, and no trusted directory,
+catalog field, profile reference, or serving gate consumes them. A locally
+constructed decision whose fields say `Validated` is only a syntactically
+consistent document until repository review deliberately publishes it through
+a future trusted persistence path.
 
 Under ADR 0004, the future supervised operator workflow is the separate
 `pulsar-model-onboarding` skill. It may compose acquisition, distribution,
@@ -143,7 +172,9 @@ decisions.
 Even a candidate whose behavioral gates pass remains `Testing incomplete`
 under ADR 0004 until every required gate and provenance/security review is
 complete and a reviewed validation decision exists. The current tooling does
-not assign that status in machine-readable form.
+not assemble or publish that decision. The pure stage-2 schema can reject an
+internally inconsistent decision candidate, but it cannot establish reviewer
+authority or change the current serving/status implementation.
 
 ## Preconditions
 

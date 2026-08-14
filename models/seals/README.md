@@ -118,10 +118,12 @@ unbound. See
 only an accelerator for identity previously established by full verification.
 It is never a seal issuer.
 
-ADR 0004 stage 1 adds a separate pure release descriptor and frozen Validation
-Contract alongside this content trust root. Neither is issued or referenced by
-the current seal path. Run records, new evidence bundles, reviewed validation
-decisions, and status/serving projection remain pending. Candidate tooling,
+ADR 0004 adds a separate pure release descriptor and frozen Validation Contract
+alongside this content trust root. Pure immutable run-record, new
+validation-bundle, reviewed-decision, independent status-derivation, and
+supersession schemas are also implemented separately. None is issued,
+persisted, or referenced by the current seal path; trusted publication,
+status/serving projection, and migration remain pending. Candidate tooling,
 schema builders, and local content verification may demonstrate internal
-consistency or a content match, but none can assign a Model Serving Release
-status.
+consistency or a content match, but a locally constructed decision cannot
+establish reviewer authority or assign a trusted Model Serving Release status.

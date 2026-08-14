@@ -43,10 +43,13 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 [ADR 0004](./decisions/0004-model-serving-release-validation.md) defines a
 Model Serving Release as the immutable exact-model + serving-recipe +
 runtime/image + supported-hardware-geometry tuple and introduces explicit
-validation-decision statuses. The current operator commands do not implement
-that schema or status model yet: `STATUS=tested*` and `--validated` retain their
-legacy allowlist meaning, and existing reviewed seals/bundles are not
-automatically `Validated`.
+validation-decision statuses. Pure descriptor, contract, immutable run-record,
+evidence-bundle, reviewed-decision, status-derivation, and supersession schemas
+are implemented, but the current operator commands do not capture, persist,
+publish, or project them. `STATUS=tested*` and `--validated` retain their legacy
+allowlist meaning, and existing reviewed seals/bundles are not automatically
+`Validated`. A schema-valid local decision is not proof of maintainer review or
+physical qualification.
 
 The planned supervised skill is `pulsar-model-onboarding`. It will compose
 available acquisition, distribution, verification, launch, test, evidence, and

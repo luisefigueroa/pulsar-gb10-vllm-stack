@@ -102,13 +102,24 @@ extensible parameters, and predecessor/protocol/geometry binding for relative
 performance budgets. Fixed-ID fixtures and fail-closed tests are under
 `scripts/testlib/`.
 
-**Current implementation boundary:** these two schemas are library contracts,
-not issued releases or status records. No operator CLI writes them, no profile
-references them, and no serving gate consumes them yet. Run records, the new
-evidence-bundle and validation-decision schemas, cross-link persistence,
-status projection, and serving-eligibility migration remain pending. Existing
-schema-1 bundles and `STATUS=tested*` behavior remain unchanged legacy
-contracts; no current profile is automatically `Validated`.
+`scripts/model_validation_evidence.py` now owns the pure ADR 0004
+content-addressed evidence-artifact, immutable run-record, validation-bundle,
+and reviewed validation-decision schema version 1. It binds attempts to the
+exact release and frozen contract, records rank-relative environment and
+distribution provenance, recomputes measured criterion outcomes against frozen
+thresholds plus required context, soak, and comparable-predecessor budgets,
+rejects status disagreement, and projects immutable supersession. Its fixed-ID
+and adversarial fixtures are also under `scripts/testlib/`.
+
+**Current implementation boundary:** these schemas are pure contracts, not a
+trusted release registry. No operator CLI captures or persists them, no profile
+references a new decision, and no serving gate consumes one. The decision
+schema can validate a syntactically reviewed outcome but cannot prove that
+repository review or physical qualification occurred. Capture/persistence,
+trusted publication, catalog/operator status projection, and
+serving-eligibility migration remain pending. Existing schema-1 bundles and
+`STATUS=tested*` behavior remain unchanged legacy contracts; no current profile
+is automatically `Validated`.
 
 ---
 
@@ -520,12 +531,14 @@ profile/runtime configuration, resolved image digest, geometry/topology class,
 and evidence. Hosting location—including a future mirror—is distribution
 metadata, not identity.
 
-ADR 0004's implemented first-stage schemas separate the first two roles. A
-release descriptor owns the stable Model Serving Release ID, and a frozen
-Validation Contract declares the gates. The pending stages add run records,
-new evidence bundles, reviewed validation decisions, and status projection.
-Existing schema-1 bundles remain immutable legacy combined artifacts and are
-not converted in place.
+ADR 0004's implemented schemas now separate all five roles. A release descriptor
+owns the stable Model Serving Release ID, a frozen Validation Contract declares
+the gates, immutable run records bind observed attempts and evidence, a new
+bundle binds the exact evidence set, and a reviewed decision records an explicit
+status that must equal the outcome independently derived from those inputs.
+The next stage persists and projects these objects into catalog/operator and
+serving policy. Existing schema-1 bundles remain immutable legacy combined
+artifacts and are not converted in place.
 
 Verification has two tiers:
 
@@ -953,11 +966,11 @@ affected Model Serving Release and its frozen Validation Contract.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Immutable run-record, new validation-bundle, validation-decision,
-  persistence/cross-link, status-projection, and serving-eligibility stages
-  defined by ADR 0004. Release-descriptor and frozen Validation Contract schema
-  version 1 are implemented; current schema-1 bundles and `STATUS=tested*`
-  remain legacy implementation contracts
+- Evidence capture/persistence, trusted decision publication,
+  catalog/operator status projection, and serving-eligibility stages defined by
+  ADR 0004. Release, frozen-contract, immutable run-record, new bundle, and
+  reviewed-decision schema version 1 are implemented as pure contracts; current
+  schema-1 bundles and `STATUS=tested*` remain legacy implementation contracts
 - Initial reviewed two-rank `library-hot` GA closure in section 7.1; remote
   one-rank placement remains outside the initial GA scope
 - Issue remaining supported profiles over time
@@ -1027,3 +1040,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-14 | Wizard replacement became a short-lived fail-closed transaction. New launch labels bind the operational launch contract and actual speculative-decode state; inventory plus catalog health capture exact placement, storage source, revision identity, runtime sources, and retention before stop. Ephemeral catalog views are pinned until replacement or exact rollback succeeds. Deterministic contracts pass; the physical failed-replacement/rollback repeat remains pending and no storage-path or model promotion claim changes. |
 | 2026-08-14 | **ADR 0004 accepted:** name the immutable model/artifact + serving-recipe + runtime/image + supported-geometry tuple a **Model Serving Release**; separate its release descriptor from frozen contracts, run records, evidence bundles, and reviewed decisions; adopt `Untested`, `Testing incomplete`, `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and `Superseded`; require strict same-boot reproducibility and reviewed provenance/security for `Validated`; and treat transfer as run provenance after a full pre-qualification verification barrier. Existing schema-1 artifacts and `STATUS=tested*` are not relabeled. The future supervised skill is `pulsar-model-onboarding`. Initial `library-hot` GA is scoped to the reviewed two-rank path and depends on the section 7.1 closure task, not on the DeepSeek release's strict-determinism result. |
 | 2026-08-14 | Implemented ADR 0004 stage 1 as pure Python release-descriptor and frozen Validation Contract schemas with fixed deterministic IDs and fail-closed tests. The release ID hashes exactly the Model Artifact Set, normalized serving recipe/access contract, digest-pinned runtime compatibility envelope, and privacy-safe supported geometry. Contract checks require all core/prerequisite dimensions, exact same-boot equality, reviewed provenance, and protocol/geometry-bound relative budgets. Legacy schema-1 artifacts and serving/status behavior are unchanged; no physical qualification or `Validated` decision was produced. |
+| 2026-08-14 | Implemented ADR 0004 stage 2 as pure Python content-addressed evidence-artifact, immutable run-record, validation-bundle, and reviewed-decision schemas. Cross-link verification binds release, frozen contract, exact run/artifact sets, observed rank/runtime and distribution provenance, frozen protocols/sample sizes/thresholds, required context and soak observations, comparable-predecessor regression evidence, review/privacy state, and immutable supersession. Reviewer-selected status is independently derived and mismatches fail. The implementation performs no capture, persistence, trusted issuance, catalog projection, profile migration, or physical qualification; existing schema-1 and serving behavior remain unchanged. |

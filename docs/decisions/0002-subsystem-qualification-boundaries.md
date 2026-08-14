@@ -64,9 +64,11 @@ At acceptance, the schema-1 validation bundle was the combined immutable
 binding for an exact model, image, configuration, geometry, and evidence set.
 ADR 0004 supersedes that object model for future issuance: the implemented
 release descriptor identifies the immutable Model Serving Release and the
-implemented frozen Validation Contract declares its gates. Pending run records
-and evidence bundles bind observed evidence, and a reviewed validation decision
-assigns status. Existing schema-1 bundles remain immutable legacy artifacts.
+implemented frozen Validation Contract declares its gates. Implemented pure run
+records and evidence bundles bind observed evidence, and the implemented pure
+decision schema independently verifies an explicit reviewed status. Capture,
+trusted persistence/publication, and status projection remain pending. Existing
+schema-1 bundles remain immutable legacy artifacts.
 Reusing generic catalog evidence does not carry an old bundle, release decision,
 or `STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
 still requires every applicable gate.
@@ -107,9 +109,10 @@ still requires the combined release and promotion gates.
   unchanged, reducing unnecessary physical reruns.
 - Change reviews must identify the causal impact before expanding the
   revalidation scope.
-- Current CLI status fields and machine-readable schemas are unchanged. ADR
-  0004 now defines the first-class qualification model, but its schema and
-  status migration remains pending.
+- Current CLI status fields and serving behavior are unchanged. ADR 0004 now
+  defines the first-class qualification model and its pure schema contracts;
+  persistence, trusted publication, and status/serving migration remain
+  pending.
 
 ## Revisit triggers
 

@@ -42,20 +42,25 @@ reviewed validation decision, and the statuses `Untested`, `Testing incomplete`,
 `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
 `Superseded`. The pure release-descriptor and frozen-contract schemas are now
 implemented in `scripts/model_serving_release.py`, with deterministic fixtures
-and fail-closed tests. They perform no evidence capture, persistence, issuance,
-decision, profile update, or serving gate. Run-record/evidence/decision schemas,
+and fail-closed tests. Pure immutable run-record, new evidence-bundle, reviewed
+validation-decision, status-derivation, and supersession schemas are implemented
+in `scripts/model_validation_evidence.py`. Together they perform no command
+execution, evidence capture, persistence, trusted issuance, profile update, or
+serving gate. A syntactically reviewed decision cannot prove physical behavior
+or that repository review occurred. Capture/persistence, trusted publication,
 CLI orchestration, status projection, and serving migration remain pending.
-Existing bundles, seals, profiles, and historical evidence remain unchanged
-and must not be automatically relabeled `Validated`.
+Existing bundles, seals, profiles, and historical evidence remain unchanged and
+must not be automatically relabeled `Validated`.
 
 ## Qualification scope and change impact
 
 Revalidation is scoped before commands are chosen. A release bundle still
 binds all of its exact inputs in the current serving schema. In the ADR 0004
 model, the implemented release descriptor binds the four-part identity and the
-implemented Validation Contract freezes criteria; pending run records, evidence
-bundles, and reviewed decisions remain separate. Reusable subsystem evidence is
-not erased by an unrelated change.
+implemented Validation Contract freezes criteria. The implemented stage-2
+schemas separately bind immutable attempts, evidence sets, and reviewed
+decisions, but no current capture or trusted persistence path emits them.
+Reusable subsystem evidence is not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
 
@@ -83,8 +88,8 @@ the smallest complete gate set from this change-impact matrix:
 
 Changing an image, model, configuration, or geometry creates a new release ID
 and requires a newly frozen contract and reviewed decision under ADR 0004. The
-stage-1 library can build and validate the descriptor and contract, but no
-current operator or serving path persists or consumes them. A new schema-1
+pure libraries can build and validate all five object roles, but no current
+operator or serving path captures, persists, or consumes them. A new schema-1
 bundle is still required by the current serving implementation before
 `STATUS=tested` or a guided claim can move. Preserving unchanged catalog
 evidence is scoped evidence reuse, not release-status or bundle inheritance.
@@ -103,6 +108,27 @@ release cross-links, including recipe/geometry consistency and privacy-safe
 descriptor fields. `scripts/testlib/test_model_serving_release.py` verifies the
 schema contract during `scripts/selftest.sh`; it does not collect a run or
 establish that any physical criterion passed.
+
+`scripts/model_validation_evidence.py` validates the next evidence layer. Each
+run names the exact release and contract, uses rank-relative observations and
+opaque boot/launch identities, records exact command descriptors and
+distribution/subsystem provenance, and distinguishes failure before the full
+verification barrier from qualification. Evidence artifacts are content
+addressed and explicitly `publishable` or `protected`, with privacy-review
+state. A bundle must resolve the exact run and artifact sets. A decision must
+select supporting runs for every criterion and record a reviewer-selected
+status; the validator recomputes threshold results, required context and soak
+conditions, applicable predecessor-relative performance budgets, and the only
+permissible status. Missing comparison evidence cannot validate, and an
+over-budget comparison is a conclusive failure. A mismatch fails closed.
+Experimental distribution maturity is provenance and does not cap status. A
+later decision points backward to prior decision IDs; readers project the older
+one as `Superseded` without rewriting it.
+
+These functions validate supplied JSON-compatible objects only. Until capture
+and persistence land, continue retaining the existing raw/sanitized artifacts
+and current schema-1 release materials described below. Do not create a
+`Validated` claim merely by calling a builder or copying a synthetic document.
 
 FP-equivalent output does not pass strict same-boot reproducibility. Automatic
 latency or throughput regression budgets are valid only against a named

@@ -26,11 +26,12 @@ requires both.
 ADR 0004 is accepted policy, not retroactive artifact relabeling. Existing
 schema-1 bundles, seals, PASS/FAIL rows, and `STATUS=tested*` claims keep their
 recorded implementation meaning. None is automatically `Validated`. The pure
-stage-1 release descriptor now identifies the exact model + serving-recipe +
-runtime/image + supported-geometry tuple separately from its frozen contract.
-No release or contract instance is issued by this results tree; run records,
-new evidence bundles, reviewed decisions, and status/serving projection remain
-pending.
+release descriptor identifies the exact model + serving-recipe + runtime/image
+plus supported-geometry tuple separately from its frozen contract. Pure immutable
+run-record, new evidence-bundle, reviewed-decision, status-derivation, and
+supersession schemas are also implemented. No release, contract, run, bundle,
+or decision instance is issued by this results tree; capture/persistence,
+trusted publication, and status/serving projection remain pending.
 
 Deterministic tests under `scripts/testlib/` cover fixed release/contract IDs,
 all four identity mutations, strict same-boot and reviewed-provenance
@@ -39,6 +40,17 @@ rejection, and unchanged legacy schema-1 validation. This is control-plane
 schema evidence only. It does not demonstrate model behavior, storage behavior,
 or physical qualification on a supported geometry, so no new result artifact
 or PASS row is added here.
+
+The stage-2 adversarial suite additionally freezes representative run, bundle,
+and decision IDs and covers exact release/contract/run/artifact cross-links,
+threshold and sample-size derivation, required context and soak conditions,
+comparable-predecessor throughput/latency budgets, protocol tamper, failed
+preparation before the qualification barrier, explicit Experimental subsystem
+provenance, privacy state, observed image/geometry drift, strict same-boot
+selection, reviewer authority shape, every base outcome, and immutable backward
+supersession. The fixture's synthetic `Validated` decision demonstrates schema
+consistency only; it is not lab evidence, proof of review, an issued status, or
+a physical claim.
 
 ADR 0003 selects a transfer policy within the accepted catalog/artifact scope;
 it does not reinterpret the failed DeepSeek determinism artifact, establish a
