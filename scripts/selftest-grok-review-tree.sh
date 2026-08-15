@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Skill and helper contracts: Grok must not see the live worktree.
+# Grok skill contracts: isolated review, approved implementation preflight.
+# shellcheck disable=SC2016  # Assertions intentionally match literal Markdown shell text.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,11 +13,16 @@ fail() {
 
 skill="$REPO_DIR/skills/grok-subagent/SKILL.md"
 brief="$REPO_DIR/skills/grok-subagent/references/review-brief-template.md"
+implementation_brief="$REPO_DIR/skills/grok-subagent/references/implementation-brief-template.md"
 helper="$REPO_DIR/scripts/prepare-grok-review-tree.sh"
+implementation_preflight="$REPO_DIR/skills/grok-subagent/scripts/preflight-implementation-worktree.sh"
 
 [ -f "$skill" ] || fail "missing $skill"
 [ -f "$brief" ] || fail "missing $brief"
+[ -f "$implementation_brief" ] || fail "missing $implementation_brief"
 [ -x "$helper" ] || fail "missing executable $helper"
+[ -x "$implementation_preflight" ] \
+  || fail "missing executable $implementation_preflight"
 
 grep -Fq 'scripts/prepare-grok-review-tree.sh' "$skill" \
   || fail "skill must prepare a sanitized review tree via the helper"
@@ -29,6 +35,28 @@ grep -Fq '.env' "$skill" \
   || fail "skill must name .env as excluded from Grok's filesystem"
 grep -Fq '.cluster-topology.json' "$skill" \
   || fail "skill must name .cluster-topology.json as excluded from Grok's filesystem"
+grep -Fq 'grok --version' "$skill" \
+  || fail "skill must verify the Grok CLI version"
+grep -Fq -- '--sandbox strict' "$skill" \
+  || fail "skill must kernel-restrict Grok filesystem access"
+grep -Fq -- '--tools "read_file,grep,list_dir"' "$skill" \
+  || fail "review must expose only internal read-only tool IDs"
+grep -Fq -- '--deny MCPTool' "$skill" \
+  || fail "skill must deny MCP tools"
+grep -Fq -- '--max-turns 20' "$skill" \
+  || fail "review must have a bounded multi-turn budget"
+grep -Fq -- '--prompt-file "$review_prompt_file"' "$skill" \
+  || fail "review must use a temporary prompt file"
+grep -Fq '`grok -p` they are sent to the model as ordinary prompt text' "$skill" \
+  || fail "skill must not treat interactive slash commands as headless commands"
+grep -Fq 'Explicitly ask the user to approve or revise' "$skill" \
+  || fail "skill must preserve the user approval boundary"
+grep -Fq 'preflight-implementation-worktree.sh' "$skill" \
+  || fail "implementation must run the privacy preflight"
+grep -Fq -- '--cwd "$implementation_worktree"' "$skill" \
+  || fail "approved implementation must target the cleared feature worktree"
+grep -Fq 'Do not make' "$skill" \
+  || fail "skill must avoid default manual patch re-entry"
 
 if grep -Fq 'Inspect the repository yourself' "$brief"; then
   fail "brief must not ask Grok to inspect the live repository"
@@ -41,6 +69,15 @@ grep -Fq '.env' "$brief" \
   || fail "brief must forbid reading .env"
 grep -Fq '.cluster-topology.json' "$brief" \
   || fail "brief must forbid reading .cluster-topology.json"
+
+grep -Fq 'The independent review is complete' "$implementation_brief" \
+  || fail "implementation brief must start after review"
+grep -Fq 'user approved the reconciled plan' "$implementation_brief" \
+  || fail "implementation brief must require user approval"
+grep -Fq 'Make ordinary code-level decisions' "$implementation_brief" \
+  || fail "implementation brief must grant normal coding autonomy"
+grep -Fq 'Do not push' "$implementation_brief" \
+  || fail "implementation brief must reserve publication authority"
 
 fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
@@ -78,4 +115,49 @@ real_dest="$fixture/real-review"
   || fail "real-repo tree leaked .cluster-topology.json"
 [ ! -e "$real_dest/.git" ] || fail "real-repo tree included .git"
 
-echo "grok review-tree isolation selftest OK"
+implementation_repo="$fixture/implementation-repo"
+mkdir -p "$implementation_repo"
+git -C "$implementation_repo" init -q -b main
+git -C "$implementation_repo" config user.email "implementation@example.test"
+git -C "$implementation_repo" config user.name "Implementation Worktree"
+printf '%s\n' '.env' >"$implementation_repo/.gitignore"
+printf 'tracked\n' >"$implementation_repo/README.md"
+git -C "$implementation_repo" add .gitignore README.md
+git -C "$implementation_repo" commit -qm 'initial fixture'
+
+if "$implementation_preflight" --repo-root "$implementation_repo" \
+  >/dev/null 2>&1; then
+  fail "implementation preflight must reject the default branch"
+fi
+
+git -C "$implementation_repo" switch -qc feat/grok-test
+reviewed_head=$(git -C "$implementation_repo" rev-parse HEAD)
+preflight_output=$(
+  "$implementation_preflight" \
+    --repo-root "$implementation_repo" \
+    --expected-head "$reviewed_head"
+)
+grep -Fq 'Grok implementation worktree preflight OK' <<<"$preflight_output" \
+  || fail "implementation preflight did not accept a clean feature branch"
+
+printf 'secret\n' >"$implementation_repo/.env"
+if "$implementation_preflight" --repo-root "$implementation_repo" \
+  --expected-head "$reviewed_head" >/dev/null 2>&1; then
+  fail "implementation preflight must reject ignored state"
+fi
+rm -f -- "$implementation_repo/.env"
+
+printf 'scratch\n' >"$implementation_repo/scratch.txt"
+if "$implementation_preflight" --repo-root "$implementation_repo" \
+  --expected-head "$reviewed_head" >/dev/null 2>&1; then
+  fail "implementation preflight must reject untracked state"
+fi
+rm -f -- "$implementation_repo/scratch.txt"
+
+if "$implementation_preflight" --repo-root "$implementation_repo" \
+  --expected-head 0000000000000000000000000000000000000000 \
+  >/dev/null 2>&1; then
+  fail "implementation preflight must reject a different reviewed commit"
+fi
+
+echo "grok review and implementation isolation selftest OK"
