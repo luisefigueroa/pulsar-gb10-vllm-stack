@@ -21,7 +21,9 @@ controlling.
    mutate Git or GitHub state, operate infrastructure, or change external state.
 5. Remove secrets, credentials, private topology, stable site identifiers, and
    unnecessary proprietary data from the brief. Do not send sensitive raw
-   artifacts to an external model.
+   artifacts to an external model. Brief redaction is not enough: never give
+   Grok the live worktree. Gitignored files such as `.env` and
+   `.cluster-topology.json` stay readable there.
 
 Encourage Grok to suggest valuable alternatives, including ideas that conflict
 with the tentative direction. Require it to label conflicts with accepted
@@ -39,10 +41,26 @@ model. Do not silently substitute a default or newer model. If Grok 4.6 is
 unavailable, authentication fails, or the CLI contract differs materially,
 stop and report the blocker.
 
+## Prepare a sanitized review tree
+
+Create a temporary tree of tracked worktree files only, outside the live
+repository:
+
+```bash
+review_tree=$(scripts/prepare-grok-review-tree.sh --print-dest)
+```
+
+If the helper cannot build a clean tree, stop. Do not copy, mount, or otherwise
+expose `.env`, `.cluster-topology.json`, `.cluster-ssh-config`,
+`.weight-fabric/`, `.model-library/`, raw results, `experiments/`, or any other
+gitignored site-local state. Do not pass the live repository path,
+`HF_TOKEN`, `VLLM_API_KEY`, `API_KEY`, or other credential variables into the
+Grok process.
+
 The current verified invocation shape is:
 
 ```bash
-grok --cwd "$review_repo_root" \
+grok --cwd "$review_tree" \
   --model grok-4.6 \
   --reasoning-effort xhigh \
   --permission-mode plan \
@@ -54,8 +72,9 @@ grok --cwd "$review_repo_root" \
 Adapt exact flags only when the local help requires it, and disclose the
 adaptation. Prefer a temporary prompt file plus `--prompt-file` when that is
 safer than shell-quoting a long brief; both are single-turn prompt modes in the
-current CLI. Never place the prompt or Grok transcript in the repository unless
-the user explicitly requests a reviewed, sanitized artifact.
+current CLI. Never place the prompt, Grok transcript, or sanitized review tree
+in the repository unless the user explicitly requests a reviewed, sanitized
+artifact. Delete `$review_tree` after the review.
 
 ## Prepare a self-contained brief
 

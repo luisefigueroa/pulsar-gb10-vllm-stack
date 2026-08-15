@@ -29,6 +29,10 @@ run "Docker Compose remains an unsupported historical sketch" \
   "$REPO_DIR/scripts/selftest-compose-unsupported.sh"
 run "publishable documentation privacy" \
   "$REPO_DIR/scripts/selftest-docs-privacy.sh"
+run "Grok sanitized review-tree contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_grok_review_tree.py"
+run "Grok review skill isolation" \
+  "$REPO_DIR/scripts/selftest-grok-review-tree.sh"
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 run "terminal formatting" "$REPO_DIR/scripts/selftest-terminal-format.sh"
 run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"
