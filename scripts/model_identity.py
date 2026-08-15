@@ -40,6 +40,24 @@ def fail(message: str) -> None:
     raise ModelIdentityError(message)
 
 
+def pretty_json_bytes(value: Any) -> bytes:
+    """Return deterministic pretty JSON bytes for published candidate files.
+
+    Identity digests stay on compact ``canonical_json_digest``. This encoder is
+    only the shared publication form used by unreviewed planner and capture
+    candidates.
+    """
+    return (
+        json.dumps(
+            value,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
 def canonical_json_digest(value: Any) -> str:
     raw = json.dumps(
         value,

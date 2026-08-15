@@ -29,7 +29,8 @@ case "$command" in
 esac
 
 json=0
-spec=""
+release_plan=""
+attempt_spec=""
 output_dir=""
 candidate_dirs=()
 passthrough=()
@@ -40,8 +41,16 @@ while [ "$#" -gt 0 ]; do
       json=1
       ;;
     --spec)
-      [ "$#" -ge 2 ] || die "--spec requires a value"
-      spec="$2"
+      die "the embedded --spec capture input is no longer accepted; use --release-plan DIR --attempt-spec FILE"
+      ;;
+    --release-plan)
+      [ "$#" -ge 2 ] || die "--release-plan requires a value"
+      release_plan="$2"
+      shift
+      ;;
+    --attempt-spec)
+      [ "$#" -ge 2 ] || die "--attempt-spec requires a value"
+      attempt_spec="$2"
       shift
       ;;
     --output-dir)
@@ -75,7 +84,8 @@ done
 
 case "$command" in
   plan|capture-run)
-    [ -n "$spec" ] || die "usage: model-serving-release-capture.sh $command --spec SPEC [--json]"
+    [ -n "$release_plan" ] && [ -n "$attempt_spec" ] || die \
+      "usage: model-serving-release-capture.sh $command --release-plan DIR --attempt-spec FILE [--json]"
     ;;
   assemble-bundle)
     [ "${#candidate_dirs[@]}" -gt 0 ] || die \
@@ -96,8 +106,11 @@ else
   args+=("${passthrough[@]}")
 fi
 args+=("$command")
-if [ -n "$spec" ]; then
-  args+=(--spec "$spec")
+if [ -n "$release_plan" ]; then
+  args+=(--release-plan "$release_plan")
+fi
+if [ -n "$attempt_spec" ]; then
+  args+=(--attempt-spec "$attempt_spec")
 fi
 if [ -n "$output_dir" ]; then
   args+=(--output-dir "$output_dir")

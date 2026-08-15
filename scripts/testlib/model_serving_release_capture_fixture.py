@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import copy
-import json
+import dataclasses
 import pathlib
 import shutil
-import sys
 from typing import Any
 
+from scripts import model_identity, model_serving_release_plan
 from scripts.testlib import model_serving_release_fixture as release_fixture
 from scripts.testlib import model_serving_release_registry_fixture as registry_fixture
 from scripts.testlib import model_validation_evidence_fixture as evidence_fixture
@@ -20,34 +20,23 @@ CAPTURE_PROGRAMS = (
     "scripts/model-library.sh",
     "validate/run-gates.sh",
 )
+ATTEMPT_SPEC_KIND = "pulsar-model-serving-release-capture-attempt-spec"
+LEGACY_CAPTURE_SPEC_KIND = "pulsar-model-serving-release-capture-spec"
+
+
+@dataclasses.dataclass
+class CaptureInputs:
+    attempt: dict[str, Any]
+    attempt_path: pathlib.Path
+    plan_dir: pathlib.Path
+    release: dict[str, Any]
+    contract: dict[str, Any]
+    planner_candidate_id: str
 
 
 def write_json(path: pathlib.Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-def release_for_spec(release: dict[str, Any] | None = None) -> dict[str, Any]:
-    document = copy.deepcopy(release or release_fixture.build_release())
-    document.pop("release_id", None)
-    return document
-
-
-def contract_for_spec(
-    contract: dict[str, Any] | None = None,
-    *,
-    release: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    built_release = release or release_fixture.build_release()
-    document = copy.deepcopy(
-        contract or release_fixture.build_contract(release=built_release)
-    )
-    document.pop("contract_id", None)
-    document.pop("release_id", None)
-    return document
+    path.write_bytes(model_identity.pretty_json_bytes(value))
 
 
 def environment_for_spec(environment: dict[str, Any]) -> dict[str, Any]:
@@ -100,10 +89,7 @@ def write_publishable_file(
     if isinstance(payload, bytes):
         dest.write_bytes(payload)
     else:
-        dest.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        dest.write_bytes(model_identity.pretty_json_bytes(payload))
     return dest
 
 
@@ -130,7 +116,55 @@ def _observation_for_spec(
     return document
 
 
-def spec_from_run(
+def _source_kind_for(release: dict[str, Any]) -> str:
+    artifacts = release.get("model_artifact_set", {}).get("artifacts") or []
+    primary = next(
+        (
+            item
+            for item in artifacts
+            if item.get("artifact_key") == "primary"
+        ),
+        artifacts[0] if artifacts else {},
+    )
+    if primary.get("kind") == "content-addressed-model":
+        return "content-addressed"
+    return "hf"
+
+
+def write_release_plan_candidate(
+    repo_root: pathlib.Path,
+    release: dict[str, Any],
+    contract: dict[str, Any],
+    *,
+    profile: str = "qwen3-1.7b",
+    source_kind: str | None = None,
+) -> tuple[pathlib.Path, dict[str, Any]]:
+    candidate = model_serving_release_plan.build_candidate_document(
+        profile=profile,
+        source_kind=source_kind or _source_kind_for(release),
+        release=release,
+        contract=contract,
+    )
+    base = repo_root / "release-plans"
+    dest = base / release["release_id"]
+    suffix = 0
+    while dest.exists() or dest.is_symlink():
+        suffix += 1
+        dest = base / f"{release['release_id']}-{suffix}"
+    model_serving_release_plan.write_candidate_directory(
+        dest,
+        {
+            "candidate.json": candidate,
+            model_serving_release_plan.CANDIDATE_FILES["release"]: release,
+            model_serving_release_plan.CANDIDATE_FILES["validation_contract"]: (
+                contract
+            ),
+        },
+    )
+    return dest, candidate
+
+
+def attempt_from_run(
     record: dict[str, Any],
     *,
     release: dict[str, Any],
@@ -170,9 +204,9 @@ def spec_from_run(
     ]
     return {
         "schema_version": 1,
-        "kind": "pulsar-model-serving-release-capture-spec",
-        "release": release_for_spec(release),
-        "contract": contract_for_spec(contract, release=release),
+        "kind": ATTEMPT_SPEC_KIND,
+        "release_id": release["release_id"],
+        "contract_id": contract["contract_id"],
         "attempt": copy.deepcopy(record["attempt"]),
         "preparation_provenance": provenance_for_spec(
             record["preparation_provenance"]
@@ -187,6 +221,105 @@ def spec_from_run(
     }
 
 
+def spec_from_run(
+    record: dict[str, Any],
+    *,
+    release: dict[str, Any],
+    contract: dict[str, Any],
+    source_key: str,
+    repository_path: str | None,
+    protected_digest: str | None = None,
+    extra_protected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return attempt_from_run(
+        record,
+        release=release,
+        contract=contract,
+        source_key=source_key,
+        repository_path=repository_path,
+        protected_digest=protected_digest,
+        extra_protected=extra_protected,
+    )
+
+
+def legacy_embedded_spec(
+    record: dict[str, Any],
+    *,
+    release: dict[str, Any],
+    contract: dict[str, Any],
+    source_key: str,
+    repository_path: str,
+) -> dict[str, Any]:
+    release_document = copy.deepcopy(release)
+    release_document.pop("release_id", None)
+    contract_document = copy.deepcopy(contract)
+    contract_document.pop("contract_id", None)
+    contract_document.pop("release_id", None)
+    return {
+        "schema_version": 1,
+        "kind": LEGACY_CAPTURE_SPEC_KIND,
+        "release": release_document,
+        "contract": contract_document,
+        "attempt": copy.deepcopy(record["attempt"]),
+        "preparation_provenance": provenance_for_spec(
+            record["preparation_provenance"]
+        ),
+        "observed_environment": environment_for_spec(
+            record["observed_environment"]
+        ),
+        "commands": commands_for_spec(record["commands"]),
+        "criterion_observations": [
+            _observation_for_spec(item, source_key=source_key)
+            for item in record["criterion_observations"]
+        ],
+        "evidence_sources": [
+            {
+                "source_key": source_key,
+                "class": "publishable",
+                "qualification_scope": record["attempt"]["qualification_scope"],
+                "media_type": "application/json",
+                "repository_path": repository_path,
+            }
+        ],
+        "review_source_keys": [],
+    }
+
+
+def _inputs_from_record(
+    record: dict[str, Any],
+    *,
+    repo_root: pathlib.Path,
+    release: dict[str, Any],
+    contract: dict[str, Any],
+    source_key: str,
+    repository_path: str,
+    extra_fields: dict[str, Any] | None = None,
+    attempt_name: str,
+) -> CaptureInputs:
+    plan_dir, candidate = write_release_plan_candidate(
+        repo_root, release, contract
+    )
+    attempt = attempt_from_run(
+        record,
+        release=release,
+        contract=contract,
+        source_key=source_key,
+        repository_path=repository_path,
+    )
+    if extra_fields:
+        attempt.update(extra_fields)
+    attempt_path = repo_root / "capture-specs" / f"{attempt_name}.json"
+    write_json(attempt_path, attempt)
+    return CaptureInputs(
+        attempt=attempt,
+        attempt_path=attempt_path,
+        plan_dir=plan_dir,
+        release=release,
+        contract=contract,
+        planner_candidate_id=candidate["candidate_id"],
+    )
+
+
 def passing_criterion_spec(
     criterion_id: str,
     *,
@@ -198,7 +331,7 @@ def passing_criterion_spec(
     observation_completion: str | None = None,
     observation_reason: str | None = None,
     extra_fields: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], pathlib.Path]:
+) -> CaptureInputs:
     release = release or release_fixture.build_release()
     contract = contract or release_fixture.build_contract(release=release)
     complete = attempt_completion == "completed" and (
@@ -223,18 +356,16 @@ def passing_criterion_spec(
         relative,
         {"criterion_id": criterion_id, "kind": "publishable-capture-fixture"},
     )
-    spec = spec_from_run(
+    return _inputs_from_record(
         record,
+        repo_root=repo_root,
         release=release,
         contract=contract,
         source_key=criterion_id,
         repository_path=relative,
+        extra_fields=extra_fields,
+        attempt_name=criterion_id,
     )
-    if extra_fields:
-        spec.update(extra_fields)
-    spec_path = repo_root / "capture-specs" / f"{criterion_id}.json"
-    write_json(spec_path, spec)
-    return spec, spec_path
 
 
 def failing_measurement_spec(
@@ -242,7 +373,7 @@ def failing_measurement_spec(
     *,
     release: dict[str, Any] | None = None,
     contract: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], pathlib.Path]:
+) -> CaptureInputs:
     return passing_criterion_spec(
         "accuracy-gsm8k",
         repo_root=repo_root,
@@ -259,7 +390,7 @@ def incomplete_attempt_spec(
     reason: str,
     release: dict[str, Any] | None = None,
     contract: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], pathlib.Path]:
+) -> CaptureInputs:
     return passing_criterion_spec(
         "latency-ttft",
         repo_root=repo_root,
@@ -276,7 +407,7 @@ def prebarrier_spec(
     *,
     release: dict[str, Any] | None = None,
     contract: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], pathlib.Path]:
+) -> CaptureInputs:
     release = release or release_fixture.build_release()
     contract = contract or release_fixture.build_contract(release=release)
     record, _artifacts = evidence_fixture.build_prequalification_failure(
@@ -288,19 +419,20 @@ def prebarrier_spec(
         relative,
         {"kind": "preparation-failure"},
     )
-    spec = spec_from_run(
+    return _inputs_from_record(
         record,
+        repo_root=repo_root,
         release=release,
         contract=contract,
         source_key="preparation-failure",
         repository_path=relative,
+        attempt_name="preparation-failure",
     )
-    spec_path = repo_root / "capture-specs" / "preparation-failure.json"
-    write_json(spec_path, spec)
-    return spec, spec_path
 
 
-def write_spec(repo_root: pathlib.Path, name: str, spec: dict[str, Any]) -> pathlib.Path:
+def write_spec(
+    repo_root: pathlib.Path, name: str, spec: dict[str, Any]
+) -> pathlib.Path:
     path = repo_root / "capture-specs" / f"{name}.json"
     write_json(path, spec)
     return path

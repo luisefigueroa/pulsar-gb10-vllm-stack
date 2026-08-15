@@ -1,8 +1,9 @@
 # ADR 0004 evidence-capture candidate persistence
 
 This is the maintainer runbook for the local, candidate-only ADR 0004
-evidence-capture workflow. It validates supplied Model Serving Release and
-Validation Contract objects, captures immutable run records plus
+evidence-capture workflow. It composes a verified unreviewed release-plan
+candidate with a separate attempt-only spec, independently validates the
+release and contract objects, captures immutable run records plus
 content-addressed evidence, assembles compatible run records into one
 immutable evidence bundle, and independently verifies the resulting
 candidate.
@@ -10,40 +11,45 @@ candidate.
 The workflow makes capture repeatable. It is not an issuing or promotion
 authority. A successful candidate is explicitly unreviewed, has privacy
 review pending, changes no catalog or profile status, launches nothing, and
-never writes the tracked release registry.
+never writes the tracked release registry. It does not issue `Untested`.
+A pre-barrier failure means qualification did not start; absence of a
+reviewed decision stays neutral.
 
 This is **ADR 0004 evidence-capture candidate persistence**. It is not
-catalog/operator status projection (ADR 0004 numbered item 3). It does not add validator-output adapters and
-makes no physical DGX claim.
+catalog/operator status projection (ADR 0004 numbered item 3). It does not add
+`validate/*` measurement adapters and makes no physical DGX claim.
 The separate source-neutral release planner documented in
-[MODEL_RELEASE.md](./MODEL_RELEASE.md) produces the release and contract values
-that a later adapter or supervised workflow can place into a capture spec. The
-current capture CLI does not ingest a planner directory directly; its spec
-still omits derived IDs as documented below. Planning does not make those
-objects reviewed and does not weaken this workflow's independent validation.
+[MODEL_RELEASE.md](./MODEL_RELEASE.md) publishes the release and contract
+values. Capture `plan` and `capture-run` consume that planner directory
+through the planner's public `load_verified_release_plan_candidate`
+loader. Planning does not make those objects reviewed and does not weaken
+this workflow's independent validation. Capture persists no planner path
+or planner candidate ID.
 
 ## System boundary
 
 | Subsystem | Responsibility |
 |---|---|
-| Capture spec (this document) | Closed operator input: complete unreviewed release and contract objects, attempt fields, provenance/environment, command descriptors without program versions, criterion observations, and evidence-source metadata |
-| ADR 0004 schema (`scripts/model_serving_release.py`) | Owns release-descriptor and frozen Validation Contract schema version 1 |
-| Release-plan candidates (`scripts/model-serving-release-plan.sh`) | Unreviewed upstream release/contract values; direct planner-to-capture adaptation is not implemented |
+| Attempt-only spec (this document) | Closed operator input: defensive `release_id` / `contract_id` foreign keys plus attempt fields, provenance/environment, command descriptors without program versions, criterion observations, and evidence-source metadata. Embeds neither release nor contract. |
+| ADR 0004 schema (`scripts/model_serving_release.py`) | Owns release-descriptor and frozen Validation Contract schema version 1; capture validates those objects independently |
+| Release-plan candidates (`scripts/model-serving-release-plan.sh`) | Unreviewed upstream release/contract values; capture consumes a verified planner directory through `load_verified_release_plan_candidate` |
+| Immutable descriptor directories (`scripts/immutable_descriptor_dir.py`) | Generic descriptor-rooted immutable-directory primitives only; not a schema owner |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns evidence-artifact, run-record, evidence-bundle, and reviewed-decision schema version 1 |
 | Capture persistence (`scripts/model-serving-release-capture.sh`) | Plans, captures, assembles, and verifies unreviewed candidates under a gitignored output boundary |
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only verification of reviewed objects under `models/model-serving-releases/`; this tool never writes it |
-| Legacy validators (`validate/*`) | Heterogeneous measurement programs; exit zero or a selftest is not a criterion pass |
+| Legacy validators (`validate/*`) | Heterogeneous measurement programs; exit zero or a selftest is not a criterion pass. Measurement adapters remain pending. |
 
-The Bash entrypoint is the operator boundary. Python owns spec loading,
-derivation, filesystem-safe publication, assembly, verification, and both
-human and JSON rendering. The command is not routed through `./pulsar`, the
-wizard, or profile/catalog status projection, and it launches nothing.
+The Bash entrypoint is the operator boundary. Python owns attempt-spec
+loading, verified release-plan composition, derivation, filesystem-safe
+publication, assembly, verification, and both human and JSON rendering.
+The command is not routed through `./pulsar`, the wizard, or
+profile/catalog status projection, and it launches nothing.
 
 ## Commands
 
 ```text
-scripts/model-serving-release-capture.sh plan --spec SPEC [--json]
-scripts/model-serving-release-capture.sh capture-run --spec SPEC
+scripts/model-serving-release-capture.sh plan --release-plan DIR --attempt-spec FILE [--json]
+scripts/model-serving-release-capture.sh capture-run --release-plan DIR --attempt-spec FILE
     [--output-dir DIR] [--json]
 scripts/model-serving-release-capture.sh assemble-bundle
     --candidate-dir DIR [--candidate-dir DIR ...]
@@ -51,6 +57,12 @@ scripts/model-serving-release-capture.sh assemble-bundle
 scripts/model-serving-release-capture.sh verify-candidate
     --candidate-dir DIR [--json]
 ```
+
+`plan` and `capture-run` require both `--release-plan DIR` and
+`--attempt-spec FILE`. The old `--spec` flag and the old kind
+`pulsar-model-serving-release-capture-spec` are rejected with a migration
+message that names `--release-plan DIR --attempt-spec FILE`. There is no
+dual compatibility.
 
 Default output is gitignored
 `experiments/model-serving-release-captures/`. An explicit directory
@@ -64,15 +76,18 @@ with `schema_version: 1` and carries no serving-permission field. Neither mode p
 evidence paths, repository paths, private topology identifiers, or
 secret values.
 
-## Capture spec
+## Attempt-only spec
 
-The spec kind is `pulsar-model-serving-release-capture-spec`, schema
-version 1. Closed top-level fields are:
+The attempt-only document kind is
+`pulsar-model-serving-release-capture-attempt-spec`, schema version 1.
+It embeds neither a release nor a contract. Required top-level
+`release_id` and `contract_id` are defensive foreign-key cross-checks
+against the verified planner objects. Closed top-level fields are:
 
 | Field | Role |
 |---|---|
-| `release` | Complete four-part release object without `release_id` |
-| `contract` | `repository_invariants` and `release_criteria` without `contract_id` or `release_id` |
+| `release_id` | Defensive foreign-key cross-check against the verified planner release |
+| `contract_id` | Defensive foreign-key cross-check against the verified planner contract |
 | `attempt` | Attempt identity, phase, scope, attempted criteria, timestamps, and completion |
 | `preparation_provenance` | Origin, transfer, subsystems, runtime sources, verification status only, barrier, elapsed time |
 | `observed_environment` | Image digest, opaque boot/launch IDs, cluster shape, and per-rank observations; geometry ID is derived |
@@ -82,7 +97,8 @@ version 1. Closed top-level fields are:
 | `review_source_keys` | Explicit, sorted source keys reserved for review evidence. Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` scope. |
 
 The loader rejects duplicate JSON keys, invalid UTF-8, `NaN`/`Infinity`,
-unknown fields, precomputed derived IDs, precomputed program versions,
+unknown fields, embedded release or contract objects, precomputed derived
+IDs other than the defensive foreign keys, precomputed program versions,
 precomputed publishable file digests, privacy `passed`, decisions,
 statuses, reviewer claims, authority claims, serving-authorization
 claims, and process-exit or validator-output adapters. Protected
@@ -94,17 +110,21 @@ attempt remains `failed` / `interrupted` / `inconclusive` and may
 contribute only inconclusive observations. Process exit status is never
 translated into a pass.
 
-Self-contained unreviewed release and contract objects are allowed. If
-an object with the same derived ID exists in the tracked registry, the
-canonical object must be equal; otherwise capture fails closed. Missing
-registry objects are allowed. An unreadable or unsafe registry path
-fails closed.
+Release and contract bytes come from the verified release-plan
+candidate, not from the attempt-only spec. Capture independently
+validates those objects through `scripts/model_serving_release.py`.
+If an object with the same derived ID exists in the tracked registry,
+the canonical object must be equal; otherwise capture fails closed.
+Missing registry objects are allowed. An unreadable or unsafe registry
+path fails closed. The planner path and planner candidate ID are not
+copied into the capture candidate or any ADR object it emits.
 
 ## Derived identity
 
 Capture derives, and does not invent or review:
 
-- release ID and contract ID
+- release ID and contract ID, taken from the independently validated
+  planner objects and cross-checked against the attempt-only foreign keys
 - phase/scope consistency
 - Model Artifact Set ID
 - current checked-out allowlisted program SHA-256 versions
@@ -112,7 +132,12 @@ Capture derives, and does not invent or review:
 - run-record ID, bundle ID, coverage, and qualification-started state
 - candidate ID
 
-Every generated evidence artifact has privacy review `pending`.
+Published candidate JSON uses the shared `pretty_json_bytes` encoding from
+`scripts/model_identity.py` (`indent=2`, `sort_keys=True`,
+`ensure_ascii=False`, trailing newline). Canonical identity digests remain
+compact `canonical_json_digest`. Every generated evidence artifact has
+privacy review `pending`. No planner path or planner candidate ID is
+persisted.
 
 ## Evidence classes
 
@@ -138,7 +163,11 @@ the read. Publication holds the destination parent directory fd,
 creates a private staging directory, and finishes with dirfd-relative
 `renameat2(RENAME_NOREPLACE)` plus a parent fsync. Verify keeps the
 candidate-root fd open, rechecks the exact directory snapshot, and
-requires directory mode `0700` and file mode `0600`. These checks are
+requires directory mode `0700` and file mode `0600`. Generic
+descriptor-rooted exact-file-set, mode, regular-file/no-symlink,
+fd-relative read, mutation/replacement, and snapshot-recheck primitives
+are owned by `scripts/immutable_descriptor_dir.py`; that helper is not
+a schema owner. These checks are
 control-plane integrity only; they do not prove physical behavior.
 
 ## Candidate layout
@@ -163,7 +192,8 @@ pending, and promotion not authorized. It binds the release ID, contract ID,
 sorted run-record IDs,
 bundle ID, exact file map of every file except `candidate.json`, and the
 candidate ID. It does not carry a decision, review outcome, validation
-status, reviewer, or protected source path.
+status, reviewer, protected source path, planner path, or planner
+candidate ID.
 
 Publication writes a private same-filesystem staging directory (mode
 `0700`, files mode `0600`), fsyncs files and directories, and finishes
@@ -206,15 +236,17 @@ existing candidate or any existing ancestor that contains
 
 ## What this unit does not do
 
-- Issue a reviewed validation decision
+- Issue a reviewed validation decision or `Untested`
 - Write `models/model-serving-releases/`
 - Change `STATUS`, a profile's release binding, recommendation/default policy,
   or runtime state
+- Persist a planner path or planner candidate ID
 - Adapt `validate/*` output into a trusted producer contract
 - Claim physical DGX, model-download, container, or remote behavior
 - Route through `./pulsar` or the wizard
 
-Trusted privacy review and decision issuance/publication remain later units.
+Trusted privacy review, `validate/*` measurement adapters, and decision
+issuance/publication remain later units.
 The separate read-only projection consumes only the tracked registry and never
 this unreviewed candidate output. Serving permission is status-independent.
 

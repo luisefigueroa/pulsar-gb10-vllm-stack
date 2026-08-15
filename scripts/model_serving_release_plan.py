@@ -17,16 +17,19 @@ import pathlib
 import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from typing import Any
 
 try:
     from scripts import (
+        immutable_descriptor_dir,
         model_identity,
         model_library,
         model_serving_release,
         terminal_format,
     )
 except ModuleNotFoundError:
+    import immutable_descriptor_dir  # type: ignore[no-redef]
     import model_identity  # type: ignore[no-redef]
     import model_library  # type: ignore[no-redef]
     import model_serving_release  # type: ignore[no-redef]
@@ -84,14 +87,14 @@ def load_json(path: str | pathlib.Path) -> Any:
 
 
 def atomic_write_json(path: pathlib.Path, value: Any) -> None:
-    raw = json.dumps(value, indent=2, sort_keys=True) + "\n"
+    raw = model_identity.pretty_json_bytes(value)
     fd, temporary = tempfile.mkstemp(
         prefix=f".{path.name}.",
         dir=str(path.parent),
-        text=True,
+        text=False,
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "wb") as handle:
             handle.write(raw)
             handle.flush()
             os.fsync(handle.fileno())
@@ -636,35 +639,92 @@ def validate_candidate_document(candidate: Any) -> dict[str, Any]:
     return candidate
 
 
+@dataclass(frozen=True)
+class VerifiedReleasePlanCandidate:
+    candidate: dict[str, Any]
+    release: dict[str, Any]
+    contract: dict[str, Any]
+
+
+def load_verified_release_plan_candidate(
+    candidate_dir: str | pathlib.Path,
+) -> VerifiedReleasePlanCandidate:
+    """Load a hardened, schema-validated unreviewed release-plan candidate.
+
+    Shared filesystem primitives enforce the immutable directory. This module
+    still owns candidate, release, and contract schema validation.
+    """
+    dest = pathlib.Path(candidate_dir)
+    if not dest.is_absolute():
+        dest = pathlib.Path.cwd() / dest
+    dest_fd = None
+    snapshot = None
+    try:
+        dest_fd, snapshot = immutable_descriptor_dir.open_and_scan_immutable_directory(
+            dest,
+            allowed_subdirs=set(),
+            label="release-plan candidate",
+        )
+        expected_files = {"candidate.json", *CANDIDATE_FILES.values()}
+        observed = snapshot.relative_names()
+        if observed != expected_files:
+            fail("candidate directory file set is invalid")
+        candidate = validate_candidate_document(
+            immutable_descriptor_dir.parse_strict_json(
+                snapshot.file_bytes("candidate.json"),
+                label="release-plan candidate.json",
+            )
+        )
+        release = model_serving_release.validate_model_serving_release(
+            immutable_descriptor_dir.parse_strict_json(
+                snapshot.file_bytes(CANDIDATE_FILES["release"]),
+                label="release-plan release.json",
+            )
+        )
+        contract = model_serving_release.validate_validation_contract(
+            immutable_descriptor_dir.parse_strict_json(
+                snapshot.file_bytes(CANDIDATE_FILES["validation_contract"]),
+                label="release-plan validation-contract.json",
+            ),
+            expected_release=release,
+        )
+        if candidate["release_id"] != release["release_id"]:
+            fail("release-plan candidate release_id differs from release.json")
+        if candidate["contract_id"] != contract["contract_id"]:
+            fail(
+                "release-plan candidate contract_id differs from "
+                "validation-contract.json"
+            )
+        if candidate["files"] != CANDIDATE_FILES:
+            fail("release-plan candidate file map is invalid")
+        immutable_descriptor_dir.recheck_immutable_directory(
+            dest_fd,
+            snapshot,
+            immutable_descriptor_dir.safe_absolute(
+                dest, label="release-plan candidate directory"
+            ),
+            label="release-plan candidate",
+        )
+        return VerifiedReleasePlanCandidate(
+            candidate=candidate,
+            release=release,
+            contract=contract,
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+    except model_serving_release.ModelServingReleaseError as exc:
+        fail(str(exc))
+    finally:
+        if snapshot is not None:
+            snapshot.close()
+        immutable_descriptor_dir.close_quietly(dest_fd)
+
+
 def _load_candidate_directory(
     candidate_dir: pathlib.Path,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    if not candidate_dir.is_dir() or candidate_dir.is_symlink():
-        fail(f"candidate directory is missing or unsafe: {candidate_dir}")
-    expected_files = {"candidate.json", *CANDIDATE_FILES.values()}
-    try:
-        observed_files = {item.name for item in candidate_dir.iterdir()}
-    except OSError as exc:
-        fail(f"cannot inspect candidate directory {candidate_dir}: {exc}")
-    if observed_files != expected_files:
-        fail("candidate directory file set is invalid")
-    for name in expected_files:
-        path = candidate_dir / name
-        if not path.is_file() or path.is_symlink():
-            fail(f"candidate file is missing or unsafe: {name}")
-    candidate = validate_candidate_document(load_json(candidate_dir / "candidate.json"))
-    release = model_serving_release.validate_model_serving_release(
-        load_json(candidate_dir / CANDIDATE_FILES["release"])
-    )
-    contract = model_serving_release.validate_validation_contract(
-        load_json(candidate_dir / CANDIDATE_FILES["validation_contract"]),
-        expected_release=release,
-    )
-    if candidate["release_id"] != release["release_id"]:
-        fail("release-plan candidate release_id differs from release.json")
-    if candidate["contract_id"] != contract["contract_id"]:
-        fail("release-plan candidate contract_id differs from validation-contract.json")
-    return candidate, release, contract
+    verified = load_verified_release_plan_candidate(candidate_dir)
+    return verified.candidate, verified.release, verified.contract
 
 
 def _verify_current_profile(args: argparse.Namespace, release: dict[str, Any]) -> None:
@@ -828,8 +888,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     supplied_candidate_dir = pathlib.Path(args.candidate_dir)
     if supplied_candidate_dir.is_symlink():
         fail("candidate directory must not be a symlink")
-    candidate_dir = supplied_candidate_dir.resolve()
-    candidate, release, contract = _load_candidate_directory(candidate_dir)
+    candidate, release, contract = _load_candidate_directory(supplied_candidate_dir)
     if candidate["profile"] != args.profile:
         fail("release-plan candidate profile differs from the requested profile")
     if candidate["source_kind"] != args.source_kind:
@@ -929,6 +988,7 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except (
         ModelServingReleasePlanError,
+        immutable_descriptor_dir.ImmutableDescriptorDirectoryError,
         model_identity.ModelIdentityError,
         model_library.ModelLibraryError,
         model_serving_release.ModelServingReleaseError,

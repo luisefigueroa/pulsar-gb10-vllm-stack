@@ -112,7 +112,9 @@ tree uses a public logical identity, public revision, and complete
 content-addressed manifest. Neither source path nor transfer mechanism enters
 the release ID. `scripts/model-serving-release-plan.sh` builds and verifies
 only unreviewed release/contract candidates from a sourced profile, full
-manifest, explicit runtime/hardware envelope, and frozen criteria. Its output
+manifest, explicit runtime/hardware envelope, and frozen criteria. Planner
+`verify` uses the public `load_verified_release_plan_candidate(dir)` loader.
+Planner output
 has no status or issuance authority and cannot target the tracked registry.
 
 `scripts/model_validation_evidence.py` now owns the pure ADR 0004
@@ -142,7 +144,10 @@ verified inspection now supplies advisory catalog/operator projection for an
 explicitly bound `MODEL_SERVING_RELEASE_ID`. Local
 ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model-serving-release-capture.sh` and remains explicitly unreviewed:
-it does not write the tracked registry, issue a decision, or launch a release.
+it composes a verified release-plan candidate with an attempt-only spec,
+independently validates the release and contract, and does not write the
+tracked registry, issue a decision, persist a planner path, issue
+`Untested`, or launch a release.
 No profile currently binds a release and the tracked store is empty, so the
 current projection is neutral. Review-metadata shape checks cannot prove that
 repository review or physical qualification occurred. Trusted decision
@@ -1139,3 +1144,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-15 | **ADR 0004 advisory-status amendment:** validation labels communicate evidence and confidence but never authorize serving. The wizard and serving catalog expose every fitting serving profile with status and caveats, legacy `--force` status overrides are no-ops, and unsealed preparation no longer needs a validation-status override. Recommendation/default ordering remains evidence-backed; exact identity, recipe, topology, capacity, security, and lifecycle failures still block the concrete operation. This is a control-plane policy change only and creates no physical qualification claim. |
 | 2026-08-15 | Implemented read-only advisory Model Serving Release status projection. An optional reviewed `MODEL_SERVING_RELEASE_ID` profile binding selects a content-verified registry release; catalog JSON, human catalog, wizard, and `scripts/up.sh` display its one unambiguous reviewed effective status. No binding and no reviewed decision remain neutral, ambiguity/unavailability stays visible, and a different runtime model-access contract cannot inherit the decision. Legacy `STATUS` remains separate and continues to drive recommendation order. Projection never issues a decision, authorizes serving, or creates a physical claim; the empty registry and unbound current profiles therefore remain neutral. |
 | 2026-08-15 | Expanded the unissued ADR 0004 schema-1 primary identity to be source-neutral: exact Hugging Face snapshots and other complete content-addressed model trees are valid primary artifacts, while generic digest attachments are not. Added a maintainer-only planner that sources a profile and persists unreviewed release/contract candidates from a complete manifest, explicit runtime/hardware envelope, frozen criteria, and explicitly bound behavior artifacts. Local source references can normalize to public artifact keys but are never persisted. The planner cannot acquire bytes, write the tracked registry, issue a decision, assign status, or prove physical behavior. The registry is empty, so schema version 1 remains appropriate; legacy schema-1 seals/bundles are untouched. |
+| 2026-08-15 | Capture `plan` and `capture-run` now compose a verified release-plan candidate with a separate attempt-only spec (`--release-plan DIR --attempt-spec FILE`). The old embedded `--spec` / `pulsar-model-serving-release-capture-spec` path is rejected with a migration message. Planner `verify` uses the public `load_verified_release_plan_candidate` loader; planner and capture publish candidate JSON with shared `pretty_json_bytes`. No planner path or planner candidate ID is persisted. Capture still independently validates release/contract objects and does not issue `Untested`. Measurement/validator-output adapters, trusted privacy review, and physical qualification remain pending. This is control-plane/schema plumbing only. |

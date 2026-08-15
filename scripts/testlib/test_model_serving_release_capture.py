@@ -20,7 +20,9 @@ from unittest import mock
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import model_identity  # noqa: E402
 from scripts import model_serving_release_capture as capture  # noqa: E402
+from scripts import model_serving_release_plan as plan_mod  # noqa: E402
 from scripts.testlib import (  # noqa: E402
     model_serving_release_capture_fixture as fixture,
 )
@@ -96,31 +98,66 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(leftover, [])
         self.assertFalse((self.repo / "models" / "qwen3-1.7b.conf").exists())
 
+    def capture_flags(
+        self,
+        inputs: fixture.CaptureInputs,
+        *,
+        attempt_path: pathlib.Path | None = None,
+    ) -> list[str]:
+        return [
+            "--release-plan",
+            str(inputs.plan_dir),
+            "--attempt-spec",
+            str(attempt_path or inputs.attempt_path),
+        ]
+
+    def capture_dest(self, payload: dict[str, object]) -> pathlib.Path:
+        return self.repo.joinpath(
+            "experiments",
+            "model-serving-release-captures",
+            *pathlib.PurePosixPath(str(payload["layout"])).parts,
+        )
+
+    def assert_no_plan_leak(
+        self,
+        text: str,
+        inputs: fixture.CaptureInputs,
+        dest: pathlib.Path | None = None,
+    ) -> None:
+        self.assertNotIn(str(inputs.plan_dir), text)
+        self.assertNotIn(str(inputs.attempt_path), text)
+        self.assertNotIn(inputs.planner_candidate_id, text)
+        if dest is None:
+            return
+        for path in dest.rglob("*"):
+            if not path.is_file():
+                continue
+            payload = path.read_bytes()
+            self.assertNotIn(str(inputs.plan_dir).encode("utf-8"), payload)
+            self.assertNotIn(str(inputs.attempt_path).encode("utf-8"), payload)
+            self.assertNotIn(inputs.planner_candidate_id.encode("ascii"), payload)
+
     def capture_criterion(self, criterion_id: str, **kwargs: object) -> tuple[dict[str, object], pathlib.Path]:
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             criterion_id,
             repo_root=self.repo,
             **kwargs,
         )
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(spec_path), "--json"]
+            ["capture-run", *self.capture_flags(inputs), "--json"]
         )
         self.assertEqual(code, 0, stderr)
         payload = json.loads(stdout)
-        dest = self.repo.joinpath(
-            "experiments",
-            "model-serving-release-captures",
-            *pathlib.PurePosixPath(str(payload["layout"])).parts,
-        )
+        dest = self.capture_dest(payload)
+        self.assert_no_plan_leak(stdout + stderr, inputs, dest)
         return payload, dest
 
     def test_plan_and_capture_json_and_human(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        del spec
         code, stdout, stderr = self.run_main(
-            ["plan", "--spec", str(spec_path), "--json"]
+            ["plan", *self.capture_flags(inputs), "--json"]
         )
         self.assertEqual(code, 0, stderr)
         plan = json.loads(stdout)
@@ -129,31 +166,30 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(plan["command"], "plan")
         self.assertIn("/runs/", plan["layout"])
         self.assert_safe_text(stdout)
+        self.assert_no_plan_leak(stdout, inputs)
 
-        human = self.run_main(["plan", "--spec", str(spec_path)])
+        human = self.run_main(["plan", *self.capture_flags(inputs)])
         self.assertEqual(human[0], 0, human[2])
         self.assertIn("unreviewed", human[1])
         self.assertIn("no", human[1])
         self.assert_safe_text(human[1])
+        self.assert_no_plan_leak(human[1], inputs)
 
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(spec_path), "--json"]
+            ["capture-run", *self.capture_flags(inputs), "--json"]
         )
         self.assertEqual(code, 0, stderr)
         captured = json.loads(stdout)
         self.assert_no_authority(captured)
         self.assertEqual(captured["release_id"], plan["release_id"])
         self.assertEqual(captured["run_record_ids"], plan["run_record_ids"])
-        dest = self.repo.joinpath(
-            "experiments",
-            "model-serving-release-captures",
-            *pathlib.PurePosixPath(str(captured["layout"])).parts,
-        )
+        dest = self.capture_dest(captured)
         self.assertTrue((dest / "candidate.json").is_file())
         self.assertEqual((dest / "candidate.json").stat().st_mode & 0o777, 0o600)
         self.assertEqual(dest.stat().st_mode & 0o777, 0o700)
         self.assert_no_authority(captured, dest)
         self.assert_repo_unmutated()
+        self.assert_no_plan_leak(stdout + stderr, inputs, dest)
 
         verify = self.run_main(
             ["verify-candidate", "--candidate-dir", str(dest), "--json"]
@@ -163,18 +199,20 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(verified["candidate_id"], captured["candidate_id"])
 
     def test_cli_human_and_json_modes(self) -> None:
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "latency-ttft", repo_root=self.repo
         )
-        planned = self.run_cli("plan", "--spec", str(spec_path), "--json")
+        planned = self.run_cli("plan", *self.capture_flags(inputs), "--json")
         self.assertEqual(planned.returncode, 0, planned.stderr)
         payload = json.loads(planned.stdout)
-        human = self.run_cli("plan", "--spec", str(spec_path), env={"COLUMNS": "40"})
+        human = self.run_cli(
+            "plan", *self.capture_flags(inputs), env={"COLUMNS": "40"}
+        )
         self.assertEqual(human.returncode, 0, human.stderr)
         for line in human.stdout.splitlines():
             self.assertLessEqual(len(line), 40, line)
         captured = self.run_cli(
-            "capture-run", "--spec", str(spec_path), "--json"
+            "capture-run", *self.capture_flags(inputs), "--json"
         )
         self.assertEqual(captured.returncode, 0, captured.stderr)
         dest_layout = json.loads(captured.stdout)["layout"]
@@ -184,11 +222,13 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             "verify-candidate", "--candidate-dir", str(dest), "--json"
         )
         self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assert_no_plan_leak(planned.stdout + captured.stdout, inputs, dest)
+        del payload
 
     def test_completed_failing_measurement_and_incomplete_attempts(self) -> None:
-        _spec, fail_path = fixture.failing_measurement_spec(self.repo)
+        fail_inputs = fixture.failing_measurement_spec(self.repo)
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(fail_path), "--json"]
+            ["capture-run", *self.capture_flags(fail_inputs), "--json"]
         )
         self.assertEqual(code, 0, stderr)
         payload = json.loads(stdout)
@@ -213,11 +253,11 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             ("interrupted", "interrupted"),
             ("inconclusive", "missing-output"),
         ):
-            _spec, spec_path = fixture.incomplete_attempt_spec(
+            inputs = fixture.incomplete_attempt_spec(
                 self.repo, completion=completion, reason=reason
             )
             code, stdout, stderr = self.run_main(
-                ["capture-run", "--spec", str(spec_path), "--json"]
+                ["capture-run", *self.capture_flags(inputs), "--json"]
             )
             self.assertEqual(code, 0, stderr)
             captured = json.loads(stdout)
@@ -239,43 +279,42 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             )
 
     def test_prebarrier_and_coverage_constraints(self) -> None:
-        _spec, spec_path = fixture.prebarrier_spec(self.repo)
+        prebarrier = fixture.prebarrier_spec(self.repo)
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(spec_path), "--json"]
+            ["capture-run", *self.capture_flags(prebarrier), "--json"]
         )
         self.assertEqual(code, 0, stderr)
         payload = json.loads(stdout)
         self.assertFalse(payload["qualification_started"])
 
-        spec, bad_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        spec["criterion_observations"] = []
-        fixture.write_spec(self.repo, "missing-observation", spec)
+        inputs.attempt["criterion_observations"] = []
+        missing_path = fixture.write_spec(
+            self.repo, "missing-observation", inputs.attempt
+        )
         code, stdout, stderr = self.run_main(
             [
                 "plan",
-                "--spec",
-                str(self.repo / "capture-specs" / "missing-observation.json"),
+                *self.capture_flags(inputs, attempt_path=missing_path),
                 "--json",
             ]
         )
         self.assertNotEqual(code, 0)
         self.assert_safe_text(stdout + stderr)
-        del bad_path
 
     def test_missing_evidence_is_not_a_pass(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         evidence = self.repo / "results" / "capture-fixture" / "throughput-serving.json"
         evidence.unlink()
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(spec_path), "--json"]
+            ["capture-run", *self.capture_flags(inputs), "--json"]
         )
         self.assertNotEqual(code, 0)
         self.assert_safe_text(stdout + stderr)
-        del spec
 
     def test_program_hash_and_drift(self) -> None:
         payload, dest = self.capture_criterion("throughput-serving")
@@ -350,7 +389,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         del payload
 
     def test_spec_rejects_forbidden_and_malformed_json(self) -> None:
-        spec, _path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         cases = [
@@ -362,7 +401,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             path = self.repo / "capture-specs" / f"{name}.json"
             path.write_text(raw, encoding="utf-8")
             code, stdout, stderr = self.run_main(
-                ["plan", "--spec", str(path), "--json"]
+                ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
             )
             self.assertNotEqual(code, 0, name)
             self.assert_safe_text(stdout + stderr)
@@ -370,14 +409,24 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         invalid_utf = self.repo / "capture-specs" / "invalid-utf.json"
         invalid_utf.write_bytes(b'{"schema_version": 1, "kind": "\xff"}')
         code, stdout, stderr = self.run_main(
-            ["plan", "--spec", str(invalid_utf), "--json"]
+            ["plan", *self.capture_flags(inputs, attempt_path=invalid_utf), "--json"]
         )
         self.assertNotEqual(code, 0)
 
-        forbidden = copy.deepcopy(spec)
-        forbidden["release"]["release_id"] = "a" * 64
-        path = fixture.write_spec(self.repo, "precomputed-id", forbidden)
-        code, stdout, stderr = self.run_main(["plan", "--spec", str(path), "--json"])
+        forbidden = copy.deepcopy(inputs.attempt)
+        forbidden["release_id"] = "a" * 64
+        path = fixture.write_spec(self.repo, "wrong-release-id", forbidden)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
+        )
+        self.assertNotEqual(code, 0)
+
+        nested = copy.deepcopy(inputs.attempt)
+        nested["attempt"]["release_id"] = "b" * 64
+        path = fixture.write_spec(self.repo, "nested-release-id", nested)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
+        )
         self.assertNotEqual(code, 0)
 
         for field, value in (
@@ -387,38 +436,42 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             ("exit_code", 0),
             ("authority", "reviewed"),
         ):
-            mutated = copy.deepcopy(spec)
+            mutated = copy.deepcopy(inputs.attempt)
             mutated[field] = value
             path = fixture.write_spec(self.repo, f"forbidden-{field}", mutated)
             code, stdout, stderr = self.run_main(
-                ["plan", "--spec", str(path), "--json"]
+                ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
             )
             self.assertNotEqual(code, 0, field)
 
-        secret = copy.deepcopy(spec)
+        secret = copy.deepcopy(inputs.attempt)
         secret["criterion_observations"][0]["reason"] = "hf_" + ("a" * 32)
         path = fixture.write_spec(self.repo, "credential", secret)
-        code, stdout, stderr = self.run_main(["plan", "--spec", str(path), "--json"])
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
+        )
         self.assertNotEqual(code, 0)
         self.assertNotIn("hf_", stdout + stderr)
 
     def test_publishable_and_protected_evidence_rules(self) -> None:
-        spec, _path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        spec["evidence_sources"][0]["repository_path"] = (
+        inputs.attempt["evidence_sources"][0]["repository_path"] = (
             "results/capture-fixture/raw/secret.json"
         )
         raw_dir = self.repo / "results" / "capture-fixture" / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / "secret.json").write_text("{}\n", encoding="utf-8")
-        path = fixture.write_spec(self.repo, "raw-path", spec)
-        code, stdout, stderr = self.run_main(["plan", "--spec", str(path), "--json"])
+        path = fixture.write_spec(self.repo, "raw-path", inputs.attempt)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
+        )
         self.assertNotEqual(code, 0)
         self.assertNotIn("secret.json", stdout + stderr)
         self.assert_safe_text(stdout + stderr)
 
-        protected = copy.deepcopy(spec)
+        protected = copy.deepcopy(inputs.attempt)
         protected["evidence_sources"] = [
             {
                 "class": "protected",
@@ -437,15 +490,15 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         }
         path = fixture.write_spec(self.repo, "protected-only", protected)
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(path), "--json"]
+            [
+                "capture-run",
+                *self.capture_flags(inputs, attempt_path=path),
+                "--json",
+            ]
         )
         self.assertEqual(code, 0, stderr)
         payload = json.loads(stdout)
-        dest = self.repo.joinpath(
-            "experiments",
-            "model-serving-release-captures",
-            *pathlib.PurePosixPath(str(payload["layout"])).parts,
-        )
+        dest = self.capture_dest(payload)
         self.assertFalse((dest / "evidence").exists())
         bundle = json.loads((dest / "evidence-bundle.json").read_text(encoding="utf-8"))
         artifact = bundle["evidence_artifacts"][0]
@@ -456,16 +509,16 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertNotIn("secret", listing)
 
     def test_registry_exact_match_and_mismatch(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        release = release_fixture.build_release()
-        contract = release_fixture.build_contract(release=release)
+        release = inputs.release
+        contract = inputs.contract
         registry_root = self.repo / "models" / "model-serving-releases"
         registry_fixture.write_release(registry_root, release)
         registry_fixture.write_contract(registry_root, contract)
         code, stdout, stderr = self.run_main(
-            ["plan", "--spec", str(spec_path), "--json"]
+            ["plan", *self.capture_flags(inputs), "--json"]
         )
         self.assertEqual(code, 0, stderr)
         mismatched = copy.deepcopy(release)
@@ -476,14 +529,14 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             {"kind": "not-a-release", "payload": "mismatch"},
         )
         code, stdout, stderr = self.run_main(
-            ["plan", "--spec", str(spec_path), "--json"]
+            ["plan", *self.capture_flags(inputs), "--json"]
         )
         self.assertNotEqual(code, 0)
         self.assert_safe_text(stdout + stderr)
-        del spec
+        del contract
 
     def test_symlink_and_nonregular_inputs(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         evidence = self.repo / "results" / "capture-fixture" / "throughput-serving.json"
@@ -492,7 +545,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         evidence.unlink()
         evidence.symlink_to(real)
         code, stdout, stderr = self.run_main(
-            ["plan", "--spec", str(spec_path), "--json"]
+            ["plan", *self.capture_flags(inputs), "--json"]
         )
         self.assertNotEqual(code, 0)
         self.assert_safe_text(stdout + stderr)
@@ -500,14 +553,13 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         evidence.unlink()
         os.mkfifo(evidence)
         code, stdout, stderr = self.run_main(
-            ["plan", "--spec", str(spec_path), "--json"]
+            ["plan", *self.capture_flags(inputs), "--json"]
         )
         self.assertNotEqual(code, 0)
         os.unlink(evidence)
-        del spec
 
     def test_unsafe_and_existing_destinations(self) -> None:
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         for target in (
@@ -519,8 +571,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             code, stdout, stderr = self.run_main(
                 [
                     "capture-run",
-                    "--spec",
-                    str(spec_path),
+                    *self.capture_flags(inputs),
                     "--output-dir",
                     target,
                     "--json",
@@ -531,18 +582,21 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
 
         payload, dest = self.capture_criterion("throughput-serving")
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(spec_path), "--json"]
+            ["capture-run", *self.capture_flags(inputs), "--json"]
         )
         self.assertNotEqual(code, 0)
         self.assertTrue((dest / "candidate.json").is_file())
         del payload
 
     def test_concurrent_publish_is_exclusive(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        del spec_path
-        built = capture.build_capture_from_spec(spec, repo_root=self.repo)
+        built = capture.build_capture_from_plan(
+            release_plan_dir=inputs.plan_dir,
+            attempt_spec=inputs.attempt,
+            repo_root=self.repo,
+        )
         output_root = capture.default_capture_root(self.repo)
         dest = output_root.joinpath(*pathlib.PurePosixPath(built.layout).parts)
         results: list[str] = []
@@ -603,14 +657,14 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         other_release = release_fixture.build_release(
             recipe=release_fixture.build_recipe(engine_args=["--max-model-len", "8"])
         )
-        _spec, other_path = fixture.passing_criterion_spec(
+        other_inputs = fixture.passing_criterion_spec(
             "throughput-serving",
             repo_root=self.repo,
             release=other_release,
             contract=release_fixture.build_contract(release=other_release),
         )
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(other_path), "--json"]
+            ["capture-run", *self.capture_flags(other_inputs), "--json"]
         )
         self.assertEqual(code, 0, stderr)
         other = json.loads(stdout)
@@ -637,19 +691,23 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             self.repo / "results" / "capture-fixture" / "throughput-serving.json"
         )
         evidence.write_text('{"mutated": true}\n', encoding="utf-8")
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "latency-ttft", repo_root=self.repo
         )
-        spec["evidence_sources"][0]["repository_path"] = (
+        inputs.attempt["evidence_sources"][0]["repository_path"] = (
             "results/capture-fixture/throughput-serving.json"
         )
-        spec["evidence_sources"][0]["source_key"] = "shared-location"
-        spec["criterion_observations"][0]["evidence_source_keys"] = [
+        inputs.attempt["evidence_sources"][0]["source_key"] = "shared-location"
+        inputs.attempt["criterion_observations"][0]["evidence_source_keys"] = [
             "shared-location"
         ]
-        path = fixture.write_spec(self.repo, "shared-location", spec)
+        path = fixture.write_spec(self.repo, "shared-location", inputs.attempt)
         code, stdout, stderr = self.run_main(
-            ["capture-run", "--spec", str(path), "--json"]
+            [
+                "capture-run",
+                *self.capture_flags(inputs, attempt_path=path),
+                "--json",
+            ]
         )
         self.assertEqual(code, 0, stderr)
         second = json.loads(stdout)
@@ -670,18 +728,16 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         )
         self.assertNotEqual(code, 0)
         self.assert_safe_text(stdout + stderr)
-        del spec_path
 
     def test_explicit_external_output_dir(self) -> None:
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         external = self.tmpdir / "external-captures"
         code, stdout, stderr = self.run_main(
             [
                 "capture-run",
-                "--spec",
-                str(spec_path),
+                *self.capture_flags(inputs),
                 "--output-dir",
                 str(external),
                 "--json",
@@ -754,7 +810,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         return hostile_dest
 
     def test_dotdot_output_cannot_write_models(self) -> None:
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         traversal = (
@@ -767,8 +823,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         code, stdout, stderr = self.run_main(
             [
                 "capture-run",
-                "--spec",
-                str(spec_path),
+                *self.capture_flags(inputs),
                 "--output-dir",
                 traversal,
                 "--json",
@@ -784,7 +839,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertFalse((self.repo / "models" / "hostile").exists())
 
     def test_parent_symlink_output_is_rejected(self) -> None:
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         outside = self.tmpdir / "outside-captures"
@@ -799,8 +854,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         code, stdout, stderr = self.run_main(
             [
                 "capture-run",
-                "--spec",
-                str(spec_path),
+                *self.capture_flags(inputs),
                 "--output-dir",
                 str(link / "nested"),
                 "--json",
@@ -811,7 +865,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(list(outside.iterdir()), [])
 
     def test_same_size_mutation_during_read_fails(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         evidence = (
@@ -827,20 +881,23 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         capture.READ_STABILITY_HOOK = hook
         try:
             with self.assertRaises(capture.ModelServingReleaseCaptureError):
-                capture.build_capture_from_spec(spec, repo_root=self.repo)
+                capture.build_capture_from_plan(
+                    release_plan_dir=inputs.plan_dir,
+                    attempt_spec=inputs.attempt,
+                    repo_root=self.repo,
+                )
         finally:
             capture.READ_STABILITY_HOOK = None
-        del spec_path
 
     def test_nested_context_source_is_in_run_artifacts(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "accuracy-gsm8k", repo_root=self.repo
         )
         context_path = "results/capture-fixture/accuracy-context.json"
         fixture.write_publishable_file(
             self.repo, context_path, {"kind": "context-only"}
         )
-        spec["evidence_sources"].append(
+        inputs.attempt["evidence_sources"].append(
             {
                 "source_key": "accuracy-context",
                 "class": "publishable",
@@ -849,18 +906,21 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
                 "repository_path": context_path,
             }
         )
-        spec["evidence_sources"] = sorted(
-            spec["evidence_sources"], key=lambda item: item["source_key"]
+        inputs.attempt["evidence_sources"] = sorted(
+            inputs.attempt["evidence_sources"], key=lambda item: item["source_key"]
         )
-        context = spec["criterion_observations"][0]["contract_requirements"]["context"]
+        context = inputs.attempt["criterion_observations"][0][
+            "contract_requirements"
+        ]["context"]
         self.assertIsNotNone(context)
         context["evidence_source_keys"] = ["accuracy-context"]
-        fixture.write_spec(self.repo, "nested-context", spec)
+        nested_path = fixture.write_spec(
+            self.repo, "nested-context", inputs.attempt
+        )
         code, stdout, stderr = self.run_main(
             [
                 "capture-run",
-                "--spec",
-                str(self.repo / "capture-specs" / "nested-context.json"),
+                *self.capture_flags(inputs, attempt_path=nested_path),
                 "--json",
             ]
         )
@@ -886,13 +946,12 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertNotEqual(nested_ids, top_ids)
         self.assertTrue(set(nested_ids).issubset(record["evidence_artifact_ids"]))
         self.assertTrue(set(top_ids).issubset(record["evidence_artifact_ids"]))
-        del spec_path
 
     def test_unused_source_requires_explicit_review_list(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        spec["evidence_sources"].append(
+        inputs.attempt["evidence_sources"].append(
             {
                 "source_key": "review-note",
                 "class": "protected",
@@ -901,26 +960,28 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
                 "content_sha256": "ab" * 32,
             }
         )
-        spec["evidence_sources"] = sorted(
-            spec["evidence_sources"], key=lambda item: item["source_key"]
+        inputs.attempt["evidence_sources"] = sorted(
+            inputs.attempt["evidence_sources"], key=lambda item: item["source_key"]
         )
-        fixture.write_spec(self.repo, "unused-protected", spec)
+        unused_path = fixture.write_spec(
+            self.repo, "unused-protected", inputs.attempt
+        )
         code, stdout, stderr = self.run_main(
             [
                 "plan",
-                "--spec",
-                str(self.repo / "capture-specs" / "unused-protected.json"),
+                *self.capture_flags(inputs, attempt_path=unused_path),
                 "--json",
             ]
         )
         self.assertNotEqual(code, 0)
-        spec["review_source_keys"] = ["review-note"]
-        fixture.write_spec(self.repo, "explicit-review", spec)
+        inputs.attempt["review_source_keys"] = ["review-note"]
+        review_path = fixture.write_spec(
+            self.repo, "explicit-review", inputs.attempt
+        )
         code, stdout, stderr = self.run_main(
             [
                 "capture-run",
-                "--spec",
-                str(self.repo / "capture-specs" / "explicit-review.json"),
+                *self.capture_flags(inputs, attempt_path=review_path),
                 "--json",
             ]
         )
@@ -940,7 +1001,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         )
         self.assertEqual(review["qualification_scope"], "release-promotion")
         self.assertEqual(review["privacy_review"], "pending")
-        del spec_path
 
     def test_hostile_raw_location_fails_independent_verify(self) -> None:
         from scripts import model_validation_evidence as evidence
@@ -1016,10 +1076,10 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assert_safe_text(combined)
 
     def test_registry_permission_error_is_not_enoent(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        release = release_fixture.build_release()
+        release = inputs.release
         registry_root = self.repo / "models" / "model-serving-releases"
         path = (
             registry_root / "descriptors" / f"{release['release_id']}.json"
@@ -1039,9 +1099,13 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
                 raise PermissionError(errno.EACCES, "permission denied")
             return original_open(name, flags, mode, dir_fd=dir_fd)
 
-        with mock.patch.object(capture.os, "open", side_effect=deny_registry_file):
+        with mock.patch.object(
+            capture.immutable_descriptor_dir.os,
+            "open",
+            side_effect=deny_registry_file,
+        ):
             code, stdout, stderr = self.run_main(
-                ["plan", "--spec", str(spec_path), "--json"]
+                ["plan", *self.capture_flags(inputs), "--json"]
             )
             self.assertNotEqual(code, 0)
             combined = stdout + stderr
@@ -1051,28 +1115,29 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
 
         path.unlink()
         code, stdout, stderr = self.run_main(
-            ["plan", "--spec", str(spec_path), "--json"]
+            ["plan", *self.capture_flags(inputs), "--json"]
         )
         self.assertEqual(code, 0, stderr)
-        del spec
 
     def test_private_freeform_value_is_rejected(self) -> None:
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        spec["criterion_observations"][0]["reason"] = "home_node_id=lab-orion"
-        fixture.write_spec(self.repo, "private-reason", spec)
+        inputs.attempt["criterion_observations"][0]["reason"] = (
+            "home_node_id=lab-orion"
+        )
+        private_path = fixture.write_spec(
+            self.repo, "private-reason", inputs.attempt
+        )
         code, stdout, stderr = self.run_main(
             [
                 "plan",
-                "--spec",
-                str(self.repo / "capture-specs" / "private-reason.json"),
+                *self.capture_flags(inputs, attempt_path=private_path),
                 "--json",
             ]
         )
         self.assertNotEqual(code, 0)
         self.assertNotIn("lab-orion", stdout + stderr)
-        del spec_path
 
     def test_altered_modes_fail_verify(self) -> None:
         _payload, dest = self.capture_criterion("throughput-serving")
@@ -1150,10 +1215,10 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
     def test_hostile_review_scope_fails_independent_verify(self) -> None:
         from scripts import model_validation_evidence as evidence
 
-        spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
-        spec["evidence_sources"].append(
+        inputs.attempt["evidence_sources"].append(
             {
                 "source_key": "review-note",
                 "class": "protected",
@@ -1162,16 +1227,17 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
                 "content_sha256": "cd" * 32,
             }
         )
-        spec["evidence_sources"] = sorted(
-            spec["evidence_sources"], key=lambda item: item["source_key"]
+        inputs.attempt["evidence_sources"] = sorted(
+            inputs.attempt["evidence_sources"], key=lambda item: item["source_key"]
         )
-        spec["review_source_keys"] = ["review-note"]
-        fixture.write_spec(self.repo, "review-scope-source", spec)
+        inputs.attempt["review_source_keys"] = ["review-note"]
+        review_path = fixture.write_spec(
+            self.repo, "review-scope-source", inputs.attempt
+        )
         code, stdout, stderr = self.run_main(
             [
                 "capture-run",
-                "--spec",
-                str(self.repo / "capture-specs" / "review-scope-source.json"),
+                *self.capture_flags(inputs, attempt_path=review_path),
                 "--json",
             ]
         )
@@ -1233,7 +1299,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("release-promotion", stdout + stderr)
         self.assert_safe_text(stdout + stderr)
-        del spec_path
 
     def test_extra_file_after_scan_fails_verify(self) -> None:
         _payload, dest = self.capture_criterion("throughput-serving")
@@ -1283,7 +1348,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
 
     def test_output_dir_cannot_be_existing_candidate_or_subdir(self) -> None:
         payload, dest = self.capture_criterion("throughput-serving")
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "latency-ttft", repo_root=self.repo
         )
         for output in (dest, dest / "evidence", dest / "run-records"):
@@ -1291,8 +1356,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             code, stdout, stderr = self.run_main(
                 [
                     "capture-run",
-                    "--spec",
-                    str(spec_path),
+                    *self.capture_flags(inputs),
                     "--output-dir",
                     str(output),
                     "--json",
@@ -1348,7 +1412,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(verify[0], 0, verify[2])
 
     def test_nonregular_candidate_marker_is_rejected(self) -> None:
-        _spec, spec_path = fixture.passing_criterion_spec(
+        inputs = fixture.passing_criterion_spec(
             "throughput-serving", repo_root=self.repo
         )
         for kind in ("directory", "fifo"):
@@ -1367,8 +1431,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             code, stdout, stderr = self.run_main(
                 [
                     "capture-run",
-                    "--spec",
-                    str(spec_path),
+                    *self.capture_flags(inputs),
                     "--output-dir",
                     str(home),
                     "--json",
@@ -1382,6 +1445,170 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
                 if path.is_dir() and path.name != "candidate.json"
             ]
             self.assertEqual(nested, [])
+
+    def test_legacy_spec_flag_and_kind_are_rejected(self) -> None:
+        inputs = fixture.passing_criterion_spec(
+            "throughput-serving", repo_root=self.repo
+        )
+        python_legacy = self.run_main(
+            ["plan", "--spec", str(inputs.attempt_path), "--json"]
+        )
+        self.assertNotEqual(python_legacy[0], 0)
+        combined = python_legacy[1] + python_legacy[2]
+        self.assertIn("--release-plan", combined)
+        self.assertIn("--attempt-spec", combined)
+        self.assert_safe_text(combined)
+
+        bash_legacy = self.run_cli(
+            "plan", "--spec", str(inputs.attempt_path), "--json"
+        )
+        self.assertNotEqual(bash_legacy.returncode, 0)
+        bash_text = bash_legacy.stdout + bash_legacy.stderr
+        self.assertIn("--release-plan", bash_text)
+        self.assertIn("--attempt-spec", bash_text)
+        self.assert_safe_text(bash_text)
+
+        legacy = fixture.legacy_embedded_spec(
+            {
+                "attempt": inputs.attempt["attempt"],
+                "preparation_provenance": inputs.attempt["preparation_provenance"],
+                "observed_environment": inputs.attempt["observed_environment"],
+                "commands": inputs.attempt["commands"],
+                "criterion_observations": inputs.attempt["criterion_observations"],
+            },
+            release=inputs.release,
+            contract=inputs.contract,
+            source_key="throughput-serving",
+            repository_path="results/capture-fixture/throughput-serving.json",
+        )
+        legacy_path = fixture.write_spec(self.repo, "legacy-embedded", legacy)
+        code, stdout, stderr = self.run_main(
+            [
+                "plan",
+                *self.capture_flags(inputs, attempt_path=legacy_path),
+                "--json",
+            ]
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("--release-plan", stdout + stderr)
+        self.assert_safe_text(stdout + stderr)
+
+    def test_wrong_binding_ids_and_plan_tamper_fail(self) -> None:
+        inputs = fixture.passing_criterion_spec(
+            "throughput-serving", repo_root=self.repo
+        )
+        wrong_release = copy.deepcopy(inputs.attempt)
+        wrong_release["release_id"] = "d" * 64
+        path = fixture.write_spec(self.repo, "wrong-release-bind", wrong_release)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
+        )
+        self.assertNotEqual(code, 0)
+        self.assert_safe_text(stdout + stderr)
+
+        wrong_contract = copy.deepcopy(inputs.attempt)
+        wrong_contract["contract_id"] = "e" * 64
+        path = fixture.write_spec(self.repo, "wrong-contract-bind", wrong_contract)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs, attempt_path=path), "--json"]
+        )
+        self.assertNotEqual(code, 0)
+
+        tampered = json.loads(
+            (inputs.plan_dir / "release.json").read_text(encoding="utf-8")
+        )
+        tampered["serving_recipe"]["engine_args"] = ["--max-model-len", "3"]
+        (inputs.plan_dir / "release.json").write_bytes(
+            model_identity.pretty_json_bytes(tampered)
+        )
+        os.chmod(inputs.plan_dir / "release.json", 0o600)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs), "--json"]
+        )
+        self.assertNotEqual(code, 0)
+        self.assert_safe_text(stdout + stderr)
+
+    def test_capture_uses_shared_pretty_json_encoding(self) -> None:
+        inputs = fixture.passing_criterion_spec(
+            "throughput-serving", repo_root=self.repo
+        )
+        unicode_note = "café"
+        raw = model_identity.pretty_json_bytes({"note": unicode_note})
+        self.assertIn(unicode_note.encode("utf-8"), raw)
+        self.assertNotIn(b"\\u00e9", raw)
+        compact = model_identity.canonical_json_digest({"note": unicode_note})
+        self.assertRegex(compact, r"^[0-9a-f]{64}$")
+        self.assertNotIn(unicode_note.encode("utf-8"), compact.encode("ascii"))
+
+        code, stdout, stderr = self.run_main(
+            ["capture-run", *self.capture_flags(inputs), "--json"]
+        )
+        self.assertEqual(code, 0, stderr)
+        dest = self.capture_dest(json.loads(stdout))
+        release_bytes = (dest / "release.json").read_bytes()
+        contract_bytes = (dest / "contract.json").read_bytes()
+        self.assertEqual(
+            release_bytes, model_identity.pretty_json_bytes(inputs.release)
+        )
+        self.assertEqual(
+            contract_bytes, model_identity.pretty_json_bytes(inputs.contract)
+        )
+        plan_release = (inputs.plan_dir / "release.json").read_bytes()
+        self.assertEqual(plan_release, release_bytes)
+        self.assert_no_plan_leak(stdout + stderr, inputs, dest)
+
+    def test_planner_directory_is_consumed_directly(self) -> None:
+        inputs = fixture.passing_criterion_spec(
+            "latency-ttft", repo_root=self.repo
+        )
+        verified = plan_mod.load_verified_release_plan_candidate(inputs.plan_dir)
+        self.assertEqual(verified.release["release_id"], inputs.release["release_id"])
+        self.assertEqual(
+            verified.contract["contract_id"], inputs.contract["contract_id"]
+        )
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs), "--json"]
+        )
+        self.assertEqual(code, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["release_id"], verified.release["release_id"])
+        self.assertNotIn("candidate_id", payload.get("notes", []))
+        self.assert_no_plan_leak(stdout + stderr, inputs)
+
+    def test_release_plan_directory_hardening(self) -> None:
+        inputs = fixture.passing_criterion_spec(
+            "throughput-serving", repo_root=self.repo
+        )
+        extra = inputs.plan_dir / "unexpected.json"
+        extra.write_bytes(model_identity.pretty_json_bytes({"extra": True}))
+        os.chmod(extra, 0o600)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs), "--json"]
+        )
+        self.assertNotEqual(code, 0)
+        extra.unlink()
+
+        os.chmod(inputs.plan_dir / "release.json", 0o644)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs), "--json"]
+        )
+        self.assertNotEqual(code, 0)
+        os.chmod(inputs.plan_dir / "release.json", 0o600)
+
+        linked = inputs.plan_dir.with_name(inputs.plan_dir.name + "-link")
+        linked.symlink_to(inputs.plan_dir)
+        code, stdout, stderr = self.run_main(
+            [
+                "plan",
+                "--release-plan",
+                str(linked),
+                "--attempt-spec",
+                str(inputs.attempt_path),
+                "--json",
+            ]
+        )
+        self.assertNotEqual(code, 0)
+        self.assert_safe_text(stdout + stderr)
 
 
 if __name__ == "__main__":

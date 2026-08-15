@@ -36,12 +36,13 @@ enforcement:
 |---|---|
 | Profile registry (`models/*.conf`) | Declares the exact runtime configuration to normalize |
 | Validation (`validate/`, `results/`) | Produces model-qualification evidence for exact model/image/profile/geometry inputs |
-| Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
+| Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs; also owns shared `pretty_json_bytes` publication encoding |
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns pure release-descriptor and frozen Validation Contract schema version 1; performs no I/O, issuance, or status assignment |
-| ADR 0004 release-plan candidates (`scripts/model-serving-release-plan.sh`) | Sources a profile and assembles/verifies unreviewed source-neutral release and contract candidates from explicit manifest, runtime/hardware, and criteria inputs; never writes the tracked registry |
+| ADR 0004 release-plan candidates (`scripts/model-serving-release-plan.sh`) | Sources a profile and assembles/verifies unreviewed source-neutral release and contract candidates from explicit manifest, runtime/hardware, and criteria inputs; exposes `load_verified_release_plan_candidate` for planner `verify` and capture; never writes the tracked registry |
+| Immutable descriptor directories (`scripts/immutable_descriptor_dir.py`) | Generic descriptor-rooted immutable-directory primitives only: exact file-set, 0700/0600, regular-file/no-symlink, fd-relative reads, mutation/replacement detection, snapshot recheck; not a schema owner |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns pure evidence-artifact, immutable run-record, new validation-bundle, reviewed-decision, status-derivation, and supersession schema version 1; performs no capture, persistence, or trusted issuance |
 | ADR 0004 registry (`scripts/model-serving-release-registry.sh`) | Read-only load, verify, and inspect stored objects under `models/model-serving-releases/`; supplies advisory projection for explicitly bound profiles but does not capture evidence, issue a decision, authorize serving, or launch a release |
-| ADR 0004 evidence-capture candidates (`scripts/model-serving-release-capture.sh`) | Local unreviewed persistence of run records, content-addressed evidence, and assembled bundles; never writes the tracked registry or launches a release |
+| ADR 0004 evidence-capture candidates (`scripts/model-serving-release-capture.sh`) | Composes a verified release-plan candidate with an attempt-only spec; local unreviewed persistence of run records, content-addressed evidence, and assembled bundles; never writes the tracked registry or launches a release |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
@@ -224,13 +225,27 @@ must be supplied again to `verify`, and is never persisted.
 
 Default output is the new, gitignored
 `experiments/model-onboarding/<profile>/<release-id>/` tree containing
-`candidate.json`, `release.json`, and `validation-contract.json`. The
+`candidate.json`, `release.json`, and `validation-contract.json`. Published
+candidate JSON uses the shared `pretty_json_bytes` encoding from
+`scripts/model_identity.py` (`indent=2`, `sort_keys=True`,
+`ensure_ascii=False`, trailing newline). Canonical identity digests remain
+compact `canonical_json_digest`. The
 candidate is `unreviewed`, has authority `none`, privacy review `pending`, and
 promotion `not-authorized`. Existing output, tracked repository locations,
-and `models/` are refused. Verification checks content IDs, exact file set,
-release/contract cross-links, and current profile recipe/image/geometry. It
+and `models/` are refused. Planner `verify` uses the public schema-owning
+`load_verified_release_plan_candidate(dir)` loader. That loader applies the
+generic descriptor-directory primitives in
+`scripts/immutable_descriptor_dir.py`, then validates `candidate.json`,
+`release.json`, and `validation-contract.json`, derived IDs, file map, and
+cross-links. Verification also checks the current profile
+recipe/image/geometry. It
 does not prove that the manifest came from the claimed source, that the runtime
 envelope works on physical hardware, or that any criterion passed.
+
+Capture `plan` and `capture-run` consume that same verified loader
+directly through `--release-plan DIR`. They do not persist the planner path
+or planner candidate ID. See
+[MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md).
 
 ## Issued profiles
 
