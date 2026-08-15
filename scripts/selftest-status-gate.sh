@@ -152,7 +152,7 @@ else
   fail=$((fail + 1))
 fi
 
-python3 - "$STATE/repo" "$STATE/neutral-repo" <<'PY'
+python3 - "$STATE/repo" "$STATE/neutral-repo" "$STATE/ambiguous-repo" <<'PY'
 from pathlib import Path
 import sys
 
@@ -173,6 +173,17 @@ neutral_registry = fixture.init_registry_root(
 fixture.write_release(neutral_registry, source["release"])
 (neutral_repo / "release-id").write_text(
     source["release"]["release_id"] + "\n", encoding="utf-8"
+)
+ambiguous_repo = Path(sys.argv[3])
+ambiguous_source = fixture.populate_happy_registry(
+    ambiguous_repo / "models" / "model-serving-releases", ambiguous_repo
+)
+fixture.write_contract(
+    ambiguous_repo / "models" / "model-serving-releases",
+    fixture.build_alternate_contract(ambiguous_source["release"]),
+)
+(ambiguous_repo / "release-id").write_text(
+    ambiguous_source["release"]["release_id"] + "\n", encoding="utf-8"
 )
 PY
 original_repo_dir="$REPO_DIR"
@@ -209,6 +220,28 @@ if [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" = no-reviewed-decision ] \
   pass=$((pass + 1))
 else
   echo "FAIL neutral no-reviewed-decision projection" >&2
+  fail=$((fail + 1))
+fi
+MODEL_SERVING_RELEASE_ID=$(<"$STATE/ambiguous-repo/release-id")
+REPO_DIR="$STATE/ambiguous-repo"
+load_model_serving_release_projection local-verified-readonly
+if [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" = ambiguous ] \
+    && [ -z "$MODEL_SERVING_RELEASE_STATUS" ] \
+    && [ "$MODEL_SERVING_RELEASE_STATUS_LABEL" = "Ambiguous reviewed decisions" ]; then
+  echo "OK   ambiguous reviewed decisions remain a precise advisory state"
+  pass=$((pass + 1))
+else
+  echo "FAIL ambiguous release projection" >&2
+  fail=$((fail + 1))
+fi
+load_model_serving_release_projection live-remote-readonly
+if [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" = recipe-mismatch ] \
+    && [ -z "$MODEL_SERVING_RELEASE_STATUS" ] \
+    && [ "$MODEL_SERVING_RELEASE_STATUS_LABEL" = "No decision for selected recipe" ]; then
+  echo "OK   recipe mismatch remains precise when the release is ambiguous"
+  pass=$((pass + 1))
+else
+  echo "FAIL ambiguous recipe-mismatch projection" >&2
   fail=$((fail + 1))
 fi
 REPO_DIR="$original_repo_dir"

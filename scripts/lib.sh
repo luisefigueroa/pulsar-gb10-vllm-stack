@@ -578,9 +578,11 @@ print("\t".join((
     || MODEL_SERVING_RELEASE_CONTRACT_ID=""
   [ "$MODEL_SERVING_RELEASE_DECISION_ID" != - ] \
     || MODEL_SERVING_RELEASE_DECISION_ID=""
-  # Ambiguity is a valid advisory projection even though show-release exits 1.
+  # Ambiguity and a recipe mismatch derived from an ambiguous release are
+  # valid advisory projections even though show-release exits 1.
   if [ "$rc" -ne 0 ] \
-      && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != ambiguous ]; then
+      && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != ambiguous ] \
+      && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != recipe-mismatch ]; then
     MODEL_SERVING_RELEASE_PROJECTION_STATE="projection-unavailable"
     MODEL_SERVING_RELEASE_STATUS=""
     MODEL_SERVING_RELEASE_STATUS_LABEL="Release status unavailable"
