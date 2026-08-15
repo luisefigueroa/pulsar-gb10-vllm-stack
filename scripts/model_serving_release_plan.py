@@ -140,10 +140,13 @@ def write_candidate_directory(
     if output_dir.exists() or output_dir.is_symlink():
         fail(f"candidate output already exists; refusing overwrite: {output_dir}")
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        output_dir.mkdir(mode=0o700)
-    except FileExistsError:
-        fail(f"candidate output already exists; refusing overwrite: {output_dir}")
+    staging = pathlib.Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_dir.name}.",
+            dir=str(output_dir.parent),
+        )
+    )
+    os.chmod(staging, 0o700)
     try:
         ordered_names = [name for name in documents if name != "candidate.json"]
         if "candidate.json" in documents:
@@ -151,9 +154,10 @@ def write_candidate_directory(
         for name in ordered_names:
             if pathlib.PurePosixPath(name).name != name:
                 fail(f"candidate filename is unsafe: {name}")
-            atomic_write_json(output_dir / name, documents[name])
+            atomic_write_json(staging / name, documents[name])
+        os.rename(staging, output_dir)
     except Exception:
-        shutil.rmtree(output_dir, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
         raise
 
 

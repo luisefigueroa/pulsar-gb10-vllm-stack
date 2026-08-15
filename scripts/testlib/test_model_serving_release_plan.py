@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -173,6 +174,70 @@ class ModelServingReleasePlanTests(unittest.TestCase):
                 "--json",
             )
             self.assertEqual(json.loads(verification.stdout)["verification"], "passed")
+
+    def test_candidate_directory_is_published_atomically(self) -> None:
+        documents = {
+            "candidate.json": {"kind": "candidate"},
+            "release.json": {"kind": "release"},
+            "validation-contract.json": {"kind": "contract"},
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            candidate_dir = root / "candidate"
+            real_atomic_write = model_serving_release_plan.atomic_write_json
+            final_path_states: list[bool] = []
+
+            def observed_write(path: pathlib.Path, value: object) -> None:
+                final_path_states.append(candidate_dir.exists())
+                real_atomic_write(path, value)
+
+            with mock.patch.object(
+                model_serving_release_plan,
+                "atomic_write_json",
+                side_effect=observed_write,
+            ):
+                model_serving_release_plan.write_candidate_directory(
+                    candidate_dir,
+                    documents,
+                )
+
+            self.assertEqual(final_path_states, [False, False, False])
+            self.assertEqual(
+                {item.name for item in candidate_dir.iterdir()},
+                set(documents),
+            )
+
+    def test_candidate_write_failure_leaves_no_partial_output(self) -> None:
+        documents = {
+            "candidate.json": {"kind": "candidate"},
+            "release.json": {"kind": "release"},
+            "validation-contract.json": {"kind": "contract"},
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            candidate_dir = root / "candidate"
+            real_atomic_write = model_serving_release_plan.atomic_write_json
+            writes = 0
+
+            def interrupted_write(path: pathlib.Path, value: object) -> None:
+                nonlocal writes
+                writes += 1
+                real_atomic_write(path, value)
+                if writes == 2:
+                    raise OSError("simulated candidate write failure")
+
+            with mock.patch.object(
+                model_serving_release_plan,
+                "atomic_write_json",
+                side_effect=interrupted_write,
+            ), self.assertRaisesRegex(OSError, "simulated candidate write failure"):
+                model_serving_release_plan.write_candidate_directory(
+                    candidate_dir,
+                    documents,
+                )
+
+            self.assertFalse(candidate_dir.exists())
+            self.assertEqual(list(root.iterdir()), [])
 
     def test_public_cli_builds_source_neutral_catalog_primary(self) -> None:
         catalog_profile = "inkling-small-nvfp4"
