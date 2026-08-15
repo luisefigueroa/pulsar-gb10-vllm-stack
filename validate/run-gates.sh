@@ -92,8 +92,14 @@ esac
 P="results/${NAME}-${TAG}"
 mkdir -p results
 FAIL=0
-INTERRUPTED=0
-trap 'INTERRUPTED=1' INT TERM
+interrupt_gates() {
+  local exit_code="$1"
+  trap - INT TERM
+  echo "GATES INTERRUPTED for $NAME — partial artifacts, if any, remain at ${P}-*" >&2
+  exit "$exit_code"
+}
+trap 'interrupt_gates 130' INT
+trap 'interrupt_gates 143' TERM
 if compgen -G "${P}-*" >/dev/null; then
   echo "refusing to overwrite existing artifacts: ${P}-* (choose a unique --tag)" >&2
   exit 2
@@ -198,10 +204,6 @@ if [ "$NEEDLE" -gt 0 ]; then
   needle_rc=${PIPESTATUS[0]}
   set -e
   [ "$needle_rc" -eq 0 ] || FAIL=1
-fi
-
-if [ "$INTERRUPTED" -eq 1 ]; then
-  FAIL=1
 fi
 
 echo

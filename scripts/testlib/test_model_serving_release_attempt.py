@@ -780,6 +780,42 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         self.assertIn("supply a validator --result-json", stderr)
         self.assertFalse(self.compose_dir("missing").exists())
 
+    def test_unreadable_measurement_fails_without_unpack_error(self) -> None:
+        inputs = fixture.prepare_compose_inputs(self.repo)
+        dest = self.compose_dir("unreadable")
+        original_read = attempt.read_stable_bytes
+
+        def reject_measurement(path: Path, *, label: str) -> bytes:
+            if label.endswith("measurement"):
+                raise attempt.ValidatorMeasurementError("unsafe private path")
+            return original_read(path, label=label)
+
+        with mock.patch.object(
+            attempt,
+            "read_stable_bytes",
+            side_effect=reject_measurement,
+        ):
+            code, _stdout, stderr = self.run_main(
+                [
+                    "compose",
+                    "--release-plan",
+                    str(inputs["plan_dir"]),
+                    "--context",
+                    str(inputs["context_path"]),
+                    "--compare-measurement",
+                    str(inputs["compare_path"]),
+                    "--benchmark-measurement",
+                    str(inputs["bench_path"]),
+                    "--output-dir",
+                    str(dest),
+                ]
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("measurement cannot be read safely", stderr)
+        self.assertNotIn("not enough values to unpack", stderr)
+        self.assertNotIn("unsafe private path", stderr)
+        self.assertFalse(dest.exists())
+
     def test_validation_failure_leaves_no_partial_output(self) -> None:
         inputs = fixture.prepare_compose_inputs(self.repo)
         dest = self.compose_dir("partial")
@@ -901,6 +937,91 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         )
         with self.assertRaises(attempt.ModelServingReleaseAttemptError):
             attempt.load_invocation_plan(dest)
+
+    def test_invocation_plan_rejects_too_few_requests_for_concurrency(self) -> None:
+        release = release_fixture.build_release()
+        criteria = []
+        for item in release_fixture.criteria():
+            item = json.loads(json.dumps(item))
+            if item["criterion_id"] in {"throughput-serving", "latency-ttft"}:
+                item["sample_size"] = 1
+            criteria.append(item)
+        contract = release_fixture.build_contract(
+            release=release, release_criteria=criteria
+        )
+        with self.assertRaisesRegex(
+            attempt.ModelServingReleaseAttemptError,
+            "sample_size must be at least the largest declared concurrency",
+        ):
+            attempt.plan_invocation(contract)
+
+        dest = self.tmpdir / "short-bench-plan.json"
+        dest.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": attempt.INVOCATION_PLAN_KIND,
+                    "benchmark-serving": {
+                        "program": "validate/bench_serve.py",
+                        "operation": "benchmark-serving",
+                        "concurrency": [8],
+                        "num_requests": 1,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            attempt.ModelServingReleaseAttemptError,
+            "num_requests must be at least the largest concurrency",
+        ):
+            attempt.load_invocation_plan(dest)
+
+    def test_run_gates_stops_after_interrupt(self) -> None:
+        gate_repo = self.tmpdir / "gate-repo"
+        validate_dir = gate_repo / "validate"
+        validate_dir.mkdir(parents=True)
+        shutil.copy2(REPO_ROOT / "validate" / "run-gates.sh", validate_dir)
+        mock_bin = self.tmpdir / "mock-bin"
+        mock_bin.mkdir()
+        calls = self.tmpdir / "python-calls.log"
+        fake_python = mock_bin / "python3"
+        fake_python.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' \"$*\" >> \"$PULSAR_TEST_CALLS\"\n"
+            "kill -s \"$PULSAR_TEST_SIGNAL\" \"$PPID\"\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake_python.chmod(0o755)
+
+        for signal_name, expected_code in (("INT", 130), ("TERM", 143)):
+            calls.unlink(missing_ok=True)
+            env = os.environ.copy()
+            env["PATH"] = f"{mock_bin}{os.pathsep}{env['PATH']}"
+            env["PULSAR_TEST_CALLS"] = str(calls)
+            env["PULSAR_TEST_SIGNAL"] = signal_name
+            proc = subprocess.run(
+                [
+                    str(validate_dir / "run-gates.sh"),
+                    "fixture",
+                    "--tag",
+                    signal_name.lower(),
+                ],
+                cwd=str(gate_repo),
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(
+                proc.returncode, expected_code, proc.stdout + proc.stderr
+            )
+            invoked = calls.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(invoked), 1, invoked)
+            self.assertIn("validate/greedy_capture.py", invoked[0])
+            self.assertNotIn("gate 3:", proc.stdout)
+            self.assertIn("GATES INTERRUPTED", proc.stderr)
 
 
 if __name__ == "__main__":

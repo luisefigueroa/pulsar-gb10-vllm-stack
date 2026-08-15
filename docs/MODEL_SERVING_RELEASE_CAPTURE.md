@@ -75,7 +75,9 @@ changes only the benchmark arguments and fails closed on an invalid plan; it
 does not change the ordinary default sweep. The compare section reports the
 contract sample size but does not rewrite `validate/prompts.txt` or synthesize
 prompts. If the captured prompt count differs, composition records an
-inconclusive sample/protocol mismatch.
+inconclusive sample/protocol mismatch. A benchmark plan is refused when its
+sample size is smaller than its largest declared concurrency, because that
+request count cannot exercise the frozen concurrency protocol.
 
 `compose` consumes the verified release-plan directory, the two closed
 validator measurement files, and a closed caller context. The context supplies
@@ -87,6 +89,11 @@ the same files supplied on the measurement flags. This low-level context is
 expected to be assembled by the future supervised onboarding workflow; the
 composer validates it but does not discover topology, launch a server, infer
 attempt timestamps, or create missing validator output.
+
+If `validate/run-gates.sh` receives SIGINT or SIGTERM, it stops before starting
+another gate and exits with the signal-compatible status. Any validator output
+already persisted remains partial evidence; interruption never advances into a
+later capture or benchmark.
 
 Each emitted file is an ordinary attempt-only spec accepted by the capture
 commands below. Run capture immediately after composition. The output

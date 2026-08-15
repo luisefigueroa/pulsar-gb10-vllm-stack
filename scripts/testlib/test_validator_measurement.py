@@ -280,6 +280,27 @@ class ValidatorMeasurementTests(unittest.TestCase):
             document["benchmark-serving"]["levels"][0]["reason"], "warmup-failed"
         )
 
+    def test_bench_rejects_request_count_below_concurrency(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "bench_serve.py",
+                "--model",
+                "fixture",
+                "--concurrency",
+                "8",
+                "--num-requests",
+                "1",
+            ],
+        ), contextlib.redirect_stderr(stderr), self.assertRaises(
+            SystemExit
+        ) as raised:
+            asyncio.run(bench.main())
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("at least the largest --concurrency", stderr.getvalue())
+
     def test_semantic_count_and_range_errors(self) -> None:
         with self.assertRaises(measurement.ValidatorMeasurementError):
             measurement.validate_measurement(
@@ -482,6 +503,26 @@ class ValidatorMeasurementTests(unittest.TestCase):
                 prompt_style="synthetic",
                 explicit_request_count=4,
                 levels=[{**complete_level, "aggregate_tps": "0"}],
+            )
+        with self.assertRaisesRegex(
+            measurement.ValidatorMeasurementError,
+            "requested_request_count must be at least concurrency",
+        ):
+            measurement.build_benchmark_measurement(
+                completion="complete",
+                reason="completed",
+                input_tokens=512,
+                output_tokens=256,
+                prompt_style="synthetic",
+                explicit_request_count=1,
+                levels=[
+                    {
+                        **complete_level,
+                        "concurrency": 8,
+                        "requested_request_count": 1,
+                        "measured_request_count": 1,
+                    }
+                ],
             )
 
     def test_symlink_parent_cannot_escape_result_json(self) -> None:

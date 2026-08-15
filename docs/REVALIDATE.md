@@ -301,7 +301,11 @@ existing measurement files are never overwritten. Those documents are
 validator output. Attempt composition consumes them later and does not invent
 a missing file. Optional `--invocation-plan FILE` is an explicit
 contract-driven bench argv overlay; an invalid plan fails closed and does not
-fall back to the default `c=1,2,4,8` sweep.
+fall back to the default `c=1,2,4,8` sweep. The explicit request count must be
+at least the largest declared concurrency; otherwise the benchmark cannot
+exercise that protocol and is refused before network work begins. SIGINT or
+SIGTERM stops the remaining gate sequence with exit 130 or 143 respectively
+while preserving any output already written.
 
 **grep the engine log on every first boot** — backend selection changes
 silently across versions:

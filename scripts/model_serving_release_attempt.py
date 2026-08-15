@@ -859,7 +859,7 @@ def load_bound_measurement(
             "--result-json document (incomplete validator output is accepted)"
         )
     except ValidatorMeasurementError:
-        return None, "corrupt-measurement"
+        fail(f"{operation} measurement cannot be read safely")
     try:
         document = load_measurement_bytes(data)
     except ValidatorMeasurementError:
@@ -1037,11 +1037,17 @@ def plan_invocation(contract: dict[str, Any]) -> dict[str, Any]:
         )
         if not concurrencies:
             fail("benchmark criteria do not declare concurrency")
+        sample_size = next(iter(sample_sizes))
+        if sample_size < max(concurrencies):
+            fail(
+                "benchmark criterion sample_size must be at least the largest "
+                "declared concurrency"
+            )
         section: dict[str, Any] = {
             "program": OPERATION_PROGRAMS[BENCHMARK_OPERATION],
             "operation": BENCHMARK_OPERATION,
             "concurrency": concurrencies,
-            "num_requests": next(iter(sample_sizes)),
+            "num_requests": sample_size,
         }
         for key in ("input_tokens", "output_tokens", "prompt_style"):
             value = _unique_protocol_value(bench, key)
@@ -1105,14 +1111,20 @@ def _validate_invocation_bench(value: Any) -> dict[str, Any]:
     ]
     if len(parsed) != len(set(parsed)):
         fail("invocation plan concurrency values must be unique")
+    num_requests = _positive_int(
+        value.get("num_requests"),
+        label="invocation plan num_requests",
+    )
+    if num_requests < max(parsed):
+        fail(
+            "invocation plan num_requests must be at least the largest "
+            "concurrency value"
+        )
     section: dict[str, Any] = {
         "program": OPERATION_PROGRAMS[BENCHMARK_OPERATION],
         "operation": BENCHMARK_OPERATION,
         "concurrency": parsed,
-        "num_requests": _positive_int(
-            value.get("num_requests"),
-            label="invocation plan num_requests",
-        ),
+        "num_requests": num_requests,
     }
     if "input_tokens" in value:
         section["input_tokens"] = _positive_int(

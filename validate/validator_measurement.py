@@ -414,6 +414,9 @@ def _validate_compare_payload(value: Any, *, completion: str) -> dict[str, Any]:
 def _validate_level(value: Any, *, index: int) -> dict[str, Any]:
     label = f"benchmark-serving.levels[{index}]"
     level = _require_fields(value, LEVEL_FIELDS, label=label)
+    concurrency = _positive_int(
+        level.get("concurrency"), label=f"{label}.concurrency"
+    )
     completion = level.get("completion")
     if completion not in COMPLETIONS:
         fail(f"{label}.completion is unsupported")
@@ -432,6 +435,8 @@ def _validate_level(value: Any, *, index: int) -> dict[str, Any]:
         level.get("measured_request_count"),
         label=f"{label}.measured_request_count",
     )
+    if requested < concurrency:
+        fail(f"{label}.requested_request_count must be at least concurrency")
     if measured > requested:
         fail(f"{label}.measured_request_count exceeds requested_request_count")
     if completion == "complete" and measured != requested:
@@ -477,9 +482,7 @@ def _validate_level(value: Any, *, index: int) -> dict[str, Any]:
     ):
         fail(f"{label}.ttft_p95_ms must be at least ttft_p50_ms")
     return {
-        "concurrency": _positive_int(
-            level.get("concurrency"), label=f"{label}.concurrency"
-        ),
+        "concurrency": concurrency,
         "requested_request_count": requested,
         "measured_request_count": measured,
         "completion": completion,

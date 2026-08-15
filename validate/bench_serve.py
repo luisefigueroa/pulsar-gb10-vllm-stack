@@ -198,6 +198,8 @@ async def main() -> int:
         ap.error("--concurrency values must all be positive")
     if a.num_requests is not None and a.num_requests <= 0:
         ap.error("--num-requests must be positive")
+    if a.num_requests is not None and a.num_requests < max(a.concurrency):
+        ap.error("--num-requests must be at least the largest --concurrency value")
     if a.input_tokens <= 0:
         ap.error("--input-tokens must be positive")
     if a.output_tokens < 2:
