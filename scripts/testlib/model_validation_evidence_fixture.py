@@ -243,6 +243,9 @@ def build_observed_environment(
     server_boot_id: str | None = None,
     launch_id: str | None = None,
     launched: bool = True,
+    driver_abi_version: str = "580.1",
+    container_runtime_version: str = "28.0",
+    kernel_version: str = "6.11.1",
 ) -> dict[str, Any]:
     release = release or build_release()
     geometry = release["supported_hardware_geometry"]
@@ -280,17 +283,17 @@ def build_observed_environment(
                 "unified_memory_gib": "128",
                 "driver_abi": {
                     "family": compatibility["driver_abi"]["family"],
-                    "version": "580.1",
+                    "version": driver_abi_version,
                 },
                 "container_runtime": {
                     "family": compatibility["container_runtime"]["family"],
-                    "version": "28.0",
+                    "version": container_runtime_version,
                     "capabilities": compatibility["container_runtime"][
                         "required_capabilities"
                     ],
                 },
                 "kernel": {
-                    "version": "6.11.1",
+                    "version": kernel_version,
                     "features": compatibility["kernel"]["required_features"],
                 },
                 "engine_version": "0.26.0",
@@ -329,6 +332,9 @@ def build_run_for_criterion(
     attempt_completion: str = "completed",
     server_boot_id: str | None = None,
     launch_id: str | None = None,
+    driver_abi_version: str = "580.1",
+    container_runtime_version: str = "28.0",
+    kernel_version: str = "6.11.1",
     maturity: str = "experimental",
     attempt_id: str | None = None,
     include_context_requirement: bool = True,
@@ -484,6 +490,9 @@ def build_run_for_criterion(
             release=release,
             server_boot_id=server_boot_id,
             launch_id=launch_id,
+            driver_abi_version=driver_abi_version,
+            container_runtime_version=container_runtime_version,
+            kernel_version=kernel_version,
         ),
         commands=[
             {

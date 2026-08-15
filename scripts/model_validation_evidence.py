@@ -97,7 +97,7 @@ STATUS_LABELS = {
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 COMMAND_ENVIRONMENT_CREDENTIAL_VALUE_PATTERNS = (
-    re.compile(r"hf_[A-Za-z0-9]{8,}"),
+    re.compile(r"(?i)hf_[A-Za-z0-9]{30,64}(?![A-Za-z0-9_])"),
     re.compile(
         r"(?:gh[opusr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
     ),
@@ -767,6 +767,7 @@ def _validate_command_site_reference(
     *,
     label: str,
     allowed_kinds: set[str],
+    node_count: int,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         fail(f"{label} must be a structured site reference")
@@ -775,7 +776,11 @@ def _validate_command_site_reference(
         fail(f"{label}.kind is incompatible with its site option")
     if kind == "rank-reference":
         descriptor = _require_fields(value, {"kind", "rank"}, label=label)
-        _nonnegative_integer(descriptor.get("rank"), label=f"{label}.rank")
+        rank = _nonnegative_integer(
+            descriptor.get("rank"), label=f"{label}.rank"
+        )
+        if rank >= node_count:
+            fail(f"{label}.rank is outside the release geometry")
         return descriptor
     descriptor = _require_fields(value, {"kind", "digest"}, label=label)
     _sha256(descriptor.get("digest"), label=f"{label}.digest", prefix=True)
@@ -790,6 +795,7 @@ def _validate_command_argument(
     program: str,
     criteria: dict[str, dict[str, Any]],
     attempted_criterion_ids: set[str],
+    node_count: int,
 ) -> dict[str, Any]:
     label = f"run commands[{command_index}].arguments[{index}]"
     if not isinstance(value, dict):
@@ -837,6 +843,7 @@ def _validate_command_argument(
         descriptor.get("reference"),
         label=f"{label}.reference",
         allowed_kinds=allowed_reference_kinds,
+        node_count=node_count,
     )
     return descriptor
 
@@ -875,6 +882,7 @@ def _validate_command(
     index: int,
     criteria: dict[str, dict[str, Any]],
     attempted_criterion_ids: set[str],
+    node_count: int,
 ) -> dict[str, Any]:
     command = _require_fields(
         value,
@@ -907,6 +915,7 @@ def _validate_command(
             program=program,
             criteria=criteria,
             attempted_criterion_ids=attempted_criterion_ids,
+            node_count=node_count,
         )
         if isinstance(argument, dict) and argument.get("kind") == "operation":
             operations += 1
@@ -1500,6 +1509,7 @@ def validate_validation_run_record(
             index=index,
             criteria=criteria,
             attempted_criterion_ids=set(attempted_criterion_ids),
+            node_count=release["supported_hardware_geometry"]["node_count"],
         )
     run_artifact_ids = _sorted_unique_sha256(
         record.get("evidence_artifact_ids"), label="validation run evidence_artifact_ids"
@@ -1892,7 +1902,24 @@ def evaluate_criterion_observation(
     predecessor_metrics: dict[tuple[str, str], str] | None = None,
 ) -> tuple[str, str]:
     """Derive a disposition and reason from every frozen requirement."""
+    criterion_id = criterion["criterion_id"]
+    requirements = observation["contract_requirements"]
+    nested_requirement_outcomes = [
+        _evaluate_context_requirement(
+            requirements["context"],
+            _context_requirement_for_criterion(contract, criterion_id),
+        ),
+        _evaluate_soak_requirement(
+            requirements["soak"],
+            _soak_requirement_for_criterion(contract, criterion_id),
+        ),
+    ]
     if observation["completion"] == "inconclusive":
+        # Context and soak carry their own completion state.  A completed
+        # failure there is conclusive even if the outer measurement is not.
+        for disposition, reason in nested_requirement_outcomes:
+            if disposition == "fail":
+                return disposition, reason
         return "inconclusive", "criterion-evidence-inconclusive"
     metrics = {
         (item["metric"], item["unit"]): item["value"]
@@ -1906,17 +1933,8 @@ def evaluate_criterion_observation(
     )
     if not passes:
         return "fail", "threshold-not-satisfied"
-    criterion_id = criterion["criterion_id"]
-    requirements = observation["contract_requirements"]
     supplemental = [
-        _evaluate_context_requirement(
-            requirements["context"],
-            _context_requirement_for_criterion(contract, criterion_id),
-        ),
-        _evaluate_soak_requirement(
-            requirements["soak"],
-            _soak_requirement_for_criterion(contract, criterion_id),
-        ),
+        *nested_requirement_outcomes,
         _evaluate_relative_performance(
             predecessor_metrics,
             _relative_requirement_for_criterion(contract, criterion),

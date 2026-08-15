@@ -167,16 +167,19 @@ evidence lineage needed to validate them.
 Observed runtime compatibility and architecture/geometry are checked
 structurally against the release envelope. This can reject an incompatible run
 but cannot prove physical behavior; serving-integration and physical-geometry
-criteria need physical DGX evidence. Command descriptors use a closed schema:
-an allowlisted repository program, a `sha256:<digest>` program-version
+criteria need physical DGX evidence. Canonical compatibility ranges compare
+the numeric core of exact observed deployed versions; zero-padded components
+and vendor suffixes remain preserved evidence. Command descriptors use a closed
+schema: an allowlisted repository program, a `sha256:<digest>` program-version
 identity, exactly one allowed operation, closed repository resources, typed
 criterion references, typed protected/rank references for site-bearing
-options, `environment[]` references without values or credential-shaped names,
-and the generic
-repository-root working directory. `observed_environment.cluster` and
+options with ranks bounded by the release geometry, `environment[]` references
+without values or credential-shaped names, and the generic `repository-root`
+working directory. `observed_environment.cluster` and
 per-rank compatibility observations must match the release structurally, and a
 soak observation's `started_at`, `ended_at`, and `duration_seconds` must agree
-exactly. A later
+exactly. A completed nested context or soak failure remains conclusive even
+when the enclosing criterion is inconclusive. A later
 decision points backward to prior decision IDs only with strictly later
 chronology and an acyclic relationship; readers project the older one as
 `Superseded` without rewriting it. `predecessor_evidence_registry` and
@@ -189,9 +192,11 @@ and current schema-1 release materials described below. Do not create a
 `Validated` claim merely by calling a builder or copying a synthetic document.
 
 Structural privacy checks are fail-closed for recognized credential, path,
-endpoint, and topology forms, but they are not a complete privacy proof. The
-future trusted capture path must compute program digests from the checked-out
-files, and publication must still run the repository privacy audit and reviewer
+explicit URI, private/site endpoint, and topology forms, including
+credential-bearing extensible field names. Ordinary dotted public identifiers
+remain valid, but these checks are not a complete privacy proof. The future
+trusted capture path must compute program digests from the checked-out files,
+and publication must still run the repository privacy audit and reviewer
 inspection for unknown site codenames.
 
 FP-equivalent output does not pass strict same-boot reproducibility. If no

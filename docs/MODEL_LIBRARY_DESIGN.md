@@ -336,10 +336,15 @@ it does not establish physical behavior. Serving-integration and
 physical-geometry criteria still require physical DGX evidence. Operator
 command evidence is closed and typed: allowlisted program, SHA-256-shaped
 program identity, program-specific operation, known repository resource,
-criterion reference, or protected/rank-relative site reference. Recursive
-privacy checks reject recognized secret and deployment-only values in releases
-and contracts. Trusted capture must verify program digests, and publication
-privacy review remains mandatory because structural validation cannot identify
+criterion reference, or protected/rank-relative site reference bounded by the
+release geometry. Recursive privacy checks reject recognized secret and
+deployment-only values plus credential-bearing extensible keys while
+preserving ordinary dotted public identifiers. Canonical compatibility ranges
+compare the numeric core of exact deployed versions without discarding the raw
+zero-padded or vendor-suffixed evidence. Completed nested context or soak
+failures cannot be softened by an outer inconclusive label. Trusted capture
+must verify program digests, and publication privacy review remains mandatory
+because structural validation cannot identify
 every private codename. Supersession requires later chronology and an acyclic
 decision relationship.
 

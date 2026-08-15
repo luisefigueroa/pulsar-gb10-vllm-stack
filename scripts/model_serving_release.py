@@ -77,6 +77,10 @@ NUMERIC_VERSION_RE = re.compile(rf"^{NUMERIC_VERSION_PATTERN}$")
 NUMERIC_VERSION_RANGE_RE = re.compile(
     rf"^>=({NUMERIC_VERSION_PATTERN}),<({NUMERIC_VERSION_PATTERN})$"
 )
+DEPLOYED_VERSION_RE = re.compile(
+    r"^(?P<numeric>[0-9]+(?:\.[0-9]+)*)"
+    r"(?:[-+~][A-Za-z0-9][A-Za-z0-9.+~_-]*)?$"
+)
 HIGH_RISK_SECRET_VALUE_RE = re.compile(
     r"(?i)(?:"
     r"\b(?:bearer|basic)\s+\S+|"
@@ -86,8 +90,11 @@ HIGH_RISK_SECRET_VALUE_RE = re.compile(
     r"[:=]\s*[\"']?(?:password|passwd|passphrase|secret|token|"
     r"credential|authorization|api[_-]?key|access[_-]?key|"
     r"private[_-]?key)(?:$|[^A-Za-z0-9])|"
-    r"(?:sk-|hf_|gh[opusr]_|github_pat_|AKIA|AIza)"
-    r"[A-Za-z0-9_-]{8,}|"
+    r"sk-[A-Za-z0-9_-]{20,}|"
+    r"hf_[A-Za-z0-9]{30,64}(?![A-Za-z0-9_-])|"
+    r"(?:gh[opusr]_|github_pat_)[A-Za-z0-9_]{20,}|"
+    r"(?:AKIA|ASIA)[A-Z0-9]{16}|"
+    r"AIza[A-Za-z0-9_-]{20,}|"
     r"(?:^|[^A-Za-z0-9])eyJ[A-Za-z0-9_-]+\."
     r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|[^A-Za-z0-9])"
     r")"
@@ -112,8 +119,7 @@ PRIVATE_ENDPOINT_VALUE_RE = re.compile(
     r"(?i)(?:^|[\s=,:;\"'(\[])"
     r"(?:localhost|(?:node|host|topology|site|lab)[-_.][A-Za-z0-9-]+|"
     r"[A-Za-z][A-Za-z0-9_-]*:[0-9]{1,5}|"
-    r"[A-Za-z0-9-]+\.(?:local|lan|internal)|"
-    r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?::[0-9]{1,5})?)"
+    r"[A-Za-z0-9-]+\.(?:local|lan|internal))"
     r"(?:$|[\s,;\"')\]}])"
 )
 PRIVATE_VALUE_ASSIGNMENT_RE = re.compile(
@@ -187,6 +193,25 @@ PRIVATE_FIELD_NAMES = {
     "topology_id",
     "topology_ids",
 }
+CREDENTIAL_FIELD_NAME_SUFFIXES = {
+    "ACCESSKEY",
+    "ACCESSTOKEN",
+    "APIKEY",
+    "AUTHORIZATION",
+    "AUTHTOKEN",
+    "BEARER",
+    "BEARERTOKEN",
+    "CLIENTSECRET",
+    "CREDENTIAL",
+    "CREDENTIALS",
+    "GITHUBTOKEN",
+    "HFTOKEN",
+    "PASSWORD",
+    "PASSPHRASE",
+    "PASSWD",
+    "PRIVATEKEY",
+    "SECRET",
+}
 
 
 class ModelServingReleaseError(ValueError):
@@ -238,6 +263,20 @@ def parse_numeric_version(
     return tuple(int(component) for component in value.split("."))
 
 
+def parse_deployed_version(
+    value: Any,
+    *,
+    label: str = "deployed version",
+) -> tuple[int, ...]:
+    """Parse an observed vendor version while preserving its raw evidence value."""
+    if not isinstance(value, str):
+        fail(f"{label} must be a dotted numeric version with optional vendor suffix")
+    match = DEPLOYED_VERSION_RE.fullmatch(value)
+    if match is None:
+        fail(f"{label} must be a dotted numeric version with optional vendor suffix")
+    return tuple(int(component) for component in match.group("numeric").split("."))
+
+
 def _compare_numeric_versions(
     left: tuple[int, ...],
     right: tuple[int, ...],
@@ -273,7 +312,7 @@ def numeric_version_in_range(
     label: str = "numeric version",
 ) -> bool:
     """Return whether an observed dotted numeric version is in a frozen range."""
-    observed = parse_numeric_version(observed_version, label=label)
+    observed = parse_deployed_version(observed_version, label=label)
     lower, upper = parse_numeric_version_range(
         version_range,
         label=f"{label} range",
@@ -414,6 +453,14 @@ def _validate_public_string_value(value: str, *, label: str) -> str:
     return value
 
 
+def _is_credential_field_name(value: str) -> bool:
+    normalized = re.sub(r"[^A-Za-z0-9]", "", value).upper()
+    return any(
+        normalized == marker or normalized.endswith(marker)
+        for marker in CREDENTIAL_FIELD_NAME_SUFFIXES
+    )
+
+
 def _validate_public_json(value: Any, *, label: str) -> None:
     if value is None or isinstance(value, (bool, int)):
         return
@@ -431,6 +478,8 @@ def _validate_public_json(value: Any, *, label: str) -> None:
             if not isinstance(key, str) or not key or "\x00" in key:
                 fail(f"{label} has an invalid object key")
             _validate_public_string_value(key, label=f"{label} object key")
+            if _is_credential_field_name(key):
+                fail(f"{label} contains credential-bearing field {key!r}")
             if key.lower() in PRIVATE_FIELD_NAMES:
                 fail(f"{label} contains private field {key!r}")
             _validate_public_json(item, label=f"{label}.{key}")

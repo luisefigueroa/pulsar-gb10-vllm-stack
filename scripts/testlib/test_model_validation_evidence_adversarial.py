@@ -429,6 +429,32 @@ class ModelValidationEvidenceAdversarialTests(unittest.TestCase):
         )
         self._validate_rehashed_run(record)
 
+    def test_rank_references_are_bounded_by_release_geometry(self) -> None:
+        record = copy.deepcopy(self.runs[0])
+        record["commands"][0]["arguments"].append(
+            {
+                "kind": "site-option",
+                "option": "--rank",
+                "reference": {
+                    "kind": "rank-reference",
+                    "rank": self.release["supported_hardware_geometry"][
+                        "node_count"
+                    ],
+                },
+            }
+        )
+        record["run_record_id"] = evidence.validation_run_record_id(record)
+        with self.assertRaisesRegex(
+            evidence.ModelValidationEvidenceError,
+            "outside the release geometry",
+        ):
+            evidence.validate_validation_run_record(
+                record,
+                release=self.release,
+                contract=self.contract,
+                evidence_artifacts=self.artifacts,
+            )
+
     def test_secret_environment_names_cannot_be_mislabeled(self) -> None:
         record = copy.deepcopy(self.runs[0])
         record["commands"][0]["environment"] = [
@@ -449,7 +475,6 @@ class ModelValidationEvidenceAdversarialTests(unittest.TestCase):
     def test_environment_names_reject_embedded_credential_values(self) -> None:
         realistic_hugging_face_token = "hf_" + ("A1b2C3d4" * 4) + "Z9"
         cases = (
-            ("fake-shaped", "hf_FAKE00000000", "non-secret-reference"),
             (
                 "realistic-shaped",
                 realistic_hugging_face_token,
@@ -489,6 +514,7 @@ class ModelValidationEvidenceAdversarialTests(unittest.TestCase):
             ("VLLM_API_KEY", "secret-reference"),
             ("HF_TOKEN", "secret-reference"),
             ("PYTHONHASHSEED", "non-secret-reference"),
+            ("CAPTURE_hf_transfer", "non-secret-reference"),
         )
         for name, kind in cases:
             with self.subTest(name=name):
@@ -646,6 +672,56 @@ class ModelValidationEvidenceAdversarialTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_artifacts=self.artifacts,
             )
+
+    def test_completed_requirement_failures_dominate_outer_inconclusive(self) -> None:
+        cases = (
+            (
+                "stability-soak",
+                {
+                    "metrics": [
+                        {
+                            "metric": "request_error_count",
+                            "value": "1",
+                            "unit": "count",
+                        }
+                    ],
+                    "soak_request_errors": 1,
+                },
+                "soak-error-budget-not-satisfied",
+            ),
+            (
+                "accuracy-gsm8k",
+                {"context_minimum_tokens": 1},
+                "context-minimum-not-satisfied",
+            ),
+        )
+        for criterion_id, overrides, expected_reason in cases:
+            with self.subTest(criterion_id=criterion_id):
+                inconclusive = fixture.build_run_for_criterion(
+                    criterion_id,
+                    release=self.release,
+                    contract=self.contract,
+                    artifacts=self.artifacts,
+                    observation_completion="inconclusive",
+                    attempt_completion="inconclusive",
+                    attempt_id=f"attempt-{criterion_id}-nested-failure",
+                    **overrides,
+                )
+                records = self._replace_criterion_records(
+                    criterion_id,
+                    [inconclusive],
+                )
+                decision = self._decision_for_records(
+                    records,
+                    status="tested-criteria-not-met",
+                )
+                result = next(
+                    item
+                    for item in decision["criterion_results"]
+                    if item["criterion_id"] == criterion_id
+                )
+                self.assertEqual(result["disposition"], "fail")
+                self.assertEqual(result["reason"], expected_reason)
 
     def test_every_observation_is_automatically_adjudicated(self) -> None:
         passing = fixture.build_run_for_criterion(

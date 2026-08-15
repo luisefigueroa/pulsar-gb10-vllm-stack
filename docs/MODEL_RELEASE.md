@@ -73,8 +73,10 @@ hashed into a release descriptor. Every persisted free-form release/contract
 string without a stricter closed grammar—including artifact identifiers,
 criterion/workload/protocol/threshold strings, environment values, remaining
 engine and speculative-decoding arguments, and extensible parameter keys and
-values—is screened for credential patterns, absolute site paths, endpoints,
-environment/path references, and deployment-only assignments.
+values—is screened for recognized credential patterns, absolute site paths,
+explicit URIs, private/site endpoint forms, environment/path references, and
+deployment-only assignments. Credential-bearing extensible keys fail even when
+their value is opaque; ordinary dotted public identifiers remain valid.
 TP/PP, GPU memory utilization, speculative decoding, artifact use, and access
 contract are structured fields and cannot be repeated ambiguously in the
 remaining ordered engine arguments. The
@@ -129,11 +131,15 @@ status derivation, and immutable supersession. Every declared attempt is
 accounted for, and every applicable observation is included automatically;
 explicit evidence-backed exclusions and pass/fail/inconclusive conflict rules
 are validated. Runtime compatibility and architecture/geometry are checked
-structurally. Commands use an allowlisted repository program, a
+structurally. Canonical compatibility ranges compare the dotted numeric core of
+exact observed versions while preserving deployed zero-padding and vendor
+suffixes in the run record. Commands use an allowlisted repository program, a
 `sha256:<digest>` version identity, exactly one program-specific closed
 operation, closed repository resources, typed criterion references, typed
-`--host`/`--rank`/`--url` site references, and value-free classified
-environment references. Soak timestamps must
+`--host`/`--rank`/`--url` site references with rank references bounded by the
+release geometry, and value-free classified environment references. A
+completed nested context or soak failure remains conclusive even if the outer
+criterion is inconclusive. Soak timestamps must
 exactly agree with `duration_seconds`, and supersession must be chronologically
 later and acyclic. A later decision stores its normal reviewed outcome and points
 backward; readers project the older decision as `Superseded` without changing

@@ -220,7 +220,9 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
   disagrees with the evidence, and projects supersession without rewriting the
   earlier decision. Conflicts adjudicate as follows: pass+fail is
   inconclusive, pass+inconclusive is inconclusive, fail+inconclusive is fail,
-  and all-pass is pass.
+  and all-pass is pass. A completed nested context or soak failure remains a
+  conclusive failure even when its enclosing criterion observation is marked
+  inconclusive.
   Every run attempt hash-binds a sorted `attempted_criterion_ids` declaration.
   A post-barrier non-preparation attempt must name at least one scope-compatible
   frozen criterion, and its observations must cover that set exactly;
@@ -231,12 +233,17 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
   decision, and run; the relevant predecessor criterion must pass, but the
   predecessor release need not be globally `Validated`. Runtime compatibility
   and architecture/geometry checks are structural only; physical behavior
-  still requires physical evidence. Supersession must be later in time and
-  acyclic. Release/contract free-form values are screened recursively for
-  credentials and deployment-only data. Command evidence uses allowlisted
+  still requires physical evidence. Canonical compatibility ranges compare
+  the numeric core of exact observed deployed versions, preserving accepted
+  zero-padded components and vendor suffixes in run evidence. Supersession must
+  be later in time and acyclic. Release/contract free-form values are screened
+  recursively for recognized credentials and deployment-only data while
+  ordinary dotted public identifiers remain valid; credential-bearing
+  extensible field names are rejected. Command evidence uses allowlisted
   repository programs, SHA-256-shaped program-version identities, closed
   operations/resources, typed criterion references, and typed site-option
-  references; it must still pass trusted publication privacy review. Pure
+  references whose rank values are bounded by the release geometry; it must
+  still pass trusted publication privacy review. Pure
   schema validation does not prove that a supplied digest names the checked-out
   executable or that no unknown private identifier escaped structural checks.
   These builders do not capture or persist evidence, prove that review occurred,

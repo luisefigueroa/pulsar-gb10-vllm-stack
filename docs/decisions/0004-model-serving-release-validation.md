@@ -67,10 +67,12 @@ Runtime/image identity includes the exact image digest and the compatibility
 envelope needed to run it safely, such as supported driver ABI or range,
 container-runtime capabilities, and required kernel features. A run record
 captures exact observed host versions. Driver, container-runtime, and kernel
-version envelopes use canonical numeric `>=LOW,<HIGH` ranges; architecture and
-required capabilities/features are exact contract fields. An in-envelope host
-patch does not create a new release; changing the image digest or compatibility
-envelope does.
+version envelopes use canonical numeric `>=LOW,<HIGH` ranges. Exact observed
+versions may retain deployed zero-padded components and a vendor suffix (for
+example a distro kernel build); comparison uses their dotted numeric core.
+Architecture and required capabilities/features are exact contract fields. An
+in-envelope host patch does not create a new release; changing the image digest
+or compatibility envelope does.
 
 Supported hardware geometry is reusable and privacy-safe. Exact hostnames,
 addresses, serial numbers, node IDs, and durable topology identifiers belong
@@ -241,6 +243,9 @@ Multiple included observations for one criterion are adjudicated as follows:
 A conclusive failure is not softened merely because another attempt was
 inconclusive; conflicting conclusive pass/fail observations instead require
 adjudication and remain inconclusive until new evidence resolves the conflict.
+A completed nested context or soak observation is independently conclusive: if
+it violates its frozen requirement, an `inconclusive` enclosing criterion label
+cannot downgrade that failure.
 After criterion-level aggregation, any failed criterion produces
 `Tested—criteria not met`, otherwise any inconclusive criterion produces
 `Tested—inconclusive`, any unevaluated requirement produces
@@ -285,16 +290,19 @@ records a `sha256:<digest>` program-version identity, contains exactly one
 program-specific closed operation, and may add only closed repository-resource
 references, attempted-criterion references, or typed site options. A site
 option embeds a rank reference or protected content-addressed site reference,
-never a raw host, URL, or address. Structured `environment[]` entries contain a
-classification and variable name but never a value; the working-directory
-marker is always `repository-root`.
+never a raw host, URL, or address. Rank references must name a rank in the
+release geometry. Structured `environment[]` entries contain a classification
+and variable name but never a value; the working-directory marker is always
+`repository-root`.
 
 Every persisted free-form release/contract string that lacks a stricter closed
-grammar rejects recognized credential values, absolute site paths, endpoints,
-deployment-variable references, and private topology assignments. Command
-environment references additionally reject credential-shaped names.
-Provenance/security is
-review-derived and therefore has one exact canonical criterion template;
+grammar rejects recognized credential values, absolute site paths, explicit
+URIs, private/site endpoint forms, deployment-variable references, and private
+topology assignments. Ordinary dotted public identifiers remain valid, while
+credential-bearing extensible field names are rejected independently of their
+values. Command environment references additionally reject credential-shaped
+names. Provenance/security is review-derived and therefore has one exact
+canonical criterion template;
 unimplemented extra thresholds or parameters are invalid. These are structural
 controls, not a proof against every unknown private codename. Trusted capture
 must calculate program digests from the selected checkout, and publication

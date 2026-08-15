@@ -801,6 +801,34 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 evidence_artifacts=self.artifacts,
             )
 
+    def test_documented_vendor_runtime_versions_are_accepted(self) -> None:
+        release = release_fixture.build_release(
+            runtime=release_fixture.build_runtime(
+                driver_abi_range=">=580,<590",
+                container_runtime_range=">=29,<30",
+                kernel_range=">=6.17,<6.18",
+            )
+        )
+        contract = release_fixture.build_contract(release=release)
+        record = fixture.build_run_for_criterion(
+            "latency-ttft",
+            release=release,
+            contract=contract,
+            artifacts=self.artifacts,
+            driver_abi_version="580.173.02",
+            container_runtime_version="29.2.1",
+            kernel_version="6.17.0-1026-nvidia",
+        )
+        self.assertEqual(
+            evidence.validate_validation_run_record(
+                record,
+                release=release,
+                contract=contract,
+                evidence_artifacts=self.artifacts,
+            ),
+            record,
+        )
+
     def test_observed_image_or_geometry_drift_fails_closed(self) -> None:
         for field, value in (
             ("image_digest", "sha256:" + ("1" * 64)),

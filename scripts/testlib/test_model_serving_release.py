@@ -17,6 +17,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts import model_identity, model_serving_release  # noqa: E402
 from scripts.testlib import model_serving_release_fixture as fixture  # noqa: E402
 
+HF_TOKEN_SHAPED_VALUE = "hf_" + ("A1b2C3d4" * 4) + "Z9"
+
 
 def rebuild_recipe(
     recipe: dict[str, Any],
@@ -218,6 +220,34 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                         )
                     )
 
+    def test_deployed_vendor_versions_compare_by_numeric_core(self) -> None:
+        cases = (
+            ("580.173.02", ">=580,<590", True),
+            ("6.17.0-1026-nvidia", ">=6.17,<6.18", True),
+            ("29.2.1-ce", ">=29,<30", True),
+            ("6.18.0-1000-nvidia", ">=6.17,<6.18", False),
+        )
+        for observed, version_range, expected in cases:
+            with self.subTest(observed=observed, version_range=version_range):
+                self.assertEqual(
+                    model_serving_release.numeric_version_in_range(
+                        observed,
+                        version_range,
+                    ),
+                    expected,
+                )
+
+        for malformed in ("6..17-vendor", "6.17-", "v6.17.0", " 6.17.0"):
+            with self.subTest(malformed=malformed):
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "dotted numeric version with optional vendor suffix",
+                ):
+                    model_serving_release.numeric_version_in_range(
+                        malformed,
+                        ">=6.17,<6.18",
+                    )
+
     def test_numeric_versions_and_ranges_reject_noncanonical_forms(self) -> None:
         for observed in ("", "06.11", "6..11", "6.11-rc1", " 6.11"):
             with self.subTest(observed=observed):
@@ -310,7 +340,9 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
         recipe = self.release["serving_recipe"]
         mutations = (
             {
-                "container_env": ["PUBLIC_SETTING=hf_live_secret"],
+                "container_env": [
+                    f"PUBLIC_SETTING={HF_TOKEN_SHAPED_VALUE}"
+                ],
             },
             {
                 "engine_args": ["--config", "/home/operator/runtime.json"],
@@ -768,12 +800,26 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                         release_criteria=criteria,
                     )
 
+    def test_extensible_parameters_reject_credential_bearing_keys(self) -> None:
+        for field in ("api_key", "serviceApiKey", "hf_token", "client_secret"):
+            with self.subTest(field=field):
+                criteria = fixture.criteria()
+                criteria[0]["protocol"]["parameters"][field] = "plain-old-value"
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "credential-bearing field",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                    )
+
     def test_extensible_parameter_values_reject_private_data(self) -> None:
         private_values: tuple[Any, ...] = (
             "/home/operator/private-result.json",
             "node-a",
             "endpoint=https://lab.internal:8000",
-            "hf_live_secret",
+            HF_TOKEN_SHAPED_VALUE,
             {"nested": ["topology_id=site-topology"]},
         )
         for private_value in private_values:
@@ -788,18 +834,6 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                         release=self.release,
                         release_criteria=criteria,
                     )
-
-        criteria = fixture.criteria()
-        criteria[0]["protocol"]["parameters"]["hf_FAKE00000000"] = "public"
-        with self.assertRaisesRegex(
-            model_serving_release.ModelServingReleaseError,
-            "private, secret, or deployment-only",
-        ):
-            fixture.build_contract(
-                release=self.release,
-                release_criteria=criteria,
-            )
-
     def test_not_applicable_reasons_reject_private_values(self) -> None:
         release_criteria = self.contract["release_criteria"]
         for requirement in ("context_requirement", "soak_requirement"):
@@ -808,7 +842,7 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                 soak = copy.deepcopy(release_criteria["soak_requirement"])
                 replacement = {
                     "status": "not-applicable",
-                    "reason": "hf_FAKE00000000",
+                    "reason": HF_TOKEN_SHAPED_VALUE,
                 }
                 if requirement == "context_requirement":
                     context = replacement
@@ -849,6 +883,34 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
             "Fixture/Public-Model",
         )
 
+    def test_dotted_and_hf_prefixed_public_identifiers_are_preserved(self) -> None:
+        criteria = fixture.criteria()
+        accuracy = next(
+            item for item in criteria if item["dimension"] == "accuracy"
+        )
+        accuracy["workload"]["name"] = "accuracy.mmlu"
+        accuracy["protocol"]["name"] = "torch.distributed"
+        accuracy["protocol"]["parameters"]["hf_transfer_mode"] = (
+            "hf_public_adapter"
+        )
+        accuracy["thresholds"][0]["metric"] = "tokens.per.second"
+        contract = fixture.build_contract(
+            release=self.release,
+            release_criteria=criteria,
+        )
+        observed = next(
+            item
+            for item in contract["release_criteria"]["criteria"]
+            if item["criterion_id"] == accuracy["criterion_id"]
+        )
+        self.assertEqual(observed["workload"]["name"], "accuracy.mmlu")
+        self.assertEqual(observed["protocol"]["name"], "torch.distributed")
+        self.assertEqual(
+            observed["protocol"]["parameters"]["hf_transfer_mode"],
+            "hf_public_adapter",
+        )
+        self.assertEqual(observed["thresholds"][0]["metric"], "tokens.per.second")
+
     def test_open_contract_strings_reject_secret_like_values(self) -> None:
         mutations = ("criterion_id", "workload_name", "threshold_value")
         for mutation in mutations:
@@ -858,11 +920,11 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                     item for item in criteria if item["dimension"] == "throughput"
                 )
                 if mutation == "criterion_id":
-                    throughput["criterion_id"] = "hf_FAKE00000000"
+                    throughput["criterion_id"] = HF_TOKEN_SHAPED_VALUE
                 elif mutation == "workload_name":
-                    throughput["workload"]["name"] = "hf_FAKE00000000"
+                    throughput["workload"]["name"] = HF_TOKEN_SHAPED_VALUE
                 else:
-                    throughput["thresholds"][0]["value"] = "hf_FAKE00000000"
+                    throughput["thresholds"][0]["value"] = HF_TOKEN_SHAPED_VALUE
                 with self.assertRaisesRegex(
                     model_serving_release.ModelServingReleaseError,
                     "private, secret, or deployment-only",
