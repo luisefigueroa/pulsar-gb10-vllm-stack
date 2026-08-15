@@ -196,6 +196,8 @@ async def main() -> int:
     a = ap.parse_args()
     if not a.concurrency or any(c <= 0 for c in a.concurrency):
         ap.error("--concurrency values must all be positive")
+    if len(a.concurrency) != len(set(a.concurrency)):
+        ap.error("--concurrency values must be unique")
     if a.num_requests is not None and a.num_requests <= 0:
         ap.error("--num-requests must be positive")
     if a.num_requests is not None and a.num_requests < max(a.concurrency):

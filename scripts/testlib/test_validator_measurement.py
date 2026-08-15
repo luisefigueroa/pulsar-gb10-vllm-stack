@@ -301,6 +301,29 @@ class ValidatorMeasurementTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("at least the largest --concurrency", stderr.getvalue())
 
+    def test_bench_rejects_duplicate_concurrency_before_network_work(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "bench_serve.py",
+                "--model",
+                "fixture",
+                "--concurrency",
+                "1",
+                "1",
+            ],
+        ), mock.patch.object(
+            bench, "run_level", new_callable=mock.AsyncMock
+        ) as run_level, contextlib.redirect_stderr(stderr), self.assertRaises(
+            SystemExit
+        ) as raised:
+            asyncio.run(bench.main())
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--concurrency values must be unique", stderr.getvalue())
+        run_level.assert_not_awaited()
+
     def test_semantic_count_and_range_errors(self) -> None:
         with self.assertRaises(measurement.ValidatorMeasurementError):
             measurement.validate_measurement(
