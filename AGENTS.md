@@ -80,7 +80,17 @@ language for new features without an explicit decision.
   `experiments/release-candidates/` (or an explicit path outside the repo); it
   must not write trust roots, edit profiles, or change validation status.
   `scripts/model_serving_release.py` separately owns ADR 0004 release and
-  contract schema version 1. `scripts/model_validation_evidence.py` owns the
+  contract schema version 1. `scripts/model-serving-release-plan.sh` may source
+  a profile and assemble/verify only explicitly unreviewed source-neutral
+  release/contract candidates under gitignored
+  `experiments/model-onboarding/` (or an explicit path outside the repo). It
+  must require a complete manifest plus explicit runtime/hardware and criteria
+  inputs and explicit one-to-one bindings for every supplied additional
+  behavior artifact, and strip local source paths. It must not acquire bytes,
+  write the tracked registry, issue a decision, change status, or claim
+  physical behavior. A local profile-reference mapping may normalize an exact argument
+  value to a bound public artifact key, but the mapping itself must never be
+  persisted. `scripts/model_validation_evidence.py` owns the
   content-addressed evidence-artifact, immutable run-record, validation-bundle,
   and reviewed-decision schema version 1. Keep both modules pure and
   non-issuing. `scripts/model_serving_release_registry.py` owns read-only
@@ -229,6 +239,11 @@ unless that authority is explicitly part of the approved plan.
   [ADR 0004](docs/decisions/0004-model-serving-release-validation.md). Any
   change to one of those four parts creates a new release; validation does not
   transfer across release IDs.
+- Its primary artifact identity is source-neutral: use `huggingface-snapshot`
+  for an exact Hugging Face commit and full manifest, or
+  `content-addressed-model` for another complete model tree with a public
+  logical ID, public revision, and full manifest. Never persist a local source
+  path. A generic `digest-artifact` cannot be the primary model.
 - The target decision statuses are `Untested`, `Testing incomplete`,
   `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
   `Superseded`. `Validated` requires every frozen release-specific criterion
@@ -284,7 +299,9 @@ unless that authority is explicitly part of the approved plan.
   schema validation does not prove that a supplied digest names the checked-out
   executable or that no unknown private identifier escaped structural checks.
   These builders do not capture evidence, issue a trusted decision, or launch
-  a release. Local ADR 0004 evidence-capture candidate persistence
+  a release. Local source-neutral release-plan candidates can build and verify
+  unreviewed release/contract objects without status or issuance authority.
+  Local ADR 0004 evidence-capture candidate persistence
   can plan, capture, assemble, and verify unreviewed candidates without
   writing the tracked registry or launching a release. Read-only trusted
   persistence can verify exact reviewed objects under
@@ -363,7 +380,8 @@ this work; the skill is procedural and does not outrank these sources.
   those objects under `models/model-serving-releases/`; that store is
   currently empty. Caller-supplied predecessor and decision registries remain
   validation input, not trusted persistence. Local evidence-capture candidate
-  persistence is implemented and remains unreviewed. Read-only
+  persistence and source-neutral release-plan candidate persistence are
+  implemented and remain unreviewed. Read-only
   catalog/operator projection is implemented for an explicitly bound release;
   trusted decision issuance/publication remains pending. No current profile is
   bound and the tracked store is empty, so current projections are neutral.

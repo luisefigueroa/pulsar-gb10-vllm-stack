@@ -19,6 +19,9 @@ decision statuses `Untested`, `Testing incomplete`,
 `STATUS=tested*`, schema-1 bundles, and PASS/FAIL gate history. None of those
 records is automatically relabeled `Validated`. Release-descriptor and frozen
 Validation Contract schema version 1 are implemented as pure Python contracts.
+Their primary artifact is source-neutral, and a separate maintainer planner
+can persist unreviewed release/contract candidates from a complete manifest,
+explicit runtime/hardware envelope, and frozen criteria.
 Immutable run-record, new evidence-bundle, reviewed-decision, independent
 status-derivation, and supersession schema version 1 are also implemented.
 Their pure validators include frozen context, soak, and applicable
@@ -67,6 +70,12 @@ runtime-access recipe mismatch, launch independence, JSON separation from
 legacy `STATUS`, and 48-column human output. These checks do not issue a
 decision or demonstrate physical model behavior.
 
+The source-neutral release-planning tests cover Hugging Face and
+content-addressed primary identity, complete-manifest binding, image and
+geometry mismatch rejection, current-profile verification, tamper/file-set
+rejection, and output boundaries. They create no reviewed object, launch no
+model, and add no physical, model-qualification, or status evidence.
+
 ### Qualification scopes
 
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
@@ -90,6 +99,7 @@ their current scope and interpretation.
 | Policy | Status | Evidence / limitation |
 |---|---|---|
 | Model Serving Release and legacy profile status inform operators but do not authorize serving | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-status-gate.sh`, the model catalog scope checks, `scripts/selftest-wizard-switch.sh`, `scripts/selftest-wizard-model-library.sh`, and model-library identity tests prove that all status labels remain available, visible, and launchable with respect to status; a profile labeled `Tested—criteria not met` is exercised through the guided replicated path. Legacy `--force` and `--allow-unvalidated` status overrides are compatibility no-ops. Exact identity mismatches and concrete recipe, runtime, topology, capacity, security, ownership, and lifecycle failures still fail closed in their owning paths. These deterministic tests do not launch a model, prove physical DGX behavior, change any release status, or add model-qualification evidence. |
+| Source-neutral unreviewed release planning | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/testlib/test_model_serving_release.py` and `scripts/testlib/test_model_serving_release_plan.py` prove deterministic complete-manifest identity, profile/runtime/geometry cross-checks, unreviewed output, and trusted-directory refusal. The planner does not acquire or inspect source bytes, capture results, issue a decision, or prove physical behavior. |
 
 ## Current ship set (read this first)
 

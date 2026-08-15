@@ -37,7 +37,7 @@
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
-| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only `scripts/model-release.sh` candidate assembly; and maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates |
+| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; and maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -105,6 +105,15 @@ Recognized secret, path, endpoint, and deployment-only values are rejected
 recursively rather than hashed into release or contract identity. Fixed-ID
 fixtures and fail-closed tests are under
 `scripts/testlib/`.
+
+Its primary-model identity is source-neutral: exact Hugging Face snapshots
+retain their repository and immutable commit, while any other complete model
+tree uses a public logical identity, public revision, and complete
+content-addressed manifest. Neither source path nor transfer mechanism enters
+the release ID. `scripts/model-serving-release-plan.sh` builds and verifies
+only unreviewed release/contract candidates from a sourced profile, full
+manifest, explicit runtime/hardware envelope, and frozen criteria. Its output
+has no status or issuance authority and cannot target the tracked registry.
 
 `scripts/model_validation_evidence.py` now owns the pure ADR 0004
 content-addressed evidence-artifact, immutable run-record, validation-bundle,
@@ -1129,3 +1138,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-15 | Implemented ADR 0004 evidence-capture candidate persistence: a local, unreviewed `plan` / `capture-run` / `assemble-bundle` / `verify-candidate` workflow that validates supplied release and contract objects, hashes checked-out allowlisted programs and evidence, publishes immutable candidates under a gitignored output boundary, and independently verifies them. It does not issue a decision, write the tracked registry, change catalog or profile status, or authorize serving. Validator adapters, trusted privacy review, and physical qualification remain pending. |
 | 2026-08-15 | **ADR 0004 advisory-status amendment:** validation labels communicate evidence and confidence but never authorize serving. The wizard and serving catalog expose every fitting serving profile with status and caveats, legacy `--force` status overrides are no-ops, and unsealed preparation no longer needs a validation-status override. Recommendation/default ordering remains evidence-backed; exact identity, recipe, topology, capacity, security, and lifecycle failures still block the concrete operation. This is a control-plane policy change only and creates no physical qualification claim. |
 | 2026-08-15 | Implemented read-only advisory Model Serving Release status projection. An optional reviewed `MODEL_SERVING_RELEASE_ID` profile binding selects a content-verified registry release; catalog JSON, human catalog, wizard, and `scripts/up.sh` display its one unambiguous reviewed effective status. No binding and no reviewed decision remain neutral, ambiguity/unavailability stays visible, and a different runtime model-access contract cannot inherit the decision. Legacy `STATUS` remains separate and continues to drive recommendation order. Projection never issues a decision, authorizes serving, or creates a physical claim; the empty registry and unbound current profiles therefore remain neutral. |
+| 2026-08-15 | Expanded the unissued ADR 0004 schema-1 primary identity to be source-neutral: exact Hugging Face snapshots and other complete content-addressed model trees are valid primary artifacts, while generic digest attachments are not. Added a maintainer-only planner that sources a profile and persists unreviewed release/contract candidates from a complete manifest, explicit runtime/hardware envelope, frozen criteria, and explicitly bound behavior artifacts. Local source references can normalize to public artifact keys but are never persisted. The planner cannot acquire bytes, write the tracked registry, issue a decision, assign status, or prove physical behavior. The registry is empty, so schema version 1 remains appropriate; legacy schema-1 seals/bundles are untouched. |

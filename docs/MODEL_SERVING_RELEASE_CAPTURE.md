@@ -15,6 +15,12 @@ never writes the tracked release registry.
 This is **ADR 0004 evidence-capture candidate persistence**. It is not
 catalog/operator status projection (ADR 0004 numbered item 3). It does not add validator-output adapters and
 makes no physical DGX claim.
+The separate source-neutral release planner documented in
+[MODEL_RELEASE.md](./MODEL_RELEASE.md) produces the release and contract values
+that a later adapter or supervised workflow can place into a capture spec. The
+current capture CLI does not ingest a planner directory directly; its spec
+still omits derived IDs as documented below. Planning does not make those
+objects reviewed and does not weaken this workflow's independent validation.
 
 ## System boundary
 
@@ -22,6 +28,7 @@ makes no physical DGX claim.
 |---|---|
 | Capture spec (this document) | Closed operator input: complete unreviewed release and contract objects, attempt fields, provenance/environment, command descriptors without program versions, criterion observations, and evidence-source metadata |
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns release-descriptor and frozen Validation Contract schema version 1 |
+| Release-plan candidates (`scripts/model-serving-release-plan.sh`) | Unreviewed upstream release/contract values; direct planner-to-capture adaptation is not implemented |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns evidence-artifact, run-record, evidence-bundle, and reviewed-decision schema version 1 |
 | Capture persistence (`scripts/model-serving-release-capture.sh`) | Plans, captures, assembles, and verifies unreviewed candidates under a gitignored output boundary |
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only verification of reviewed objects under `models/model-serving-releases/`; this tool never writes it |

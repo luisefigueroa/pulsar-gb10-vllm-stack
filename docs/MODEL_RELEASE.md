@@ -13,8 +13,10 @@ model accepted in
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). It assembles
 schema-1 validation-bundle and expected-seal candidates, whose IDs include
 evidence and issuance metadata. It does not create the separate ADR 0004
-release descriptor or frozen Validation Contract now implemented as pure
-schemas in `scripts/model_serving_release.py`; nor does it create the immutable
+release descriptor or frozen Validation Contract. Those now have a distinct
+unreviewed planner, `scripts/model-serving-release-plan.sh`, backed by the pure
+schemas in `scripts/model_serving_release.py`. The legacy service also does not
+create the immutable
 run records, new validation bundles, or reviewed decisions whose pure schemas
 are implemented in `scripts/model_validation_evidence.py`. Its bundle ID must
 not be presented as a Model Serving Release ID. Existing candidates and issued
@@ -36,6 +38,7 @@ enforcement:
 | Validation (`validate/`, `results/`) | Produces model-qualification evidence for exact model/image/profile/geometry inputs |
 | Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns pure release-descriptor and frozen Validation Contract schema version 1; performs no I/O, issuance, or status assignment |
+| ADR 0004 release-plan candidates (`scripts/model-serving-release-plan.sh`) | Sources a profile and assembles/verifies unreviewed source-neutral release and contract candidates from explicit manifest, runtime/hardware, and criteria inputs; never writes the tracked registry |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns pure evidence-artifact, immutable run-record, new validation-bundle, reviewed-decision, status-derivation, and supersession schema version 1; performs no capture, persistence, or trusted issuance |
 | ADR 0004 registry (`scripts/model-serving-release-registry.sh`) | Read-only load, verify, and inspect stored objects under `models/model-serving-releases/`; supplies advisory projection for explicitly bound profiles but does not capture evidence, issue a decision, authorize serving, or launch a release |
 | ADR 0004 evidence-capture candidates (`scripts/model-serving-release-capture.sh`) | Local unreviewed persistence of run records, content-addressed evidence, and assembled bundles; never writes the tracked registry or launches a release |
@@ -121,7 +124,8 @@ The fixed deterministic fixture and mutation suite are
 `scripts/testlib/test_model_serving_release.py`. They prove schema and hashing
 contracts only. They do not prove physical behavior, issue a release, create a
 reviewed decision, or alter the current serving path. Stage 1 still has no
-writer. Read-only verification of later stored objects uses
+trusted writer; its planner persists explicitly unreviewed candidates only.
+Read-only verification of later stored objects uses
 `scripts/model-serving-release-registry.sh`.
 
 `scripts/testlib/model_validation_evidence_fixture.py` and
@@ -172,6 +176,61 @@ Under ADR 0004, the future supervised operator workflow is the separate
 verification, launch, tests, and evidence capture—including explicitly selected
 Experimental subsystems—but it will not inherit trusted issuance, validation,
 or promotion authority from this maintainer tool.
+
+## Unreviewed ADR 0004 release planning
+
+Use the separate planner when the desired output is the ADR 0004 release and
+frozen contract rather than a legacy seal/bundle candidate:
+
+```text
+scripts/model-serving-release-plan.sh build <profile>
+    --artifact-manifest FILE
+    --runtime-envelope FILE
+    --criteria FILE
+    --model-access-contract local-verified-readonly|live-remote-readonly
+    [--artifact FILE --artifact-binding ARTIFACT_KEY=USE ...]
+    [--artifact-reference ARTIFACT_KEY=PROFILE_REFERENCE ...]
+    [--output-dir DIR] [--json]
+
+scripts/model-serving-release-plan.sh verify <profile>
+    --candidate-dir DIR
+    --model-access-contract local-verified-readonly|live-remote-readonly
+    [--artifact-reference ARTIFACT_KEY=PROFILE_REFERENCE ...]
+    [--json]
+```
+
+The artifact input is an existing complete
+`model-library-snapshot-manifest`, not a caller-supplied bare digest. For a
+Hugging Face profile, its public model ID and exact commit must match the
+profile. For an absolute-path/catalog profile, the manifest supplies a public
+logical artifact ID and revision; the source path is never persisted. The
+runtime-envelope document has kind
+`pulsar-model-serving-release-runtime-envelope`, schema version 1, and contains
+the complete `runtime_image_identity` and `supported_hardware_geometry`
+objects. The planner requires the image digest, node count, TP/PP, topology,
+and rail contract to match the sourced profile instead of inferring physical
+compatibility. The criteria document contains exactly `criteria`,
+`context_requirement`, `soak_requirement`, and `relative_performance`.
+Repeat `--artifact` with one schema-valid artifact object and
+`--artifact-binding` with its `ARTIFACT_KEY=USE` mapping for every separate
+draft, adapter, tokenizer override, model-code payload, or other
+behavior-affecting artifact. The planner requires a one-to-one binding and
+never infers omitted artifacts from opaque engine arguments. When a sourced
+profile argument names an artifact by a deployment-local path or source
+identifier, `--artifact-reference ARTIFACT_KEY=PROFILE_REFERENCE` replaces
+that exact value (including an exact JSON string value) with the public
+artifact key before release hashing. The mapping must match a profile argument,
+must be supplied again to `verify`, and is never persisted.
+
+Default output is the new, gitignored
+`experiments/model-onboarding/<profile>/<release-id>/` tree containing
+`candidate.json`, `release.json`, and `validation-contract.json`. The
+candidate is `unreviewed`, has authority `none`, privacy review `pending`, and
+promotion `not-authorized`. Existing output, tracked repository locations,
+and `models/` are refused. Verification checks content IDs, exact file set,
+release/contract cross-links, and current profile recipe/image/geometry. It
+does not prove that the manifest came from the claimed source, that the runtime
+envelope works on physical hardware, or that any criterion passed.
 
 ## Issued profiles
 

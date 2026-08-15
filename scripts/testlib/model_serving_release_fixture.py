@@ -21,6 +21,9 @@ EXPECTED_RELEASE_ID = (
 EXPECTED_CONTRACT_ID = (
     "2f40604a134c93943698c629c04bed5053dfe1f547430717bbcf4c8cba5f8490"
 )
+EXPECTED_CONTENT_ADDRESSED_RELEASE_ID = (
+    "63da4d916f24772293832fd881d2973e45ee12206ad89dd71d0a1f1b08740103"
+)
 
 
 def model_artifacts() -> list[dict[str, Any]]:
@@ -60,6 +63,55 @@ def model_artifacts() -> list[dict[str, Any]]:
 
 def build_artifact_set() -> dict[str, Any]:
     return model_serving_release.build_model_artifact_set(model_artifacts())
+
+
+def content_addressed_model_artifact() -> dict[str, Any]:
+    return {
+        "artifact_key": "primary",
+        "kind": "content-addressed-model",
+        "artifact_id": "fixture/catalog-primary-model",
+        "revision": "catalog-release-v1",
+        "manifest": {
+            "scheme": model_identity.SNAPSHOT_INTEGRITY_SCHEME,
+            "manifest_id": "9" * 64,
+        },
+    }
+
+
+def build_primary_only_recipe(
+    *,
+    tensor_parallel_size: int = 2,
+    pipeline_parallel_size: int = 1,
+) -> dict[str, Any]:
+    return model_serving_release.build_serving_recipe(
+        artifact_bindings=[{"artifact_key": "primary", "use": "primary-model"}],
+        engine_args=[
+            "--max-model-len",
+            "131072",
+            "--distributed-executor-backend",
+            "mp",
+        ],
+        container_env=["VLLM_BATCH_INVARIANT=1", "VLLM_USE_V1=1"],
+        gpu_memory_utilization="0.80",
+        spec_decode_args=[],
+        spec_decode_enabled_by_default=False,
+        model_access_contract="local-verified-readonly",
+        tensor_parallel_size=tensor_parallel_size,
+        pipeline_parallel_size=pipeline_parallel_size,
+        weights_ram_gib="40.0",
+        kv_gib="20.00",
+        overhead_gib="8",
+        mem_min_free_gib="16.0",
+    )
+
+
+def build_content_addressed_release() -> dict[str, Any]:
+    return build_release(
+        artifact_set=model_serving_release.build_model_artifact_set(
+            [content_addressed_model_artifact()]
+        ),
+        recipe=build_primary_only_recipe(),
+    )
 
 
 def build_recipe(

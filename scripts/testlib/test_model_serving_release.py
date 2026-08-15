@@ -180,6 +180,59 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
         )
         self.assertNotEqual(remote["release_id"], self.release["release_id"])
 
+    def test_content_addressed_model_can_be_the_primary_artifact(self) -> None:
+        release = fixture.build_content_addressed_release()
+        validated = model_serving_release.validate_model_serving_release(release)
+        self.assertEqual(
+            validated["release_id"],
+            fixture.EXPECTED_CONTENT_ADDRESSED_RELEASE_ID,
+        )
+        primary = validated["model_artifact_set"]["artifacts"][0]
+        self.assertEqual(primary["kind"], "content-addressed-model")
+        self.assertNotIn("status", validated)
+        self.assertNotIn("source_path", json.dumps(validated))
+
+        changed = fixture.content_addressed_model_artifact()
+        changed["manifest"]["manifest_id"] = "8" * 64
+        rebuilt = fixture.build_release(
+            artifact_set=model_serving_release.build_model_artifact_set([changed]),
+            recipe=fixture.build_primary_only_recipe(),
+        )
+        self.assertNotEqual(rebuilt["release_id"], release["release_id"])
+
+    def test_generic_digest_artifact_cannot_be_the_primary_model(self) -> None:
+        artifact = {
+            "artifact_key": "primary",
+            "kind": "digest-artifact",
+            "artifact_id": "fixture/not-a-complete-model",
+            "revision": "v1",
+            "digest": {"scheme": "sha256", "value": "7" * 64},
+        }
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "complete content-addressed model",
+        ):
+            fixture.build_release(
+                artifact_set=model_serving_release.build_model_artifact_set(
+                    [artifact]
+                ),
+                recipe=fixture.build_primary_only_recipe(),
+            )
+
+    def test_content_addressed_model_rejects_private_identity_values(self) -> None:
+        for field, value in (
+            ("artifact_id", "/mnt/private/model"),
+            ("revision", "https://catalog.internal/revision"),
+        ):
+            artifact = fixture.content_addressed_model_artifact()
+            artifact[field] = value
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "private, secret, or deployment-only",
+                ):
+                    model_serving_release.build_model_artifact_set([artifact])
+
     def test_numeric_version_range_helpers_enforce_boundaries(self) -> None:
         self.assertEqual(
             model_serving_release.parse_numeric_version_range(">=6.11,<6.12"),

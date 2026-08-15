@@ -35,7 +35,7 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of ten implementation areas:
+This snapshot supports review of eleven implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
@@ -47,8 +47,9 @@ This snapshot supports review of ten implementation areas:
 7. the pure ADR 0004 immutable run-record, evidence-bundle, and reviewed
    validation-decision schemas;
 8. read-only ADR 0004 tracked persistence and graph verification;
-9. local unreviewed ADR 0004 evidence-capture candidate persistence; and
-10. advisory catalog/operator status projection for explicitly bound releases.
+9. local source-neutral ADR 0004 release-plan candidate persistence;
+10. local unreviewed ADR 0004 evidence-capture candidate persistence; and
+11. advisory catalog/operator status projection for explicitly bound releases.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -78,8 +79,15 @@ live-mount launches remain unbound.
 ADR 0004 stage 1 is implemented by `scripts/model_serving_release.py`: pure
 builders and fail-closed validators own the separate release descriptor and
 frozen Validation Contract, with fixed-ID fixtures under `scripts/testlib/`.
-The module has no I/O or issuance authority. The separate read-only registry
-verifier can inspect stored objects, and its verified result supplies advisory
+The primary artifact may be an exact Hugging Face snapshot or a complete
+source-neutral `content-addressed-model`; generic digest attachments cannot be
+the primary model. The module has no I/O or issuance authority. The separate
+`scripts/model-serving-release-plan.sh` sources a profile and persists only
+unreviewed release/contract candidates from a complete manifest, explicit
+runtime/hardware envelope, and frozen criteria. It strips local source paths,
+checks the profile image and geometry contract, cannot write the registry, and
+does not prove physical compatibility or any criterion result. The separate
+read-only registry verifier can inspect stored objects, and its verified result supplies advisory
 catalog/operator status projection for a profile explicitly bound by
 `MODEL_SERVING_RELEASE_ID`. Schema-1 bundles still combine serving inputs, evidence, and
 issuance metadata; `STATUS=tested*` is a legacy recommendation label; and
@@ -1205,7 +1213,9 @@ content and needs no validation-status override. The one-node diagnostic `qwen3-
 first issued exception and flagship `deepseek-v4-flash` is the second. Sealed
 replicated mode enforces the same expected commit/manifest identity;
 absolute-path catalog and live-mount paths still have no equivalent reviewed
-content lock. The seal's reviewed validation-bundle ID resolves to a
+content lock. They can now be described by an unreviewed source-neutral ADR
+0004 release-plan candidate, but that candidate does not create or enforce a
+reviewed seal. The seal's reviewed validation-bundle ID resolves to a
 content-addressed schema-1 document. Profile load verifies the bundle's exact
 primary model, declared external-artifact identities/digests,
 provenance/evidence, normalized live runtime/memory contract, digest-pinned
@@ -1740,7 +1750,8 @@ sanitized command descriptors, and chronological acyclic supersession. No ADR
 0004 objects were issued or persisted before the correction; legacy schema-1
 seals/bundles and raw evidence remain untouched. Read-only persistence and
 verification of those objects is implemented. Local evidence-capture
-candidate persistence is implemented and unreviewed. Decision issuance,
+candidate persistence and source-neutral release-plan candidate persistence
+are implemented and unreviewed. Decision issuance,
 and serving migration remain accepted work rather than open policy questions.
 Advisory catalog/operator status projection is implemented for explicitly
 bound profiles without changing legacy recommendation order or serving
@@ -1939,6 +1950,10 @@ The implementation described here is primarily defined by:
 - [`scripts/model-release.sh`](../scripts/model-release.sh) and
   [`scripts/model_release.py`](../scripts/model_release.py) — maintainer-only
   exact-manifest and untrusted release-candidate assembly/verification;
+- [`scripts/model-serving-release-plan.sh`](../scripts/model-serving-release-plan.sh)
+  and [`scripts/model_serving_release_plan.py`](../scripts/model_serving_release_plan.py)
+  — source-neutral ADR 0004 release/contract planning; unreviewed and
+  non-authorizing;
 - [`scripts/model-serving-release-capture.sh`](../scripts/model-serving-release-capture.sh)
   and [`scripts/model_serving_release_capture.py`](../scripts/model_serving_release_capture.py)
   — local ADR 0004 evidence-capture candidate persistence; unreviewed and
@@ -1960,7 +1975,8 @@ The implementation described here is primarily defined by:
   — accepted Model Serving Release identity, evidence, status, onboarding, and
   subsystem-GA boundaries; descriptor, contract, run, bundle, and decision
   schemas implemented; read-only persistence and verification implemented;
-  local evidence-capture candidate persistence implemented and unreviewed;
+  local release-plan and evidence-capture candidate persistence implemented
+  and unreviewed;
   advisory status projection implemented for explicitly bound profiles;
   trusted issuance and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)

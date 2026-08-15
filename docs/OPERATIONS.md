@@ -62,11 +62,25 @@ filter. Neither status field grants or denies serving. Existing reviewed
 seals/bundles are not automatically `Validated`.
 
 The current `./pulsar` commands do not capture or publish ADR 0004 objects or
-issue decisions. Local ADR 0004 evidence-capture candidate persistence is a
-separate maintainer command and launches nothing; see
+issue decisions. Local ADR 0004 release planning and evidence-capture
+candidate persistence are separate maintainer commands and launch nothing;
+see [MODEL_RELEASE.md](./MODEL_RELEASE.md) and
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md).
 A schema-valid local decision is not proof of maintainer review or physical
 qualification.
+
+Release planning uses
+`scripts/model-serving-release-plan.sh build <profile> --artifact-manifest ...
+--runtime-envelope ... --criteria ... --model-access-contract ...`; `verify`
+rechecks a candidate against the current profile. Non-Hugging-Face primary
+models use a public logical ID, public revision, and complete content manifest,
+never their local source path. Additional behavior artifacts require explicit
+descriptors and use bindings; `--artifact-reference` can normalize an exact
+deployment-local argument value to its public artifact key without persisting
+the mapping. Output is unreviewed under
+`experiments/model-onboarding/`, cannot target `models/`, and grants no status
+or serving authority. The explicit runtime/hardware envelope is a structural
+contract, not physical qualification.
 
 The corrected schemas remain version 1 because no ADR 0004 object was issued
 or persisted before the correction. Existing legacy schema-1 seals/bundles and

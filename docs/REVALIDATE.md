@@ -38,6 +38,12 @@ The standalone bundle verifier is implemented. Maintainer-only
 `scripts/model-release.sh` can hash an exact commit and assemble/verify
 deterministic unreviewed candidates; trusted publication remains a deliberate
 reviewed repository change. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
+The separate `scripts/model-serving-release-plan.sh` can build and verify an
+unreviewed ADR 0004 release descriptor and frozen contract from a complete
+manifest, explicit runtime/hardware envelope, and criteria. Both exact
+Hugging Face snapshots and non-Hugging-Face complete content-addressed model
+trees are valid primary identities. This planning step neither verifies the
+source bytes nor establishes physical behavior, evidence, status, or review.
 
 **Policy versus implementation:** ADR 0004 defines a separate release
 descriptor, frozen Validation Contract, immutable run records, evidence bundle,
@@ -62,6 +68,9 @@ must not be automatically relabeled `Validated`. The corrected ADR 0004
 objects remain schema version 1 because none was issued or persisted before
 the correction; older schema-1 seals/bundles are separate legacy formats and
 remain byte-for-byte untouched.
+Locally generated release-plan candidates made before the source-neutral
+schema correction are disposable and must be rebuilt. The tracked ADR 0004
+registry remains empty, so the correction stays at schema version 1.
 
 ## Qualification scope and change impact
 
