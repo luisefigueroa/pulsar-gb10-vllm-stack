@@ -136,6 +136,17 @@ language for new features without an explicit decision.
   status, authorize serving, or claim physical behavior. Later capture must
   independently re-read the evidence and derive its digest; regenerate the
   attempt specs if that file changes between commands.
+  `skills/pulsar-model-onboarding/` is the ADR 0004 stage-4 supervised
+  onboarding skill. It composes those existing CLIs for a brand-new unsealed
+  model and collaborates at material decisions. It never issues a seal or
+  validation decision, assigns status, binds a profile to a release, writes
+  the trusted registry, promotes a path, or claims physical behavior.
+  `skills/pulsar-model-onboarding/scripts/onboarding_journal.py` owns only the
+  skill-local append-only workflow journal (orchestration recovery state).
+  It is not a sixth ADR object, not evidence, and not a status authority.
+  Default local journal state belongs under gitignored
+  `experiments/model-onboarding/`. Deterministic skill and journal tests make
+  no physical DGX claim and create no release decision.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -412,7 +423,11 @@ this work; the skill is procedural and does not outrank these sources.
   absolute throughput/latency; they do not issue status or prove physical
   behavior. Read-only
   catalog/operator projection is implemented for an explicitly bound release;
-  trusted decision issuance/publication remains pending. No current profile is
+  trusted decision issuance/publication remains pending. The supervised
+  `pulsar-model-onboarding` skill is implemented as control-plane
+  orchestration around those CLIs; it does not issue a decision, assign
+  status, or bind a profile. Deterministic skill and journal tests make no
+  physical DGX claim. No current profile is
   bound and the tracked store is empty, so current projections are neutral.
   Expected-seal identity and validation status are independent contracts: a
   future non-tested profile may carry a reviewed seal, and a matching seal does

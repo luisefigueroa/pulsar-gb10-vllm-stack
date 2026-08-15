@@ -35,7 +35,7 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of eleven implementation areas:
+This snapshot supports review of twelve implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
@@ -48,8 +48,10 @@ This snapshot supports review of eleven implementation areas:
    validation-decision schemas;
 8. read-only ADR 0004 tracked persistence and graph verification;
 9. local source-neutral ADR 0004 release-plan candidate persistence;
-10. local unreviewed ADR 0004 evidence-capture candidate persistence; and
-11. advisory catalog/operator status projection for explicitly bound releases.
+10. local unreviewed ADR 0004 evidence-capture candidate persistence;
+11. advisory catalog/operator status projection for explicitly bound releases;
+    and
+12. the supervised `pulsar-model-onboarding` control-plane orchestration skill.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -120,8 +122,16 @@ persistence and verification of stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
 persistence is implemented by `scripts/model-serving-release-capture.sh` and
 does not write that registry or launch a release. No current profile is bound
-and the tracked registry is empty, so current projections are neutral. Trusted
-decision issuance remains an implementation gap.
+and the tracked registry is empty, so current projections are neutral. The
+supervised `pulsar-model-onboarding` skill is implemented as control-plane
+orchestration around those CLIs. It never issues a seal or validation
+decision, assigns status, binds a profile, writes the trusted registry,
+promotes a path, or claims physical behavior. Current automated mapping covers
+only strict same-boot and absolute throughput/latency. The default unsealed
+replicated path is not an exact ADR 0004 qualification attempt. The
+skill-local journal is recovery state, not evidence. Deterministic skill and
+journal tests make no physical DGX claim and create no release decision.
+Trusted decision issuance remains an implementation gap.
 
 A predecessor decision that itself has supersession links must supply
 complete `prior_decision_sources` with exact prior release, contract, bundle,
@@ -1958,6 +1968,9 @@ The implementation described here is primarily defined by:
   and [`scripts/model_serving_release_capture.py`](../scripts/model_serving_release_capture.py)
   — local ADR 0004 evidence-capture candidate persistence; unreviewed and
   non-authorizing;
+- [`skills/pulsar-model-onboarding/SKILL.md`](../skills/pulsar-model-onboarding/SKILL.md)
+  — supervised ADR 0004 stage-4 onboarding orchestration; no seal, status,
+  binding, registry, or promotion authority;
 - [`docs/MODEL_RELEASE.md`](./MODEL_RELEASE.md) — candidate-stage maintainer
   runbook and trust boundary;
 - [`docs/MODEL_SERVING_RELEASE_CAPTURE.md`](./MODEL_SERVING_RELEASE_CAPTURE.md)
@@ -1978,7 +1991,8 @@ The implementation described here is primarily defined by:
   local release-plan and evidence-capture candidate persistence implemented
   and unreviewed;
   advisory status projection implemented for explicitly bound profiles;
-  trusted issuance and serving migration pending;
+  supervised `pulsar-model-onboarding` skill implemented as control-plane
+  orchestration; trusted issuance and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

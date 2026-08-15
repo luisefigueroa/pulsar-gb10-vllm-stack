@@ -173,11 +173,14 @@ recognize every possible private codename. Trusted capture must compute the
 digest, and publication still requires the artifact privacy review and current
 tree privacy audit.
 
-Under ADR 0004, the future supervised operator workflow is the separate
+Under ADR 0004, the supervised operator workflow is the separate
 `pulsar-model-onboarding` skill. It may compose acquisition, distribution,
 verification, launch, tests, and evidence capture—including explicitly selected
-Experimental subsystems—but it will not inherit trusted issuance, validation,
-or promotion authority from this maintainer tool.
+Experimental subsystems—but it does not inherit trusted issuance, validation,
+or promotion authority from this maintainer tool. Current automated mapping
+covers only strict same-boot and absolute throughput/latency. Deterministic
+skill and journal tests make no physical DGX claim and create no release
+decision.
 
 ## Unreviewed ADR 0004 release planning
 

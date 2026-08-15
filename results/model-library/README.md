@@ -67,6 +67,12 @@ profiles, unavailable registry data, runtime-access recipe mismatch, advisory
 launch behavior, legacy-status separation, and narrow terminal rendering. This
 is control-plane evidence only; it adds no physical result artifact.
 
+The supervised `pulsar-model-onboarding` skill is implemented as control-plane
+orchestration around existing CLIs. Deterministic skill and journal tests
+cover package contracts, the draft-profile PR stop, journal integrity, and
+non-authority wording only. They make no physical DGX claim, create no
+release decision, and add no result artifact here.
+
 The stage-2 adversarial suite additionally freezes representative run, bundle,
 and decision IDs and covers exact release/contract/run/artifact cross-links,
 threshold and sample-size derivation, required context and soak conditions,

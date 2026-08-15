@@ -64,7 +64,15 @@ measurements and attempt-only spec composition are implemented for strict
 same-boot and absolute throughput/latency; they do not issue status or prove
 physical behavior. Advisory catalog/operator
 projection is implemented for a profile explicitly bound to a release ID;
-current profiles are unbound and the tracked store is empty. Trusted decision
+current profiles are unbound and the tracked store is empty. The supervised
+`pulsar-model-onboarding` skill is implemented as control-plane orchestration
+around those CLIs. It never issues a seal or validation decision, assigns
+status, binds a profile, writes the trusted registry, promotes a path, or
+claims physical behavior. Current automated mapping covers only strict
+same-boot and absolute throughput/latency; the skill invokes greedy capture,
+compare, and benchmark sequentially rather than using `validate/run-gates.sh`
+as an ADR attempt wrapper. Deterministic skill and journal tests make no
+physical DGX claim and create no release decision. Trusted decision
 issuance remains pending.
 Existing bundles, seals, profiles, and historical evidence remain unchanged and
 must not be automatically relabeled `Validated`. The corrected ADR 0004
