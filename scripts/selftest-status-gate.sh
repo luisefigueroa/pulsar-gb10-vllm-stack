@@ -5,6 +5,9 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$REPO_DIR/scripts/lib.sh"
 
+STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-status-projection.XXXXXX")
+trap 'rm -rf "$STATE"' EXIT
+
 pass=0
 fail=0
 check() {
@@ -90,6 +93,126 @@ else
   echo "FAIL wizard catalog selection still filters by status" >&2
   fail=$((fail + 1))
 fi
+
+catalog_json=$("$REPO_DIR/scripts/list-models.sh" --serving --json)
+if CATALOG_JSON="$catalog_json" python3 - <<'PY'
+import json
+import os
+
+models = json.loads(os.environ["CATALOG_JSON"])["models"]
+assert models
+for model in models:
+    assert model["legacy_status"] == model["status"]
+    release = model["model_serving_release"]
+    assert release == {
+        "release_id": None,
+        "state": "legacy-unbound",
+        "effective_status": None,
+        "effective_status_label": "No release binding",
+        "contract_id": None,
+        "decision_id": None,
+        "advisory": True,
+    }
+PY
+then
+  echo "OK   catalog separates neutral release projection from legacy status"
+  pass=$((pass + 1))
+else
+  echo "FAIL catalog release projection contract" >&2
+  fail=$((fail + 1))
+fi
+
+narrow_catalog=$(COLUMNS=48 "$REPO_DIR/scripts/list-models.sh" --serving)
+if NARROW_CATALOG="$narrow_catalog" python3 - <<'PY'
+import os
+
+lines = os.environ["NARROW_CATALOG"].splitlines()
+assert lines
+assert max(map(len, lines)) <= 48
+assert any("Release" in line and "No release binding" in line for line in lines)
+assert any("Legacy" in line for line in lines)
+PY
+then
+  echo "OK   human catalog projection honors narrow terminal width"
+  pass=$((pass + 1))
+else
+  echo "FAIL narrow catalog release projection" >&2
+  fail=$((fail + 1))
+fi
+
+MODEL_SERVING_RELEASE_ID=not-a-content-id
+load_model_serving_release_projection local-verified-readonly
+if [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" = projection-unavailable ] \
+    && [ "$MODEL_SERVING_RELEASE_STATUS_LABEL" = "Release status unavailable" ] \
+    && status_is_launchable; then
+  echo "OK   unavailable release projection remains advisory"
+  pass=$((pass + 1))
+else
+  echo "FAIL unavailable release projection affected status policy" >&2
+  fail=$((fail + 1))
+fi
+
+python3 - "$STATE/repo" "$STATE/neutral-repo" <<'PY'
+from pathlib import Path
+import sys
+
+from scripts.testlib import model_serving_release_registry_fixture as fixture
+
+repo = Path(sys.argv[1])
+repo.mkdir()
+source = fixture.populate_happy_registry(
+    repo / "models" / "model-serving-releases", repo
+)
+(repo / "release-id").write_text(
+    source["release"]["release_id"] + "\n", encoding="utf-8"
+)
+neutral_repo = Path(sys.argv[2])
+neutral_registry = fixture.init_registry_root(
+    neutral_repo / "models" / "model-serving-releases"
+)
+fixture.write_release(neutral_registry, source["release"])
+(neutral_repo / "release-id").write_text(
+    source["release"]["release_id"] + "\n", encoding="utf-8"
+)
+PY
+original_repo_dir="$REPO_DIR"
+MODEL_SERVING_RELEASE_ID=$(<"$STATE/repo/release-id")
+PULSAR_MODEL_SERVING_RELEASE_REGISTRY_PY="$original_repo_dir/scripts/model_serving_release_registry.py"
+REPO_DIR="$STATE/repo"
+load_model_serving_release_projection local-verified-readonly
+if [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" = unique-reviewed-decision ] \
+    && [ "$MODEL_SERVING_RELEASE_STATUS" = validated ] \
+    && [ "$MODEL_SERVING_RELEASE_STATUS_LABEL" = Validated ]; then
+  echo "OK   exact bound release projects its reviewed status"
+  pass=$((pass + 1))
+else
+  echo "FAIL exact bound release projection" >&2
+  fail=$((fail + 1))
+fi
+load_model_serving_release_projection live-remote-readonly
+if [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" = recipe-mismatch ] \
+    && [ -z "$MODEL_SERVING_RELEASE_STATUS" ] \
+    && status_is_launchable; then
+  echo "OK   different runtime-access recipe does not inherit status"
+  pass=$((pass + 1))
+else
+  echo "FAIL runtime-access recipe mismatch projection" >&2
+  fail=$((fail + 1))
+fi
+MODEL_SERVING_RELEASE_ID=$(<"$STATE/neutral-repo/release-id")
+REPO_DIR="$STATE/neutral-repo"
+load_model_serving_release_projection local-verified-readonly
+if [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" = no-reviewed-decision ] \
+    && [ -z "$MODEL_SERVING_RELEASE_STATUS" ] \
+    && [ "$MODEL_SERVING_RELEASE_STATUS_LABEL" = "No reviewed decision" ]; then
+  echo "OK   absent reviewed decision remains neutral rather than Untested"
+  pass=$((pass + 1))
+else
+  echo "FAIL neutral no-reviewed-decision projection" >&2
+  fail=$((fail + 1))
+fi
+REPO_DIR="$original_repo_dir"
+unset PULSAR_MODEL_SERVING_RELEASE_REGISTRY_PY MODEL_SERVING_RELEASE_ID
 
 echo "---"
 echo "pass=$pass fail=$fail"

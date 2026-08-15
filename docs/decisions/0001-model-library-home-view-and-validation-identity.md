@@ -101,7 +101,8 @@ run records, validation bundle, and reviewed validation decision are separate.
 Their pure schema contracts are now implemented. Read-only trusted
 persistence and verification of those objects is implemented and currently
 empty. Local evidence-capture candidate persistence is implemented and
-unreviewed. Issuance/publication and catalog/operator status projection remain
-pending. Serving permission is status-independent; these objects still govern
+unreviewed. Advisory catalog/operator projection is implemented for profiles
+explicitly bound to a release ID; no current profile is bound. Trusted
+issuance/publication remains pending. Serving permission is status-independent; these objects still govern
 identity verification and evidence claims. Existing schema-1 bundles and seals
 remain immutable legacy artifacts.

@@ -92,11 +92,17 @@ elif [ -n "$NODE_SELECTOR" ]; then
   die "--node is only valid for one-node profiles" 2
 fi
 resolve_spec_decode "$SPEC_MODE"
+case "$WEIGHT_SOURCE" in
+  fabric) load_model_serving_release_projection live-remote-readonly ;;
+  *) load_model_serving_release_projection local-verified-readonly ;;
+esac
 export QUIET=1
 [ "$VERBOSE" = 1 ] && export QUIET=0
 
 echo "┌─ up  $NAME"
-echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT  status=$STATUS"
+echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT"
+echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (advisory)"
+echo "│  legacy-status=$STATUS (advisory)"
 case "$WEIGHT_SOURCE" in
   fabric) echo "│  weights=fabric (experimental · cold reads use RoCE)" ;;
   library-hot) echo "│  weights=library-hot (experimental · local hot staging)" ;;
@@ -113,7 +119,8 @@ fi
 [ "$DRY" = 1 ] && echo "│  mode=DRY-RUN (checks only)"
 echo "├─ checks"
 
-echo "INFO  status    $STATUS (advisory; operational checks decide launch)"
+echo "INFO  release   $MODEL_SERVING_RELEASE_STATUS_LABEL (advisory)"
+echo "INFO  legacy    $STATUS (advisory)"
 warn_profile_status
 echo "PASS  conf      exact profile contract parsed"
 

@@ -46,15 +46,26 @@ runtime/image + supported-hardware-geometry tuple and introduces explicit
 validation-decision statuses. Any change to one tuple component creates a new
 release. Pure descriptor, contract, immutable run-record, evidence-bundle,
 reviewed-decision, status-derivation, and supersession schemas are implemented,
-but the current `./pulsar` commands do not capture, persist, publish, or
-project them. Local ADR 0004 evidence-capture candidate persistence is a
+and the read-only registry verifies stored objects. Profiles may optionally
+bind an exact release with the reviewed `MODEL_SERVING_RELEASE_ID` field.
+`scripts/list-models.sh`, the wizard, and `scripts/up.sh` then display the one
+unambiguous reviewed effective decision as an advisory release status. A
+missing binding displays `No release binding`; absence of a reviewed decision
+is not inferred as `Untested`, and ambiguity, registry errors, or a selected
+runtime-access recipe mismatch remain visible without blocking launch.
+
+Current profiles have no such binding and the tracked registry is empty, so
+their release projection is neutral. `STATUS=tested*` remains a separate
+legacy evidence/recommendation label; it still determines recommendation
+order. `--validated` is a deprecated alias for the `--legacy-tested` profile
+filter. Neither status field grants or denies serving. Existing reviewed
+seals/bundles are not automatically `Validated`.
+
+The current `./pulsar` commands do not capture or publish ADR 0004 objects or
+issue decisions. Local ADR 0004 evidence-capture candidate persistence is a
 separate maintainer command and launches nothing; see
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md).
-`STATUS=tested*` remains a legacy evidence/recommendation label, and
-`--validated` is a deprecated alias for the `--legacy-tested` profile filter;
-neither grants serving permission. Existing reviewed seals/bundles are not
-automatically `Validated`. A
-schema-valid local decision is not proof of maintainer review or physical
+A schema-valid local decision is not proof of maintainer review or physical
 qualification.
 
 The corrected schemas remain version 1 because no ADR 0004 object was issued

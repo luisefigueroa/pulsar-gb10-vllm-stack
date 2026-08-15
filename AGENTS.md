@@ -85,15 +85,22 @@ language for new features without an explicit decision.
   and reviewed-decision schema version 1. Keep both modules pure and
   non-issuing. `scripts/model_serving_release_registry.py` owns read-only
   filesystem loading, content verification, graph assembly, and inspection of
-  stored ADR 0004 objects under `models/model-serving-releases/`.
+  stored ADR 0004 objects under `models/model-serving-releases/`; its verified
+  inspection result is the only source for read-only catalog/operator release
+  status projection. Profiles may bind that projection with the optional
+  reviewed `MODEL_SERVING_RELEASE_ID` field. The binding is a review assertion:
+  any four-part tuple change must update it to the newly derived release ID in
+  the same reviewed change. Runtime projection additionally checks the selected
+  model-access contract, but does not independently reconstruct the full tuple
+  from shell profile fields.
   `scripts/model-serving-release-capture.sh` owns local ADR 0004
   evidence-capture candidate persistence: it validates supplied release and
   contract objects, captures immutable run records and content-addressed
   evidence, assembles compatible runs, and independently verifies the
   unreviewed candidate. It must not write the tracked registry, issue a
-  decision, change catalog or profile status, or launch a release. Decision
-  issuance and catalog/operator status projection remain pending and must validate through the
-  pure schema modules rather than duplicating their identity or status rules.
+  decision, change catalog or profile status, or launch a release. Trusted
+  decision issuance remains pending and must validate through the pure schema
+  modules rather than duplicating their identity or status rules.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -281,14 +288,15 @@ unless that authority is explicitly part of the approved plan.
   can plan, capture, assemble, and verify unreviewed candidates without
   writing the tracked registry or launching a release. Read-only trusted
   persistence can verify exact reviewed objects under
-  `models/model-serving-releases/` without projecting catalog status or
-  changing runtime state. Inspection of a stored release is
-  informational: absence of a reviewed decision is not `Untested`, and
-  multiple contract lineages or unsuperseded heads stay ambiguous. Current
-  `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles remain
-  legacy implementation contracts until catalog/operator projection lands.
-  Do not automatically relabel an existing
-  profile or bundle `Validated`. The corrected ADR 0004 objects remain schema
+  `models/model-serving-releases/`. Catalog, wizard, and `scripts/up.sh`
+  consume that inspection as an advisory projection for profiles explicitly
+  bound by `MODEL_SERVING_RELEASE_ID`; projection never changes recommendation
+  order or serving permission. Absence of a profile binding or reviewed
+  decision is neutral and is not inferred as `Untested`; multiple contract
+  lineages or unsuperseded heads stay ambiguous. Current `STATUS=tested*`,
+  `--validated`, expected seals, and schema-1 bundles remain separate legacy
+  implementation contracts. Do not automatically relabel an existing profile
+  or bundle `Validated`. The corrected ADR 0004 objects remain schema
   version 1 because none was issued or persisted before the correction;
   existing legacy schema-1 seals/bundles and raw evidence remain untouched.
   The tracked ADR 0004 registry currently stores no issued object.
@@ -355,8 +363,10 @@ this work; the skill is procedural and does not outrank these sources.
   those objects under `models/model-serving-releases/`; that store is
   currently empty. Caller-supplied predecessor and decision registries remain
   validation input, not trusted persistence. Local evidence-capture candidate
-  persistence is implemented and remains unreviewed; decision
-  issuance/publication and catalog/operator status projection remain pending.
+  persistence is implemented and remains unreviewed. Read-only
+  catalog/operator projection is implemented for an explicitly bound release;
+  trusted decision issuance/publication remains pending. No current profile is
+  bound and the tracked store is empty, so current projections are neutral.
   Expected-seal identity and validation status are independent contracts: a
   future non-tested profile may carry a reviewed seal, and a matching seal does
   not promote its release status.

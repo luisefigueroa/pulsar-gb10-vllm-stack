@@ -9,12 +9,14 @@ particular, no row is automatically `Validated`: that status belongs to one
 exact serving recipe, runtime/image identity, and supported hardware geometry,
 after every frozen criterion and review requirement passes. Changing any one
 component creates a new release. Pure version-1 schema validation and
-read-only verification of stored ADR 0004 objects exist. Local
-evidence-capture candidate persistence is unreviewed and does not change
-this table. Trusted publication and catalog/operator status projection do not
-yet exist; serving permission is status-independent and no current row is
-silently relabeled. The tracked ADR 0004 store currently contains no issued
-object.
+read-only verification of stored ADR 0004 objects exist. Catalog, wizard, and
+start output can project a reviewed decision only when a profile explicitly
+binds its exact release through `MODEL_SERVING_RELEASE_ID`. No current profile
+is bound and the tracked store is empty, so current rows display the neutral
+`No release binding` state. Local evidence-capture candidate persistence is
+unreviewed and does not change this table. Trusted decision issuance remains
+pending; serving permission is status-independent and no current row is
+silently relabeled.
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for

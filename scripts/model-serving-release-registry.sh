@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Read-only inspection of the tracked ADR 0004 Model Serving Release registry.
-# Not routed by ./pulsar. Does not capture evidence, issue a decision,
-# project catalog status, or launch a release.
+# Its verified inspection is consumed by catalog/operator status projection.
+# It does not capture evidence, issue a decision, authorize serving, or launch.
 set -euo pipefail
 # Used by die/log after sourcing lib.sh.
 # shellcheck disable=SC2034
@@ -20,9 +20,10 @@ Usage:
   scripts/model-serving-release-registry.sh show-release RELEASE_ID [--json]
   scripts/model-serving-release-registry.sh show-decision DECISION_ID [--json]
 
-This command only verifies and displays stored ADR 0004 objects. It does
-not capture evidence, issue a decision, project catalog status, or launch a
-release. Validation status is advisory and never serving authorization.
+This command only verifies and displays stored ADR 0004 objects. Its verified
+inspection is also the source for read-only catalog/operator status projection.
+It does not capture evidence, issue a decision, change recommendation policy,
+authorize serving, or launch a release.
 
 Publishable evidence hashing does not prove privacy review, repository
 review, or physical behavior. Absence of a reviewed decision is not
