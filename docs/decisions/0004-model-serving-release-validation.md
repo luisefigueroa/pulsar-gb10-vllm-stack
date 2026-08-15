@@ -8,8 +8,10 @@
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
   and verification implemented under `models/model-serving-releases/`;
-  local ADR 0004 evidence-capture candidate persistence implemented;
-  local source-neutral release-plan candidate persistence implemented;
+  local ADR 0004 evidence-capture candidate persistence implemented
+  and composed from a verified release-plan candidate plus an attempt-only spec;
+  local source-neutral release-plan candidate persistence implemented with
+  a public verified loader;
   advisory catalog/operator ADR 0004 status projection implemented for
   explicitly bound profiles; trusted decision issuance pending;
   status-independent serving policy implemented
@@ -478,7 +480,14 @@ only release and contract candidates beneath `experiments/model-onboarding/`
 (or an explicit path outside the repository). It strips deployment-local
 source paths from source-neutral identity, checks the profile image, TP/PP, node count,
 topology, and rail contract against the supplied envelope, and can verify the
-candidate against the current profile. It does not acquire bytes, prove the
+candidate against the current profile. Planner `verify` uses the public
+schema-owning `load_verified_release_plan_candidate(dir)` loader: shared
+filesystem hardening from `scripts/immutable_descriptor_dir.py`, then
+validation of `candidate.json`, `release.json`, and
+`validation-contract.json`, derived IDs, file map, and cross-links.
+Published candidate JSON uses the shared `pretty_json_bytes` encoding from
+`scripts/model_identity.py`; identity digests remain compact
+`canonical_json_digest`. It does not acquire bytes, prove the
 manifest was measured from the claimed source, prove physical compatibility,
 capture evidence, issue a decision, assign status, or write the trusted
 registry. Explicit profile-reference mappings may replace a local artifact
@@ -567,14 +576,22 @@ tracked store currently contains no issued object.
 
 Local ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model_serving_release_capture.py` and
-`scripts/model-serving-release-capture.sh`. That workflow validates
-supplied release and contract objects, captures immutable run records and
-content-addressed evidence, assembles compatible run records, and
-independently verifies the resulting candidate under a gitignored output
-boundary. A successful candidate is unreviewed, has privacy review
-pending, changes no catalog or profile status, launches nothing, and never
-writes the tracked registry. It is not a validator
-adapter, a reviewed decision, or a physical DGX claim. See
+`scripts/model-serving-release-capture.sh`. That workflow composes a
+verified release-plan candidate with a separate attempt-only spec
+(`--release-plan DIR --attempt-spec FILE`), independently validates the
+release and contract through `scripts/model_serving_release.py`, checks
+tracked-registry equality when those IDs exist, captures immutable run
+records and content-addressed evidence, assembles compatible run records,
+and independently verifies the resulting candidate under a gitignored
+output boundary. It persists no planner path or planner candidate ID. The
+old embedded `--spec` / `pulsar-model-serving-release-capture-spec` path is
+rejected with a migration message; there is no dual compatibility. A
+successful candidate is unreviewed, has privacy review pending, changes no
+catalog or profile status, launches nothing, never writes the tracked
+registry, and does not issue `Untested`. A pre-barrier failure means
+qualification did not start; absence of a reviewed decision stays
+neutral. It is not a `validate/*` measurement adapter, a reviewed
+decision, or a physical DGX claim. See
 [MODEL_SERVING_RELEASE_CAPTURE.md](../MODEL_SERVING_RELEASE_CAPTURE.md).
 
 ### Pre-issuance schema correction

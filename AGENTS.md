@@ -88,7 +88,15 @@ language for new features without an explicit decision.
   inputs and explicit one-to-one bindings for every supplied additional
   behavior artifact, and strip local source paths. It must not acquire bytes,
   write the tracked registry, issue a decision, change status, or claim
-  physical behavior. A local profile-reference mapping may normalize an exact argument
+  physical behavior. Planner `verify` uses the public schema-owning
+  `load_verified_release_plan_candidate(dir)` loader after shared filesystem
+  hardening. Planner and capture publish candidate JSON with the shared
+  `pretty_json_bytes` encoding from `scripts/model_identity.py` (`indent=2`,
+  `sort_keys=True`, `ensure_ascii=False`, trailing newline); identity digests
+  remain compact `canonical_json_digest`.
+  `scripts/immutable_descriptor_dir.py` owns only generic descriptor-rooted
+  immutable-directory primitives and is not a schema owner. A local
+  profile-reference mapping may normalize an exact argument
   value to a bound public artifact key, but the mapping itself must never be
   persisted. `scripts/model_validation_evidence.py` owns the
   content-addressed evidence-artifact, immutable run-record, validation-bundle,
@@ -104,11 +112,14 @@ language for new features without an explicit decision.
   model-access contract, but does not independently reconstruct the full tuple
   from shell profile fields.
   `scripts/model-serving-release-capture.sh` owns local ADR 0004
-  evidence-capture candidate persistence: it validates supplied release and
-  contract objects, captures immutable run records and content-addressed
-  evidence, assembles compatible runs, and independently verifies the
-  unreviewed candidate. It must not write the tracked registry, issue a
-  decision, change catalog or profile status, or launch a release. Trusted
+  evidence-capture candidate persistence: it composes a verified release-plan
+  candidate plus an attempt-only spec, independently validates release and
+  contract objects through `scripts/model_serving_release.py`, captures
+  immutable run records and content-addressed evidence, assembles compatible
+  runs, and independently verifies the unreviewed candidate. It must not write
+  the tracked registry, issue a decision, change catalog or profile status,
+  launch a release, persist a planner path or planner candidate ID, or issue
+  `Untested`. Trusted
   decision issuance remains pending and must validate through the pure schema
   modules rather than duplicating their identity or status rules.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
@@ -302,8 +313,9 @@ unless that authority is explicitly part of the approved plan.
   a release. Local source-neutral release-plan candidates can build and verify
   unreviewed release/contract objects without status or issuance authority.
   Local ADR 0004 evidence-capture candidate persistence
+  composes a verified release-plan candidate with an attempt-only spec and
   can plan, capture, assemble, and verify unreviewed candidates without
-  writing the tracked registry or launching a release. Read-only trusted
+  writing the tracked registry, issuing `Untested`, or launching a release. Read-only trusted
   persistence can verify exact reviewed objects under
   `models/model-serving-releases/`. Catalog, wizard, and `scripts/up.sh`
   consume that inspection as an advisory projection for profiles explicitly

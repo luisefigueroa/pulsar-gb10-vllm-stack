@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -20,6 +21,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import (  # noqa: E402
+    immutable_descriptor_dir,
+    model_identity,
     model_library,
     model_serving_release,
     model_serving_release_plan,
@@ -36,6 +39,33 @@ PROFILE_IMAGE = (
 
 def write_json(path: pathlib.Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def rewrite_json(path: pathlib.Path, value: object) -> None:
+    path.write_bytes(model_identity.pretty_json_bytes(value))
+    os.chmod(path, 0o600)
+
+
+def publish_plan_candidate(
+    dest: pathlib.Path,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    release = fixture.build_release()
+    contract = fixture.build_contract(release=release)
+    candidate = model_serving_release_plan.build_candidate_document(
+        profile=PROFILE,
+        source_kind="hf",
+        release=release,
+        contract=contract,
+    )
+    model_serving_release_plan.write_candidate_directory(
+        dest,
+        {
+            "candidate.json": candidate,
+            "release.json": release,
+            "validation-contract.json": contract,
+        },
+    )
+    return candidate, release, contract
 
 
 def manifest(*, model_id: str = "Qwen/Qwen3-1.7B") -> dict[str, object]:
@@ -504,7 +534,9 @@ class ModelServingReleasePlanTests(unittest.TestCase):
                 "--output-dir",
                 str(candidate_dir),
             )
-            (candidate_dir / "unexpected.txt").write_text("unexpected\n")
+            extra = candidate_dir / "unexpected.txt"
+            extra.write_text("unexpected\n")
+            os.chmod(extra, 0o600)
             result = self.run_cli(
                 "verify",
                 PROFILE,
@@ -515,6 +547,244 @@ class ModelServingReleasePlanTests(unittest.TestCase):
                 expect_success=False,
             )
             self.assertIn("file set is invalid", result.stderr)
+
+    def test_pretty_json_bytes_preserves_utf8_and_planner_encoding(self) -> None:
+        payload = {"note": "café"}
+        pretty = model_identity.pretty_json_bytes(payload)
+        compact = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.assertIn("café".encode("utf-8"), pretty)
+        self.assertNotIn(b"\\u00e9", pretty)
+        self.assertTrue(pretty.endswith(b"\n"))
+        self.assertIn(b"\n  ", pretty)
+        self.assertEqual(
+            model_identity.canonical_json_digest(payload),
+            hashlib.sha256(compact).hexdigest(),
+        )
+        self.assertNotEqual(
+            model_identity.canonical_json_digest(payload),
+            hashlib.sha256(pretty).hexdigest(),
+        )
+        self.assertEqual(
+            model_identity.canonical_json_digest(json.loads(pretty.decode("utf-8"))),
+            model_identity.canonical_json_digest(payload),
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            dest = pathlib.Path(raw) / "candidate"
+            publish_plan_candidate(dest)
+            for name in (
+                "candidate.json",
+                "release.json",
+                "validation-contract.json",
+            ):
+                raw_bytes = (dest / name).read_bytes()
+                parsed = json.loads(raw_bytes.decode("utf-8"))
+                self.assertEqual(raw_bytes, model_identity.pretty_json_bytes(parsed))
+
+    def test_load_verified_release_plan_candidate_accepts_planner_directory(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dest = pathlib.Path(raw) / "candidate"
+            candidate, release, contract = publish_plan_candidate(dest)
+            verified = (
+                model_serving_release_plan.load_verified_release_plan_candidate(dest)
+            )
+            self.assertEqual(
+                verified.candidate["candidate_id"],
+                candidate["candidate_id"],
+            )
+            self.assertEqual(verified.release["release_id"], release["release_id"])
+            self.assertEqual(
+                verified.contract["contract_id"],
+                contract["contract_id"],
+            )
+
+    def test_load_verified_rejects_release_identity_tamper(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dest = pathlib.Path(raw) / "candidate"
+            _candidate, release, _contract = publish_plan_candidate(dest)
+            release = copy.deepcopy(release)
+            release["serving_recipe"]["engine_args"] = ["--max-model-len", "1"]
+            rewrite_json(dest / "release.json", release)
+            with self.assertRaisesRegex(
+                model_serving_release_plan.ModelServingReleasePlanError,
+                "identity mismatch",
+            ):
+                model_serving_release_plan.load_verified_release_plan_candidate(dest)
+
+    def test_load_verified_rejects_candidate_cross_link_mismatch(self) -> None:
+        other = "ab" * 32
+        with tempfile.TemporaryDirectory() as raw:
+            dest = pathlib.Path(raw) / "candidate"
+            candidate, _release, _contract = publish_plan_candidate(dest)
+            for field, message in (
+                ("release_id", "release_id differs from release.json"),
+                ("contract_id", "contract_id differs from validation-contract.json"),
+            ):
+                with self.subTest(field=field):
+                    mutated = copy.deepcopy(candidate)
+                    self.assertNotEqual(mutated[field], other)
+                    mutated[field] = other
+                    mutated["candidate_id"] = model_serving_release_plan.candidate_id(
+                        mutated
+                    )
+                    rewrite_json(dest / "candidate.json", mutated)
+                    with self.assertRaisesRegex(
+                        model_serving_release_plan.ModelServingReleasePlanError,
+                        message,
+                    ):
+                        model_serving_release_plan.load_verified_release_plan_candidate(
+                            dest
+                        )
+
+    def test_load_verified_rejects_extra_and_missing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            extra_dir = root / "extra"
+            publish_plan_candidate(extra_dir)
+            unexpected = extra_dir / "unexpected.txt"
+            unexpected.write_text("unexpected\n")
+            os.chmod(unexpected, 0o600)
+            with self.assertRaisesRegex(
+                model_serving_release_plan.ModelServingReleasePlanError,
+                "file set is invalid",
+            ):
+                model_serving_release_plan.load_verified_release_plan_candidate(
+                    extra_dir
+                )
+
+            missing_dir = root / "missing"
+            publish_plan_candidate(missing_dir)
+            (missing_dir / "release.json").unlink()
+            with self.assertRaisesRegex(
+                model_serving_release_plan.ModelServingReleasePlanError,
+                "file set is invalid",
+            ):
+                model_serving_release_plan.load_verified_release_plan_candidate(
+                    missing_dir
+                )
+
+    def test_load_verified_rejects_unsafe_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dest = pathlib.Path(raw) / "candidate"
+            publish_plan_candidate(dest)
+            os.chmod(dest, 0o755)
+            with self.assertRaisesRegex(
+                model_serving_release_plan.ModelServingReleasePlanError,
+                "mode is not 0700",
+            ):
+                model_serving_release_plan.load_verified_release_plan_candidate(dest)
+            os.chmod(dest, 0o700)
+            os.chmod(dest / "release.json", 0o644)
+            with self.assertRaisesRegex(
+                model_serving_release_plan.ModelServingReleasePlanError,
+                "mode is not 0600",
+            ):
+                model_serving_release_plan.load_verified_release_plan_candidate(dest)
+
+    def test_load_verified_rejects_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            real = root / "real"
+            publish_plan_candidate(real)
+            linked = root / "linked"
+            linked.symlink_to(real)
+            with self.assertRaisesRegex(
+                model_serving_release_plan.ModelServingReleasePlanError,
+                "must not be a symlink",
+            ):
+                model_serving_release_plan.load_verified_release_plan_candidate(linked)
+
+            dest = root / "files"
+            publish_plan_candidate(dest)
+            outside = root / "release.json"
+            target = dest / "release.json"
+            target.rename(outside)
+            target.symlink_to(outside)
+            with self.assertRaisesRegex(
+                model_serving_release_plan.ModelServingReleasePlanError,
+                "must not contain a symlink",
+            ):
+                model_serving_release_plan.load_verified_release_plan_candidate(dest)
+
+    def test_load_verified_rejects_replacement_and_in_read_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dest = pathlib.Path(raw) / "candidate"
+            publish_plan_candidate(dest)
+            release_path = dest / "release.json"
+            original = release_path.read_bytes()
+            mutated = b"x" * len(original)
+
+            def mutate(key: str | None) -> None:
+                if key == "release.json":
+                    release_path.write_bytes(mutated)
+
+            immutable_descriptor_dir.READ_STABILITY_HOOK = mutate
+            try:
+                with self.assertRaisesRegex(
+                    model_serving_release_plan.ModelServingReleasePlanError,
+                    "changed during read",
+                ):
+                    model_serving_release_plan.load_verified_release_plan_candidate(
+                        dest
+                    )
+            finally:
+                immutable_descriptor_dir.READ_STABILITY_HOOK = None
+                release_path.write_bytes(original)
+                os.chmod(release_path, 0o600)
+
+            extra = dest / "extra-after-scan.json"
+
+            def add_extra() -> None:
+                extra.write_text("{}\n", encoding="utf-8")
+                os.chmod(extra, 0o600)
+
+            immutable_descriptor_dir.VERIFY_AFTER_SCAN_HOOK = add_extra
+            try:
+                with self.assertRaisesRegex(
+                    model_serving_release_plan.ModelServingReleasePlanError,
+                    "directory entries changed",
+                ):
+                    model_serving_release_plan.load_verified_release_plan_candidate(
+                        dest
+                    )
+            finally:
+                immutable_descriptor_dir.VERIFY_AFTER_SCAN_HOOK = None
+                if extra.exists():
+                    extra.unlink()
+
+            moved = dest.with_name(dest.name + ".original")
+
+            def replace() -> None:
+                dest.rename(moved)
+                dest.mkdir()
+                os.chmod(dest, 0o700)
+
+            immutable_descriptor_dir.VERIFY_AFTER_SCAN_HOOK = replace
+            try:
+                with self.assertRaisesRegex(
+                    model_serving_release_plan.ModelServingReleasePlanError,
+                    "path no longer identifies the same directory",
+                ):
+                    model_serving_release_plan.load_verified_release_plan_candidate(
+                        dest
+                    )
+            finally:
+                immutable_descriptor_dir.VERIFY_AFTER_SCAN_HOOK = None
+                if (
+                    dest.exists()
+                    and dest.is_dir()
+                    and not (dest / "candidate.json").exists()
+                ):
+                    dest.rmdir()
+                if moved.exists() and not dest.exists():
+                    moved.rename(dest)
 
 
 if __name__ == "__main__":

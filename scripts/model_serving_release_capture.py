@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """ADR 0004 evidence-capture candidate persistence.
 
-Local, candidate-only workflow: validate supplied release and contract
-objects, capture immutable run records and content-addressed evidence,
-assemble compatible run records into an immutable evidence bundle, and
-independently verify the resulting candidate.
+Local, candidate-only workflow: compose a verified release-plan candidate
+with a separate attempt-only specification, capture immutable run records
+and content-addressed evidence, assemble compatible run records into an
+immutable evidence bundle, and independently verify the resulting
+candidate.
 
 This module is not an issuing or promotion authority. A successful
 candidate is unreviewed, has privacy review pending, grants no serving
@@ -32,20 +33,29 @@ from typing import Any
 
 try:
     from scripts import (
+        immutable_descriptor_dir,
         model_identity,
         model_serving_release,
+        model_serving_release_plan,
         model_validation_evidence,
         terminal_format,
     )
 except ModuleNotFoundError:
+    import immutable_descriptor_dir  # type: ignore[no-redef]
     import model_identity  # type: ignore[no-redef]
     import model_serving_release  # type: ignore[no-redef]
+    import model_serving_release_plan  # type: ignore[no-redef]
     import model_validation_evidence  # type: ignore[no-redef]
     import terminal_format  # type: ignore[no-redef]
 
 
 CAPTURE_SPEC_SCHEMA_VERSION = 1
-CAPTURE_SPEC_KIND = "pulsar-model-serving-release-capture-spec"
+LEGACY_CAPTURE_SPEC_KIND = "pulsar-model-serving-release-capture-spec"
+CAPTURE_SPEC_KIND = "pulsar-model-serving-release-capture-attempt-spec"
+LEGACY_SPEC_MIGRATION = (
+    "the embedded --spec capture input is no longer accepted; "
+    "use --release-plan DIR --attempt-spec FILE"
+)
 CANDIDATE_SCHEMA_VERSION = 1
 CANDIDATE_KIND = "pulsar-model-serving-release-capture-candidate"
 OUTPUT_SCHEMA_VERSION = 1
@@ -66,8 +76,8 @@ CANDIDATE_PRIVACY = "pending"
 SPEC_TOP_FIELDS = {
     "schema_version",
     "kind",
-    "release",
-    "contract",
+    "release_id",
+    "contract_id",
     "attempt",
     "preparation_provenance",
     "observed_environment",
@@ -76,27 +86,7 @@ SPEC_TOP_FIELDS = {
     "evidence_sources",
     "review_source_keys",
 }
-RELEASE_SPEC_FIELDS = {
-    "schema_version",
-    "kind",
-    "model_artifact_set",
-    "serving_recipe",
-    "runtime_image_identity",
-    "supported_hardware_geometry",
-}
-RELEASE_SPEC_REQUIRED = {
-    "model_artifact_set",
-    "serving_recipe",
-    "runtime_image_identity",
-    "supported_hardware_geometry",
-}
-CONTRACT_SPEC_FIELDS = {
-    "schema_version",
-    "kind",
-    "repository_invariants",
-    "release_criteria",
-}
-CONTRACT_SPEC_REQUIRED = {"repository_invariants", "release_criteria"}
+SPEC_TOP_ID_FIELDS = {"release_id", "contract_id"}
 ATTEMPT_SPEC_FIELDS = {
     "attempt_id",
     "phase",
@@ -229,7 +219,7 @@ SAFE_RELATIVE_FILE_RE = re.compile(
 
 _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
-UNSAFE_PATH_COMPONENTS = {"", ".", ".."}
+UNSAFE_PATH_COMPONENTS = immutable_descriptor_dir.UNSAFE_PATH_COMPONENTS
 READ_STABILITY_HOOK = None
 VERIFY_AFTER_SCAN_HOOK = None
 
@@ -278,14 +268,17 @@ def _require_closed(
     return value
 
 
+def _apply_descriptor_hooks() -> None:
+    immutable_descriptor_dir.READ_STABILITY_HOOK = READ_STABILITY_HOOK
+    immutable_descriptor_dir.VERIFY_AFTER_SCAN_HOOK = VERIFY_AFTER_SCAN_HOOK
+
+
 def encode_json(value: Any) -> bytes:
-    return (
-        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    ).encode("utf-8")
+    return model_identity.pretty_json_bytes(value)
 
 
 def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+    return immutable_descriptor_dir.sha256_bytes(data)
 
 
 def candidate_identity(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -297,24 +290,29 @@ def candidate_id_for(manifest: dict[str, Any]) -> str:
 
 
 def _require_safe_component(name: str, *, label: str) -> str:
-    if name in UNSAFE_PATH_COMPONENTS or "/" in name or os.sep in name or "\x00" in name:
-        fail(f"{label} has an unsafe path component")
-    return name
+    try:
+        return immutable_descriptor_dir.require_safe_component(name, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
 def lexical_parts(path: Path, *, label: str) -> tuple[str, ...]:
     """Return non-root parts after rejecting empty, dot, and dot-dot names."""
-    parts = path.parts[1:] if path.is_absolute() else path.parts
-    return tuple(_require_safe_component(part, label=label) for part in parts)
+    try:
+        return immutable_descriptor_dir.lexical_parts(path, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
 def safe_absolute(path: Path, *, base: Path | None = None, label: str = "path") -> Path:
     """Return an absolute path without following or collapsing through '..'."""
-    if not path.is_absolute():
-        if base is None:
-            fail(f"{label} must be absolute")
-        path = base.joinpath(*lexical_parts(path, label=label))
-    return Path("/").joinpath(*lexical_parts(path, label=label))
+    try:
+        return immutable_descriptor_dir.safe_absolute(path, base=base, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
 def path_is_under(path: Path, root: Path, *, allow_equal: bool = False) -> bool:
@@ -345,35 +343,12 @@ def sanitize_error(message: str, *, repo_root: Path | None = None) -> str:
     return text
 
 
-def _reject_json_constant(value: str) -> None:
-    fail(f"JSON contains non-standard constant {value}")
-
-
-def _unique_object_pairs(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            fail(f"duplicate JSON object key {key!r}")
-        result[key] = value
-    return result
-
-
 def parse_strict_json(raw: bytes, *, label: str) -> Any:
     try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        fail(f"{label} is not valid UTF-8")
-    try:
-        return json.loads(
-            text,
-            parse_constant=_reject_json_constant,
-            object_pairs_hook=_unique_object_pairs,
-            strict=True,
-        )
-    except json.JSONDecodeError:
-        fail(f"{label} is malformed JSON")
-    except ValueError as exc:
-        fail(f"{label}: {exc}")
+        return immutable_descriptor_dir.parse_strict_json(raw, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
 def _is_enoent(exc: OSError) -> bool:
@@ -385,54 +360,30 @@ def _is_permission(exc: OSError) -> bool:
 
 
 def _classify_os_error(exc: OSError, *, label: str) -> None:
-    if _is_enoent(exc):
-        fail(f"{label} is missing")
-    if _is_permission(exc):
-        fail(f"{label} is unreadable")
-    if exc.errno in {errno.ELOOP, errno.EINVAL}:
-        fail(f"{label} must not be a symlink")
-    fail(f"{label} is unreadable")
+    try:
+        immutable_descriptor_dir.classify_os_error(exc, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as wrapped:
+        fail(str(wrapped))
 
 
 def close_quietly(fd: int | None) -> None:
-    if fd is None or fd < 0:
-        return
-    try:
-        os.close(fd)
-    except OSError:
-        pass
+    immutable_descriptor_dir.close_quietly(fd)
 
 
 def read_fd(fd: int) -> bytes:
-    chunks: list[bytes] = []
-    while True:
-        chunk = os.read(fd, 1024 * 1024)
-        if not chunk:
-            break
-        chunks.append(chunk)
-    return b"".join(chunks)
+    return immutable_descriptor_dir.read_fd(fd)
 
 
 def write_fd(fd: int, data: bytes) -> None:
-    view = memoryview(data)
-    while view:
-        written = os.write(fd, view)
-        view = view[written:]
+    immutable_descriptor_dir.write_fd(fd, data)
 
 
 def fsync_dir_fd(dir_fd: int) -> None:
-    os.fsync(dir_fd)
+    immutable_descriptor_dir.fsync_dir_fd(dir_fd)
 
 
 def stat_fingerprint(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        info.st_dev,
-        info.st_ino,
-        info.st_size,
-        info.st_mode,
-        info.st_mtime_ns,
-        info.st_ctime_ns,
-    )
+    return immutable_descriptor_dir.stat_fingerprint(info)
 
 
 def _require_same_file(
@@ -441,16 +392,19 @@ def _require_same_file(
     *,
     label: str,
 ) -> None:
-    if stat_fingerprint(observed) != stat_fingerprint(expected):
-        fail(f"{label} changed during read")
+    try:
+        immutable_descriptor_dir.require_same_file(
+            observed, expected, label=label
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
 
 
 def _stat_at(dir_fd: int, name: str, *, label: str) -> os.stat_result:
-    _require_safe_component(name, label=label)
     try:
-        return os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-    except OSError as exc:
-        _classify_os_error(exc, label=label)
+        return immutable_descriptor_dir.stat_at(dir_fd, name, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
         raise
 
 
@@ -462,23 +416,21 @@ def _open_at(
     mode: int = 0o600,
     label: str,
 ) -> int:
-    _require_safe_component(name, label=label)
     try:
-        return os.open(name, flags | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
-    except OSError as exc:
-        _classify_os_error(exc, label=label)
+        return immutable_descriptor_dir.open_at(
+            dir_fd, name, flags=flags, mode=mode, label=label
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
         raise
 
 
 def _file_read_flags() -> int:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NONBLOCK"):
-        flags |= os.O_NONBLOCK
-    return flags
+    return immutable_descriptor_dir.file_read_flags()
 
 
 def _dir_identity(info: os.stat_result) -> tuple[int, int]:
-    return (info.st_dev, info.st_ino)
+    return immutable_descriptor_dir.dir_identity(info)
 
 
 def _require_same_dir(
@@ -487,10 +439,10 @@ def _require_same_dir(
     *,
     label: str,
 ) -> None:
-    if stat.S_ISLNK(opened.st_mode) or not stat.S_ISDIR(opened.st_mode):
-        fail(f"{label} must be a directory")
-    if _dir_identity(opened) != _dir_identity(preview):
-        fail(f"{label} changed during open")
+    try:
+        immutable_descriptor_dir.require_same_dir(opened, preview, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
 
 
 def _open_dir_at_matching(
@@ -500,28 +452,24 @@ def _open_dir_at_matching(
     *,
     label: str,
 ) -> int:
-    fd = _open_at(
-        parent_fd,
-        name,
-        flags=os.O_RDONLY | os.O_DIRECTORY,
-        label=label,
-    )
     try:
-        _require_same_dir(os.fstat(fd), preview, label=label)
-    except Exception:
-        close_quietly(fd)
+        return immutable_descriptor_dir.open_dir_at_matching(
+            parent_fd, name, preview, label=label
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
         raise
-    return fd
 
 
 def _mode_of(fd: int) -> int:
-    return stat.S_IMODE(os.fstat(fd).st_mode)
+    return immutable_descriptor_dir.mode_of(fd)
 
 
 def require_fd_mode(fd: int, expected: int, *, label: str) -> None:
-    observed = _mode_of(fd)
-    if observed != expected:
-        fail(f"{label} mode is not {expected:04o}")
+    try:
+        immutable_descriptor_dir.require_fd_mode(fd, expected, label=label)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
 
 
 def _stable_read_fd(
@@ -531,21 +479,14 @@ def _stable_read_fd(
     label: str,
     hook_key: str | None = None,
 ) -> bytes:
-    opened = os.fstat(fd)
-    if stat.S_ISLNK(opened.st_mode):
-        fail(f"{label} must not be a symlink")
-    if not stat.S_ISREG(opened.st_mode):
-        fail(f"{label} must be a regular file")
-    _require_same_file(opened, preview, label=label)
-    hook = READ_STABILITY_HOOK
-    if hook is not None:
-        hook(hook_key)
-    data = read_fd(fd)
-    after = os.fstat(fd)
-    _require_same_file(after, preview, label=label)
-    if after.st_size != len(data):
-        fail(f"{label} changed during read")
-    return data
+    _apply_descriptor_hooks()
+    try:
+        return immutable_descriptor_dir.stable_read_fd(
+            fd, preview=preview, label=label, hook_key=hook_key
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
 def _reject_candidate_marker(dir_fd: int, *, label: str) -> None:
@@ -612,61 +553,19 @@ def open_directory_from_root(
     create: bool = False,
 ) -> int:
     """Walk absolute parts with no-follow opens. Optionally create missing directories."""
-    if not parts:
-        fail(f"{label} is too broad")
-    first = "/" + parts[0]
+
+    def on_directory(dir_fd: int) -> None:
+        _reject_candidate_marker(dir_fd, label=label)
+
     try:
-        preview = os.lstat(first)
-    except OSError as exc:
-        if create and _is_enoent(exc):
-            fail(f"{label} is missing")
-        _classify_os_error(exc, label=label)
-        raise
-    if stat.S_ISLNK(preview.st_mode):
-        fail(f"{label} must not be a symlink")
-    if not stat.S_ISDIR(preview.st_mode):
-        fail(f"{label} must be a directory")
-    try:
-        current = os.open(first, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    except OSError as exc:
-        _classify_os_error(exc, label=label)
-        raise
-    try:
-        _require_same_dir(os.fstat(current), preview, label=label)
-        if create:
-            _reject_candidate_marker(current, label=label)
-        for part in parts[1:]:
-            _require_safe_component(part, label=label)
-            created = False
-            try:
-                preview = os.stat(part, dir_fd=current, follow_symlinks=False)
-            except OSError as exc:
-                if create and _is_enoent(exc):
-                    try:
-                        os.mkdir(part, 0o700, dir_fd=current)
-                    except OSError as mkdir_exc:
-                        _classify_os_error(mkdir_exc, label=label)
-                    preview = os.stat(part, dir_fd=current, follow_symlinks=False)
-                    created = True
-                else:
-                    _classify_os_error(exc, label=label)
-                    raise
-            if stat.S_ISLNK(preview.st_mode):
-                fail(f"{label} must not be a symlink")
-            if not stat.S_ISDIR(preview.st_mode):
-                fail(f"{label} must be a directory")
-            next_fd = _open_dir_at_matching(
-                current, part, preview, label=label
-            )
-            close_quietly(current)
-            current = next_fd
-            if created:
-                os.fchmod(current, 0o700)
-            if create:
-                _reject_candidate_marker(current, label=label)
-        return current
-    except Exception:
-        close_quietly(current)
+        return immutable_descriptor_dir.open_directory_from_root(
+            parts,
+            label=label,
+            create=create,
+            on_directory=on_directory if create else None,
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
         raise
 
 
@@ -676,38 +575,25 @@ def open_file_from_root(
     label: str,
     hook_key: str | None = None,
 ) -> tuple[int, os.stat_result]:
-    if not parts:
-        fail(f"{label} must be a regular file")
-    parent = open_directory_from_root(parts[:-1], label=label, create=False)
+    _apply_descriptor_hooks()
     try:
-        preview = _stat_at(parent, parts[-1], label=label)
-        if stat.S_ISLNK(preview.st_mode):
-            fail(f"{label} must not be a symlink")
-        if not stat.S_ISREG(preview.st_mode):
-            fail(f"{label} must be a regular file")
-        fd = _open_at(parent, parts[-1], flags=_file_read_flags(), label=label)
-        try:
-            opened = os.fstat(fd)
-            _require_same_file(opened, preview, label=label)
-        except Exception:
-            close_quietly(fd)
-            raise
-        return fd, preview
-    finally:
-        close_quietly(parent)
+        return immutable_descriptor_dir.open_file_from_root(
+            parts, label=label, hook_key=hook_key
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
 def read_absolute_file(path: Path, *, label: str, hook_key: str | None = None) -> bytes:
-    absolute = safe_absolute(path, label=label)
-    fd, preview = open_file_from_root(
-        lexical_parts(absolute, label=label),
-        label=label,
-        hook_key=hook_key,
-    )
+    _apply_descriptor_hooks()
     try:
-        return _stable_read_fd(fd, preview=preview, label=label, hook_key=hook_key)
-    finally:
-        close_quietly(fd)
+        return immutable_descriptor_dir.read_absolute_file(
+            path, label=label, hook_key=hook_key
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
 def hash_regular_file(path: Path, *, label: str) -> tuple[str, bytes, os.stat_result]:
@@ -783,10 +669,19 @@ def _rmtree_at(parent_fd: int, name: str) -> None:
         pass
 
 
-def _scan_forbidden_keys(value: Any, *, label: str) -> None:
+def _scan_forbidden_keys(
+    value: Any,
+    *,
+    label: str,
+    allow_top_level_ids: bool = False,
+) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
-            if key in FORBIDDEN_SPEC_KEYS or key in PROCESS_TRANSLATION_KEYS:
+            allowed_id = allow_top_level_ids and key in SPEC_TOP_ID_FIELDS
+            if (
+                not allowed_id
+                and (key in FORBIDDEN_SPEC_KEYS or key in PROCESS_TRANSLATION_KEYS)
+            ):
                 fail(f"{label} contains forbidden field {key}")
             _scan_forbidden_keys(item, label=f"{label}.{key}")
         return
@@ -885,78 +780,44 @@ def _observation_artifact_ids(observation: dict[str, Any]) -> set[str]:
     return ids
 
 
-def load_spec_file(path: Path) -> dict[str, Any]:
-    data = read_absolute_file(path, label="capture spec", hook_key="capture-spec")
-    payload = parse_strict_json(data, label="capture spec")
+def load_attempt_spec_file(path: Path) -> dict[str, Any]:
+    data = read_absolute_file(path, label="attempt spec", hook_key="attempt-spec")
+    payload = parse_strict_json(data, label="attempt spec")
     if not isinstance(payload, dict):
-        fail("capture spec must be a JSON object")
+        fail("attempt spec must be a JSON object")
+    kind = payload.get("kind")
+    if kind == LEGACY_CAPTURE_SPEC_KIND:
+        fail(LEGACY_SPEC_MIGRATION)
     return payload
 
 
-def _load_release(value: Any) -> dict[str, Any]:
-    release_spec = _require_closed(
-        value,
-        allowed=RELEASE_SPEC_FIELDS,
-        required=RELEASE_SPEC_REQUIRED,
-        label="spec.release",
-    )
-    if "schema_version" in release_spec:
-        if release_spec["schema_version"] != (
-            model_serving_release.MODEL_SERVING_RELEASE_SCHEMA_VERSION
-        ):
-            fail("spec.release schema_version is unsupported")
-    if "kind" in release_spec:
-        if release_spec["kind"] != model_serving_release.MODEL_SERVING_RELEASE_KIND:
-            fail("spec.release kind is invalid")
-    try:
-        return model_serving_release.build_model_serving_release(
-            model_artifact_set=release_spec["model_artifact_set"],
-            serving_recipe=release_spec["serving_recipe"],
-            runtime_image_identity=release_spec["runtime_image_identity"],
-            supported_hardware_geometry=release_spec["supported_hardware_geometry"],
-        )
-    except model_serving_release.ModelServingReleaseError as exc:
-        fail(f"spec.release is invalid: {exc}")
+def load_spec_file(path: Path) -> dict[str, Any]:
+    return load_attempt_spec_file(path)
 
 
-def _load_contract(value: Any, *, release: dict[str, Any]) -> dict[str, Any]:
-    contract_spec = _require_closed(
-        value,
-        allowed=CONTRACT_SPEC_FIELDS,
-        required=CONTRACT_SPEC_REQUIRED,
-        label="spec.contract",
-    )
-    if "schema_version" in contract_spec:
-        if contract_spec["schema_version"] != (
-            model_serving_release.VALIDATION_CONTRACT_SCHEMA_VERSION
-        ):
-            fail("spec.contract schema_version is unsupported")
-    if "kind" in contract_spec:
-        if contract_spec["kind"] != model_serving_release.VALIDATION_CONTRACT_KIND:
-            fail("spec.contract kind is invalid")
-    invariants = contract_spec["repository_invariants"]
-    if invariants != model_serving_release.repository_validation_invariants():
-        fail("spec.contract repository invariants differ from policy")
-    criteria_block = _require_object(
-        contract_spec["release_criteria"],
-        {
-            "criteria",
-            "context_requirement",
-            "soak_requirement",
-            "relative_performance",
-        },
-        label="spec.contract.release_criteria",
-    )
+def load_verified_release_and_contract(
+    release_plan_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
-        return model_serving_release.build_validation_contract(
-            release=release,
-            criteria=criteria_block["criteria"],
-            context_requirement=criteria_block["context_requirement"],
-            soak_requirement=criteria_block["soak_requirement"],
-            relative_performance=criteria_block["relative_performance"],
+        verified = model_serving_release_plan.load_verified_release_plan_candidate(
+            release_plan_dir
+        )
+    except (
+        model_serving_release_plan.ModelServingReleasePlanError,
+        immutable_descriptor_dir.ImmutableDescriptorDirectoryError,
+    ) as exc:
+        fail(f"release-plan candidate is invalid: {exc}")
+    try:
+        release = model_serving_release.validate_model_serving_release(
+            verified.release
+        )
+        contract = model_serving_release.validate_validation_contract(
+            verified.contract,
+            expected_release=release,
         )
     except model_serving_release.ModelServingReleaseError as exc:
-        fail(f"spec.contract is invalid: {exc}")
+        fail(str(exc))
+    return release, contract
 
 
 def _load_evidence_sources(value: Any) -> list[dict[str, Any]]:
@@ -1350,7 +1211,7 @@ def check_registry_object(
     if model_identity.canonical_json_digest(loaded) != (
         model_identity.canonical_json_digest(expected)
     ):
-        fail(f"tracked registry {label} differs from the capture spec")
+        fail(f"tracked registry {label} differs from the verified release-plan object")
 
 
 def check_registry_equality(
@@ -1666,16 +1527,34 @@ def build_capture_from_spec(
     spec: dict[str, Any],
     *,
     repo_root: Path,
+    release: dict[str, Any],
+    contract: dict[str, Any],
 ) -> BuiltCapture:
-    document = _require_object(spec, SPEC_TOP_FIELDS, label="capture spec")
+    if isinstance(spec, dict) and spec.get("kind") == LEGACY_CAPTURE_SPEC_KIND:
+        fail(LEGACY_SPEC_MIGRATION)
+    document = _require_object(spec, SPEC_TOP_FIELDS, label="attempt spec")
     if document.get("schema_version") != CAPTURE_SPEC_SCHEMA_VERSION:
-        fail("capture spec schema_version is unsupported")
+        fail("attempt spec schema_version is unsupported")
     if document.get("kind") != CAPTURE_SPEC_KIND:
-        fail("capture spec kind is invalid")
-    _scan_forbidden_keys(document, label="capture spec")
-    _screen_capture_input(document, label="capture spec")
-    release = _load_release(document["release"])
-    contract = _load_contract(document["contract"], release=release)
+        fail("attempt spec kind is invalid")
+    _scan_forbidden_keys(document, label="attempt spec", allow_top_level_ids=True)
+    _screen_capture_input(document, label="attempt spec")
+    for field_name in ("release_id", "contract_id"):
+        digest = document.get(field_name)
+        if not isinstance(digest, str) or HEX64_RE.fullmatch(digest) is None:
+            fail(f"attempt spec {field_name} is invalid")
+    try:
+        release = model_serving_release.validate_model_serving_release(release)
+        contract = model_serving_release.validate_validation_contract(
+            contract,
+            expected_release=release,
+        )
+    except model_serving_release.ModelServingReleaseError as exc:
+        fail(str(exc))
+    if document["release_id"] != release["release_id"]:
+        fail("attempt spec release_id does not match the verified release")
+    if document["contract_id"] != contract["contract_id"]:
+        fail("attempt spec contract_id does not match the verified contract")
     check_registry_equality(repo_root, release=release, contract=contract)
     attempt = _require_object(
         document["attempt"], ATTEMPT_SPEC_FIELDS, label="spec.attempt"
@@ -1799,6 +1678,21 @@ def build_capture_from_spec(
     )
 
 
+def build_capture_from_plan(
+    *,
+    release_plan_dir: Path,
+    attempt_spec: dict[str, Any],
+    repo_root: Path,
+) -> BuiltCapture:
+    release, contract = load_verified_release_and_contract(release_plan_dir)
+    return build_capture_from_spec(
+        attempt_spec,
+        repo_root=repo_root,
+        release=release,
+        contract=contract,
+    )
+
+
 def output_root_from_args(args: argparse.Namespace, repo_root: Path) -> Path:
     repo = safe_absolute(repo_root, label="repository root")
     if args.output_dir:
@@ -1898,109 +1792,30 @@ def error_payload(command: str, message: str) -> dict[str, Any]:
 def _read_child_file(
     dir_fd: int, name: str, *, label: str
 ) -> tuple[bytes, tuple[int, int, int, int, int, int]]:
-    preview = _stat_at(dir_fd, name, label=label)
-    if stat.S_ISLNK(preview.st_mode):
-        fail(f"{label} must not be a symlink")
-    if not stat.S_ISREG(preview.st_mode):
-        fail(f"{label} must be a regular file")
-    fd = _open_at(dir_fd, name, flags=_file_read_flags(), label=label)
+    _apply_descriptor_hooks()
     try:
-        require_fd_mode(fd, 0o600, label=label)
-        data = _stable_read_fd(fd, preview=preview, label=label, hook_key=name)
-        after = os.fstat(fd)
-        return data, stat_fingerprint(after)
-    finally:
-        close_quietly(fd)
+        return immutable_descriptor_dir.read_child_file(
+            dir_fd, name, label=label, file_mode=0o600
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
+        raise
 
 
-@dataclass
-class CandidateSnapshot:
-    root_identity: tuple[int, int]
-    root_mode: int
-    root_names: tuple[str, ...]
-    subdirs: dict[str, tuple[int, tuple[int, int], int, tuple[str, ...]]]
-    files: dict[str, tuple[str, bytes, tuple[int, int, int, int, int, int]]]
-
-    def close(self) -> None:
-        for handle, _identity, _mode, _names in self.subdirs.values():
-            close_quietly(handle)
-        self.subdirs.clear()
+CandidateSnapshot = immutable_descriptor_dir.ImmutableDirectorySnapshot
 
 
 def scan_candidate_tree(dest_fd: int) -> CandidateSnapshot:
-    require_fd_mode(dest_fd, 0o700, label="candidate directory")
-    root_stat = os.fstat(dest_fd)
+    _apply_descriptor_hooks()
     try:
-        root_names = tuple(sorted(os.listdir(dest_fd)))
-    except OSError:
-        fail("candidate directory is unreadable")
-    snapshot = CandidateSnapshot(
-        root_identity=_dir_identity(root_stat),
-        root_mode=stat.S_IMODE(root_stat.st_mode),
-        root_names=root_names,
-        subdirs={},
-        files={},
-    )
-    try:
-        for name in root_names:
-            preview = _stat_at(dest_fd, name, label="candidate entry")
-            if stat.S_ISLNK(preview.st_mode):
-                fail("candidate must not contain a symlink")
-            if name.startswith("."):
-                fail("candidate cannot retain scratch files")
-            if stat.S_ISDIR(preview.st_mode):
-                if name not in {RUN_RECORDS_DIR, EVIDENCE_DIR}:
-                    fail("candidate contains an unexpected directory")
-                child_fd = _open_dir_at_matching(
-                    dest_fd,
-                    name,
-                    preview,
-                    label="candidate subdirectory",
-                )
-                require_fd_mode(child_fd, 0o700, label="candidate subdirectory")
-                try:
-                    child_names = tuple(sorted(os.listdir(child_fd)))
-                except OSError:
-                    fail("candidate directory is unreadable")
-                if not child_names:
-                    fail("candidate contains an unexpected directory")
-                snapshot.subdirs[name] = (
-                    child_fd,
-                    _dir_identity(os.fstat(child_fd)),
-                    0o700,
-                    child_names,
-                )
-                for child_name in child_names:
-                    if child_name.startswith("."):
-                        fail("candidate cannot retain scratch files")
-                    child_preview = _stat_at(
-                        child_fd, child_name, label="candidate file"
-                    )
-                    if stat.S_ISLNK(child_preview.st_mode):
-                        fail("candidate must not contain a symlink")
-                    if stat.S_ISDIR(child_preview.st_mode):
-                        fail("candidate contains an unexpected directory")
-                    if not stat.S_ISREG(child_preview.st_mode):
-                        fail("candidate file must be a regular file")
-                    data, fingerprint = _read_child_file(
-                        child_fd, child_name, label="candidate file"
-                    )
-                    snapshot.files[f"{name}/{child_name}"] = (
-                        sha256_bytes(data),
-                        data,
-                        fingerprint,
-                    )
-                continue
-            if not stat.S_ISREG(preview.st_mode):
-                fail("candidate file must be a regular file")
-            data, fingerprint = _read_child_file(
-                dest_fd, name, label="candidate file"
-            )
-            snapshot.files[name] = (sha256_bytes(data), data, fingerprint)
-    except Exception:
-        snapshot.close()
+        return immutable_descriptor_dir.scan_immutable_directory(
+            dest_fd,
+            allowed_subdirs={RUN_RECORDS_DIR, EVIDENCE_DIR},
+            label="candidate",
+        )
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
         raise
-    return snapshot
 
 
 def _recheck_candidate_snapshot(
@@ -2008,68 +1823,15 @@ def _recheck_candidate_snapshot(
     snapshot: CandidateSnapshot,
     dest: Path,
 ) -> None:
-    root_now = os.fstat(dest_fd)
-    if _dir_identity(root_now) != snapshot.root_identity:
-        fail("candidate directory identity changed")
-    if stat.S_IMODE(root_now.st_mode) != 0o700:
-        fail("candidate directory mode is not 0700")
     try:
-        root_names = tuple(sorted(os.listdir(dest_fd)))
-    except OSError:
-        fail("candidate directory is unreadable")
-    if root_names != snapshot.root_names:
-        fail("candidate directory entries changed")
-    for name, (handle, identity, _mode, names) in snapshot.subdirs.items():
-        preview = _stat_at(dest_fd, name, label="candidate subdirectory")
-        if stat.S_ISLNK(preview.st_mode):
-            fail("candidate subdirectory must not be a symlink")
-        if not stat.S_ISDIR(preview.st_mode):
-            fail("candidate subdirectory must be a directory")
-        if _dir_identity(preview) != identity:
-            fail("candidate subdirectory identity changed")
-        named_fd = _open_dir_at_matching(
+        immutable_descriptor_dir.recheck_immutable_directory(
             dest_fd,
-            name,
-            preview,
-            label="candidate subdirectory",
+            snapshot,
+            dest,
+            label="candidate",
         )
-        try:
-            if _dir_identity(os.fstat(named_fd)) != identity:
-                fail("candidate subdirectory identity changed")
-            now = os.fstat(handle)
-            if _dir_identity(now) != identity:
-                fail("candidate subdirectory identity changed")
-            if stat.S_IMODE(now.st_mode) != 0o700:
-                fail("candidate subdirectory mode is not 0700")
-            try:
-                current_names = tuple(sorted(os.listdir(named_fd)))
-            except OSError:
-                fail("candidate directory is unreadable")
-            if current_names != names:
-                fail("candidate directory entries changed")
-        finally:
-            close_quietly(named_fd)
-    for relative, (_digest, _data, fingerprint) in snapshot.files.items():
-        parts = lexical_parts(PurePosixPath(relative), label="candidate file")
-        if len(parts) == 1:
-            parent_fd = dest_fd
-            name = parts[0]
-        else:
-            parent_fd = snapshot.subdirs[parts[0]][0]
-            name = parts[1]
-        preview = _stat_at(parent_fd, name, label="candidate file")
-        if stat_fingerprint(preview) != fingerprint:
-            fail("candidate file changed")
-    fresh = open_directory_from_root(
-        lexical_parts(dest, label="candidate directory"),
-        label="candidate directory",
-        create=False,
-    )
-    try:
-        if _dir_identity(os.fstat(fresh)) != snapshot.root_identity:
-            fail("candidate path no longer identifies the same directory")
-    finally:
-        close_quietly(fresh)
+    except immutable_descriptor_dir.ImmutableDescriptorDirectoryError as exc:
+        fail(str(exc))
 
 
 def _load_candidate_json_from_map(
@@ -2393,22 +2155,57 @@ def assemble_built_candidates(candidates: list[BuiltCapture]) -> BuiltCapture:
     )
 
 
-def load_spec_from_args(args: argparse.Namespace) -> dict[str, Any]:
+def _absolute_input_path(
+    raw: str,
+    *,
+    repo_root: Path,
+    label: str,
+) -> Path:
+    path = Path(raw)
+    if not path.is_absolute():
+        return safe_absolute(path, base=repo_root, label=label)
+    return safe_absolute(path, label=label)
+
+
+def reject_legacy_spec_argument(args: argparse.Namespace) -> None:
+    if getattr(args, "spec", None):
+        fail(LEGACY_SPEC_MIGRATION)
+
+
+def load_capture_inputs_from_args(
+    args: argparse.Namespace,
+) -> tuple[Path, dict[str, Any]]:
+    reject_legacy_spec_argument(args)
     repo = safe_absolute(Path(args.repo_root), label="repository root")
-    spec_path = Path(args.spec)
-    if not spec_path.is_absolute():
-        spec_path = safe_absolute(spec_path, base=repo, label="capture spec")
-    else:
-        spec_path = safe_absolute(spec_path, label="capture spec")
-    return load_spec_file(spec_path)
+    plan_dir = getattr(args, "release_plan", None)
+    attempt_path = getattr(args, "attempt_spec", None)
+    if not plan_dir or not attempt_path:
+        fail("plan and capture-run require --release-plan DIR --attempt-spec FILE")
+    release_plan_dir = _absolute_input_path(
+        plan_dir,
+        repo_root=repo,
+        label="release-plan candidate directory",
+    )
+    spec_path = _absolute_input_path(
+        attempt_path,
+        repo_root=repo,
+        label="attempt spec",
+    )
+    return release_plan_dir, load_attempt_spec_file(spec_path)
+
+
+def load_spec_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    _plan_dir, spec = load_capture_inputs_from_args(args)
+    del _plan_dir
+    return spec
 
 
 HELP_LINES = (
     "Capture unreviewed ADR 0004 evidence-capture candidates",
     "",
     "Usage:",
-    "scripts/model-serving-release-capture.sh plan --spec SPEC [--json]",
-    "scripts/model-serving-release-capture.sh capture-run --spec SPEC [--output-dir DIR] [--json]",
+    "scripts/model-serving-release-capture.sh plan --release-plan DIR --attempt-spec FILE [--json]",
+    "scripts/model-serving-release-capture.sh capture-run --release-plan DIR --attempt-spec FILE [--output-dir DIR] [--json]",
     "scripts/model-serving-release-capture.sh assemble-bundle --candidate-dir DIR [--candidate-dir DIR ...] [--output-dir DIR] [--json]",
     "scripts/model-serving-release-capture.sh verify-candidate --candidate-dir DIR [--json]",
     "",
@@ -2433,7 +2230,12 @@ def cmd_help(_args: argparse.Namespace) -> int:
 
 def cmd_plan(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root)
-    built = build_capture_from_spec(load_spec_from_args(args), repo_root=repo_root)
+    release_plan_dir, attempt_spec = load_capture_inputs_from_args(args)
+    built = build_capture_from_plan(
+        release_plan_dir=release_plan_dir,
+        attempt_spec=attempt_spec,
+        repo_root=repo_root,
+    )
     payload = common_result("plan", built)
     if args.json:
         emit_json(payload)
@@ -2444,7 +2246,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 def cmd_capture_run(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root)
-    built = build_capture_from_spec(load_spec_from_args(args), repo_root=repo_root)
+    release_plan_dir, attempt_spec = load_capture_inputs_from_args(args)
+    built = build_capture_from_plan(
+        release_plan_dir=release_plan_dir,
+        attempt_spec=attempt_spec,
+        repo_root=repo_root,
+    )
     output_root = output_root_from_args(args, repo_root)
     dest = destination_for_layout(output_root, built.layout, repo_root=repo_root)
     publish_candidate_tree(dest, built.files)
@@ -2515,14 +2322,18 @@ def build_parser() -> argparse.ArgumentParser:
     help_cmd.set_defaults(func=cmd_help)
 
     plan = subparsers.add_parser("plan", help="Derive IDs without writing")
-    plan.add_argument("--spec", required=True)
+    plan.add_argument("--release-plan")
+    plan.add_argument("--attempt-spec")
+    plan.add_argument("--spec", help=argparse.SUPPRESS)
     plan.add_argument("--json", action="store_true")
     plan.set_defaults(func=cmd_plan)
 
     capture = subparsers.add_parser(
         "capture-run", help="Capture one immutable run candidate"
     )
-    capture.add_argument("--spec", required=True)
+    capture.add_argument("--release-plan")
+    capture.add_argument("--attempt-spec")
+    capture.add_argument("--spec", help=argparse.SUPPRESS)
     capture.add_argument("--output-dir")
     capture.add_argument("--json", action="store_true")
     capture.set_defaults(func=cmd_capture_run)
@@ -2554,6 +2365,8 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except (
         ModelServingReleaseCaptureError,
+        immutable_descriptor_dir.ImmutableDescriptorDirectoryError,
+        model_serving_release_plan.ModelServingReleasePlanError,
         model_serving_release.ModelServingReleaseError,
         model_validation_evidence.ModelValidationEvidenceError,
         model_identity.ModelIdentityError,
