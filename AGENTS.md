@@ -160,6 +160,14 @@ rather than additional parallel SSH/local state machines.
 
 These rules exist because silent fallbacks, wrong networks, and unowned cleanup have caused real multi-node failures. Prefer failing loudly over “making it work.”
 
+### Independent implementation review
+
+When a user requests an independent Grok review before implementation, use
+`skills/grok-subagent/SKILL.md`. Launch Grok only against a sanitized review
+tree, never the live worktree. Grok remains advisory; reconcile its findings
+against repository authority and obtain agreement on the final approach before
+editing.
+
 ### Fail closed; no silent policy changes
 
 - Partial weights, wrong transport, digest mismatch, stale topology, or incomplete preparation/start must **not** report healthy serving.
