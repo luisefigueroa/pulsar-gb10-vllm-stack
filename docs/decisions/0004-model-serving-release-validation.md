@@ -12,6 +12,8 @@
   and composed from a verified release-plan candidate plus an attempt-only spec;
   local source-neutral release-plan candidate persistence implemented with
   a public verified loader;
+  closed validator-measurement documents and attempt-only spec composition
+  implemented for strict same-boot and absolute throughput/latency;
   advisory catalog/operator ADR 0004 status projection implemented for
   explicitly bound profiles; trusted decision issuance pending;
   status-independent serving policy implemented
@@ -591,7 +593,11 @@ catalog or profile status, launches nothing, never writes the tracked
 registry, and does not issue `Untested`. A pre-barrier failure means
 qualification did not start; absence of a reviewed decision stays
 neutral. It is not a `validate/*` measurement adapter, a reviewed
-decision, or a physical DGX claim. See
+decision, or a physical DGX claim. Closed validator-measurement documents
+and `scripts/model-serving-release-attempt.sh` now compose attempt-only
+specs for strict same-boot and absolute throughput/latency; capture still
+consumes those specs and derives program versions and evidence digests.
+See
 [MODEL_SERVING_RELEASE_CAPTURE.md](../MODEL_SERVING_RELEASE_CAPTURE.md).
 
 ### Pre-issuance schema correction

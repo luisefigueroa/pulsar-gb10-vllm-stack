@@ -36,7 +36,11 @@ evidence cannot produce `Validated`.
 Read-only persistence and verification of stored ADR 0004 objects is
 implemented under `models/model-serving-releases/`. Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
-unreviewed. Advisory catalog/operator projection is implemented for profiles
+unreviewed. Closed compare/bench measurement documents and
+`scripts/model-serving-release-attempt.sh` can compose attempt-only specs
+for strict same-boot and absolute throughput/latency. Those control-plane
+documents are not a ledger pass and do not issue status. Advisory
+catalog/operator projection is implemented for profiles
 explicitly bound by `MODEL_SERVING_RELEASE_ID`; no binding and no reviewed
 decision are neutral, not inferred as `Untested`. Current profiles are unbound
 and the tracked registry is empty. Trusted decision issuance remains pending.

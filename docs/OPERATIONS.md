@@ -62,9 +62,9 @@ filter. Neither status field grants or denies serving. Existing reviewed
 seals/bundles are not automatically `Validated`.
 
 The current `./pulsar` commands do not capture or publish ADR 0004 objects or
-issue decisions. Local ADR 0004 release planning and evidence-capture
-candidate persistence are separate maintainer commands and launch nothing;
-see [MODEL_RELEASE.md](./MODEL_RELEASE.md) and
+issue decisions. Local ADR 0004 release planning, attempt composition, and
+evidence-capture candidate persistence are separate maintainer commands and
+launch nothing; see [MODEL_RELEASE.md](./MODEL_RELEASE.md) and
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md).
 A schema-valid local decision is not proof of maintainer review or physical
 qualification.
@@ -643,7 +643,7 @@ qualification scope:
 | `home add` exact download, verification, and publication | Catalog/artifact acquisition | Does not prepare a runtime view, qualify the model, or promote the storage path |
 | Preparation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
 | Exact-source launch, health, warmup, completion smoke, owned stop | Serving integration | Does not prove accuracy, determinism, performance, context, or soak |
-| `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe |
+| `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe. Ordinary invocation stays human-compatible and does not require a release plan. Optional `--measurement-dir` writes closed compare/bench measurement files under `results/` or a safe explicit outside path; optional `--invocation-plan` is an explicit contract-driven bench overlay and fails closed instead of changing the default sweep. |
 | Validation status | Evidence-derived release decision | Describes confidence/results; never grants or denies serving |
 | Recommendation/default storage policy | Combined release/promotion | Requires every applicable subsystem gate; does not hide other labeled choices |
 

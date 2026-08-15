@@ -115,7 +115,26 @@ PY
 
 grep -q -- '--require-identical' validate/run-gates.sh
 grep -q -- '--allow-fp-equivalent-run-to-run' validate/run-gates.sh
+grep -q -- '--measurement-dir' validate/run-gates.sh
+grep -q -- '--invocation-plan' validate/run-gates.sh
+grep -q -- '--result-json' validate/run-gates.sh
+grep -q -- '--num-requests' validate/bench_serve.py
 grep -q 'Y%m%dT%H%M%S' validate/run-gates.sh
 grep -q 'refusing to overwrite existing artifacts' validate/run-gates.sh
+! grep -q '2>/dev/null' validate/run-gates.sh
+grep -q 'preserve_child_stderr' validate/run-gates.sh
+python3 - <<'PY'
+from pathlib import Path
+text = Path("validate/run-gates.sh").read_text(encoding="utf-8")
+baseline = text.split("gate 2: vs baseline", 1)[1].split("gate 3:", 1)[0]
+assert "--result-json" not in baseline
+assert "--allow-fp-equivalent-run-to-run" in text
+assert "1 2 4 8" in text
+assert "INVOCATION_PLAN" in text
+assert "mapfile -t BENCH_ARGS < <" not in text
+assert "bench_argv_rc" in text
+assert "check-measurement-dir" in text
+assert 'mkdir -p "$MEASUREMENT_DIR"' not in text
+PY
 
 echo "validation verdict selftest OK"
