@@ -39,7 +39,7 @@ data planes even when they involve the same machines.
 
 - `scripts/selftest.sh` runs control-plane tests and Python syntax checks without requiring Docker.
 - `scripts/doctor.sh` verifies GPU, Docker, port, cache, and optional worker readiness on GB10 hardware.
-- `scripts/list-models.sh --validated --serving` lists wizard/operator ship profiles (`STATUS=tested*` and `PROFILE_PURPOSE=serving`). `--validated` alone also includes diagnostic canaries.
+- `scripts/list-models.sh --serving` lists every serving-purpose profile and its advisory status. `--legacy-tested` filters the historical `STATUS=tested*` recommendation class; `--validated` is a deprecated alias and does not mean ADR 0004 `Validated`.
 - `scripts/up.sh qwen3-1.7b --dry-run` exercises launch checks without starting a server.
 - `validate/run-gates.sh <served-name> --tag <label>` runs determinism captures, throughput benchmarks, and optional baseline/needle gates against an already-running server.
 - `docker build -t vllm-gb10:v0.26.0 .` builds the optional metadata overlay; see `docs/BUILD.md` before changing image pins.
@@ -91,9 +91,8 @@ language for new features without an explicit decision.
   contract objects, captures immutable run records and content-addressed
   evidence, assembles compatible runs, and independently verifies the
   unreviewed candidate. It must not write the tracked registry, issue a
-  decision, change catalog or profile status, or grant serving
-  authorization. Decision issuance, catalog/operator status projection, and
-  serving-eligibility migration remain pending and must validate through the
+  decision, change catalog or profile status, or launch a release. Decision
+  issuance and catalog/operator status projection remain pending and must validate through the
   pure schema modules rather than duplicating their identity or status rules.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
@@ -191,8 +190,8 @@ unless that authority is explicitly part of the approved plan.
 
 - Partial weights, wrong transport, digest mismatch, stale topology, or incomplete preparation/start must **not** report healthy serving.
 - Do **not** silently fall back (e.g. fabric → full N-replica pull, RoCE NFS → TCP/control-LAN NFS, confirmed rail → “any route”). If an alternate path exists, it is an **explicit** operator choice and must be visible in CLI, labels, and docs.
-- Do **not** invent serving geometries (TP/PP/node counts) from “we discovered N machines.” Exact profiles and `STATUS` gates decide what may run; extra confirmed nodes stay idle capacity.
-- Wizard and default paths stay on **promoted** behavior. Experimental features remain opt-in CLI (never surprise defaults).
+- Do **not** invent serving geometries (TP/PP/node counts) from “we discovered N machines.” Exact profile contracts and operational gates decide what can run; extra confirmed nodes stay idle capacity.
+- The wizard exposes all serving profiles that fit confirmed capacity, with status and material caveats visible. Recommendation and default ordering prefer evidence-backed behavior. Experimental subsystems remain explicit choices and are never silent fallbacks.
 
 ### Topology, SSH, and data planes
 
@@ -229,6 +228,13 @@ unless that authority is explicitly part of the approved plan.
   across stability, accuracy, throughput, and latency, plus reviewed
   provenance/security and strict same-boot reproducibility. FP-equivalent
   output does not satisfy the strict gate.
+- Validation status is advisory and never grants or denies serving. Catalog and
+  operator surfaces must not hide or block a release solely because of status,
+  including legacy `do-not-use`/`blocked` labels or no reviewed decision.
+  Recommendation/default policy may prefer stronger evidence. Operational
+  admission still fails closed for concrete identity, integrity, recipe,
+  runtime/geometry, capacity, topology, security, lifecycle, or ownership
+  failures.
 - Criterion scopes are fixed: stability, accuracy, throughput, latency, and
   strict same-boot are `model-qualification`; serving integration is
   `serving-integration`; provenance/security and physical geometry are
@@ -270,23 +276,26 @@ unless that authority is explicitly part of the approved plan.
   still pass trusted publication privacy review. Pure
   schema validation does not prove that a supplied digest names the checked-out
   executable or that no unknown private identifier escaped structural checks.
-  These builders do not capture evidence, issue a trusted decision, or change
-  serving eligibility. Local ADR 0004 evidence-capture candidate persistence
+  These builders do not capture evidence, issue a trusted decision, or launch
+  a release. Local ADR 0004 evidence-capture candidate persistence
   can plan, capture, assemble, and verify unreviewed candidates without
-  writing the tracked registry or authorizing serving. Read-only trusted
+  writing the tracked registry or launching a release. Read-only trusted
   persistence can verify exact reviewed objects under
   `models/model-serving-releases/` without projecting catalog status or
-  changing serving eligibility. Inspection of a stored release is
+  changing runtime state. Inspection of a stored release is
   informational: absence of a reviewed decision is not `Untested`, and
   multiple contract lineages or unsuperseded heads stay ambiguous. Current
   `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles remain
-  legacy implementation contracts until catalog/operator projection and
-  serving-eligibility migration land. Do not automatically relabel an existing
+  legacy implementation contracts until catalog/operator projection lands.
+  Do not automatically relabel an existing
   profile or bundle `Validated`. The corrected ADR 0004 objects remain schema
   version 1 because none was issued or persisted before the correction;
   existing legacy schema-1 seals/bundles and raw evidence remain untouched.
   The tracked ADR 0004 registry currently stores no issued object.
-- `STATUS` / `docs/VALIDATION.md` / wizard allowlists change only with reproducible evidence. Preserve failed and partial runs; do not rewrite failures as passes.
+- `STATUS`, ADR 0004 decisions, recommendations/defaults, and
+  `docs/VALIDATION.md` claims change only with reproducible evidence. The wizard
+  still shows other fitting profiles with accurate labels and caveats. Preserve
+  failed and partial runs; do not rewrite failures as passes.
 - Selftests prove control-plane contracts; they do **not** replace physical gates for serving or storage claims (`docs/REVALIDATE.md`).
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
 - Document dependency honesty: if a mode needs owner/home/library after start, inventory and docs say so; if independence is claimed, tests must cover home-down restart.
@@ -333,7 +342,8 @@ this work; the skill is procedural and does not outrank these sources.
   not start a container or establish model qualification. `activate` is a
   backward-compatible command and internal-schema term, not the product label.
 
-- In the **current implementation**, a reviewed `STATUS=tested` identity binds
+- In the **current repository data**, each issued reviewed identity is attached
+  to a legacy `STATUS=tested` profile and binds
   a schema-1 validation bundle, not a model repository ID alone. Only issued
   seals (`qwen3-1.7b`, `deepseek-v4-flash` today) have that bundle. Other
   `tested` serving profiles remain `legacy-unsealed`. Expected identity comes
@@ -346,8 +356,10 @@ this work; the skill is procedural and does not outrank these sources.
   currently empty. Caller-supplied predecessor and decision registries remain
   validation input, not trusted persistence. Local evidence-capture candidate
   persistence is implemented and remains unreviewed; decision
-  issuance/publication, catalog/operator status projection, and
-  serving-eligibility migration remain pending.
+  issuance/publication and catalog/operator status projection remain pending.
+  Expected-seal identity and validation status are independent contracts: a
+  future non-tested profile may carry a reviewed seal, and a matching seal does
+  not promote its release status.
 - A deterministic release candidate has no authority by itself. Trusted
   issuance remains a reviewed change that binds lab evidence; candidate tools
   must fail if output claims review/promotion or targets trusted directories.

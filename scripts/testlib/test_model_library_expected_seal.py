@@ -420,21 +420,20 @@ class ExpectedModelSealContracts(unittest.TestCase):
         validation = model_library.verify_hot_stamp_against_profile(stamp, live)
         self.assertEqual(validation["identity_status"], "legacy-unsealed")
 
-    def test_legacy_tested_profile_requires_explicit_override(self) -> None:
+    def test_legacy_unsealed_profile_needs_no_status_override(self) -> None:
         self._write_profile(sealed=False)
         self._write_catalog()
-        with self.assertRaisesRegex(model_library.ModelLibraryError, "legacy-unsealed"):
-            self._plan()
-        plan = self._plan(allow_unvalidated=True)
+        plan = self._plan()
         self.assertEqual(plan["validation"]["identity_status"], "legacy-unsealed")
 
-    def test_seal_cannot_self_promote_experimental_profile(self) -> None:
+    def test_reviewed_identity_is_independent_of_profile_status(self) -> None:
         self._write_profile(status="experimental")
-        with self.assertRaisesRegex(
-            model_library.ModelLibraryError,
-            "EXPECTED_MODEL_SEAL requires STATUS=tested",
-        ):
-            model_library.load_hf_profile(self.models_dir, self.profile)
+        profile = model_library.load_hf_profile(self.models_dir, self.profile)
+        self.assertEqual(profile["status"], "experimental")
+        self.assertEqual(
+            profile["expected_model_seal"]["seal_id"],
+            self._seal()["seal_id"],
+        )
 
     def test_hot_launch_resolves_exact_snapshot_path(self) -> None:
         _plan, instance = self._materialize_hot()

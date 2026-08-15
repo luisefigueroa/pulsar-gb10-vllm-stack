@@ -727,7 +727,7 @@ def render_save(document: dict[str, Any], destination: str) -> None:
     field("Membership", f"{len(nodes)} {node_word} shown above")
     field(
         "Models",
-        "unchanged · wizard will offer only exact validated configurations",
+        "unchanged · wizard will offer exact configurations that fit capacity",
     )
     field(
         "Effect",

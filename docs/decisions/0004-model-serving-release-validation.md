@@ -2,13 +2,15 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
+- **Amended:** 2026-08-15 — validation status is advisory, not serving
+  authorization
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
   and verification implemented under `models/model-serving-releases/`;
   local ADR 0004 evidence-capture candidate persistence implemented;
-  decision issuance, catalog/operator status projection, and
-  serving-eligibility migration pending
+  decision issuance and catalog/operator ADR 0004 status projection pending;
+  status-independent serving policy implemented
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -31,8 +33,8 @@ This makes two questions unnecessarily hard to answer:
 
 The word `tested` is also overloaded. It can mean that a test merely ran, that
 the observed result met an expectation, or that a complete reviewed release is
-eligible for a supported serving path. Those meanings must be separated before
-onboarding can be safely automated.
+recommended for a supported serving path. Those meanings must be separated
+before onboarding can be safely automated.
 
 ## Decision
 
@@ -188,10 +190,28 @@ evidence captured on the declared physical DGX geometry.
 The status applies to one exact Model Serving Release, never to a model name,
 repository ID, family, or mutable profile label.
 
-There is no minimum status required to record a release in the catalog or keep
-its evidence: represent the release and label its actual state. Eligibility for
-a reviewed serving path is a separate policy gate and must not rewrite or hide
-the validation status.
+There is no minimum status required to record or serve a release. Represent the
+release and label its actual state. Validation status is descriptive evidence,
+not authorization: `Untested`, incomplete, failed, inconclusive, `Validated`,
+`Superseded`, legacy labels, and the absence of a reviewed decision neither
+grant nor deny permission to launch.
+
+Operator surfaces must expose every structurally valid serving profile that
+fits the selected hardware capacity, together with its status and material
+caveats. They may sort or recommend evidence-backed choices first, and a
+guided/default policy may prefer `Validated` releases, but recommendation and
+default selection are distinct from availability. They must not hide or block
+another release solely because of its validation status.
+
+Operational admission remains fail-closed and separate from status. A launch
+may be refused for a concrete inability to execute the requested release
+safely—for example missing, partial, or mismatched bytes; an absent or invalid
+serving recipe; incompatible runtime or geometry; insufficient capacity;
+stale or unreachable required topology; or security, lifecycle, integrity, and
+ownership failures. Those failures describe current runnability, not the
+release's validation decision. A catalog entry without an executable recipe is
+shown with recipe-required guidance rather than being described as
+status-blocked.
 
 | Status | Meaning |
 |---|---|
@@ -325,10 +345,10 @@ bundles, validation decisions, and their cross-links. Both pure-schema stages
 are implemented. Read-only trusted persistence and verification for those
 objects now live under `models/model-serving-releases/` and
 `scripts/model_serving_release_registry.py`. That layer does not capture
-evidence, issue a decision, project catalog status, or change serving
-eligibility. Existing `STATUS=tested*`, `--validated`, reviewed seals, and
-legacy-unsealed behavior retain their current implementation meaning until
-catalog/operator projection and serving-eligibility migration land. No
+evidence, issue a decision, project catalog status, or launch a release.
+Existing `STATUS=tested*`, `--validated`, reviewed seals, and legacy-unsealed
+behavior retain their legacy meanings until catalog/operator projection lands;
+none grants or denies serving. No
 existing profile is automatically relabeled `Validated`. The tracked ADR
 0004 store currently contains no issued object.
 
@@ -422,7 +442,7 @@ strict same-boot exactness, reviewed provenance requirements, and reviewed
 comparable-predecessor lineage plus protocol/geometry binding.
 The fixed-ID fixture and adversarial contracts live under `scripts/testlib/`.
 This code performs no filesystem or network I/O, emits no reviewed artifact,
-assigns no status, changes no profile, and grants no serving eligibility.
+assigns no status, changes no profile, and launches nothing.
 Control-plane selftests establish only these schema contracts; no physical DGX
 claim follows from them.
 
@@ -494,16 +514,16 @@ object graph, and publishable evidence hashes. A stored Validation Contract
 with a required relative-performance gate must resolve and semantically
 validate every frozen predecessor source even before a current decision
 exists. More than one later decision that directly supersedes the same
-record fails verify through the canonical supersession check. It does not capture evidence,
-issue a decision, project catalog or operator status, or change serving
-eligibility. Inspection of a release is informational: one contract lineage
+record fails verify through the canonical supersession check. It does not
+capture evidence, issue a decision, project catalog or operator status, or
+launch a release. Inspection of a release is informational: one contract lineage
 with one unsuperseded reviewed decision may display that decision's
 evidence-derived effective status; no reviewed decision is a neutral
 no-reviewed-decision state, never inferred `Untested`; multiple contract
 lineages or unsuperseded heads are ambiguous and fail closed when one
 reviewed status is requested. ADR 0004 roadmap item 3 remains catalog and
-operator status projection, then later serving-eligibility migration. The
-tracked store currently contains no issued object.
+operator status projection. The tracked store currently contains no issued
+object.
 
 Local ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model_serving_release_capture.py` and
@@ -512,8 +532,8 @@ supplied release and contract objects, captures immutable run records and
 content-addressed evidence, assembles compatible run records, and
 independently verifies the resulting candidate under a gitignored output
 boundary. A successful candidate is unreviewed, has privacy review
-pending, grants no serving authorization, changes no catalog or profile
-status, and never writes the tracked registry. It is not a validator
+pending, changes no catalog or profile status, launches nothing, and never
+writes the tracked registry. It is not a validator
 adapter, a reviewed decision, or a physical DGX claim. See
 [MODEL_SERVING_RELEASE_CAPTURE.md](../MODEL_SERVING_RELEASE_CAPTURE.md).
 
@@ -540,13 +560,13 @@ Implement this decision in focused, reviewable units:
 2. **Implemented:** add immutable attempt/run records, evidence bundles, and
    validation decisions with fail-closed cross-link verification, independent
    status derivation, and explicit supersession;
-3. project the new statuses into catalog and operator surfaces, then migrate
-   serving eligibility only through explicit reviewed decisions—never by
-   converting `STATUS=tested*` automatically. Read-only trusted persistence
+3. project the new statuses into catalog and operator surfaces without
+   converting `STATUS=tested*` automatically. Status remains advisory, while
+   recommendation/default policy is a separate projection. Read-only trusted persistence
    and verification of stored ADR 0004 objects is implemented as a focused
    foundation for this item; local evidence-capture candidate persistence is
-   implemented separately and does not project status or authorize serving;
-   catalog/operator projection and serving migration remain pending;
+   implemented separately and does not project status or launch a release;
+   catalog/operator projection remains pending;
 4. create the supervised `pulsar-model-onboarding` skill around the supported
    subsystem CLIs and confirmation boundaries; and
 5. complete and publish the separate bounded `library-hot` GA closure evidence.
@@ -578,6 +598,15 @@ unnecessarily couple model qualification to subsystem maturity.
 
 Two positive states with the same gates would create an unexplained authority
 gap. Passing all frozen criteria and review is exactly what `Validated` means.
+
+### Gate serving permission on validation status
+
+Users need to run experimental, incomplete, failed, or superseded releases for
+evaluation, diagnosis, and workloads whose priorities differ from the frozen
+criteria. Making status an allowlist would turn an evidence label into access
+control and hide useful, accurately described choices. Pulsar instead preserves
+strict `Validated` meaning, visible warnings, and separate operational safety
+checks.
 
 ### Use one global performance threshold
 
@@ -628,10 +657,13 @@ mandatory.
   predecessor result without overstating that predecessor's global status.
 - Distribution experiments can improve onboarding without contaminating model
   status, provided the pre-qualification verification barrier holds.
+- Status communicates confidence and results but never grants or denies serving.
+  Recommendation/default policy may prefer stronger evidence; operational
+  admission may still reject an unrunnable or unsafe launch for concrete reasons.
 - Current commands and legacy schemas continue to work during migration, but
   their `tested`/`validated` labels must not be presented as implementation of
-  this ADR until catalog/operator status projection and serving enforcement
-  exist. Read-only persistence and verification of stored ADR 0004 objects
+  this ADR until catalog/operator status projection exists. Read-only
+  persistence and verification of stored ADR 0004 objects
   is implemented; it does not change those legacy labels.
 - Physical qualification is still required for physical claims. Documentation
   and selftests alone cannot produce a `Validated` decision.

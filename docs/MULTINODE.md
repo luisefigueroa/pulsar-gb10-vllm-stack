@@ -12,10 +12,11 @@ profiles marked `STATUS=tested*` in `models/`. There is no promoted three-node
 profile. Finding three nodes therefore does not make the wizard invent TP=3,
 PP=3, or any other unmeasured launch.
 
-This page uses `STATUS=tested*` and the `--validated` CLI in their current
-legacy allowlist sense. They do not yet implement the `Validated` Model Serving
-Release status accepted in
-[ADR 0004](./decisions/0004-model-serving-release-validation.md).
+Legacy `STATUS=tested*` identifies the current recommendation class; use
+`scripts/list-models.sh --legacy-tested` to filter it. The deprecated
+`--validated` alias does not implement the `Validated` Model Serving Release
+status accepted in [ADR 0004](./decisions/0004-model-serving-release-validation.md).
+Status is advisory and never grants or denies serving.
 
 ## Two independent gates
 
@@ -27,17 +28,19 @@ Release status accepted in
 A multi-node profile is valid only when `TP × PP == NODES`, uses the native
 `mp` distributed executor, and its topology requirements are met. Launchers
 prepares ranks `0..NODES-1`; extra confirmed ranks remain idle. The wizard
-shows only `STATUS=tested*` profiles whose exact `NODES` value fits the
-confirmed capacity. Related profiles can carry family and variant labels, but
+shows all serving profiles whose exact `NODES` value fits the confirmed
+capacity, displays status and notes, and orders recommended evidence-backed
+choices first. Related profiles can carry family and variant labels, but
 each node-count variant must earn its own status.
 
-Non-tested profiles remain available only through the deliberate CLI
-`--force` path. `--force` bypasses the status gate; it does not synthesize a
-geometry or weaken topology checks.
+Non-tested, failed, blocked, and experimental labels are warnings rather than
+permission gates. The legacy `--force` option is a compatibility no-op. Exact
+geometry, topology, memory, image, weight integrity, lifecycle, and security
+checks are unchanged and still fail closed.
 
 ## Idle capacity and one-node placement
 
-A confirmed node may host a legacy-allowlisted one-node profile even when it is
+A confirmed node may host a fitting one-node profile even when it is
 not rank 0 and other confirmed nodes are busy with an exact multi-node service.
 The wizard recommends an idle node that passes the profile's cold-start memory
 policy; operators can select the same immutable target directly with
@@ -202,19 +205,19 @@ throughput. `/health` also remains insufficient during partial rank loss.
 To make a three-node or larger option appear in the wizard:
 
 1. Add a separate profile variant with explicit `NODES`, TP/PP values,
-   `TOPOLOGY_CLASS=roce-full-mesh`, `MIN_RAILS_PER_PAIR`, image, flags, and a
-   non-tested status.
-2. Launch it only as a deliberate CLI experiment with `--force` on that exact
-   physical topology.
+   `TOPOLOGY_CLASS=roce-full-mesh`, `MIN_RAILS_PER_PAIR`, image, flags, and an
+   accurate untested/incomplete legacy status.
+2. Launch it deliberately on that exact physical topology. The wizard will
+   display its warning label; the direct CLI needs no status override.
 3. Run the appropriate correctness, determinism, concurrency, long-context,
    node-loss, and soak gates from `REVALIDATE.md`; archive raw artifacts under
    `results/` and record the outcome in `VALIDATION.md`.
-4. Promote that exact profile to `STATUS=tested*` only after the evidence
-   passes. The wizard will then expose it automatically when confirmed capacity
-   is at least its `NODES` value.
+4. Update that exact profile's evidence label only after the evidence passes.
+   Recommendation ordering may then change, but availability does not.
 
-A failed geometry stays non-tested and out of the wizard. Discovery code needs
-no change when a profile is promoted.
+A failed geometry keeps its failed label and evidence but remains visible when
+it fits confirmed capacity. Discovery code needs no change when its label or
+recommendation changes.
 
 ## Operations
 

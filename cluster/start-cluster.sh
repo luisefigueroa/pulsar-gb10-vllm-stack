@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start an exact validated N-node vLLM profile: remote headless ranks first,
+# Start an exact N-node vLLM profile: remote headless ranks first,
 # then local rank 0 with the API. Every active rank is one GB10.
 #
 #   cluster/start-cluster.sh <model-name> [--spec-decode|--no-spec-decode]
@@ -20,7 +20,6 @@ SPEC_MODE=auto
 SKIP_PREFLIGHT=0
 SKIP_WARMUP=0
 DRY_RUN=0
-FORCE=0
 WEIGHT_SOURCE=replicated
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,7 +28,7 @@ while [ $# -gt 0 ]; do
     --skip-preflight) SKIP_PREFLIGHT=1 ;;
     --skip-warmup) SKIP_WARMUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
-    --force) FORCE=1 ;;
+    --force) : ;; # Backward-compatible no-op: status labels are advisory.
     --weight-source)
       [ "$#" -ge 2 ] || die "--weight-source requires replicated|fabric|library-hot" 2
       WEIGHT_SOURCE="$2"
@@ -57,10 +56,7 @@ fi
 resolve_spec_decode "$SPEC_MODE"
 LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
 SPEC_DECODE_STATE=$([ "$SPEC_DECODE_ENABLED" = 1 ] && printf on || printf off)
-if status_requires_force && [ "$FORCE" != 1 ]; then
-  echo "$MODEL_NAME status=$STATUS — refuse start without --force (allowlist: tested*)" >&2
-  exit 1
-fi
+warn_profile_status
 if [ "$NODES" -le 1 ]; then
   echo "$MODEL_NAME is a single-node profile; use ./serve.sh" >&2
   exit 1

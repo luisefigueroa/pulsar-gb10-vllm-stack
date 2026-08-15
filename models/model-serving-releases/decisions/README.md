@@ -11,7 +11,8 @@ stored prior decisions. All decisions remain; there is no mutable current
 status index and no latest-timestamp winner.
 
 Inspection may show the stored base outcome and the effective superseded
-projection for that exact decision. That is not serving authorization.
+projection for that exact decision. Status is advisory and never serving
+authorization.
 
 This namespace is independently tracked and currently empty. Do not add a
 real decision or `Validated` fixture here.

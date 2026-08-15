@@ -40,7 +40,7 @@
 | Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only `scripts/model-release.sh` candidate assembly; and maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
-optional reviewed `models/seals/*.json` trust root and binds a tested profile to
+optional reviewed `models/seals/*.json` trust root and binds a profile to
 its exact Hugging Face commit. Hot schema 3 records the expected seal,
 validation-bundle ID, and locally observed revision/manifest. Preparation
 full-hashes every rank and atomically writes a rank-local witness before
@@ -54,8 +54,9 @@ profile carries the first issued seal/bundle and reaches `identity=match` on
 `library-hot`. The flagship `deepseek-v4-flash` profile carries the second
 issued seal/bundle and passed its applicable two-node post-issuance physical
 enforcement gate. Profiles without a seal, including `qwen3-1.7b-2node`, remain
-`legacy-unsealed` and require explicit `--allow-unvalidated` for model-library
-experiments. Catalog refresh discovers complete snapshot commit
+`legacy-unsealed`; after full verification they may be prepared without a
+validation-status override. `--allow-unvalidated` is retained only as a
+deprecated compatibility no-op. Catalog refresh discovers complete snapshot commit
 directories independently of mutable `refs/main`; sealed inspection,
 manifest construction, verification, and launch all receive that selected
 commit explicitly. Guarded home removal now requires all confirmed nodes'
@@ -127,16 +128,16 @@ Read-only trusted persistence and verification now live under
 `models/model-serving-releases/` and
 `scripts/model-serving-release-registry.sh`. That layer can load, verify, and
 inspect stored objects; it does not capture evidence, issue a decision,
-project catalog or operator status, or change serving eligibility. Local
+project catalog or operator status, or launch a release. Local
 ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model-serving-release-capture.sh` and remains explicitly unreviewed:
-it does not write the tracked registry, issue a decision, or authorize
-serving. No profile references a new decision, and no serving gate consumes
+it does not write the tracked registry, issue a decision, or launch a release.
+No profile references a new decision, and no status projection consumes
 one. Review-metadata shape checks cannot prove that repository review or
 physical qualification occurred. Decision issuance, catalog/operator status
-projection, and serving-eligibility migration remain pending. Existing
-schema-1 bundles and `STATUS=tested*` behavior remain unchanged legacy
-contracts; no current profile is automatically `Validated`. These corrected
+projection remains pending. Existing schema-1 bundles and `STATUS=tested*`
+labels remain legacy contracts; no current profile is automatically
+`Validated`. Serving permission is status-independent. These corrected
 ADR 0004 objects remain schema version 1 because none was issued or persisted
 before the correction. The tracked ADR 0004 store currently contains no issued
 object. Existing legacy schema-1 seals/bundles and raw evidence are not
@@ -308,10 +309,11 @@ FP-equivalent output is diagnostic evidence and does not satisfy the strict
 gate. The full status vocabulary and object model are defined by
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). Its release
 and contract schemas are implemented, while current `STATUS=tested*` and
-schema-1 bundle behavior remains the serving/status implementation until that
-migration lands. Catalog recording has no minimum validation status: the
-release remains visible with its actual label, while serving eligibility is a
-separate gate.
+schema-1 bundle behavior remain legacy status inputs until projection lands.
+Catalog recording and serving have no minimum validation status: the release
+remains visible with its actual label. Recommendation/default projection is
+separate, while operational admission checks concrete runnability rather than
+status.
 
 Criterion scope is not reviewer-selected. Stability, accuracy, throughput,
 latency, and strict same-boot are `model-qualification`; serving integration is
@@ -430,21 +432,25 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
 
 | Label | Meaning |
 |---|---|
-| **Validated** *(legacy catalog label)* | Current implementation: the observed exact revision/manifest matches the lab-issued seal in a tested schema-1 bundle. This is content-identity match, not the ADR 0004 Model Serving Release status. |
+| **Reviewed identity match** *(legacy schema value: `expected-unverified` → `match`)* | The observed exact revision/manifest matches the lab-issued seal and schema-1 bundle. This is content identity, not the ADR 0004 Model Serving Release status. |
 | **Present (unvalidated)** | Complete-looking hub tree on a Spark; Pulsar has **not** validated serving that model |
 | **Partial / invalid** | Incomplete or not sealable — not a usable home |
 
-**Catalog visibility ≠ Pulsar serving guarantee.** Wizard and default serve
-paths remain gated on current legacy-allowlisted profiles. Unvalidated presence is for disk
-awareness and advanced/explicit flows only.
+**Catalog visibility ≠ Pulsar serving guarantee.** Validation status neither
+authorizes nor blocks serving. Operator surfaces show fitting serving profiles
+with their labels and caveats; recommendation/default policy may prefer
+stronger evidence. Exact identity, recipe, topology, capacity, lifecycle, and
+security checks still fail closed when the requested run cannot proceed.
 
 **Current implementation:** a tested profile without
 `EXPECTED_MODEL_SEAL` is labeled `legacy-unsealed`. A reviewed seal under
 `models/seals/` makes catalog schema 2 select only the declared immutable
 commit and label it `expected-unverified`; preparation then computes the observed
-manifest and must reach `match`. `catalog list --validated` includes only
-entries carrying a reviewed expected seal, never legacy repository-ID-only
-claims. The one-node diagnostic `qwen3-1.7b` profile is the first issued seal and
+manifest and must reach `match`. `catalog list --reviewed-identity` includes
+only entries carrying a reviewed expected seal, never legacy
+repository-ID-only claims; `--validated` remains a deprecated compatibility
+alias and does not assign an ADR 0004 status. The one-node diagnostic
+`qwen3-1.7b` profile is the first issued seal and
 `deepseek-v4-flash` is the second. Profiles without a seal remain
 legacy-unsealed.
 
@@ -783,17 +789,19 @@ projection labels replicated serving as the guided default and the distributed
 catalog as experimental.
 
 An exact model detail may also offer **Prepare for experimental serving** when
-the catalog mapping is current and the matching tested serving profile carries
+the catalog mapping is current and the matching serving profile carries
 a reviewed expected seal. This is a separate default-no mutation, fixed to the
 accepted eight-stream SSH-over-RoCE copy policy for non-home ranks with no
 fallback. A one-node home-only view uses `ssh-control` with one stream and no
 bulk transfer. The
 interactive layer shows exact revision/manifest identity, durable-home
 dependency, serving ranks, and an approximate non-home storage requirement,
-then delegates to the existing preparation service. That service remains the
+then delegates to the existing preparation service. The reviewed seal is an
+identity requirement for this interactive acquisition/preparation path, not a
+validation-status allowlist. That service remains the
 authority for full verification, exact all-rank storage admission, topology and
 primary checks, rollback, and witness publication. The interaction never adds
-`--allow-unvalidated`, starts serving, changes the replicated guided default, or
+validation-status override, starts serving, changes the replicated recommended default, or
 claims model qualification or storage-path promotion. Retention, repair, purge,
 and durable-home removal remain separate direct-CLI operations.
 
@@ -885,6 +893,9 @@ Pulsar's discovery boundary.
     Serving Release ID names exact serving inputs; contracts, attempts,
     decisions, transfer paths, and physical placement are linked provenance,
     not hash inputs.
+17. **Status informs; it does not authorize** — show every fitting serving
+    profile with its status and material caveats. Keep recommendation/default
+    policy and concrete operational admission as separate decisions.
 
 ---
 
@@ -894,9 +905,9 @@ These are the historical combined **release/default-promotion** gates, not a
 single verdict on every subsystem. Catalog/artifact and serving-integration
 results may be accepted and preserved in their own scopes while model
 qualification remains open. A Model Serving Release cannot become `Validated`,
-and the model-library path cannot become a wizard/default distribution policy,
+and the model-library path cannot become a recommended/default distribution policy,
 until their respective applicable gates pass. A subsystem pass never changes
-profile `STATUS`, Model Serving Release status, guided exposure, or the default
+profile `STATUS`, Model Serving Release status, recommendation, or the default
 storage path by itself.
 
 ADR 0004 additionally separates bounded `library-hot` subsystem GA from a
@@ -1030,8 +1041,7 @@ affected Model Serving Release and its frozen Validation Contract.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Decision issuance, catalog/operator status projection, and
-  serving-eligibility stages defined by ADR 0004. Release,
+- Decision issuance and catalog/operator status projection defined by ADR 0004. Release,
   frozen-contract, immutable run-record, new bundle, and reviewed-decision
   schema version 1 are implemented as pure contracts; read-only persistence
   and verification of those objects is implemented under
@@ -1042,10 +1052,9 @@ affected Model Serving Release and its frozen Validation Contract.
   one-rank placement remains outside the initial GA scope
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
-- Issuance, catalog/operator projection, and serving-eligibility CLI
-  guarantees beyond the read-only ADR 0004 registry verifier, the local
+- Issuance and catalog/operator projection guarantees beyond the read-only ADR
+  0004 registry verifier, the local
   evidence-capture candidate workflow, and health schema 1
-- Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete the remaining guided/default promotion matrix after bounded
   subsystem GA, without treating a subsystem pass as Model Serving Release
   validation
@@ -1112,3 +1121,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-14 | Corrected the unissued ADR 0004 schema-1 contracts before persistence: criterion scopes are canonical; catalog/preparation evidence cannot satisfy validation criteria; the review-derived provenance criterion is closed; release/contract values reject recognized private data; every post-barrier attempt declares and exactly accounts for its criteria; every applicable observation is included unless explicitly excluded with evidence; conflicts use deterministic adjudication; relative baselines bind a reviewed predecessor contract/bundle/decision/run whose relevant criterion passed; runtime and architecture/geometry checks remain structural; command evidence uses closed typed descriptors; and supersession is later and acyclic. No ADR 0004 object had been issued or persisted, so schema version 1 remains appropriate. Legacy schema-1 seals/bundles and raw evidence are untouched, and no physical claim follows from this correction. |
 | 2026-08-14 | Implemented the read-only trusted-persistence foundation for ADR 0004 objects: tracked namespaces under `models/model-serving-releases/`, fail-closed filesystem and graph verification, publishable evidence hashing, predecessor-decision lineage validation, closed review-reference grammar, and `verify` / `show-release` / `show-decision` inspection. The store contains no issued object. Evidence capture, decision issuance, catalog/operator projection, serving-eligibility migration, and physical qualification remain pending. |
 | 2026-08-15 | Implemented ADR 0004 evidence-capture candidate persistence: a local, unreviewed `plan` / `capture-run` / `assemble-bundle` / `verify-candidate` workflow that validates supplied release and contract objects, hashes checked-out allowlisted programs and evidence, publishes immutable candidates under a gitignored output boundary, and independently verifies them. It does not issue a decision, write the tracked registry, change catalog or profile status, or authorize serving. Validator adapters, trusted privacy review, and physical qualification remain pending. |
+| 2026-08-15 | **ADR 0004 advisory-status amendment:** validation labels communicate evidence and confidence but never authorize serving. The wizard and serving catalog expose every fitting serving profile with status and caveats, legacy `--force` status overrides are no-ops, and unsealed preparation no longer needs a validation-status override. Recommendation/default ordering remains evidence-backed; exact identity, recipe, topology, capacity, security, and lifecycle failures still block the concrete operation. This is a control-plane policy change only and creates no physical qualification claim. |

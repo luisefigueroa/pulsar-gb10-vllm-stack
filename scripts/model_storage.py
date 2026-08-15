@@ -303,8 +303,6 @@ def preparation_check(
     for profile in profiles.get("models") or []:
         if profile.get("id") not in model_profiles:
             continue
-        if not str(profile.get("status") or "").startswith("tested"):
-            continue
         if profile.get("purpose") != "serving" or profile.get("source") != "hf":
             continue
         if not profile.get("reviewed_identity"):
@@ -381,7 +379,7 @@ def preparation_check(
             )
         else:
             blockers.append(
-                "no tested serving profile with a reviewed seal is available"
+                "no serving profile with a reviewed exact identity is available"
             )
     if blockers:
         candidates = []

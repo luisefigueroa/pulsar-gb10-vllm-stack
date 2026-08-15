@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # List models/*.conf for humans and gum choose (conf id is first column).
-#   scripts/list-models.sh [--validated] [--serving|--diagnostic] [--json]
+#   scripts/list-models.sh [--legacy-tested] [--serving|--diagnostic] [--json]
 set -euo pipefail
 SCRIPT_NAME=list-models
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
-VALIDATED=0 JSON=0 SCOPE=all
+LEGACY_TESTED=0 JSON=0 SCOPE=all
 while [ $# -gt 0 ]; do
   case "$1" in
-    --validated) VALIDATED=1 ;;
+    --legacy-tested) LEGACY_TESTED=1 ;;
+    --validated)
+      # Backward-compatible alias. This filters legacy profile STATUS text; it
+      # does not assert an ADR 0004 Validated Model Serving Release.
+      LEGACY_TESTED=1
+      ;;
     --serving)
       [ "$SCOPE" = all ] || die "--serving and --diagnostic are mutually exclusive"
       SCOPE=serving
@@ -20,7 +25,8 @@ while [ $# -gt 0 ]; do
       ;;
     --json) JSON=1 ;;
     -h|--help)
-      echo "usage: $0 [--validated] [--serving|--diagnostic] [--json]"
+      echo "usage: $0 [--legacy-tested] [--serving|--diagnostic] [--json]"
+      echo "       --validated is a deprecated alias for --legacy-tested"
       exit 0
       ;;
     *) die "unknown arg: $1" ;;
@@ -42,7 +48,7 @@ for conf in "$REPO_DIR"/models/*.conf; do
     # shellcheck disable=SC1091
     . "$REPO_DIR/scripts/lib.sh"
     load_conf "$name"
-    if [ "$VALIDATED" = 1 ] && ! status_is_tested; then
+    if [ "$LEGACY_TESTED" = 1 ] && ! status_is_tested; then
       exit 0
     fi
     case "$SCOPE" in
@@ -76,8 +82,24 @@ for conf in "$REPO_DIR"/models/*.conf; do
   ) >>"$tmp" || true
 done
 
-# first-run candidates first, then 1-node, then name
-sort -t$'\t' -k7,7r -k3,3n -k1,1 "$tmp" -o "$tmp"
+# Legacy tested/recommended profiles first, then first-run candidates, one-node,
+# and name. This is recommendation order only; no status is hidden by default.
+python3 - "$tmp" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+rows = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+def key(line: str):
+    fields = line.split("\t")
+    status = fields[1] if len(fields) > 1 else ""
+    nodes = int(fields[2] or 1) if len(fields) > 2 else 1
+    first_run = fields[6] == "1" if len(fields) > 6 else False
+    return (not status.startswith("tested"), not first_run, nodes, fields[0].casefold())
+
+path.write_text("".join(f"{line}\n" for line in sorted(rows, key=key)), encoding="utf-8")
+PY
 
 if [ "$JSON" = 1 ]; then
   python3 - <<PY
@@ -134,17 +156,18 @@ cat <<'EOF'
 
 Columns:
   ID           conf name for scripts/up.sh <ID>
-  STATUS       validation ledger status
+  STATUS       advisory evidence label; never launch permission
   NODES        exact active rank count; multi-node needs confirmed topology
   SRC          hf = Hugging Face id; nfs = path under /mnt/Models (no auto-download)
   SERVED_NAME  OpenAI API "model" field (may differ from ID)
   SPEC_DECODE  none | optional | recommended
-                 none        = no validated speculative-decode configuration
-                 optional    = validated; off by default; --spec-decode enables
-                 recommended = validated and on by default
+                 none        = no reviewed speculative-decode configuration
+                 optional    = reviewed; off by default; --spec-decode enables
+                 recommended = reviewed and on by default
                                (--no-spec-decode is the rollback)
 
 Filters:
-  --serving     profiles offered by the serving wizard
+  --serving     serving-purpose profiles (all statuses)
   --diagnostic  canary profiles reserved for explicit diagnostics
+  --legacy-tested  filter to legacy STATUS=tested* recommendation labels
 EOF

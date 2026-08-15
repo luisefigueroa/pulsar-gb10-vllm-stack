@@ -85,7 +85,8 @@ data planes even when they involve the same machines.
 5. **Cluster operations as first-class deliverables.** Discovery verifies
    hostname-independent GB10 membership and every RoCE pair; preflight and
    teardown visit every node used by the selected profile. Pin-bump and on-call runbooks plus
-   profile status gates keep unvalidated node counts out of the wizard.
+   exact profile geometry and topology gates keep invented node counts out of
+   the wizard, while validation labels remain visible and advisory.
 
 ## Quick start
 
@@ -104,8 +105,8 @@ docker pull vllm/vllm-openai:v0.26.0
 # Host sanity (GPU, docker, port, cache)
 scripts/doctor.sh
 
-# List the current legacy serving allowlist (ID is the conf name)
-scripts/list-models.sh --validated --serving
+# List every serving profile and its advisory evidence label
+scripts/list-models.sh --serving
 
 # First serving model: download weights if needed, then serve
 # Requires hf or huggingface-cli on PATH (see PREREQUISITES.md)
@@ -134,7 +135,7 @@ durable-home/runtime placement, and findings; it labels the distributed catalog
 experimental. Browsing and health rechecks are read-only. A separate,
 confirmation-gated refresh can rescan confirmed ranks and update only the
 cached catalog; it never runs automatically. A second confirmed action can
-prepare only a tested serving profile with reviewed identity using eight-stream
+prepare a serving profile with reviewed identity using eight-stream
 SSH-over-RoCE and no fallback. It verifies and budgets rank-local views but does
 not start serving, qualify the model, promote the storage path, or change the
 replicated guided default. Retention, cleanup, repair, and durable-home removal
@@ -225,12 +226,15 @@ scripts/up.sh deepseek-v4-flash                  # exact NODES=2, DSpark k=5
 ./pulsar stop deepseek-v4-flash
 ```
 
-The wizard offers only exact `STATUS=tested*` profiles that fit confirmed
-capacity. No three-node profile is promoted today. Smoke served name:
+The wizard offers every exact serving profile that fits confirmed capacity,
+shows its status and profile notes, and orders legacy evidence-backed choices
+first. Validation status never blocks serving. No three-node profile is
+promoted today. Smoke served name:
 `deepseek-v4-flash`; cold load can take ~10+ minutes.
 
-`--validated` is the current CLI's legacy name for that `STATUS=tested*`
-allowlist. It does not yet report the Model Serving Release statuses defined by
+`--legacy-tested` filters the historical `STATUS=tested*` recommendation class;
+`--validated` remains a deprecated alias for compatibility. Neither reports the
+Model Serving Release statuses defined by
 [ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and no
 existing profile is automatically relabeled `Validated`. A **Model Serving
 Release** is the immutable combination of exact model identity, exact serving
@@ -240,9 +244,10 @@ descriptor, contract, run-record, evidence-bundle, and reviewed-decision
 validators. Read-only persistence and verification of stored ADR 0004 objects
 is implemented under `models/model-serving-releases/` and is currently empty.
 Local ADR 0004 evidence-capture candidate persistence can record unreviewed
-run and bundle candidates without writing that registry or authorizing
-serving. Trusted publication, catalog/operator status projection, and
-serving admission remain unfinished. No such schema object or selftest
+run and bundle candidates without writing that registry or launching a model.
+Trusted publication and catalog/operator status projection remain unfinished.
+Serving is status-independent, while concrete identity, recipe, topology,
+capacity, security, and lifecycle checks still fail closed. No schema object or selftest
 establishes physical DGX behavior.
 
 **Experimental storage research:** replicated local Hugging Face caches remain
@@ -452,7 +457,7 @@ no leaks, no thermal throttling anywhere).
 | `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
 | `models/validation-bundles/` | legacy schema-1 combined model/runtime/image/geometry/evidence claims; not a Model Serving Release ID and unchanged by the pre-issuance ADR 0004 schema correction |
 | `models/model-serving-releases/` | tracked ADR 0004 release/contract/run/bundle/decision registry; currently empty and read-only through `scripts/model-serving-release-registry.sh` |
-| `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture candidate persistence; unreviewed, no serving authorization, never writes the tracked registry |
+| `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture candidate persistence; unreviewed, launches nothing, never writes the tracked registry |
 | `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |

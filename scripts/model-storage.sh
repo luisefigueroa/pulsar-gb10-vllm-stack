@@ -80,10 +80,10 @@ cmd_profiles_json() {
     return 0
   fi
   if [ -n "${MODEL_STORAGE_PROFILES_CMD:-}" ]; then
-    "$MODEL_STORAGE_PROFILES_CMD" --validated --serving --json
+    "$MODEL_STORAGE_PROFILES_CMD" --serving --json
     return $?
   fi
-  "$REPO_DIR/scripts/list-models.sh" --validated --serving --json
+  "$REPO_DIR/scripts/list-models.sh" --serving --json
 }
 
 cmd_prepare_model() {

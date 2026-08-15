@@ -224,10 +224,12 @@ scripts/status.sh qwen3-1.7b-2node
 scripts/down.sh qwen3-1.7b-2node
 ```
 
-The wizard remains on the validated replicated default. It tells the operator
+The wizard keeps replicated weights as the recommended default. It tells the operator
 that missing Hugging Face weights will be copied to every serving rank; it
 does not select or fall back to fabric mode. Use the CLI above for this
-experiment.
+experiment. The model's validation label is advisory and does not block the
+explicit fabric choice; fabric's own exact topology, identity, and lifecycle
+checks still fail closed.
 
 Stop the tracked service before storage teardown:
 

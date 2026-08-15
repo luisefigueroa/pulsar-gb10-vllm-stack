@@ -36,7 +36,7 @@ Candidate sources are combined and de-duplicated:
   * nodes from an existing confirmed topology
 
 SSH checks are non-interactive and use saved host keys by default. Discovery
-never chooses model geometry; each profile remains an exact validated deployment.
+never chooses model geometry; each profile remains an exact configured deployment.
 EOF
 }
 

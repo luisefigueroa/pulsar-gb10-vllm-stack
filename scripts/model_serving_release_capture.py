@@ -175,7 +175,6 @@ MANIFEST_FIELDS = {
     "authority",
     "privacy_review",
     "promotion_authorized",
-    "serving_authorization",
     "release_id",
     "contract_id",
     "run_record_ids",
@@ -237,7 +236,7 @@ VERIFY_AFTER_SCAN_HOOK = None
 PERSISTENCE_NOTES = (
     "This candidate is unreviewed and has no issuance authority.",
     "Privacy review is pending.",
-    "Serving authorization is false.",
+    "This workflow does not launch a release.",
     "Capture does not write the tracked release registry.",
     "Capture does not change catalog or profile status.",
     "A successful candidate is not a reviewed decision.",
@@ -1544,7 +1543,6 @@ def build_candidate_manifest(
         "authority": CANDIDATE_AUTHORITY,
         "privacy_review": CANDIDATE_PRIVACY,
         "promotion_authorized": False,
-        "serving_authorization": False,
         "release_id": release_id,
         "contract_id": contract_id,
         "run_record_ids": list(run_record_ids),
@@ -1569,8 +1567,6 @@ def validate_candidate_manifest(value: Any) -> dict[str, Any]:
         fail("capture candidate privacy review must remain pending")
     if manifest.get("promotion_authorized") is not False:
         fail("capture candidate promotion is not authorized")
-    if manifest.get("serving_authorization") is not False:
-        fail("capture candidate serving authorization must be false")
     for field_name in ("release_id", "contract_id", "bundle_id", "candidate_id"):
         digest = manifest.get(field_name)
         if not isinstance(digest, str) or HEX64_RE.fullmatch(digest) is None:
@@ -1831,7 +1827,6 @@ def common_result(
         "authority": CANDIDATE_AUTHORITY,
         "privacy_review": CANDIDATE_PRIVACY,
         "promotion_authorized": False,
-        "serving_authorization": False,
         "release_id": built.release["release_id"],
         "contract_id": built.contract["contract_id"],
         "run_record_ids": [item["run_record_id"] for item in built.run_records],
@@ -1853,10 +1848,6 @@ def render_result(payload: dict[str, Any]) -> None:
     writer.field("Command", payload.get("command", ""))
     writer.field("State", payload.get("state", CANDIDATE_STATE))
     writer.field("Authority", payload.get("authority", CANDIDATE_AUTHORITY))
-    writer.field(
-        "Serving",
-        "no" if not payload.get("serving_authorization") else "yes",
-    )
     writer.field("Privacy", payload.get("privacy_review", CANDIDATE_PRIVACY))
     writer.field(
         "Promotion",
@@ -1896,7 +1887,6 @@ def error_payload(command: str, message: str) -> dict[str, Any]:
         "ok": False,
         "command": command,
         "error": message,
-        "serving_authorization": False,
         "state": CANDIDATE_STATE,
         "authority": CANDIDATE_AUTHORITY,
         "privacy_review": CANDIDATE_PRIVACY,
@@ -2424,7 +2414,7 @@ HELP_LINES = (
     "",
     "Candidate safety:",
     "Output is unreviewed and has no validation authority.",
-    "Privacy review remains pending. Serving authorization is false.",
+    "Privacy review remains pending. This tool does not launch a model.",
     "Default output is gitignored experiments/model-serving-release-captures/.",
     "This tool never writes models/, the tracked release registry, a profile, or catalog status.",
     "Existing candidates are never overwritten.",

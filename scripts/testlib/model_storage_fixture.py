@@ -165,7 +165,7 @@ def main() -> int:
         "models": [
             {
                 "id": "deepseek-v4-flash",
-                "status": "tested",
+                "status": "Tested—criteria not met",
                 "nodes": 2,
                 "source": "hf",
                 "purpose": "serving",

@@ -18,7 +18,7 @@ run() {
   echo
 }
 
-run "status gate" "$REPO_DIR/scripts/selftest-status-gate.sh"
+run "status advisory policy" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
 run "N-node topology + exact profile subset" "$REPO_DIR/scripts/selftest-topology.sh"
 run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust.sh"
@@ -105,13 +105,13 @@ run "operator home + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "model catalog scopes" bash -c '
   set -e
-  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --json)
+  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --json)
   echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert m[\"qwen3-1.7b\"][\"purpose\"]==\"diagnostic\"; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\""
 
-  serving=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --serving --json)
-  echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x for x in m); assert not any(x[\"id\"].startswith(\"qwen3-1.7b\") for x in m); assert any(x[\"id\"]==\"deepseek-v4-flash\" and x[\"spec_default_enabled\"] and x[\"reviewed_identity\"] and x[\"weights_gib\"] > 160 and x[\"reviewed_model_id\"]==\"deepseek-ai/DeepSeek-V4-Flash-0731\" and len(x[\"reviewed_revision\"])==40 and len(x[\"reviewed_manifest\"])==64 for x in m); assert all((x[\"reviewed_model_id\"] is not None)==x[\"reviewed_identity\"] for x in m)"
+  serving=$("'"$REPO_DIR"'/scripts/list-models.sh" --serving --json)
+  echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x for x in m); assert not any(x[\"id\"].startswith(\"qwen3-1.7b\") for x in m); assert any(x[\"status\"]==\"do-not-use\" for x in m); assert any(x[\"id\"]==\"deepseek-v4-flash\" and x[\"spec_default_enabled\"] and x[\"reviewed_identity\"] and x[\"weights_gib\"] > 160 and x[\"reviewed_model_id\"]==\"deepseek-ai/DeepSeek-V4-Flash-0731\" and len(x[\"reviewed_revision\"])==40 and len(x[\"reviewed_manifest\"])==64 for x in m); assert all((x[\"reviewed_model_id\"] is not None)==x[\"reviewed_identity\"] for x in m)"
 
-  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --validated --diagnostic --json)
+  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --diagnostic --json)
   echo "$diagnostic" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert {x[\"id\"] for x in m}=={\"qwen3-1.7b\",\"qwen3-1.7b-2node\"}"
 '
 
@@ -149,7 +149,7 @@ run "API base covers one- and multi-node launches" bash -c '
 '
 
 run "wizard uses serving-only model catalog" bash -c '
-  grep -qE "list-models\.sh\" --validated --serving --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
+  grep -qE "list-models\.sh\" --serving --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
 '
 run "guided CLI uses plain node language" bash -c '
   grep -Fq "doctor_ready_line \"no blocking issues found\"" "'"$REPO_DIR"'/scripts/doctor.sh"

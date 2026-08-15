@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local ADR 0004 evidence-capture candidate persistence.
 # Not routed by ./pulsar. Does not issue a decision, write the tracked
-# registry, change catalog/profile status, or authorize serving.
+# registry, change catalog/profile status, or launch a release.
 set -euo pipefail
 # Used by die/log after sourcing lib.sh.
 # shellcheck disable=SC2034

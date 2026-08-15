@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-12
+- **Amended:** 2026-08-15 — guided exposure is distinct from status-based
+  serving permission
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decision:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md)
@@ -44,7 +46,9 @@ promotion claim that requires both subsystems.
 Evidence must name its scope. Health and completion smoke prove serving
 integration only; they do not establish model correctness, determinism,
 performance, context, or soak. Catalog acceptance does not promote a profile or
-storage path into the wizard or another guided default.
+storage path into a recommendation or default. The wizard may expose an
+experimental or otherwise non-promoted choice with its accurate label and
+caveats; exposure is not promotion and status is not serving permission.
 
 A change invalidates the scopes whose inputs or contracts it changes:
 
@@ -69,8 +73,8 @@ records and evidence bundles bind observed evidence, and the implemented pure
 decision schema independently verifies an explicit reviewed status. Read-only
 persistence and verification of stored ADR 0004 objects is implemented and
 currently empty. Local evidence-capture candidate persistence is implemented
-and unreviewed. Trusted publication, status projection, and serving
-migration remain pending. Existing schema-1 bundles remain immutable
+and unreviewed. Trusted publication and status projection remain pending.
+Existing schema-1 bundles remain immutable
 legacy artifacts.
 Reusing generic catalog evidence does not carry an old bundle, release decision,
 or `STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
@@ -120,12 +124,13 @@ still requires the combined release and promotion gates.
   unchanged, reducing unnecessary physical reruns.
 - Change reviews must identify the causal impact before expanding the
   revalidation scope.
-- Current CLI status fields and serving behavior are unchanged. ADR 0004 now
-  defines the first-class qualification model and its pure schema contracts.
+- Current legacy CLI status fields remain unchanged, while serving permission
+  is status-independent. ADR 0004 now defines the first-class qualification
+  model and its pure schema contracts.
   Read-only persistence and verification are implemented and empty; local
   evidence-capture candidate persistence is implemented and unreviewed;
-  trusted publication, status projection, and serving migration remain
-  pending.
+  trusted publication and status projection remain pending. Recommendation
+  and default policy remain separate from availability.
 
 ## Revisit triggers
 

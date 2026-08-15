@@ -37,8 +37,8 @@ enforcement:
 | Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns pure release-descriptor and frozen Validation Contract schema version 1; performs no I/O, issuance, or status assignment |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns pure evidence-artifact, immutable run-record, new validation-bundle, reviewed-decision, status-derivation, and supersession schema version 1; performs no capture, persistence, or trusted issuance |
-| ADR 0004 registry (`scripts/model-serving-release-registry.sh`) | Read-only load, verify, and inspect stored objects under `models/model-serving-releases/`; does not capture evidence, issue a decision, project catalog status, or authorize serving |
-| ADR 0004 evidence-capture candidates (`scripts/model-serving-release-capture.sh`) | Local unreviewed persistence of run records, content-addressed evidence, and assembled bundles; never writes the tracked registry or authorizes serving |
+| ADR 0004 registry (`scripts/model-serving-release-registry.sh`) | Read-only load, verify, and inspect stored objects under `models/model-serving-releases/`; does not capture evidence, issue a decision, project catalog status, or launch a release |
+| ADR 0004 evidence-capture candidates (`scripts/model-serving-release-capture.sh`) | Local unreviewed persistence of run records, content-addressed evidence, and assembled bundles; never writes the tracked registry or launches a release |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
@@ -64,9 +64,9 @@ content-addressed evidence references:
 
 | Object | Included | Deliberately excluded |
 |---|---|---|
-| Run record | Exact release/contract IDs, unique attempt identity and timestamps, completion condition, sorted `attempted_criterion_ids`, structured `observed_environment.cluster` and per-rank compatibility observations, opaque boot/launch IDs, closed typed `commands[].arguments[]` and value-free `commands[].environment[]` descriptors, preparation transport/subsystem provenance, full-verification barrier, current-release criterion measurements, timestamp-bound context/soak observations, and evidence IDs; `run_record_id` | Trusted review, predecessor baseline measurements, profile status, and serving eligibility |
+| Run record | Exact release/contract IDs, unique attempt identity and timestamps, completion condition, sorted `attempted_criterion_ids`, structured `observed_environment.cluster` and per-rank compatibility observations, opaque boot/launch IDs, closed typed `commands[].arguments[]` and value-free `commands[].environment[]` descriptors, preparation transport/subsystem provenance, full-verification barrier, current-release criterion measurements, timestamp-bound context/soak observations, and evidence IDs; `run_record_id` | Trusted review, predecessor baseline measurements, profile status, and runtime mutation |
 | ADR 0004 validation bundle | Exact release/contract IDs, immutable run IDs, content-addressed artifact descriptors and privacy state, review-evidence IDs, qualification-started fact, and criterion coverage; `bundle_id` | Reviewer authority, final status, profile mutation, and legacy schema-1 seal/bundle identity |
-| Validation decision | Exact release/contract/bundle IDs; every automatically aggregated disposition with `included_run_record_ids`; explicit evidence-backed `excluded_run_records`; provenance/security/privacy review; an explicit base-status assertion that must equal the derived result; repository-review metadata; and backward supersession links; `decision_id` | Proof that the named review actually occurred, trusted placement/publication, catalog projection, and serving authorization |
+| Validation decision | Exact release/contract/bundle IDs; every automatically aggregated disposition with `included_run_record_ids`; explicit evidence-backed `excluded_run_records`; provenance/security/privacy review; an explicit base-status assertion that must equal the derived result; repository-review metadata; and backward supersession links; `decision_id` | Proof that the named review actually occurred, trusted placement/publication, catalog projection, or a launch operation |
 
 The descriptor cross-checks recipe TP/PP against the declared geometry. The
 recipe stores only behavior-affecting, non-secret environment entries;
@@ -152,12 +152,12 @@ or physical qualification.
 Read-only persistence and verification for stored ADR 0004 objects now live
 under `models/model-serving-releases/` and
 `scripts/model-serving-release-registry.sh`. That CLI does not capture
-evidence, issue a decision, or change serving eligibility. The tracked store
+evidence, issue a decision, project status, or launch a release. The tracked store
 currently contains no issued object. Local ADR 0004 evidence-capture
 candidate persistence is documented in
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) and
-is a separate unreviewed workflow. No catalog field, profile reference, or
-serving gate consumes an ADR 0004 decision. A locally constructed decision
+is a separate unreviewed workflow. No catalog field or profile reference
+consumes an ADR 0004 decision. A locally constructed decision
 whose fields say `Validated` is only a syntactically consistent document until
 repository review deliberately publishes it into that store.
 

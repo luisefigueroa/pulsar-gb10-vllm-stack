@@ -77,7 +77,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
 
     def assert_no_authority(self, payload: dict[str, object], dest: pathlib.Path | None = None) -> None:
         self.assertEqual(payload["schema_version"], 1)
-        self.assertFalse(payload["serving_authorization"])
         self.assertEqual(payload.get("state"), "unreviewed")
         self.assertEqual(payload.get("authority"), "none")
         self.assertEqual(payload.get("privacy_review"), "pending")
@@ -162,7 +161,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(verify[0], 0, verify[2])
         verified = json.loads(verify[1])
         self.assertEqual(verified["candidate_id"], captured["candidate_id"])
-        self.assertFalse(verified["serving_authorization"])
 
     def test_cli_human_and_json_modes(self) -> None:
         _spec, spec_path = fixture.passing_criterion_spec(
@@ -171,7 +169,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         planned = self.run_cli("plan", "--spec", str(spec_path), "--json")
         self.assertEqual(planned.returncode, 0, planned.stderr)
         payload = json.loads(planned.stdout)
-        self.assertFalse(payload["serving_authorization"])
         human = self.run_cli("plan", "--spec", str(spec_path), env={"COLUMNS": "40"})
         self.assertEqual(human.returncode, 0, human.stderr)
         for line in human.stdout.splitlines():
@@ -187,7 +184,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             "verify-candidate", "--candidate-dir", str(dest), "--json"
         )
         self.assertEqual(verified.returncode, 0, verified.stderr)
-        self.assertFalse(json.loads(verified.stdout)["serving_authorization"])
 
     def test_completed_failing_measurement_and_incomplete_attempts(self) -> None:
         _spec, fail_path = fixture.failing_measurement_spec(self.repo)
@@ -1149,7 +1145,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         )
         self.assertNotEqual(code, 0)
         self.assertIn("pending", (stdout + stderr).lower())
-        self.assertFalse(json.loads(stdout).get("serving_authorization", True))
         self.assert_safe_text(stdout + stderr)
 
     def test_hostile_review_scope_fails_independent_verify(self) -> None:
@@ -1237,7 +1232,6 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         )
         self.assertNotEqual(code, 0)
         self.assertIn("release-promotion", stdout + stderr)
-        self.assertFalse(json.loads(stdout).get("serving_authorization", True))
         self.assert_safe_text(stdout + stderr)
         del spec_path
 

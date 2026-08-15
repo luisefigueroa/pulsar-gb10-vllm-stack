@@ -85,7 +85,6 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
             payload["schema_version"], registry.REGISTRY_OUTPUT_SCHEMA_VERSION
         )
         self.assertTrue(payload["ok"])
-        self.assertFalse(payload["serving_authorization"])
         self.assertEqual(payload["counts"]["descriptors"], 0)
         self.assertEqual(
             payload["registry_root"], registry.DEFAULT_REGISTRY_RELATIVE
@@ -105,7 +104,6 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
             inspected["inspection"]["unique_decision_id"],
             source["decision"]["decision_id"],
         )
-        self.assertFalse(inspected["inspection"]["serving_authorization"])
         shown = registry.inspect_decision(
             graph, source["decision"]["decision_id"]
         )
@@ -515,7 +513,6 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["command"], "show-release")
         self.assertIn("not stored", payload["error"])
-        self.assertFalse(payload["serving_authorization"])
 
     def test_no_reviewed_decision_json_is_neutral(self) -> None:
         fixture.init_registry_root(self.registry_root)

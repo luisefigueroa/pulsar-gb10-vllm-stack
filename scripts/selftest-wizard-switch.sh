@@ -663,8 +663,8 @@ assert_file_contains "$STATE/logs/wizard.combined" \
   "1 standalone local node available · no cluster membership confirmed" \
   "standalone capacity is explicit and not called confirmed"
 assert_file_contains "$STATE/logs/wizard.err" \
-  "Choose a validated model · standalone local node" \
-  "standalone model chooser is explicit"
+  "Choose a model · status labels are advisory · standalone local node" \
+  "standalone model chooser exposes advisory status policy"
 assert_file_contains "$STATE/logs/wizard.err" \
   "qwen3-1\\.7b[[:space:]]+1 node" \
   "one-node profiles remain available"
@@ -887,7 +887,7 @@ assert_false "unreachable: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "unreachable" "unreachable messaging"
 
 # ---------------------------------------------------------------------------
-# 9b) Idle extra rank does not block an exact validated subset
+# 9b) Idle extra rank does not block an exact configured subset
 # ---------------------------------------------------------------------------
 echo "=== idle extra rank does not block exact subset ==="
 reset_logs

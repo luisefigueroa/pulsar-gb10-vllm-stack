@@ -8,19 +8,21 @@ ops in [OPERATIONS.md](./OPERATIONS.md); multi-node detail in
 Serving results are validated on 2× NVIDIA DGX Spark (GB10), Ubuntu, driver
 580.x, CUDA 13.0, Docker 29.x + NVIDIA Container Toolkit. The control plane
 supports larger confirmed GB10 topologies, but a node count is serveable only
-when an exact `STATUS=tested*` profile has earned that claim. Hostnames are not
-part of cluster qualification. Host NCCL is not required; images provide it.
+when an exact profile defines an executable recipe and its concrete topology,
+capacity, identity, runtime, security, and lifecycle checks pass. Hostnames are
+not part of cluster qualification. Host NCCL is not required; images provide it.
 
-Here, `STATUS=tested*` is the current implementation's legacy serving gate. It
-is not the `Validated` Model Serving Release decision defined by
+Here, `STATUS=tested*` is the current implementation's legacy evidence and
+recommendation label. It is advisory, not a serving gate, and is not the
+`Validated` Model Serving Release decision defined by
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). The separate
 release-descriptor, frozen-contract, immutable run-record, evidence-bundle, and
 reviewed-decision schema version 1 contracts are implemented. Read-only
 persistence and verification of those objects is implemented under
 `models/model-serving-releases/` and is currently empty. Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
-unreviewed. Decision issuance/publication, catalog/operator status
-projection, and serving-eligibility migration are still pending. The corrected schemas remain
+unreviewed. Decision issuance/publication and catalog/operator status
+projection are still pending. Serving permission is status-independent. The corrected schemas remain
 version 1 because no ADR 0004 object was issued or persisted before the
 correction; existing legacy schema-1 seals/bundles and raw evidence are
 untouched.
@@ -242,8 +244,8 @@ cluster/stop-cluster.sh <profile>
 Other nodes used by the profile start headless first; this node starts last and
 serves the API. The profile contract requires `TP × PP == NODES`, native `mp`,
 and an explicit topology class/rail minimum. Extra discovered nodes stay idle.
-The wizard offers only exact `STATUS=tested*` profiles that fit capacity; it
-does not infer a larger geometry.
+The wizard offers every exact serving profile that fits capacity, displays its
+status and caveats, and does not infer a larger geometry.
 
 `HEAD_IP`/`WORKER_IP` remains supported for old two-node setups, but cannot
 prove per-rank HCAs or an N-node mesh. Migrate with `--write-topology`.
@@ -348,8 +350,8 @@ not permission to serve an unmeasured geometry.
 | [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: reviewed exact-content home symlink, non-home hot only, expected seal and serve-time witness |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |
 | [decisions/0003-explicit-model-preparation-transport.md](./decisions/0003-explicit-model-preparation-transport.md) | Accepted rationale: explicit reviewed-profile preparation uses topology-bound eight-stream SSH-over-RoCE with no fallback |
-| [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence and verification implemented and empty; local evidence-capture candidate persistence implemented and unreviewed; issuance/publication, status projection, and serving migration pending |
-| [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) | Maintainer-only ADR 0004 evidence-capture candidate persistence; no issuance or serving authorization |
+| [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; validation status is advisory; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence and verification implemented and empty; local evidence-capture candidate persistence implemented and unreviewed; issuance/publication and status projection pending |
+| [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) | Maintainer-only ADR 0004 evidence-capture candidate persistence; no issuance and no runtime launch |
 | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) | Descriptive current implementation, evidence boundaries, and known gaps |
 | [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Maintainer-only exact-manifest and unreviewed release-candidate workflow; no issuance authority |
 | [models/seals/README.md](../models/seals/README.md) | Reviewed expected-seal schema, lab issuance boundary, and current migration status |

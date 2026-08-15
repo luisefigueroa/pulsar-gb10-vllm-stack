@@ -464,7 +464,8 @@ status_is_tested() {
   esac
 }
 
-# Historical name: true for blocked* only. Prefer status_requires_force for gates.
+# Descriptive classifier only. A blocked/do-not-use label warns about recorded
+# evidence; it is not launch authorization.
 status_is_blocked() {
   case "${STATUS}" in
     blocked*|BLOCKED*|do-not-use|DO-NOT-USE*) return 0 ;;
@@ -472,16 +473,23 @@ status_is_blocked() {
   esac
 }
 
-# Ship default: only STATUS=tested* may launch without --force.
+# Compatibility helpers retained for callers that sourced older versions of
+# lib.sh. Validation status is advisory, so every parsed profile is launchable
+# with respect to status and no status requires --force. Operational checks
+# (identity, recipe, topology, capacity, lifecycle, and security) still fail
+# closed in their owning code paths.
 status_is_launchable() {
-  status_is_tested
+  return 0
 }
 
 status_requires_force() {
-  if status_is_launchable; then
-    return 1
+  return 1
+}
+
+warn_profile_status() {
+  if ! status_is_tested; then
+    warn "profile status=${STATUS:-?} is advisory; ${NOTES:-review its evidence and caveats before serving}"
   fi
-  return 0
 }
 
 mem_available_gib_local() {

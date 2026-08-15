@@ -15,13 +15,13 @@ NAME="${1:-}"
 [ -n "$NAME" ] || die "usage: $0 <model-name> [options]"
 shift
 
-SPEC_MODE=auto FORCE=0 SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0
+SPEC_MODE=auto SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0
 DRY=0 YES=0 VERBOSE=0 NODE_SELECTOR="" WEIGHT_SOURCE=replicated
 while [ $# -gt 0 ]; do
   case "$1" in
     --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
     --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
-    --force) FORCE=1 ;;
+    --force) : ;; # Backward-compatible no-op: status labels are advisory.
     --skip-preflight) SKIP_PF=1 ;;
     --skip-weights-check) SKIP_W=1 ;;
     --accept-memory-warn) ACCEPT_MEM=1 ;;
@@ -57,7 +57,7 @@ usage: scripts/up.sh <model-name> [options]
   --weight-mode MODE      alias for --weight-source (library-hot recommended name)
   --accept-memory-warn   allow start on memory WARN
   --pull-image / --yes   attempt image pull/sync when missing
-  --force                allow non-tested conf statuses (untested/do-not-use/blocked*)
+  --force                deprecated no-op; status labels never block serving
   --skip-preflight       skip cluster/preflight.sh
   --skip-weights-check   skip weight presence check
 EOF
@@ -113,11 +113,9 @@ fi
 [ "$DRY" = 1 ] && echo "│  mode=DRY-RUN (checks only)"
 echo "├─ checks"
 
-if status_requires_force && [ "$FORCE" != 1 ]; then
-  echo "FAIL  conf      status=$STATUS (ship default: only tested*; use --force)"
-  die "$NAME status=$STATUS — refuse start without --force (allowlist: tested*)"
-fi
-echo "PASS  conf      status=$STATUS"
+echo "INFO  status    $STATUS (advisory; operational checks decide launch)"
+warn_profile_status
+echo "PASS  conf      exact profile contract parsed"
 
 if [ "$NODES" -gt 1 ]; then
   if ! require_profile_topology \
@@ -282,7 +280,6 @@ case "$SPEC_MODE" in
 esac
 
 launch_flags=()
-[ "$FORCE" = 1 ] && launch_flags+=(--force)
 if [ "$NODES" -gt 1 ]; then
   # up.sh already ran (or explicitly skipped) this preflight. Always suppress
   # start-cluster.sh's duplicate run while preserving the caller's decision.

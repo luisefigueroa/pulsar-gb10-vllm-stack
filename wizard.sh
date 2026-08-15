@@ -23,7 +23,7 @@
 #   WIZARD_MEMORY_RC=0|1|2         exit status for memory (default 0)
 #   WIZARD_CHECK_MEMORY_CMD=path   executable: <model> [--json] → body; exit rc
 #   WIZARD_API_HEALTHY=0|1         force API-healthy probe for selected profile
-#   WIZARD_LIST_MODELS_JSON=path   fixed list-models --validated --json
+#   WIZARD_LIST_MODELS_JSON=path   fixed list-models --serving --json
 #   WIZARD_CHECK_WEIGHTS_CMD=path  executable: <model> --json
 #   WIZARD_PULL_WEIGHTS_CMD=path   executable: <model> --yes
 #   WIZARD_MODEL_LIBRARY_HEALTH_CMD=path  executable: --json
@@ -193,7 +193,7 @@ cmd_list_models_json() {
   if [ -n "${WIZARD_LIST_MODELS_JSON:-}" ]; then
     cat "$WIZARD_LIST_MODELS_JSON"
   else
-    "$REPO_DIR/scripts/list-models.sh" --validated --serving --json
+    "$REPO_DIR/scripts/list-models.sh" --serving --json
   fi
 }
 PLACEMENT_SELECTOR=""
@@ -255,7 +255,7 @@ collect_library_serving_check() {
       ;;
   esac
   cmd_list_models_json >"$profiles_file" \
-    || { warn "validated serving-profile metadata is unavailable"; return 1; }
+    || { warn "serving-profile metadata is unavailable"; return 1; }
   if [ "$NODES" -eq 1 ]; then
     target_args=(--target-rank "$SINGLE_NODE_INDEX")
   fi
@@ -673,8 +673,12 @@ render_model_selection() {
   local -a fields=(
     "Model" "$NAME"
     "Serves" "$SERVED_NAME on :$PORT"
-    "Validation" "$STATUS · exact $NODES-node profile"
+    "Evidence label" "$STATUS · advisory"
+    "Recipe" "exact $NODES-node profile"
   )
+  if [ -n "${NOTES:-}" ]; then
+    fields+=("Profile note" "$NOTES")
+  fi
   if [ "$NODES" -eq 1 ]; then
     node="$PLACEMENT_HOSTNAME"
     [ -n "$node" ] || node="this node"
@@ -2055,7 +2059,7 @@ if [ "$standalone_capacity" = 1 ]; then
   log "1 standalone local node available · no cluster membership confirmed"
 else
   topology_context="${topology_capacity} confirmed nodes available"
-  log "$topology_capacity confirmed nodes available · exact validated profiles only"
+  log "$topology_capacity confirmed nodes available · all fitting serving profiles shown"
 fi
 
 recovery_rc=0
@@ -2083,7 +2087,13 @@ models = [
     model for model in json.load(sys.stdin).get('models', [])
     if int(model.get('nodes') or 1) <= capacity
 ]
-models.sort(key=lambda model: str(model.get('id') or '').casefold())
+def recommended(model):
+    return str(model.get('status') or '').startswith('tested')
+
+models.sort(key=lambda model: (
+    not recommended(model),
+    str(model.get('id') or '').casefold(),
+))
 
 family_models = {}
 for model in models:
@@ -2098,14 +2108,15 @@ name_width = max((len(str(model['id'])) for model in models), default=0)
 for model in models:
     family = model.get('family') or model.get('served_name') or model['id']
     nodes = int(model['nodes'])
-    suggested = bool(model.get('family_recommended')) or (
+    suggested = recommended(model) and (bool(model.get('family_recommended')) or (
         len(family_models[family]) > 1 and nodes == family_min[family]
-    )
+    ))
     marks = []
     if suggested:
         marks.append('suggested')
     if model.get('first_run_candidate'):
         marks.append('first run')
+    marks.append('status={}'.format(model.get('status') or '?'))
     suffix = (' · ' + ' · '.join(marks)) if marks else ''
     node_word = 'node' if nodes == 1 else 'nodes'
     print(f\"{model['id']:<{name_width}}  {nodes} {node_word}{suffix}\")
@@ -2113,12 +2124,12 @@ for model in models:
   )
   if [ "${#choices[@]}" -eq 0 ]; then
     if [ "$standalone_capacity" = 1 ]; then
-      die "no validated single-node profile is available for standalone local use"
+      die "no single-node serving profile is available for standalone local use"
     fi
-    die "no validated profile fits the $topology_capacity confirmed node(s)"
+    die "no serving profile fits the $topology_capacity confirmed node(s)"
   fi
 
-  pick=$(choose "Choose a validated model · $topology_context" "${choices[@]}")
+  pick=$(choose "Choose a model · status labels are advisory · $topology_context" "${choices[@]}")
   NAME=$(echo "$pick" | awk '{print $1}')
   [ -n "$NAME" ] || die "no selection"
 
@@ -2130,10 +2141,6 @@ for model in models:
   fi
   echo
   render_model_selection
-
-  if status_requires_force; then
-    die "$NAME status=$STATUS is not ship-default (need tested*). Not offered for guided start; use scripts/up.sh --force only if you mean it."
-  fi
 
   source_rc=0
   select_weight_source || source_rc=$?
