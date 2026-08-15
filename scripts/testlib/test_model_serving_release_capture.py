@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import json
 import os
 import pathlib
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -1027,15 +1029,30 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
             registry_root / "descriptors" / f"{release['release_id']}.json"
         )
         registry_fixture.write_release(registry_root, release)
-        os.chmod(path, 0o000)
-        try:
+
+        original_open = os.open
+
+        def deny_registry_file(
+            name: str | bytes,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            if name == path.name and dir_fd is not None:
+                raise PermissionError(errno.EACCES, "permission denied")
+            return original_open(name, flags, mode, dir_fd=dir_fd)
+
+        with mock.patch.object(capture.os, "open", side_effect=deny_registry_file):
             code, stdout, stderr = self.run_main(
                 ["plan", "--spec", str(spec_path), "--json"]
             )
             self.assertNotEqual(code, 0)
-            self.assert_safe_text(stdout + stderr)
-        finally:
-            os.chmod(path, 0o600)
+            combined = stdout + stderr
+            self.assertIn("unreadable", combined)
+            self.assertNotIn("missing", combined)
+            self.assert_safe_text(combined)
+
         path.unlink()
         code, stdout, stderr = self.run_main(
             ["plan", "--spec", str(spec_path), "--json"]
