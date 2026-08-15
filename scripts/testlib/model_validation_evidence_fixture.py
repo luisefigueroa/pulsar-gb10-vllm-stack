@@ -7,6 +7,8 @@ import copy
 import hashlib
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 
@@ -22,13 +24,13 @@ from scripts.testlib import model_serving_release_fixture as release_fixture  # 
 
 
 EXPECTED_FIRST_RUN_RECORD_ID = (
-    "5b117631115cd3e35ea505c917cb6154db5dda59b29a499ac86bf22f0bf3d5cf"
+    "09c407fd2c7a8004ced8033d9b1e7e035aab94c40b2b10e8bf20d906a376709d"
 )
 EXPECTED_EVIDENCE_BUNDLE_ID = (
-    "9929e849a41663ee37c9e295fd9365fa78478a823d35d269eaab3092c8f19010"
+    "e8a98f17d14837c5a2405910095b2cbfb1bfbe3803abf4f5e06765a8c5a7fc07"
 )
 EXPECTED_VALIDATION_DECISION_ID = (
-    "38339191a9eac005531e0180a48d19228a621142026f49d5d39dbbe886124364"
+    "b87146549936390c3738ad4661dd4ed5ecb89e50dbfb43b140dd02abf6d37bb6"
 )
 
 
@@ -80,20 +82,48 @@ def build_contract(*, release: dict[str, Any] | None = None) -> dict[str, Any]:
 def build_relative_contract(
     *,
     release: dict[str, Any] | None = None,
+    predecessor_source: dict[str, Any] | None = None,
     predecessor_release_id: str | None = None,
     throughput_max_regression_percent: str = "5",
     latency_max_regression_percent: str = "10",
 ) -> dict[str, Any]:
     release = release or build_release()
+    predecessor_source = predecessor_source or build_predecessor_source()
+    predecessor_contract = predecessor_source["contract"]
+    predecessor_runs = predecessor_source["run_records"]
     release_criteria = release_fixture.criteria()
     by_dimension = {item["dimension"]: item for item in release_criteria}
+    predecessor_criteria = {
+        item["dimension"]: item
+        for item in predecessor_contract["release_criteria"]["criteria"]
+    }
+    predecessor_run_by_criterion = {
+        observation["criterion_id"]: record["run_record_id"]
+        for record in predecessor_runs
+        for observation in record["criterion_observations"]
+    }
     relative = model_serving_release.build_relative_performance_requirement(
         release=release,
         predecessor_release_id=(
-            predecessor_release_id or digest("predecessor-release")
+            predecessor_release_id or predecessor_source["release"]["release_id"]
         ),
+        predecessor_contract_id=predecessor_contract["contract_id"],
+        predecessor_bundle_id=predecessor_source["evidence_bundle"]["bundle_id"],
+        predecessor_decision_id=predecessor_source["decision"]["decision_id"],
         throughput_criterion=by_dimension["throughput"],
+        throughput_predecessor_criterion_id=predecessor_criteria["throughput"][
+            "criterion_id"
+        ],
+        throughput_predecessor_run_record_id=predecessor_run_by_criterion[
+            predecessor_criteria["throughput"]["criterion_id"]
+        ],
         latency_criterion=by_dimension["latency"],
+        latency_predecessor_criterion_id=predecessor_criteria["latency"][
+            "criterion_id"
+        ],
+        latency_predecessor_run_record_id=predecessor_run_by_criterion[
+            predecessor_criteria["latency"]["criterion_id"]
+        ],
         throughput_max_regression_percent=throughput_max_regression_percent,
         latency_max_regression_percent=latency_max_regression_percent,
     )
@@ -216,6 +246,7 @@ def build_observed_environment(
 ) -> dict[str, Any]:
     release = release or build_release()
     geometry = release["supported_hardware_geometry"]
+    compatibility = release["runtime_image_identity"]["host_compatibility"]
     return {
         "image_digest": release["runtime_image_identity"]["image"]["digest"],
         "supported_hardware_geometry_id": (
@@ -231,16 +262,38 @@ def build_observed_environment(
             if launch_id is not None
             else (digest("launch") if launched else None)
         ),
+        "cluster": {
+            "node_count": geometry["node_count"],
+            "accelerator_count": geometry["accelerator_count"],
+            "tensor_parallel_size": geometry["tensor_parallel_size"],
+            "pipeline_parallel_size": geometry["pipeline_parallel_size"],
+            "topology_class": geometry["topology_class"],
+            "interconnect_class": geometry["interconnect_class"],
+            "rails_per_pair": geometry["minimum_rails_per_pair"],
+        },
         "ranks": [
             {
                 "rank": rank,
                 "hardware_class": geometry["hardware_class"],
+                "architecture": geometry["architecture"],
                 "accelerator_count": geometry["accelerators_per_node"],
                 "unified_memory_gib": "128",
-                "driver_version": "fixture-driver-580",
-                "kernel_release": "fixture-kernel-6.11",
-                "container_runtime_version": "fixture-runtime-28",
-                "engine_version": "fixture-vllm-0.26",
+                "driver_abi": {
+                    "family": compatibility["driver_abi"]["family"],
+                    "version": "580.1",
+                },
+                "container_runtime": {
+                    "family": compatibility["container_runtime"]["family"],
+                    "version": "28.0",
+                    "capabilities": compatibility["container_runtime"][
+                        "required_capabilities"
+                    ],
+                },
+                "kernel": {
+                    "version": "6.11.1",
+                    "features": compatibility["kernel"]["required_features"],
+                },
+                "engine_version": "0.26.0",
             }
             for rank in range(geometry["node_count"])
         ],
@@ -256,6 +309,13 @@ def phase_for_scope(scope: str) -> str:
     }[scope]
 
 
+def timestamp_after(value: str, seconds: str) -> str:
+    parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    elapsed = Decimal(seconds)
+    result = parsed + timedelta(microseconds=int(elapsed * Decimal(1_000_000)))
+    return result.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def build_run_for_criterion(
     criterion_id: str,
     *,
@@ -263,7 +323,7 @@ def build_run_for_criterion(
     contract: dict[str, Any] | None = None,
     artifacts: list[dict[str, Any]] | None = None,
     metrics: list[dict[str, str]] | None = None,
-    observation_completion: str = "complete",
+    observation_completion: str | None = None,
     observation_reason: str | None = None,
     sample_size: int | None = None,
     attempt_completion: str = "completed",
@@ -280,10 +340,11 @@ def build_run_for_criterion(
     soak_duration_seconds: str | None = None,
     soak_concurrency: int | None = None,
     soak_request_errors: int | None = None,
-    include_relative_comparison: bool = True,
-    relative_completion: str = "complete",
-    relative_sample_size: int | None = None,
-    relative_predecessor_metrics: list[dict[str, str]] | None = None,
+    soak_started_at: str | None = None,
+    soak_ended_at: str | None = None,
+    attempt_started_at: str = "2026-08-14T12:00:00Z",
+    attempt_ended_at: str | None = None,
+    attempted_criterion_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     release = release or build_release()
     contract = contract or build_contract(release=release)
@@ -294,6 +355,9 @@ def build_run_for_criterion(
         if item["criterion_id"] == criterion_id
     )
     artifact = artifact_for_label(artifacts, criterion_id)
+    observed_observation_completion = observation_completion or (
+        "complete" if attempt_completion == "completed" else "inconclusive"
+    )
     observed_metrics = copy.deepcopy(
         PASS_METRICS[criterion_id] if metrics is None else metrics
     )
@@ -334,13 +398,20 @@ def build_run_for_criterion(
         and soak_requirement["status"] == "required"
         and criterion_id == soak_requirement["criterion_id"]
     ):
+        observed_soak_duration = (
+            str(soak_requirement["minimum_duration_seconds"])
+            if soak_duration_seconds is None
+            else soak_duration_seconds
+        )
+        observed_soak_started_at = soak_started_at or attempt_started_at
+        observed_soak_ended_at = soak_ended_at or timestamp_after(
+            observed_soak_started_at, observed_soak_duration
+        )
         soak_observation = {
             "completion": soak_completion,
-            "duration_seconds": (
-                str(soak_requirement["minimum_duration_seconds"])
-                if soak_duration_seconds is None
-                else soak_duration_seconds
-            ),
+            "started_at": observed_soak_started_at,
+            "ended_at": observed_soak_ended_at,
+            "duration_seconds": observed_soak_duration,
             "concurrency": (
                 soak_requirement["concurrency"]
                 if soak_concurrency is None
@@ -358,50 +429,12 @@ def build_run_for_criterion(
                 else "soak-interrupted"
             ),
         }
-    relative_requirement = release_requirements["relative_performance"]
-    relative_observation = None
-    if (
-        include_relative_comparison
-        and relative_requirement["status"] == "required"
-        and criterion["dimension"] in {"throughput", "latency"}
-        and relative_requirement[criterion["dimension"]]["criterion_id"]
-        == criterion_id
-    ):
-        dimension_requirement = relative_requirement[criterion["dimension"]]
-        relative_observation = {
-            "predecessor_release_id": relative_requirement[
-                "predecessor_release_id"
-            ],
-            "supported_hardware_geometry_id": relative_requirement[
-                "supported_hardware_geometry_id"
-            ],
-            "benchmark_protocol_id": dimension_requirement[
-                "benchmark_protocol_id"
-            ],
-            "completion": relative_completion,
-            "sample_size": (
-                criterion["sample_size"]
-                if relative_sample_size is None
-                else relative_sample_size
-            ),
-            "metrics": copy.deepcopy(
-                PASS_METRICS[criterion_id]
-                if relative_predecessor_metrics is None
-                else relative_predecessor_metrics
-            ),
-            "evidence_artifact_ids": [artifact["artifact_id"]],
-            "reason": (
-                "completed"
-                if relative_completion == "complete"
-                else "predecessor-samples-inconclusive"
-            ),
-        }
     observation = {
         "criterion_id": criterion_id,
         "benchmark_protocol_id": model_serving_release.benchmark_protocol_id(
             criterion
         ),
-        "completion": observation_completion,
+        "completion": observed_observation_completion,
         "sample_size": (
             criterion["sample_size"] if sample_size is None else sample_size
         ),
@@ -410,18 +443,22 @@ def build_run_for_criterion(
         "contract_requirements": {
             "context": context_observation,
             "soak": soak_observation,
-            "relative_performance": relative_observation,
         },
         "reason": (
             observation_reason
             if observation_reason is not None
             else (
                 "completed"
-                if observation_completion == "complete"
+                if observed_observation_completion == "complete"
                 else "insufficient-stable-samples"
             )
         ),
     }
+    observed_attempt_ended_at = attempt_ended_at or (
+        soak_observation["ended_at"]
+        if soak_observation is not None
+        else "2026-08-14T12:05:00Z"
+    )
     return model_validation_evidence.build_validation_run_record(
         release=release,
         contract=contract,
@@ -429,8 +466,15 @@ def build_run_for_criterion(
             "attempt_id": attempt_id or f"attempt-{criterion_id}",
             "phase": phase_for_scope(criterion["qualification_scope"]),
             "qualification_scope": criterion["qualification_scope"],
-            "started_at": "2026-08-14T12:00:00Z",
-            "ended_at": "2026-08-14T12:05:00Z",
+            "attempted_criterion_ids": sorted(
+                copy.deepcopy(
+                    [criterion_id]
+                    if attempted_criterion_ids is None
+                    else attempted_criterion_ids
+                )
+            ),
+            "started_at": attempt_started_at,
+            "ended_at": observed_attempt_ended_at,
             "completion": attempt_completion,
         },
         preparation_provenance=build_preparation_provenance(
@@ -444,9 +488,17 @@ def build_run_for_criterion(
         commands=[
             {
                 "program": "validate/run-gates.sh",
-                "version": "fixture-v1",
-                "arguments": [criterion_id, "--tag", "fixture"],
-                "environment_variable_names": ["VLLM_API_KEY"],
+                "version": "sha256:" + digest("validate/run-gates.sh:fixture-v1"),
+                "arguments": [
+                    {"kind": "operation", "value": "run-validation-gates"},
+                    {
+                        "kind": "criterion-reference",
+                        "criterion_id": criterion_id,
+                    },
+                ],
+                "environment": [
+                    {"kind": "secret-reference", "name": "VLLM_API_KEY"}
+                ],
                 "working_directory": "repository-root",
             }
         ],
@@ -498,6 +550,7 @@ def build_prequalification_failure(
             "attempt_id": "attempt-preparation-failure",
             "phase": "preparation",
             "qualification_scope": "catalog-artifact",
+            "attempted_criterion_ids": [],
             "started_at": "2026-08-14T11:00:00Z",
             "ended_at": "2026-08-14T11:01:00Z",
             "completion": "failed",
@@ -513,9 +566,14 @@ def build_prequalification_failure(
         commands=[
             {
                 "program": "scripts/model-library.sh",
-                "version": "fixture-v1",
-                "arguments": ["prepare", "fixture-profile", "--yes"],
-                "environment_variable_names": [],
+                "version": "sha256:" + digest("scripts/model-library.sh:fixture-v1"),
+                "arguments": [
+                    {
+                        "kind": "operation",
+                        "value": "prepare-model-for-serving",
+                    },
+                ],
+                "environment": [],
                 "working_directory": "repository-root",
             }
         ],
@@ -549,15 +607,21 @@ def build_bundle(
     )
 
 
-def passing_selections(
-    run_records: list[dict[str, Any]],
-) -> dict[str, list[str]]:
-    selections: dict[str, list[str]] = {}
-    for record in run_records:
-        for observation in record["criterion_observations"]:
-            selections[observation["criterion_id"]] = [record["run_record_id"]]
-    selections["provenance-security-review"] = []
-    return selections
+def build_exclusion(
+    criterion_id: str,
+    run_record: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    *,
+    reason: str = "reviewed-protocol-deviation",
+) -> dict[str, Any]:
+    return {
+        "criterion_id": criterion_id,
+        "run_record_id": run_record["run_record_id"],
+        "reason": reason,
+        "review_evidence_artifact_ids": [
+            review_artifact(artifacts)["artifact_id"]
+        ],
+    }
 
 
 def build_review(
@@ -586,11 +650,13 @@ def build_decision(
     artifacts: list[dict[str, Any]] | None = None,
     run_records: list[dict[str, Any]] | None = None,
     bundle: dict[str, Any] | None = None,
-    selections: dict[str, list[str]] | None = None,
+    exclusions: list[dict[str, Any]] | None = None,
+    predecessor_registry: list[dict[str, Any]] | None = None,
     provenance_review: dict[str, Any] | None = None,
     status: str = "validated",
     supersedes: list[dict[str, Any]] | None = None,
-    reviewed_at: str = "2026-08-14T13:00:00Z",
+    supersession_lineage: list[dict[str, Any]] | None = None,
+    reviewed_at: str = "2026-08-14T15:00:00Z",
 ) -> dict[str, Any]:
     release = release or build_release()
     contract = contract or build_contract(release=release)
@@ -609,9 +675,8 @@ def build_decision(
         contract=contract,
         evidence_bundle=bundle,
         run_records=run_records,
-        criterion_run_record_ids=(
-            selections if selections is not None else passing_selections(run_records)
-        ),
+        criterion_exclusions=exclusions or [],
+        predecessor_evidence_registry=predecessor_registry or [],
         provenance_security_review=(
             provenance_review
             if provenance_review is not None
@@ -622,4 +687,63 @@ def build_decision(
         reviewed_at=reviewed_at,
         review_reference="repository-review:fixture",
         supersedes_decisions=supersedes or [],
+        supersession_lineage=supersession_lineage or [],
     )
+
+
+def build_predecessor_release() -> dict[str, Any]:
+    artifacts = release_fixture.model_artifacts()
+    primary = next(item for item in artifacts if item["artifact_key"] == "primary")
+    primary["snapshot_revision"] = "9" * 40
+    primary["manifest"]["manifest_id"] = "8" * 64
+    return release_fixture.build_release(
+        artifact_set=model_serving_release.build_model_artifact_set(artifacts)
+    )
+
+
+def build_predecessor_source() -> dict[str, Any]:
+    release = build_predecessor_release()
+    contract = build_contract(release=release)
+    artifacts = build_artifacts()
+    runs = build_passing_runs(
+        release=release,
+        contract=contract,
+        artifacts=artifacts,
+    )
+    bundle = build_bundle(
+        release=release,
+        contract=contract,
+        artifacts=artifacts,
+        run_records=runs,
+    )
+    decision = build_decision(
+        release=release,
+        contract=contract,
+        artifacts=artifacts,
+        run_records=runs,
+        bundle=bundle,
+    )
+    return {
+        "release": release,
+        "contract": contract,
+        "evidence_bundle": bundle,
+        "run_records": runs,
+        "decision": decision,
+    }
+
+
+def evidence_source(
+    *,
+    release: dict[str, Any],
+    contract: dict[str, Any],
+    bundle: dict[str, Any],
+    run_records: list[dict[str, Any]],
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "release": release,
+        "contract": contract,
+        "evidence_bundle": bundle,
+        "run_records": run_records,
+        "decision": decision,
+    }

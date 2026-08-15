@@ -205,18 +205,48 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
   across stability, accuracy, throughput, and latency, plus reviewed
   provenance/security and strict same-boot reproducibility. FP-equivalent
   output does not satisfy the strict gate.
+- Criterion scopes are fixed: stability, accuracy, throughput, latency, and
+  strict same-boot are `model-qualification`; serving integration is
+  `serving-integration`; provenance/security and physical geometry are
+  `release-promotion`. `catalog-artifact` is preparation/subsystem evidence and
+  cannot satisfy a validation criterion.
 - `scripts/model_serving_release.py` owns the pure ADR 0004 release-descriptor
   and frozen Validation Contract schemas. `scripts/model_validation_evidence.py`
   owns pure immutable run-record, evidence-bundle, and validation-decision
-  schemas. It binds exact cross-links, derives criterion outcomes from frozen
-  thresholds plus required context, soak, and predecessor-relative budgets,
-  rejects a reviewer-selected status that disagrees with the evidence, and
-  projects supersession without rewriting the earlier decision.
+  schemas. It binds exact cross-links, considers every applicable observation
+  automatically, requires explicit evidence-backed exclusions, derives
+  criterion outcomes from frozen thresholds plus required context, soak, and
+  predecessor-relative budgets, rejects a supplied status assertion that
+  disagrees with the evidence, and projects supersession without rewriting the
+  earlier decision. Conflicts adjudicate as follows: pass+fail is
+  inconclusive, pass+inconclusive is inconclusive, fail+inconclusive is fail,
+  and all-pass is pass.
+  Every run attempt hash-binds a sorted `attempted_criterion_ids` declaration.
+  A post-barrier non-preparation attempt must name at least one scope-compatible
+  frozen criterion, and its observations must cover that set exactly;
+  incomplete attempts may contribute only inconclusive observations. The
+  review-derived provenance/security criterion uses one canonical closed
+  template so unimplemented thresholds or parameters cannot be added silently.
+  Relative performance binds the reviewed predecessor contract, bundle,
+  decision, and run; the relevant predecessor criterion must pass, but the
+  predecessor release need not be globally `Validated`. Runtime compatibility
+  and architecture/geometry checks are structural only; physical behavior
+  still requires physical evidence. Supersession must be later in time and
+  acyclic. Release/contract free-form values are screened recursively for
+  credentials and deployment-only data. Command evidence uses allowlisted
+  repository programs, SHA-256-shaped program-version identities, closed
+  operations/resources, typed criterion references, and typed site-option
+  references; it must still pass trusted publication privacy review. Pure
+  schema validation does not prove that a supplied digest names the checked-out
+  executable or that no unknown private identifier escaped structural checks.
   These builders do not capture or persist evidence, prove that review occurred,
   issue a trusted decision, or change serving eligibility. Current
   `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles remain
   legacy implementation contracts until persistence/status migration lands.
   Do not automatically relabel an existing profile or bundle `Validated`.
+  The corrected ADR 0004 objects remain schema version 1 because none was
+  issued or persisted before the correction; existing legacy schema-1
+  seals/bundles and raw evidence remain untouched.
 - `STATUS` / `docs/VALIDATION.md` / wizard allowlists change only with reproducible evidence. Preserve failed and partial runs; do not rewrite failures as passes.
 - Selftests prove control-plane contracts; they do **not** replace physical gates for serving or storage claims (`docs/REVALIDATE.md`).
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
@@ -228,8 +258,11 @@ For model distribution and serving work, classify evidence before changing claim
 
 - **Catalog/artifact service:** exact bytes and identity, placement, transfer, runtime views, retention, repair, and cleanup.
 - **Serving integration:** the selected image mounts and loads the intended exact source, then passes health, warmup, and completion smoke.
-- **Model qualification:** accuracy, determinism, throughput, long context, and soak for the exact model/image/configuration/geometry.
-- **Release/promotion:** every required subsystem result combined for a supported profile, wizard path, or default policy.
+- **Model qualification:** stability, accuracy, throughput, latency, strict
+  same-boot, long context, and soak for the exact model/image/configuration/geometry.
+- **Release/promotion:** provenance/security, physical geometry, and every
+  required subsystem result combined for a supported profile, wizard path, or
+  default policy.
 
 A failure in one subsystem does not erase valid evidence from another unless a
 causal connection is demonstrated. It does block any combined claim that

@@ -34,8 +34,8 @@ Pulsar records and interprets evidence in four qualification scopes:
 |---|---|
 | **Catalog and artifact service** | Exact bytes and identity, durable placement, transfer integrity, rank-local views, retention, repair, and cleanup |
 | **Serving integration** | The selected image and launcher mount and load the intended exact runtime source; health, warmup, and completion smoke belong here |
-| **Model qualification** | Accuracy, determinism, throughput, long context, and soak for the exact model, image, normalized runtime configuration, and geometry |
-| **Release and promotion** | The conjunction of every required subsystem result for a supported profile, guided workflow, or default policy |
+| **Model qualification** | Stability, accuracy, throughput, latency, strict same-boot reproducibility, long context, and soak for the exact model, image, normalized runtime configuration, and geometry |
+| **Release and promotion** | Provenance/security, physical-geometry qualification, and the conjunction of every required subsystem result for a supported profile, guided workflow, or default policy |
 
 A failure in one subsystem does not erase valid evidence from another subsystem
 unless a causal connection is demonstrated. It does block any release or
@@ -72,6 +72,14 @@ schema-1 bundles remain immutable legacy artifacts.
 Reusing generic catalog evidence does not carry an old bundle, release decision,
 or `STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
 still requires every applicable gate.
+
+ADR 0004 also fixes the machine-readable criterion scopes. Stability,
+accuracy, throughput, latency, and strict same-boot use
+`model-qualification`; serving integration uses `serving-integration`; and
+provenance/security plus physical geometry use `release-promotion`.
+`catalog-artifact` is an evidence and preparation scope, not a validation
+criterion scope. Catalog acquisition, preparation, identity, or lifecycle
+evidence cannot satisfy a Model Serving Release criterion.
 
 Failed, partial, and superseded evidence remains immutable. Later conclusions
 change its current interpretation and scope, not its recorded outcome.

@@ -178,6 +178,103 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
         )
         self.assertNotEqual(remote["release_id"], self.release["release_id"])
 
+    def test_numeric_version_range_helpers_enforce_boundaries(self) -> None:
+        self.assertEqual(
+            model_serving_release.parse_numeric_version_range(">=6.11,<6.12"),
+            ((6, 11), (6, 12)),
+        )
+        cases = (
+            (">=580,<590", ("580", "589.99"), ("579.99", "590")),
+            (">=28,<29", ("28", "28.99"), ("27.99", "29")),
+            (
+                ">=6.11,<6.12",
+                ("6.11", "6.11.0", "6.11.99"),
+                ("6.10.99", "6.12", "7"),
+            ),
+        )
+        for version_range, included, excluded in cases:
+            for observed in included:
+                with self.subTest(
+                    version_range=version_range,
+                    observed=observed,
+                    expected=True,
+                ):
+                    self.assertTrue(
+                        model_serving_release.numeric_version_in_range(
+                            observed,
+                            version_range,
+                        )
+                    )
+            for observed in excluded:
+                with self.subTest(
+                    version_range=version_range,
+                    observed=observed,
+                    expected=False,
+                ):
+                    self.assertFalse(
+                        model_serving_release.numeric_version_in_range(
+                            observed,
+                            version_range,
+                        )
+                    )
+
+    def test_numeric_versions_and_ranges_reject_noncanonical_forms(self) -> None:
+        for observed in ("", "06.11", "6..11", "6.11-rc1", " 6.11"):
+            with self.subTest(observed=observed):
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "canonical dotted numeric version",
+                ):
+                    model_serving_release.parse_numeric_version(observed)
+
+        malformed_ranges = (
+            "580",
+            ">=580,<=590",
+            ">=580, <590",
+            ">=0580,<590",
+            ">=580.,<590",
+            ">=580.0-rc1,<590",
+            ">=580,<",
+            ">=580,<580",
+            ">=590,<580",
+        )
+        range_fields = {
+            "driver_abi_range": ">=580,<590",
+            "container_runtime_range": ">=28,<29",
+            "kernel_range": ">=6.11,<6.12",
+        }
+        for field in range_fields:
+            for malformed in malformed_ranges:
+                with self.subTest(field=field, malformed=malformed):
+                    values = dict(range_fields)
+                    values[field] = malformed
+                    with self.assertRaisesRegex(
+                        model_serving_release.ModelServingReleaseError,
+                        "canonical >=LOW,<HIGH|lower endpoint must be less",
+                    ):
+                        fixture.build_runtime(**values)
+
+    def test_runtime_architecture_must_match_supported_geometry(self) -> None:
+        runtime = fixture.build_runtime(architecture="x86-64")
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "runtime host architecture differs",
+        ):
+            fixture.build_release(runtime=runtime)
+
+        persisted = copy.deepcopy(self.release)
+        persisted["runtime_image_identity"]["host_compatibility"][
+            "architecture"
+        ] = "x86-64"
+        persisted["release_id"] = model_serving_release.model_serving_release_id(
+            persisted
+        )
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "runtime host architecture differs",
+        ):
+            model_serving_release.validate_model_serving_release(persisted)
+
     def test_recipe_parallelism_must_match_supported_geometry(self) -> None:
         recipe = fixture.build_recipe(tensor_parallel_size=1)
         with self.assertRaisesRegex(
@@ -205,9 +302,36 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                 recipe = self.release["serving_recipe"]
                 with self.assertRaisesRegex(
                     model_serving_release.ModelServingReleaseError,
-                    "credential or deployment-only",
+                    "credential or deployment-only|private, secret",
                 ):
                     rebuild_recipe(recipe, container_env=[item])
+
+    def test_recipe_values_reject_secrets_paths_and_endpoints(self) -> None:
+        recipe = self.release["serving_recipe"]
+        mutations = (
+            {
+                "container_env": ["PUBLIC_SETTING=hf_live_secret"],
+            },
+            {
+                "engine_args": ["--config", "/home/operator/runtime.json"],
+            },
+            {
+                "spec_decode_args": [
+                    "--speculative-config",
+                    '{"model":"/mnt/private/draft"}',
+                ],
+            },
+            {
+                "engine_args": ["--endpoint", "https://lab.internal:8000"],
+            },
+        )
+        for changes in mutations:
+            with self.subTest(changes=changes):
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "private, secret, or deployment-only",
+                ):
+                    rebuild_recipe(recipe, **changes)
 
     def test_persisted_documents_require_canonical_decimal_strings(self) -> None:
         for value in ("0.80", 1):
@@ -273,6 +397,49 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                         release_criteria=incomplete,
                     )
 
+    def test_every_dimension_rejects_every_noncanonical_scope(self) -> None:
+        expected_scopes = (
+            model_serving_release.VALIDATION_DIMENSION_QUALIFICATION_SCOPES
+        )
+        self.assertEqual(
+            self.contract["repository_invariants"][
+                "dimension_qualification_scopes"
+            ],
+            expected_scopes,
+        )
+        for criterion_index, criterion in enumerate(fixture.criteria()):
+            expected_scope = expected_scopes[criterion["dimension"]]
+            for wrong_scope in sorted(
+                model_serving_release.QUALIFICATION_SCOPES - {expected_scope}
+            ):
+                with self.subTest(
+                    dimension=criterion["dimension"],
+                    wrong_scope=wrong_scope,
+                ):
+                    criteria = fixture.criteria()
+                    criteria[criterion_index]["qualification_scope"] = wrong_scope
+                    with self.assertRaisesRegex(
+                        model_serving_release.ModelServingReleaseError,
+                        f"qualification_scope must be {expected_scope}",
+                    ):
+                        fixture.build_contract(
+                            release=self.release,
+                            release_criteria=criteria,
+                        )
+
+    def test_all_catalog_scope_laundering_fails_closed(self) -> None:
+        criteria = fixture.criteria()
+        for criterion in criteria:
+            criterion["qualification_scope"] = "catalog-artifact"
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "qualification_scope must be",
+        ):
+            fixture.build_contract(
+                release=self.release,
+                release_criteria=criteria,
+            )
+
     def test_strict_same_boot_cannot_be_relaxed_to_fp_equivalence(self) -> None:
         for field, value in (
             ("comparison", "fp-equivalent"),
@@ -309,24 +476,70 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                 release_criteria=criteria,
             )
 
-    def test_provenance_security_requires_reviewed_pass(self) -> None:
-        for mutation in ("parameter", "threshold"):
+    def test_provenance_security_requires_exact_review_template(self) -> None:
+        mutated_criteria: list[tuple[str, list[dict[str, Any]]]] = []
+
+        criteria = fixture.criteria()
+        provenance = next(
+            item for item in criteria if item["dimension"] == "provenance-security"
+        )
+        provenance["protocol"]["parameters"]["reviewed_issuance_required"] = False
+        mutated_criteria.append(("required review disabled", criteria))
+
+        criteria = fixture.criteria()
+        provenance = next(
+            item for item in criteria if item["dimension"] == "provenance-security"
+        )
+        provenance["thresholds"][0]["value"] = "pending"
+        mutated_criteria.append(("review threshold changed", criteria))
+
+        criteria = fixture.criteria()
+        provenance = next(
+            item for item in criteria if item["dimension"] == "provenance-security"
+        )
+        provenance["thresholds"].append(
+            {
+                "metric": "security_findings",
+                "operator": "eq",
+                "value": "0",
+                "unit": "count",
+            }
+        )
+        mutated_criteria.append(("extra security findings threshold", criteria))
+
+        criteria = fixture.criteria()
+        provenance = next(
+            item for item in criteria if item["dimension"] == "provenance-security"
+        )
+        provenance["protocol"]["parameters"]["allow_open_findings"] = True
+        mutated_criteria.append(("extra protocol parameter", criteria))
+
+        criteria = fixture.criteria()
+        provenance = next(
+            item for item in criteria if item["dimension"] == "provenance-security"
+        )
+        provenance["workload"]["parameters"]["review_subset"] = "security-only"
+        mutated_criteria.append(("extra workload parameter", criteria))
+
+        criteria = fixture.criteria()
+        provenance = next(
+            item for item in criteria if item["dimension"] == "provenance-security"
+        )
+        provenance["sample_size"] = 2
+        mutated_criteria.append(("sample size changed", criteria))
+
+        criteria = fixture.criteria()
+        provenance = next(
+            item for item in criteria if item["dimension"] == "provenance-security"
+        )
+        provenance["workload"]["name"] = "partial-release-inputs"
+        mutated_criteria.append(("workload changed", criteria))
+
+        for mutation, criteria in mutated_criteria:
             with self.subTest(mutation=mutation):
-                criteria = fixture.criteria()
-                provenance = next(
-                    item
-                    for item in criteria
-                    if item["dimension"] == "provenance-security"
-                )
-                if mutation == "parameter":
-                    provenance["protocol"]["parameters"][
-                        "reviewed_issuance_required"
-                    ] = False
-                else:
-                    provenance["thresholds"][0]["value"] = "pending"
                 with self.assertRaisesRegex(
                     model_serving_release.ModelServingReleaseError,
-                    "provenance-security",
+                    "canonical review-derived template",
                 ):
                     fixture.build_contract(
                         release=self.release,
@@ -352,8 +565,15 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
         relative = model_serving_release.build_relative_performance_requirement(
             release=self.release,
             predecessor_release_id="1" * 64,
+            predecessor_contract_id="2" * 64,
+            predecessor_bundle_id="3" * 64,
+            predecessor_decision_id="4" * 64,
             throughput_criterion=throughput,
+            throughput_predecessor_criterion_id="predecessor-throughput",
+            throughput_predecessor_run_record_id="5" * 64,
             latency_criterion=latency,
+            latency_predecessor_criterion_id="predecessor-latency",
+            latency_predecessor_run_record_id="6" * 64,
             throughput_max_regression_percent="5.00",
             latency_max_regression_percent="10.0",
         )
@@ -365,6 +585,25 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
         observed = contract["release_criteria"]["relative_performance"]
         self.assertEqual(observed["throughput"]["maximum_regression_percent"], "5")
         self.assertEqual(observed["latency"]["maximum_regression_percent"], "10")
+        self.assertEqual(observed["predecessor_contract_id"], "2" * 64)
+        self.assertEqual(observed["predecessor_bundle_id"], "3" * 64)
+        self.assertEqual(observed["predecessor_decision_id"], "4" * 64)
+        self.assertEqual(
+            observed["throughput"]["predecessor_criterion_id"],
+            "predecessor-throughput",
+        )
+        self.assertEqual(
+            observed["throughput"]["predecessor_run_record_id"],
+            "5" * 64,
+        )
+        self.assertEqual(
+            observed["latency"]["predecessor_criterion_id"],
+            "predecessor-latency",
+        )
+        self.assertEqual(
+            observed["latency"]["predecessor_run_record_id"],
+            "6" * 64,
+        )
         self.assertEqual(
             observed["supported_hardware_geometry_id"],
             model_serving_release.supported_hardware_geometry_id(
@@ -399,6 +638,73 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                 release_criteria=criteria,
                 relative_performance=bad_geometry,
             )
+
+    def test_relative_budgets_require_shaped_predecessor_source_ids(self) -> None:
+        criteria = fixture.criteria()
+        throughput = next(
+            item for item in criteria if item["dimension"] == "throughput"
+        )
+        latency = next(item for item in criteria if item["dimension"] == "latency")
+        relative = model_serving_release.build_relative_performance_requirement(
+            release=self.release,
+            predecessor_release_id="1" * 64,
+            predecessor_contract_id="2" * 64,
+            predecessor_bundle_id="3" * 64,
+            predecessor_decision_id="4" * 64,
+            throughput_criterion=throughput,
+            throughput_predecessor_criterion_id="predecessor-throughput",
+            throughput_predecessor_run_record_id="5" * 64,
+            latency_criterion=latency,
+            latency_predecessor_criterion_id="predecessor-latency",
+            latency_predecessor_run_record_id="6" * 64,
+            throughput_max_regression_percent="5",
+            latency_max_regression_percent="10",
+        )
+
+        for field in (
+            "predecessor_release_id",
+            "predecessor_contract_id",
+            "predecessor_bundle_id",
+            "predecessor_decision_id",
+        ):
+            with self.subTest(field=field):
+                malformed = copy.deepcopy(relative)
+                malformed[field] = "not-a-content-id"
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "sha256 content ID",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                        relative_performance=malformed,
+                    )
+
+        for dimension in ("throughput", "latency"):
+            with self.subTest(dimension=dimension, field="predecessor_criterion_id"):
+                malformed = copy.deepcopy(relative)
+                malformed[dimension]["predecessor_criterion_id"] = "not safe"
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "predecessor_criterion_id is invalid",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                        relative_performance=malformed,
+                    )
+            with self.subTest(dimension=dimension, field="predecessor_run_record_id"):
+                malformed = copy.deepcopy(relative)
+                malformed[dimension]["predecessor_run_record_id"] = "not-a-digest"
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "sha256 content ID",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                        relative_performance=malformed,
+                    )
 
     def test_protocol_identity_excludes_pass_threshold(self) -> None:
         criterion = next(
@@ -461,6 +767,189 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                         release=self.release,
                         release_criteria=criteria,
                     )
+
+    def test_extensible_parameter_values_reject_private_data(self) -> None:
+        private_values: tuple[Any, ...] = (
+            "/home/operator/private-result.json",
+            "node-a",
+            "endpoint=https://lab.internal:8000",
+            "hf_live_secret",
+            {"nested": ["topology_id=site-topology"]},
+        )
+        for private_value in private_values:
+            with self.subTest(private_value=private_value):
+                criteria = fixture.criteria()
+                criteria[0]["protocol"]["parameters"]["description"] = private_value
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "private, secret, or deployment-only",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                    )
+
+        criteria = fixture.criteria()
+        criteria[0]["protocol"]["parameters"]["hf_FAKE00000000"] = "public"
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "private, secret, or deployment-only",
+        ):
+            fixture.build_contract(
+                release=self.release,
+                release_criteria=criteria,
+            )
+
+    def test_not_applicable_reasons_reject_private_values(self) -> None:
+        release_criteria = self.contract["release_criteria"]
+        for requirement in ("context_requirement", "soak_requirement"):
+            with self.subTest(requirement=requirement):
+                context = copy.deepcopy(release_criteria["context_requirement"])
+                soak = copy.deepcopy(release_criteria["soak_requirement"])
+                replacement = {
+                    "status": "not-applicable",
+                    "reason": "hf_FAKE00000000",
+                }
+                if requirement == "context_requirement":
+                    context = replacement
+                else:
+                    soak = replacement
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "private, secret, or deployment-only",
+                ):
+                    model_serving_release.build_validation_contract(
+                        release=self.release,
+                        criteria=fixture.criteria(),
+                        context_requirement=context,
+                        soak_requirement=soak,
+                        relative_performance=(
+                            model_serving_release.no_comparable_predecessor()
+                        ),
+                    )
+
+    def test_public_parameter_values_preserve_content_identities(self) -> None:
+        criteria = fixture.criteria()
+        criteria[0]["protocol"]["parameters"]["public_identity"] = {
+            "model_id": "Fixture/Public-Model",
+            "manifest_id": "a" * 64,
+            "revision": "fixture-public-v1",
+        }
+        contract = fixture.build_contract(
+            release=self.release,
+            release_criteria=criteria,
+        )
+        throughput = next(
+            item
+            for item in contract["release_criteria"]["criteria"]
+            if item["criterion_id"] == "throughput-serving"
+        )
+        self.assertEqual(
+            throughput["protocol"]["parameters"]["public_identity"]["model_id"],
+            "Fixture/Public-Model",
+        )
+
+    def test_open_contract_strings_reject_secret_like_values(self) -> None:
+        mutations = ("criterion_id", "workload_name", "threshold_value")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                criteria = fixture.criteria()
+                throughput = next(
+                    item for item in criteria if item["dimension"] == "throughput"
+                )
+                if mutation == "criterion_id":
+                    throughput["criterion_id"] = "hf_FAKE00000000"
+                elif mutation == "workload_name":
+                    throughput["workload"]["name"] = "hf_FAKE00000000"
+                else:
+                    throughput["thresholds"][0]["value"] = "hf_FAKE00000000"
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "private, secret, or deployment-only",
+                ):
+                    fixture.build_contract(
+                        release=self.release,
+                        release_criteria=criteria,
+                    )
+
+        criteria = fixture.criteria()
+        throughput = next(
+            item for item in criteria if item["dimension"] == "throughput"
+        )
+        throughput["thresholds"][0]["value"] = (
+            "PUBLIChf_abcdefghijklmnopqrstuvwxyz123456"
+        )
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "private, secret, or deployment-only",
+        ):
+            fixture.build_contract(
+                release=self.release,
+                release_criteria=criteria,
+            )
+
+    def test_model_domain_token_terminology_is_not_a_credential(self) -> None:
+        criterion = next(
+            item for item in fixture.criteria() if item["dimension"] == "throughput"
+        )
+        criterion["criterion_id"] = "token-throughput-public-v2"
+        criterion["workload"]["name"] = "token-generation-evaluation"
+        criterion["protocol"]["name"] = "tokenizer-benchmark"
+        criterion["thresholds"][0] = {
+            "metric": "time_to_first_token",
+            "operator": "lte",
+            "value": "1500",
+            "unit": "milliseconds-per-token",
+        }
+        self.assertEqual(
+            model_serving_release.validate_validation_criterion(criterion),
+            criterion,
+        )
+
+    def test_digest_artifact_identity_rejects_absolute_site_path(self) -> None:
+        artifacts = fixture.model_artifacts()
+        adapter = next(item for item in artifacts if item["kind"] == "digest-artifact")
+        adapter["artifact_id"] = "/home/operator/private-adapter"
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "private, secret, or deployment-only",
+        ):
+            model_serving_release.build_model_artifact_set(artifacts)
+
+    def test_open_release_and_contract_strings_preserve_public_identifiers(
+        self,
+    ) -> None:
+        artifacts = fixture.model_artifacts()
+        adapter = next(item for item in artifacts if item["kind"] == "digest-artifact")
+        adapter["artifact_id"] = "Fixture/Public-Adapter"
+        adapter["revision"] = "release-v1.2"
+        artifact_set = model_serving_release.build_model_artifact_set(artifacts)
+        observed_adapter = next(
+            item
+            for item in artifact_set["artifacts"]
+            if item["kind"] == "digest-artifact"
+        )
+        self.assertEqual(observed_adapter["artifact_id"], "Fixture/Public-Adapter")
+        self.assertEqual(observed_adapter["revision"], "release-v1.2")
+
+        criterion = next(
+            item for item in fixture.criteria() if item["dimension"] == "throughput"
+        )
+        criterion["criterion_id"] = "throughput-public-v2"
+        criterion["workload"]["name"] = "public-eval-v2"
+        criterion["workload"]["version"] = "dataset-v2"
+        criterion["protocol"]["name"] = "public-benchmark-v2"
+        criterion["protocol"]["version"] = "protocol-v2"
+        criterion["thresholds"][0] = {
+            "metric": "public-throughput",
+            "operator": "gte",
+            "value": "public-baseline-v2",
+            "unit": "public-units",
+        }
+        self.assertEqual(
+            model_serving_release.validate_validation_criterion(criterion),
+            criterion,
+        )
 
     def test_contract_changes_never_change_release_identity(self) -> None:
         criteria = fixture.criteria()

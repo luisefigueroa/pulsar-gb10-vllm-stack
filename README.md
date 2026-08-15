@@ -232,7 +232,14 @@ capacity. No three-node profile is promoted today. Smoke served name:
 `--validated` is the current CLI's legacy name for that `STATUS=tested*`
 allowlist. It does not yet report the Model Serving Release statuses defined by
 [ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and no
-existing profile is automatically relabeled `Validated`.
+existing profile is automatically relabeled `Validated`. A **Model Serving
+Release** is the immutable combination of exact model identity, exact serving
+recipe, runtime/image identity, and supported hardware geometry; changing any
+component creates a new release. The repository now has pure version-1
+descriptor, contract, run-record, evidence-bundle, and reviewed-decision
+validators, but trusted capture/persistence, publication, CLI projection, and
+serving admission remain separate unfinished work. No such schema object or
+selftest establishes physical DGX behavior.
 
 **Experimental storage research:** replicated local Hugging Face caches remain
 the default. A separate, unpromoted NFSv4.2/RDMA path can keep one
@@ -437,9 +444,9 @@ no leaks, no thermal throttling anywhere).
 
 | Path | What |
 |---|---|
-| `models/*.conf` | one validated flag set per model; statuses earned by runs |
+| `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
 | `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
-| `models/validation-bundles/` | current schema-1 combined model/runtime/image/geometry/evidence claims; not the future Model Serving Release ID |
+| `models/validation-bundles/` | legacy schema-1 combined model/runtime/image/geometry/evidence claims; not a Model Serving Release ID and unchanged by the pre-issuance ADR 0004 schema correction |
 | `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |

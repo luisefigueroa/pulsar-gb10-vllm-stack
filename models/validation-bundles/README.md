@@ -95,6 +95,22 @@ those objects yet. The future persistence/publication stage will allow multiple
 immutable attempts, evidence sets, and reviewed decisions to refer to one
 unchanged four-part release ID without rewriting these legacy files.
 
+The ADR 0004 objects remain schema version 1 after the current correction
+because none was issued or persisted. This directory's schema-1 files are a
+different legacy schema and remain byte-for-byte unchanged. Future decisions
+consider every applicable observation automatically, allow only explicit
+evidence-backed exclusions, and apply deterministic conflict adjudication.
+Every post-barrier non-preparation run declares a nonempty set of attempted
+criteria and supplies exactly one complete or inconclusive observation for
+each; incomplete attempts use inconclusive observations.
+Criterion scopes are canonical; `catalog-artifact` preparation evidence cannot
+satisfy a validation criterion. Relative performance binds a reviewed
+predecessor contract, bundle, decision, and run whose relevant criterion
+passed, without requiring the predecessor release to be globally `Validated`.
+Structural runtime and architecture/geometry checks do not replace physical
+DGX evidence. Closed command descriptors and recursive value screening reduce
+privacy risk but do not replace trusted capture or publication privacy review.
+
 ## Normalized profile contract
 
 `profile_contract` binds the live sourced profile values that can affect the

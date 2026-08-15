@@ -43,13 +43,41 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 [ADR 0004](./decisions/0004-model-serving-release-validation.md) defines a
 Model Serving Release as the immutable exact-model + serving-recipe +
 runtime/image + supported-hardware-geometry tuple and introduces explicit
-validation-decision statuses. Pure descriptor, contract, immutable run-record,
-evidence-bundle, reviewed-decision, status-derivation, and supersession schemas
-are implemented, but the current operator commands do not capture, persist,
-publish, or project them. `STATUS=tested*` and `--validated` retain their legacy
-allowlist meaning, and existing reviewed seals/bundles are not automatically
-`Validated`. A schema-valid local decision is not proof of maintainer review or
-physical qualification.
+validation-decision statuses. Any change to one tuple component creates a new
+release. Pure descriptor, contract, immutable run-record, evidence-bundle,
+reviewed-decision, status-derivation, and supersession schemas are implemented,
+but the current operator commands do not capture, persist, publish, or project
+them. `STATUS=tested*` and `--validated` retain their legacy allowlist meaning,
+and existing reviewed seals/bundles are not automatically `Validated`. A
+schema-valid local decision is not proof of maintainer review or physical
+qualification.
+
+The corrected schemas remain version 1 because no ADR 0004 object was issued
+or persisted before the correction. Existing legacy schema-1 seals/bundles and
+raw evidence remain untouched. Criteria use canonical scopes: stability,
+accuracy, throughput, latency, and strict same-boot are
+`model-qualification`; serving integration is `serving-integration`; and
+provenance/security plus physical geometry are `release-promotion`.
+Catalog/artifact preparation may establish exact content and the qualification
+barrier, but it cannot satisfy a validation criterion.
+
+A decision automatically considers every applicable observation. The pure
+builder accepts exceptions only through `criterion_exclusions`; persisted
+results use `included_run_record_ids` and evidence-backed
+`excluded_run_records`. Pass+fail and pass+inconclusive are inconclusive,
+fail+inconclusive is fail, and all-pass is pass. A relative
+performance baseline binds the reviewed predecessor contract, bundle, decision,
+and run whose relevant criterion passed; the predecessor does not need to be
+globally `Validated`. Runtime compatibility and architecture/geometry checks
+are structural and never replace physical DGX evidence. Supersession must be
+later and acyclic. Predecessor and effective-supersession registries are
+caller-supplied validation inputs, not trusted storage. Command evidence uses
+allowlisted programs, SHA-256-shaped version identities, closed operations and
+resources, typed criterion/site references, and value-free `environment[]`
+descriptors. Each post-barrier non-preparation attempt declares a nonempty
+scope-compatible `attempted_criterion_ids` set that its observations cover
+exactly; incomplete attempts use inconclusive observations. Structural privacy
+rejection does not replace the mandatory publication privacy audit.
 
 The planned supervised skill is `pulsar-model-onboarding`. It will compose
 available acquisition, distribution, verification, launch, test, evidence, and
@@ -591,9 +619,12 @@ placement, transfer, or cleanup unhealthy unless evidence demonstrates that
 connection. It still blocks a release or guided-path claim that requires the
 failed runtime gate. Conversely, catalog health and a successful completion
 never substitute for model qualification. See
-[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md). No
-command or JSON schema currently stores these scopes as a separate status
-field.
+[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md). Legacy
+catalog/launch commands and JSON do not store these scopes as independent
+status dimensions. The ADR 0004 Validation Contract criteria, evidence
+artifacts, and run records do carry a validated `qualification_scope`; those
+pure objects are not yet captured, persisted, or projected by operator
+commands.
 
 **Duplicate durable homes:** refresh first, then inspect the persistent
 exact-revision primary state. Pulsar never silently chooses among duplicates:

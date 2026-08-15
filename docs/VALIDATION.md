@@ -22,15 +22,34 @@ Validation Contract schema version 1 are implemented as pure Python contracts.
 Immutable run-record, new evidence-bundle, reviewed-decision, independent
 status-derivation, and supersession schema version 1 are also implemented.
 Their pure validators include frozen context, soak, and applicable
-comparable-predecessor performance requirements in the derived verdict; missing
-or over-budget evidence cannot produce `Validated`.
+comparable-predecessor performance requirements in the derived verdict. Every
+applicable observation is considered automatically; exclusions must be
+explicit and evidence-backed. Pass+fail and pass+inconclusive adjudicate to
+inconclusive, fail+inconclusive adjudicates to fail, and all-pass adjudicates to
+pass. A relative baseline binds the reviewed predecessor contract, bundle,
+decision, and exact run whose relevant criterion passed; the predecessor does
+not need an overall `Validated` decision. Missing, conflicted, or over-budget
+evidence cannot produce `Validated`.
 Evidence capture/persistence, trusted publication, catalog/operator status
 projection, and serving migration remain pending. Strict same-boot exactness
 remains mandatory for a future trusted `Validated` decision, and FP-equivalent
 output remains diagnostic rather than a strict pass. The deterministic schema
 selftests are control-plane evidence only; a syntactically valid decision does
 not prove review or physical behavior and adds no physical or
-model-qualification result to this ledger.
+model-qualification result to this ledger. Runtime compatibility and
+architecture/geometry checks are structural only; physical DGX behavior still
+needs physical evidence. Supersession must be chronologically later and
+acyclic. Every post-barrier non-preparation attempt hash-binds its attempted
+criteria and covers them exactly with complete or inconclusive observations;
+incomplete attempts use only inconclusive observations. Command evidence uses
+the closed typed program/operation/resource/reference schema. Release and
+contract values are recursively screened for recognized secret and
+deployment-only forms, while trusted capture and publication privacy review
+remain required.
+
+These pre-issuance corrections remain schema version 1 because no ADR 0004
+object was issued or persisted. Existing legacy schema-1 seals/bundles and all
+raw or historical evidence remain untouched.
 
 ### Qualification scopes
 
@@ -39,10 +58,10 @@ separates four scopes:
 
 | Scope | Ledger interpretation |
 |---|---|
-| Catalog and artifact service | Exact bytes/identity, placement, transfer, runtime views, retention, repair, and cleanup |
-| Serving integration | Exact-source launch, health, warmup, completion smoke, and owned stop |
-| Model qualification | Accuracy, determinism, throughput, long context, and soak for exact runtime inputs |
-| Release and promotion | All required scopes combined for `STATUS`, wizard exposure, or a guided/default policy |
+| Catalog and artifact service | Exact bytes/identity, placement, transfer, runtime views, retention, repair, and cleanup; never satisfies a validation criterion |
+| Serving integration | Exact-source launch, health, warmup, completion smoke, and owned stop; canonical criterion scope `serving-integration` |
+| Model qualification | Stability, accuracy, throughput, latency, strict same-boot, long context, and soak for exact runtime inputs; canonical criterion scope `model-qualification` |
+| Release and promotion | Provenance/security, physical geometry, and all required scopes combined for `STATUS`, wizard exposure, or a guided/default policy; canonical criterion scope `release-promotion` |
 
 A failure does not erase valid evidence from another scope unless a causal
 connection is demonstrated. It does block any release claim requiring both.

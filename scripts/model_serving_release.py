@@ -53,9 +53,17 @@ REQUIRED_VALIDATION_PREREQUISITES = (
     "serving-integration",
     "physical-geometry",
 )
-VALIDATION_DIMENSIONS = set(
-    CORE_VALIDATION_DIMENSIONS + REQUIRED_VALIDATION_PREREQUISITES
-)
+VALIDATION_DIMENSION_QUALIFICATION_SCOPES = {
+    "stability": "model-qualification",
+    "accuracy": "model-qualification",
+    "throughput": "model-qualification",
+    "latency": "model-qualification",
+    "strict-same-boot": "model-qualification",
+    "provenance-security": "release-promotion",
+    "serving-integration": "serving-integration",
+    "physical-geometry": "release-promotion",
+}
+VALIDATION_DIMENSIONS = set(VALIDATION_DIMENSION_QUALIFICATION_SCOPES)
 QUALIFICATION_SCOPES = {
     "catalog-artifact",
     "serving-integration",
@@ -64,6 +72,57 @@ QUALIFICATION_SCOPES = {
 }
 THRESHOLD_OPERATORS = {"eq", "gt", "gte", "lt", "lte"}
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+NUMERIC_VERSION_PATTERN = r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))*"
+NUMERIC_VERSION_RE = re.compile(rf"^{NUMERIC_VERSION_PATTERN}$")
+NUMERIC_VERSION_RANGE_RE = re.compile(
+    rf"^>=({NUMERIC_VERSION_PATTERN}),<({NUMERIC_VERSION_PATTERN})$"
+)
+HIGH_RISK_SECRET_VALUE_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:bearer|basic)\s+\S+|"
+    r"(?:^|[^A-Za-z0-9])(?:password|passwd|passphrase|secret|token|"
+    r"credential|authorization|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key)\s*[:=]|"
+    r"[:=]\s*[\"']?(?:password|passwd|passphrase|secret|token|"
+    r"credential|authorization|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key)(?:$|[^A-Za-z0-9])|"
+    r"(?:sk-|hf_|gh[opusr]_|github_pat_|AKIA|AIza)"
+    r"[A-Za-z0-9_-]{8,}|"
+    r"(?:^|[^A-Za-z0-9])eyJ[A-Za-z0-9_-]+\."
+    r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:$|[^A-Za-z0-9])"
+    r")"
+)
+ABSOLUTE_SITE_PATH_RE = re.compile(
+    r"(?:^|[\s=,:;\"'(\[{])(?:~[/\\]|/(?!/)|[A-Za-z]:[/\\]|\\\\)"
+)
+DEPLOYMENT_REFERENCE_RE = re.compile(
+    r"(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|"
+    r"%[A-Za-z_][A-Za-z0-9_]*%|"
+    r"(?:^|[\s=,:;\"'(\[{])\.\.[/\\])"
+)
+URI_ENDPOINT_RE = re.compile(r"(?i)\b[A-Za-z][A-Za-z0-9+.-]*://")
+IPV4_VALUE_RE = re.compile(
+    r"(?:^|[^0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?:$|[^0-9])"
+)
+IPV6_VALUE_RE = re.compile(
+    r"(?i)(?:^|[\s=\[('\"])(?:[0-9a-f]{0,4}:){2,}"
+    r"[0-9a-f]{0,4}(?:$|[\s\])'\",}])"
+)
+PRIVATE_ENDPOINT_VALUE_RE = re.compile(
+    r"(?i)(?:^|[\s=,:;\"'(\[])"
+    r"(?:localhost|(?:node|host|topology|site|lab)[-_.][A-Za-z0-9-]+|"
+    r"[A-Za-z][A-Za-z0-9_-]*:[0-9]{1,5}|"
+    r"[A-Za-z0-9-]+\.(?:local|lan|internal)|"
+    r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(?::[0-9]{1,5})?)"
+    r"(?:$|[\s,;\"')\]}])"
+)
+PRIVATE_VALUE_ASSIGNMENT_RE = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9])(?:address|cache[_ -]?path|endpoint|"
+    r"home[_ -]?node[_ -]?id|host(?:name|[_ -]?id)?|interface|"
+    r"ip(?:[_ -]?address)?|mount[_ -]?path|node[_ -]?id|"
+    r"serial(?:[_ -]?number)?|ssh[_ -]?(?:alias|host)|"
+    r"topology[_ -]?id)\s*[:=]"
+)
 PRIVATE_ENV_PARTS = {
     "CREDENTIAL",
     "CREDENTIALS",
@@ -149,7 +208,7 @@ def _require_fields(value: Any, fields: set[str], *, label: str) -> dict[str, An
 def _nonempty_string(value: Any, *, label: str) -> str:
     if not isinstance(value, str) or not value.strip() or "\x00" in value:
         fail(f"{label} must be a non-empty string")
-    return value
+    return _validate_public_string_value(value, label=label)
 
 
 def _safe_identifier(value: Any, *, label: str) -> str:
@@ -157,6 +216,72 @@ def _safe_identifier(value: Any, *, label: str) -> str:
     if model_identity.SAFE_REV.fullmatch(value) is None:
         fail(f"{label} is invalid")
     return value
+
+
+def _content_id(value: Any, *, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or model_identity.SHA256_HEX_RE.fullmatch(value) is None
+    ):
+        fail(f"{label} must be a sha256 content ID")
+    return value
+
+
+def parse_numeric_version(
+    value: Any,
+    *,
+    label: str = "numeric version",
+) -> tuple[int, ...]:
+    """Parse a canonical dependency-free dotted numeric version."""
+    if not isinstance(value, str) or NUMERIC_VERSION_RE.fullmatch(value) is None:
+        fail(f"{label} must be a canonical dotted numeric version")
+    return tuple(int(component) for component in value.split("."))
+
+
+def _compare_numeric_versions(
+    left: tuple[int, ...],
+    right: tuple[int, ...],
+) -> int:
+    width = max(len(left), len(right))
+    padded_left = left + (0,) * (width - len(left))
+    padded_right = right + (0,) * (width - len(right))
+    return (padded_left > padded_right) - (padded_left < padded_right)
+
+
+def parse_numeric_version_range(
+    value: Any,
+    *,
+    label: str = "numeric version range",
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Parse the canonical inclusive-low/exclusive-high range grammar."""
+    if not isinstance(value, str):
+        fail(f"{label} must use canonical >=LOW,<HIGH numeric grammar")
+    match = NUMERIC_VERSION_RANGE_RE.fullmatch(value)
+    if match is None:
+        fail(f"{label} must use canonical >=LOW,<HIGH numeric grammar")
+    lower = parse_numeric_version(match.group(1), label=f"{label} lower endpoint")
+    upper = parse_numeric_version(match.group(2), label=f"{label} upper endpoint")
+    if _compare_numeric_versions(lower, upper) >= 0:
+        fail(f"{label} lower endpoint must be less than upper endpoint")
+    return lower, upper
+
+
+def numeric_version_in_range(
+    observed_version: Any,
+    version_range: Any,
+    *,
+    label: str = "numeric version",
+) -> bool:
+    """Return whether an observed dotted numeric version is in a frozen range."""
+    observed = parse_numeric_version(observed_version, label=label)
+    lower, upper = parse_numeric_version_range(
+        version_range,
+        label=f"{label} range",
+    )
+    return (
+        _compare_numeric_versions(observed, lower) >= 0
+        and _compare_numeric_versions(observed, upper) < 0
+    )
 
 
 def _positive_integer(value: Any, *, label: str) -> int:
@@ -226,7 +351,7 @@ def _validate_container_env(value: Any) -> list[str]:
     values = _string_list(value, label="serving recipe container_env")
     names: list[str] = []
     for item in values:
-        name, separator, _env_value = item.partition("=")
+        name, separator, env_value = item.partition("=")
         if not separator or ENV_NAME_RE.fullmatch(name) is None:
             fail("serving recipe container_env items must be NAME=value")
         upper_name = name.upper()
@@ -245,6 +370,10 @@ def _validate_container_env(value: Any) -> list[str]:
                 "serving recipe container_env contains a credential or "
                 f"deployment-only name: {name}"
             )
+        _validate_public_string_value(
+            env_value,
+            label=f"serving recipe container_env value for {name}",
+        )
         names.append(name)
     if values != sorted(values) or len(values) != len(set(values)):
         fail("serving recipe container_env must be sorted and unique")
@@ -256,6 +385,10 @@ def _validate_container_env(value: Any) -> list[str]:
 def _validate_remaining_engine_args(value: Any) -> list[str]:
     values = _string_list(value, label="serving recipe engine_args")
     for item in values:
+        _validate_public_string_value(
+            item,
+            label="serving recipe engine_args item",
+        )
         for flag in STRUCTURED_ENGINE_FLAGS:
             if item == flag or item.startswith(flag + "="):
                 fail(
@@ -264,10 +397,28 @@ def _validate_remaining_engine_args(value: Any) -> list[str]:
     return values
 
 
+def _validate_public_string_value(value: str, *, label: str) -> str:
+    if "\x00" in value:
+        fail(f"{label} contains a NUL byte")
+    if (
+        HIGH_RISK_SECRET_VALUE_RE.search(value)
+        or ABSOLUTE_SITE_PATH_RE.search(value)
+        or DEPLOYMENT_REFERENCE_RE.search(value)
+        or URI_ENDPOINT_RE.search(value)
+        or IPV4_VALUE_RE.search(value)
+        or IPV6_VALUE_RE.search(value)
+        or PRIVATE_ENDPOINT_VALUE_RE.search(value)
+        or PRIVATE_VALUE_ASSIGNMENT_RE.search(value)
+    ):
+        fail(f"{label} contains private, secret, or deployment-only data")
+    return value
+
+
 def _validate_public_json(value: Any, *, label: str) -> None:
-    if value is None or isinstance(value, (bool, int, str)):
-        if isinstance(value, str) and "\x00" in value:
-            fail(f"{label} contains a NUL byte")
+    if value is None or isinstance(value, (bool, int)):
+        return
+    if isinstance(value, str):
+        _validate_public_string_value(value, label=label)
         return
     if isinstance(value, float):
         fail(f"{label} must encode decimals as canonical strings, not floats")
@@ -279,6 +430,7 @@ def _validate_public_json(value: Any, *, label: str) -> None:
         for key, item in value.items():
             if not isinstance(key, str) or not key or "\x00" in key:
                 fail(f"{label} has an invalid object key")
+            _validate_public_string_value(key, label=f"{label} object key")
             if key.lower() in PRIVATE_FIELD_NAMES:
                 fail(f"{label} contains private field {key!r}")
             _validate_public_json(item, label=f"{label}.{key}")
@@ -592,6 +744,11 @@ def validate_serving_recipe(
         speculative.get("arguments"),
         label="serving recipe speculative_decoding.arguments",
     )
+    for argument in arguments:
+        _validate_public_string_value(
+            argument,
+            label="serving recipe speculative_decoding.arguments item",
+        )
     enabled = speculative.get("enabled_by_default")
     if not isinstance(enabled, bool):
         fail("serving recipe speculative_decoding.enabled_by_default must be boolean")
@@ -701,7 +858,7 @@ def validate_runtime_image_identity(value: Any) -> dict[str, Any]:
         driver.get("family"),
         label="runtime/image identity host_compatibility.driver_abi.family",
     )
-    _nonempty_string(
+    parse_numeric_version_range(
         driver.get("range"),
         label="runtime/image identity host_compatibility.driver_abi.range",
     )
@@ -714,7 +871,7 @@ def validate_runtime_image_identity(value: Any) -> dict[str, Any]:
         runtime.get("family"),
         label="runtime/image identity host_compatibility.container_runtime.family",
     )
-    _nonempty_string(
+    parse_numeric_version_range(
         runtime.get("range"),
         label="runtime/image identity host_compatibility.container_runtime.range",
     )
@@ -731,7 +888,7 @@ def validate_runtime_image_identity(value: Any) -> dict[str, Any]:
         {"range", "required_features"},
         label="runtime/image identity host_compatibility.kernel",
     )
-    _nonempty_string(
+    parse_numeric_version_range(
         kernel.get("range"),
         label="runtime/image identity host_compatibility.kernel.range",
     )
@@ -900,6 +1057,15 @@ def _validate_recipe_geometry(
         fail("serving recipe pipeline parallelism differs from hardware geometry")
 
 
+def _validate_runtime_geometry(
+    runtime: dict[str, Any],
+    geometry: dict[str, Any],
+) -> None:
+    runtime_architecture = runtime["host_compatibility"]["architecture"]
+    if runtime_architecture != geometry["architecture"]:
+        fail("runtime host architecture differs from hardware geometry")
+
+
 def build_model_serving_release(
     *,
     model_artifact_set: dict[str, Any],
@@ -915,6 +1081,7 @@ def build_model_serving_release(
     runtime = validate_runtime_image_identity(runtime_image_identity)
     geometry = validate_supported_hardware_geometry(supported_hardware_geometry)
     _validate_recipe_geometry(recipe, geometry)
+    _validate_runtime_geometry(runtime, geometry)
     release: dict[str, Any] = {
         "schema_version": MODEL_SERVING_RELEASE_SCHEMA_VERSION,
         "kind": MODEL_SERVING_RELEASE_KIND,
@@ -950,11 +1117,12 @@ def validate_model_serving_release(value: Any) -> dict[str, Any]:
         release.get("serving_recipe"),
         artifact_set=artifact_set,
     )
-    validate_runtime_image_identity(release.get("runtime_image_identity"))
+    runtime = validate_runtime_image_identity(release.get("runtime_image_identity"))
     geometry = validate_supported_hardware_geometry(
         release.get("supported_hardware_geometry")
     )
     _validate_recipe_geometry(recipe, geometry)
+    _validate_runtime_geometry(runtime, geometry)
     release_id = release.get("release_id")
     if (
         not isinstance(release_id, str)
@@ -972,6 +1140,9 @@ def repository_validation_invariants() -> dict[str, Any]:
         "core_dimensions": list(CORE_VALIDATION_DIMENSIONS),
         "priority_order": list(CORE_VALIDATION_DIMENSIONS),
         "required_prerequisites": list(REQUIRED_VALIDATION_PREREQUISITES),
+        "dimension_qualification_scopes": dict(
+            VALIDATION_DIMENSION_QUALIFICATION_SCOPES
+        ),
         "strict_same_boot": {
             "required": True,
             "comparison": "exact",
@@ -1059,10 +1230,18 @@ def validate_validation_criterion(value: Any, *, index: int = 0) -> dict[str, An
         label=label,
     )
     _safe_identifier(criterion.get("criterion_id"), label=f"{label}.criterion_id")
-    if criterion.get("dimension") not in VALIDATION_DIMENSIONS:
+    dimension = criterion.get("dimension")
+    if dimension not in VALIDATION_DIMENSIONS:
         fail(f"{label}.dimension is unsupported")
-    if criterion.get("qualification_scope") not in QUALIFICATION_SCOPES:
+    qualification_scope = criterion.get("qualification_scope")
+    if qualification_scope not in QUALIFICATION_SCOPES:
         fail(f"{label}.qualification_scope is unsupported")
+    expected_scope = VALIDATION_DIMENSION_QUALIFICATION_SCOPES[dimension]
+    if qualification_scope != expected_scope:
+        fail(
+            f"{label}.qualification_scope must be {expected_scope} "
+            f"for dimension {dimension}"
+        )
     _validate_workload_or_protocol(criterion.get("workload"), label=f"{label}.workload")
     _validate_workload_or_protocol(criterion.get("protocol"), label=f"{label}.protocol")
     _positive_integer(criterion.get("sample_size"), label=f"{label}.sample_size")
@@ -1101,18 +1280,40 @@ def _validate_strict_same_boot_criterion(criterion: dict[str, Any]) -> None:
         fail("strict-same-boot criterion must require exact_match_rate == 1")
 
 
-def _validate_provenance_security_criterion(criterion: dict[str, Any]) -> None:
-    parameters = criterion["protocol"]["parameters"]
-    if parameters.get("reviewed_issuance_required") is not True:
-        fail("provenance-security criterion must require reviewed issuance")
-    required_threshold = {
-        "metric": "review_verdict",
-        "operator": "eq",
-        "value": "pass",
-        "unit": "verdict",
+def provenance_security_criterion_template() -> dict[str, Any]:
+    """Return the only review-derived provenance/security criterion shape."""
+    return {
+        "criterion_id": "provenance-security-review",
+        "dimension": "provenance-security",
+        "qualification_scope": "release-promotion",
+        "workload": {
+            "name": "bound-release-inputs",
+            "version": "1",
+            "parameters": {},
+        },
+        "protocol": {
+            "name": "reviewed-provenance-security",
+            "version": "1",
+            "parameters": {"reviewed_issuance_required": True},
+        },
+        "sample_size": 1,
+        "thresholds": [
+            {
+                "metric": "review_verdict",
+                "operator": "eq",
+                "value": "pass",
+                "unit": "verdict",
+            }
+        ],
     }
-    if required_threshold not in criterion["thresholds"]:
-        fail("provenance-security criterion must require a passing review verdict")
+
+
+def _validate_provenance_security_criterion(criterion: dict[str, Any]) -> None:
+    if criterion != provenance_security_criterion_template():
+        fail(
+            "provenance-security criterion must match the canonical "
+            "review-derived template"
+        )
 
 
 def benchmark_protocol_id(criterion: dict[str, Any]) -> str:
@@ -1138,8 +1339,15 @@ def build_relative_performance_requirement(
     *,
     release: dict[str, Any],
     predecessor_release_id: str,
+    predecessor_contract_id: str,
+    predecessor_bundle_id: str,
+    predecessor_decision_id: str,
     throughput_criterion: dict[str, Any],
+    throughput_predecessor_criterion_id: str,
+    throughput_predecessor_run_record_id: str,
     latency_criterion: dict[str, Any],
+    latency_predecessor_criterion_id: str,
+    latency_predecessor_run_record_id: str,
     throughput_max_regression_percent: str,
     latency_max_regression_percent: str,
 ) -> dict[str, Any]:
@@ -1153,11 +1361,16 @@ def build_relative_performance_requirement(
     result = {
         "status": "required",
         "predecessor_release_id": predecessor_release_id,
+        "predecessor_contract_id": predecessor_contract_id,
+        "predecessor_bundle_id": predecessor_bundle_id,
+        "predecessor_decision_id": predecessor_decision_id,
         "supported_hardware_geometry_id": supported_hardware_geometry_id(
             release["supported_hardware_geometry"]
         ),
         "throughput": {
             "criterion_id": throughput_criterion["criterion_id"],
+            "predecessor_criterion_id": throughput_predecessor_criterion_id,
+            "predecessor_run_record_id": throughput_predecessor_run_record_id,
             "benchmark_protocol_id": benchmark_protocol_id(throughput_criterion),
             "maximum_regression_percent": _canonical_decimal(
                 throughput_max_regression_percent,
@@ -1167,6 +1380,8 @@ def build_relative_performance_requirement(
         },
         "latency": {
             "criterion_id": latency_criterion["criterion_id"],
+            "predecessor_criterion_id": latency_predecessor_criterion_id,
+            "predecessor_run_record_id": latency_predecessor_run_record_id,
             "benchmark_protocol_id": benchmark_protocol_id(latency_criterion),
             "maximum_regression_percent": _canonical_decimal(
                 latency_max_regression_percent,
@@ -1328,7 +1543,13 @@ def _validate_relative_dimension(
 ) -> dict[str, Any]:
     item = _require_fields(
         value,
-        {"criterion_id", "benchmark_protocol_id", "maximum_regression_percent"},
+        {
+            "criterion_id",
+            "predecessor_criterion_id",
+            "predecessor_run_record_id",
+            "benchmark_protocol_id",
+            "maximum_regression_percent",
+        },
         label=f"Validation Contract relative_performance.{dimension}",
     )
     criterion_id = _safe_identifier(
@@ -1341,6 +1562,20 @@ def _validate_relative_dimension(
             f"Validation Contract relative_performance.{dimension} references "
             "the wrong criterion"
         )
+    _safe_identifier(
+        item.get("predecessor_criterion_id"),
+        label=(
+            f"Validation Contract relative_performance.{dimension}."
+            "predecessor_criterion_id"
+        ),
+    )
+    _content_id(
+        item.get("predecessor_run_record_id"),
+        label=(
+            f"Validation Contract relative_performance.{dimension}."
+            "predecessor_run_record_id"
+        ),
+    )
     protocol_id = item.get("benchmark_protocol_id")
     if (
         not isinstance(protocol_id, str)
@@ -1384,6 +1619,9 @@ def _validate_relative_performance(
         {
             "status",
             "predecessor_release_id",
+            "predecessor_contract_id",
+            "predecessor_bundle_id",
+            "predecessor_decision_id",
             "supported_hardware_geometry_id",
             "throughput",
             "latency",
@@ -1392,13 +1630,21 @@ def _validate_relative_performance(
     )
     if relative.get("status") != "required":
         fail("Validation Contract relative_performance status is unsupported")
-    predecessor = relative.get("predecessor_release_id")
-    if (
-        not isinstance(predecessor, str)
-        or model_identity.SHA256_HEX_RE.fullmatch(predecessor) is None
-        or predecessor == release_id
-    ):
+    predecessor = _content_id(
+        relative.get("predecessor_release_id"),
+        label="Validation Contract predecessor_release_id",
+    )
+    if predecessor == release_id:
         fail("Validation Contract predecessor_release_id is invalid")
+    for field in (
+        "predecessor_contract_id",
+        "predecessor_bundle_id",
+        "predecessor_decision_id",
+    ):
+        _content_id(
+            relative.get(field),
+            label=f"Validation Contract {field}",
+        )
     observed_geometry_id = relative.get("supported_hardware_geometry_id")
     if (
         not isinstance(observed_geometry_id, str)

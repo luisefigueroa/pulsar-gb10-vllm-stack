@@ -95,16 +95,58 @@ STATUS_LABELS = {
 }
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)(password|secret|token|api[_-]?key|authorization)\s*[:=]"
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+COMMAND_ENVIRONMENT_CREDENTIAL_VALUE_PATTERNS = (
+    re.compile(r"hf_[A-Za-z0-9]{8,}"),
+    re.compile(
+        r"(?:gh[opusr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
+    ),
+    re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"),
+    re.compile(r"AIza[A-Za-z0-9_-]{20,}"),
 )
-SECRET_FLAGS = {
-    "--api-key",
-    "--authorization",
-    "--password",
-    "--secret",
-    "--token",
+SENSITIVE_ENV_MARKERS = {
+    "APIKEY",
+    "AUTH",
+    "AUTHORIZATION",
+    "BEARER",
+    "COOKIE",
+    "CREDENTIAL",
+    "CREDENTIALS",
+    "HEADER",
+    "PASSWORD",
+    "PASSPHRASE",
+    "SECRET",
+    "TOKEN",
+}
+COMMAND_PROGRAM_OPERATIONS = {
+    "bench/membw.py": {"measure-memory-bandwidth"},
+    "scripts/model-library.sh": {"prepare-model-for-serving"},
+    "scripts/pull-weights.sh": {"acquire-replicated-model"},
+    "validate/analyze_trace.py": {"analyze-trace"},
+    "validate/bench_serve.py": {"benchmark-serving"},
+    "validate/compare_captures.py": {"compare-captures"},
+    "validate/greedy_capture.py": {"capture-determinism"},
+    "validate/hf_reference.py": {"capture-reference"},
+    "validate/needle.py": {"validate-context"},
+    "validate/run-gates.sh": {"run-validation-gates"},
+    "validate/soak.py": {"validate-soak"},
+    "validate/warmup.py": {"warmup-serving"},
+}
+COMMAND_ARGUMENT_KINDS = {
+    "operation",
+    "criterion-reference",
+    "repository-path",
+    "site-option",
+}
+COMMAND_REPOSITORY_PATHS = {"validate/prompts.txt"}
+COMMAND_SITE_OPTION_REFERENCE_KINDS = {
+    "--host": {"protected-site-reference", "rank-reference"},
+    "--rank": {"rank-reference"},
+    "--url": {"protected-site-reference"},
+}
+COMMAND_ENVIRONMENT_KINDS = {
+    "non-secret-reference",
+    "secret-reference",
 }
 
 
@@ -209,6 +251,48 @@ def _parse_rfc3339_utc(value: Any, *, label: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
         fail(f"{label} must include UTC")
     return parsed
+
+
+def _elapsed_seconds(started_at: datetime, ended_at: datetime) -> Decimal:
+    """Return an exact decimal duration without float conversion."""
+    delta = ended_at - started_at
+    microseconds = (
+        (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+    )
+    return Decimal(microseconds) / Decimal(1_000_000)
+
+
+def _canonical_elapsed_seconds(started_at: datetime, ended_at: datetime) -> str:
+    normalized = format(_elapsed_seconds(started_at, ended_at), "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    return normalized or "0"
+
+
+def _sorted_unique_safe_identifiers(value: Any, *, label: str) -> list[str]:
+    if not isinstance(value, list):
+        fail(f"{label} must be a list")
+    for item in value:
+        _safe_identifier(item, label=f"{label} item")
+    if value != sorted(value) or len(value) != len(set(value)):
+        fail(f"{label} must be sorted and unique")
+    return value
+
+
+def _numeric_version_in_range(
+    observed_version: Any,
+    version_range: Any,
+    *,
+    label: str,
+) -> bool:
+    try:
+        return model_serving_release.numeric_version_in_range(
+            observed_version,
+            version_range,
+            label=label,
+        )
+    except model_serving_release.ModelServingReleaseError as exc:
+        fail(str(exc))
 
 
 def _sorted_unique_sha256(value: Any, *, label: str) -> list[str]:
@@ -485,7 +569,9 @@ def _validate_rank_observations(
     if not isinstance(value, list):
         fail("observed environment ranks must be a list")
     geometry = release["supported_hardware_geometry"]
+    compatibility = release["runtime_image_identity"]["host_compatibility"]
     ranks: list[int] = []
+    engine_versions: set[str] = set()
     minimum_memory = Decimal(
         geometry["capacity"]["minimum_unified_memory_gib_per_node"]
     )
@@ -495,11 +581,12 @@ def _validate_rank_observations(
             {
                 "rank",
                 "hardware_class",
+                "architecture",
                 "accelerator_count",
                 "unified_memory_gib",
-                "driver_version",
-                "kernel_release",
-                "container_runtime_version",
+                "driver_abi",
+                "container_runtime",
+                "kernel",
                 "engine_version",
             },
             label=f"observed environment ranks[{index}]",
@@ -509,6 +596,8 @@ def _validate_rank_observations(
         )
         if rank.get("hardware_class") != geometry["hardware_class"]:
             fail("observed environment hardware class differs from release")
+        if rank.get("architecture") != compatibility["architecture"]:
+            fail("observed environment architecture differs from release")
         if rank.get("accelerator_count") != geometry["accelerators_per_node"]:
             fail("observed environment accelerator count differs from release")
         memory = _normalize_decimal(
@@ -519,18 +608,68 @@ def _validate_rank_observations(
         assert memory is not None
         if Decimal(memory) < minimum_memory:
             fail("observed environment memory is below release requirement")
-        for field in (
-            "driver_version",
-            "kernel_release",
-            "container_runtime_version",
-            "engine_version",
+        driver = _require_fields(
+            rank.get("driver_abi"),
+            {"family", "version"},
+            label=f"observed environment ranks[{index}].driver_abi",
+        )
+        expected_driver = compatibility["driver_abi"]
+        if driver.get("family") != expected_driver["family"]:
+            fail("observed environment driver ABI family differs from release")
+        if not _numeric_version_in_range(
+            driver.get("version"),
+            expected_driver["range"],
+            label=f"observed environment ranks[{index}].driver_abi.version",
         ):
-            _nonempty_string(
-                rank.get(field), label=f"observed environment ranks[{index}].{field}"
-            )
+            fail("observed environment driver ABI version is outside release range")
+        runtime = _require_fields(
+            rank.get("container_runtime"),
+            {"family", "version", "capabilities"},
+            label=f"observed environment ranks[{index}].container_runtime",
+        )
+        expected_runtime = compatibility["container_runtime"]
+        if runtime.get("family") != expected_runtime["family"]:
+            fail("observed environment container runtime family differs from release")
+        if not _numeric_version_in_range(
+            runtime.get("version"),
+            expected_runtime["range"],
+            label=f"observed environment ranks[{index}].container_runtime.version",
+        ):
+            fail("observed environment container runtime version is outside release range")
+        capabilities = _sorted_unique_safe_identifiers(
+            runtime.get("capabilities"),
+            label=f"observed environment ranks[{index}].container_runtime.capabilities",
+        )
+        if not set(expected_runtime["required_capabilities"]).issubset(capabilities):
+            fail("observed environment lacks a required container capability")
+        kernel = _require_fields(
+            rank.get("kernel"),
+            {"version", "features"},
+            label=f"observed environment ranks[{index}].kernel",
+        )
+        expected_kernel = compatibility["kernel"]
+        if not _numeric_version_in_range(
+            kernel.get("version"),
+            expected_kernel["range"],
+            label=f"observed environment ranks[{index}].kernel.version",
+        ):
+            fail("observed environment kernel version is outside release range")
+        features = _sorted_unique_safe_identifiers(
+            kernel.get("features"),
+            label=f"observed environment ranks[{index}].kernel.features",
+        )
+        if not set(expected_kernel["required_features"]).issubset(features):
+            fail("observed environment lacks a required kernel feature")
+        engine_version = _safe_identifier(
+            rank.get("engine_version"),
+            label=f"observed environment ranks[{index}].engine_version",
+        )
+        engine_versions.add(engine_version)
         ranks.append(rank_number)
     if ranks != list(range(geometry["node_count"])):
         fail("observed environment must contain each release rank exactly once")
+    if len(engine_versions) != 1:
+        fail("observed environment engine version differs across ranks")
     return value
 
 
@@ -547,6 +686,7 @@ def _validate_observed_environment(
             "supported_hardware_geometry_id",
             "server_boot_id",
             "launch_id",
+            "cluster",
             "ranks",
         },
         label="observed environment",
@@ -559,6 +699,43 @@ def _validate_observed_environment(
     )
     if environment.get("supported_hardware_geometry_id") != expected_geometry:
         fail("observed environment geometry differs from release")
+    geometry = release["supported_hardware_geometry"]
+    cluster = _require_fields(
+        environment.get("cluster"),
+        {
+            "node_count",
+            "accelerator_count",
+            "tensor_parallel_size",
+            "pipeline_parallel_size",
+            "topology_class",
+            "interconnect_class",
+            "rails_per_pair",
+        },
+        label="observed environment cluster",
+    )
+    for field in (
+        "node_count",
+        "accelerator_count",
+        "tensor_parallel_size",
+        "pipeline_parallel_size",
+    ):
+        _positive_integer(cluster.get(field), label=f"observed environment cluster.{field}")
+        if cluster.get(field) != geometry[field]:
+            fail(f"observed environment cluster {field} differs from release")
+    for field in ("topology_class", "interconnect_class"):
+        _safe_identifier(
+            cluster.get(field), label=f"observed environment cluster.{field}"
+        )
+        if cluster.get(field) != geometry[field]:
+            fail(f"observed environment cluster {field} differs from release")
+    observed_rails = _nonnegative_integer(
+        cluster.get("rails_per_pair"),
+        label="observed environment cluster.rails_per_pair",
+    )
+    if observed_rails < geometry["minimum_rails_per_pair"]:
+        fail("observed environment cluster rails are below release requirement")
+    if geometry["node_count"] == 1 and observed_rails != 0:
+        fail("single-node observed environment must report zero rails")
     for field in ("server_boot_id", "launch_id"):
         identifier = environment.get(field)
         if identifier is not None:
@@ -569,46 +746,173 @@ def _validate_observed_environment(
     return environment
 
 
-def _validate_command(value: Any, *, index: int) -> dict[str, Any]:
+def _normalized_sensitive_marker(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", value).upper()
+
+
+def _contains_sensitive_marker(value: str) -> bool:
+    normalized = _normalized_sensitive_marker(value)
+    return any(marker in normalized for marker in SENSITIVE_ENV_MARKERS)
+
+
+def _contains_command_environment_credential_value(value: str) -> bool:
+    return any(
+        pattern.search(value) is not None
+        for pattern in COMMAND_ENVIRONMENT_CREDENTIAL_VALUE_PATTERNS
+    )
+
+
+def _validate_command_site_reference(
+    value: Any,
+    *,
+    label: str,
+    allowed_kinds: set[str],
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        fail(f"{label} must be a structured site reference")
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in allowed_kinds:
+        fail(f"{label}.kind is incompatible with its site option")
+    if kind == "rank-reference":
+        descriptor = _require_fields(value, {"kind", "rank"}, label=label)
+        _nonnegative_integer(descriptor.get("rank"), label=f"{label}.rank")
+        return descriptor
+    descriptor = _require_fields(value, {"kind", "digest"}, label=label)
+    _sha256(descriptor.get("digest"), label=f"{label}.digest", prefix=True)
+    return descriptor
+
+
+def _validate_command_argument(
+    value: Any,
+    *,
+    command_index: int,
+    index: int,
+    program: str,
+    criteria: dict[str, dict[str, Any]],
+    attempted_criterion_ids: set[str],
+) -> dict[str, Any]:
+    label = f"run commands[{command_index}].arguments[{index}]"
+    if not isinstance(value, dict):
+        fail(f"{label} must be a structured argument descriptor")
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in COMMAND_ARGUMENT_KINDS:
+        fail(f"{label}.kind is unsupported")
+    if kind == "operation":
+        descriptor = _require_fields(value, {"kind", "value"}, label=label)
+        operation = descriptor.get("value")
+        if (
+            not isinstance(operation, str)
+            or operation not in COMMAND_PROGRAM_OPERATIONS[program]
+        ):
+            fail(f"{label}.value is not allowed for the selected program")
+        return descriptor
+    if kind == "criterion-reference":
+        descriptor = _require_fields(value, {"kind", "criterion_id"}, label=label)
+        criterion_id = descriptor.get("criterion_id")
+        if not isinstance(criterion_id, str) or criterion_id not in criteria:
+            fail(f"{label}.criterion_id is unknown")
+        if criterion_id not in attempted_criterion_ids:
+            fail(f"{label}.criterion_id was not declared by the attempt")
+        return descriptor
+    if kind == "repository-path":
+        descriptor = _require_fields(value, {"kind", "value"}, label=label)
+        path = _relative_repository_path(descriptor.get("value"), label=f"{label}.value")
+        if path not in COMMAND_REPOSITORY_PATHS:
+            fail("run command repository-path is not an allowed repository resource")
+        return descriptor
+    descriptor = _require_fields(
+        value,
+        {"kind", "option", "reference"},
+        label=label,
+    )
+    option = descriptor.get("option")
+    allowed_reference_kinds = (
+        COMMAND_SITE_OPTION_REFERENCE_KINDS.get(option)
+        if isinstance(option, str)
+        else None
+    )
+    if allowed_reference_kinds is None:
+        fail(f"{label}.option is unsupported")
+    _validate_command_site_reference(
+        descriptor.get("reference"),
+        label=f"{label}.reference",
+        allowed_kinds=allowed_reference_kinds,
+    )
+    return descriptor
+
+
+def _validate_command_environment(value: Any, *, command_index: int) -> list[dict[str, Any]]:
+    label = f"run commands[{command_index}].environment"
+    if not isinstance(value, list):
+        fail(f"{label} must be a list")
+    keys: list[str] = []
+    for index, item in enumerate(value):
+        descriptor = _require_fields(
+            item, {"kind", "name"}, label=f"{label}[{index}]"
+        )
+        kind = descriptor.get("kind")
+        if not isinstance(kind, str) or kind not in COMMAND_ENVIRONMENT_KINDS:
+            fail(f"{label}[{index}].kind is unsupported")
+        name = descriptor.get("name")
+        if not isinstance(name, str):
+            fail(f"{label}[{index}].name is invalid")
+        if _contains_command_environment_credential_value(name):
+            fail(f"{label}[{index}].name contains a credential value")
+        if ENV_NAME_RE.fullmatch(name) is None:
+            fail(f"{label}[{index}].name is invalid")
+        sensitive = _contains_sensitive_marker(name)
+        if sensitive != (kind == "secret-reference"):
+            fail(f"{label}[{index}] secret classification is invalid")
+        keys.append(name)
+    if keys != sorted(keys) or len(keys) != len(set(keys)):
+        fail(f"{label} must be sorted by unique environment-variable name")
+    return value
+
+
+def _validate_command(
+    value: Any,
+    *,
+    index: int,
+    criteria: dict[str, dict[str, Any]],
+    attempted_criterion_ids: set[str],
+) -> dict[str, Any]:
     command = _require_fields(
         value,
         {
             "program",
             "version",
             "arguments",
-            "environment_variable_names",
+            "environment",
             "working_directory",
         },
         label=f"run commands[{index}]",
     )
-    program = _relative_repository_path(
-        command.get("program"), label=f"run commands[{index}].program"
+    program = command.get("program")
+    if not isinstance(program, str) or program not in COMMAND_PROGRAM_OPERATIONS:
+        fail("run command program is not an allowed repository-owned executable")
+    _sha256(
+        command.get("version"),
+        label=f"run commands[{index}].version",
+        prefix=True,
     )
-    if program.startswith("results/"):
-        fail("run command program cannot be an evidence artifact")
-    _nonempty_string(command.get("version"), label=f"run commands[{index}].version")
     arguments = command.get("arguments")
     if not isinstance(arguments, list):
         fail(f"run commands[{index}].arguments must be a list")
+    operations = 0
     for argument_index, argument in enumerate(arguments):
-        argument = _nonempty_string(
+        _validate_command_argument(
             argument,
-            label=f"run commands[{index}].arguments[{argument_index}]",
+            command_index=index,
+            index=argument_index,
+            program=program,
+            criteria=criteria,
+            attempted_criterion_ids=attempted_criterion_ids,
         )
-        if argument.startswith("/"):
-            fail("run command arguments must not expose absolute paths")
-        if SECRET_ASSIGNMENT_RE.search(argument) or argument.lower() in SECRET_FLAGS:
-            fail("run command arguments must not contain credentials")
-    environment_names = command.get("environment_variable_names")
-    if not isinstance(environment_names, list):
-        fail(f"run commands[{index}].environment_variable_names must be a list")
-    for name in environment_names:
-        if not isinstance(name, str) or ENV_NAME_RE.fullmatch(name) is None:
-            fail("run command environment variable name is invalid")
-    if environment_names != sorted(environment_names) or len(environment_names) != len(
-        set(environment_names)
-    ):
-        fail("run command environment variable names must be sorted and unique")
+        if isinstance(argument, dict) and argument.get("kind") == "operation":
+            operations += 1
+    if operations != 1:
+        fail(f"run commands[{index}] must declare exactly one allowed operation")
+    _validate_command_environment(command.get("environment"), command_index=index)
     if command.get("working_directory") != "repository-root":
         fail("run command working_directory must be repository-root")
     return command
@@ -793,6 +1097,8 @@ def _validate_soak_requirement_observation(
     requirement: dict[str, Any] | None,
     criterion_metrics: list[dict[str, Any]],
     run_artifact_ids: set[str],
+    attempt_started_at: datetime,
+    attempt_ended_at: datetime,
 ) -> dict[str, Any] | None:
     label = "run soak requirement observation"
     if requirement is None:
@@ -805,6 +1111,8 @@ def _validate_soak_requirement_observation(
         value,
         {
             "completion",
+            "started_at",
+            "ended_at",
             "duration_seconds",
             "concurrency",
             "request_errors",
@@ -814,11 +1122,27 @@ def _validate_soak_requirement_observation(
         label=label,
     )
     completion = _validate_requirement_completion(observation, label=label)
-    _normalize_decimal(
+    soak_started_at = _parse_rfc3339_utc(
+        observation.get("started_at"), label=f"{label}.started_at"
+    )
+    soak_ended_at = _parse_rfc3339_utc(
+        observation.get("ended_at"), label=f"{label}.ended_at"
+    )
+    if soak_ended_at < soak_started_at:
+        fail("run soak ended_at precedes started_at")
+    if soak_started_at < attempt_started_at or soak_ended_at > attempt_ended_at:
+        fail("run soak interval must be contained within the attempt")
+    duration = _normalize_decimal(
         observation.get("duration_seconds"),
         label=f"{label}.duration_seconds",
         require_canonical=True,
     )
+    assert duration is not None
+    expected_duration = _canonical_elapsed_seconds(soak_started_at, soak_ended_at)
+    if duration != expected_duration:
+        fail(
+            "run soak duration_seconds differs from its verified timestamp interval"
+        )
     _nonnegative_integer(
         observation.get("concurrency"), label=f"{label}.concurrency"
     )
@@ -859,83 +1183,6 @@ def _numeric_metric(
     return parsed
 
 
-def _validate_relative_performance_comparison(
-    value: Any,
-    *,
-    requirement: dict[str, Any] | None,
-    criterion: dict[str, Any],
-    criterion_metrics: list[dict[str, Any]],
-    run_artifact_ids: set[str],
-) -> dict[str, Any] | None:
-    label = "run relative performance comparison"
-    if requirement is None:
-        if value is not None:
-            fail(
-                "run records relative evidence without a comparable predecessor"
-            )
-        return None
-    if value is None:
-        return None
-    comparison = _require_fields(
-        value,
-        {
-            "predecessor_release_id",
-            "supported_hardware_geometry_id",
-            "benchmark_protocol_id",
-            "completion",
-            "sample_size",
-            "metrics",
-            "evidence_artifact_ids",
-            "reason",
-        },
-        label=label,
-    )
-    for field in (
-        "predecessor_release_id",
-        "supported_hardware_geometry_id",
-        "benchmark_protocol_id",
-    ):
-        if comparison.get(field) != requirement[field]:
-            fail(f"{label} {field} differs from the frozen contract")
-    completion = _validate_requirement_completion(comparison, label=label)
-    sample_size = _nonnegative_integer(
-        comparison.get("sample_size"), label=f"{label}.sample_size"
-    )
-    metrics = _validate_metrics(comparison.get("metrics"), label=f"{label}.metrics")
-    _validate_requirement_artifact_ids(
-        comparison.get("evidence_artifact_ids"),
-        label=f"{label}.evidence_artifact_ids",
-        run_artifact_ids=run_artifact_ids,
-    )
-    if completion == "complete":
-        if sample_size < criterion["sample_size"]:
-            fail(f"{label} complete sample is smaller than the frozen contract")
-        required_keys = {
-            (threshold["metric"], threshold["unit"])
-            for threshold in criterion["thresholds"]
-        }
-        predecessor_metrics = {
-            (item["metric"], item["unit"]): item["value"] for item in metrics
-        }
-        current_metrics = {
-            (item["metric"], item["unit"]): item["value"]
-            for item in criterion_metrics
-        }
-        if set(predecessor_metrics) != required_keys:
-            fail(f"{label} must contain exactly the frozen threshold metrics")
-        for key in sorted(required_keys):
-            _numeric_metric(
-                predecessor_metrics[key],
-                label=f"{label} predecessor metric {key[0]}",
-                positive=True,
-            )
-            _numeric_metric(
-                current_metrics[key],
-                label=f"{label} current metric {key[0]}",
-            )
-    return comparison
-
-
 def _validate_contract_requirement_observations(
     value: Any,
     *,
@@ -943,10 +1190,12 @@ def _validate_contract_requirement_observations(
     criterion: dict[str, Any],
     criterion_metrics: list[dict[str, Any]],
     run_artifact_ids: set[str],
+    attempt_started_at: datetime,
+    attempt_ended_at: datetime,
 ) -> dict[str, Any]:
     requirements = _require_fields(
         value,
-        {"context", "soak", "relative_performance"},
+        {"context", "soak"},
         label="run contract requirement observations",
     )
     criterion_id = criterion["criterion_id"]
@@ -960,13 +1209,8 @@ def _validate_contract_requirement_observations(
         requirement=_soak_requirement_for_criterion(contract, criterion_id),
         criterion_metrics=criterion_metrics,
         run_artifact_ids=run_artifact_ids,
-    )
-    _validate_relative_performance_comparison(
-        requirements.get("relative_performance"),
-        requirement=_relative_requirement_for_criterion(contract, criterion),
-        criterion=criterion,
-        criterion_metrics=criterion_metrics,
-        run_artifact_ids=run_artifact_ids,
+        attempt_started_at=attempt_started_at,
+        attempt_ended_at=attempt_ended_at,
     )
     return requirements
 
@@ -978,6 +1222,8 @@ def _validate_criterion_observation(
     contract: dict[str, Any],
     criterion: dict[str, Any],
     run_artifact_ids: set[str],
+    attempt_started_at: datetime,
+    attempt_ended_at: datetime,
 ) -> dict[str, Any]:
     label = f"run criterion_observations[{index}]"
     observation = _require_fields(
@@ -1033,6 +1279,8 @@ def _validate_criterion_observation(
         criterion=criterion,
         criterion_metrics=metrics,
         run_artifact_ids=run_artifact_ids,
+        attempt_started_at=attempt_started_at,
+        attempt_ended_at=attempt_ended_at,
     )
     return observation
 
@@ -1062,19 +1310,6 @@ def _canonicalize_observation(value: dict[str, Any]) -> dict[str, Any]:
             soak_artifacts = soak.get("evidence_artifact_ids")
             if isinstance(soak_artifacts, list):
                 soak["evidence_artifact_ids"] = sorted(soak_artifacts)
-        relative = requirements.get("relative_performance")
-        if isinstance(relative, dict):
-            relative_metrics = relative.get("metrics")
-            if isinstance(relative_metrics, list):
-                relative_metrics.sort(
-                    key=lambda item: (
-                        str(item.get("metric", "")),
-                        str(item.get("unit", "")),
-                    )
-                )
-            relative_artifacts = relative.get("evidence_artifact_ids")
-            if isinstance(relative_artifacts, list):
-                relative["evidence_artifact_ids"] = sorted(relative_artifacts)
     return result
 
 
@@ -1123,17 +1358,27 @@ def build_validation_run_record(
         runtime_sources.sort(key=lambda item: int(item.get("rank", -1)))
     normalized_commands = copy.deepcopy(commands)
     for command in normalized_commands:
-        names = command.get("environment_variable_names")
-        if isinstance(names, list):
-            command["environment_variable_names"] = sorted(names)
+        environment = command.get("environment")
+        if isinstance(environment, list):
+            environment.sort(
+                key=lambda item: str(item.get("name", ""))
+                if isinstance(item, dict)
+                else ""
+            )
     observations = [_canonicalize_observation(item) for item in criterion_observations]
     observations.sort(key=lambda item: str(item.get("criterion_id", "")))
+    normalized_attempt = copy.deepcopy(attempt)
+    attempted_criterion_ids = normalized_attempt.get("attempted_criterion_ids")
+    if isinstance(attempted_criterion_ids, list):
+        normalized_attempt["attempted_criterion_ids"] = sorted(
+            attempted_criterion_ids
+        )
     record: dict[str, Any] = {
         "schema_version": VALIDATION_RUN_RECORD_SCHEMA_VERSION,
         "kind": VALIDATION_RUN_RECORD_KIND,
         "release_id": release["release_id"],
         "contract_id": contract["contract_id"],
-        "attempt": copy.deepcopy(attempt),
+        "attempt": normalized_attempt,
         "preparation_provenance": provenance,
         "observed_environment": copy.deepcopy(observed_environment),
         "commands": normalized_commands,
@@ -1192,6 +1437,7 @@ def validate_validation_run_record(
             "attempt_id",
             "phase",
             "qualification_scope",
+            "attempted_criterion_ids",
             "started_at",
             "ended_at",
             "completion",
@@ -1214,6 +1460,11 @@ def validate_validation_run_record(
         fail("validation run ended_at precedes started_at")
     if attempt.get("completion") not in ATTEMPT_COMPLETIONS:
         fail("validation run completion is unsupported")
+    criteria = _criterion_map(contract)
+    attempted_criterion_ids = _sorted_unique_safe_identifiers(
+        attempt.get("attempted_criterion_ids"),
+        label="validation run attempted_criterion_ids",
+    )
     provenance = _validate_preparation_provenance(
         record.get("preparation_provenance"), release=release
     )
@@ -1223,6 +1474,18 @@ def validate_validation_run_record(
             fail("pre-qualification failure must use the preparation phase")
         if attempt.get("completion") == "completed":
             fail("not-reached qualification barrier cannot report completed")
+        if attempted_criterion_ids:
+            fail("pre-qualification preparation must declare no attempted criteria")
+    elif phase != "preparation" and not attempted_criterion_ids:
+        fail("post-barrier qualification attempt must declare an attempted criterion")
+    for criterion_id in attempted_criterion_ids:
+        criterion = criteria.get(criterion_id)
+        if criterion is None:
+            fail("validation run attempted_criterion_ids contains an unknown criterion")
+        if criterion["dimension"] == "provenance-security":
+            fail("provenance/security criterion is review-derived, not run-derived")
+        if criterion["qualification_scope"] != attempt["qualification_scope"]:
+            fail("validation run attempted criterion scope differs from attempt scope")
     _validate_observed_environment(
         record.get("observed_environment"),
         release=release,
@@ -1232,7 +1495,12 @@ def validate_validation_run_record(
     if not isinstance(commands, list) or not commands:
         fail("validation run commands must be a non-empty list")
     for index, command in enumerate(commands):
-        _validate_command(command, index=index)
+        _validate_command(
+            command,
+            index=index,
+            criteria=criteria,
+            attempted_criterion_ids=set(attempted_criterion_ids),
+        )
     run_artifact_ids = _sorted_unique_sha256(
         record.get("evidence_artifact_ids"), label="validation run evidence_artifact_ids"
     )
@@ -1249,7 +1517,6 @@ def validate_validation_run_record(
         fail("validation run criterion_observations must be a list")
     if barrier_state == "not-reached" and observations:
         fail("pre-qualification failure cannot contain qualification observations")
-    criteria = _criterion_map(contract)
     observation_ids: list[str] = []
     for index, observation in enumerate(observations):
         if not isinstance(observation, dict):
@@ -1258,6 +1525,8 @@ def validate_validation_run_record(
         criterion = criteria.get(criterion_id)
         if criterion is None:
             fail("validation run references an unknown criterion")
+        if criterion["dimension"] == "provenance-security":
+            fail("provenance/security criterion is review-derived, not run-derived")
         if criterion["qualification_scope"] != attempt["qualification_scope"]:
             fail("validation run criterion scope differs from attempt scope")
         _validate_criterion_observation(
@@ -1266,12 +1535,24 @@ def validate_validation_run_record(
             contract=contract,
             criterion=criterion,
             run_artifact_ids=set(run_artifact_ids),
+            attempt_started_at=started_at,
+            attempt_ended_at=ended_at,
         )
+        if (
+            attempt["completion"] != "completed"
+            and observation.get("completion") != "inconclusive"
+        ):
+            fail("incomplete validation attempt requires inconclusive observations")
         observation_ids.append(criterion_id)
     if observation_ids != sorted(observation_ids) or len(observation_ids) != len(
         set(observation_ids)
     ):
         fail("validation run criterion_observations must be sorted and unique")
+    if observation_ids != attempted_criterion_ids:
+        fail(
+            "validation run criterion observations must exactly cover "
+            "attempted_criterion_ids"
+        )
     run_record_id_value = record.get("run_record_id")
     if (
         not isinstance(run_record_id_value, str)
@@ -1562,9 +1843,14 @@ def _evaluate_soak_requirement(
         return "not-evaluated", "soak-evidence-missing"
     if observation["completion"] == "inconclusive":
         return "inconclusive", "soak-evidence-inconclusive"
-    if Decimal(observation["duration_seconds"]) < requirement[
-        "minimum_duration_seconds"
-    ]:
+    started_at = _parse_rfc3339_utc(
+        observation["started_at"], label="soak observation started_at"
+    )
+    ended_at = _parse_rfc3339_utc(
+        observation["ended_at"], label="soak observation ended_at"
+    )
+    verified_duration = _elapsed_seconds(started_at, ended_at)
+    if verified_duration < requirement["minimum_duration_seconds"]:
         return "fail", "soak-duration-not-satisfied"
     if observation["concurrency"] != requirement["concurrency"]:
         return "fail", "soak-concurrency-not-satisfied"
@@ -1574,7 +1860,7 @@ def _evaluate_soak_requirement(
 
 
 def _evaluate_relative_performance(
-    observation: dict[str, Any] | None,
+    predecessor_metrics: dict[tuple[str, str], str] | None,
     requirement: dict[str, Any] | None,
     *,
     criterion: dict[str, Any],
@@ -1582,18 +1868,12 @@ def _evaluate_relative_performance(
 ) -> tuple[str, str]:
     if requirement is None:
         return "pass", "relative-performance-not-required"
-    if observation is None:
+    if predecessor_metrics is None:
         return "not-evaluated", "relative-performance-evidence-missing"
-    if observation["completion"] == "inconclusive":
-        return "inconclusive", "relative-performance-evidence-inconclusive"
-    predecessor_metrics = {
-        (item["metric"], item["unit"]): Decimal(item["value"])
-        for item in observation["metrics"]
-    }
     maximum_regression = Decimal(requirement["maximum_regression_percent"])
     for threshold in criterion["thresholds"]:
         key = (threshold["metric"], threshold["unit"])
-        predecessor = predecessor_metrics[key]
+        predecessor = Decimal(predecessor_metrics[key])
         current = Decimal(current_metrics[key])
         if criterion["dimension"] == "throughput":
             regression = (predecessor - current) * Decimal("100") / predecessor
@@ -1608,6 +1888,8 @@ def evaluate_criterion_observation(
     observation: dict[str, Any],
     criterion: dict[str, Any],
     contract: dict[str, Any],
+    *,
+    predecessor_metrics: dict[tuple[str, str], str] | None = None,
 ) -> tuple[str, str]:
     """Derive a disposition and reason from every frozen requirement."""
     if observation["completion"] == "inconclusive":
@@ -1636,7 +1918,7 @@ def evaluate_criterion_observation(
             _soak_requirement_for_criterion(contract, criterion_id),
         ),
         _evaluate_relative_performance(
-            requirements["relative_performance"],
+            predecessor_metrics,
             _relative_requirement_for_criterion(contract, criterion),
             criterion=criterion,
             current_metrics=metrics,
@@ -1656,18 +1938,124 @@ def _observation_for(record: dict[str, Any], criterion_id: str) -> dict[str, Any
     fail("validation decision selects a run without the named criterion")
 
 
+def _canonicalize_criterion_exclusions(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        fail("validation decision criterion_exclusions must be a list")
+    exclusions = copy.deepcopy(value)
+    for exclusion in exclusions:
+        if isinstance(exclusion, dict):
+            evidence_ids = exclusion.get("review_evidence_artifact_ids")
+            if isinstance(evidence_ids, list):
+                exclusion["review_evidence_artifact_ids"] = sorted(evidence_ids)
+    exclusions.sort(
+        key=lambda item: (
+            str(item.get("criterion_id", "")) if isinstance(item, dict) else "",
+            str(item.get("run_record_id", "")) if isinstance(item, dict) else "",
+        )
+    )
+    return exclusions
+
+
+def _validate_criterion_exclusions(
+    value: Any,
+    *,
+    contract: dict[str, Any],
+    bundle: dict[str, Any],
+    run_records: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(value, list):
+        fail("validation decision criterion_exclusions must be a list")
+    criteria = _criterion_map(contract)
+    records = {item["run_record_id"]: item for item in run_records}
+    artifacts = {item["artifact_id"]: item for item in bundle["evidence_artifacts"]}
+    review_ids = set(bundle["review_evidence_artifact_ids"])
+    keys: list[tuple[str, str]] = []
+    by_criterion: dict[str, list[dict[str, Any]]] = {}
+    for index, exclusion_value in enumerate(value):
+        label = f"validation decision criterion_exclusions[{index}]"
+        exclusion = _require_fields(
+            exclusion_value,
+            {
+                "criterion_id",
+                "run_record_id",
+                "reason",
+                "review_evidence_artifact_ids",
+            },
+            label=label,
+        )
+        criterion_id = _safe_identifier(
+            exclusion.get("criterion_id"), label=f"{label}.criterion_id"
+        )
+        criterion = criteria.get(criterion_id)
+        if criterion is None:
+            fail("validation decision exclusion references an unknown criterion")
+        if criterion["dimension"] == "provenance-security":
+            fail("provenance/security disposition cannot exclude run evidence")
+        run_id = _sha256(
+            exclusion.get("run_record_id"), label=f"{label}.run_record_id"
+        )
+        record = records.get(run_id)
+        if record is None:
+            fail("validation decision exclusion references a run outside the bundle")
+        if not any(
+            item["criterion_id"] == criterion_id
+            for item in record["criterion_observations"]
+        ):
+            fail("validation decision exclusion does not name an observed criterion")
+        _nonempty_string(exclusion.get("reason"), label=f"{label}.reason")
+        evidence_ids = _sorted_unique_sha256(
+            exclusion.get("review_evidence_artifact_ids"),
+            label=f"{label}.review_evidence_artifact_ids",
+        )
+        if not evidence_ids or not set(evidence_ids).issubset(review_ids):
+            fail("validation decision exclusion lacks bundle review evidence")
+        if any(
+            artifacts[artifact_id]["qualification_scope"] != "release-promotion"
+            for artifact_id in evidence_ids
+        ):
+            fail(
+                "validation decision exclusion evidence must be "
+                "release-promotion review evidence"
+            )
+        keys.append((criterion_id, run_id))
+        by_criterion.setdefault(criterion_id, []).append(exclusion)
+    if keys != sorted(keys) or len(keys) != len(set(keys)):
+        fail("validation decision criterion_exclusions must be sorted and unique")
+    return by_criterion
+
+
+def _aggregate_observation_outcomes(
+    outcomes: list[tuple[str, str]],
+) -> tuple[str, str]:
+    dispositions = {item[0] for item in outcomes}
+    if "pass" in dispositions and "fail" in dispositions:
+        return "inconclusive", "conflicting-pass-fail-evidence"
+    if "pass" in dispositions and "inconclusive" in dispositions:
+        return "inconclusive", "pass-with-inconclusive-evidence"
+    if "fail" in dispositions:
+        return "fail", "conclusive-failure-evidence"
+    if "inconclusive" in dispositions:
+        return "inconclusive", "inconclusive-evidence"
+    if "not-evaluated" in dispositions:
+        return "not-evaluated", "included-evidence-not-evaluated"
+    if dispositions == {"pass"}:
+        return "pass", "all-included-evidence-passed"
+    fail("validation decision has an unsupported observation outcome set")
+
+
 def _criterion_result(
     *,
     contract: dict[str, Any],
     criterion: dict[str, Any],
-    selected_run_ids: list[str],
     records: dict[str, dict[str, Any]],
+    exclusions: list[dict[str, Any]],
     provenance_review: dict[str, Any],
+    predecessor_metrics: dict[tuple[str, str], str] | None,
 ) -> dict[str, Any]:
     criterion_id = criterion["criterion_id"]
     if criterion["dimension"] == "provenance-security":
-        if selected_run_ids:
-            fail("provenance/security criterion is decided by reviewed disposition")
+        if exclusions:
+            fail("provenance/security criterion cannot carry exclusions")
         disposition = _provenance_disposition(provenance_review)
         reason = {
             "pass": "review-passed",
@@ -1677,25 +2065,40 @@ def _criterion_result(
         return {
             "criterion_id": criterion_id,
             "disposition": disposition,
-            "run_record_ids": [],
+            "included_run_record_ids": [],
+            "excluded_run_records": [],
             "reason": reason,
         }
-    if not selected_run_ids:
+    observed_run_ids = sorted(
+        record["run_record_id"]
+        for record in records.values()
+        if any(
+            observation["criterion_id"] == criterion_id
+            for observation in record["criterion_observations"]
+        )
+    )
+    excluded_ids = {item["run_record_id"] for item in exclusions}
+    included_run_ids = [
+        run_id for run_id in observed_run_ids if run_id not in excluded_ids
+    ]
+    if not included_run_ids:
         return {
             "criterion_id": criterion_id,
             "disposition": "not-evaluated",
-            "run_record_ids": [],
-            "reason": "no-selected-evidence",
+            "included_run_record_ids": [],
+            "excluded_run_records": exclusions,
+            "reason": "no-included-evidence",
         }
     outcomes: list[tuple[str, str]] = []
-    selected_records: list[dict[str, Any]] = []
-    for run_id in selected_run_ids:
-        record = records.get(run_id)
-        if record is None:
-            fail("validation decision selects a run outside the evidence bundle")
-        selected_records.append(record)
+    included_records: list[dict[str, Any]] = []
+    for run_id in included_run_ids:
+        record = records[run_id]
+        included_records.append(record)
         outcome, reason = evaluate_criterion_observation(
-            _observation_for(record, criterion_id), criterion, contract
+            _observation_for(record, criterion_id),
+            criterion,
+            contract,
+            predecessor_metrics=predecessor_metrics,
         )
         if outcome == "pass" and record["attempt"]["completion"] != "completed":
             outcome = "inconclusive"
@@ -1707,27 +2110,22 @@ def _criterion_result(
     }:
         boot_ids = {
             record["observed_environment"]["server_boot_id"]
-            for record in selected_records
+            for record in included_records
         }
         launch_ids = {
             record["observed_environment"]["launch_id"]
-            for record in selected_records
+            for record in included_records
         }
         if len(boot_ids) != 1 or len(launch_ids) != 1:
             fail("strict same-boot evidence spans more than one live server boot")
-    for disposition in ("fail", "inconclusive", "not-evaluated", "pass"):
-        matching_reasons = [
-            observed_reason
-            for observed_disposition, observed_reason in outcomes
-            if observed_disposition == disposition
-        ]
-        if matching_reasons:
-            reason = matching_reasons[0]
-            break
+    disposition, reason = _aggregate_observation_outcomes(outcomes)
+    if len(outcomes) == 1:
+        disposition, reason = outcomes[0]
     return {
         "criterion_id": criterion_id,
         "disposition": disposition,
-        "run_record_ids": selected_run_ids,
+        "included_run_record_ids": included_run_ids,
+        "excluded_run_records": exclusions,
         "reason": reason,
     }
 
@@ -1737,31 +2135,28 @@ def _derive_criterion_results(
     contract: dict[str, Any],
     bundle: dict[str, Any],
     run_records: list[dict[str, Any]],
-    criterion_run_record_ids: dict[str, list[str]],
+    criterion_exclusions: list[dict[str, Any]],
     provenance_review: dict[str, Any],
+    predecessor_baselines: dict[str, dict[tuple[str, str], str]],
 ) -> list[dict[str, Any]]:
     criteria = _criterion_map(contract)
-    unknown = set(criterion_run_record_ids) - set(criteria)
-    if unknown:
-        fail("validation decision selects an unknown criterion")
-    bundle_ids = set(bundle["run_record_ids"])
     records = {item["run_record_id"]: item for item in run_records}
+    exclusions = _validate_criterion_exclusions(
+        criterion_exclusions,
+        contract=contract,
+        bundle=bundle,
+        run_records=run_records,
+    )
     results: list[dict[str, Any]] = []
     for criterion_id, criterion in sorted(criteria.items()):
-        selected = sorted(criterion_run_record_ids.get(criterion_id, []))
-        if len(selected) != len(set(selected)):
-            fail("validation decision run selections must be unique")
-        for run_id in selected:
-            _sha256(run_id, label="validation decision selected run ID")
-        if not set(selected).issubset(bundle_ids):
-            fail("validation decision selects a run outside the evidence bundle")
         results.append(
             _criterion_result(
                 contract=contract,
                 criterion=criterion,
-                selected_run_ids=selected,
                 records=records,
+                exclusions=exclusions.get(criterion_id, []),
                 provenance_review=provenance_review,
+                predecessor_metrics=predecessor_baselines.get(criterion_id),
             )
         )
     return results
@@ -1844,7 +2239,13 @@ def _validate_decision_shape_and_identity(value: Any) -> dict[str, Any]:
     for index, value_item in enumerate(results):
         result = _require_fields(
             value_item,
-            {"criterion_id", "disposition", "run_record_ids", "reason"},
+            {
+                "criterion_id",
+                "disposition",
+                "included_run_record_ids",
+                "excluded_run_records",
+                "reason",
+            },
             label=f"validation decision criterion_results[{index}]",
         )
         criterion_id = _safe_identifier(
@@ -1853,10 +2254,52 @@ def _validate_decision_shape_and_identity(value: Any) -> dict[str, Any]:
         )
         if result.get("disposition") not in CRITERION_DISPOSITIONS:
             fail("validation decision criterion disposition is unsupported")
-        _sorted_unique_sha256(
-            result.get("run_record_ids"),
-            label=f"validation decision criterion_results[{index}].run_record_ids",
+        included_ids = _sorted_unique_sha256(
+            result.get("included_run_record_ids"),
+            label=(
+                f"validation decision criterion_results[{index}]."
+                "included_run_record_ids"
+            ),
         )
+        excluded = result.get("excluded_run_records")
+        if not isinstance(excluded, list):
+            fail("validation decision excluded_run_records must be a list")
+        excluded_keys: list[tuple[str, str]] = []
+        for exclusion_index, exclusion_value in enumerate(excluded):
+            exclusion = _require_fields(
+                exclusion_value,
+                {
+                    "criterion_id",
+                    "run_record_id",
+                    "reason",
+                    "review_evidence_artifact_ids",
+                },
+                label=(
+                    f"validation decision criterion_results[{index}]."
+                    f"excluded_run_records[{exclusion_index}]"
+                ),
+            )
+            if exclusion.get("criterion_id") != criterion_id:
+                fail("validation decision excluded record criterion mismatch")
+            excluded_run_id = _sha256(
+                exclusion.get("run_record_id"),
+                label="validation decision excluded run_record_id",
+            )
+            _nonempty_string(
+                exclusion.get("reason"),
+                label="validation decision excluded record reason",
+            )
+            _sorted_unique_sha256(
+                exclusion.get("review_evidence_artifact_ids"),
+                label="validation decision exclusion review evidence",
+            )
+            excluded_keys.append((criterion_id, excluded_run_id))
+        if excluded_keys != sorted(excluded_keys) or len(excluded_keys) != len(
+            set(excluded_keys)
+        ):
+            fail("validation decision excluded_run_records must be sorted and unique")
+        if set(included_ids).intersection(item[1] for item in excluded_keys):
+            fail("validation decision cannot include and exclude the same run")
         _nonempty_string(
             result.get("reason"),
             label=f"validation decision criterion_results[{index}].reason",
@@ -1893,19 +2336,270 @@ def _validate_decision_shape_and_identity(value: Any) -> dict[str, Any]:
     return decision
 
 
+def _validate_evidence_source_set(
+    value: Any,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    """Validate one caller-supplied source set without granting it authority."""
+    source = _require_fields(
+        value,
+        {"release", "contract", "evidence_bundle", "run_records", "decision"},
+        label=label,
+    )
+    release = model_serving_release.validate_model_serving_release(
+        source.get("release")
+    )
+    contract = model_serving_release.validate_validation_contract(
+        source.get("contract"), expected_release=release
+    )
+    run_records = source.get("run_records")
+    if not isinstance(run_records, list):
+        fail(f"{label}.run_records must be a list")
+    bundle = validate_validation_evidence_bundle(
+        source.get("evidence_bundle"),
+        release=release,
+        contract=contract,
+        run_records=run_records,
+    )
+    decision = _validate_decision_shape_and_identity(source.get("decision"))
+    if decision["release_id"] != release["release_id"]:
+        fail(f"{label} decision release cross-link mismatch")
+    if decision["contract_id"] != contract["contract_id"]:
+        fail(f"{label} decision contract cross-link mismatch")
+    if decision["evidence_bundle_id"] != bundle["bundle_id"]:
+        fail(f"{label} decision bundle cross-link mismatch")
+    return source
+
+
+def _validate_evidence_source_registry(
+    value: Any,
+    *,
+    label: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        fail(f"{label} must be a list of exact evidence source sets")
+    sources = [
+        _validate_evidence_source_set(item, label=f"{label}[{index}]")
+        for index, item in enumerate(value)
+    ]
+    decision_ids = [item["decision"]["decision_id"] for item in sources]
+    if decision_ids != sorted(decision_ids) or len(decision_ids) != len(
+        set(decision_ids)
+    ):
+        fail(f"{label} must be sorted by unique decision_id")
+    return sources
+
+
+def _resolve_predecessor_baselines(
+    *,
+    release: dict[str, Any],
+    contract: dict[str, Any],
+    predecessor_evidence_registry: list[dict[str, Any]],
+    validation_stack: set[str],
+) -> dict[str, dict[tuple[str, str], str]]:
+    """Resolve frozen predecessor IDs to reviewed, internally valid evidence.
+
+    The registry is external validation input and is never persisted into the
+    current decision.  Validating it proves schema and cross-link consistency,
+    not repository review, trusted publication, or physical measurement.
+    """
+    sources = _validate_evidence_source_registry(
+        predecessor_evidence_registry,
+        label="predecessor evidence registry",
+    )
+    relative = contract["release_criteria"]["relative_performance"]
+    if relative["status"] == "not-applicable":
+        return {}
+    expected_ids = {
+        "release_id": relative["predecessor_release_id"],
+        "contract_id": relative["predecessor_contract_id"],
+        "bundle_id": relative["predecessor_bundle_id"],
+        "decision_id": relative["predecessor_decision_id"],
+    }
+    matching: list[dict[str, Any]] = []
+    for source in sources:
+        observed_ids = {
+            "release_id": source["release"]["release_id"],
+            "contract_id": source["contract"]["contract_id"],
+            "bundle_id": source["evidence_bundle"]["bundle_id"],
+            "decision_id": source["decision"]["decision_id"],
+        }
+        shared = {
+            field for field, observed in observed_ids.items() if observed == expected_ids[field]
+        }
+        if shared and observed_ids != expected_ids:
+            fail("predecessor evidence registry contains conflicting identity cross-links")
+        if observed_ids == expected_ids:
+            matching.append(source)
+    if len(matching) != 1:
+        fail("relative performance requires exactly one matching predecessor source set")
+    source = matching[0]
+    predecessor_release = source["release"]
+    predecessor_contract = source["contract"]
+    predecessor_bundle = source["evidence_bundle"]
+    predecessor_runs = source["run_records"]
+    predecessor_decision = source["decision"]
+    if (
+        predecessor_release["supported_hardware_geometry"]
+        != release["supported_hardware_geometry"]
+    ):
+        fail("comparable predecessor hardware geometry differs from current release")
+    if predecessor_decision["supersedes_decision_ids"]:
+        fail(
+            "comparable predecessor decision has supersession lineage without "
+            "a fully supplied prior-decision evidence registry"
+        )
+    predecessor_decision_id = predecessor_decision["decision_id"]
+    if predecessor_decision_id in validation_stack:
+        fail("comparable predecessor evidence contains a decision cycle")
+    validate_validation_decision(
+        predecessor_decision,
+        release=predecessor_release,
+        contract=predecessor_contract,
+        evidence_bundle=predecessor_bundle,
+        run_records=predecessor_runs,
+        predecessor_evidence_registry=[
+            item
+            for item in sources
+            if item["decision"]["decision_id"] != predecessor_decision_id
+        ],
+        prior_decisions=[],
+        _predecessor_validation_stack=validation_stack | {predecessor_decision_id},
+    )
+    predecessor_criteria = _criterion_map(predecessor_contract)
+    predecessor_records = {
+        item["run_record_id"]: item for item in predecessor_runs
+    }
+    predecessor_results = {
+        item["criterion_id"]: item
+        for item in predecessor_decision["criterion_results"]
+    }
+    current_criteria = _criterion_map(contract)
+    baselines: dict[str, dict[tuple[str, str], str]] = {}
+    for dimension in ("throughput", "latency"):
+        requirement = relative[dimension]
+        current_criterion = current_criteria[requirement["criterion_id"]]
+        predecessor_criterion_id = requirement["predecessor_criterion_id"]
+        predecessor_criterion = predecessor_criteria.get(predecessor_criterion_id)
+        if predecessor_criterion is None or predecessor_criterion["dimension"] != dimension:
+            fail("relative performance predecessor criterion has the wrong dimension")
+        if (
+            model_serving_release.benchmark_protocol_id(predecessor_criterion)
+            != requirement["benchmark_protocol_id"]
+        ):
+            fail("relative performance predecessor protocol differs from current protocol")
+        result = predecessor_results.get(predecessor_criterion_id)
+        if result is None or result["disposition"] != "pass":
+            fail("relative performance predecessor criterion is not a reviewed pass")
+        run_id = requirement["predecessor_run_record_id"]
+        if run_id not in result["included_run_record_ids"]:
+            fail("relative performance predecessor run is not included in the passing result")
+        if run_id not in predecessor_bundle["run_record_ids"]:
+            fail("relative performance predecessor run is outside the predecessor bundle")
+        record = predecessor_records.get(run_id)
+        if record is None or record["attempt"]["completion"] != "completed":
+            fail("relative performance predecessor run is not a completed attempt")
+        observation = _observation_for(record, predecessor_criterion_id)
+        if observation["benchmark_protocol_id"] != requirement["benchmark_protocol_id"]:
+            fail("relative performance predecessor run protocol mismatch")
+        observed_metrics = {
+            (item["metric"], item["unit"]): item["value"]
+            for item in observation["metrics"]
+        }
+        required_keys = {
+            (threshold["metric"], threshold["unit"])
+            for threshold in current_criterion["thresholds"]
+        }
+        if not required_keys.issubset(observed_metrics):
+            fail("relative performance predecessor run lacks a required baseline metric")
+        baseline: dict[tuple[str, str], str] = {}
+        for key in sorted(required_keys):
+            _numeric_metric(
+                observed_metrics[key],
+                label=f"relative performance predecessor metric {key[0]}",
+                positive=True,
+            )
+            baseline[key] = observed_metrics[key]
+        baselines[current_criterion["criterion_id"]] = baseline
+    return baselines
+
+
+def _supersession_lineage_closure(
+    decision: dict[str, Any],
+    registry: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    closure: dict[str, dict[str, Any]] = {}
+    visiting: set[str] = set()
+
+    def visit(child: dict[str, Any]) -> None:
+        child_id = child["decision_id"]
+        if child_id in visiting:
+            fail("validation decision supersession lineage contains a cycle")
+        visiting.add(child_id)
+        child_reviewed_at = _parse_rfc3339_utc(
+            child["review"]["reviewed_at"],
+            label="validation decision reviewed_at",
+        )
+        for parent_id in child["supersedes_decision_ids"]:
+            if parent_id in visiting:
+                fail("validation decision supersession lineage contains a cycle")
+            parent = registry.get(parent_id)
+            if parent is None:
+                fail("validation decision supersession lineage is incomplete")
+            if (
+                child["release_id"] != parent["release_id"]
+                or child["contract_id"] != parent["contract_id"]
+            ):
+                fail(
+                    "validation decision supersession must retain release and contract"
+                )
+            parent_reviewed_at = _parse_rfc3339_utc(
+                parent["review"]["reviewed_at"],
+                label="prior validation decision reviewed_at",
+            )
+            if child_reviewed_at <= parent_reviewed_at:
+                fail("superseding validation decision review must be strictly later")
+            if parent_id not in closure:
+                closure[parent_id] = parent
+                visit(parent)
+        visiting.remove(child_id)
+
+    visit(decision)
+    return [closure[item] for item in sorted(closure)]
+
+
+def _validate_supersession_lineage(
+    decision: dict[str, Any],
+    prior_decisions: list[dict[str, Any]],
+) -> None:
+    validated = [
+        _validate_decision_shape_and_identity(item) for item in prior_decisions
+    ]
+    ids = [item["decision_id"] for item in validated]
+    if ids != sorted(ids) or len(ids) != len(set(ids)):
+        fail("validation decision prior lineage must be sorted and unique")
+    registry = {item["decision_id"]: item for item in validated}
+    closure = _supersession_lineage_closure(decision, registry)
+    if [item["decision_id"] for item in closure] != ids:
+        fail("validation decision prior lineage contains unrelated decisions")
+
+
 def build_validation_decision(
     *,
     release: dict[str, Any],
     contract: dict[str, Any],
     evidence_bundle: dict[str, Any],
     run_records: list[dict[str, Any]],
-    criterion_run_record_ids: dict[str, list[str]],
+    criterion_exclusions: list[dict[str, Any]],
+    predecessor_evidence_registry: list[dict[str, Any]],
     provenance_security_review: dict[str, Any],
     status: str,
     reviewer: str,
     reviewed_at: str,
     review_reference: str,
     supersedes_decisions: list[dict[str, Any]] | None = None,
+    supersession_lineage: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a decision candidate whose explicit status must match evidence."""
     release = model_serving_release.validate_model_serving_release(release)
@@ -1920,12 +2614,22 @@ def build_validation_decision(
     )
     provenance = copy.deepcopy(provenance_security_review)
     _validate_provenance_security_review(provenance, bundle=bundle)
+    normalized_exclusions = _canonicalize_criterion_exclusions(
+        criterion_exclusions
+    )
+    predecessor_baselines = _resolve_predecessor_baselines(
+        release=release,
+        contract=contract,
+        predecessor_evidence_registry=predecessor_evidence_registry,
+        validation_stack=set(),
+    )
     results = _derive_criterion_results(
         contract=contract,
         bundle=bundle,
         run_records=run_records,
-        criterion_run_record_ids=criterion_run_record_ids,
+        criterion_exclusions=normalized_exclusions,
         provenance_review=provenance,
+        predecessor_baselines=predecessor_baselines,
     )
     derived_status = derive_validation_status(
         qualification_started=bundle["qualification_started"],
@@ -1936,9 +2640,9 @@ def build_validation_decision(
             "validation decision status disagrees with evidence "
             f"(expected {derived_status})"
         )
-    prior_decisions = supersedes_decisions or []
+    direct_prior_decisions = supersedes_decisions or []
     prior_ids: list[str] = []
-    for prior in prior_decisions:
+    for prior in direct_prior_decisions:
         prior_ids.append(_validate_decision_shape_and_identity(prior)["decision_id"])
     if len(prior_ids) != len(set(prior_ids)):
         fail("validation decision supersession inputs must be unique")
@@ -1960,12 +2664,21 @@ def build_validation_decision(
         "supersedes_decision_ids": sorted(prior_ids),
     }
     decision["decision_id"] = validation_decision_id(decision)
+    prior_decisions_by_id: dict[str, dict[str, Any]] = {}
+    for prior in [*direct_prior_decisions, *(supersession_lineage or [])]:
+        validated_prior = _validate_decision_shape_and_identity(prior)
+        prior_id = validated_prior["decision_id"]
+        if prior_id in prior_decisions_by_id:
+            fail("validation decision supersession inputs must be unique")
+        prior_decisions_by_id[prior_id] = validated_prior
+    prior_decisions = [prior_decisions_by_id[item] for item in sorted(prior_decisions_by_id)]
     return validate_validation_decision(
         decision,
         release=release,
         contract=contract,
         evidence_bundle=bundle,
         run_records=run_records,
+        predecessor_evidence_registry=predecessor_evidence_registry,
         prior_decisions=prior_decisions,
     )
 
@@ -1977,7 +2690,9 @@ def validate_validation_decision(
     contract: dict[str, Any],
     evidence_bundle: dict[str, Any],
     run_records: list[dict[str, Any]],
+    predecessor_evidence_registry: list[dict[str, Any]],
     prior_decisions: list[dict[str, Any]] | None = None,
+    _predecessor_validation_stack: set[str] | None = None,
 ) -> dict[str, Any]:
     release = model_serving_release.validate_model_serving_release(release)
     contract = model_serving_release.validate_validation_contract(
@@ -1999,16 +2714,25 @@ def validate_validation_decision(
     provenance = _validate_provenance_security_review(
         decision["provenance_security_review"], bundle=bundle
     )
-    selections = {
-        item["criterion_id"]: item["run_record_ids"]
+    exclusions = [
+        exclusion
         for item in decision["criterion_results"]
-    }
+        for exclusion in item["excluded_run_records"]
+    ]
+    stack = set(_predecessor_validation_stack or {decision["decision_id"]})
+    predecessor_baselines = _resolve_predecessor_baselines(
+        release=release,
+        contract=contract,
+        predecessor_evidence_registry=predecessor_evidence_registry,
+        validation_stack=stack,
+    )
     expected_results = _derive_criterion_results(
         contract=contract,
         bundle=bundle,
         run_records=run_records,
-        criterion_run_record_ids=selections,
+        criterion_exclusions=exclusions,
         provenance_review=provenance,
+        predecessor_baselines=predecessor_baselines,
     )
     if decision["criterion_results"] != expected_results:
         fail("validation decision criterion results disagree with evidence")
@@ -2031,35 +2755,53 @@ def validate_validation_decision(
     if reviewed_at < latest_run_end:
         fail("validation decision review predates its evidence")
     supplied_prior = prior_decisions or []
-    prior_ids = sorted(
-        _validate_decision_shape_and_identity(item)["decision_id"]
-        for item in supplied_prior
-    )
-    if prior_ids != decision["supersedes_decision_ids"]:
-        fail("validation decision supersession cross-link mismatch")
-    if supplied_prior:
-        latest_prior_review = max(
-            _parse_rfc3339_utc(
-                prior["review"]["reviewed_at"],
-                label="prior validation decision reviewed_at",
-            )
-            for prior in supplied_prior
-        )
-        if reviewed_at <= latest_prior_review:
-            fail("superseding validation decision review must be later")
+    _validate_supersession_lineage(decision, supplied_prior)
     return decision
 
 
 def effective_validation_status(
-    decision: dict[str, Any], *, later_decisions: list[dict[str, Any]]
+    decision: dict[str, Any],
+    *,
+    decision_evidence_registry: list[dict[str, Any]],
+    predecessor_evidence_registry: list[dict[str, Any]],
 ) -> str:
-    """Project Superseded without mutating the earlier reviewed outcome."""
+    """Project Superseded from fully supplied, internally valid source sets.
+
+    This rejects shape-only or backdated superseders.  It is still a pure
+    consistency check over caller-supplied objects: until trusted persistence
+    lands, it cannot prove repository review, issuance, or current authority.
+    """
     current = _validate_decision_shape_and_identity(decision)
+    sources = _validate_evidence_source_registry(
+        decision_evidence_registry,
+        label="decision evidence registry",
+    )
+    source_by_id = {
+        item["decision"]["decision_id"]: item for item in sources
+    }
+    current_source = source_by_id.get(current["decision_id"])
+    if current_source is None or current_source["decision"] != current:
+        fail("decision evidence registry does not contain the exact current decision")
+    decisions = {
+        decision_id: source["decision"]
+        for decision_id, source in source_by_id.items()
+    }
+    for decision_id, source in source_by_id.items():
+        source_decision = source["decision"]
+        lineage = _supersession_lineage_closure(source_decision, decisions)
+        validate_validation_decision(
+            source_decision,
+            release=source["release"],
+            contract=source["contract"],
+            evidence_bundle=source["evidence_bundle"],
+            run_records=source["run_records"],
+            predecessor_evidence_registry=predecessor_evidence_registry,
+            prior_decisions=lineage,
+        )
     superseders = [
-        _validate_decision_shape_and_identity(item)
-        for item in later_decisions
-        if current["decision_id"]
-        in _validate_decision_shape_and_identity(item)["supersedes_decision_ids"]
+        source["decision"]
+        for source in sources
+        if current["decision_id"] in source["decision"]["supersedes_decision_ids"]
     ]
     if len(superseders) > 1:
         fail("more than one later decision directly supersedes the same decision")

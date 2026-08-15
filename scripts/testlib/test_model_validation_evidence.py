@@ -71,7 +71,8 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
         records: list[dict[str, Any]],
         *,
         status: str,
-        selections: dict[str, list[str]] | None = None,
+        exclusions: list[dict[str, Any]] | None = None,
+        predecessor_registry: list[dict[str, Any]] | None = None,
         artifacts: list[dict[str, Any]] | None = None,
         review: dict[str, Any] | None = None,
         contract: dict[str, Any] | None = None,
@@ -90,11 +91,8 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             artifacts=artifacts,
             run_records=records,
             bundle=bundle,
-            selections=(
-                selections
-                if selections is not None
-                else fixture.passing_selections(records)
-            ),
+            exclusions=exclusions,
+            predecessor_registry=predecessor_registry,
             provenance_review=review,
             status=status,
         )
@@ -112,6 +110,18 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             self.decision["decision_id"], fixture.EXPECTED_VALIDATION_DECISION_ID
         )
         self.assertEqual(self.decision["status"], "validated")
+        soak_run = next(
+            record
+            for record in self.runs
+            if record["criterion_observations"][0]["criterion_id"]
+            == "stability-soak"
+        )
+        soak = soak_run["criterion_observations"][0]["contract_requirements"][
+            "soak"
+        ]
+        self.assertEqual(soak["duration_seconds"], "9000")
+        self.assertEqual(soak_run["attempt"]["ended_at"], "2026-08-14T14:30:00Z")
+        self.assertEqual(self.decision["review"]["reviewed_at"], "2026-08-14T15:00:00Z")
         self.assertEqual(
             evidence.validation_status_label(self.decision["status"]), "Validated"
         )
@@ -155,6 +165,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_bundle=bundle,
                 run_records=runs,
+                predecessor_evidence_registry=[],
             ),
             decision,
         )
@@ -186,7 +197,9 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             launch_id=fixture.digest("another-launch"),
         )
         changed_command = copy.deepcopy(baseline)
-        changed_command["commands"][0]["arguments"][-1] = "another-tag"
+        changed_command["commands"][0]["version"] = (
+            "sha256:" + fixture.digest("another-run-gates-version")
+        )
         changed_command["run_record_id"] = evidence.validation_run_record_id(
             changed_command
         )
@@ -229,7 +242,8 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             contract=self.contract,
             evidence_bundle=bundle,
             run_records=[record],
-            criterion_run_record_ids={},
+            criterion_exclusions=[],
+            predecessor_evidence_registry=[],
             provenance_security_review=review,
             status="untested",
             reviewer="fixture-maintainer",
@@ -421,14 +435,21 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 self.assertEqual(result["reason"], expected_reason)
 
     def test_required_relative_budgets_gate_validated_status(self) -> None:
-        contract = fixture.build_relative_contract(release=self.release)
+        predecessor = fixture.build_predecessor_source()
+        registry = [predecessor]
+        contract = fixture.build_relative_contract(
+            release=self.release, predecessor_source=predecessor
+        )
         runs = fixture.build_passing_runs(
             release=self.release,
             contract=contract,
             artifacts=self.artifacts,
         )
         _bundle, passing = self._bundle_and_decision(
-            runs, status="validated", contract=contract
+            runs,
+            status="validated",
+            contract=contract,
+            predecessor_registry=registry,
         )
         self.assertEqual(passing["status"], "validated")
 
@@ -442,7 +463,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             ),
             ("latency-ttft", "ttft_p95", "1200", "1000", "milliseconds"),
         )
-        for criterion_id, metric, current, predecessor, unit in cases:
+        for criterion_id, metric, current, _predecessor, unit in cases:
             with self.subTest(criterion_id=criterion_id):
                 regressed = fixture.build_run_for_criterion(
                     criterion_id,
@@ -450,9 +471,6 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                     contract=contract,
                     artifacts=self.artifacts,
                     metrics=[{"metric": metric, "value": current, "unit": unit}],
-                    relative_predecessor_metrics=[
-                        {"metric": metric, "value": predecessor, "unit": unit}
-                    ],
                 )
                 records = self._replace_run(
                     criterion_id, regressed, records=runs
@@ -461,6 +479,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                     records,
                     status="tested-criteria-not-met",
                     contract=contract,
+                    predecessor_registry=registry,
                 )
                 result = next(
                     item
@@ -471,103 +490,58 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                     result["reason"], "relative-regression-budget-exceeded"
                 )
 
-    def test_missing_or_inconclusive_relative_evidence_cannot_validate(self) -> None:
-        contract = fixture.build_relative_contract(release=self.release)
-        passing_runs = fixture.build_passing_runs(
+    def test_relative_budget_requires_exact_predecessor_registry(self) -> None:
+        predecessor = fixture.build_predecessor_source()
+        contract = fixture.build_relative_contract(
+            release=self.release, predecessor_source=predecessor
+        )
+        runs = fixture.build_passing_runs(
             release=self.release,
             contract=contract,
             artifacts=self.artifacts,
         )
-        cases = (
-            (
-                "testing-incomplete",
-                {"include_relative_comparison": False},
-                "relative-performance-evidence-missing",
-            ),
-            (
-                "tested-inconclusive",
-                {"relative_completion": "inconclusive"},
-                "relative-performance-evidence-inconclusive",
-            ),
-        )
-        for expected_status, overrides, expected_reason in cases:
-            with self.subTest(status=expected_status):
-                replacement = fixture.build_run_for_criterion(
-                    "latency-ttft",
-                    release=self.release,
-                    contract=contract,
-                    artifacts=self.artifacts,
-                    **overrides,
-                )
-                records = self._replace_run(
-                    "latency-ttft", replacement, records=passing_runs
-                )
-                _bundle, decision = self._bundle_and_decision(
-                    records,
-                    status=expected_status,
-                    contract=contract,
-                )
-                result = next(
-                    item
-                    for item in decision["criterion_results"]
-                    if item["criterion_id"] == "latency-ttft"
-                )
-                self.assertEqual(result["reason"], expected_reason)
+        with self.assertRaisesRegex(
+            evidence.ModelValidationEvidenceError,
+            "exactly one matching predecessor source set",
+        ):
+            self._bundle_and_decision(
+                runs,
+                status="validated",
+                contract=contract,
+                predecessor_registry=[],
+            )
 
-    def test_relative_comparison_cross_links_fail_closed(self) -> None:
-        contract = fixture.build_relative_contract(release=self.release)
+    def test_run_cannot_embed_caller_invented_predecessor_metrics(self) -> None:
+        predecessor = fixture.build_predecessor_source()
+        contract = fixture.build_relative_contract(
+            release=self.release, predecessor_source=predecessor
+        )
         record = fixture.build_run_for_criterion(
             "throughput-serving",
             release=self.release,
             contract=contract,
             artifacts=self.artifacts,
         )
-        comparison = record["criterion_observations"][0][
-            "contract_requirements"
-        ]["relative_performance"]
-        assert comparison is not None
-        for field in (
-            "predecessor_release_id",
-            "supported_hardware_geometry_id",
-            "benchmark_protocol_id",
-        ):
-            with self.subTest(field=field):
-                tampered = copy.deepcopy(record)
-                tampered["criterion_observations"][0]["contract_requirements"][
-                    "relative_performance"
-                ][field] = "0" * 64
-                tampered["run_record_id"] = evidence.validation_run_record_id(
-                    tampered
-                )
-                with self.assertRaisesRegex(
-                    evidence.ModelValidationEvidenceError,
-                    "differs from the frozen contract",
-                ):
-                    evidence.validate_validation_run_record(
-                        tampered,
-                        release=self.release,
-                        contract=contract,
-                        evidence_artifacts=self.artifacts,
-                    )
-
-        irrelevant = fixture.build_run_for_criterion(
-            "throughput-serving",
-            release=self.release,
-            contract=self.contract,
-            artifacts=self.artifacts,
-        )
-        irrelevant["criterion_observations"][0]["contract_requirements"][
+        record["criterion_observations"][0]["contract_requirements"][
             "relative_performance"
-        ] = copy.deepcopy(comparison)
-        irrelevant["run_record_id"] = evidence.validation_run_record_id(irrelevant)
+        ] = {
+            "metrics": [
+                {
+                    "metric": "output_tokens_per_second",
+                    "value": "1000000",
+                    "unit": "tokens-per-second",
+                }
+            ]
+        }
+        record["run_record_id"] = evidence.validation_run_record_id(record)
         with self.assertRaisesRegex(
             evidence.ModelValidationEvidenceError,
-            "without a comparable predecessor",
+            "fields differ",
         ):
             evidence.validate_validation_run_record(
-                irrelevant,
+                record,
                 release=self.release,
-                contract=self.contract,
+                contract=contract,
                 evidence_artifacts=self.artifacts,
             )
 
@@ -605,17 +579,35 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             for item in decision["criterion_results"]
             if item["criterion_id"] == "throughput-serving"
         )
+        self.assertEqual(
+            interrupted["criterion_observations"][0]["completion"],
+            "inconclusive",
+        )
         self.assertEqual(result["disposition"], "inconclusive")
 
     def test_missing_gate_derives_testing_incomplete(self) -> None:
-        selections = fixture.passing_selections(self.runs)
-        selections["latency-ttft"] = []
+        latency_run = next(
+            record
+            for record in self.runs
+            if record["criterion_observations"][0]["criterion_id"]
+            == "latency-ttft"
+        )
+        exclusion = fixture.build_exclusion(
+            "latency-ttft", latency_run, self.artifacts
+        )
         _bundle, decision = self._bundle_and_decision(
             self.runs,
             status="testing-incomplete",
-            selections=selections,
+            exclusions=[exclusion],
         )
         self.assertEqual(decision["status"], "testing-incomplete")
+        result = next(
+            item
+            for item in decision["criterion_results"]
+            if item["criterion_id"] == "latency-ttft"
+        )
+        self.assertEqual(result["included_run_record_ids"], [])
+        self.assertEqual(result["excluded_run_records"], [exclusion])
 
     def test_pending_provenance_review_derives_testing_incomplete(self) -> None:
         review = fixture.build_review(
@@ -656,6 +648,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_bundle=self.bundle,
                 run_records=self.runs,
+                predecessor_evidence_registry=[],
             )
 
     def test_rehashed_criterion_disposition_tamper_is_rejected(self) -> None:
@@ -673,6 +666,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_bundle=self.bundle,
                 run_records=self.runs,
+                predecessor_evidence_registry=[],
             )
 
     def test_protocol_mismatch_fails_even_after_run_id_is_rehashed(self) -> None:
@@ -743,10 +737,6 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             artifacts=self.artifacts,
             run_records=records,
         )
-        selections = fixture.passing_selections(records)
-        selections["strict-same-boot-captures"] = sorted(
-            [first["run_record_id"], second["run_record_id"]]
-        )
         with self.assertRaisesRegex(
             evidence.ModelValidationEvidenceError,
             "spans more than one live server boot",
@@ -757,7 +747,6 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 artifacts=self.artifacts,
                 run_records=records,
                 bundle=bundle,
-                selections=selections,
             )
 
     def test_release_and_contract_cross_link_drift_fails_closed(self) -> None:
@@ -793,11 +782,17 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 privacy_review="passed",
             )
         tampered = copy.deepcopy(self.runs[0])
-        tampered["commands"][0]["arguments"] = ["--api-key", "private-value"]
+        tampered["commands"][0]["arguments"] = [
+            {"kind": "operation", "value": "run-validation-gates"},
+            {
+                "kind": "literal",
+                "value": "hf_privatevalue1234567890",
+            },
+        ]
         tampered["run_record_id"] = evidence.validation_run_record_id(tampered)
         with self.assertRaisesRegex(
             evidence.ModelValidationEvidenceError,
-            "must not contain credentials",
+            "kind is unsupported",
         ):
             evidence.validate_validation_run_record(
                 tampered,
@@ -925,17 +920,36 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             run_records=self.runs,
             bundle=self.bundle,
             supersedes=[self.decision],
-            reviewed_at="2026-08-14T14:00:00Z",
+            reviewed_at="2026-08-14T16:00:00Z",
+        )
+        sources = sorted(
+            [
+                fixture.evidence_source(
+                    release=self.release,
+                    contract=self.contract,
+                    bundle=self.bundle,
+                    run_records=self.runs,
+                    decision=item,
+                )
+                for item in (self.decision, later)
+            ],
+            key=lambda item: item["decision"]["decision_id"],
         )
         self.assertEqual(self.decision, original)
         self.assertEqual(
             evidence.effective_validation_status(
-                self.decision, later_decisions=[later]
+                self.decision,
+                decision_evidence_registry=sources,
+                predecessor_evidence_registry=[],
             ),
             "superseded",
         )
         self.assertEqual(
-            evidence.effective_validation_status(later, later_decisions=[]),
+            evidence.effective_validation_status(
+                later,
+                decision_evidence_registry=sources,
+                predecessor_evidence_registry=[],
+            ),
             "validated",
         )
         self.assertEqual(
@@ -950,11 +964,11 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
             run_records=self.runs,
             bundle=self.bundle,
             supersedes=[self.decision],
-            reviewed_at="2026-08-14T14:00:00Z",
+            reviewed_at="2026-08-14T16:00:00Z",
         )
         with self.assertRaisesRegex(
             evidence.ModelValidationEvidenceError,
-            "supersession cross-link mismatch",
+            "lineage is incomplete",
         ):
             evidence.validate_validation_decision(
                 later,
@@ -962,10 +976,11 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_bundle=self.bundle,
                 run_records=self.runs,
+                predecessor_evidence_registry=[],
             )
         with self.assertRaisesRegex(
             evidence.ModelValidationEvidenceError,
-            "review must be later",
+            "strictly later",
         ):
             fixture.build_decision(
                 release=self.release,
@@ -990,6 +1005,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_bundle=self.bundle,
                 run_records=self.runs,
+                predecessor_evidence_registry=[],
             )
 
     def test_invalid_time_or_reviewer_authority_fails_closed(self) -> None:
@@ -1022,6 +1038,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_bundle=self.bundle,
                 run_records=self.runs,
+                predecessor_evidence_registry=[],
             )
         with self.assertRaisesRegex(
             evidence.ModelValidationEvidenceError,
@@ -1032,7 +1049,8 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 contract=self.contract,
                 evidence_bundle=self.bundle,
                 run_records=self.runs,
-                criterion_run_record_ids=fixture.passing_selections(self.runs),
+                criterion_exclusions=[],
+                predecessor_evidence_registry=[],
                 provenance_security_review=fixture.build_review(self.artifacts),
                 status="validated",
                 reviewer="fixture-maintainer",

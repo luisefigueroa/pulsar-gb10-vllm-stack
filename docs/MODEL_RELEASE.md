@@ -20,6 +20,11 @@ are implemented in `scripts/model_validation_evidence.py`. Its bundle ID must
 not be presented as a Model Serving Release ID. Existing candidates and issued
 artifacts remain immutable.
 
+The corrected ADR 0004 objects remain schema version 1 because none was issued
+or persisted before this pre-issuance correction. Existing schema-1 seals and
+combined bundles produced by this legacy candidate service are different
+formats and remain byte-for-byte unchanged.
+
 ## System boundary
 
 The release identity service sits between lab validation and model-library
@@ -57,21 +62,55 @@ content-addressed evidence references:
 
 | Object | Included | Deliberately excluded |
 |---|---|---|
-| Run record | Exact release/contract IDs, unique attempt identity and timestamps, completion condition, rank-relative observed hardware/runtime and opaque boot/launch IDs, commands, preparation transport/subsystem provenance, full-verification barrier, criterion measurements, required context/soak observations, applicable comparable-predecessor measurements, and evidence IDs; `run_record_id` | Trusted review, profile status, and serving eligibility |
+| Run record | Exact release/contract IDs, unique attempt identity and timestamps, completion condition, sorted `attempted_criterion_ids`, structured `observed_environment.cluster` and per-rank compatibility observations, opaque boot/launch IDs, closed typed `commands[].arguments[]` and value-free `commands[].environment[]` descriptors, preparation transport/subsystem provenance, full-verification barrier, current-release criterion measurements, timestamp-bound context/soak observations, and evidence IDs; `run_record_id` | Trusted review, predecessor baseline measurements, profile status, and serving eligibility |
 | ADR 0004 validation bundle | Exact release/contract IDs, immutable run IDs, content-addressed artifact descriptors and privacy state, review-evidence IDs, qualification-started fact, and criterion coverage; `bundle_id` | Reviewer authority, final status, profile mutation, and legacy schema-1 seal/bundle identity |
-| Validation decision | Exact release/contract/bundle IDs, every criterion disposition and selected supporting run, provenance/security/privacy review, explicit reviewer-selected base status, repository-review metadata, and backward supersession links; `decision_id` | Proof that the named review actually occurred, trusted placement/publication, catalog projection, and serving authorization |
+| Validation decision | Exact release/contract/bundle IDs; every automatically aggregated disposition with `included_run_record_ids`; explicit evidence-backed `excluded_run_records`; provenance/security/privacy review; an explicit base-status assertion that must equal the derived result; repository-review metadata; and backward supersession links; `decision_id` | Proof that the named review actually occurred, trusted placement/publication, catalog projection, and serving authorization |
 
 The descriptor cross-checks recipe TP/PP against the declared geometry. The
 recipe stores only behavior-affecting, non-secret environment entries;
 credential and deployment/placement environment names are rejected rather than
-hashed into a release descriptor. TP/PP, GPU memory utilization, speculative
-decoding, artifact use, and access contract are structured fields and cannot be
-repeated ambiguously in the remaining ordered engine arguments. The
+hashed into a release descriptor. Every persisted free-form release/contract
+string without a stricter closed grammar—including artifact identifiers,
+criterion/workload/protocol/threshold strings, environment values, remaining
+engine and speculative-decoding arguments, and extensible parameter keys and
+values—is screened for credential patterns, absolute site paths, endpoints,
+environment/path references, and deployment-only assignments.
+TP/PP, GPU memory utilization, speculative decoding, artifact use, and access
+contract are structured fields and cannot be repeated ambiguously in the
+remaining ordered engine arguments. The
 contract requires stability, accuracy, throughput, latency, exact same-boot
 reproducibility, reviewed provenance/security, serving integration, and
-physical-geometry criteria. A relative latency/throughput budget is valid only
-when it binds a named predecessor, the exact benchmark protocol IDs, and the
-same supported-geometry ID; otherwise it is `N/A` and absolute criteria remain.
+physical-geometry criteria. Their scopes are fixed: stability, accuracy,
+throughput, latency, and strict same-boot are `model-qualification`; serving
+integration is `serving-integration`; and provenance/security plus physical
+geometry are `release-promotion`. `catalog-artifact` evidence can establish
+preparation and the qualification barrier but cannot satisfy a criterion.
+Because provenance/security is derived from fixed review components rather
+than a run metric, that criterion must equal the canonical closed template;
+additional thresholds, parameters, workloads, or sample requirements are
+rejected rather than ignored.
+A relative latency/throughput budget is valid only when it binds a reviewed
+predecessor contract, bundle, decision, and exact run, the relevant predecessor
+criterion passed, and the benchmark protocol and supported geometry are
+identical. The predecessor release need not be globally `Validated`; otherwise
+the relative gate is `N/A` and absolute criteria remain.
+
+Each run hash-binds a sorted `attempted_criterion_ids` declaration. A
+post-barrier non-preparation run must declare at least one known criterion in
+its scope, and its `criterion_observations` must cover that declaration exactly.
+A failed, interrupted, or otherwise incomplete attempt must record
+inconclusive observations for every declared criterion. The pure decision
+builder accepts exclusions through `criterion_exclusions`; it includes all
+other applicable observations automatically and persists each
+exception under `criterion_results[].excluded_run_records`. Relative evaluation
+accepts a `predecessor_evidence_registry` whose entries contain the exact
+`release`, `contract`, `evidence_bundle`, `run_records`, and `decision` source
+set. Effective supersession accepts a fully validated
+`decision_evidence_registry`. These registries are caller-supplied validation
+inputs, not a trusted store or proof of issuance. The current predecessor
+resolver rejects a predecessor decision that itself has supersession links:
+the five-key predecessor source entry does not include the full prior-decision
+evidence lineage required to validate them.
 
 The fixed deterministic fixture and mutation suite are
 `scripts/testlib/model_serving_release_fixture.py` and
@@ -86,16 +125,32 @@ exercise threshold/sample/protocol tamper, release/contract/run/artifact
 cross-links, required context and soak conditions, automatic relative
 throughput/latency budgets, experimental distribution provenance, the
 pre-qualification barrier, privacy state, exact same-boot selection, independent
-status derivation, and immutable supersession. A later decision stores its normal
-reviewed outcome and points backward; readers project the older decision as
-`Superseded` without changing the older bytes. These remain control-plane
-schema tests, not evidence capture or physical qualification.
+status derivation, and immutable supersession. Every declared attempt is
+accounted for, and every applicable observation is included automatically;
+explicit evidence-backed exclusions and pass/fail/inconclusive conflict rules
+are validated. Runtime compatibility and architecture/geometry are checked
+structurally. Commands use an allowlisted repository program, a
+`sha256:<digest>` version identity, exactly one program-specific closed
+operation, closed repository resources, typed criterion references, typed
+`--host`/`--rank`/`--url` site references, and value-free classified
+environment references. Soak timestamps must
+exactly agree with `duration_seconds`, and supersession must be chronologically
+later and acyclic. A later decision stores its normal reviewed outcome and points
+backward; readers project the older decision as `Superseded` without changing
+the older bytes. These remain control-plane schema tests, not evidence capture
+or physical qualification.
 
 No current CLI captures or persists the new objects, and no trusted directory,
 catalog field, profile reference, or serving gate consumes them. A locally
 constructed decision whose fields say `Validated` is only a syntactically
 consistent document until repository review deliberately publishes it through
 a future trusted persistence path.
+
+These structural checks reject known leak classes; they do not inspect the
+working tree to prove that a supplied program digest is correct and cannot
+recognize every possible private codename. Trusted capture must compute the
+digest, and publication still requires the artifact privacy review and current
+tree privacy audit.
 
 Under ADR 0004, the future supervised operator workflow is the separate
 `pulsar-model-onboarding` skill. It may compose acquisition, distribution,

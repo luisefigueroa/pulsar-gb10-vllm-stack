@@ -13,8 +13,33 @@ part of cluster qualification. Host NCCL is not required; images provide it.
 
 Here, `STATUS=tested*` is the current implementation's legacy serving gate. It
 is not the `Validated` Model Serving Release decision defined by
-[ADR 0004](./decisions/0004-model-serving-release-validation.md); that schema
-and status migration is still pending.
+[ADR 0004](./decisions/0004-model-serving-release-validation.md). The separate
+release-descriptor, frozen-contract, immutable run-record, evidence-bundle, and
+reviewed-decision schema version 1 contracts are implemented. Evidence capture
+and trusted persistence/publication, catalog/operator status projection, and
+serving-eligibility migration are still pending. The corrected schemas remain
+version 1 because no ADR 0004 object was issued or persisted before the
+correction; existing legacy schema-1 seals/bundles and raw evidence are
+untouched.
+
+A Model Serving Release is the immutable combination of exact model identity,
+serving recipe, runtime/image identity, and supported hardware geometry. Any
+change creates a new release. Structural checks can reject an incompatible
+runtime, architecture, capacity, or TP/PP geometry, but they do not prove
+physical behavior. Physical serving-integration and geometry evidence must be
+collected on the declared DGX geometry; documentation and selftests cannot
+supply it. Catalog acquisition and preparation establish exact content and the
+qualification barrier only, not a validation criterion.
+
+Validation Contract scopes are fixed: stability, accuracy, throughput,
+latency, and strict same-boot are `model-qualification`; serving integration is
+`serving-integration`; provenance/security and physical geometry are
+`release-promotion`. Operator command evidence is recorded structurally and
+uses allowlisted programs, SHA-256-shaped program identities, closed
+operations/resources, and typed criterion or protected site references. Each
+post-barrier non-preparation run must account exactly for its declared
+attempted criteria. Release/contract values and run evidence are structurally
+screened, but trusted capture and publication privacy review remain required.
 
 ---
 
