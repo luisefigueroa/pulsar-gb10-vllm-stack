@@ -46,6 +46,14 @@ expect_failure 2 "invalid served name" "gate runner rejects artifact path traver
   "$REPO_DIR/validate/run-gates.sh" ../outside
 expect_failure 2 "baseline is not readable" "gate runner rejects missing baseline" \
   "$REPO_DIR/validate/run-gates.sh" model --baseline /no/such/capture.json
+expect_failure 2 "--measurement-dir requires a value" "gate runner missing measurement dir" \
+  "$REPO_DIR/validate/run-gates.sh" model --measurement-dir
+expect_failure 2 "--invocation-plan requires a value" "gate runner missing invocation plan" \
+  "$REPO_DIR/validate/run-gates.sh" model --invocation-plan
+expect_failure 2 "invocation plan is not readable" "gate runner rejects missing invocation plan" \
+  "$REPO_DIR/validate/run-gates.sh" model --invocation-plan /no/such/invocation-plan.json
+expect_failure 2 "measurement directory is not a safe" "gate runner rejects protected measurement dir" \
+  "$REPO_DIR/validate/run-gates.sh" model --tag measdir --measurement-dir models/unsafe
 
 expect_failure 1 "invalid WORKER_IP" "cluster endpoints cannot become SSH options" \
   bash -c 'HEAD_IP=10.0.0.1; WORKER_IP=-oProxyCommand=false; . "$1"; require_cluster_ips' \

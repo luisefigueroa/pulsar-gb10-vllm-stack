@@ -122,6 +122,20 @@ language for new features without an explicit decision.
   `Untested`. Trusted
   decision issuance remains pending and must validate through the pure schema
   modules rather than duplicating their identity or status rules.
+  `validate/validator_measurement.py` owns the closed, versioned, status-neutral
+  measurement documents emitted by `validate/compare_captures.py` and
+  `validate/bench_serve.py`. `scripts/model_serving_release_attempt.py` owns the
+  closed attempt context and invocation-plan schemas plus mapping of those
+  measurements into existing attempt-only specs. It may consume only the
+  supported publishable `results/` measurement files in this slice, must
+  validate both generated specs through the capture contract, and may publish
+  only one exclusive unreviewed two-file directory under
+  `experiments/model-serving-release-attempts/` (or an explicit safe path
+  outside the repository). It must not invent missing validator output, persist
+  a publishable evidence digest in the attempt spec, issue a decision, change
+  status, authorize serving, or claim physical behavior. Later capture must
+  independently re-read the evidence and derive its digest; regenerate the
+  attempt specs if that file changes between commands.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -393,7 +407,10 @@ this work; the skill is procedural and does not outrank these sources.
   currently empty. Caller-supplied predecessor and decision registries remain
   validation input, not trusted persistence. Local evidence-capture candidate
   persistence and source-neutral release-plan candidate persistence are
-  implemented and remain unreviewed. Read-only
+  implemented and remain unreviewed. Closed compare/benchmark measurements and
+  candidate-only attempt composition are implemented for strict same-boot and
+  absolute throughput/latency; they do not issue status or prove physical
+  behavior. Read-only
   catalog/operator projection is implemented for an explicitly bound release;
   trusted decision issuance/publication remains pending. No current profile is
   bound and the tracked store is empty, so current projections are neutral.

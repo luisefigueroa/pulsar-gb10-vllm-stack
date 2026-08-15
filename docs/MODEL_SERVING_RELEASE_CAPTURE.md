@@ -16,8 +16,11 @@ A pre-barrier failure means qualification did not start; absence of a
 reviewed decision stays neutral.
 
 This is **ADR 0004 evidence-capture candidate persistence**. It is not
-catalog/operator status projection (ADR 0004 numbered item 3). It does not add
-`validate/*` measurement adapters and makes no physical DGX claim.
+catalog/operator status projection (ADR 0004 numbered item 3). It does not
+adapt `validate/*` output itself and makes no physical DGX claim. Closed
+validator-measurement documents and the separate attempt-composition service
+in `scripts/model-serving-release-attempt.sh` are the producer of attempt-only
+specs; this workflow still consumes those specs unchanged.
 The separate source-neutral release planner documented in
 [MODEL_RELEASE.md](./MODEL_RELEASE.md) publishes the release and contract
 values. Capture `plan` and `capture-run` consume that planner directory
@@ -37,7 +40,8 @@ or planner candidate ID.
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns evidence-artifact, run-record, evidence-bundle, and reviewed-decision schema version 1 |
 | Capture persistence (`scripts/model-serving-release-capture.sh`) | Plans, captures, assembles, and verifies unreviewed candidates under a gitignored output boundary |
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only verification of reviewed objects under `models/model-serving-releases/`; this tool never writes it |
-| Legacy validators (`validate/*`) | Heterogeneous measurement programs; exit zero or a selftest is not a criterion pass. Measurement adapters remain pending. |
+| Validator measurements (`validate/compare_captures.py`, `validate/bench_serve.py`) | Optional closed measurement documents for `compare-captures` and `benchmark-serving`. Exit zero or a selftest is not a criterion pass. |
+| Attempt composition (`scripts/model-serving-release-attempt.sh`) | Maps verified release-plan criteria plus caller context and validator measurements into existing attempt-only specs. This slice requires publishable `results/` files: the supplied measurement path and evidence `repository_path` must name the same stably read file. Generated specs are capture-validated against those current bytes, then published as one exclusive two-file directory under `experiments/model-serving-release-attempts/` or a safe explicit outside path. The attempt spec carries no precomputed publishable digest; later capture independently re-reads the file and derives the digest. Emits metrics and completion only. |
 
 The Bash entrypoint is the operator boundary. Python owns attempt-spec
 loading, verified release-plan composition, derivation, filesystem-safe
@@ -48,6 +52,13 @@ profile/catalog status projection, and it launches nothing.
 ## Commands
 
 ```text
+scripts/model-serving-release-attempt.sh plan-invocation
+    --release-plan DIR [--output FILE] [--json]
+scripts/model-serving-release-attempt.sh compose
+    --release-plan DIR --context FILE --output-dir DIR
+    [--compare-measurement FILE] [--benchmark-measurement FILE] [--json]
+scripts/model-serving-release-attempt.sh bench-argv --invocation-plan FILE
+
 scripts/model-serving-release-capture.sh plan --release-plan DIR --attempt-spec FILE [--json]
 scripts/model-serving-release-capture.sh capture-run --release-plan DIR --attempt-spec FILE
     [--output-dir DIR] [--json]
@@ -57,6 +68,30 @@ scripts/model-serving-release-capture.sh assemble-bundle
 scripts/model-serving-release-capture.sh verify-candidate
     --candidate-dir DIR [--json]
 ```
+
+`plan-invocation` reads the frozen contract and can persist an explicit bench
+argv plan. Passing that plan to `validate/run-gates.sh --invocation-plan FILE`
+changes only the benchmark arguments and fails closed on an invalid plan; it
+does not change the ordinary default sweep. The compare section reports the
+contract sample size but does not rewrite `validate/prompts.txt` or synthesize
+prompts. If the captured prompt count differs, composition records an
+inconclusive sample/protocol mismatch.
+
+`compose` consumes the verified release-plan directory, the two closed
+validator measurement files, and a closed caller context. The context supplies
+the existing capture-contract provenance and observed environment, unique
+attempt IDs/timestamps for `compare-captures` and `benchmark-serving`, typed
+command environment/site options, and one publishable `application/json`
+evidence source under `results/` for each operation. Its source paths must name
+the same files supplied on the measurement flags. This low-level context is
+expected to be assembled by the future supervised onboarding workflow; the
+composer validates it but does not discover topology, launch a server, infer
+attempt timestamps, or create missing validator output.
+
+Each emitted file is an ordinary attempt-only spec accepted by the capture
+commands below. Run capture immediately after composition. The output
+directory is an exclusive unreviewed two-file directory; an existing target or
+partial validation failure leaves it untouched.
 
 `plan` and `capture-run` require both `--release-plan DIR` and
 `--attempt-spec FILE`. The old `--spec` flag and the old kind
@@ -241,18 +276,30 @@ existing candidate or any existing ancestor that contains
 - Change `STATUS`, a profile's release binding, recommendation/default policy,
   or runtime state
 - Persist a planner path or planner candidate ID
-- Adapt `validate/*` output into a trusted producer contract
+- Adapt `validate/*` output itself; that mapping lives in
+  `scripts/model-serving-release-attempt.sh`
 - Claim physical DGX, model-download, container, or remote behavior
 - Route through `./pulsar` or the wizard
 
-Trusted privacy review, `validate/*` measurement adapters, and decision
-issuance/publication remain later units.
+Trusted privacy review and decision issuance/publication remain later units.
+The attempt composer covers only strict same-boot plus absolute
+throughput/latency in this slice. Protected digest locators are not accepted
+as measurement evidence here. Composition proves the measurement and evidence
+paths name the same current file and rechecks that digest around capture
+validation; it does not create an immutable binding. A mutation after compose
+and before later capture is an inter-command window. Capture immediately, or
+regenerate and compose again if the evidence file changes. The composer does
+not invent a validator measurement; supply the validator `--result-json`,
+including incomplete validator output. Selftests prove control-plane contracts
+only and do not prove physical DGX behavior.
 The separate read-only projection consumes only the tracked registry and never
 this unreviewed candidate output. Serving permission is status-independent.
 
 ## Tests
 
 Focused contracts live in
-`scripts/testlib/test_model_serving_release_capture.py` and are wired
-into `scripts/selftest.sh`. They prove control-plane capture,
-persistence, and verification behavior only.
+`scripts/testlib/test_model_serving_release_capture.py`,
+`scripts/testlib/test_validator_measurement.py`, and
+`scripts/testlib/test_model_serving_release_attempt.py`; all are wired into
+`scripts/selftest.sh`. They prove control-plane measurement, composition,
+capture, persistence, and verification behavior only.

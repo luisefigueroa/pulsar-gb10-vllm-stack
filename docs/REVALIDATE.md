@@ -59,7 +59,10 @@ launch. A syntactically reviewed decision cannot prove physical behavior
 or that repository review occurred. Read-only persistence and verification of
 stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
-persistence is implemented and remains unreviewed. Advisory catalog/operator
+persistence is implemented and remains unreviewed. Closed validator
+measurements and attempt-only spec composition are implemented for strict
+same-boot and absolute throughput/latency; they do not issue status or prove
+physical behavior. Advisory catalog/operator
 projection is implemented for a profile explicitly bound to a release ID;
 current profiles are unbound and the tracked store is empty. Trusted decision
 issuance remains pending.
@@ -285,9 +288,20 @@ validate/run-gates.sh <served-name> \
 Gate reading: same-run comparison is strict (`--require-identical`) by
 default. It must be IDENTICAL for FLASH_ATTN-path models (qwen, nano). For
 Laguna only, explicitly append `--allow-fp-equivalent-run-to-run` because its
-known FLASHINFER-path noise is FP-equivalent. Vs-baseline must have ZERO hard
-disagreements; an incomplete warmup or measured concurrency level exits
-nonzero. Bench must remain within ~5% of the README table or be investigated.
+known FLASHINFER-path noise is FP-equivalent. That flag changes only the
+human compare exit path; it does not rewrite a later strict same-boot
+measurement. Vs-baseline remains a human-only diagnostic and is not an ADR
+predecessor-relative gate. An incomplete warmup or measured concurrency
+level exits nonzero. Bench must remain within ~5% of the README table or be
+investigated. Optional `--measurement-dir DIR` writes closed compare and
+bench measurement documents and does not require a release plan. The
+directory must be under tracked `results/` or an explicit path outside the
+repository; `models/`, `.git`, and the repository root are refused, and
+existing measurement files are never overwritten. Those documents are
+validator output. Attempt composition consumes them later and does not invent
+a missing file. Optional `--invocation-plan FILE` is an explicit
+contract-driven bench argv overlay; an invalid plan fails closed and does not
+fall back to the default `c=1,2,4,8` sweep.
 
 **grep the engine log on every first boot** — backend selection changes
 silently across versions:

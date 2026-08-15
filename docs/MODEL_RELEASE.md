@@ -157,12 +157,13 @@ or physical qualification.
 Read-only persistence and verification for stored ADR 0004 objects now live
 under `models/model-serving-releases/` and
 `scripts/model-serving-release-registry.sh`. That CLI does not capture
-evidence, issue a decision, project status, or launch a release. The tracked store
-currently contains no issued object. Local ADR 0004 evidence-capture
+evidence, issue a decision, or launch a release. Optional reviewed
+`MODEL_SERVING_RELEASE_ID` binding and advisory catalog/operator projection
+are implemented; the registry remains empty and current profiles remain
+unbound, so projection is currently neutral. Local ADR 0004 evidence-capture
 candidate persistence is documented in
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) and
-is a separate unreviewed workflow. No catalog field or profile reference
-consumes an ADR 0004 decision. A locally constructed decision
+is a separate unreviewed workflow. A locally constructed decision
 whose fields say `Validated` is only a syntactically consistent document until
 repository review deliberately publishes it into that store.
 

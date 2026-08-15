@@ -148,6 +148,12 @@ it composes a verified release-plan candidate with an attempt-only spec,
 independently validates the release and contract, and does not write the
 tracked registry, issue a decision, persist a planner path, issue
 `Untested`, or launch a release.
+Closed validator-measurement documents for `compare-captures` and
+`benchmark-serving` are implemented under `validate/`;
+`scripts/model-serving-release-attempt.sh` composes those measurements plus
+caller context into the existing attempt-only specs. Neither surface issues a
+status, decision, or serving permission, and ordinary `validate/run-gates.sh`
+remains a human path that does not require a release plan.
 No profile currently binds a release and the tracked store is empty, so the
 current projection is neutral. Review-metadata shape checks cannot prove that
 repository review or physical qualification occurred. Trusted decision
@@ -625,9 +631,12 @@ owns the stable Model Serving Release ID, a frozen Validation Contract declares
 the gates, immutable run records bind observed attempts and evidence, a new
 bundle binds the exact evidence set, and a reviewed decision records an explicit
 status that must equal the outcome independently derived from those inputs.
-The next stage persists and projects these objects into catalog/operator and
-serving policy. Existing schema-1 bundles remain immutable legacy combined
-artifacts and are not converted in place.
+Read-only trusted persistence and advisory catalog/operator projection are now
+implemented. Local release planning, validator measurements, attempt
+composition, and evidence-capture candidate persistence remain unreviewed and
+non-issuing. Trusted decision issuance is the next authority boundary; serving
+permission remains status-independent. Existing schema-1 bundles remain
+immutable legacy combined artifacts and are not converted in place.
 
 Verification has two tiers:
 
@@ -1145,3 +1154,5 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-15 | Implemented read-only advisory Model Serving Release status projection. An optional reviewed `MODEL_SERVING_RELEASE_ID` profile binding selects a content-verified registry release; catalog JSON, human catalog, wizard, and `scripts/up.sh` display its one unambiguous reviewed effective status. No binding and no reviewed decision remain neutral, ambiguity/unavailability stays visible, and a different runtime model-access contract cannot inherit the decision. Legacy `STATUS` remains separate and continues to drive recommendation order. Projection never issues a decision, authorizes serving, or creates a physical claim; the empty registry and unbound current profiles therefore remain neutral. |
 | 2026-08-15 | Expanded the unissued ADR 0004 schema-1 primary identity to be source-neutral: exact Hugging Face snapshots and other complete content-addressed model trees are valid primary artifacts, while generic digest attachments are not. Added a maintainer-only planner that sources a profile and persists unreviewed release/contract candidates from a complete manifest, explicit runtime/hardware envelope, frozen criteria, and explicitly bound behavior artifacts. Local source references can normalize to public artifact keys but are never persisted. The planner cannot acquire bytes, write the tracked registry, issue a decision, assign status, or prove physical behavior. The registry is empty, so schema version 1 remains appropriate; legacy schema-1 seals/bundles are untouched. |
 | 2026-08-15 | Capture `plan` and `capture-run` now compose a verified release-plan candidate with a separate attempt-only spec (`--release-plan DIR --attempt-spec FILE`). The old embedded `--spec` / `pulsar-model-serving-release-capture-spec` path is rejected with a migration message. Planner `verify` uses the public `load_verified_release_plan_candidate` loader; planner and capture publish candidate JSON with shared `pretty_json_bytes`. No planner path or planner candidate ID is persisted. Capture still independently validates release/contract objects and does not issue `Untested`. Measurement/validator-output adapters, trusted privacy review, and physical qualification remain pending. This is control-plane/schema plumbing only. |
+| 2026-08-15 | Implemented the first reusable measurement and attempt-composition foundation for a future `pulsar-model-onboarding` skill: `validate/compare_captures.py` and `validate/bench_serve.py` can emit closed versioned measurement documents; `validate/run-gates.sh` can optionally preserve them without requiring a release plan; and `scripts/model-serving-release-attempt.sh` composes those measurements into existing ADR 0004 attempt-only specs. Mapping is limited to strict same-boot, absolute throughput, and absolute latency. Missing, corrupt, interrupted, short-sample, or protocol-mismatched work stays incomplete/inconclusive. Capture still derives program versions and evidence digests. No status, decision, trusted publication, physical claim, or serving gate was added. |
+| 2026-08-15 | Hardened that foundation fail-closed: invocation plans are closed and type-checked before argv emission; run-gates refuses a failed or empty bench-argv instead of keeping the default sweep; compose requires the measurement path and publishable evidence path to name the same stably read file, capture-validates both specs, then publishes one exclusive two-file directory. Writes use descriptor-rooted no-follow parents. Compare/bench persist incomplete `--result-json` on ordinary failure; missing validator output is refused rather than invented. The attempt spec still has no precomputed digest, so later capture must re-read the file. Protected locators remain out of this slice. Control-plane tests only. |
