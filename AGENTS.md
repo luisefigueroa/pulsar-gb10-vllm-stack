@@ -163,13 +163,19 @@ rather than additional parallel SSH/local state machines.
 
 These rules exist because silent fallbacks, wrong networks, and unowned cleanup have caused real multi-node failures. Prefer failing loudly over “making it work.”
 
-### Independent implementation review
+### Independent Grok review and approved implementation
 
-When a user requests an independent Grok review before implementation, use
-`skills/grok-subagent/SKILL.md`. Launch Grok only against a sanitized review
-tree, never the live worktree. Grok remains advisory; reconcile its findings
-against repository authority and obtain agreement on the final approach before
-editing.
+When a user requests a Grok review or delegated implementation, use
+`skills/grok-subagent/SKILL.md`. The first pass stays read-only against a
+sanitized review tree. Reconcile its findings against repository authority and
+obtain explicit agreement before editing. After approval, Grok may implement
+the agreed unit directly in a clean dedicated feature worktree that passes the
+skill's privacy preflight, and may run in-scope local tests or bounded
+subagents. The primary agent reviews the resulting diff and authoritative test
+results without needlessly reimplementing the change, and retains publication
+responsibility. Grok must not receive secrets or site-local state, expand
+policy or scope without approval, or operate external/privileged infrastructure
+unless that authority is explicitly part of the approved plan.
 
 ### Fail closed; no silent policy changes
 

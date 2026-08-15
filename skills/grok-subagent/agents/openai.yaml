@@ -1,4 +1,4 @@
 interface:
-  display_name: "Grok Subagent Review"
-  short_description: "Get an independent Grok review before coding"
-  default_prompt: "Use $grok-subagent to independently review this task and reconcile an implementation approach before coding."
+  display_name: "Grok Review and Implementation"
+  short_description: "Review, approve, and delegate implementation"
+  default_prompt: "Use $grok-subagent to independently review this task, reconcile the approach with me, and let Grok implement it after I approve."
