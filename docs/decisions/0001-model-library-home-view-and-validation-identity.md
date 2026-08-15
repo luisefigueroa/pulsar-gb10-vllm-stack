@@ -95,7 +95,9 @@ evidence; current implementation convenience is not sufficient.
 ## Interpretation note — 2026-08-14
 
 ADR 0004 keeps this expected-versus-observed model-content trust boundary and
-supersedes only the combined release-object interpretation. A future release
+supersedes only the combined release-object interpretation. A separate release
 descriptor owns the stable Model Serving Release ID; the Validation Contract,
 run records, validation bundle, and reviewed validation decision are separate.
-Existing schema-1 bundles and seals remain immutable legacy artifacts.
+Their pure schema contracts are now implemented, while trusted persistence and
+status/serving projection remain pending. Existing schema-1 bundles and seals
+remain immutable legacy artifacts.

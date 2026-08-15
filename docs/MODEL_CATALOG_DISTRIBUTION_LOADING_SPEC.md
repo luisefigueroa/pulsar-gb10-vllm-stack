@@ -35,7 +35,7 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of six implementation areas:
+This snapshot supports review of seven implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
@@ -43,8 +43,9 @@ This snapshot supports review of six implementation areas:
 3. the experimental live NFS/RDMA single-copy path;
 4. the experimental transfer-then-load model-library path;
 5. the maintainer-only legacy release identity and candidate-assembly service;
-   and
-6. the pure ADR 0004 release-descriptor and Validation Contract schemas.
+6. the pure ADR 0004 release-descriptor and Validation Contract schemas; and
+7. the pure ADR 0004 immutable run-record, evidence-bundle, and reviewed
+   validation-decision schemas.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -78,10 +79,42 @@ The module has no I/O or issuance authority, and no operator or serving path
 consumes these objects yet. Schema-1 bundles still combine serving inputs,
 evidence, and issuance metadata; `STATUS=tested*` still controls launch
 eligibility; and `--validated` retains its legacy command meaning. No current
-profile or bundle is automatically assigned the new `Validated` status. Run
-records, new evidence bundles, validation decisions, persistence/cross-links,
-status projection, and serving-eligibility migration remain implementation
-gaps.
+profile or bundle is automatically assigned the new `Validated` status.
+
+ADR 0004 stage 2 is implemented by `scripts/model_validation_evidence.py`.
+Content-addressed evidence references, immutable attempt/run records, new
+validation bundles, and reviewed validation decisions now have pure schema
+version 1. The validators bind the exact release, frozen contract, run and
+artifact sets, rank-relative observed environment, preparation provenance,
+commands, completion condition, measured criteria, privacy/review disposition,
+required context and soak observations, reviewed comparable-predecessor source
+bindings and derived baselines, and backward supersession links. Criterion
+scope is canonical. Post-barrier attempts declare and exactly cover their
+attempted criteria. Every applicable
+observation is considered automatically unless an explicit evidence-backed
+exclusion remains in the review history; conflicts use the ADR 0004
+adjudication table. Relative throughput/latency comparisons bind the reviewed
+predecessor contract, bundle, decision, and run whose relevant criterion
+passed. Runtime compatibility and architecture/geometry are checked
+structurally, command evidence uses the closed typed schema, and supersession
+must be chronologically later and acyclic. Criterion results are recomputed
+from frozen thresholds and every applicable contract requirement. The explicit
+base-status assertion fails if it differs from the derived result. The
+module has no I/O; its review fields are a schema shape, not proof that
+repository review or physical behavior occurred. Evidence capture/persistence,
+trusted publication, status projection, and serving-eligibility migration
+remain implementation gaps.
+
+One current fail-closed limitation is deliberate: the comparable-predecessor
+resolver rejects a predecessor decision that itself has supersession links.
+Each `predecessor_evidence_registry` entry carries the exact `release`,
+`contract`, `evidence_bundle`, `run_records`, and `decision`, but not the full
+prior-decision evidence lineage needed to validate those links semantically.
+
+These changes remain schema version 1 because no ADR 0004 object was issued or
+persisted before this pre-issuance correction. The older schema-1 seals and
+combined validation bundles under `models/` are separate legacy formats and
+remain byte-for-byte unchanged.
 
 The model catalog still selects **what to run and how many ranks it needs**.
 The guided replicated path has no storage owner. A live NFS/RDMA owner exists
@@ -178,6 +211,16 @@ must not be promoted into policy merely because the code currently behaves
 that way.
 
 - **Profile**: a trusted shell configuration in `models/`.
+- **Model Serving Release**: the immutable combination of exact model
+  identity, serving recipe, runtime/image identity, and supported hardware
+  geometry. Any change to one part creates a new release; a profile name is not
+  the release identity.
+- **Qualification scope**: the required evidence boundary recorded on ADR 0004
+  criteria and evidence. Stability, accuracy, throughput, latency, and strict
+  same-boot map to `model-qualification`; serving integration maps to
+  `serving-integration`; provenance/security and physical geometry map to
+  `release-promotion`. `catalog-artifact` is preparation/subsystem evidence and
+  is not a validation-criterion scope.
 - **Model ID**: the `MODEL` value passed to vLLM. It is either a Hugging Face
   repository identifier or an absolute filesystem path.
 - **Served name**: the stable name exposed through the OpenAI-compatible API.
@@ -1177,19 +1220,50 @@ SSH targets, addresses, cache/export/mount paths, and tokens. The artifact
 auditor rejects private field names or exact known private values before a
 bundle is considered shareable.
 
+ADR 0004 run records store operator commands as structured descriptors:
+an allowlisted repository program, `sha256:<digest>` program-version identity,
+exactly one closed program operation, closed repository resources, attempted
+criterion references, typed protected/rank-relative site-option references,
+`environment[]` references without values, and a generic repository-root
+working-directory marker. They are not raw shell transcripts. Each
+post-barrier non-preparation attempt declares the exact frozen criteria it
+attempted and supplies a complete or inconclusive observation for each;
+incomplete attempts may supply only inconclusive observations.
+
+Release/contract and command schemas reject recognized secrets, absolute site
+paths, endpoints, and topology forms. These structural checks do not prove that
+a supplied program digest matches the checked-out file or recognize every
+private codename. Trusted capture must compute the digest, and the publisher's
+privacy audit and reviewer inspection remain mandatory.
+
 ## 13. Current validation status
 
 Current documentation interprets results in the four ADR-0002 scopes: catalog
 and artifact service, serving integration, model qualification, and
-release/promotion. The implementation does not yet expose those as
-machine-readable status dimensions. Evidence in one scope remains valid while
-its measured inputs and contracts are unchanged; a failure elsewhere blocks a
-combined claim only when that claim requires both scopes.
+release/promotion. Legacy catalog and operator surfaces do not yet expose
+scope-specific statuses. The pure ADR 0004 criteria, evidence artifacts, and
+run records do expose and validate `qualification_scope`, but no trusted
+persistence or projection path consumes it. Evidence in one scope remains
+valid while its measured inputs and contracts are unchanged; a failure
+elsewhere blocks a combined claim only when that claim requires both scopes.
 
 The following is the implementation/evidence state as of the snapshot date.
 The Qwen 1.7B two-node `STATUS=tested` row is a historical runtime-profile
 claim; it neither machine-binds arbitrary Qwen snapshots to that evidence nor
 promotes any experimental storage path for general users.
+
+Under the implemented ADR 0004 contracts, a decision does not manually
+choose favorable supporting runs. It automatically considers every applicable
+observation in the exact bundle. The builder accepts only explicit,
+evidence-backed `criterion_exclusions`; each result persists
+`included_run_record_ids` and any `excluded_run_records`. For one criterion,
+pass+fail and pass+inconclusive adjudicate
+to inconclusive, fail+inconclusive adjudicates to fail, and all-pass
+adjudicates to pass. Relative performance requires a bound reviewed predecessor
+contract, bundle, decision, and run with a pass on the relevant predecessor
+criterion; the predecessor does not need an overall `Validated` status.
+Structural runtime/architecture/geometry matching only establishes that the
+run fits the declared envelope. It does not add a physical PASS row below.
 
 | Gate | Current result | Interpretation |
 |---|---|---|
@@ -1628,11 +1702,18 @@ These points combine current evidence with the accepted architecture:
 The architectural questions about full content seals and home-rank
 materialization are answered by ADR 0001. Schema-1 validation bundles implement
 the current combined binding. ADR 0004 answers the replacement object model,
-and its release-descriptor and frozen-contract schemas are implemented. Run
-records, evidence bundles, decisions, persistence/status projection, and
-serving migration remain accepted work rather than open policy questions. The
-remaining questions concern that implementation shape and unrelated
-catalog/live-mount policy.
+and its release-descriptor, frozen-contract, immutable run-record,
+evidence-bundle, and reviewed-decision schemas are implemented as pure
+contracts. The pre-issuance correction keeps those objects at schema version 1
+while adding canonical criterion scopes, automatic observation inclusion and
+adjudication, reviewed predecessor lineage, structural compatibility checks,
+sanitized command descriptors, and chronological acyclic supersession. No ADR
+0004 objects were issued or persisted before the correction; legacy schema-1
+seals/bundles and raw evidence remain untouched. Evidence
+capture/persistence, trusted publication, status projection, and serving
+migration remain accepted work rather than open policy questions. The remaining
+questions concern that implementation shape and unrelated catalog/live-mount
+policy.
 
 ### Catalog and release identity
 
@@ -1695,6 +1776,17 @@ Before interpreting a result:
 
 - declare whether it proves catalog/artifact behavior, serving integration,
   model qualification, or combined release/promotion;
+- use the canonical criterion mapping: stability, accuracy, throughput,
+  latency, and strict same-boot are `model-qualification`; serving integration
+  is `serving-integration`; provenance/security and physical geometry are
+  `release-promotion`;
+- never use `catalog-artifact` acquisition or preparation evidence to satisfy a
+  validation criterion;
+- include every applicable observation automatically; record any exclusion
+  explicitly with evidence and apply the ADR 0004 conflict rules;
+- require each post-barrier non-preparation attempt to declare and exactly
+  account for its attempted criteria, using inconclusive observations when the
+  attempt is incomplete;
 - do not infer accuracy, determinism, performance, context, or soak from health
   or completion smoke;
 - preserve valid evidence when unrelated subsystem inputs change;
@@ -1704,8 +1796,10 @@ Before interpreting a result:
   a default policy.
 
 The criteria below remain implementation-specific gates within those scopes.
-Current CLI and JSON schemas do not expose a first-class qualification-scope
-field.
+Legacy catalog/launch status JSON does not expose those scopes as independent
+status dimensions. The ADR 0004 Validation Contract criteria, evidence
+artifacts, and run records **do** expose and validate `qualification_scope`;
+do not describe that field as absent from the current pure schemas.
 
 ### 19.1 Profile catalog acceptance
 
@@ -1798,6 +1892,14 @@ The implementation described here is primarily defined by:
   and [`scripts/testlib/test_model_serving_release.py`](../scripts/testlib/test_model_serving_release.py)
   — fixed-ID fixtures, mutation contracts, privacy checks, and legacy
   non-regression coverage;
+- [`scripts/model_validation_evidence.py`](../scripts/model_validation_evidence.py)
+  — pure ADR 0004 evidence-artifact, run-record, validation-bundle, reviewed
+  decision, status-derivation, and supersession schemas;
+- [`scripts/testlib/model_validation_evidence_fixture.py`](../scripts/testlib/model_validation_evidence_fixture.py)
+  and [`scripts/testlib/test_model_validation_evidence.py`](../scripts/testlib/test_model_validation_evidence.py)
+  — fixed-ID evidence fixtures plus cross-link, status, threshold,
+  context/soak/relative-budget, privacy, same-boot, experimental-provenance, and
+  supersession adversarial contracts;
 - [`scripts/model-release.sh`](../scripts/model-release.sh) and
   [`scripts/model_release.py`](../scripts/model_release.py) — maintainer-only
   exact-manifest and untrusted release-candidate assembly/verification;
@@ -1814,8 +1916,9 @@ The implementation described here is primarily defined by:
   — accepted no-fallback transport policy for explicit experimental preparation;
 - [ADR 0004](./decisions/0004-model-serving-release-validation.md)
   — accepted Model Serving Release identity, evidence, status, onboarding, and
-  subsystem-GA boundaries; descriptor/contract schemas implemented, later
-  records, decisions, status, and serving migration pending;
+  subsystem-GA boundaries; descriptor, contract, run, bundle, and decision
+  schemas implemented, with capture/persistence, trusted publication, status
+  projection, and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

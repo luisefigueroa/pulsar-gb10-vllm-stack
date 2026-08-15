@@ -4,9 +4,13 @@ This table reports the implementation's existing `STATUS=tested*`, reviewed
 seal, and `legacy-unsealed` contracts. It does **not** assign the Model Serving
 Release statuses accepted in
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). In
-particular, no row is automatically `Validated`: that future status belongs to
-one immutable model + serving-recipe + runtime/image + supported-geometry tuple
-after every frozen criterion and review requirement passes.
+particular, no row is automatically `Validated`: that status belongs to one
+**Model Serving Release**, the immutable combination of exact model identity,
+exact serving recipe, runtime/image identity, and supported hardware geometry,
+after every frozen criterion and review requirement passes. Changing any one
+component creates a new release. Pure version-1 schema validation exists, but
+trusted release-object persistence, publication, status projection, and
+serving admission do not; no current row is silently migrated.
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
@@ -81,7 +85,13 @@ row or issue a claim. See [MODEL_RELEASE.md](./MODEL_RELEASE.md),
 [ADR 0004](./decisions/0004-model-serving-release-validation.md).
 Catalog/artifact or serving-integration evidence does not extend a model
 qualification or `STATUS` claim; combined release claims require every
-applicable scope.
+applicable scope. Stability, accuracy, throughput, latency, and strict
+same-boot criteria use `model-qualification`; serving checks use
+`serving-integration`; provenance/security and physical-geometry criteria use
+`release-promotion`. Catalog/artifact preparation is never a release-validation
+criterion. All applicable observations are considered automatically, except
+for explicit review-evidence-backed exclusions, and selftests or schema checks
+do not substitute for physical DGX evidence.
 
 ## Does not fit any current legacy tested serving profile
 

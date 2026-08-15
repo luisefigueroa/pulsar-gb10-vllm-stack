@@ -23,14 +23,27 @@ promoted into accuracy or determinism claims; a model-runtime failure does not
 erase unchanged catalog evidence, but it blocks a combined release claim that
 requires both.
 
+The ADR 0004 criterion mapping is stricter than the four evidence buckets:
+stability, accuracy, throughput, latency, and strict same-boot are
+`model-qualification`; serving integration is `serving-integration`; and
+provenance/security plus physical geometry are `release-promotion`.
+`catalog-artifact` is valid evidence for acquisition, preparation, identity,
+transfer, and lifecycle only. It cannot satisfy a validation criterion.
+
 ADR 0004 is accepted policy, not retroactive artifact relabeling. Existing
 schema-1 bundles, seals, PASS/FAIL rows, and `STATUS=tested*` claims keep their
 recorded implementation meaning. None is automatically `Validated`. The pure
-stage-1 release descriptor now identifies the exact model + serving-recipe +
-runtime/image + supported-geometry tuple separately from its frozen contract.
-No release or contract instance is issued by this results tree; run records,
-new evidence bundles, reviewed decisions, and status/serving projection remain
-pending.
+release descriptor identifies the exact model + serving-recipe + runtime/image
+plus supported-geometry tuple separately from its frozen contract. Pure immutable
+run-record, new evidence-bundle, reviewed-decision, status-derivation, and
+supersession schemas are also implemented. No release, contract, run, bundle,
+or decision instance is issued by this results tree; capture/persistence,
+trusted publication, and status/serving projection remain pending.
+
+The corrected objects stay at schema version 1 because no ADR 0004 object was
+issued or persisted before the correction. Existing legacy schema-1
+seals/bundles and every raw or historical artifact indexed here remain
+unchanged.
 
 Deterministic tests under `scripts/testlib/` cover fixed release/contract IDs,
 all four identity mutations, strict same-boot and reviewed-provenance
@@ -39,6 +52,26 @@ rejection, and unchanged legacy schema-1 validation. This is control-plane
 schema evidence only. It does not demonstrate model behavior, storage behavior,
 or physical qualification on a supported geometry, so no new result artifact
 or PASS row is added here.
+
+The stage-2 adversarial suite additionally freezes representative run, bundle,
+and decision IDs and covers exact release/contract/run/artifact cross-links,
+threshold and sample-size derivation, required context and soak conditions,
+comparable-predecessor throughput/latency budgets, protocol tamper, failed
+preparation before the qualification barrier, explicit Experimental subsystem
+provenance, privacy state, observed image/geometry drift, strict same-boot
+selection, reviewer authority shape, every base outcome, and immutable backward
+supersession. The fixture's synthetic `Validated` decision demonstrates schema
+consistency only; it is not lab evidence, proof of review, an issued status, or
+a physical claim.
+
+The corrected suite also covers automatic inclusion of every applicable
+observation, evidence-backed exclusions, deterministic pass/fail/inconclusive
+adjudication, reviewed predecessor contract/bundle/decision/run lineage with a
+pass on the relevant predecessor criterion, structural runtime and
+architecture/geometry compatibility, exact attempted-criterion accounting,
+closed typed command descriptors, recursive release/contract value screening,
+and chronologically later acyclic supersession. None of these control-plane tests
+substitutes for physical DGX evidence.
 
 ADR 0003 selects a transfer policy within the accepted catalog/artifact scope;
 it does not reinterpret the failed DeepSeek determinism artifact, establish a
@@ -259,8 +292,20 @@ duplicate was changed by this work.
   predates lab-issued expected-seal binding.
 - Declare the qualification scope and do not infer model correctness from
   health, preparation, or completion smoke.
+- Do not use `catalog-artifact` evidence to satisfy a validation criterion.
+- Retain every applicable observation. Any exclusion must name the observation,
+  cite evidence, and remain visible in the review history.
+- Declare every attempted criterion and account for it with a complete or
+  inconclusive observation; incomplete attempts use inconclusive observations.
+- Record operator commands with the closed typed descriptor schema; omit raw
+  secrets, environment values, absolute site paths, and private topology
+  identifiers. Verify program digests during trusted capture and retain the
+  publication privacy audit.
 - Preserve valid cross-release subsystem evidence only when its measured inputs
   and contracts are unchanged; document any causal invalidation explicitly.
+- A relative performance baseline must bind the reviewed predecessor contract,
+  bundle, decision, and run whose relevant criterion passed. Do not require or
+  imply a globally `Validated` predecessor when only that criterion matters.
 - Never transfer a validation status to a changed Model Serving Release. Reused
   subsystem evidence is linked scope evidence, not an inherited release pass.
 - Mark evidence `current`, `historical`, `superseded`, `failed`, or

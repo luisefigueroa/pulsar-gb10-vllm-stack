@@ -14,10 +14,13 @@ inputs, evidence paths, and issuance metadata together. Under
 [ADR 0004](../../docs/decisions/0004-model-serving-release-validation.md), a
 separate release descriptor now owns the stable Model Serving Release ID and a
 separate frozen Validation Contract owns its criteria. Those pure schemas are
-not consumed by this legacy directory. Run records, a new validation bundle,
-and reviewed validation decision remain pending separate objects. A schema-1
-`bundle_id` is not a Model Serving Release ID. Existing files remain immutable
-and are not automatically converted or relabeled `Validated`.
+not consumed by this legacy directory. Pure immutable run-record, new ADR 0004
+validation-bundle, reviewed-decision, status-derivation,
+and supersession schemas are now implemented separately in
+`scripts/model_validation_evidence.py`; they are not persisted or consumed by
+this directory either. A schema-1 `bundle_id` is not a Model Serving Release ID.
+Existing files remain immutable and are not automatically converted or
+relabeled `Validated`.
 
 This release contains reviewed bundles for the diagnostic `qwen3-1.7b`
 profile and the flagship `deepseek-v4-flash` profile:
@@ -85,10 +88,28 @@ the seal.
 
 This combined binding is the current implementation, not the target object
 boundary. ADR 0004 release-descriptor and frozen-contract schema version 1 are
-implemented separately in `scripts/model_serving_release.py`, but no trusted
-artifact here references them yet. Later run/bundle/decision stages will allow
-multiple immutable attempt, evidence, and decision records to refer to one
-unchanged four-part release ID.
+implemented separately in `scripts/model_serving_release.py`; run, bundle, and
+decision schema version 1 is implemented in
+`scripts/model_validation_evidence.py`. No trusted artifact here references
+those objects yet. The future persistence/publication stage will allow multiple
+immutable attempts, evidence sets, and reviewed decisions to refer to one
+unchanged four-part release ID without rewriting these legacy files.
+
+The ADR 0004 objects remain schema version 1 after the current correction
+because none was issued or persisted. This directory's schema-1 files are a
+different legacy schema and remain byte-for-byte unchanged. Future decisions
+consider every applicable observation automatically, allow only explicit
+evidence-backed exclusions, and apply deterministic conflict adjudication.
+Every post-barrier non-preparation run declares a nonempty set of attempted
+criteria and supplies exactly one complete or inconclusive observation for
+each; incomplete attempts use inconclusive observations.
+Criterion scopes are canonical; `catalog-artifact` preparation evidence cannot
+satisfy a validation criterion. Relative performance binds a reviewed
+predecessor contract, bundle, decision, and run whose relevant criterion
+passed, without requiring the predecessor release to be globally `Validated`.
+Structural runtime and architecture/geometry checks do not replace physical
+DGX evidence. Closed command descriptors and recursive value screening reduce
+privacy risk but do not replace trusted capture or publication privacy review.
 
 ## Normalized profile contract
 

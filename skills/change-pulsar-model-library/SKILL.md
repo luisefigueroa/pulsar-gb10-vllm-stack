@@ -51,8 +51,17 @@ Before choosing tests or changing a claim, classify each affected result:
 
 - **Catalog/artifact service:** exact content/identity, durable placement, transfer, runtime views, retention, repair, and cleanup.
 - **Serving integration:** the selected image and launcher use the intended exact runtime source; health, warmup, completion smoke, and owned stop.
-- **Model qualification:** correctness, determinism, throughput, long context, and soak for exact runtime inputs.
-- **Release/promotion:** the conjunction required for a supported profile, wizard path, or default policy.
+- **Model qualification:** stability, accuracy, throughput, latency, strict
+  same-boot, long context, and soak for exact runtime inputs.
+- **Release/promotion:** provenance/security, physical geometry, and the
+  conjunction required for a supported profile, wizard path, or default policy.
+
+For ADR 0004 objects, criterion scope is canonical rather than reviewer
+selected: stability, accuracy, throughput, latency, and strict same-boot use
+`model-qualification`; serving integration uses `serving-integration`; and
+provenance/security plus physical geometry use `release-promotion`.
+`catalog-artifact` is acquisition/preparation evidence and cannot satisfy a
+validation criterion.
 
 Apply [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md):
 a failure does not erase valid evidence from another scope
@@ -61,6 +70,20 @@ that requires the failure to pass. Never treat health or completion smoke as
 model qualification. Do not carry `STATUS=tested` or an old validation bundle
 onto changed model, image, runtime, or geometry inputs merely because generic
 catalog evidence remains reusable.
+
+For a reviewed decision, include every applicable observation automatically.
+An exclusion must be explicit and evidence-backed. Apply ADR 0004's conflict
+rules rather than selecting favorable runs. Relative performance must bind the
+reviewed predecessor contract, bundle, decision, and run whose relevant
+criterion passed; the predecessor need not be globally `Validated`.
+Structural compatibility checks never substitute for physical DGX evidence.
+Every post-barrier non-preparation run must hash-bind its attempted frozen
+criteria and account for each with a complete or inconclusive observation;
+incomplete attempts may not report a complete observation. Keep operator
+command evidence on ADR 0004's closed program/operation/resource schema, use
+typed criterion and protected site references, and require trusted privacy
+review rather than treating structural screening as proof. Require later
+acyclic supersession.
 
 Build a change-impact statement before running gates:
 

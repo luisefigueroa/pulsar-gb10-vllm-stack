@@ -2,9 +2,11 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
-- **Implementation status:** Policy accepted; release-descriptor and frozen
-  Validation Contract schemas implemented; run records, evidence bundles,
-  decisions, status projection, and serving-eligibility migration pending
+- **Implementation status:** Policy accepted; release-descriptor, frozen
+  Validation Contract, immutable run-record, evidence-bundle, and reviewed
+  validation-decision schemas implemented; evidence capture/persistence,
+  trusted publication, catalog/operator status projection, and
+  serving-eligibility migration pending
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -64,8 +66,13 @@ dependency is a different access contract and therefore a different release.
 Runtime/image identity includes the exact image digest and the compatibility
 envelope needed to run it safely, such as supported driver ABI or range,
 container-runtime capabilities, and required kernel features. A run record
-captures exact observed host versions. An in-envelope host patch does not create
-a new release; changing the image digest or compatibility envelope does.
+captures exact observed host versions. Driver, container-runtime, and kernel
+version envelopes use canonical numeric `>=LOW,<HIGH` ranges. Exact observed
+versions may retain deployed zero-padded components and a vendor suffix (for
+example a distro kernel build); comparison uses their dotted numeric core.
+Architecture and required capabilities/features are exact contract fields. An
+in-envelope host patch does not create a new release; changing the image digest
+or compatibility envelope does.
 
 Supported hardware geometry is reusable and privacy-safe. Exact hostnames,
 addresses, serial numbers, node IDs, and durable topology identifiers belong
@@ -112,6 +119,26 @@ the four core dimensions: **stability, accuracy, throughput, and latency**.
 Provenance/security review and strict same-boot reproducibility are mandatory
 repository-wide prerequisites for `Validated`.
 
+Every criterion has one canonical qualification scope. The schema rejects a
+criterion whose declared scope differs from this table:
+
+| Criterion dimension | Required qualification scope |
+|---|---|
+| Stability | `model-qualification` |
+| Accuracy | `model-qualification` |
+| Throughput | `model-qualification` |
+| Latency | `model-qualification` |
+| Strict same-boot reproducibility | `model-qualification` |
+| Serving integration | `serving-integration` |
+| Provenance/security | `release-promotion` |
+| Physical geometry | `release-promotion` |
+
+`catalog-artifact` remains a valid scope for acquisition, preparation,
+identity, transfer, placement, retention, repair, and cleanup evidence. It is
+not a permitted scope for a Validation Contract criterion. Catalog or model
+preparation evidence may establish the qualification barrier and provide
+provenance, but it cannot satisfy any of the validation criteria above.
+
 The contract must also include every applicable serving-integration and
 physical-geometry prerequisite for the declared runtime-access contract.
 Control-plane selftests, documentation, preparation success, health, or a
@@ -128,12 +155,31 @@ floating-point quantization format.
 
 Latency and throughput regression budgets are automatic only when the frozen
 contract names a comparable predecessor tested with the identical benchmark
-protocol and supported hardware geometry. The contract sets release-specific
-percentage budgets; Pulsar does not impose one repository-wide percentage. If
-there is no comparable predecessor, the relative regression gate is `N/A` and
-the release must still pass its absolute throughput and latency criteria. A
-budget failure is `Tested—criteria not met`; noisy or insufficient comparison
-evidence is `Tested—inconclusive`.
+protocol and supported hardware geometry. The baseline must bind the reviewed
+predecessor contract, evidence bundle, validation decision, and exact run used
+for comparison. `relative_performance` records `predecessor_release_id`,
+`predecessor_contract_id`, `predecessor_bundle_id`, and
+`predecessor_decision_id`; its throughput and latency entries each record the
+exact `predecessor_criterion_id` and `predecessor_run_record_id`. The relevant
+predecessor throughput or latency criterion must
+have a reviewed `pass` disposition in that decision. The predecessor release
+does **not** need to be globally `Validated`; for example, a release whose
+accuracy work is incomplete can still be a valid latency baseline when its
+latency criterion passed under the bound comparable protocol. The contract
+sets release-specific percentage budgets; Pulsar does not impose one
+repository-wide percentage. If there is no qualifying comparable predecessor,
+the relative regression gate is `N/A` and the release must still pass its
+absolute throughput and latency criteria. A budget failure is
+`Tested—criteria not met`; noisy or insufficient comparison evidence is
+`Tested—inconclusive`.
+
+Runtime compatibility and architecture/geometry matching are validated
+structurally: the release descriptor has a well-formed compatibility envelope,
+the observed run falls within it, and the observed rank count, hardware class,
+capacity, and TP/PP shape agree with the supported geometry. Those checks prove
+schema and environment compatibility only. They do not prove physical serving
+behavior. The serving-integration and physical-geometry criteria still require
+evidence captured on the declared physical DGX geometry.
 
 ### 3. Validation decisions use explicit statuses
 
@@ -160,6 +206,59 @@ is `Validated`; otherwise the status states why validation was not reached.
 new superseding decision carries the lineage link; the earlier record is not
 edited to add it.
 
+#### Observation inclusion and adjudication
+
+A reviewed decision automatically considers **every applicable observation**
+in its bound evidence bundle. An observation is applicable when it is bound to
+the exact release and frozen contract, names the criterion's canonical scope,
+and satisfies the criterion's structural protocol, geometry, and identity
+requirements. Reviewers do not choose only the runs that support a preferred
+outcome.
+
+Excluding an otherwise applicable observation is exceptional. The decision
+must identify the excluded observation, give an evidence-backed reason, and
+retain both the observation and exclusion record in the reviewable history.
+An unexplained omission is missing evidence and prevents `Validated`.
+
+In the version-1 pure API, `build_validation_decision(...,
+criterion_exclusions=[...])` is the only exclusion input. The persisted
+decision does not carry a manually selected run list: each
+`criterion_results[]` entry records all accepted observations in
+`included_run_record_ids` and retains any exception in
+`excluded_run_records`, including its reason and review-evidence artifact IDs.
+
+Multiple included observations for one criterion are adjudicated as follows:
+
+| Included dispositions | Criterion disposition |
+|---|---|
+| No applicable observation | `not-evaluated` |
+| All `pass` | `pass` |
+| All `fail` | `fail` |
+| All `inconclusive` | `inconclusive` |
+| `pass` + `fail` | `inconclusive` |
+| `pass` + `inconclusive` | `inconclusive` |
+| `fail` + `inconclusive` with no pass | `fail` |
+| `pass` + `fail` + `inconclusive` | `inconclusive` |
+
+A conclusive failure is not softened merely because another attempt was
+inconclusive; conflicting conclusive pass/fail observations instead require
+adjudication and remain inconclusive until new evidence resolves the conflict.
+A completed nested context or soak observation is independently conclusive: if
+it violates its frozen requirement, an `inconclusive` enclosing criterion label
+cannot downgrade that failure.
+After criterion-level aggregation, any failed criterion produces
+`Tested—criteria not met`, otherwise any inconclusive criterion produces
+`Tested—inconclusive`, any unevaluated requirement produces
+`Testing incomplete`, and only an all-pass reviewed result produces
+`Validated`.
+
+The schema stores the new decision's reviewed base outcome (`Untested`,
+`Testing incomplete`, `Tested—criteria not met`, `Tested—inconclusive`, or
+`Validated`) and its backward supersession links. `Superseded` is projected as
+the earlier decision's effective lifecycle status when a later reviewed
+decision names it. This preserves the earlier outcome byte-for-byte while
+making its non-current state machine-readable.
+
 ### 4. Identity, evidence, and authority are separate objects
 
 The machine-readable model has five immutable object roles:
@@ -170,18 +269,58 @@ The machine-readable model has five immutable object roles:
 | **Validation Contract** | Freezes repository-wide invariants plus release-specific gates before testing |
 | **Run record** | Records one attempt, exact observed environment, commands/protocols, outputs, and completion condition |
 | **Validation bundle** | Binds the release descriptor, frozen contract, and referenced run records into a reviewable evidence set |
-| **Validation decision** | Records the reviewed status, criterion results, provenance/security disposition, reviewer authority, timestamps, and supersession links |
+| **Validation decision** | Records the reviewed status, automatically aggregated criterion results, explicit evidence-backed exclusions, provenance/security disposition, reviewer authority, timestamps, and supersession links |
 
 Every attempt receives a new run record, including failed, interrupted, and
 inconclusive attempts. Records are never overwritten. New attempts produce new
 records; new bundles and decisions supersede earlier ones without deleting or
 relabeling their history.
 
+Each attempt hash-binds a sorted `attempted_criterion_ids` declaration. A
+pre-barrier preparation attempt declares none. A post-barrier non-preparation
+attempt declares at least one known criterion whose scope matches the attempt,
+and its observations cover that set exactly. Failed, interrupted, or otherwise
+incomplete attempts record inconclusive observations for every declared
+criterion. Omitting both the declaration and a failed observation is invalid,
+not an evidence-selection mechanism.
+
+Operator command evidence is structured data, not an arbitrary shell
+transcript. Each `commands[]` entry names an allowlisted repository program,
+records a `sha256:<digest>` program-version identity, contains exactly one
+program-specific closed operation, and may add only closed repository-resource
+references, attempted-criterion references, or typed site options. A site
+option embeds a rank reference or protected content-addressed site reference,
+never a raw host, URL, or address. Rank references must name a rank in the
+release geometry. Structured `environment[]` entries contain a classification
+and variable name but never a value; the working-directory marker is always
+`repository-root`.
+
+Every persisted free-form release/contract string that lacks a stricter closed
+grammar rejects recognized credential values, absolute site paths, explicit
+URIs, private/site endpoint forms, deployment-variable references, and private
+topology assignments. Ordinary dotted public identifiers remain valid, while
+credential-bearing extensible field names are rejected independently of their
+values. Command environment references additionally reject credential-shaped
+names. Provenance/security is review-derived and therefore has one exact
+canonical criterion template;
+unimplemented extra thresholds or parameters are invalid. These are structural
+controls, not a proof against every unknown private codename. Trusted capture
+must calculate program digests from the selected checkout, and publication
+still requires privacy auditing and reviewer inspection.
+
+Run records also make physical context reviewable without publishing a site
+map. `observed_environment.cluster` records the rank-relative geometry shape,
+while `observed_environment.ranks[]` records per-rank architecture and runtime
+compatibility observations. A soak observation records `started_at`,
+`ended_at`, and canonical `duration_seconds`; the validator checks that the
+duration exactly equals the contained timestamp interval.
+
 Existing schema-1 validation bundles and expected-model seals remain immutable.
 They are legacy combined identity/evidence artifacts and are not rehashed,
-rewritten, or automatically converted. The first implementation stage adds a
-separate release descriptor and frozen Validation Contract; later stages add
-run records, evidence bundles, validation decisions, and their cross-links.
+rewritten, or automatically converted. Stage 1 adds a separate release
+descriptor and frozen Validation Contract; stage 2 adds run records, evidence
+bundles, validation decisions, and their cross-links. Both pure-schema stages
+are implemented, but neither is a trusted persistence or issuance path.
 Existing `STATUS=tested*`, `--validated`, reviewed seals, and legacy-unsealed
 behavior retain their current implementation meaning until that migration
 lands. No existing profile is automatically relabeled `Validated`.
@@ -200,6 +339,13 @@ the applicable full verification barrier. A distribution failure is a failed
 preparation/onboarding attempt: the release remains `Untested`, rather than
 being classified as `Tested—criteria not met`. The chosen transport, placement,
 timings, and subsystem versions are recorded as run provenance.
+
+Catalog/artifact and preparation observations cannot be selected as evidence
+for stability, accuracy, throughput, latency, strict same-boot,
+serving-integration, provenance/security, or physical-geometry criteria. They
+can prove their own subsystem contract and the full-verification barrier, and
+they remain useful immutable provenance, but qualification starts only after
+that barrier passes.
 
 Catalog/artifact, serving-integration, model-qualification, and
 release/promotion evidence retain the independent scopes defined by ADR 0002.
@@ -264,21 +410,88 @@ affected Model Serving Release.
 Stage 1 is implemented by `scripts/model_serving_release.py`. It provides pure
 builders and fail-closed validators for the release descriptor and frozen
 Validation Contract, including deterministic IDs, privacy-safe geometry,
-recipe/geometry parallelism consistency, strict same-boot exactness, reviewed
-provenance requirements, and comparable-predecessor protocol/geometry binding.
+recipe/geometry parallelism consistency, canonical criterion-scope mapping,
+strict same-boot exactness, reviewed provenance requirements, and reviewed
+comparable-predecessor lineage plus protocol/geometry binding.
 The fixed-ID fixture and adversarial contracts live under `scripts/testlib/`.
 This code performs no filesystem or network I/O, emits no reviewed artifact,
 assigns no status, changes no profile, and grants no serving eligibility.
 Control-plane selftests establish only these schema contracts; no physical DGX
 claim follows from them.
 
+Stage 2 is implemented by `scripts/model_validation_evidence.py`. It provides
+pure builders and fail-closed validators for content-addressed evidence
+references, immutable attempt/run records, Model Serving Release validation
+bundles, and reviewed validation decisions. A run binds one release and frozen
+contract to exact timestamps, completion condition, rank-relative observed
+hardware/runtime versions, opaque boot/launch identities, commands, selected
+subsystem maturity and distribution provenance, the pre-qualification
+verification barrier, criterion measurements, and content-addressed evidence.
+Bundles require the exact immutable run and artifact sets. Decisions explicitly
+record a supplied base-status assertion but independently recompute criterion
+dispositions from frozen thresholds, required context depths/token minimums,
+soak duration/concurrency/error limits, and applicable predecessor-relative
+throughput/latency budgets. Every attempted criterion is accounted for and
+every applicable observation is considered automatically; an exclusion
+requires an explicit evidence-backed record, and
+the deterministic conflict rules in this ADR are enforced. A status or result
+mismatch fails.
+Missing required evidence remains incomplete, inconclusive evidence remains
+inconclusive, and a conclusive requirement miss fails. Strict evidence cannot
+span live server boots, bundles reject reused attempt identities, and review
+timestamps cannot precede their evidence or the decisions they supersede.
+Incomplete privacy or provenance review cannot become `Validated`, and a failed
+distribution before the qualification barrier derives `Untested`. Experimental
+subsystem use is recorded but does not cap the result. Runtime compatibility
+and architecture/geometry are checked structurally without claiming physical
+behavior. Command descriptors use the closed typed schema and reject raw site
+values. Relative
+baselines bind the predecessor contract, bundle, decision, and run and require
+a pass for the relevant predecessor criterion, not a globally `Validated`
+predecessor. Relative evaluation accepts an external
+`predecessor_evidence_registry`; each entry must contain the exact `release`,
+`contract`, `evidence_bundle`, `run_records`, and `decision` source set named
+by the frozen predecessor IDs. The registry is validation input, not trusted
+persistence or part of the current decision. The current resolver fails closed
+when that predecessor decision itself has supersession links because the
+five-object source set does not contain the complete prior-decision evidence
+lineage needed to validate those links. Supporting that case requires an
+explicit registry-contract extension; it is not permission to ignore lineage.
+Later decisions carry immutable
+backward supersession links; chronology must be strictly later and the
+relationship must remain acyclic. Effective `Superseded` projection accepts a
+fully validated `decision_evidence_registry` and does not mutate the prior
+decision or establish that any supplied registry was repository-issued.
+
+Stage 2 still performs no command execution, evidence capture, filesystem or
+network I/O, trusted publication, catalog update, profile edit, or serving
+gate. A syntactically valid review block or `Validated` fixture is not proof
+that repository review or physical qualification occurred. No current release
+received an ADR 0004 decision from this implementation unit.
+
+### Pre-issuance schema correction
+
+The observation, predecessor-lineage, structural-compatibility, command,
+chronology, and acyclicity rules above are a pre-issuance correction to ADR
+0004 schema version 1. No ADR 0004 release descriptor, Validation Contract,
+run record, evidence bundle, or validation decision has been issued, persisted
+through a trusted publication path, referenced by a profile, or consumed by a
+serving gate. There is therefore no released object to migrate and no reason to
+introduce schema version 2.
+
+This statement does not apply retroactively to the older schema-1 expected
+seals and combined validation bundles under `models/`. They are different,
+legacy schemas owned by `scripts/model_identity.py`; their bytes, IDs,
+historical evidence, and current enforcement behavior remain untouched.
+
 Implement this decision in focused, reviewable units:
 
 1. **Implemented:** add canonical release-descriptor identity and Validation
    Contract schemas in Python with deterministic fixtures, without modifying
    schema-1 artifacts;
-2. add immutable attempt/run records, evidence bundles, and validation decisions
-   with fail-closed cross-link verification and explicit supersession;
+2. **Implemented:** add immutable attempt/run records, evidence bundles, and
+   validation decisions with fail-closed cross-link verification, independent
+   status derivation, and explicit supersession;
 3. project the new statuses into catalog and operator surfaces, then migrate
    serving eligibility only through explicit reviewed decisions—never by
    converting `STATUS=tested*` automatically;
@@ -329,6 +542,26 @@ the agreed same-boot invariant and would make `Validated` ambiguous.
 An orchestrator that both produces and authorizes evidence collapses the trust
 boundary and can turn local observation into an official claim.
 
+### Let reviewers select only favorable runs
+
+Manual run selection can hide a valid failure or manufacture certainty from a
+conflicted result. Every applicable observation is therefore included
+automatically, with explicit evidence-backed exclusions and deterministic
+adjudication.
+
+### Require the predecessor release to be globally Validated
+
+That would discard valid criterion-specific baselines for unrelated reasons.
+Relative performance instead requires a reviewed pass for the exact predecessor
+criterion, contract, bundle, decision, run, protocol, and geometry being used.
+
+### Treat structural compatibility as physical qualification
+
+Schema and envelope checks can reject mismatched architecture, runtime, or
+geometry without running a model. They cannot show that the release behaves
+correctly or reliably on physical hardware, so physical evidence remains
+mandatory.
+
 ## Consequences
 
 - `Validated` becomes a precise claim about one immutable serving tuple.
@@ -337,10 +570,15 @@ boundary and can turn local observation into an official claim.
   possible.
 - Failed and inconclusive work remains useful, visible evidence rather than a
   hidden or overwritten attempt.
+- Attempt declarations must be covered exactly, applicable evidence cannot be
+  cherry-picked, and conflicts have one deterministic adjudication rule.
+- Criterion-specific performance lineage can reuse a reviewed passing
+  predecessor result without overstating that predecessor's global status.
 - Distribution experiments can improve onboarding without contaminating model
   status, provided the pre-qualification verification barrier holds.
-- Current commands and schemas continue to work during migration, but their
-  legacy `tested`/`validated` labels must not be presented as implementation of
-  this ADR until the new objects and enforcement exist.
+- Current commands and legacy schemas continue to work during migration, but
+  their `tested`/`validated` labels must not be presented as implementation of
+  this ADR until trusted object persistence, status projection, and serving
+  enforcement exist.
 - Physical qualification is still required for physical claims. Documentation
   and selftests alone cannot produce a `Validated` decision.

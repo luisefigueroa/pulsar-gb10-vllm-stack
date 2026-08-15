@@ -42,33 +42,48 @@ reviewed validation decision, and the statuses `Untested`, `Testing incomplete`,
 `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
 `Superseded`. The pure release-descriptor and frozen-contract schemas are now
 implemented in `scripts/model_serving_release.py`, with deterministic fixtures
-and fail-closed tests. They perform no evidence capture, persistence, issuance,
-decision, profile update, or serving gate. Run-record/evidence/decision schemas,
+and fail-closed tests. Pure immutable run-record, new evidence-bundle, reviewed
+validation-decision, status-derivation, and supersession schemas are implemented
+in `scripts/model_validation_evidence.py`. Together they perform no command
+execution, evidence capture, persistence, trusted issuance, profile update, or
+serving gate. A syntactically reviewed decision cannot prove physical behavior
+or that repository review occurred. Capture/persistence, trusted publication,
 CLI orchestration, status projection, and serving migration remain pending.
-Existing bundles, seals, profiles, and historical evidence remain unchanged
-and must not be automatically relabeled `Validated`.
+Existing bundles, seals, profiles, and historical evidence remain unchanged and
+must not be automatically relabeled `Validated`. The corrected ADR 0004
+objects remain schema version 1 because none was issued or persisted before
+the correction; older schema-1 seals/bundles are separate legacy formats and
+remain byte-for-byte untouched.
 
 ## Qualification scope and change impact
 
 Revalidation is scoped before commands are chosen. A release bundle still
 binds all of its exact inputs in the current serving schema. In the ADR 0004
 model, the implemented release descriptor binds the four-part identity and the
-implemented Validation Contract freezes criteria; pending run records, evidence
-bundles, and reviewed decisions remain separate. Reusable subsystem evidence is
-not erased by an unrelated change.
+implemented Validation Contract freezes criteria. The implemented stage-2
+schemas separately bind immutable attempts, evidence sets, and reviewed
+decisions, but no current capture or trusted persistence path emits them.
+Reusable subsystem evidence is not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
 
 | Scope | Typical evidence | What it does not prove |
 |---|---|---|
-| Catalog and artifact service | Seal/manifest match, placement, transfer integrity, witness/lifecycle, retention, repair, cleanup | Runtime correctness or a supported release |
-| Serving integration | Exact-source mount/load, health, warmup, completion smoke, owned stop | Accuracy, determinism, performance, context, or soak |
-| Model qualification | Correctness, determinism, throughput, context, soak for exact runtime inputs | Storage-policy safety outside the tested runtime source |
-| Release and promotion | All required subsystem results bound to one supported profile/policy | Broader geometries, images, revisions, or storage paths |
+| Catalog and artifact service | Seal/manifest match, placement, transfer integrity, witness/lifecycle, retention, repair, cleanup | Any Model Serving Release validation criterion or a supported release |
+| Serving integration | Exact-source mount/load, health, warmup, completion smoke, owned stop | Stability, accuracy, throughput, latency, strict same-boot, context, or soak |
+| Model qualification | Stability, accuracy, throughput, latency, strict same-boot, context, and soak for exact runtime inputs | Storage-policy safety outside the tested runtime source |
+| Release and promotion | Provenance/security, physical geometry, and all required subsystem results bound to one supported profile/policy | Broader geometries, images, revisions, or storage paths |
 
 A failure in one scope blocks every release claim that depends on it, but does
 not invalidate another scope without a demonstrated causal connection. Select
 the smallest complete gate set from this change-impact matrix:
+
+The machine-readable criterion mapping is fixed: stability, accuracy,
+throughput, latency, and strict same-boot use `model-qualification`; serving
+integration uses `serving-integration`; provenance/security and physical
+geometry use `release-promotion`. `catalog-artifact` evidence establishes its
+own subsystem contract and the pre-qualification verification barrier only; it
+cannot satisfy a validation criterion.
 
 | Changed input or contract | Required revalidation |
 |---|---|
@@ -83,8 +98,8 @@ the smallest complete gate set from this change-impact matrix:
 
 Changing an image, model, configuration, or geometry creates a new release ID
 and requires a newly frozen contract and reviewed decision under ADR 0004. The
-stage-1 library can build and validate the descriptor and contract, but no
-current operator or serving path persists or consumes them. A new schema-1
+pure libraries can build and validate all five object roles, but no current
+operator or serving path captures, persists, or consumes them. A new schema-1
 bundle is still required by the current serving implementation before
 `STATUS=tested` or a guided claim can move. Preserving unchanged catalog
 evidence is scoped evidence reuse, not release-status or bundle inheritance.
@@ -100,17 +115,96 @@ sample sizes, context/soak conditions, and any comparable predecessor.
 
 `scripts/model_serving_release.py` now enforces that frozen shape and its
 release cross-links, including recipe/geometry consistency and privacy-safe
-descriptor fields. `scripts/testlib/test_model_serving_release.py` verifies the
+descriptor fields. The review-derived provenance/security criterion is one
+closed canonical template; extra requirements are rejected because the
+decision evaluator would have no run metric with which to satisfy them.
+Every persisted free-form release/contract string without a stricter closed
+grammar is screened for secret, absolute-path, endpoint, and deployment-only
+content, including artifact identifiers, criterion/workload/protocol/threshold
+strings, argument/environment values, N/A reasons, and extensible keys/values.
+`scripts/testlib/test_model_serving_release.py` verifies the
 schema contract during `scripts/selftest.sh`; it does not collect a run or
 establish that any physical criterion passed.
 
-FP-equivalent output does not pass strict same-boot reproducibility. Automatic
-latency or throughput regression budgets are valid only against a named
-predecessor measured with the identical protocol and supported hardware
-geometry; otherwise the relative gate is `N/A` and absolute release-specific
-criteria still apply. Record every attempt, including interrupted, failed, and
-inconclusive runs. A pre-qualification acquisition or distribution failure
-leaves the release `Untested`; a completed criterion failure is
+`scripts/model_validation_evidence.py` validates the next evidence layer. Each
+run names the exact release and contract, hash-binds sorted
+`attempted_criterion_ids`, uses rank-relative observations and
+opaque boot/launch identities, records exact command descriptors and
+distribution/subsystem provenance, and distinguishes failure before the full
+verification barrier from qualification. Evidence artifacts are content
+addressed and explicitly `publishable` or `protected`, with privacy-review
+state. Before the barrier, a preparation failure declares no attempted
+criterion. After the barrier, every non-preparation attempt must declare at
+least one scope-compatible criterion and provide exactly one corresponding
+complete or inconclusive observation for each; an incomplete attempt may only
+provide inconclusive observations. A bundle must resolve the exact run and
+artifact sets. A decision must
+consider every applicable observation automatically; its supplied status must
+equal the independently derived result. Excluding an otherwise applicable
+observation requires an entry in the builder's `criterion_exclusions` input,
+and the decision retains it under
+`criterion_results[].excluded_run_records`; omission is not a selection
+mechanism. Included observations are recorded in
+`criterion_results[].included_run_record_ids`. For one criterion, pass+fail
+and pass+inconclusive aggregate to
+inconclusive, fail+inconclusive aggregates to fail, and all-pass aggregates to
+pass. The validator recomputes those results, required context and soak
+conditions, applicable predecessor-relative performance budgets, and the only
+permissible status. Missing comparison evidence cannot validate, and an
+over-budget comparison is a conclusive failure. A mismatch fails closed.
+Experimental distribution maturity is provenance and does not cap status.
+
+A relative baseline must cross-link the reviewed predecessor contract,
+evidence bundle, validation decision, and exact run. The relevant predecessor
+throughput or latency criterion must have passed in that decision. The
+predecessor release itself need not be globally `Validated`; unrelated criteria
+do not invalidate a criterion-specific baseline. The benchmark protocol and
+supported geometry must still be identical. The current pure resolver fails
+closed if the selected predecessor decision itself has supersession links,
+because its source registry does not yet carry the complete prior-decision
+evidence lineage needed to validate them.
+
+Observed runtime compatibility and architecture/geometry are checked
+structurally against the release envelope. This can reject an incompatible run
+but cannot prove physical behavior; serving-integration and physical-geometry
+criteria need physical DGX evidence. Canonical compatibility ranges compare
+the numeric core of exact observed deployed versions; zero-padded components
+and vendor suffixes remain preserved evidence. Command descriptors use a closed
+schema: an allowlisted repository program, a `sha256:<digest>` program-version
+identity, exactly one allowed operation, closed repository resources, typed
+criterion references, typed protected/rank references for site-bearing
+options with ranks bounded by the release geometry, `environment[]` references
+without values or credential-shaped names, and the generic `repository-root`
+working directory. `observed_environment.cluster` and
+per-rank compatibility observations must match the release structurally, and a
+soak observation's `started_at`, `ended_at`, and `duration_seconds` must agree
+exactly. A completed nested context or soak failure remains conclusive even
+when the enclosing criterion is inconclusive. A later
+decision points backward to prior decision IDs only with strictly later
+chronology and an acyclic relationship; readers project the older one as
+`Superseded` without rewriting it. `predecessor_evidence_registry` and
+`decision_evidence_registry` are complete caller-supplied source registries for
+pure validation; neither is trusted persistence or evidence of issuance.
+
+These functions validate supplied JSON-compatible objects only. Until capture
+and persistence land, continue retaining the existing raw/sanitized artifacts
+and current schema-1 release materials described below. Do not create a
+`Validated` claim merely by calling a builder or copying a synthetic document.
+
+Structural privacy checks are fail-closed for recognized credential, path,
+explicit URI, private/site endpoint, and topology forms, including
+credential-bearing extensible field names. Ordinary dotted public identifiers
+remain valid, but these checks are not a complete privacy proof. The future
+trusted capture path must compute program digests from the checked-out files,
+and publication must still run the repository privacy audit and reviewer
+inspection for unknown site codenames.
+
+FP-equivalent output does not pass strict same-boot reproducibility. If no
+reviewed criterion-passing comparable predecessor exists, the relative gate is
+`N/A` and absolute release-specific criteria still apply. Record every attempt,
+including interrupted, failed, and inconclusive runs. A pre-qualification
+acquisition or distribution failure leaves the release `Untested`; a completed
+criterion failure is
 `Tested—criteria not met`; noisy or insufficient evidence is
 `Tested—inconclusive`; missing gates or review is `Testing incomplete`; and
 only a complete reviewed pass is `Validated`.
@@ -234,10 +328,12 @@ PP combination:
    profile in place to cover another world size.
 2. Use `scripts/up.sh <profile> --force` only for the deliberate experiment.
    The launcher still requires confirmed capacity and the exact topology.
-3. Capture correctness and determinism against the appropriate single- or
-   previously validated control; run concurrency/throughput sweeps, context
-   gates appropriate to the model, a partial-rank/node-loss exercise, and the
-   full soak. Re-measure collectives because adding ranks changes pair count
+3. Capture correctness and determinism against the appropriate control; run
+   concurrency/throughput sweeps, context gates appropriate to the model, a
+   partial-rank/node-loss exercise, and the full soak. A relative performance
+   control must bind a reviewed predecessor contract, bundle, decision, and run
+   whose relevant criterion passed; the predecessor need not be globally
+   `Validated`. Re-measure collectives because adding ranks changes pair count
    and algorithms.
 4. Store raw outputs under `results/` and add the exact image, hardware ranks,
    topology ID/class, TP/PP, flags, verdicts, and artifact paths to
@@ -449,8 +545,10 @@ with replicated weights.
 ## 8. Close out
 
 - Classify each result as catalog/artifact, serving integration, model
-  qualification, or release/promotion. Assign the ADR 0004 decision status from
-  the frozen contract without hiding failures or missing evidence. Until the
+  qualification, or release/promotion. Include every applicable observation,
+  record any evidence-backed exclusion, and let the frozen-contract rules
+  derive the ADR 0004 decision status without hiding conflicts, failures, or
+  missing evidence. Until the
   status migration is implemented, update conf `STATUS`/`NOTES` only under its
   current legacy contract and only when the complete serving-eligibility scope
   passes. Update `docs/VALIDATION.md` with the measured
@@ -469,6 +567,9 @@ with replicated weights.
   Never promote a locally observed user seal or bundle into expected identity.
 - Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
 - Archive the new raw results under `results/` using a unique bump tag.
+- Store publishable command provenance as structured, sanitized descriptors;
+  never include environment values, secrets, absolute site paths, or private
+  topology identifiers.
 - Run a current-tree secret/path scan and inspect `git diff` before merge.
 - Merge the pin branch only after every required gate passes.
 

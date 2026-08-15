@@ -118,10 +118,25 @@ unbound. See
 only an accelerator for identity previously established by full verification.
 It is never a seal issuer.
 
-ADR 0004 stage 1 adds a separate pure release descriptor and frozen Validation
-Contract alongside this content trust root. Neither is issued or referenced by
-the current seal path. Run records, new evidence bundles, reviewed validation
-decisions, and status/serving projection remain pending. Candidate tooling,
-schema builders, and local content verification may demonstrate internal
-consistency or a content match, but none can assign a Model Serving Release
-status.
+ADR 0004 adds a separate pure release descriptor and frozen Validation Contract
+alongside this content trust root. Pure immutable run-record, new
+validation-bundle, reviewed-decision, independent status-derivation, and
+supersession schemas are also implemented separately. The corrected contracts
+remain schema version 1 because no ADR 0004 object was issued or persisted
+before the correction. This directory's older schema-1 seals and linked
+combined bundles are a different legacy format and remain byte-for-byte
+unchanged. None of the ADR 0004 objects is issued, persisted, or referenced by
+the current seal path; trusted publication, status/serving projection, and
+migration remain pending. Candidate tooling, schema builders, and local content
+verification may demonstrate internal consistency or a content match, but a
+locally constructed decision cannot establish reviewer authority or assign a
+trusted Model Serving Release status.
+
+Under the corrected policy, validation criteria use canonical scopes and
+catalog/preparation evidence cannot satisfy them. Every applicable observation
+is considered automatically unless an evidence-backed exclusion is retained.
+Relative performance binds a reviewed predecessor contract, bundle, decision,
+and run whose relevant criterion passed; the predecessor need not be globally
+`Validated`. Runtime and architecture/geometry checks are structural, not
+physical proof. These rules affect future ADR 0004 decisions, not the identity
+or interpretation of an issued seal in this legacy directory.

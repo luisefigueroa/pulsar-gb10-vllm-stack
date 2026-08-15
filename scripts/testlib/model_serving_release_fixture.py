@@ -19,7 +19,7 @@ EXPECTED_RELEASE_ID = (
     "cb8d2362aec0556dd8a270b279e01aff7bf1fa93e1585188bc9081a4d39f1766"
 )
 EXPECTED_CONTRACT_ID = (
-    "96ca0ecc1e32b8bdd51b310508d478d8648a4075cef2021140e43de906a7f2fd"
+    "2f40604a134c93943698c629c04bed5053dfe1f547430717bbcf4c8cba5f8490"
 )
 
 
@@ -105,17 +105,21 @@ def build_recipe(
 def build_runtime(
     *,
     image_reference: str | None = None,
+    architecture: str = "aarch64",
+    driver_abi_range: str = ">=580,<590",
+    container_runtime_range: str = ">=28,<29",
+    kernel_range: str = ">=6.11,<6.12",
 ) -> dict[str, Any]:
     return model_serving_release.build_runtime_image_identity(
         image_reference=image_reference
         or "registry.invalid/vllm@sha256:" + ("f" * 64),
-        architecture="aarch64",
+        architecture=architecture,
         driver_abi_family="nvidia-open-kernel-module",
-        driver_abi_range=">=580,<590",
+        driver_abi_range=driver_abi_range,
         container_runtime_family="docker",
-        container_runtime_range=">=28,<29",
+        container_runtime_range=container_runtime_range,
         required_container_capabilities=["ipc-host", "nvidia-gpu"],
-        kernel_range=">=6.11,<6.12",
+        kernel_range=kernel_range,
         required_kernel_features=["nfs-v4.2", "rdma"],
     )
 
@@ -123,10 +127,11 @@ def build_runtime(
 def build_geometry(
     *,
     hardware_class: str = "nvidia-dgx-spark-gb10",
+    architecture: str = "aarch64",
 ) -> dict[str, Any]:
     return model_serving_release.build_supported_hardware_geometry(
         hardware_class=hardware_class,
-        architecture="aarch64",
+        architecture=architecture,
         node_count=2,
         accelerators_per_node=1,
         accelerator_count=2,
@@ -270,19 +275,7 @@ def criteria() -> list[dict[str, Any]]:
                 "fp_equivalent_satisfies": False,
             },
         ),
-        _criterion(
-            criterion_id="provenance-security-review",
-            dimension="provenance-security",
-            qualification_scope="release-promotion",
-            workload_name="bound-release-inputs",
-            protocol_name="reviewed-provenance-security",
-            sample_size=1,
-            metric="review_verdict",
-            operator="eq",
-            value="pass",
-            unit="verdict",
-            protocol_parameters={"reviewed_issuance_required": True},
-        ),
+        model_serving_release.provenance_security_criterion_template(),
         _criterion(
             criterion_id="serving-integration-smoke",
             dimension="serving-integration",
