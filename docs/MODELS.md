@@ -1,4 +1,4 @@
-# Model support matrix — current legacy tested profiles (2026-08-14)
+# Model support matrix — current legacy tested profiles (2026-08-15)
 
 This table reports the implementation's existing `STATUS=tested*`, reviewed
 seal, and `legacy-unsealed` contracts. It does **not** assign the Model Serving
@@ -11,9 +11,10 @@ after every frozen criterion and review requirement passes. Changing any one
 component creates a new release. Pure version-1 schema validation and
 read-only verification of stored ADR 0004 objects exist. Local
 evidence-capture candidate persistence is unreviewed and does not change
-this table. Trusted publication, catalog/operator status projection, and
-serving admission do not; no current row is silently migrated. The tracked
-ADR 0004 store currently contains no issued object.
+this table. Trusted publication and catalog/operator status projection do not
+yet exist; serving permission is status-independent and no current row is
+silently relabeled. The tracked ADR 0004 store currently contains no issued
+object.
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
@@ -45,7 +46,7 @@ any status in the table or the replicated guided default.
 | `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K; ledger only — no `results/` artifact) | DFlash **marginal +13%** (off by default) | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
 | `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **published, digest-pinned PR-41834 image** | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (client cap; **20 GB/rank KV → 652,465 tok, 1.30x @500K**; `max-num-seqs 5`; 20 GB needle 3/3 @447K in `results/needle-dsv4-20gb-447k.log`; prior soaked 10 GB→577k) | **DSpark default-on; k=5 checkpoint-fixed** (`--no-spec-decode` rollback; **0731 benches** 43–48 tok/s c=1 — no 20 GB throughput re-run) | **`STATUS=tested`** (20 GB soak in VALIDATION.md); **lab-sealed exact identity** — flagship; **2026-08-01 defaults retuned for few long agent sessions** (see conf header + DeepSeek notes) |
 | `inkling-small-nvfp4` | Thinkingmachines/Inkling-Small-NVFP4 (NFS catalog, added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 131,072 in conf (checkpoint 1M; needle-gate first) | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
-| `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — measurement only; stock graphs hang without `--enforce-eager` (baked in conf; still requires `--force`). Prefer 1-node `laguna-s-2.1-nvfp4` |
+| `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — advisory measurement-only label; stock graphs hang without `--enforce-eager` (baked in conf). Prefer 1-node `laguna-s-2.1-nvfp4` |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
 | (candidate) | Qwen3.6-35B-A3B MXFP4/FP8 | MXFP4 | 21 GB | 1 | — | MTP head exists | not configured |
 | (candidate) | cyankiwi/GLM-4.7-Flash-AWQ-4bit (node1) | AWQ int4 | ~18 GB | 1 | 202,752 (prior lab profile) | — | not configured |

@@ -4,7 +4,7 @@
 This module implements the second machine-readable stage of Model Serving
 Release validation.  It is deliberately pure: it performs no filesystem or
 network I/O, captures no evidence itself, publishes no trusted artifact,
-changes no profile, and grants no serving eligibility.  Repository review and
+changes no profile, and launches nothing.  Repository review and
 the separate read-only persistence/inspection layer remain distinct
 authority boundaries.  Caller-supplied predecessor and decision registries
 are validation input, not trusted persistence.  Review-metadata shape checks

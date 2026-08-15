@@ -1058,8 +1058,6 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
         model_id=model_id,
     )
     tested = bool(STATUS_TESTED.match(status))
-    if expected_seal is not None and not tested:
-        fail(f"{path.stem}: EXPECTED_MODEL_SEAL requires STATUS=tested*")
     return {
         "profile": path.stem,
         "model_id": model_id,
@@ -1108,8 +1106,6 @@ def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
         model_id=model,
     )
     tested = bool(STATUS_TESTED.match(status))
-    if expected_seal is not None and not tested:
-        fail(f"{path.stem}: EXPECTED_MODEL_SEAL requires STATUS=tested*")
     return {
         "profile": path.stem,
         "model_id": model,
@@ -1243,11 +1239,7 @@ def replicated_verification_plan(
     parsed = load_hf_profile(models_dir, profile)
     seal = parsed.get("expected_model_seal")
     bundle = parsed.get("validation_bundle")
-    if (
-        not parsed.get("validated")
-        or not isinstance(seal, dict)
-        or not isinstance(bundle, dict)
-    ):
+    if not isinstance(seal, dict) or not isinstance(bundle, dict):
         fail(f"{profile}: replicated exact identity requires a reviewed expected seal")
     manifest = load_profile_expected_snapshot_manifest(models_dir, profile)
     expected = expected_model_seal_projection(seal)
@@ -1374,7 +1366,7 @@ def compare_profile_expected_identity(
                 f"observed={observed[field]} expected={expected_projection[field]}"
             )
     return {
-        "identity_status": "match" if profile.get("validated") else "unvalidated",
+        "identity_status": "match",
         "expected_seal": expected_projection,
         "observed_seal": observed,
     }
@@ -1386,18 +1378,12 @@ def require_activation_identity(
     *,
     allow_unvalidated: bool,
 ) -> dict[str, Any]:
+    # allow_unvalidated is a backward-compatible CLI input. Validation status
+    # is descriptive, so exact observed content without a reviewed expectation
+    # does not need an authorization override. Configured expectation mismatches
+    # still fail in compare_profile_expected_identity above.
+    _ = allow_unvalidated
     validation = compare_profile_expected_identity(profile, manifest)
-    status = validation["identity_status"]
-    if status != "match" and not allow_unvalidated:
-        if status == "legacy-unsealed":
-            fail(
-                f"prepare: {profile['profile']} is legacy-unsealed; add a reviewed "
-                "EXPECTED_MODEL_SEAL or pass --allow-unvalidated for an explicit experiment"
-            )
-        fail(
-            f"prepare: {profile['profile']} identity status is {status}; "
-            "pass --allow-unvalidated for an explicit experiment"
-        )
     return validation
 
 
@@ -1425,11 +1411,9 @@ def _profile_catalog_status(
 ) -> str:
     if not present:
         return "missing"
-    if not profile.get("validated"):
-        return "unvalidated"
-    if profile.get("expected_model_seal") is None:
-        return "legacy-unsealed"
-    return "expected-unverified"
+    if profile.get("expected_model_seal") is not None:
+        return "expected-unverified"
+    return "legacy-unsealed" if profile.get("validated") else "unvalidated"
 
 
 def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
@@ -2448,11 +2432,6 @@ def plan_cold_stage(
             "expected_seal": None,
             "observed_seal": observed_model_seal_projection(integrity_manifest),
         }
-        if not allow_unvalidated:
-            fail(
-                "cold stage-only: profile identity is unvalidated; "
-                "pass --allow-unvalidated for an explicit experiment"
-            )
     else:
         validation = require_activation_identity(
             profile_data,
@@ -3021,7 +3000,7 @@ def validate_hot_validation(
         fail("hot validation profile is invalid")
     status = validation.get("identity_status")
     if status not in {"match", "legacy-unsealed", "unvalidated"}:
-        fail(f"hot identity status is not launchable: {status!r}")
+        fail(f"hot identity status is unsupported: {status!r}")
     observed = validation.get("observed_seal")
     expected_observed = observed_model_seal_projection(manifest)
     if observed != expected_observed:
@@ -9097,7 +9076,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_p = sub.add_parser("list", help="List catalog entries")
     list_p.add_argument("--catalog", required=True)
-    list_p.add_argument("--validated", action="store_true")
+    list_p.add_argument(
+        "--reviewed-identity",
+        "--validated",
+        dest="validated",
+        action="store_true",
+        help=(
+            "show entries with a reviewed expected identity "
+            "(--validated is a compatibility alias)"
+        ),
+    )
     list_p.add_argument("--json", action="store_true")
     list_p.set_defaults(func=cmd_list)
 

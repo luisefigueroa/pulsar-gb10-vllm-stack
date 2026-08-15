@@ -9,12 +9,11 @@ candidate.
 
 The workflow makes capture repeatable. It is not an issuing or promotion
 authority. A successful candidate is explicitly unreviewed, has privacy
-review pending, grants no serving authorization, changes no catalog or
-profile status, and never writes the tracked release registry.
+review pending, changes no catalog or profile status, launches nothing, and
+never writes the tracked release registry.
 
 This is **ADR 0004 evidence-capture candidate persistence**. It is not
-catalog/operator status projection or serving-eligibility migration (ADR
-0004 numbered item 3). It does not add validator-output adapters and
+catalog/operator status projection (ADR 0004 numbered item 3). It does not add validator-output adapters and
 makes no physical DGX claim.
 
 ## System boundary
@@ -30,8 +29,8 @@ makes no physical DGX claim.
 
 The Bash entrypoint is the operator boundary. Python owns spec loading,
 derivation, filesystem-safe publication, assembly, verification, and both
-human and JSON rendering. The command is not routed through `./pulsar`,
-the wizard, profile/catalog status, or the serving allowlist.
+human and JSON rendering. The command is not routed through `./pulsar`, the
+wizard, or profile/catalog status projection, and it launches nothing.
 
 ## Commands
 
@@ -53,9 +52,8 @@ rules: never `/`, the repository root, `models/`,
 `models/model-serving-releases/`, `.git`, or the capture-root directory
 itself.
 
-Human output is scan-friendly at narrow widths. Machine output is stable
-JSON with `schema_version: 1` and always states
-`serving_authorization: false`. Neither mode prints absolute protected
+Human output is scan-friendly at narrow widths. Machine output is stable JSON
+with `schema_version: 1` and carries no serving-permission field. Neither mode prints absolute protected
 evidence paths, repository paths, private topology identifiers, or
 secret values.
 
@@ -153,9 +151,9 @@ evidence/<sha256>    # publishable copies only
 ```
 
 The manifest kind is `pulsar-model-serving-release-capture-candidate`,
-schema version 1. It identifies itself as unreviewed, authority none,
-privacy pending, promotion not authorized, and serving authorization
-false. It binds the release ID, contract ID, sorted run-record IDs,
+schema version 1. It identifies itself as unreviewed, authority none, privacy
+pending, and promotion not authorized. It binds the release ID, contract ID,
+sorted run-record IDs,
 bundle ID, exact file map of every file except `candidate.json`, and the
 candidate ID. It does not carry a decision, review outcome, validation
 status, reviewer, or protected source path.
@@ -203,13 +201,13 @@ existing candidate or any existing ancestor that contains
 
 - Issue a reviewed validation decision
 - Write `models/model-serving-releases/`
-- Change `STATUS`, catalog projection, or the serving allowlist
+- Change `STATUS`, catalog projection, recommendation/default policy, or runtime state
 - Adapt `validate/*` output into a trusted producer contract
 - Claim physical DGX, model-download, container, or remote behavior
 - Route through `./pulsar` or the wizard
 
-Trusted privacy review, decision persistence, status projection, and
-serving-eligibility migration remain later units.
+Trusted privacy review, decision persistence, and status projection remain
+later units. Serving permission is status-independent.
 
 ## Tests
 

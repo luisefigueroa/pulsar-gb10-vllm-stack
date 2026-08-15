@@ -28,7 +28,7 @@ Federated model library (warm catalog + optional cold + hot staging)
 
 Usage:
   scripts/model-library.sh catalog refresh [--json] [--local-only]
-  scripts/model-library.sh catalog list [--validated] [--json]
+  scripts/model-library.sh catalog list [--reviewed-identity] [--json]
   scripts/model-library.sh catalog show <model_id|profile> [--json]
   scripts/model-library.sh catalog primary list [--json]
   scripts/model-library.sh catalog primary set <profile|model_id|model_id@revision>
@@ -79,11 +79,14 @@ Notes:
     only (cold remains sole durable copy; pin still allows warm restart).
   • Catalog identity labels distinguish reviewed expected seals from
     legacy-unsealed STATUS claims; local bytes never create expected identity.
-    catalog list --validated shows present entries with reviewed expected seals.
+    catalog list --reviewed-identity shows present entries with reviewed
+    expected seals. --validated remains a compatibility alias for that identity
+    filter; it is not a Model Serving Release status filter.
     Sealed profiles also require a content-addressed validation bundle whose
     model, image, runtime, geometry, artifact, and evidence contract matches.
-    prepare refuses legacy-unsealed profiles unless --allow-unvalidated marks
-    an explicit experiment; that flag never bypasses a configured seal mismatch.
+    Validation labels are advisory: prepare accepts fully verified unsealed
+    content without an override. --allow-unvalidated remains a deprecated no-op
+    for compatibility and never bypasses a configured seal mismatch.
   • Duplicate complete homes refuse resolve until an exact-revision primary is
     chosen. The selection persists in the site catalog across refreshes; a
     missing selected home is stale and fails closed rather than auto-electing.
@@ -2285,7 +2288,6 @@ cmd_release_transfer() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend fabric \
-    --allow-unvalidated \
     --nodes "$NODES")
   local action
   action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -2919,13 +2921,13 @@ timed_activate_backend() {
   start_ts=$(date +%s.%N 2>/dev/null || date +%s)
   if [ "$LIBRARY_SUDO_MODE" = interactive ]; then
     if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
-      "$0" prepare "$profile" --backend "$backend" --allow-unvalidated --yes --interactive-sudo 1>&2; then
+      "$0" prepare "$profile" --backend "$backend" --yes --interactive-sudo 1>&2; then
       rm -f "$phase_tmp"
       die "timed preparation --backend $backend failed"
     fi
   else
     if ! ACTIVATE_PHASE_LOG="$phase_tmp" \
-      "$0" prepare "$profile" --backend "$backend" --allow-unvalidated --yes 1>&2; then
+      "$0" prepare "$profile" --backend "$backend" --yes 1>&2; then
       rm -f "$phase_tmp"
       die "timed preparation --backend $backend failed"
     fi
@@ -3013,7 +3015,6 @@ cmd_bench_activate() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend copy \
-    --allow-unvalidated \
     --nodes "$nodes") \
     || die "bench-prepare: preparation plan failed (catalog primary or model identity?)"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
@@ -3095,7 +3096,6 @@ cmd_probe_ssh_roce() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend copy \
-    --allow-unvalidated \
     --nodes "$nodes") \
     || die "probe-ssh-roce: preparation plan failed"
   home_rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
@@ -3233,7 +3233,6 @@ cmd_bench_ssh_roce() {
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
     --backend copy \
-    --allow-unvalidated \
     --nodes "$nodes") \
     || die "bench-ssh-roce: preparation plan failed"
   model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')

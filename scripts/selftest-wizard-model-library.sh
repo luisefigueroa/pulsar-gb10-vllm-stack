@@ -387,8 +387,10 @@ run_wizard() {
 }
 
 echo "=== replicated remains the guided default ==="
-run_wizard healthy.json 0 0 $'1\n1\n\ny\n'
+run_wizard healthy.json 0 0 $'2\n1\n\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
+assert_contains "$STATE/logs/output.log" 'Tested—criteria not met' \
+  "wizard exposes a non-recommended serving profile with its advisory status"
 assert_empty "$STATE/logs/health.log" "replicated choice does not inspect catalog health"
 assert_empty "$STATE/logs/prepare.log" "replicated choice does not prepare catalog views"
 assert_contains "$STATE/logs/weights.log" '^deepseek-v4-flash --json$' \
@@ -397,7 +399,7 @@ assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
   "replicated launch remains unchanged"
 
 echo "=== explicit experimental preparation and launch ==="
-run_wizard unprepared.json 0 0 $'1\n2\ny\n\ny\n'
+run_wizard unprepared.json 0 0 $'2\n2\ny\n\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'DISTRIBUTED CATALOG.*EXPERIMENTAL' \
   "wizard labels the catalog path experimental"
@@ -416,14 +418,14 @@ assert_contains "$STATE/logs/up.log" \
   "launch receives library-hot only after separate confirmation"
 
 echo "=== blocked catalog can return to replicated explicitly ==="
-run_wizard attention.json 1 0 $'1\n2\n1\n\ny\n'
+run_wizard attention.json 1 0 $'2\n2\n1\n\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_empty "$STATE/logs/prepare.log" "blocked catalog does not attempt preparation"
 assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
   "operator explicitly returns to replicated weights"
 
 echo "=== failed preparation never launches ==="
-run_wizard unprepared.json 0 7 $'1\n2\ny\n3\n'
+run_wizard unprepared.json 0 7 $'2\n2\ny\n3\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'preparation failed' \
   "preparation failure is visible"
@@ -431,7 +433,7 @@ assert_empty "$STATE/logs/up.log" "preparation failure cannot launch"
 
 echo "=== confirmed experimental restart retains prepared views ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.running"
-run_wizard healthy-active.json 0 0 $'1\n2\n1\n\ny\n' \
+run_wizard healthy-active.json 0 0 $'2\n2\n1\n\ny\n' \
   "$STATE/inventory.json.running"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/down.log" \
@@ -443,7 +445,7 @@ assert_contains "$STATE/logs/up.log" \
 
 echo "=== failed replacement restores exact catalog contract ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.rollback"
-run_wizard healthy-active.json 0 0 $'1\n2\n1\n\ny\n1\ny\n' \
+run_wizard healthy-active.json 0 0 $'2\n2\n1\n\ny\n1\ny\n' \
   "$STATE/inventory.json.rollback" "$STATE/reports/profiles.json" 1
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" \

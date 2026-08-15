@@ -18,7 +18,7 @@ published here to pass repository review. The read-only verifier
 the filesystem layout, verifies content IDs, and assembles the object graph
 through the pure schema modules. It cannot prove that repository review
 occurred. It does not capture evidence, issue a decision, project catalog or
-operator status, change legacy `STATUS` gates, or grant serving eligibility.
+operator status, or launch a release. Validation status is advisory.
 
 ## Trust rules
 
@@ -38,8 +38,8 @@ operator status, change legacy `STATUS` gates, or grant serving eligibility.
 - Inspection of a stored release is informational. Absence of a reviewed
   decision is not `Untested`. Multiple contract lineages or unsuperseded
   heads are ambiguous and never collapsed to one status.
-- Machine-readable command output uses `schema_version: 1`; it always reports
-  `serving_authorization: false` in this stage.
+- Machine-readable command output uses `schema_version: 1` and reports only
+  inspection results; it carries no serving-permission field.
 
 This store currently contains no issued release, contract, run, bundle, or
 decision. Do not add a `Validated` fixture here. Local ADR 0004

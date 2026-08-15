@@ -8,8 +8,9 @@ EXPECTED_MODEL_SEAL="seals/<profile>.json"
 ```
 
 The reference is relative to `models/` and must resolve inside this directory.
-Only `STATUS=tested*` profiles may reference a seal. The one-node diagnostic
-`qwen3-1.7b` profile carries the first reviewed lab-issued seal. The flagship
+Seal attachment is independent of validation status: any profile may reference
+a reviewed seal, and an identity match does not promote its Model Serving
+Release status. The one-node diagnostic `qwen3-1.7b` profile carries the first reviewed lab-issued seal. The flagship
 `deepseek-v4-flash` profile carries the second. Profiles without a reviewed
 seal, including `qwen3-1.7b-2node`, remain `legacy-unsealed`.
 
@@ -67,12 +68,11 @@ calculation.
    their trusted paths and commit them with the profile
    `EXPECTED_MODEL_SEAL` reference in one pull request.
 6. Run `scripts/model-library.sh validation-bundle verify <profile>` and
-   `scripts/selftest.sh`, refresh the site catalog, and prepare without
-   `--allow-unvalidated`. Preparation must full-hash the source and report
+   `scripts/selftest.sh`, refresh the site catalog, and prepare. Preparation must full-hash the source and report
    `identity_status=match` before it can publish ready hot state.
 
-A configured model, commit, or manifest mismatch cannot be bypassed with
-`--allow-unvalidated`. Under current schema-1 enforcement, changing any seal
+A configured model, commit, or manifest mismatch cannot be bypassed by a
+validation label or compatibility flag. Under current schema-1 enforcement, changing any seal
 creates a distinct hot identity; prior hot state is not silently relabeled.
 That legacy hot identity is not the Model Serving Release identity. A seal
 change that alters only review, provenance, evidence, or issuance metadata
@@ -129,7 +129,8 @@ unchanged. None of the ADR 0004 objects is issued or referenced by the
 current seal path. Read-only persistence and verification of those objects
 is implemented under `models/model-serving-releases/` and is currently empty.
 Local evidence-capture candidate persistence is implemented and unreviewed.
-Issuance/publication, status/serving projection, and migration remain pending. Candidate tooling, schema builders, and local content
+Issuance/publication and status projection remain pending. Serving permission
+is status-independent. Candidate tooling, schema builders, and local content
 verification may demonstrate internal consistency or a content match, but a
 locally constructed decision cannot establish reviewer authority or assign a
 trusted Model Serving Release status.

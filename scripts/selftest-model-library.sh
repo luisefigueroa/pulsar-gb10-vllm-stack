@@ -184,7 +184,6 @@ plan=$(python3 "$PY" plan-activate \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
-  --allow-unvalidated \
   --backend copy \
   --nodes 1)
 action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -209,7 +208,6 @@ plan2=$(python3 "$PY" plan-activate \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
-  --allow-unvalidated \
   --backend copy \
   --nodes 1)
 action2=$(printf '%s' "$plan2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -319,7 +317,6 @@ fplan=$(python3 "$PY" plan-activate \
   --topology-file "$STATE/topology.json" \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
-  --allow-unvalidated \
   --backend fabric \
   --nodes 2)
 faction=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -338,7 +335,6 @@ python3 "$PY" plan-activate \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
-  --allow-unvalidated \
   --backend nfs >/dev/null 2>&1
 bad_rc=$?
 set -e
@@ -356,7 +352,6 @@ splan=$(python3 "$PY" plan-activate \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
-  --allow-unvalidated \
   --backend fabric \
   --nodes 1)
 saction=$(printf '%s' "$splan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -529,7 +524,6 @@ stage=$(python3 "$PY" plan-cold-stage \
   --hot-root "$HOT" \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
-  --allow-unvalidated \
   --execute)
 stage_action=$(printf '%s' "$stage" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "stage-only action" "$stage_action" "stage-only"
@@ -543,8 +537,7 @@ stage2=$(python3 "$PY" plan-cold-stage \
   --topology-id topo-cold-001 \
   --hot-root "$HOT" \
   --catalog "$STATE/catalog-cold.json" \
-  --models-dir "$STATE/models" \
-  --allow-unvalidated)
+  --models-dir "$STATE/models")
 stage2_action=$(printf '%s' "$stage2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "stage-only skip when hot ready" "$stage2_action" "skip"
 
@@ -556,7 +549,6 @@ python3 "$PY" plan-activate \
   --topology-id topo-cold-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
-  --allow-unvalidated \
   --backend copy \
   --nodes 1 >/dev/null 2>"$STATE/activate-cold.err"
 ac_rc=$?

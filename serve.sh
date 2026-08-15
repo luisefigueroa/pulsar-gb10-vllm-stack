@@ -10,7 +10,7 @@
 # -d            detach (docker -d)
 # --spec-decode / --no-spec-decode override the model profile's default
 # --dry-run     print the docker command instead of running it
-# --force       allow non-tested STATUS (see scripts/lib.sh status gate)
+# --force       deprecated no-op; retained for command compatibility
 #
 # Multi-node profiles (NODES>1): use cluster/start-cluster.sh.
 set -euo pipefail
@@ -36,7 +36,7 @@ fi
 MODEL_NAME="${1:?usage: ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-decode] [--dry-run] [--port N] [--force] (see --list)}"
 shift
 
-DETACH="" SPEC_MODE=auto DRY_RUN=0 PORT_OVERRIDE="" FORCE=0 NODE_SELECTOR=""
+DETACH="" SPEC_MODE=auto DRY_RUN=0 PORT_OVERRIDE="" NODE_SELECTOR=""
 WEIGHT_SOURCE=replicated
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -44,7 +44,7 @@ while [ $# -gt 0 ]; do
     --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
     --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --dry-run) DRY_RUN=1 ;;
-    --force) FORCE=1 ;;
+    --force) : ;; # Backward-compatible no-op: status labels are advisory.
     --weight-source)
       [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
       WEIGHT_SOURCE="$2"
@@ -92,10 +92,7 @@ resolve_spec_decode "$SPEC_MODE"
 LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
 SPEC_DECODE_STATE=$([ "$SPEC_DECODE_ENABLED" = 1 ] && printf on || printf off)
 
-if status_requires_force && [ "$FORCE" != 1 ]; then
-  echo "$MODEL_NAME status=$STATUS — refuse serve without --force (allowlist: tested*)" >&2
-  exit 1
-fi
+warn_profile_status
 
 if [ "$NODES" != "1" ]; then
   echo "$MODEL_NAME is a ${NODES}-node config. Use: cluster/start-cluster.sh $MODEL_NAME" >&2

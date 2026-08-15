@@ -75,11 +75,12 @@ live-mount launches remain unbound.
 ADR 0004 stage 1 is implemented by `scripts/model_serving_release.py`: pure
 builders and fail-closed validators own the separate release descriptor and
 frozen Validation Contract, with fixed-ID fixtures under `scripts/testlib/`.
-The module has no I/O or issuance authority, and no promoted operator or
-serving path consumes these objects. The separate read-only registry verifier
-can inspect stored objects. Schema-1 bundles still combine serving inputs,
-evidence, and issuance metadata; `STATUS=tested*` still controls launch
-eligibility; and `--validated` retains its legacy command meaning. No current
+The module has no I/O or issuance authority, and no operator status projection
+consumes these objects. The separate read-only registry verifier can inspect
+stored objects. Schema-1 bundles still combine serving inputs, evidence, and
+issuance metadata; `STATUS=tested*` is a legacy recommendation label; and
+`--validated` is a deprecated alias for the legacy-tested filter. Neither
+controls serving permission. No current
 profile or bundle is automatically assigned the new `Validated` status.
 
 ADR 0004 stage 2 is implemented by `scripts/model_validation_evidence.py`.
@@ -106,9 +107,8 @@ repository review or physical behavior occurred. Read-only trusted
 persistence and verification of stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
 persistence is implemented by `scripts/model-serving-release-capture.sh` and
-does not write that registry or authorize serving. Decision issuance, catalog
-or operator status projection, and serving-eligibility migration remain
-implementation gaps.
+does not write that registry or launch a release. Decision issuance and catalog
+or operator status projection remain implementation gaps.
 
 A predecessor decision that itself has supersession links must supply
 complete `prior_decision_sources` with exact prior release, contract, bundle,
@@ -286,7 +286,7 @@ and reviewed profile changes are trusted.
 |---|---|
 | `MODEL` | Required. Normally passed to vLLM as `--model`. A leading `/` classifies an absolute-path catalog model; otherwise it is a Hugging Face repository. `library-hot` and sealed replicated launch instead pass the exact local `snapshots/<revision>` path. |
 | `SERVED_NAME` | API model name. Defaults to the profile ID and may intentionally differ from the repository ID. |
-| `EXPECTED_MODEL_SEAL` | Optional path relative to `models/`, constrained under `models/seals/`. Only `STATUS=tested*` may reference one. The strict seal and every repository-relative evidence path must exist. |
+| `EXPECTED_MODEL_SEAL` | Optional path relative to `models/`, constrained under `models/seals/`. Any status may reference one because exact identity and validation status are independent. The strict seal and every repository-relative evidence path must exist. |
 | Profile filename | Operator-facing launch ID, for example `scripts/up.sh <profile>`. |
 | `PROFILE_FAMILY` | Groups related one-node/two-node or serving/diagnostic variants. Defaults to `SERVED_NAME`. |
 | `VARIANT_LABEL` | Human label for a variant. Defaults to `<NODES>-node`. |
@@ -335,24 +335,27 @@ Speculative decoding has three catalog-visible states:
 - `optional`: validated arguments exist but remain off by default;
 - `recommended`: validated arguments exist and are enabled by profile policy.
 
-An explicit `--spec-decode` is refused when a profile has no validated
+An explicit `--spec-decode` is refused when a profile has no reviewed
 `SPEC_DECODE_ARGS`. Contradictory on/off flags are also refused.
 
-### 5.5 Status and guided exposure
+### 5.5 Status, recommendation, and availability
 
-`STATUS` is the profile validation ledger state. Only values beginning with
-`tested` are ship-default launchable. `blocked*`, `do-not-use`, untested, or
-unknown statuses require the explicit `--force` escape hatch.
+`STATUS` is the legacy profile evidence label. It is advisory: `tested*`,
+`blocked*`, `do-not-use`, untested, experimental, and unknown values neither
+grant nor deny launch permission. The legacy `--force` option is a compatibility
+no-op.
 
-`scripts/list-models.sh --validated --serving --json` is the wizard's catalog
-contract. It applies both gates:
+`scripts/list-models.sh --serving --json` is the wizard's catalog contract. It
+selects `PROFILE_PURPOSE=serving` without a status filter. The wizard then:
 
-1. status must be `tested*`; and
-2. purpose must be `serving`.
+1. filters only by exact profile capacity and operational placement; and
+2. shows status and notes while ordering legacy `tested*` recommendations first.
 
 A diagnostic canary may therefore be `STATUS=tested` and still be absent from
-the normal serving wizard. This is intentional: “tested plumbing” is not the
-same claim as “recommended user workload.”
+the normal serving wizard because its purpose is diagnostic. This is
+intentional: “tested plumbing” is not the same claim as “serving-purpose
+profile.” Concrete identity, recipe, topology, capacity, security, and lifecycle
+checks remain fail-closed after selection.
 
 ### 5.6 Disk and unified-memory budgets
 
@@ -447,15 +450,15 @@ design.
 If no topology manifest or legacy topology exists and the user declines
 discovery, the wizard treats the local machine as standalone capacity 1. It
 does not create a topology manifest and does not claim cluster membership or a
-confirmed node identity. Only validated one-node serving profiles are offered.
-Here, `validated` is the current UI's legacy `STATUS=tested*` allowlist term,
-not an ADR 0004 validation decision.
+confirmed node identity. Every one-node serving profile is offered with its
+advisory status and notes. The UI does not call legacy `STATUS=tested*`
+`Validated`.
 
 The user sees the equivalent of:
 
 ```text
 1 standalone local node available · no cluster membership confirmed
-Choose a validated model · standalone local node
+Choose a model · status labels are advisory · standalone local node
 ```
 
 The resulting single-node container has no fabricated node ID or topology ID.
@@ -501,7 +504,7 @@ stale. See §15.10.
 
 | Property | Replicated HF cache | Absolute-path catalog | Experimental library-hot | Experimental live fabric |
 |---|---|---|---|---|
-| Guided default | Yes | Yes when a validated profile already references it | No; wizard second choice only | No; CLI only |
+| Guided default | Yes | Yes when an exact serving profile already references it | No; wizard second choice only | No; CLI only |
 | Model origin | Hugging Face repository ID | Operator-managed absolute path | Hugging Face repository ID (reviewed revision) | Hugging Face repository ID |
 | Durable copies | One full repository per serving node | Defined by external catalog operator | One durable home; sealed-hot only on non-home ranks | One authoritative repository on owner; complete client replicas forbidden |
 | Distribution | Controller downloads, then `rsync`s selected repository to remote ranks | Out of scope; mount/provision before Pulsar | Explicit `home add`; prepare copies non-home ranks | Owner-only download; NFS/RDMA export/mount applied explicitly |
@@ -785,7 +788,7 @@ clone repository
   → run ./pulsar wizard
   → doctor checks local prerequisites
   → decline cluster discovery
-  → see only legacy-allowlisted one-node serving profiles
+  → see all one-node serving profiles with advisory status and notes
   → choose model and local placement
   → check/download HF weights or verify absolute catalog path
   → check/sync image
@@ -895,8 +898,9 @@ health report rather than rendering private catalog paths or node identities.
 From an exact entry in **Models & storage**, Pulsar offers **Prepare for
 experimental serving** only when all of the following sanitized eligibility
 inputs agree: current cached topology, a matching primary durable home, an exact
-expected manifest, and a tested Hugging Face serving profile that declares a
-reviewed seal. The interface uses the profile's trusted node count and declared
+expected manifest, and a Hugging Face serving profile that declares a reviewed
+seal. The reviewed seal is an identity requirement for this distribution action,
+not a validation-status allowlist. The interface uses the profile's trusted node count and declared
 weight estimate for its preview. It never derives eligibility from locally
 observed bytes alone.
 
@@ -913,8 +917,8 @@ scripts/model-library.sh prepare <profile> --backend copy \
 One-node acceptance targets the durable-home rank with `ssh-control` and one
 stream; because the runtime view is local to that rank, no bulk transfer occurs.
 
-There is no interactive transport selection, fallback, or
-`--allow-unvalidated` path. The preparation service repeats authoritative
+There is no interactive transport selection, fallback, or validation-status
+override. The preparation service repeats authoritative
 identity, topology, primary, capacity, and all-rank verification immediately
 around mutation; the UI's eligibility result is not an authorization token or
 substitute for those checks. After either success or failure the UI reads fresh
@@ -924,8 +928,8 @@ guided default. Pin, purge, repair, and home deletion stay outside this surface.
 
 ### 9.8 Experimental catalog serving in the wizard
 
-The serving wizard exposes the catalog only for a tested Hugging Face serving
-profile with reviewed identity. Replicated local copies remain the first,
+The serving wizard exposes the catalog only for a Hugging Face serving profile
+with reviewed identity; status does not participate. Replicated local copies remain the first,
 recommended selection. Choosing **distributed catalog (experimental)** reads
 the current health report and displays the exact model revision and manifest,
 durable-home and target ranks, runtime-view readiness, transfer policy, and
@@ -977,7 +981,7 @@ state, not append-only audit evidence or historical service state.
 `scripts/up.sh` is the public orchestration boundary. It performs, in order:
 
 1. profile load and contract validation;
-2. status gate (`tested*`, unless explicitly forced);
+2. advisory status and caveat display;
 3. one-node placement resolution or exact multi-node topology gate;
 4. image presence on every serving rank, with explicit pull/sync if requested;
 5. weight readiness using the selected storage mode;
@@ -1174,12 +1178,12 @@ immutable expected commit, and labels the local home `expected-unverified`.
 Preparation inspects that same revision explicitly, computes the observed
 complete manifest, requires model/revision/manifest equality, and publishes
 hot schema 3 only after full verification. A configured mismatch cannot be
-bypassed with `--allow-unvalidated`.
+bypassed by status or the deprecated compatibility flag.
 
 Profiles without a seal remain `legacy-unsealed`, including
 `qwen3-1.7b-2node`. Their historical `STATUS=tested*` claim does not
-machine-bless arbitrary content and library preparation requires explicit
-`--allow-unvalidated`. The one-node diagnostic `qwen3-1.7b` profile is the
+machine-bless arbitrary content; library preparation full-verifies observed
+content and needs no validation-status override. The one-node diagnostic `qwen3-1.7b` profile is the
 first issued exception and flagship `deepseek-v4-flash` is the second. Sealed
 replicated mode enforces the same expected commit/manifest identity;
 absolute-path catalog and live-mount paths still have no equivalent reviewed
@@ -1819,8 +1823,8 @@ A profile is valid only if:
 - one-node topology class is `single`;
 - multi-node topology class is `roce-full-mesh`, rails are positive, and backend
   is `mp`;
-- recommended speculative decoding has actual validated arguments; and
-- only `tested*` profiles launch without force.
+- recommended speculative decoding has actual reviewed arguments; and
+- validation status is present for display but never used as launch permission.
 
 ### 19.2 Replicated launch acceptance
 
@@ -1940,9 +1944,9 @@ The implementation described here is primarily defined by:
 
 ## 21. Bottom line
 
-The current approach is conservative at the user boundary: profiles are gated
-by the legacy `STATUS=tested*` contract, topology is confirmed rather than
-inferred, replicated local caches remain the default, and experimental
+The current approach is explicit at the user boundary: every fitting serving
+profile is visible with status and caveats, topology is confirmed rather than
+inferred, replicated local caches remain the recommended default, and experimental
 single-copy storage is never selected, prepared, or used as a fallback
 automatically.
 

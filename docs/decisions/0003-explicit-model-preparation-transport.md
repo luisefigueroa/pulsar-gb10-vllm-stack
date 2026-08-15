@@ -124,6 +124,12 @@ the first and recommended choice. One-node profiles run from their selected
 durable-home rank with no bulk transfer; this does not expand the ADR to a
 remote-home-to-non-home relay.
 
+The reviewed seal and ready-home requirements above are identity and
+preparation-integrity requirements for this particular distribution path, not
+a validation-status allowlist. Model Serving Release status never grants or
+denies serving; profiles that do not use this path remain available through
+another compatible weight source when its operational checks pass.
+
 ## Interpretation note — 2026-08-14
 
 ADR 0004 separates distribution-subsystem maturity from Model Serving Release

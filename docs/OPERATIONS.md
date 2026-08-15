@@ -48,10 +48,12 @@ release. Pure descriptor, contract, immutable run-record, evidence-bundle,
 reviewed-decision, status-derivation, and supersession schemas are implemented,
 but the current `./pulsar` commands do not capture, persist, publish, or
 project them. Local ADR 0004 evidence-capture candidate persistence is a
-separate maintainer command and does not authorize serving; see
+separate maintainer command and launches nothing; see
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md).
-`STATUS=tested*` and `--validated` retain their legacy allowlist meaning,
-and existing reviewed seals/bundles are not automatically `Validated`. A
+`STATUS=tested*` remains a legacy evidence/recommendation label, and
+`--validated` is a deprecated alias for the `--legacy-tested` profile filter;
+neither grants serving permission. Existing reviewed seals/bundles are not
+automatically `Validated`. A
 schema-valid local decision is not proof of maintainer review or physical
 qualification.
 
@@ -141,7 +143,7 @@ direct CLI workflows except for the two bounded actions described below.
 delegates to the atomic all-confirmed-rank catalog refresh and then obtains a
 new sanitized health report. It does not move model bytes.
 
-**Prepare for experimental serving** appears only for a tested serving profile
+**Prepare for experimental serving** appears only for a serving profile
 that is associated with the exact catalog entry and carries a reviewed expected
 seal. Before confirmation the view shows the exact model revision and manifest,
 durable-home dependency, serving node count, approximate non-home storage, and
@@ -166,7 +168,7 @@ primary placement, full-verifies the expected seal, performs exact all-rank
 storage admission, creates only non-home sealed-hot copies, publishes witnesses
 only after the all-rank barrier, and rolls back or leaves explicit incomplete
 state on failure. The interactive surface always obtains fresh health after the
-attempt. It provides no `--allow-unvalidated` route, transport picker, fallback,
+attempt. It provides no validation-status override, transport picker, fallback,
 or automatic launch. Success means the artifacts are prepared, not that a model
 was started, qualified, or that `library-hot` was promoted.
 
@@ -308,9 +310,10 @@ always full.
 `./pulsar wizard` (not the no-arg home) runs doctor once, offers cluster
 discovery/confirmation when no remote topology is active, then enters a
 **selection loop** (“Choose another model” does not re-run doctor). The menu is
-capacity-aware but validation-gated: it includes only exact `STATUS=tested*`
-profiles with `NODES` no greater than confirmed capacity. It never derives a
-new TP/PP geometry from the discovered node count.
+capacity-aware and status-transparent: it includes every serving-purpose
+profile with `NODES` no greater than confirmed capacity, displays its advisory
+status and notes, and orders legacy evidence-backed recommendations first. It
+never derives a new TP/PP geometry from the discovered node count.
 
 After a one-node model is selected, the wizard evaluates every confirmed
 physical node independently. A candidate must retain the confirmed immutable
@@ -381,7 +384,7 @@ opaque launch digest records auth presence and supported runtime overrides.
 - Single node low-level: `./serve.sh <name> -d`. Do **not** `docker rm -f` by
   name unless inventory proves ownership — prefer `./pulsar stop <name>`.
   `docker-compose.yml` is an unsupported historical sketch, not an equivalent
-  operator path. It bypasses profile/`STATUS`/placement gates, exact
+  operator path. It bypasses profile-contract/placement gates, exact
   revision/seal identity, read-only runtime views, preflight, and Pulsar
   ownership/launch/topology labels; home, wizard, and `down.sh` will not manage
   it. Do not use it for lab serving.
@@ -499,7 +502,8 @@ verified through an independent channel.
 
 ### Experimental single-copy weights
 
-The wizard and ordinary launch remain replicated.
+The wizard and ordinary launch default to replicated weights; the wizard may
+also present explicitly selected experimental storage choices.
 
 **Live fabric (NFS/RDMA under vLLM):** the opt-in command
 `scripts/up.sh <profile> --weight-source fabric` uses a topology-bound,
@@ -536,8 +540,8 @@ Typical reviewed multi-rank flow:
 scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh catalog list --validated
-# Reviewed multi-rank sealed profile: no override is accepted or needed.
+scripts/model-library.sh catalog list --reviewed-identity
+# Reviewed multi-rank sealed profile: validation status is not an override.
 scripts/model-library.sh prepare <multi-rank-sealed-profile> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
 scripts/up.sh <multi-rank-sealed-profile> --weight-mode library-hot
@@ -555,10 +559,10 @@ scripts/model-library.sh prepare <single-rank-sealed-profile> \
 ```
 
 Legacy-unsealed profiles are outside ADR 0003's fixed transport and stream
-policy. Their low-level `--allow-unvalidated` path remains available only for a
-deliberate experiment; choose and record its transport and stream count as
-experiment inputs rather than inheriting the reviewed-profile recipe. Explicit
-examples remain in the advanced transport sections below.
+policy. Their low-level preparation path needs no validation-status override;
+choose and record its transport and stream count as experiment inputs rather
+than inheriting the reviewed-profile recipe. The deprecated
+`--allow-unvalidated` flag remains an accepted no-op for compatibility.
 
 Catalog refresh inventories existing durable homes; it does not download model
 bytes or create a primary home. Preparation therefore requires an eligible
@@ -615,7 +619,8 @@ qualification scope:
 | Preparation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
 | Exact-source launch, health, warmup, completion smoke, owned stop | Serving integration | Does not prove accuracy, determinism, performance, context, or soak |
 | `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe |
-| `STATUS`, wizard exposure, guided/default storage policy | Combined release/promotion | Requires every applicable subsystem gate |
+| Validation status | Evidence-derived release decision | Describes confidence/results; never grants or denies serving |
+| Recommendation/default storage policy | Combined release/promotion | Requires every applicable subsystem gate; does not hide other labeled choices |
 
 A runtime qualification failure does not make unchanged catalog bytes,
 placement, transfer, or cleanup unhealthy unless evidence demonstrates that
@@ -684,7 +689,7 @@ not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
 or deletes a model, and it never runs automatically.
 
 From an exact model detail, **Prepare for experimental serving** is a second
-separate default-no action. It is offered only for reviewed-seal tested serving
+separate default-no action. It is offered only for reviewed-seal serving
 profiles and delegates to the fixed eight-stream SSH-over-RoCE preparation
 command documented above. The service revalidates exact identity, topology,
 capacity, and all-rank completion; there is no fallback. The action does not
@@ -785,7 +790,7 @@ and refuse before writes when any observation is missing or blocked.
 Pulsar never auto-evicts, silently relaxes capacity, or changes transport; purge
 an unpinned hot instance or free disk, run `budget` again, and retry.
 
-**Current identity behavior:** a tested profile may reference a reviewed seal
+**Current identity behavior:** any profile may reference a reviewed seal
 under `models/seals/` with `EXPECTED_MODEL_SEAL="seals/<file>.json"`.
 That seal must name a content-addressed document at
 `models/validation-bundles/<validation_bundle_id>.json`. Profile load verifies
@@ -803,7 +808,8 @@ Catalog schema 2 selects only its immutable commit. Preparation full-hashes ever
 rank, compares model/commit/manifest to the expected seal, writes hot schema 3
 with expected and observed provenance, and atomically creates that rank's
 `<instance>/.pulsar/witness.json` before ready is published. A configured
-mismatch fails even with `--allow-unvalidated`.
+mismatch always fails; validation status and the deprecated compatibility flag
+cannot bypass expected identity.
 
 Launch rechecks the live profile/seal locally and the controller-provided
 validation identity remotely **before** using the witness. An unchanged witness
@@ -824,11 +830,11 @@ does not refresh. Prepare the model again if the fallback fails. Do not hand-edi
 
 The one-node diagnostic profile `qwen3-1.7b` is the first profile with a
 reviewed seal and validation bundle; the flagship `deepseek-v4-flash` profile
-is the second. Their `library-hot` preparation must match without
-`--allow-unvalidated`, and ordinary replicated staging/launch enforces the
-same commit/manifest without an override. Profiles without a seal, including
-`qwen3-1.7b-2node`, still require that explicit experimental flag for
-`library-hot`. Catalog
+is the second. Their `library-hot` preparation must match the reviewed identity,
+and ordinary replicated staging/launch enforces the same commit/manifest.
+Profiles without a seal, including `qwen3-1.7b-2node`, may use `library-hot`
+after full observed-content verification without a validation-status override.
+Catalog
 refresh enumerates complete `snapshots/<revision>` directories directly. A
 sealed profile therefore finds its reviewed commit even when `refs/main` is
 absent or has moved; only the legacy-unsealed experimental selection consults
@@ -854,8 +860,7 @@ After upgrading, run `catalog refresh`, then
 prepare each required profile again. Hot schema 3 instances created before witness
 support remain readable: the first `library-hot` readiness check visibly
 full-verifies and creates the missing rank-local witness. Current unsealed
-profiles without a seal need the explicit experimental `--allow-unvalidated`
-flag shown in the advanced transport sections below.
+profiles do not need a validation-status override.
 Do not hand-edit or relabel old site-local state into the new schemas.
 
 **Optional cold archive:** shared/local fill tier (conventionally
@@ -882,7 +887,7 @@ scripts/model-library.sh cold adopt poolside/Laguna-S-2.1-NVFP4 --yes
 scripts/model-library.sh catalog refresh
 
 # or stage for this job only (cold remains sole durable copy)
-scripts/model-library.sh cold stage-only laguna-s-2.1-nvfp4 --allow-unvalidated --yes
+scripts/model-library.sh cold stage-only laguna-s-2.1-nvfp4 --yes
 scripts/up.sh laguna-s-2.1-nvfp4 --weight-mode library-hot
 ```
 
@@ -896,11 +901,11 @@ from the catalog primary home over confirmed RoCE rails into hot staging, then
 **release** of mounts/export (not a long-lived mount under vLLM):
 
 ```bash
-scripts/model-library.sh prepare <profile> --backend fabric --allow-unvalidated --yes
+scripts/model-library.sh prepare <profile> --backend fabric --yes
 # optional attended sudo:
-scripts/model-library.sh prepare <profile> --backend fabric --allow-unvalidated --yes --interactive-sudo
+scripts/model-library.sh prepare <profile> --backend fabric --yes --interactive-sudo
 # measure wall time:
-scripts/model-library.sh prepare <profile> --backend fabric --allow-unvalidated --yes --time
+scripts/model-library.sh prepare <profile> --backend fabric --yes --time
 # emergency cleanup of transfer plane:
 scripts/model-library.sh release-transfer <profile> --yes
 ```
@@ -973,7 +978,7 @@ PULSAR_COPY_STREAM_STAGGER_MS=150 \
 
 # Manual one-shot over RoCE TCP with the enrolled alias/key identity:
 scripts/model-library.sh prepare <profile> --transport ssh-roce \
-  --backend copy --copy-streams 8 --allow-unvalidated --yes
+  --backend copy --copy-streams 8 --yes
 ```
 
 `--copy-streams` accepts 1-16 and defaults to 1. Above eight streams, the

@@ -3,9 +3,9 @@
 
 This module loads, verifies, and inspects immutable reviewed objects from a
 tracked registry.  It does not capture evidence, issue a decision, project
-catalog or operator status, change legacy STATUS gates, or grant serving
-eligibility.  Schema ownership remains in the pure modules: this layer only
-assembles caller-visible source sets and asks those validators to check them.
+catalog or operator status, or launch a release.  Schema ownership remains in
+the pure modules: this layer only assembles caller-visible source sets and asks
+those validators to check them.
 
 Publishable evidence hashing and review-metadata shape checks do not prove
 privacy review, repository review, or physical behavior.
@@ -47,11 +47,10 @@ INSPECTION_NONE = "no-reviewed-decision"
 INSPECTION_AMBIGUOUS = "ambiguous"
 PERSISTENCE_NOTES = (
     "The registry verifies stored objects only. It does not capture "
-    "evidence, issue a decision, project catalog status, or change "
-    "serving eligibility.",
+    "evidence, issue a decision, project catalog status, or launch a release.",
     "Publishable evidence hashing does not prove privacy review, "
     "repository review, or physical behavior.",
-    "This inspection is not serving authorization.",
+    "Validation status is advisory and is not serving authorization.",
 )
 
 NAMESPACE_SPECS: dict[str, dict[str, str]] = {
@@ -631,7 +630,6 @@ def inspect_release(graph: RegistryGraph, release_id: str) -> dict[str, Any]:
         "unsuperseded_decision_ids": head_ids,
         "unique_contract_id": None,
         "unique_decision_id": None,
-        "serving_authorization": False,
     }
     if len(contract_ids) > 1 or len(heads) > 1:
         inspection["state"] = INSPECTION_AMBIGUOUS
@@ -718,7 +716,6 @@ def inspect_decision(graph: RegistryGraph, decision_id: str) -> dict[str, Any]:
             model_validation_evidence.validation_status_label(effective)
         ),
         "superseded_by_decision_ids": superseded_by,
-        "serving_authorization": False,
         "notes": list(PERSISTENCE_NOTES),
     }
 
@@ -844,7 +841,6 @@ def verify_payload(graph: RegistryGraph) -> dict[str, Any]:
         "run_record_ids": sorted(graph.run_records),
         "evidence_bundle_ids": sorted(graph.evidence_bundles),
         "decision_ids": sorted(graph.decisions),
-        "serving_authorization": False,
         "notes": list(PERSISTENCE_NOTES),
     }
 
@@ -858,7 +854,6 @@ def release_payload(graph: RegistryGraph, release_id: str) -> dict[str, Any]:
         "command": "show-release",
         "release_id": release_id,
         "inspection": inspection,
-        "serving_authorization": False,
         "notes": inspected["notes"],
     }
 
@@ -880,7 +875,6 @@ def decision_payload(graph: RegistryGraph, decision_id: str) -> dict[str, Any]:
         "effective_status_label": inspected["effective_status_label"],
         "supersedes_decision_ids": decision["supersedes_decision_ids"],
         "superseded_by_decision_ids": inspected["superseded_by_decision_ids"],
-        "serving_authorization": False,
         "notes": inspected["notes"],
     }
 
@@ -891,7 +885,6 @@ def _error_payload(command: str, message: str) -> dict[str, Any]:
         "ok": False,
         "command": command,
         "error": message,
-        "serving_authorization": False,
     }
 
 

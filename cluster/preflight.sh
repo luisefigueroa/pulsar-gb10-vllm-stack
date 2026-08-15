@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only preflight for an exact validated multi-node profile.
+# Read-only preflight for an exact configured multi-node profile.
 #   cluster/preflight.sh <model-name> [--weight-source replicated|fabric|library-hot]
 set -uo pipefail
 

@@ -8,7 +8,10 @@ class change creates a new **Model Serving Release** under
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). No prior
 release status transfers across that change. In the current implementation,
 the same change invalidates the applicable schema-1 validation bundle and
-nothing keeps its `STATUS=tested*` serving eligibility without new evidence.
+nothing keeps its legacy `STATUS=tested*` evidence label without new evidence.
+Serving permission is status-independent; the changed release still has to pass
+the concrete identity, recipe, compatibility, topology, capacity, security, and
+lifecycle checks for any attempted launch.
 This is the public, repository-relative sequence; expect roughly half a day,
 mostly machine time.
 
@@ -46,12 +49,12 @@ and fail-closed tests. Pure immutable run-record, new evidence-bundle, reviewed
 validation-decision, status-derivation, and supersession schemas are implemented
 in `scripts/model_validation_evidence.py`. Together they perform no command
 execution, evidence capture, persistence, trusted issuance, profile update, or
-serving gate. A syntactically reviewed decision cannot prove physical behavior
+launch. A syntactically reviewed decision cannot prove physical behavior
 or that repository review occurred. Read-only persistence and verification of
 stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
-persistence is implemented and remains unreviewed; decision issuance,
-catalog/operator status projection, and serving migration remain pending.
+persistence is implemented and remains unreviewed; decision issuance and
+catalog/operator status projection remain pending.
 Existing bundles, seals, profiles, and historical evidence remain unchanged and
 must not be automatically relabeled `Validated`. The corrected ADR 0004
 objects remain schema version 1 because none was issued or persisted before
@@ -67,7 +70,7 @@ implemented Validation Contract freezes criteria. The implemented stage-2
 schemas separately bind immutable attempts, evidence sets, and reviewed
 decisions. Read-only verification can inspect stored objects. Local evidence-capture
 candidate persistence can emit unreviewed run and bundle candidates; it does
-not issue a reviewed decision or change serving eligibility.
+not issue a reviewed decision, project status, or launch a release.
 Reusable subsystem evidence is not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
@@ -104,10 +107,10 @@ cannot satisfy a validation criterion.
 Changing an image, model, configuration, or geometry creates a new release ID
 and requires a newly frozen contract and reviewed decision under ADR 0004. The
 pure libraries can build and validate all five object roles, but no current
-operator or serving path captures, persists, or consumes them. A new schema-1
-bundle is still required by the current serving implementation before
-`STATUS=tested` or a guided claim can move. Preserving unchanged catalog
-evidence is scoped evidence reuse, not release-status or bundle inheritance.
+operator or serving path consumes them as launch permission. A new schema-1
+bundle is still required before a legacy `STATUS=tested` recommendation or a
+guided/default claim can move. Preserving unchanged catalog evidence is scoped
+evidence reuse, not release-status or bundle inheritance.
 Health and completion smoke are never substitutes for model qualification.
 
 ## Validation contract and status rules
@@ -335,8 +338,9 @@ PP combination:
 1. Create a separate exact profile variant with `TP × PP == NODES`, explicit
    topology/rail requirements, and a non-tested status. Do not alter a tested
    profile in place to cover another world size.
-2. Use `scripts/up.sh <profile> --force` only for the deliberate experiment.
-   The launcher still requires confirmed capacity and the exact topology.
+2. Use `scripts/up.sh <profile>` for the deliberate experiment. The profile's
+   status remains visible and advisory; the launcher still requires confirmed
+   capacity and the exact topology.
 3. Capture correctness and determinism against the appropriate control; run
    concurrency/throughput sweeps, context gates appropriate to the model, a
    partial-rank/node-loss exercise, and the full soak. A relative performance
@@ -347,9 +351,9 @@ PP combination:
 4. Store raw outputs under `results/` and add the exact image, hardware ranks,
    topology ID/class, TP/PP, flags, verdicts, and artifact paths to
    `VALIDATION.md`.
-5. Promote only that variant to `STATUS=tested*` after every required gate
-   passes. Until then it stays out of the wizard even when discovery finds
-   enough nodes.
+5. Move only that variant into the legacy `STATUS=tested*` recommendation class
+   after every required gate passes. It remains visible in the wizard before
+   then, with its actual status and caveats.
 
 No three-node serving profile is promoted by the current ledger.
 
@@ -427,15 +431,16 @@ durable home separately before running preparation.
 11. interactive model-storage delegation when its eligibility or command
     contract changes:
     - browsing and health recheck remain mutation-free;
-    - stale topology, missing expected identity, missing primary, unsealed
-      profile metadata, and invalid profile JSON suppress preparation;
+    - stale topology, missing reviewed identity, missing primary, unsealed
+      profile metadata, and invalid profile JSON suppress this interactive
+      reviewed-identity preparation action; validation status does not;
     - the preview names exact revision/manifest, durable-home dependency,
       approximate non-home storage, and the selected transfer policy;
     - confirmation defaults to no and decline invokes no mutation;
     - multi-node acceptance delegates exactly to reviewed-profile eight-stream
       SSH-over-RoCE copy; one-node acceptance targets the durable-home rank with
       `ssh-control`, one stream, and no bulk transfer; neither path has fallback
-      or `--allow-unvalidated`;
+      or a validation-status override;
     - success and failure both trigger fresh health, never claim launch or
       promotion, and preserve service diagnostics; and
     - repeat physical preparation only if the underlying identity, topology,
@@ -558,9 +563,10 @@ with replicated weights.
   record any evidence-backed exclusion, and let the frozen-contract rules
   derive the ADR 0004 decision status without hiding conflicts, failures, or
   missing evidence. Until the
-  status migration is implemented, update conf `STATUS`/`NOTES` only under its
-  current legacy contract and only when the complete serving-eligibility scope
-  passes. Update `docs/VALIDATION.md` with the measured
+  status projection is implemented, update conf `STATUS`/`NOTES` only under its
+  current legacy evidence contract and only when the evidence supports the
+  label. Status changes never authorize or prohibit serving. Update
+  `docs/VALIDATION.md` with the measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
 - Build the exact manifest and unreviewed documents with

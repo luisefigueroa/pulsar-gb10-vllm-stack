@@ -151,7 +151,7 @@ assert_contains "$STATE/healthy.out" 'MODEL STORAGE DETAIL'   "exact-model detai
 assert_contains "$STATE/healthy.out" 'durable home|durable-home'   "durable-home dependency is visible"
 [ "$(wc -l <"$LOG")" -eq 1 ]
 [ "$(cat "$LOG")" = "--json" ]
-[ "$(cat "$PROFILES_LOG")" = "--validated --serving --json" ]
+[ "$(cat "$PROFILES_LOG")" = "--serving --json" ]
 [ ! -s "$REFRESH_LOG" ]
 [ ! -s "$PREPARE_LOG" ]
 echo "OK   browsing never refreshes the catalog automatically"
@@ -185,7 +185,7 @@ assert_contains "$STATE/prepare-success.out" 'serving was not started' \
 assert_contains "$STATE/prepare-success.out" 'views[[:space:]]+2' \
   "successful preparation re-renders current runtime-view count"
 assert_not_contains "$PREPARE_LOG" 'allow-unvalidated' \
-  "interactive preparation cannot bypass reviewed identity"
+  "interactive preparation does not use a validation-status override"
 
 run_view unprepared.json 0 $'1\n1\ny\n6\n' "$STATE/prepare-failure.out" 0 "" 1
 [ "$VIEW_RC" -eq 0 ]

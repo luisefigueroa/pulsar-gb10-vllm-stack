@@ -126,7 +126,7 @@ flat = " ".join(line.strip() for line in lines)
 assert lines and max(map(len, lines)) <= 48
 assert lines[0] == "SAVE CLUSTER MEMBERSHIP"
 assert "3 nodes shown above" in flat
-assert "exact validated configurations" in flat
+assert "exact configurations that fit capacity" in flat
 assert "does not validate or create a model profile" in flat
 PY
 

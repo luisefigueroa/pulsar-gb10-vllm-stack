@@ -144,12 +144,14 @@ unsupported.
 - **Canaries**: `qwen3-1.7b` (E2E smoke, ~2 min to healthy) and
   `qwen3-1.7b-2node` (multi-node plumbing check, TP=2 mp backend).
   They are hidden from the serving wizard; list them with
-  `scripts/list-models.sh --validated --diagnostic` (`--validated` is the
-  current legacy `STATUS=tested*` filter, not yet the ADR 0004 release status).
+  `scripts/list-models.sh --legacy-tested --diagnostic`. The deprecated
+  `--validated` alias applies the same legacy `STATUS=tested*` filter; neither
+  reports the ADR 0004 release status.
 - **Bit-exact reproducibility run** (standard-attention models only): add
   `-e VLLM_BATCH_INVARIANT=1` → greedy outputs identical across nodes AND
   boots (30/30 verified). Not for production throughput paths.
 - **Cross-node TP=2 of a 1-node model on the official image** (measurement
-  only): `laguna-s-2.1-2node` is **STATUS=do-not-use** (requires `--force`).
+  only): `laguna-s-2.1-2node` is **STATUS=do-not-use** (advisory; no status
+  override is required).
   Conf bakes `--enforce-eager` (stock graphs hang by request ~2 without it).
   Prefer 1-node `laguna-s-2.1-nvfp4` for real serving.
