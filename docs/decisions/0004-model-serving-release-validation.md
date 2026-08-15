@@ -3,12 +3,13 @@
 - **Status:** Accepted
 - **Date:** 2026-08-14
 - **Amended:** 2026-08-15 — validation status is advisory, not serving
-  authorization
+  authorization; primary model identity is source-neutral
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
   and verification implemented under `models/model-serving-releases/`;
   local ADR 0004 evidence-capture candidate persistence implemented;
+  local source-neutral release-plan candidate persistence implemented;
   advisory catalog/operator ADR 0004 status projection implemented for
   explicitly bound profiles; trusted decision issuance pending;
   status-independent serving policy implemented
@@ -59,6 +60,15 @@ The Model Artifact Set includes weights, tokenizer, configuration, bundled
 model code, and any separate adapter, draft model, tokenizer override,
 supplemental head, or external code that can affect behavior. The serving
 recipe records how each artifact is used.
+
+Primary identity is source-neutral. A Hugging Face acquisition is represented
+as a `huggingface-snapshot` with its exact commit and complete manifest. A
+complete model tree acquired from another catalog or filesystem source is
+represented as a `content-addressed-model` with a public logical artifact ID,
+public revision, and the same complete-manifest integrity scheme. Local path
+spelling and acquisition transport are not persisted. A `digest-artifact`
+describes a behavior-affecting attachment, not a complete primary model, and
+cannot satisfy the primary-model binding by itself.
 
 The runtime model-access contract is part of the serving recipe. Replicated
 cache and `library-hot` preparation may instantiate the same Model Serving
@@ -458,6 +468,23 @@ assigns no status, changes no profile, and launches nothing.
 Control-plane selftests establish only these schema contracts; no physical DGX
 claim follows from them.
 
+The unreviewed Stage-1 planning boundary is implemented by
+`scripts/model-serving-release-plan.sh` and
+`scripts/model_serving_release_plan.py`. It sources one profile, consumes an
+already computed complete snapshot manifest, requires an explicit
+runtime/image and hardware envelope plus frozen criteria, accepts explicitly
+bound descriptors for every additional behavior-affecting artifact, and writes
+only release and contract candidates beneath `experiments/model-onboarding/`
+(or an explicit path outside the repository). It strips deployment-local
+source paths from source-neutral identity, checks the profile image, TP/PP, node count,
+topology, and rail contract against the supplied envelope, and can verify the
+candidate against the current profile. It does not acquire bytes, prove the
+manifest was measured from the claimed source, prove physical compatibility,
+capture evidence, issue a decision, assign status, or write the trusted
+registry. Explicit profile-reference mappings may replace a local artifact
+argument with its public artifact key before hashing; those mappings must match
+an argument and are never persisted.
+
 Stage 2 is implemented by `scripts/model_validation_evidence.py`. It provides
 pure builders and fail-closed validators for content-addressed evidence
 references, immutable attempt/run records, Model Serving Release validation
@@ -552,13 +579,15 @@ adapter, a reviewed decision, or a physical DGX claim. See
 
 ### Pre-issuance schema correction
 
-The observation, predecessor-lineage, structural-compatibility, command,
-chronology, and acyclicity rules above are a pre-issuance correction to ADR
-0004 schema version 1. No ADR 0004 release descriptor, Validation Contract,
-run record, evidence bundle, or validation decision has been issued, persisted
-through a trusted publication path, referenced by a profile, or consumed by a
-serving gate. There is therefore no released object to migrate and no reason to
-introduce schema version 2.
+The source-neutral primary artifact, observation, predecessor-lineage,
+structural-compatibility, command, chronology, and acyclicity rules above are a
+pre-issuance correction to ADR 0004 schema version 1. No ADR 0004 release
+descriptor, Validation Contract, run record, evidence bundle, or validation
+decision has been issued, persisted through a trusted publication path,
+referenced by a profile, or consumed by a serving gate. There is therefore no
+released object to migrate and no reason to introduce schema version 2.
+Earlier local unreviewed release-plan candidates, if any, are disposable and
+must be rebuilt; this does not alter legacy schema-1 seals or bundles.
 
 This statement does not apply retroactively to the older schema-1 expected
 seals and combined validation bundles under `models/`. They are different,
@@ -567,8 +596,9 @@ historical evidence, and current enforcement behavior remain untouched.
 
 Implement this decision in focused, reviewable units:
 
-1. **Implemented:** add canonical release-descriptor identity and Validation
-   Contract schemas in Python with deterministic fixtures, without modifying
+1. **Implemented:** add canonical source-neutral release-descriptor identity,
+   Validation Contract schemas, and unreviewed release-plan candidate
+   persistence in Python with deterministic fixtures, without modifying
    schema-1 artifacts;
 2. **Implemented:** add immutable attempt/run records, evidence bundles, and
    validation decisions with fail-closed cross-link verification, independent

@@ -63,6 +63,8 @@ run "model release identity and candidate contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_release.py"
 run "Model Serving Release and Validation Contract schemas" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release.py"
+run "Model Serving Release unreviewed planning" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_plan.py"
 run "Model Serving Release evidence and decision schemas" \
   python3 "$REPO_DIR/scripts/testlib/test_model_validation_evidence.py"
 run "Model Serving Release evidence adversarial regressions" \

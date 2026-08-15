@@ -25,7 +25,15 @@ MODEL_SERVING_RELEASE_KIND = "pulsar-model-serving-release"
 VALIDATION_CONTRACT_SCHEMA_VERSION = 1
 VALIDATION_CONTRACT_KIND = "pulsar-validation-contract"
 
-ARTIFACT_KINDS = {"huggingface-snapshot", "digest-artifact"}
+ARTIFACT_KINDS = {
+    "huggingface-snapshot",
+    "content-addressed-model",
+    "digest-artifact",
+}
+PRIMARY_MODEL_ARTIFACT_KINDS = {
+    "huggingface-snapshot",
+    "content-addressed-model",
+}
 ARTIFACT_USES = {
     "primary-model",
     "draft-model",
@@ -559,6 +567,52 @@ def _validate_artifact(artifact: Any, *, index: int) -> dict[str, Any]:
             fail(f"model artifact set artifacts[{index}].manifest_id is invalid")
         return artifact
 
+    if kind == "content-addressed-model":
+        _require_fields(
+            artifact,
+            {
+                "artifact_key",
+                "kind",
+                "artifact_id",
+                "revision",
+                "manifest",
+            },
+            label=f"model artifact set artifacts[{index}]",
+        )
+        artifact_id = _nonempty_string(
+            artifact.get("artifact_id"),
+            label=f"model artifact set artifacts[{index}].artifact_id",
+        )
+        revision = _nonempty_string(
+            artifact.get("revision"),
+            label=f"model artifact set artifacts[{index}].revision",
+        )
+        _validate_public_string_value(
+            artifact_id,
+            label=f"model artifact set artifacts[{index}].artifact_id",
+        )
+        _validate_public_string_value(
+            revision,
+            label=f"model artifact set artifacts[{index}].revision",
+        )
+        manifest = _require_fields(
+            artifact.get("manifest"),
+            {"scheme", "manifest_id"},
+            label=f"model artifact set artifacts[{index}].manifest",
+        )
+        if manifest.get("scheme") != model_identity.SNAPSHOT_INTEGRITY_SCHEME:
+            fail(
+                f"model artifact set artifacts[{index}].manifest scheme "
+                "is unsupported"
+            )
+        manifest_id = manifest.get("manifest_id")
+        if (
+            not isinstance(manifest_id, str)
+            or model_identity.SHA256_HEX_RE.fullmatch(manifest_id) is None
+        ):
+            fail(f"model artifact set artifacts[{index}].manifest_id is invalid")
+        return artifact
+
     _require_fields(
         artifact,
         {"artifact_key", "kind", "artifact_id", "revision", "digest"},
@@ -745,8 +799,11 @@ def _validate_artifact_bindings(
         artifacts = {item["artifact_key"]: item for item in artifact_set["artifacts"]}
         if set(keys) != set(artifacts):
             fail("serving recipe artifact_bindings differ from Model Artifact Set")
-        if artifacts[primary_keys[0]]["kind"] != "huggingface-snapshot":
-            fail("serving recipe primary-model must bind a Hugging Face snapshot")
+        if artifacts[primary_keys[0]]["kind"] not in PRIMARY_MODEL_ARTIFACT_KINDS:
+            fail(
+                "serving recipe primary-model must bind a complete "
+                "content-addressed model"
+            )
     return value
 
 

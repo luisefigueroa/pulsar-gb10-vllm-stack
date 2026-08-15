@@ -48,6 +48,12 @@ issued or persisted before the correction. Existing legacy schema-1
 seals/bundles and every raw or historical artifact indexed here remain
 unchanged.
 
+The schema now permits a complete non-Hugging-Face primary tree as a
+`content-addressed-model`, and the maintainer planner can persist an unreviewed
+release/contract candidate beneath a gitignored boundary. Its deterministic
+tests are control-plane evidence only; no candidate is indexed here and no
+physical or validation-status claim follows from them.
+
 Deterministic tests under `scripts/testlib/` cover fixed release/contract IDs,
 all four identity mutations, strict same-boot and reviewed-provenance
 requirements, comparable-predecessor protocol/geometry binding, privacy-field
