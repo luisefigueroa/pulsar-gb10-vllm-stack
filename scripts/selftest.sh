@@ -69,6 +69,8 @@ run "Model Serving Release evidence adversarial regressions" \
   python3 "$REPO_DIR/scripts/testlib/test_model_validation_evidence_adversarial.py"
 run "Model Serving Release trusted-persistence registry" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_registry.py"
+run "Model Serving Release evidence-capture candidate persistence" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_capture.py"
 run "model library durable-home removal contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_home_removal.py"
 run "model library durable-home acquisition contracts" \

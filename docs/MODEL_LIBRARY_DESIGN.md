@@ -37,7 +37,7 @@
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
-| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; and maintainer-only `scripts/model-release.sh` candidate assembly |
+| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only `scripts/model-release.sh` candidate assembly; and maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a tested profile to
@@ -127,10 +127,13 @@ Read-only trusted persistence and verification now live under
 `models/model-serving-releases/` and
 `scripts/model-serving-release-registry.sh`. That layer can load, verify, and
 inspect stored objects; it does not capture evidence, issue a decision,
-project catalog or operator status, or change serving eligibility. No profile
-references a new decision, and no serving gate consumes one. Review-metadata
-shape checks cannot prove that repository review or physical qualification
-occurred. Evidence capture, decision issuance, catalog/operator status
+project catalog or operator status, or change serving eligibility. Local
+ADR 0004 evidence-capture candidate persistence is implemented by
+`scripts/model-serving-release-capture.sh` and remains explicitly unreviewed:
+it does not write the tracked registry, issue a decision, or authorize
+serving. No profile references a new decision, and no serving gate consumes
+one. Review-metadata shape checks cannot prove that repository review or
+physical qualification occurred. Decision issuance, catalog/operator status
 projection, and serving-eligibility migration remain pending. Existing
 schema-1 bundles and `STATUS=tested*` behavior remain unchanged legacy
 contracts; no current profile is automatically `Validated`. These corrected
@@ -1027,20 +1030,21 @@ affected Model Serving Release and its frozen Validation Contract.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Evidence capture, decision issuance, catalog/operator status projection,
-  and serving-eligibility stages defined by ADR 0004. Release,
+- Decision issuance, catalog/operator status projection, and
+  serving-eligibility stages defined by ADR 0004. Release,
   frozen-contract, immutable run-record, new bundle, and reviewed-decision
   schema version 1 are implemented as pure contracts; read-only persistence
   and verification of those objects is implemented under
-  `models/model-serving-releases/`; current schema-1 bundles and
+  `models/model-serving-releases/`; local evidence-capture candidate
+  persistence is implemented and unreviewed; current schema-1 bundles and
   `STATUS=tested*` remain legacy implementation contracts
 - Initial reviewed two-rank `library-hot` GA closure in section 7.1; remote
   one-rank placement remains outside the initial GA scope
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
-- Capture, issuance, catalog/operator projection, and serving-eligibility
-  CLI guarantees beyond the read-only ADR 0004 registry verifier and health
-  schema 1
+- Issuance, catalog/operator projection, and serving-eligibility CLI
+  guarantees beyond the read-only ADR 0004 registry verifier, the local
+  evidence-capture candidate workflow, and health schema 1
 - Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete the remaining guided/default promotion matrix after bounded
   subsystem GA, without treating a subsystem pass as Model Serving Release
@@ -1107,3 +1111,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-14 | Implemented ADR 0004 stage 2 as pure Python content-addressed evidence-artifact, immutable run-record, validation-bundle, and reviewed-decision schemas. Cross-link verification binds release, frozen contract, exact run/artifact sets, observed rank/runtime and distribution provenance, frozen protocols/sample sizes/thresholds, required context and soak observations, comparable-predecessor regression evidence, review/privacy state, and immutable supersession. The supplied base-status assertion is independently derived and mismatches fail. The implementation performs no capture, persistence, trusted issuance, catalog projection, profile migration, or physical qualification; existing schema-1 and serving behavior remain unchanged. |
 | 2026-08-14 | Corrected the unissued ADR 0004 schema-1 contracts before persistence: criterion scopes are canonical; catalog/preparation evidence cannot satisfy validation criteria; the review-derived provenance criterion is closed; release/contract values reject recognized private data; every post-barrier attempt declares and exactly accounts for its criteria; every applicable observation is included unless explicitly excluded with evidence; conflicts use deterministic adjudication; relative baselines bind a reviewed predecessor contract/bundle/decision/run whose relevant criterion passed; runtime and architecture/geometry checks remain structural; command evidence uses closed typed descriptors; and supersession is later and acyclic. No ADR 0004 object had been issued or persisted, so schema version 1 remains appropriate. Legacy schema-1 seals/bundles and raw evidence are untouched, and no physical claim follows from this correction. |
 | 2026-08-14 | Implemented the read-only trusted-persistence foundation for ADR 0004 objects: tracked namespaces under `models/model-serving-releases/`, fail-closed filesystem and graph verification, publishable evidence hashing, predecessor-decision lineage validation, closed review-reference grammar, and `verify` / `show-release` / `show-decision` inspection. The store contains no issued object. Evidence capture, decision issuance, catalog/operator projection, serving-eligibility migration, and physical qualification remain pending. |
+| 2026-08-15 | Implemented ADR 0004 evidence-capture candidate persistence: a local, unreviewed `plan` / `capture-run` / `assemble-bundle` / `verify-candidate` workflow that validates supplied release and contract objects, hashes checked-out allowlisted programs and evidence, publishes immutable candidates under a gitignored output boundary, and independently verifies them. It does not issue a decision, write the tracked registry, change catalog or profile status, or authorize serving. Validator adapters, trusted privacy review, and physical qualification remain pending. |

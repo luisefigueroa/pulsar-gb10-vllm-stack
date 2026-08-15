@@ -85,8 +85,14 @@ language for new features without an explicit decision.
   and reviewed-decision schema version 1. Keep both modules pure and
   non-issuing. `scripts/model_serving_release_registry.py` owns read-only
   filesystem loading, content verification, graph assembly, and inspection of
-  stored ADR 0004 objects under `models/model-serving-releases/`. Evidence
-  capture, decision issuance, catalog/operator status projection, and
+  stored ADR 0004 objects under `models/model-serving-releases/`.
+  `scripts/model-serving-release-capture.sh` owns local ADR 0004
+  evidence-capture candidate persistence: it validates supplied release and
+  contract objects, captures immutable run records and content-addressed
+  evidence, assembles compatible runs, and independently verifies the
+  unreviewed candidate. It must not write the tracked registry, issue a
+  decision, change catalog or profile status, or grant serving
+  authorization. Decision issuance, catalog/operator status projection, and
   serving-eligibility migration remain pending and must validate through the
   pure schema modules rather than duplicating their identity or status rules.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
@@ -265,9 +271,12 @@ unless that authority is explicitly part of the approved plan.
   schema validation does not prove that a supplied digest names the checked-out
   executable or that no unknown private identifier escaped structural checks.
   These builders do not capture evidence, issue a trusted decision, or change
-  serving eligibility. Read-only trusted persistence can verify exact reviewed
-  objects under `models/model-serving-releases/` without projecting catalog
-  status or changing serving eligibility. Inspection of a stored release is
+  serving eligibility. Local ADR 0004 evidence-capture candidate persistence
+  can plan, capture, assemble, and verify unreviewed candidates without
+  writing the tracked registry or authorizing serving. Read-only trusted
+  persistence can verify exact reviewed objects under
+  `models/model-serving-releases/` without projecting catalog status or
+  changing serving eligibility. Inspection of a stored release is
   informational: absence of a reviewed decision is not `Untested`, and
   multiple contract lineages or unsuperseded heads stay ambiguous. Current
   `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles remain
@@ -335,7 +344,8 @@ this work; the skill is procedural and does not outrank these sources.
   bundle, and decision objects. Read-only trusted persistence can verify
   those objects under `models/model-serving-releases/`; that store is
   currently empty. Caller-supplied predecessor and decision registries remain
-  validation input, not trusted persistence. Evidence capture, decision
+  validation input, not trusted persistence. Local evidence-capture candidate
+  persistence is implemented and remains unreviewed; decision
   issuance/publication, catalog/operator status projection, and
   serving-eligibility migration remain pending.
 - A deterministic release candidate has no authority by itself. Trusted

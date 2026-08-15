@@ -38,6 +38,7 @@ enforcement:
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns pure release-descriptor and frozen Validation Contract schema version 1; performs no I/O, issuance, or status assignment |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns pure evidence-artifact, immutable run-record, new validation-bundle, reviewed-decision, status-derivation, and supersession schema version 1; performs no capture, persistence, or trusted issuance |
 | ADR 0004 registry (`scripts/model-serving-release-registry.sh`) | Read-only load, verify, and inspect stored objects under `models/model-serving-releases/`; does not capture evidence, issue a decision, project catalog status, or authorize serving |
+| ADR 0004 evidence-capture candidates (`scripts/model-serving-release-capture.sh`) | Local unreviewed persistence of run records, content-addressed evidence, and assembled bundles; never writes the tracked registry or authorizes serving |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
@@ -152,7 +153,10 @@ Read-only persistence and verification for stored ADR 0004 objects now live
 under `models/model-serving-releases/` and
 `scripts/model-serving-release-registry.sh`. That CLI does not capture
 evidence, issue a decision, or change serving eligibility. The tracked store
-currently contains no issued object. No catalog field, profile reference, or
+currently contains no issued object. Local ADR 0004 evidence-capture
+candidate persistence is documented in
+[MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) and
+is a separate unreviewed workflow. No catalog field, profile reference, or
 serving gate consumes an ADR 0004 decision. A locally constructed decision
 whose fields say `Validated` is only a syntactically consistent document until
 repository review deliberately publishes it into that store.

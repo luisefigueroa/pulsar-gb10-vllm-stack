@@ -128,8 +128,8 @@ combined bundles are a different legacy format and remain byte-for-byte
 unchanged. None of the ADR 0004 objects is issued or referenced by the
 current seal path. Read-only persistence and verification of those objects
 is implemented under `models/model-serving-releases/` and is currently empty.
-Evidence capture, issuance/publication, status/serving projection, and
-migration remain pending. Candidate tooling, schema builders, and local content
+Local evidence-capture candidate persistence is implemented and unreviewed.
+Issuance/publication, status/serving projection, and migration remain pending. Candidate tooling, schema builders, and local content
 verification may demonstrate internal consistency or a content match, but a
 locally constructed decision cannot establish reviewer authority or assign a
 trusted Model Serving Release status.

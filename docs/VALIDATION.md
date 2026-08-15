@@ -31,9 +31,10 @@ decision, and exact run whose relevant criterion passed; the predecessor does
 not need an overall `Validated` decision. Missing, conflicted, or over-budget
 evidence cannot produce `Validated`.
 Read-only persistence and verification of stored ADR 0004 objects is
-implemented under `models/model-serving-releases/`. Evidence capture,
-decision issuance, catalog/operator status projection, and serving migration
-remain pending. Strict same-boot exactness
+implemented under `models/model-serving-releases/`. Local ADR 0004
+evidence-capture candidate persistence is implemented and remains
+unreviewed; decision issuance, catalog/operator status projection, and
+serving migration remain pending. Strict same-boot exactness
 remains mandatory for a future trusted `Validated` decision, and FP-equivalent
 output remains diagnostic rather than a strict pass. The deterministic schema
 selftests are control-plane evidence only; a syntactically valid decision does

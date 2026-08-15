@@ -42,7 +42,10 @@ operator status, change legacy `STATUS` gates, or grant serving eligibility.
   `serving_authorization: false` in this stage.
 
 This store currently contains no issued release, contract, run, bundle, or
-decision. Do not add a `Validated` fixture here. Legacy schema-1 seals and
+decision. Do not add a `Validated` fixture here. Local ADR 0004
+evidence-capture candidate persistence writes only under gitignored
+`experiments/model-serving-release-captures/` (or an explicit safe external
+directory) and must never write this registry. Legacy schema-1 seals and
 combined bundles remain under `models/seals/` and
 `models/validation-bundles/` and are not reused for ADR 0004 objects.
 

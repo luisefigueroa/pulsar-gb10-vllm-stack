@@ -6,8 +6,9 @@
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
   and verification implemented under `models/model-serving-releases/`;
-  evidence capture, decision issuance, catalog/operator status projection,
-  and serving-eligibility migration pending
+  local ADR 0004 evidence-capture candidate persistence implemented;
+  decision issuance, catalog/operator status projection, and
+  serving-eligibility migration pending
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -504,6 +505,18 @@ reviewed status is requested. ADR 0004 roadmap item 3 remains catalog and
 operator status projection, then later serving-eligibility migration. The
 tracked store currently contains no issued object.
 
+Local ADR 0004 evidence-capture candidate persistence is implemented by
+`scripts/model_serving_release_capture.py` and
+`scripts/model-serving-release-capture.sh`. That workflow validates
+supplied release and contract objects, captures immutable run records and
+content-addressed evidence, assembles compatible run records, and
+independently verifies the resulting candidate under a gitignored output
+boundary. A successful candidate is unreviewed, has privacy review
+pending, grants no serving authorization, changes no catalog or profile
+status, and never writes the tracked registry. It is not a validator
+adapter, a reviewed decision, or a physical DGX claim. See
+[MODEL_SERVING_RELEASE_CAPTURE.md](../MODEL_SERVING_RELEASE_CAPTURE.md).
+
 ### Pre-issuance schema correction
 
 The observation, predecessor-lineage, structural-compatibility, command,
@@ -531,8 +544,9 @@ Implement this decision in focused, reviewable units:
    serving eligibility only through explicit reviewed decisions—never by
    converting `STATUS=tested*` automatically. Read-only trusted persistence
    and verification of stored ADR 0004 objects is implemented as a focused
-   foundation for this item; catalog/operator projection and serving
-   migration remain pending;
+   foundation for this item; local evidence-capture candidate persistence is
+   implemented separately and does not project status or authorize serving;
+   catalog/operator projection and serving migration remain pending;
 4. create the supervised `pulsar-model-onboarding` skill around the supported
    subsystem CLIs and confirmation boundaries; and
 5. complete and publish the separate bounded `library-hot` GA closure evidence.
