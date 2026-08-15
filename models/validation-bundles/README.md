@@ -91,9 +91,12 @@ boundary. ADR 0004 release-descriptor and frozen-contract schema version 1 are
 implemented separately in `scripts/model_serving_release.py`; run, bundle, and
 decision schema version 1 is implemented in
 `scripts/model_validation_evidence.py`. No trusted artifact here references
-those objects yet. The future persistence/publication stage will allow multiple
-immutable attempts, evidence sets, and reviewed decisions to refer to one
-unchanged four-part release ID without rewriting these legacy files.
+those objects yet. Read-only persistence and verification of ADR 0004 objects
+is implemented separately under `models/model-serving-releases/` and is
+currently empty. Capture, issuance/publication, and catalog/operator
+projection remain pending. Multiple immutable attempts, evidence sets, and
+reviewed decisions can already refer to one unchanged four-part release ID
+without rewriting these legacy files.
 
 The ADR 0004 objects remain schema version 1 after the current correction
 because none was issued or persisted. This directory's schema-1 files are a

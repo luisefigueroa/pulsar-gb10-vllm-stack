@@ -5,8 +5,10 @@ This module implements the second machine-readable stage of Model Serving
 Release validation.  It is deliberately pure: it performs no filesystem or
 network I/O, captures no evidence itself, publishes no trusted artifact,
 changes no profile, and grants no serving eligibility.  Repository review and
-the eventual trusted persistence/status-projection layer remain separate
-authority boundaries.
+the separate read-only persistence/inspection layer remain distinct
+authority boundaries.  Caller-supplied predecessor and decision registries
+are validation input, not trusted persistence.  Review-metadata shape checks
+cannot prove that review occurred.
 """
 
 from __future__ import annotations
@@ -95,6 +97,13 @@ STATUS_LABELS = {
 }
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+REVIEW_REFERENCE_RE = re.compile(
+    r"^(?:"
+    r"pr:[1-9][0-9]{0,6}"
+    r"|commit:[0-9a-f]{40}(?:[0-9a-f]{24})?"
+    r"|repository-review:[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+    r")$"
+)
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 COMMAND_ENVIRONMENT_CREDENTIAL_VALUE_PATTERNS = (
     re.compile(r"(?i)hf_[A-Za-z0-9]{30,64}(?![A-Za-z0-9_])"),
@@ -2198,6 +2207,50 @@ def derive_validation_status(
     return "testing-incomplete"
 
 
+def _validate_decision_reviewer(value: Any) -> str:
+    """Accept only a privacy-safe reviewer identifier.
+
+    Shape validation cannot prove that the named reviewer performed a
+    repository review.
+    """
+    reviewer = _safe_identifier(value, label="validation decision reviewer")
+    try:
+        model_serving_release.validate_public_string_value(
+            reviewer, label="validation decision reviewer"
+        )
+    except model_serving_release.ModelServingReleaseError as exc:
+        fail(str(exc))
+    return reviewer
+
+
+def _validate_decision_review_reference(value: Any) -> str:
+    """Accept only the closed repository-review grammar.
+
+    Allowed forms are ``pr:<positive-integer>``, ``commit:<40-or-64 hex>``,
+    and ``repository-review:<privacy-safe-identifier>``.  Arbitrary strings,
+    credentials, paths, addresses, and deployment-only identifiers are
+    rejected.  A matching reference does not prove that the review occurred.
+    """
+    reference = _nonempty_string(
+        value, label="validation decision review_reference"
+    )
+    if REVIEW_REFERENCE_RE.fullmatch(reference) is None:
+        fail(
+            "validation decision review_reference must use the closed "
+            "repository-review grammar (pr:<id>, commit:<hex>, or "
+            "repository-review:<identifier>)"
+        )
+    if reference.startswith("repository-review:"):
+        identifier = reference.split(":", 1)[1]
+        try:
+            model_serving_release.validate_public_string_value(
+                identifier, label="validation decision review_reference"
+            )
+        except model_serving_release.ModelServingReleaseError as exc:
+            fail(str(exc))
+    return reference
+
+
 def _validate_decision_review(value: Any) -> dict[str, Any]:
     review = _require_fields(
         value,
@@ -2206,13 +2259,11 @@ def _validate_decision_review(value: Any) -> dict[str, Any]:
     )
     if review.get("authority") != "repository-maintainer-review":
         fail("validation decision authority must be repository-maintainer-review")
-    _nonempty_string(review.get("reviewer"), label="validation decision reviewer")
+    _validate_decision_reviewer(review.get("reviewer"))
     _parse_rfc3339_utc(
         review.get("reviewed_at"), label="validation decision reviewed_at"
     )
-    _nonempty_string(
-        review.get("review_reference"), label="validation decision review_reference"
-    )
+    _validate_decision_review_reference(review.get("review_reference"))
     return review
 
 
@@ -2354,17 +2405,60 @@ def _validate_decision_shape_and_identity(value: Any) -> dict[str, Any]:
     return decision
 
 
+def _source_set_core_fields(value: Any, *, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        fail(f"{label} must be an object")
+    allowed = {
+        "release",
+        "contract",
+        "evidence_bundle",
+        "run_records",
+        "decision",
+        "prior_decision_sources",
+    }
+    required = allowed - {"prior_decision_sources"}
+    missing = sorted(required - set(value))
+    extra = sorted(set(value) - allowed)
+    if missing or extra:
+        fail(f"{label} fields differ (missing={missing}, extra={extra})")
+    return value
+
+
+def _flatten_prior_decisions(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id: dict[str, dict[str, Any]] = {}
+
+    def walk(source: dict[str, Any]) -> None:
+        decision = _validate_decision_shape_and_identity(source.get("decision"))
+        decision_id = decision["decision_id"]
+        if decision_id in by_id and by_id[decision_id] != decision:
+            fail("prior-decision evidence lineage contains conflicting objects")
+        by_id[decision_id] = decision
+        for child in source.get("prior_decision_sources") or []:
+            walk(child)
+
+    for source in sources:
+        walk(source)
+    return [by_id[item] for item in sorted(by_id)]
+
+
+def prior_decisions_from_source_set(source: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the flattened prior-decision objects from one source set."""
+    return _flatten_prior_decisions(source.get("prior_decision_sources") or [])
+
+
 def _validate_evidence_source_set(
     value: Any,
     *,
     label: str,
 ) -> dict[str, Any]:
-    """Validate one caller-supplied source set without granting it authority."""
-    source = _require_fields(
-        value,
-        {"release", "contract", "evidence_bundle", "run_records", "decision"},
-        label=label,
-    )
+    """Validate one caller-supplied source set without granting it authority.
+
+    ``prior_decision_sources`` is the explicit registry-contract extension
+    that supplies complete prior-decision evidence lineage when a predecessor
+    decision itself has supersession links.  It is caller-supplied validation
+    input, not a persisted schema-version change.
+    """
+    source = _source_set_core_fields(value, label=label)
     release = model_serving_release.validate_model_serving_release(
         source.get("release")
     )
@@ -2387,6 +2481,36 @@ def _validate_evidence_source_set(
         fail(f"{label} decision contract cross-link mismatch")
     if decision["evidence_bundle_id"] != bundle["bundle_id"]:
         fail(f"{label} decision bundle cross-link mismatch")
+    if "prior_decision_sources" in source:
+        prior_sources = source.get("prior_decision_sources")
+        if not isinstance(prior_sources, list):
+            fail(f"{label}.prior_decision_sources must be a list")
+        validated_priors = [
+            _validate_evidence_source_set(
+                item, label=f"{label}.prior_decision_sources[{index}]"
+            )
+            for index, item in enumerate(prior_sources)
+        ]
+        prior_ids = [item["decision"]["decision_id"] for item in validated_priors]
+        if prior_ids != sorted(prior_ids) or len(prior_ids) != len(set(prior_ids)):
+            fail(
+                f"{label}.prior_decision_sources must be sorted by unique "
+                "decision_id"
+            )
+        for prior in validated_priors:
+            if (
+                prior["decision"]["release_id"] != decision["release_id"]
+                or prior["decision"]["contract_id"] != decision["contract_id"]
+            ):
+                fail(
+                    f"{label}.prior_decision_sources must retain the same "
+                    "release and contract"
+                )
+        if prior_ids and not decision["supersedes_decision_ids"]:
+            fail(
+                f"{label}.prior_decision_sources must be empty when the "
+                "decision has no supersession links"
+            )
     return source
 
 
@@ -2409,6 +2533,42 @@ def _validate_evidence_source_registry(
     return sources
 
 
+def _validate_prior_decision_sources(
+    sources: list[dict[str, Any]],
+    *,
+    predecessor_evidence_registry: list[dict[str, Any]],
+    validation_stack: set[str],
+) -> None:
+    """Fully validate nested prior-decision source sets, not shape alone."""
+    for source in sources:
+        decision = source["decision"]
+        decision_id = decision["decision_id"]
+        if decision_id in validation_stack:
+            fail("comparable predecessor evidence contains a decision cycle")
+        nested = source.get("prior_decision_sources") or []
+        if decision["supersedes_decision_ids"] and not nested:
+            fail(
+                "comparable predecessor decision has supersession lineage "
+                "without a fully supplied prior-decision evidence registry"
+            )
+        next_stack = validation_stack | {decision_id}
+        _validate_prior_decision_sources(
+            nested,
+            predecessor_evidence_registry=predecessor_evidence_registry,
+            validation_stack=next_stack,
+        )
+        validate_validation_decision(
+            decision,
+            release=source["release"],
+            contract=source["contract"],
+            evidence_bundle=source["evidence_bundle"],
+            run_records=source["run_records"],
+            predecessor_evidence_registry=predecessor_evidence_registry,
+            prior_decisions=_flatten_prior_decisions(nested),
+            _predecessor_validation_stack=next_stack,
+        )
+
+
 def _resolve_predecessor_baselines(
     *,
     release: dict[str, Any],
@@ -2421,6 +2581,10 @@ def _resolve_predecessor_baselines(
     The registry is external validation input and is never persisted into the
     current decision.  Validating it proves schema and cross-link consistency,
     not repository review, trusted publication, or physical measurement.
+    A predecessor decision with supersession links must carry complete
+    ``prior_decision_sources`` so chronology, same-release/contract
+    constraints, acyclicity, exact bundle/runs, and recursive predecessor
+    requirements can be checked.  Shape-only prior decisions are rejected.
     """
     sources = _validate_evidence_source_registry(
         predecessor_evidence_registry,
@@ -2463,27 +2627,36 @@ def _resolve_predecessor_baselines(
         != release["supported_hardware_geometry"]
     ):
         fail("comparable predecessor hardware geometry differs from current release")
-    if predecessor_decision["supersedes_decision_ids"]:
+    predecessor_decision_id = predecessor_decision["decision_id"]
+    if predecessor_decision_id in validation_stack:
+        fail("comparable predecessor evidence contains a decision cycle")
+    remaining_sources = [
+        item
+        for item in sources
+        if item["decision"]["decision_id"] != predecessor_decision_id
+    ]
+    prior_sources = source.get("prior_decision_sources") or []
+    if predecessor_decision["supersedes_decision_ids"] and not prior_sources:
         fail(
             "comparable predecessor decision has supersession lineage without "
             "a fully supplied prior-decision evidence registry"
         )
-    predecessor_decision_id = predecessor_decision["decision_id"]
-    if predecessor_decision_id in validation_stack:
-        fail("comparable predecessor evidence contains a decision cycle")
+    next_stack = validation_stack | {predecessor_decision_id}
+    _validate_prior_decision_sources(
+        prior_sources,
+        predecessor_evidence_registry=remaining_sources,
+        validation_stack=next_stack,
+    )
+    prior_decisions = _flatten_prior_decisions(prior_sources)
     validate_validation_decision(
         predecessor_decision,
         release=predecessor_release,
         contract=predecessor_contract,
         evidence_bundle=predecessor_bundle,
         run_records=predecessor_runs,
-        predecessor_evidence_registry=[
-            item
-            for item in sources
-            if item["decision"]["decision_id"] != predecessor_decision_id
-        ],
-        prior_decisions=[],
-        _predecessor_validation_stack=validation_stack | {predecessor_decision_id},
+        predecessor_evidence_registry=remaining_sources,
+        prior_decisions=prior_decisions,
+        _predecessor_validation_stack=next_stack,
     )
     predecessor_criteria = _criterion_map(predecessor_contract)
     predecessor_records = {
@@ -2541,6 +2714,31 @@ def _resolve_predecessor_baselines(
             baseline[key] = observed_metrics[key]
         baselines[current_criterion["criterion_id"]] = baseline
     return baselines
+
+
+def validate_predecessor_evidence_registry(
+    *,
+    release: dict[str, Any],
+    contract: dict[str, Any],
+    predecessor_evidence_registry: list[dict[str, Any]],
+) -> dict[str, dict[tuple[str, str], str]]:
+    """Resolve and semantically validate frozen predecessor source sets.
+
+    This public entrypoint does not require a current decision.  It is a
+    pure check over caller-supplied objects: the registry is validation
+    input, not trusted persistence, and does not prove repository review
+    or physical measurement.
+    """
+    release = model_serving_release.validate_model_serving_release(release)
+    contract = model_serving_release.validate_validation_contract(
+        contract, expected_release=release
+    )
+    return _resolve_predecessor_baselines(
+        release=release,
+        contract=contract,
+        predecessor_evidence_registry=predecessor_evidence_registry,
+        validation_stack=set(),
+    )
 
 
 def _supersession_lineage_closure(
@@ -2786,8 +2984,9 @@ def effective_validation_status(
     """Project Superseded from fully supplied, internally valid source sets.
 
     This rejects shape-only or backdated superseders.  It is still a pure
-    consistency check over caller-supplied objects: until trusted persistence
-    lands, it cannot prove repository review, issuance, or current authority.
+    consistency check over caller-supplied objects.  A caller-supplied
+    decision or predecessor registry is not trusted persistence and cannot
+    prove repository review, issuance, or current authority.
     """
     current = _validate_decision_shape_and_identity(decision)
     sources = _validate_evidence_source_registry(

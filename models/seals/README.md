@@ -125,8 +125,10 @@ supersession schemas are also implemented separately. The corrected contracts
 remain schema version 1 because no ADR 0004 object was issued or persisted
 before the correction. This directory's older schema-1 seals and linked
 combined bundles are a different legacy format and remain byte-for-byte
-unchanged. None of the ADR 0004 objects is issued, persisted, or referenced by
-the current seal path; trusted publication, status/serving projection, and
+unchanged. None of the ADR 0004 objects is issued or referenced by the
+current seal path. Read-only persistence and verification of those objects
+is implemented under `models/model-serving-releases/` and is currently empty.
+Evidence capture, issuance/publication, status/serving projection, and
 migration remain pending. Candidate tooling, schema builders, and local content
 verification may demonstrate internal consistency or a content match, but a
 locally constructed decision cannot establish reviewer authority or assign a

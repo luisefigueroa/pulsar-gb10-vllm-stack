@@ -1086,6 +1086,172 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 review_reference="repository-review:too-early",
             )
 
+    def test_review_metadata_requires_privacy_safe_closed_grammar(self) -> None:
+        cases = (
+            ("reviewer", "looks good to me", "reviewer"),
+            ("reviewer", "token=secret", "reviewer"),
+            ("reviewer", "/etc/passwd", "reviewer"),
+            ("reviewer", "https://example.invalid/review", "reviewer"),
+            ("reviewer", "node-a.local", "reviewer"),
+            ("review_reference", "looks good to me", "review_reference"),
+            ("review_reference", "token=secret", "review_reference"),
+            ("review_reference", "/var/lib/pulsar/review", "review_reference"),
+            (
+                "review_reference",
+                "https://example.invalid/pull/1",
+                "review_reference",
+            ),
+            ("review_reference", "node-a.local:8000", "review_reference"),
+            (
+                "review_reference",
+                "repository-review:node-a.local",
+                "review_reference",
+            ),
+            (
+                "review_reference",
+                "repository-review:github_pat_0123456789abcdefghij",
+                "review_reference",
+            ),
+        )
+        for field, value, needle in cases:
+            with self.subTest(field=field, value=value):
+                kwargs = {
+                    "release": self.release,
+                    "contract": self.contract,
+                    "evidence_bundle": self.bundle,
+                    "run_records": self.runs,
+                    "criterion_exclusions": [],
+                    "predecessor_evidence_registry": [],
+                    "provenance_security_review": fixture.build_review(
+                        self.artifacts
+                    ),
+                    "status": "validated",
+                    "reviewer": "fixture-maintainer",
+                    "reviewed_at": "2026-08-14T15:00:00Z",
+                    "review_reference": "repository-review:fixture",
+                }
+                kwargs[field] = value
+                with self.assertRaisesRegex(
+                    evidence.ModelValidationEvidenceError, needle
+                ):
+                    evidence.build_validation_decision(**kwargs)
+
+    def test_review_reference_accepts_closed_pr_and_commit_forms(self) -> None:
+        for reference in (
+            "pr:12",
+            "commit:" + ("a" * 40),
+            "repository-review:fixture",
+        ):
+            with self.subTest(reference=reference):
+                decision = evidence.build_validation_decision(
+                    release=self.release,
+                    contract=self.contract,
+                    evidence_bundle=self.bundle,
+                    run_records=self.runs,
+                    criterion_exclusions=[],
+                    predecessor_evidence_registry=[],
+                    provenance_security_review=fixture.build_review(
+                        self.artifacts
+                    ),
+                    status="validated",
+                    reviewer="fixture-maintainer",
+                    reviewed_at="2026-08-14T15:00:00Z",
+                    review_reference=reference,
+                )
+                self.assertEqual(decision["review"]["review_reference"], reference)
+
+    def test_predecessor_registry_validates_without_a_current_decision(
+        self,
+    ) -> None:
+        predecessor = fixture.build_superseding_predecessor_source()
+        contract = fixture.build_relative_contract(
+            release=self.release, predecessor_source=predecessor
+        )
+        baselines = evidence.validate_predecessor_evidence_registry(
+            release=self.release,
+            contract=contract,
+            predecessor_evidence_registry=[predecessor],
+        )
+        self.assertIn("throughput-serving", baselines)
+        self.assertIn("latency-ttft", baselines)
+
+    def test_predecessor_decision_accepts_complete_prior_lineage(self) -> None:
+        predecessor = fixture.build_superseding_predecessor_source()
+        contract = fixture.build_relative_contract(
+            release=self.release, predecessor_source=predecessor
+        )
+        runs = fixture.build_passing_runs(
+            release=self.release,
+            contract=contract,
+            artifacts=self.artifacts,
+        )
+        _bundle, decision = self._bundle_and_decision(
+            runs,
+            status="validated",
+            contract=contract,
+            predecessor_registry=[predecessor],
+        )
+        self.assertEqual(decision["status"], "validated")
+        self.assertTrue(predecessor["decision"]["supersedes_decision_ids"])
+
+    def test_predecessor_decision_rejects_incomplete_prior_lineage(self) -> None:
+        predecessor = fixture.build_superseding_predecessor_source()
+        incomplete = {
+            key: value
+            for key, value in predecessor.items()
+            if key != "prior_decision_sources"
+        }
+        contract = fixture.build_relative_contract(
+            release=self.release, predecessor_source=predecessor
+        )
+        runs = fixture.build_passing_runs(
+            release=self.release,
+            contract=contract,
+            artifacts=self.artifacts,
+        )
+        with self.assertRaisesRegex(
+            evidence.ModelValidationEvidenceError,
+            "prior-decision evidence registry",
+        ):
+            self._bundle_and_decision(
+                runs,
+                status="validated",
+                contract=contract,
+                predecessor_registry=[incomplete],
+            )
+
+    def test_predecessor_prior_lineage_rejects_cycle_or_backdated_review(self) -> None:
+        predecessor = fixture.build_superseding_predecessor_source()
+        earlier = predecessor["prior_decision_sources"][0]["decision"]
+        cycled = copy.deepcopy(predecessor)
+        cycled["prior_decision_sources"][0]["decision"] = copy.deepcopy(earlier)
+        cycled["prior_decision_sources"][0]["decision"]["supersedes_decision_ids"] = [
+            predecessor["decision"]["decision_id"]
+        ]
+        cycled["prior_decision_sources"][0]["decision"]["decision_id"] = (
+            evidence.validation_decision_id(
+                cycled["prior_decision_sources"][0]["decision"]
+            )
+        )
+        contract = fixture.build_relative_contract(
+            release=self.release, predecessor_source=predecessor
+        )
+        runs = fixture.build_passing_runs(
+            release=self.release,
+            contract=contract,
+            artifacts=self.artifacts,
+        )
+        with self.assertRaisesRegex(
+            evidence.ModelValidationEvidenceError,
+            "cycle|strictly later|identity mismatch|lineage",
+        ):
+            self._bundle_and_decision(
+                runs,
+                status="validated",
+                contract=contract,
+                predecessor_registry=[cycled],
+            )
+
     def test_legacy_schema_one_artifacts_remain_unchanged(self) -> None:
         for path in sorted((REPO_ROOT / "models" / "validation-bundles").glob("*.json")):
             document = json.loads(path.read_text(encoding="utf-8"))

@@ -237,9 +237,11 @@ Release** is the immutable combination of exact model identity, exact serving
 recipe, runtime/image identity, and supported hardware geometry; changing any
 component creates a new release. The repository now has pure version-1
 descriptor, contract, run-record, evidence-bundle, and reviewed-decision
-validators, but trusted capture/persistence, publication, CLI projection, and
-serving admission remain separate unfinished work. No such schema object or
-selftest establishes physical DGX behavior.
+validators. Read-only persistence and verification of stored ADR 0004 objects
+is implemented under `models/model-serving-releases/` and is currently empty.
+Evidence capture, trusted publication, catalog/operator status projection,
+and serving admission remain unfinished. No such schema object or selftest
+establishes physical DGX behavior.
 
 **Experimental storage research:** replicated local Hugging Face caches remain
 the default. A separate, unpromoted NFSv4.2/RDMA path can keep one
@@ -447,6 +449,7 @@ no leaks, no thermal throttling anywhere).
 | `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
 | `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
 | `models/validation-bundles/` | legacy schema-1 combined model/runtime/image/geometry/evidence claims; not a Model Serving Release ID and unchanged by the pre-issuance ADR 0004 schema correction |
+| `models/model-serving-releases/` | tracked ADR 0004 release/contract/run/bundle/decision registry; currently empty and read-only through `scripts/model-serving-release-registry.sh` |
 | `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |

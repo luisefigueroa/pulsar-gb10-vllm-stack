@@ -436,7 +436,14 @@ def _validate_remaining_engine_args(value: Any) -> list[str]:
     return values
 
 
-def _validate_public_string_value(value: str, *, label: str) -> str:
+def validate_public_string_value(value: Any, *, label: str) -> str:
+    """Reject recognized private, secret, or deployment-only string data.
+
+    This structural screen is the public schema helper for free-form public
+    strings.  It does not prove that unknown private identifiers are absent.
+    """
+    if not isinstance(value, str):
+        fail(f"{label} must be a string")
     if "\x00" in value:
         fail(f"{label} contains a NUL byte")
     if (
@@ -451,6 +458,10 @@ def _validate_public_string_value(value: str, *, label: str) -> str:
     ):
         fail(f"{label} contains private, secret, or deployment-only data")
     return value
+
+
+def _validate_public_string_value(value: str, *, label: str) -> str:
+    return validate_public_string_value(value, label=label)
 
 
 def _is_credential_field_name(value: str) -> bool:
