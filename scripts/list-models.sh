@@ -73,12 +73,18 @@ for conf in "$REPO_DIR"/models/*.conf; do
       IFS=$'\t' read -r reviewed_model_id reviewed_revision reviewed_manifest \
         <<<"$identity_fields"
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    load_model_serving_release_projection local-verified-readonly
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$name" "$STATUS" "$NODES" "$src" "$SERVED_NAME" "$spec" \
       "${FIRST_RUN_CANDIDATE:-0}" "$PROFILE_FAMILY" "$VARIANT_LABEL" \
       "$FAMILY_RECOMMENDED" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
       "$PROFILE_PURPOSE" "${WEIGHTS_GIB:-}" "$reviewed_identity" \
-      "$reviewed_model_id" "$reviewed_revision" "$reviewed_manifest"
+      "$reviewed_model_id" "$reviewed_revision" "$reviewed_manifest" \
+      "${MODEL_SERVING_RELEASE_ID:-}" \
+      "$MODEL_SERVING_RELEASE_PROJECTION_STATE" \
+      "$MODEL_SERVING_RELEASE_STATUS" "$MODEL_SERVING_RELEASE_STATUS_LABEL" \
+      "$MODEL_SERVING_RELEASE_CONTRACT_ID" \
+      "$MODEL_SERVING_RELEASE_DECISION_ID"
   ) >>"$tmp" || true
 done
 
@@ -111,11 +117,12 @@ with open("$tmp") as f:
         if not line:
             continue
         p = line.split("\\t")
-        while len(p) < 18:
+        while len(p) < 24:
             p.append("")
         rows.append({
             "id": p[0],
             "status": p[1],
+            "legacy_status": p[1],
             "nodes": int(p[2] or 1),
             "source": p[3],
             "served_name": p[4],
@@ -133,6 +140,15 @@ with open("$tmp") as f:
             "reviewed_model_id": p[15] or None,
             "reviewed_revision": p[16] or None,
             "reviewed_manifest": p[17] or None,
+            "model_serving_release": {
+                "release_id": p[18] or None,
+                "state": p[19],
+                "effective_status": p[20] or None,
+                "effective_status_label": p[21],
+                "contract_id": p[22] or None,
+                "decision_id": p[23] or None,
+                "advisory": True,
+            },
         })
 print(json.dumps({"models": rows}, indent=2))
 PY
@@ -144,30 +160,65 @@ if [ ! -s "$tmp" ]; then
   exit 0
 fi
 
-printf '%-32s %-14s %5s %-4s %-22s %s\n' "ID" "STATUS" "NODES" "SRC" "SERVED_NAME" "SPEC_DECODE"
-printf '%-32s %-14s %5s %-4s %-22s %s\n' "--------------------------------" "--------------" "-----" "----" "----------------------" "-----------"
-while IFS=$'\t' read -r id st nodes src served spec _fr _family _variant \
-    _recommended _topology _rails _purpose; do
-  printf '%-32s %-14s %5s %-4s %-22s %s\n' \
-    "$id" "$st" "$nodes" "$src" "$served" "$spec"
-done <"$tmp"
+python3 - "$tmp" "$REPO_DIR" <<'PY'
+from pathlib import Path
+import sys
 
-cat <<'EOF'
+sys.path.insert(0, sys.argv[2])
+from scripts.terminal_format import TerminalWriter
 
-Columns:
-  ID           conf name for scripts/up.sh <ID>
-  STATUS       advisory evidence label; never launch permission
-  NODES        exact active rank count; multi-node needs confirmed topology
-  SRC          hf = Hugging Face id; nfs = path under /mnt/Models (no auto-download)
-  SERVED_NAME  OpenAI API "model" field (may differ from ID)
-  SPEC_DECODE  none | optional | recommended
-                 none        = no reviewed speculative-decode configuration
-                 optional    = reviewed; off by default; --spec-decode enables
-                 recommended = reviewed and on by default
-                               (--no-spec-decode is the rollback)
+term = TerminalWriter()
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    fields = line.split("\t")
+    fields.extend([""] * (24 - len(fields)))
+    term.emit(fields[0])
+    term.field("Release", fields[21], indent=2, label_width=10)
+    term.field("Legacy", fields[1], indent=2, label_width=10)
+    term.field("Serves", fields[4], indent=2, label_width=10)
+    term.field(
+        "Recipe",
+        f"{fields[2]} node(s) · source={fields[3]} · spec={fields[5]}",
+        indent=2,
+        label_width=10,
+    )
+    term.blank()
+PY
 
-Filters:
-  --serving     serving-purpose profiles (all statuses)
-  --diagnostic  canary profiles reserved for explicit diagnostics
-  --legacy-tested  filter to legacy STATUS=tested* recommendation labels
-EOF
+python3 - "$REPO_DIR" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.terminal_format import TerminalWriter
+
+term = TerminalWriter()
+term.emit("Columns:")
+term.field("ID", "conf name for scripts/up.sh <ID>", indent=2, label_width=16)
+term.field(
+    "Release status",
+    "reviewed ADR 0004 decision for the exact bound release; "
+    "No release binding is neutral and is not Untested",
+    indent=2,
+    label_width=16,
+)
+term.field(
+    "Legacy status",
+    "historical profile evidence/recommendation label; both status fields "
+    "are advisory and neither grants nor denies launch",
+    indent=2,
+    label_width=16,
+)
+term.field(
+    "Recipe",
+    "exact active rank count, source, and speculative-decode policy; "
+    "multi-node needs confirmed topology; hf = Hugging Face ID; nfs = "
+    "mounted path (no auto-download); spec = none, optional, or recommended",
+    indent=2,
+    label_width=16,
+)
+term.field("Serves", "OpenAI API model name", indent=2, label_width=16)
+term.blank()
+term.emit("Filters:")
+term.field("--serving", "serving-purpose profiles (all statuses)", indent=2, label_width=18)
+term.field("--diagnostic", "canary profiles reserved for explicit diagnostics", indent=2, label_width=18)
+term.field("--legacy-tested", "filter to legacy STATUS=tested* recommendation labels", indent=2, label_width=18)
+PY

@@ -73,7 +73,8 @@ records and evidence bundles bind observed evidence, and the implemented pure
 decision schema independently verifies an explicit reviewed status. Read-only
 persistence and verification of stored ADR 0004 objects is implemented and
 currently empty. Local evidence-capture candidate persistence is implemented
-and unreviewed. Trusted publication and status projection remain pending.
+and unreviewed. Advisory status projection is implemented for profiles
+explicitly bound to a release ID; trusted publication remains pending.
 Existing schema-1 bundles remain immutable
 legacy artifacts.
 Reusing generic catalog evidence does not carry an old bundle, release decision,
@@ -129,8 +130,9 @@ still requires the combined release and promotion gates.
   model and its pure schema contracts.
   Read-only persistence and verification are implemented and empty; local
   evidence-capture candidate persistence is implemented and unreviewed;
-  trusted publication and status projection remain pending. Recommendation
-  and default policy remain separate from availability.
+  advisory projection is implemented for explicitly bound profiles; trusted
+  publication remains pending. Recommendation and default policy remain
+  separate from availability.
 
 ## Revisit triggers
 

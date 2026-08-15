@@ -670,10 +670,12 @@ PY
 
 render_model_selection() {
   local rank label node
+  load_model_serving_release_projection local-verified-readonly
   local -a fields=(
     "Model" "$NAME"
     "Serves" "$SERVED_NAME on :$PORT"
-    "Evidence label" "$STATUS · advisory"
+    "Release status" "$MODEL_SERVING_RELEASE_STATUS_LABEL · advisory"
+    "Legacy label" "$STATUS · advisory"
     "Recipe" "exact $NODES-node profile"
   )
   if [ -n "${NOTES:-}" ]; then
@@ -2090,6 +2092,10 @@ models = [
 def recommended(model):
     return str(model.get('status') or '').startswith('tested')
 
+def release_status(model):
+    release = model.get('model_serving_release') or {}
+    return str(release.get('effective_status_label') or 'No release binding')
+
 models.sort(key=lambda model: (
     not recommended(model),
     str(model.get('id') or '').casefold(),
@@ -2116,7 +2122,8 @@ for model in models:
         marks.append('suggested')
     if model.get('first_run_candidate'):
         marks.append('first run')
-    marks.append('status={}'.format(model.get('status') or '?'))
+    marks.append('release={}'.format(release_status(model)))
+    marks.append('legacy={}'.format(model.get('status') or '?'))
     suffix = (' · ' + ' · '.join(marks)) if marks else ''
     node_word = 'node' if nodes == 1 else 'nodes'
     print(f\"{model['id']:<{name_width}}  {nodes} {node_word}{suffix}\")

@@ -53,8 +53,10 @@ launch. A syntactically reviewed decision cannot prove physical behavior
 or that repository review occurred. Read-only persistence and verification of
 stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
-persistence is implemented and remains unreviewed; decision issuance and
-catalog/operator status projection remain pending.
+persistence is implemented and remains unreviewed. Advisory catalog/operator
+projection is implemented for a profile explicitly bound to a release ID;
+current profiles are unbound and the tracked store is empty. Trusted decision
+issuance remains pending.
 Existing bundles, seals, profiles, and historical evidence remain unchanged and
 must not be automatically relabeled `Validated`. The corrected ADR 0004
 objects remain schema version 1 because none was issued or persisted before
@@ -562,10 +564,12 @@ with replicated weights.
   qualification, or release/promotion. Include every applicable observation,
   record any evidence-backed exclusion, and let the frozen-contract rules
   derive the ADR 0004 decision status without hiding conflicts, failures, or
-  missing evidence. Until the
-  status projection is implemented, update conf `STATUS`/`NOTES` only under its
-  current legacy evidence contract and only when the evidence supports the
-  label. Status changes never authorize or prohibit serving. Update
+  missing evidence. Update conf `STATUS`/`NOTES` only under its current legacy
+  evidence/recommendation contract and only when the evidence supports the
+  label. Bind `MODEL_SERVING_RELEASE_ID` only in the reviewed publication that
+  stores and verifies the exact ADR 0004 release lineage; never derive that
+  binding from a local candidate or legacy bundle. Release and legacy status
+  changes never authorize or prohibit serving. Update
   `docs/VALIDATION.md` with the measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.

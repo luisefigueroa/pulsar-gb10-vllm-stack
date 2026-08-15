@@ -17,8 +17,10 @@ published here to pass repository review. The read-only verifier
 (`scripts/model-serving-release-registry.sh`) loads the local checkout, checks
 the filesystem layout, verifies content IDs, and assembles the object graph
 through the pure schema modules. It cannot prove that repository review
-occurred. It does not capture evidence, issue a decision, project catalog or
-operator status, or launch a release. Validation status is advisory.
+occurred. Its verified inspection result supplies read-only catalog/operator
+status projection for profiles explicitly bound by `MODEL_SERVING_RELEASE_ID`.
+It does not capture evidence, issue a decision, change recommendation policy,
+authorize serving, or launch a release. Validation status is advisory.
 
 ## Trust rules
 
@@ -38,11 +40,16 @@ operator status, or launch a release. Validation status is advisory.
 - Inspection of a stored release is informational. Absence of a reviewed
   decision is not `Untested`. Multiple contract lineages or unsuperseded
   heads are ambiguous and never collapsed to one status.
+- A profile binding is a reviewed assertion about the exact release tuple.
+  Projection also requires the selected runtime model-access contract to match
+  the stored serving recipe. Missing bindings are neutral and legacy `STATUS`
+  remains a separate recommendation label.
 - Machine-readable command output uses `schema_version: 1` and reports only
   inspection results; it carries no serving-permission field.
 
 This store currently contains no issued release, contract, run, bundle, or
-decision. Do not add a `Validated` fixture here. Local ADR 0004
+decision, and no current profile binds a release ID. Do not add a `Validated`
+fixture here. Local ADR 0004
 evidence-capture candidate persistence writes only under gitignored
 `experiments/model-serving-release-captures/` (or an explicit safe external
 directory) and must never write this registry. Legacy schema-1 seals and

@@ -2,10 +2,11 @@
 """Read-only trusted persistence for ADR 0004 Model Serving Release objects.
 
 This module loads, verifies, and inspects immutable reviewed objects from a
-tracked registry.  It does not capture evidence, issue a decision, project
-catalog or operator status, or launch a release.  Schema ownership remains in
-the pure modules: this layer only assembles caller-visible source sets and asks
-those validators to check them.
+tracked registry.  Its verified inspection result is the read-only source for
+catalog and operator status projection.  It does not capture evidence, issue a
+decision, change recommendation policy, authorize serving, or launch a release.
+Schema ownership remains in the pure modules: this layer only assembles
+caller-visible source sets and asks those validators to check them.
 
 Publishable evidence hashing and review-metadata shape checks do not prove
 privacy review, repository review, or physical behavior.
@@ -47,7 +48,8 @@ INSPECTION_NONE = "no-reviewed-decision"
 INSPECTION_AMBIGUOUS = "ambiguous"
 PERSISTENCE_NOTES = (
     "The registry verifies stored objects only. It does not capture "
-    "evidence, issue a decision, project catalog status, or launch a release.",
+    "evidence, issue a decision, change recommendation policy, or launch "
+    "a release.",
     "Publishable evidence hashing does not prove privacy review, "
     "repository review, or physical behavior.",
     "Validation status is advisory and is not serving authorization.",
@@ -853,6 +855,9 @@ def release_payload(graph: RegistryGraph, release_id: str) -> dict[str, Any]:
         "ok": True,
         "command": "show-release",
         "release_id": release_id,
+        "model_access_contract": inspected["release"]["serving_recipe"][
+            "model_access_contract"
+        ],
         "inspection": inspection,
         "notes": inspected["notes"],
     }

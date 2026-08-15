@@ -201,13 +201,15 @@ existing candidate or any existing ancestor that contains
 
 - Issue a reviewed validation decision
 - Write `models/model-serving-releases/`
-- Change `STATUS`, catalog projection, recommendation/default policy, or runtime state
+- Change `STATUS`, a profile's release binding, recommendation/default policy,
+  or runtime state
 - Adapt `validate/*` output into a trusted producer contract
 - Claim physical DGX, model-download, container, or remote behavior
 - Route through `./pulsar` or the wizard
 
-Trusted privacy review, decision persistence, and status projection remain
-later units. Serving permission is status-independent.
+Trusted privacy review and decision issuance/publication remain later units.
+The separate read-only projection consumes only the tracked registry and never
+this unreviewed candidate output. Serving permission is status-independent.
 
 ## Tests
 

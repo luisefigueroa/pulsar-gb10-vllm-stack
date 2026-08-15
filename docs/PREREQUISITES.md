@@ -21,8 +21,10 @@ reviewed-decision schema version 1 contracts are implemented. Read-only
 persistence and verification of those objects is implemented under
 `models/model-serving-releases/` and is currently empty. Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
-unreviewed. Decision issuance/publication and catalog/operator status
-projection are still pending. Serving permission is status-independent. The corrected schemas remain
+unreviewed. Advisory catalog/operator projection is implemented for an
+explicitly bound release; current profiles are unbound and the tracked store
+is empty. Trusted decision issuance/publication is still pending. Serving
+permission is status-independent. The corrected schemas remain
 version 1 because no ADR 0004 object was issued or persisted before the
 correction; existing legacy schema-1 seals/bundles and raw evidence are
 untouched.
@@ -350,7 +352,7 @@ not permission to serve an unmeasured geometry.
 | [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: reviewed exact-content home symlink, non-home hot only, expected seal and serve-time witness |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |
 | [decisions/0003-explicit-model-preparation-transport.md](./decisions/0003-explicit-model-preparation-transport.md) | Accepted rationale: explicit reviewed-profile preparation uses topology-bound eight-stream SSH-over-RoCE with no fallback |
-| [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; validation status is advisory; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence and verification implemented and empty; local evidence-capture candidate persistence implemented and unreviewed; issuance/publication and status projection pending |
+| [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; validation status is advisory; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence and advisory projection implemented and empty/unbound; local evidence-capture candidate persistence implemented and unreviewed; trusted issuance/publication pending |
 | [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) | Maintainer-only ADR 0004 evidence-capture candidate persistence; no issuance and no runtime launch |
 | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) | Descriptive current implementation, evidence boundaries, and known gaps |
 | [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Maintainer-only exact-manifest and unreviewed release-candidate workflow; no issuance authority |

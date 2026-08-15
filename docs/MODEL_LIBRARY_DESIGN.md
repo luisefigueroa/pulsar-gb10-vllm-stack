@@ -128,16 +128,19 @@ Read-only trusted persistence and verification now live under
 `models/model-serving-releases/` and
 `scripts/model-serving-release-registry.sh`. That layer can load, verify, and
 inspect stored objects; it does not capture evidence, issue a decision,
-project catalog or operator status, or launch a release. Local
+change recommendation policy, authorize serving, or launch a release. Its
+verified inspection now supplies advisory catalog/operator projection for an
+explicitly bound `MODEL_SERVING_RELEASE_ID`. Local
 ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model-serving-release-capture.sh` and remains explicitly unreviewed:
 it does not write the tracked registry, issue a decision, or launch a release.
-No profile references a new decision, and no status projection consumes
-one. Review-metadata shape checks cannot prove that repository review or
-physical qualification occurred. Decision issuance, catalog/operator status
-projection remains pending. Existing schema-1 bundles and `STATUS=tested*`
-labels remain legacy contracts; no current profile is automatically
-`Validated`. Serving permission is status-independent. These corrected
+No profile currently binds a release and the tracked store is empty, so the
+current projection is neutral. Review-metadata shape checks cannot prove that
+repository review or physical qualification occurred. Trusted decision
+issuance remains pending. Existing schema-1 bundles and `STATUS=tested*`
+labels remain separate legacy contracts and retain recommendation order; no
+current profile is automatically `Validated`. Serving permission is
+status-independent. These corrected
 ADR 0004 objects remain schema version 1 because none was issued or persisted
 before the correction. The tracked ADR 0004 store currently contains no issued
 object. Existing legacy schema-1 seals/bundles and raw evidence are not
@@ -309,7 +312,9 @@ FP-equivalent output is diagnostic evidence and does not satisfy the strict
 gate. The full status vocabulary and object model are defined by
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). Its release
 and contract schemas are implemented, while current `STATUS=tested*` and
-schema-1 bundle behavior remain legacy status inputs until projection lands.
+schema-1 bundle behavior remain separate legacy status inputs. Advisory
+release projection consumes only a verified tracked decision for an explicitly
+bound profile; current profiles are unbound.
 Catalog recording and serving have no minimum validation status: the release
 remains visible with its actual label. Recommendation/default projection is
 separate, while operational admission checks concrete runnability rather than
@@ -1041,19 +1046,20 @@ affected Model Serving Release and its frozen Validation Contract.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Decision issuance and catalog/operator status projection defined by ADR 0004. Release,
+- Trusted decision issuance defined by ADR 0004. Release,
   frozen-contract, immutable run-record, new bundle, and reviewed-decision
   schema version 1 are implemented as pure contracts; read-only persistence
   and verification of those objects is implemented under
   `models/model-serving-releases/`; local evidence-capture candidate
-  persistence is implemented and unreviewed; current schema-1 bundles and
-  `STATUS=tested*` remain legacy implementation contracts
+  persistence is implemented and unreviewed; advisory catalog/operator status
+  projection is implemented for explicitly bound profiles; current schema-1
+  bundles and `STATUS=tested*` remain legacy implementation contracts
 - Initial reviewed two-rank `library-hot` GA closure in section 7.1; remote
   one-rank placement remains outside the initial GA scope
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
-- Issuance and catalog/operator projection guarantees beyond the read-only ADR
-  0004 registry verifier, the local
+- Issuance and publication guarantees beyond the read-only ADR 0004 registry
+  verifier, its advisory projection, the local
   evidence-capture candidate workflow, and health schema 1
 - Complete the remaining guided/default promotion matrix after bounded
   subsystem GA, without treating a subsystem pass as Model Serving Release
@@ -1122,3 +1128,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-14 | Implemented the read-only trusted-persistence foundation for ADR 0004 objects: tracked namespaces under `models/model-serving-releases/`, fail-closed filesystem and graph verification, publishable evidence hashing, predecessor-decision lineage validation, closed review-reference grammar, and `verify` / `show-release` / `show-decision` inspection. The store contains no issued object. Evidence capture, decision issuance, catalog/operator projection, serving-eligibility migration, and physical qualification remain pending. |
 | 2026-08-15 | Implemented ADR 0004 evidence-capture candidate persistence: a local, unreviewed `plan` / `capture-run` / `assemble-bundle` / `verify-candidate` workflow that validates supplied release and contract objects, hashes checked-out allowlisted programs and evidence, publishes immutable candidates under a gitignored output boundary, and independently verifies them. It does not issue a decision, write the tracked registry, change catalog or profile status, or authorize serving. Validator adapters, trusted privacy review, and physical qualification remain pending. |
 | 2026-08-15 | **ADR 0004 advisory-status amendment:** validation labels communicate evidence and confidence but never authorize serving. The wizard and serving catalog expose every fitting serving profile with status and caveats, legacy `--force` status overrides are no-ops, and unsealed preparation no longer needs a validation-status override. Recommendation/default ordering remains evidence-backed; exact identity, recipe, topology, capacity, security, and lifecycle failures still block the concrete operation. This is a control-plane policy change only and creates no physical qualification claim. |
+| 2026-08-15 | Implemented read-only advisory Model Serving Release status projection. An optional reviewed `MODEL_SERVING_RELEASE_ID` profile binding selects a content-verified registry release; catalog JSON, human catalog, wizard, and `scripts/up.sh` display its one unambiguous reviewed effective status. No binding and no reviewed decision remain neutral, ambiguity/unavailability stays visible, and a different runtime model-access contract cannot inherit the decision. Legacy `STATUS` remains separate and continues to drive recommendation order. Projection never issues a decision, authorizes serving, or creates a physical claim; the empty registry and unbound current profiles therefore remain neutral. |

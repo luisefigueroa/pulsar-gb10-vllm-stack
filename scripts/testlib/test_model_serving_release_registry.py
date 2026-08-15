@@ -109,6 +109,13 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
         )
         self.assertEqual(shown["base_status"], "validated")
         self.assertEqual(shown["effective_status"], "validated")
+        payload = registry.release_payload(
+            graph, source["release"]["release_id"]
+        )
+        self.assertEqual(
+            payload["model_access_contract"],
+            source["release"]["serving_recipe"]["model_access_contract"],
+        )
 
     def test_unknown_file_and_malformed_name_fail_closed(self) -> None:
         fixture.init_registry_root(self.registry_root)
@@ -522,6 +529,10 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
+        self.assertEqual(
+            payload["model_access_contract"],
+            release["serving_recipe"]["model_access_contract"],
+        )
         self.assertEqual(payload["inspection"]["state"], registry.INSPECTION_NONE)
         self.assertIsNone(payload["inspection"]["effective_status"])
         self.assertIsNone(payload["inspection"]["effective_status_label"])

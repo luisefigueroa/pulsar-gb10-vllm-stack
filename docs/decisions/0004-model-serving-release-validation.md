@@ -9,7 +9,8 @@
   validation-decision schemas implemented; read-only trusted persistence
   and verification implemented under `models/model-serving-releases/`;
   local ADR 0004 evidence-capture candidate persistence implemented;
-  decision issuance and catalog/operator ADR 0004 status projection pending;
+  advisory catalog/operator ADR 0004 status projection implemented for
+  explicitly bound profiles; trusted decision issuance pending;
   status-independent serving policy implemented
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
@@ -345,12 +346,23 @@ bundles, validation decisions, and their cross-links. Both pure-schema stages
 are implemented. Read-only trusted persistence and verification for those
 objects now live under `models/model-serving-releases/` and
 `scripts/model_serving_release_registry.py`. That layer does not capture
-evidence, issue a decision, project catalog status, or launch a release.
-Existing `STATUS=tested*`, `--validated`, reviewed seals, and legacy-unsealed
-behavior retain their legacy meanings until catalog/operator projection lands;
-none grants or denies serving. No
-existing profile is automatically relabeled `Validated`. The tracked ADR
-0004 store currently contains no issued object.
+evidence, issue a decision, change recommendation policy, or launch a release.
+Its verified inspection result now feeds read-only status projection in the
+catalog, wizard, and `scripts/up.sh`. A profile opts in only through a reviewed
+`MODEL_SERVING_RELEASE_ID` binding. A missing binding is shown as neutral
+`No release binding`; a bound release without one unambiguous reviewed decision
+is shown as neutral, ambiguous, or unavailable as appropriate, never inferred
+as `Untested`. The selected runtime model-access contract must match the stored
+release recipe before its decision is displayed. The binding itself is a
+reviewed assertion about the full four-part tuple; this projection does not
+reconstruct that complete tuple from shell profile fields. Any tuple-changing
+profile edit must derive and bind the new release ID in the same reviewed
+change. Existing `STATUS=tested*`,
+`--validated`, reviewed seals, and legacy-unsealed behavior retain their
+separate legacy meanings and recommendation order; none grants or denies
+serving. No existing profile is automatically relabeled `Validated`. The
+tracked ADR 0004 store currently contains no issued object and no profile is
+currently bound.
 
 ### 5. Distribution is preparation provenance, not release status
 
@@ -515,15 +527,16 @@ with a required relative-performance gate must resolve and semantically
 validate every frozen predecessor source even before a current decision
 exists. More than one later decision that directly supersedes the same
 record fails verify through the canonical supersession check. It does not
-capture evidence, issue a decision, project catalog or operator status, or
-launch a release. Inspection of a release is informational: one contract lineage
+capture evidence, issue a decision, change recommendation policy, authorize
+serving, or launch a release. Inspection of a release is informational: one
+contract lineage
 with one unsuperseded reviewed decision may display that decision's
 evidence-derived effective status; no reviewed decision is a neutral
 no-reviewed-decision state, never inferred `Untested`; multiple contract
 lineages or unsuperseded heads are ambiguous and fail closed when one
-reviewed status is requested. ADR 0004 roadmap item 3 remains catalog and
-operator status projection. The tracked store currently contains no issued
-object.
+reviewed status is requested. Catalog and operator surfaces consume this
+verified inspection only for profiles explicitly bound to a release ID. The
+tracked store currently contains no issued object.
 
 Local ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model_serving_release_capture.py` and
@@ -560,13 +573,14 @@ Implement this decision in focused, reviewable units:
 2. **Implemented:** add immutable attempt/run records, evidence bundles, and
    validation decisions with fail-closed cross-link verification, independent
    status derivation, and explicit supersession;
-3. project the new statuses into catalog and operator surfaces without
+3. **Implemented:** project the new statuses into catalog and operator surfaces without
    converting `STATUS=tested*` automatically. Status remains advisory, while
-   recommendation/default policy is a separate projection. Read-only trusted persistence
-   and verification of stored ADR 0004 objects is implemented as a focused
-   foundation for this item; local evidence-capture candidate persistence is
-   implemented separately and does not project status or launch a release;
-   catalog/operator projection remains pending;
+   recommendation/default policy remains the separate legacy projection.
+   Profiles use an optional reviewed `MODEL_SERVING_RELEASE_ID` binding; no
+   binding and no reviewed decision are neutral rather than inferred
+   `Untested`. Read-only trusted persistence and verification supply the
+   projected result. Local evidence-capture candidate persistence remains
+   separate and does not project status or launch a release;
 4. create the supervised `pulsar-model-onboarding` skill around the supported
    subsystem CLIs and confirmation boundaries; and
 5. complete and publish the separate bounded `library-hot` GA closure evidence.
@@ -660,10 +674,10 @@ mandatory.
 - Status communicates confidence and results but never grants or denies serving.
   Recommendation/default policy may prefer stronger evidence; operational
   admission may still reject an unrunnable or unsafe launch for concrete reasons.
-- Current commands and legacy schemas continue to work during migration, but
-  their `tested`/`validated` labels must not be presented as implementation of
-  this ADR until catalog/operator status projection exists. Read-only
-  persistence and verification of stored ADR 0004 objects
-  is implemented; it does not change those legacy labels.
+- Current commands and legacy schemas continue to work during migration.
+  Catalog/operator surfaces distinguish the ADR 0004 release decision from
+  legacy `STATUS`; the latter still drives recommendation order and is never
+  automatically converted. Read-only projection does not create a decision or
+  physical claim.
 - Physical qualification is still required for physical claims. Documentation
   and selftests alone cannot produce a `Validated` decision.

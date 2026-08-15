@@ -105,7 +105,7 @@ docker pull vllm/vllm-openai:v0.26.0
 # Host sanity (GPU, docker, port, cache)
 scripts/doctor.sh
 
-# List every serving profile and its advisory evidence label
+# List every serving profile with advisory release and legacy labels
 scripts/list-models.sh --serving
 
 # First serving model: download weights if needed, then serve
@@ -233,8 +233,8 @@ promoted today. Smoke served name:
 `deepseek-v4-flash`; cold load can take ~10+ minutes.
 
 `--legacy-tested` filters the historical `STATUS=tested*` recommendation class;
-`--validated` remains a deprecated alias for compatibility. Neither reports the
-Model Serving Release statuses defined by
+`--validated` remains a deprecated alias for compatibility. Neither is a Model
+Serving Release status filter under
 [ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and no
 existing profile is automatically relabeled `Validated`. A **Model Serving
 Release** is the immutable combination of exact model identity, exact serving
@@ -245,7 +245,9 @@ validators. Read-only persistence and verification of stored ADR 0004 objects
 is implemented under `models/model-serving-releases/` and is currently empty.
 Local ADR 0004 evidence-capture candidate persistence can record unreviewed
 run and bundle candidates without writing that registry or launching a model.
-Trusted publication and catalog/operator status projection remain unfinished.
+Advisory catalog/operator status projection is implemented for an explicitly
+bound release; current profiles are unbound and therefore display a neutral
+release state. Trusted decision issuance/publication remains unfinished.
 Serving is status-independent, while concrete identity, recipe, topology,
 capacity, security, and lifecycle checks still fail closed. No schema object or selftest
 establishes physical DGX behavior.

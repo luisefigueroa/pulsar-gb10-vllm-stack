@@ -204,6 +204,7 @@ load_conf() {
 
   MODEL="" SERVED_NAME="" IMAGE="" NOTES="" STATUS="?"
   EXPECTED_MODEL_SEAL=""
+  MODEL_SERVING_RELEASE_ID=""
   PROFILE_VALIDATION_BUNDLE_JSON=""
   NODES=1 PORT=8000 GPU_MEM_UTIL=0.80
   ENGINE_ARGS=() CONTAINER_ENV=() SPEC_DECODE_ARGS=()
@@ -489,6 +490,104 @@ status_requires_force() {
 warn_profile_status() {
   if ! status_is_tested; then
     warn "profile status=${STATUS:-?} is advisory; ${NOTES:-review its evidence and caveats before serving}"
+  fi
+}
+
+# Load the advisory ADR 0004 status for the reviewed release explicitly bound
+# by the sourced profile. Projection errors never become serving permission.
+# Optional argument: the runtime model-access contract selected for this run.
+load_model_serving_release_projection() {
+  local access_contract="${1:-local-verified-readonly}"
+  local tool output rc fields
+  MODEL_SERVING_RELEASE_PROJECTION_STATE="legacy-unbound"
+  MODEL_SERVING_RELEASE_STATUS=""
+  MODEL_SERVING_RELEASE_STATUS_LABEL="No release binding"
+  MODEL_SERVING_RELEASE_CONTRACT_ID=""
+  MODEL_SERVING_RELEASE_DECISION_ID=""
+
+  [ -n "${MODEL_SERVING_RELEASE_ID:-}" ] || return 0
+  tool="${PULSAR_MODEL_SERVING_RELEASE_REGISTRY_PY:-$REPO_DIR/scripts/model_serving_release_registry.py}"
+  if [ ! -f "$tool" ]; then
+    MODEL_SERVING_RELEASE_PROJECTION_STATE="projection-unavailable"
+    MODEL_SERVING_RELEASE_STATUS_LABEL="Release status unavailable"
+    return 0
+  fi
+
+  set +e
+  output=$(python3 "$tool" --repo-root "$REPO_DIR" show-release \
+    "$MODEL_SERVING_RELEASE_ID" --json 2>/dev/null)
+  rc=$?
+  set -e
+  if [ -z "$output" ]; then
+    MODEL_SERVING_RELEASE_PROJECTION_STATE="projection-unavailable"
+    MODEL_SERVING_RELEASE_STATUS_LABEL="Release status unavailable"
+    return 0
+  fi
+  if ! fields=$(printf '%s' "$output" | ACCESS_CONTRACT="$access_contract" \
+      python3 -c '
+import json
+import os
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+inspection = payload.get("inspection")
+if not isinstance(inspection, dict):
+    raise SystemExit(1)
+state = str(inspection.get("state") or "projection-unavailable")
+observed_access = str(payload.get("model_access_contract") or "")
+expected_access = os.environ.get("ACCESS_CONTRACT") or ""
+status = str(inspection.get("effective_status") or "")
+contract_id = str(inspection.get("unique_contract_id") or "")
+decision_id = str(inspection.get("unique_decision_id") or "")
+if observed_access and expected_access and observed_access != expected_access:
+    state = "recipe-mismatch"
+    status = ""
+    contract_id = ""
+    decision_id = ""
+    label = "No decision for selected recipe"
+elif state == "unique-reviewed-decision":
+    label = str(inspection.get("effective_status_label") or "Release status unavailable")
+elif state == "no-reviewed-decision":
+    label = "No reviewed decision"
+elif state == "ambiguous":
+    label = "Ambiguous reviewed decisions"
+else:
+    state = "projection-unavailable"
+    label = "Release status unavailable"
+print("\t".join((
+    state,
+    status or "-",
+    label,
+    contract_id or "-",
+    decision_id or "-",
+)))
+'); then
+    MODEL_SERVING_RELEASE_PROJECTION_STATE="projection-unavailable"
+    MODEL_SERVING_RELEASE_STATUS_LABEL="Release status unavailable"
+    return 0
+  fi
+  IFS=$'\t' read -r MODEL_SERVING_RELEASE_PROJECTION_STATE \
+    MODEL_SERVING_RELEASE_STATUS MODEL_SERVING_RELEASE_STATUS_LABEL \
+    MODEL_SERVING_RELEASE_CONTRACT_ID MODEL_SERVING_RELEASE_DECISION_ID \
+    <<<"$fields"
+  [ "$MODEL_SERVING_RELEASE_STATUS" != - ] || MODEL_SERVING_RELEASE_STATUS=""
+  [ "$MODEL_SERVING_RELEASE_CONTRACT_ID" != - ] \
+    || MODEL_SERVING_RELEASE_CONTRACT_ID=""
+  [ "$MODEL_SERVING_RELEASE_DECISION_ID" != - ] \
+    || MODEL_SERVING_RELEASE_DECISION_ID=""
+  # Ambiguity and a recipe mismatch derived from an ambiguous release are
+  # valid advisory projections even though show-release exits 1.
+  if [ "$rc" -ne 0 ] \
+      && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != ambiguous ] \
+      && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != recipe-mismatch ]; then
+    MODEL_SERVING_RELEASE_PROJECTION_STATE="projection-unavailable"
+    MODEL_SERVING_RELEASE_STATUS=""
+    MODEL_SERVING_RELEASE_STATUS_LABEL="Release status unavailable"
+    MODEL_SERVING_RELEASE_CONTRACT_ID=""
+    MODEL_SERVING_RELEASE_DECISION_ID=""
   fi
 }
 

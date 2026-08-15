@@ -19,7 +19,7 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-14 |
+| Snapshot date | 2026-08-15 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -35,7 +35,7 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of seven implementation areas:
+This snapshot supports review of ten implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
@@ -43,9 +43,12 @@ This snapshot supports review of seven implementation areas:
 3. the experimental live NFS/RDMA single-copy path;
 4. the experimental transfer-then-load model-library path;
 5. the maintainer-only legacy release identity and candidate-assembly service;
-6. the pure ADR 0004 release-descriptor and Validation Contract schemas; and
+6. the pure ADR 0004 release-descriptor and Validation Contract schemas;
 7. the pure ADR 0004 immutable run-record, evidence-bundle, and reviewed
-   validation-decision schemas.
+   validation-decision schemas;
+8. read-only ADR 0004 tracked persistence and graph verification;
+9. local unreviewed ADR 0004 evidence-capture candidate persistence; and
+10. advisory catalog/operator status projection for explicitly bound releases.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -75,9 +78,10 @@ live-mount launches remain unbound.
 ADR 0004 stage 1 is implemented by `scripts/model_serving_release.py`: pure
 builders and fail-closed validators own the separate release descriptor and
 frozen Validation Contract, with fixed-ID fixtures under `scripts/testlib/`.
-The module has no I/O or issuance authority, and no operator status projection
-consumes these objects. The separate read-only registry verifier can inspect
-stored objects. Schema-1 bundles still combine serving inputs, evidence, and
+The module has no I/O or issuance authority. The separate read-only registry
+verifier can inspect stored objects, and its verified result supplies advisory
+catalog/operator status projection for a profile explicitly bound by
+`MODEL_SERVING_RELEASE_ID`. Schema-1 bundles still combine serving inputs, evidence, and
 issuance metadata; `STATUS=tested*` is a legacy recommendation label; and
 `--validated` is a deprecated alias for the legacy-tested filter. Neither
 controls serving permission. No current
@@ -107,8 +111,9 @@ repository review or physical behavior occurred. Read-only trusted
 persistence and verification of stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
 persistence is implemented by `scripts/model-serving-release-capture.sh` and
-does not write that registry or launch a release. Decision issuance and catalog
-or operator status projection remain implementation gaps.
+does not write that registry or launch a release. No current profile is bound
+and the tracked registry is empty, so current projections are neutral. Trusted
+decision issuance remains an implementation gap.
 
 A predecessor decision that itself has supersession links must supply
 complete `prior_decision_sources` with exact prior release, contract, bundle,
@@ -327,6 +332,7 @@ selection for a multi-node profile.
 | `CONTAINER_ENV` | Profile-specific container environment variables. |
 | `SPEC_DECODE_ARGS` | Validated speculative decoding configuration, if any. |
 | `RECOMMENDED_SPEC` | `1` makes the validated speculative path the executable default; `--no-spec-decode` is the rollback. |
+| `MODEL_SERVING_RELEASE_ID` | Optional reviewed binding to the exact ADR 0004 release whose stored decision may be projected; never serving permission. |
 | `NOTES` | Human operational caveats. |
 
 Speculative decoding has three catalog-visible states:
@@ -340,10 +346,18 @@ An explicit `--spec-decode` is refused when a profile has no reviewed
 
 ### 5.5 Status, recommendation, and availability
 
-`STATUS` is the legacy profile evidence label. It is advisory: `tested*`,
+`STATUS` is the legacy profile evidence/recommendation label. It is advisory: `tested*`,
 `blocked*`, `do-not-use`, untested, experimental, and unknown values neither
 grant nor deny launch permission. The legacy `--force` option is a compatibility
 no-op.
+
+The optional `MODEL_SERVING_RELEASE_ID` is a reviewed binding to an exact
+release in the tracked ADR 0004 registry. The catalog projects only the
+registry's one unambiguous reviewed effective decision, after verifying the
+stored graph and matching the selected runtime model-access contract. Missing
+bindings and missing decisions are neutral; ambiguity and unavailable data are
+shown explicitly. This release status is also advisory and does not replace
+legacy recommendation ordering.
 
 `scripts/list-models.sh --serving --json` is the wizard's catalog contract. It
 selects `PROFILE_PURPOSE=serving` without a status filter. The wizard then:
@@ -400,7 +414,11 @@ eviction, policy relaxation, or transfer fallback.
 - serving or diagnostic purpose;
 - estimated weight GiB when declared; and
 - whether the trusted profile declares a reviewed expected model seal; and,
-  when it does, that seal's model ID, exact revision, and manifest ID.
+  when it does, that seal's model ID, exact revision, and manifest ID; and
+- a `model_serving_release` projection containing the optional release ID,
+  inspection state, effective status/label, contract and decision IDs, and an
+  explicit advisory flag. `legacy_status` is returned separately; `status`
+  remains its compatibility alias.
 
 It intentionally does not return the full image, engine arguments, memory
 budgets, notes, or executable profile body. Consumers requiring launch details
@@ -1248,13 +1266,15 @@ privacy audit and reviewer inspection remain mandatory.
 
 Current documentation interprets results in the four ADR-0002 scopes: catalog
 and artifact service, serving integration, model qualification, and
-release/promotion. Legacy catalog and operator surfaces do not yet expose
-scope-specific statuses. The pure ADR 0004 criteria, evidence artifacts, and
+release/promotion. Catalog and operator release projection displays the one
+effective reviewed release decision, not separate per-scope statuses. The pure
+ADR 0004 criteria, evidence artifacts, and
 run records expose and validate `qualification_scope`, and the read-only
-registry verifies that structure for stored objects. No catalog/operator
-projection path consumes it yet. Evidence in one scope remains valid while
-its measured inputs and contracts are unchanged; a failure elsewhere blocks
-a combined claim only when that claim requires both scopes.
+registry verifies that structure for stored objects. An optional reviewed
+profile binding selects the exact release; current profiles are unbound.
+Evidence in one scope remains valid while its measured inputs and contracts
+are unchanged; a failure elsewhere blocks a combined claim only when that
+claim requires both scopes.
 
 The following is the implementation/evidence state as of the snapshot date.
 The Qwen 1.7B two-node `STATUS=tested` row is a historical runtime-profile
@@ -1721,8 +1741,10 @@ sanitized command descriptors, and chronological acyclic supersession. No ADR
 seals/bundles and raw evidence remain untouched. Read-only persistence and
 verification of those objects is implemented. Local evidence-capture
 candidate persistence is implemented and unreviewed. Decision issuance,
-catalog/operator status projection, and serving migration remain
-accepted work rather than open policy questions. The remaining questions
+and serving migration remain accepted work rather than open policy questions.
+Advisory catalog/operator status projection is implemented for explicitly
+bound profiles without changing legacy recommendation order or serving
+permission. The remaining questions
 concern that implementation shape and unrelated catalog/live-mount policy.
 
 ### Catalog and release identity
@@ -1905,6 +1927,10 @@ The implementation described here is primarily defined by:
 - [`scripts/model_validation_evidence.py`](../scripts/model_validation_evidence.py)
   — pure ADR 0004 evidence-artifact, run-record, validation-bundle, reviewed
   decision, status-derivation, and supersession schemas;
+- [`scripts/model-serving-release-registry.sh`](../scripts/model-serving-release-registry.sh)
+  and [`scripts/model_serving_release_registry.py`](../scripts/model_serving_release_registry.py)
+  — read-only verified registry inspection and the source for advisory status
+  projection;
 - [`scripts/testlib/model_validation_evidence_fixture.py`](../scripts/testlib/model_validation_evidence_fixture.py)
   and [`scripts/testlib/test_model_validation_evidence.py`](../scripts/testlib/test_model_validation_evidence.py)
   — fixed-ID evidence fixtures plus cross-link, status, threshold,
@@ -1935,7 +1961,8 @@ The implementation described here is primarily defined by:
   subsystem-GA boundaries; descriptor, contract, run, bundle, and decision
   schemas implemented; read-only persistence and verification implemented;
   local evidence-capture candidate persistence implemented and unreviewed;
-  issuance, status projection, and serving migration pending;
+  advisory status projection implemented for explicitly bound profiles;
+  trusted issuance and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

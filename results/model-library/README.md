@@ -36,9 +36,12 @@ recorded implementation meaning. None is automatically `Validated`. The pure
 release descriptor identifies the exact model + serving-recipe + runtime/image
 plus supported-geometry tuple separately from its frozen contract. Pure immutable
 run-record, new evidence-bundle, reviewed-decision, status-derivation, and
-supersession schemas are also implemented. No release, contract, run, bundle,
-or decision instance is issued by this results tree; capture/persistence,
-trusted publication, and status/serving projection remain pending.
+supersession schemas are also implemented. Read-only status projection now
+consumes a content-verified registry decision only for an explicitly bound
+profile, while preserving neutral no-binding/no-decision states, ambiguity,
+recipe mismatches, and legacy recommendation labels. No release, contract,
+run, bundle, or decision instance is issued by this results tree; trusted
+decision publication remains pending.
 
 The corrected objects stay at schema version 1 because no ADR 0004 object was
 issued or persisted before the correction. Existing legacy schema-1
@@ -52,6 +55,11 @@ rejection, and unchanged legacy schema-1 validation. This is control-plane
 schema evidence only. It does not demonstrate model behavior, storage behavior,
 or physical qualification on a supported geometry, so no new result artifact
 or PASS row is added here.
+
+Deterministic projection tests cover unique reviewed status, current unbound
+profiles, unavailable registry data, runtime-access recipe mismatch, advisory
+launch behavior, legacy-status separation, and narrow terminal rendering. This
+is control-plane evidence only; it adds no physical result artifact.
 
 The stage-2 adversarial suite additionally freezes representative run, bundle,
 and decision IDs and covers exact release/contract/run/artifact cross-links,

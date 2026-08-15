@@ -33,8 +33,12 @@ evidence cannot produce `Validated`.
 Read-only persistence and verification of stored ADR 0004 objects is
 implemented under `models/model-serving-releases/`. Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
-unreviewed; decision issuance and catalog/operator status projection remain
-pending. Serving permission is status-independent. Strict same-boot exactness
+unreviewed. Advisory catalog/operator projection is implemented for profiles
+explicitly bound by `MODEL_SERVING_RELEASE_ID`; no binding and no reviewed
+decision are neutral, not inferred as `Untested`. Current profiles are unbound
+and the tracked registry is empty. Trusted decision issuance remains pending.
+Projection is deterministic control-plane behavior only and serving permission
+is status-independent. Strict same-boot exactness
 remains mandatory for a future trusted `Validated` decision, and FP-equivalent
 output remains diagnostic rather than a strict pass. The deterministic schema
 selftests are control-plane evidence only; a syntactically valid decision does
@@ -56,6 +60,12 @@ objects but currently contains none. Existing legacy schema-1 seals/bundles
 and all raw or historical evidence remain untouched. Reviewer and
 `review_reference` use a closed privacy-safe grammar; that shape check cannot
 prove review occurred.
+
+The release-status projection itself passes deterministic checks for a unique
+reviewed decision, neutral unbound profiles, unavailable registry data, a
+runtime-access recipe mismatch, launch independence, JSON separation from
+legacy `STATUS`, and 48-column human output. These checks do not issue a
+decision or demonstrate physical model behavior.
 
 ### Qualification scopes
 
