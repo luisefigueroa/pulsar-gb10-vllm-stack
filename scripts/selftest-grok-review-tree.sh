@@ -20,9 +20,9 @@ helper="$REPO_DIR/scripts/prepare-grok-review-tree.sh"
 
 grep -Fq 'scripts/prepare-grok-review-tree.sh' "$skill" \
   || fail "skill must prepare a sanitized review tree via the helper"
-grep -Fq '--cwd "$review_tree"' "$skill" \
+grep -Fq -- '--cwd "$review_tree"' "$skill" \
   || fail "skill must point grok --cwd at the sanitized review tree"
-if grep -Fq '--cwd "$review_repo_root"' "$skill"; then
+if grep -Fq -- '--cwd "$review_repo_root"' "$skill"; then
   fail "skill must not launch Grok against the live repository root"
 fi
 grep -Fq '.env' "$skill" \
@@ -33,8 +33,10 @@ grep -Fq '.cluster-topology.json' "$skill" \
 if grep -Fq 'Inspect the repository yourself' "$brief"; then
   fail "brief must not ask Grok to inspect the live repository"
 fi
-grep -Fq 'sanitized review tree' "$brief" \
+grep -Fq '<sanitized-review-tree>' "$brief" \
   || fail "brief must inspect only the sanitized review tree"
+grep -Fq 'Inspect only that tree' "$brief" \
+  || fail "brief must tell Grok not to inspect the live repository"
 grep -Fq '.env' "$brief" \
   || fail "brief must forbid reading .env"
 grep -Fq '.cluster-topology.json' "$brief" \
@@ -45,7 +47,7 @@ trap 'rm -rf -- "$fixture"' EXIT
 repo="$fixture/repo"
 dest="$fixture/review-tree"
 mkdir -p "$repo"
-git -C "$repo" init >/dev/null
+git -C "$repo" init -q -b main
 git -C "$repo" config user.email "review-tree@example.test"
 git -C "$repo" config user.name "Review Tree"
 printf '%s\n' '.env' '.cluster-topology.json' >"$repo/.gitignore"

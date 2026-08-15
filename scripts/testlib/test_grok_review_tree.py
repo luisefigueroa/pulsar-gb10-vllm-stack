@@ -29,7 +29,7 @@ def git(repo: pathlib.Path, *args: str, check: bool = True) -> subprocess.Comple
 
 
 def init_repo(root: pathlib.Path) -> pathlib.Path:
-    git(root, "init")
+    git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.email", "review-tree@example.test")
     git(root, "config", "user.name", "Review Tree")
     (root / ".gitignore").write_text(
