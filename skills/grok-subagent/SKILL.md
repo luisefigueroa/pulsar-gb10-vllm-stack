@@ -1,6 +1,6 @@
 ---
 name: grok-subagent
-description: Use the local Grok CLI for an independent read-only implementation review, reconcile its findings with repository evidence, obtain user approval, and optionally delegate the approved implementation to Grok in a privacy-cleared feature worktree before focused verification and publication. Use when a user asks for a Grok subagent, Grok review or second opinion, the Grok 4.6/xhigh workflow, or Grok to implement an agreed change after review.
+description: Use the local Grok CLI for an independent read-only repository-worktree review, reconcile its findings with repository evidence, obtain user approval, and optionally delegate the approved implementation to Grok in a privacy-cleared feature worktree before focused verification and publication. Use when a user asks for a Grok subagent, Grok review or second opinion, the Grok 4.6/xhigh workflow, or Grok to implement an agreed change after review.
 ---
 
 # Use Grok for Review and Approved Implementation
@@ -21,10 +21,12 @@ unit. Repository authority and verified evidence remain controlling.
    tentative direction, and validation needs.
 4. Keep the first Grok pass read-only. Do not let it edit files, mutate Git or
    GitHub state, operate infrastructure, or change external state.
-5. Remove secrets, credentials, private topology, stable site identifiers, and
-   unnecessary proprietary data. Never point the review pass at the live
-   worktree: gitignored files remain readable there unless a kernel sandbox
-   prevents it.
+5. Treat an explicit user request for a Grok review as authorization for Grok
+   to read the current repository worktree. Do not add a second approval pause
+   merely because the external Grok service receives relevant repository
+   files. Keep secrets and credentials out of the prompt and process
+   environment, and instruct Grok not to inspect known secret or site-local
+   files unless the approved task actually requires them.
 
 Encourage useful alternatives, including conflicts with the tentative
 direction. Require Grok to label conflicts with accepted repository decisions.
@@ -50,18 +52,32 @@ official changelog as a fallback.
 
 ## Run the read-only review
 
-Create a temporary tree of tracked worktree files only, outside the live
-repository:
+Resolve the current repository worktree and use it as the default review root:
 
 ```bash
-review_tree=$(scripts/prepare-grok-review-tree.sh --print-dest)
+review_repo_root=$(git rev-parse --show-toplevel)
+review_cwd="$review_repo_root"
 ```
 
-If the helper cannot build a clean tree, stop. Verify that `.git`, `.env`,
-`.cluster-topology.json`, `.cluster-ssh-config`, `.weight-fabric/`,
-`.model-library/`, `experiments/`, raw results, and other gitignored site state
-are absent. Do not pass the live repository path or unrelated credentials into
-the Grok process. Preserve only the authentication mechanism Grok itself needs.
+The request to use Grok is sufficient authorization for this direct read-only
+repository access. Do not ask the user to approve transmission again. The
+review brief must constrain Grok to relevant repository files and prohibit
+reading known secret or site-local paths such as `.env`,
+`.cluster-topology.json`, `.cluster-ssh-config`, `.weight-fabric/`, and
+`.model-library/` unless those files are explicitly in scope. Preserve only the
+authentication mechanism Grok itself needs.
+
+When the user requests a tracked-files-only review or the agreed task needs a
+narrower disclosure boundary, the optional helper remains available:
+
+```bash
+review_cwd=$(scripts/prepare-grok-review-tree.sh --print-dest)
+```
+
+If that optional helper is selected and cannot build a clean tree, stop. Verify
+that `.git`, `.env`, `.cluster-topology.json`, `.cluster-ssh-config`,
+`.weight-fabric/`, `.model-library/`, `experiments/`, raw results, and other
+gitignored site state are absent from the resulting tree.
 
 Fill [references/review-brief-template.md](references/review-brief-template.md)
 and save the completed brief in a temporary file outside the repository. Use a
@@ -73,7 +89,7 @@ grok_review_session_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
 env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN \
     -u VLLM_API_KEY -u API_KEY -u OPENAI_API_KEY \
     -u GITHUB_TOKEN -u GH_TOKEN \
-  grok --cwd "$review_tree" \
+  grok --cwd "$review_cwd" \
     --session-id "$grok_review_session_id" \
     --model grok-4.6 \
     --reasoning-effort xhigh \
@@ -89,8 +105,10 @@ env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN \
     --prompt-file "$review_prompt_file"
 ```
 
-`strict` is the important privacy boundary: `--cwd` alone does not restrict
-filesystem reads. If Grok cannot initialize its own state or enforce the
+`strict` is the filesystem-containment boundary: it keeps Grok within the
+selected review root, but it does not conceal files inside a live worktree.
+Task scoping and the explicit instruction not to read secret/site-local files
+remain necessary. If Grok cannot initialize its own state or enforce the
 sandbox, fix that condition with the required approval or stop. Never retry a
 repository review by silently dropping the sandbox. The explicit read-only
 tool set and MCP/web restrictions remain necessary even with the sandbox.
@@ -100,7 +118,7 @@ session for one tool-free synthesis turn using the same model, reasoning,
 sandbox, memory, and web settings:
 
 ```bash
-grok --cwd "$review_tree" \
+grok --cwd "$review_cwd" \
   --resume "$grok_review_session_id" \
   --model grok-4.6 \
   --reasoning-effort xhigh \
@@ -224,6 +242,6 @@ and independently verified evidence. State whether the delivered change still
 matches the approved approach and identify any physical or external validation
 that remains.
 
-Delete temporary review trees and prompt files after use. Do not commit Grok
-transcripts unless the user explicitly requests a separately reviewed and
-sanitized artifact.
+Delete temporary prompt files and any optional review trees after use. Do not
+commit Grok transcripts unless the user explicitly requests a separately
+reviewed and sanitized artifact.

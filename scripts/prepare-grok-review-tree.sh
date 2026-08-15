@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a sanitized tree for an external Grok review.
+# Optionally build a tracked-files-only tree for an external Grok review.
 # Do not source lib.sh: that loads .env into the process environment.
 set -euo pipefail
 
@@ -9,7 +9,7 @@ PY_TOOL="${PULSAR_GROK_REVIEW_TREE_PY:-$SCRIPT_DIR/grok_review_tree.py}"
 
 usage() {
   cat <<'EOF'
-Prepare a sanitized Grok review tree
+Prepare an optional tracked-files-only Grok review tree
 
 Usage:
   scripts/prepare-grok-review-tree.sh [--repo-root DIR] [--dest DIR]
@@ -18,7 +18,9 @@ Usage:
 
 Copies tracked worktree files only. Gitignored site-local files such as
 .env and .cluster-topology.json are omitted. The destination must stay
-outside the live repository. Delete the tree after the review.
+outside the live repository. Direct worktree review is the normal policy; use
+this helper when the user requests a narrower tracked-files-only disclosure.
+Delete the tree after the review.
 EOF
 }
 

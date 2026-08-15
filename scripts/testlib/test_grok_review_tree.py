@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for sanitized Grok review trees."""
+"""Contracts for the optional tracked-files-only Grok review tree."""
 
 from __future__ import annotations
 

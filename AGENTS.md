@@ -217,16 +217,22 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 ### Independent Grok review and approved implementation
 
 When a user requests a Grok review or delegated implementation, use
-`skills/grok-subagent/SKILL.md`. The first pass stays read-only against a
-sanitized review tree. Reconcile its findings against repository authority and
+`skills/grok-subagent/SKILL.md`. The first pass stays read-only and may inspect
+the current repository worktree directly; the explicit Grok-review request is
+authorization for that repository access and does not require a second
+transmission approval. Keep credentials out of the process environment and
+prompt, and instruct Grok not to inspect known secret or site-local state unless
+the task explicitly requires it. A tracked-files-only sanitized tree remains an
+optional mode when the user requests one or the review needs a narrower
+disclosure boundary. Reconcile Grok's findings against repository authority and
 obtain explicit agreement before editing. After approval, Grok may implement
 the agreed unit directly in a clean dedicated feature worktree that passes the
 skill's privacy preflight, and may run in-scope local tests or bounded
 subagents. The primary agent reviews the resulting diff and authoritative test
 results without needlessly reimplementing the change, and retains publication
-responsibility. Grok must not receive secrets or site-local state, expand
-policy or scope without approval, or operate external/privileged infrastructure
-unless that authority is explicitly part of the approved plan.
+responsibility. Grok must not expand policy or scope without approval or
+operate external/privileged infrastructure unless that authority is explicitly
+part of the approved plan.
 
 ### Fail closed; no silent policy changes
 

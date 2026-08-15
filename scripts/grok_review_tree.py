@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Prepare a sanitized tree for an external Grok review.
+"""Prepare an optional tracked-files-only tree for an external Grok review.
 
-The live worktree can contain gitignored secrets and site identity
-(``.env``, ``.cluster-topology.json``, fabric/library state). Brief
-redaction does not protect those files if Grok is launched with
-``--cwd`` pointed at the repository root. This helper copies only
-tracked worktree files into a temporary directory outside the repo.
+Direct worktree review is the normal repository policy. This optional helper
+provides a narrower disclosure mode by copying only tracked worktree files into
+a temporary directory outside the repository and omitting gitignored secrets
+and site identity.
 """
 
 from __future__ import annotations

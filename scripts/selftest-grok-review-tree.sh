@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Grok skill contracts: isolated review, approved implementation preflight.
+# Grok skill contracts: direct read-only review, optional isolated tree, and
+# approved implementation preflight.
 # shellcheck disable=SC2016  # Assertions intentionally match literal Markdown shell text.
 set -euo pipefail
 
@@ -24,12 +25,20 @@ implementation_preflight="$REPO_DIR/skills/grok-subagent/scripts/preflight-imple
 [ -x "$implementation_preflight" ] \
   || fail "missing executable $implementation_preflight"
 
+grep -Fq 'explicit user request for a Grok review as authorization' "$skill" \
+  || fail "skill must treat the Grok request as worktree-read authorization"
+grep -Fq 'review_repo_root=$(git rev-parse --show-toplevel)' "$skill" \
+  || fail "skill must resolve the live repository worktree"
+grep -Fq 'review_cwd="$review_repo_root"' "$skill" \
+  || fail "skill must default review cwd to the live worktree"
+grep -Fq -- '--cwd "$review_cwd"' "$skill" \
+  || fail "skill must point Grok at the selected review cwd"
 grep -Fq 'scripts/prepare-grok-review-tree.sh' "$skill" \
-  || fail "skill must prepare a sanitized review tree via the helper"
-grep -Fq -- '--cwd "$review_tree"' "$skill" \
-  || fail "skill must point grok --cwd at the sanitized review tree"
-if grep -Fq -- '--cwd "$review_repo_root"' "$skill"; then
-  fail "skill must not launch Grok against the live repository root"
+  || fail "skill must retain the optional tracked-files-only helper"
+grep -Fq 'optional helper remains available' "$skill" \
+  || fail "skill must describe the sanitized tree as optional"
+if grep -Fq -- '--cwd "$review_tree"' "$skill"; then
+  fail "skill must not require the former sanitized review-tree variable"
 fi
 grep -Fq '.env' "$skill" \
   || fail "skill must name .env as excluded from Grok's filesystem"
@@ -58,13 +67,12 @@ grep -Fq -- '--cwd "$implementation_worktree"' "$skill" \
 grep -Fq 'Do not make' "$skill" \
   || fail "skill must avoid default manual patch re-entry"
 
-if grep -Fq 'Inspect the repository yourself' "$brief"; then
-  fail "brief must not ask Grok to inspect the live repository"
-fi
-grep -Fq '<sanitized-review-tree>' "$brief" \
-  || fail "brief must inspect only the sanitized review tree"
-grep -Fq 'Inspect only that tree' "$brief" \
-  || fail "brief must tell Grok not to inspect the live repository"
+grep -Fq '<review-worktree>' "$brief" \
+  || fail "brief must name the repository review worktree"
+grep -Fq 'Inspect relevant repository files' "$brief" \
+  || fail "brief must direct Grok to the relevant live-worktree files"
+grep -Fq 'outside the provided worktree' "$brief" \
+  || fail "brief must keep Grok inside the selected worktree"
 grep -Fq '.env' "$brief" \
   || fail "brief must forbid reading .env"
 grep -Fq '.cluster-topology.json' "$brief" \
@@ -160,4 +168,4 @@ if "$implementation_preflight" --repo-root "$implementation_repo" \
   fail "implementation preflight must reject a different reviewed commit"
 fi
 
-echo "grok review and implementation isolation selftest OK"
+echo "grok worktree review and implementation isolation selftest OK"
