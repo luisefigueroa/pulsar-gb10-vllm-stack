@@ -46,8 +46,11 @@ runtime/image + supported-hardware-geometry tuple and introduces explicit
 validation-decision statuses. Any change to one tuple component creates a new
 release. Pure descriptor, contract, immutable run-record, evidence-bundle,
 reviewed-decision, status-derivation, and supersession schemas are implemented,
-but the current operator commands do not capture, persist, publish, or project
-them. `STATUS=tested*` and `--validated` retain their legacy allowlist meaning,
+but the current `./pulsar` commands do not capture, persist, publish, or
+project them. Local ADR 0004 evidence-capture candidate persistence is a
+separate maintainer command and does not authorize serving; see
+[MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md).
+`STATUS=tested*` and `--validated` retain their legacy allowlist meaning,
 and existing reviewed seals/bundles are not automatically `Validated`. A
 schema-valid local decision is not proof of maintainer review or physical
 qualification.

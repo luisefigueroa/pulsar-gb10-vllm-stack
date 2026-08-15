@@ -100,6 +100,7 @@ descriptor owns the stable Model Serving Release ID; the Validation Contract,
 run records, validation bundle, and reviewed validation decision are separate.
 Their pure schema contracts are now implemented. Read-only trusted
 persistence and verification of those objects is implemented and currently
-empty. Evidence capture, issuance/publication, and catalog/operator
-status/serving projection remain pending. Existing schema-1 bundles and seals
+empty. Local evidence-capture candidate persistence is implemented and
+unreviewed. Issuance/publication and catalog/operator status/serving
+projection remain pending. Existing schema-1 bundles and seals
 remain immutable legacy artifacts.

@@ -49,7 +49,8 @@ execution, evidence capture, persistence, trusted issuance, profile update, or
 serving gate. A syntactically reviewed decision cannot prove physical behavior
 or that repository review occurred. Read-only persistence and verification of
 stored ADR 0004 objects is implemented under
-`models/model-serving-releases/`. Evidence capture, decision issuance,
+`models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
+persistence is implemented and remains unreviewed; decision issuance,
 catalog/operator status projection, and serving migration remain pending.
 Existing bundles, seals, profiles, and historical evidence remain unchanged and
 must not be automatically relabeled `Validated`. The corrected ADR 0004
@@ -64,8 +65,9 @@ binds all of its exact inputs in the current serving schema. In the ADR 0004
 model, the implemented release descriptor binds the four-part identity and the
 implemented Validation Contract freezes criteria. The implemented stage-2
 schemas separately bind immutable attempts, evidence sets, and reviewed
-decisions. Read-only verification can inspect stored objects, but no capture
-or issuance path emits them.
+decisions. Read-only verification can inspect stored objects. Local evidence-capture
+candidate persistence can emit unreviewed run and bundle candidates; it does
+not issue a reviewed decision or change serving eligibility.
 Reusable subsystem evidence is not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
@@ -192,8 +194,9 @@ These functions validate supplied JSON-compatible objects only.
 `predecessor_evidence_registry` and `decision_evidence_registry` are
 caller-supplied validation input, not the trusted store. Read-only
 verification of stored ADR 0004 objects is implemented under
-`models/model-serving-releases/` and is currently empty. Until capture and
-issuance land, continue retaining the existing raw/sanitized artifacts and
+`models/model-serving-releases/` and is currently empty. Local capture
+candidates are unreviewed and do not replace those artifacts. Until
+issuance lands, continue retaining the existing raw/sanitized artifacts and
 current schema-1 release materials described below. Do not create a
 `Validated` claim merely by calling a builder or copying a synthetic document.
 

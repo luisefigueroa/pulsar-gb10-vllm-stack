@@ -104,7 +104,9 @@ base-status assertion fails if it differs from the derived result. The
 module has no I/O; its review fields are a schema shape, not proof that
 repository review or physical behavior occurred. Read-only trusted
 persistence and verification of stored ADR 0004 objects is implemented under
-`models/model-serving-releases/`. Evidence capture, decision issuance, catalog
+`models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
+persistence is implemented by `scripts/model-serving-release-capture.sh` and
+does not write that registry or authorize serving. Decision issuance, catalog
 or operator status projection, and serving-eligibility migration remain
 implementation gaps.
 
@@ -1713,8 +1715,9 @@ adjudication, reviewed predecessor lineage, structural compatibility checks,
 sanitized command descriptors, and chronological acyclic supersession. No ADR
 0004 objects were issued or persisted before the correction; legacy schema-1
 seals/bundles and raw evidence remain untouched. Read-only persistence and
-verification of those objects is implemented. Evidence capture, decision
-issuance, catalog/operator status projection, and serving migration remain
+verification of those objects is implemented. Local evidence-capture
+candidate persistence is implemented and unreviewed. Decision issuance,
+catalog/operator status projection, and serving migration remain
 accepted work rather than open policy questions. The remaining questions
 concern that implementation shape and unrelated catalog/live-mount policy.
 
@@ -1906,8 +1909,14 @@ The implementation described here is primarily defined by:
 - [`scripts/model-release.sh`](../scripts/model-release.sh) and
   [`scripts/model_release.py`](../scripts/model_release.py) — maintainer-only
   exact-manifest and untrusted release-candidate assembly/verification;
+- [`scripts/model-serving-release-capture.sh`](../scripts/model-serving-release-capture.sh)
+  and [`scripts/model_serving_release_capture.py`](../scripts/model_serving_release_capture.py)
+  — local ADR 0004 evidence-capture candidate persistence; unreviewed and
+  non-authorizing;
 - [`docs/MODEL_RELEASE.md`](./MODEL_RELEASE.md) — candidate-stage maintainer
   runbook and trust boundary;
+- [`docs/MODEL_SERVING_RELEASE_CAPTURE.md`](./MODEL_SERVING_RELEASE_CAPTURE.md)
+  — ADR 0004 evidence-capture candidate persistence runbook;
 - [`docs/WEIGHT_FABRIC.md`](./WEIGHT_FABRIC.md) — operator design/runbook;
 - [`docs/MODEL_LIBRARY_DESIGN.md`](./MODEL_LIBRARY_DESIGN.md) — canonical
   architecture for the experimental library + preparation path;
@@ -1921,7 +1930,8 @@ The implementation described here is primarily defined by:
   — accepted Model Serving Release identity, evidence, status, onboarding, and
   subsystem-GA boundaries; descriptor, contract, run, bundle, and decision
   schemas implemented; read-only persistence and verification implemented;
-  capture, issuance, status projection, and serving migration pending;
+  local evidence-capture candidate persistence implemented and unreviewed;
+  issuance, status projection, and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

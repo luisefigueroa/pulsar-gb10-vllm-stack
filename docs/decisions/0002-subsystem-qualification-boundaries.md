@@ -68,8 +68,9 @@ implemented frozen Validation Contract declares its gates. Implemented pure run
 records and evidence bundles bind observed evidence, and the implemented pure
 decision schema independently verifies an explicit reviewed status. Read-only
 persistence and verification of stored ADR 0004 objects is implemented and
-currently empty. Evidence capture, issuance/publication, and catalog/operator
-status projection remain pending. Existing schema-1 bundles remain immutable
+currently empty. Local evidence-capture candidate persistence is implemented
+and unreviewed. Trusted publication, status projection, and serving
+migration remain pending. Existing schema-1 bundles remain immutable
 legacy artifacts.
 Reusing generic catalog evidence does not carry an old bundle, release decision,
 or `STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
@@ -121,8 +122,10 @@ still requires the combined release and promotion gates.
   revalidation scope.
 - Current CLI status fields and serving behavior are unchanged. ADR 0004 now
   defines the first-class qualification model and its pure schema contracts.
-  Read-only persistence and verification are implemented and empty; capture,
-  trusted publication, and status/serving migration remain pending.
+  Read-only persistence and verification are implemented and empty; local
+  evidence-capture candidate persistence is implemented and unreviewed;
+  trusted publication, status projection, and serving migration remain
+  pending.
 
 ## Revisit triggers
 
