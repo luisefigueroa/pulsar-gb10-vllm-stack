@@ -75,8 +75,9 @@ live-mount launches remain unbound.
 ADR 0004 stage 1 is implemented by `scripts/model_serving_release.py`: pure
 builders and fail-closed validators own the separate release descriptor and
 frozen Validation Contract, with fixed-ID fixtures under `scripts/testlib/`.
-The module has no I/O or issuance authority, and no operator or serving path
-consumes these objects yet. Schema-1 bundles still combine serving inputs,
+The module has no I/O or issuance authority, and no promoted operator or
+serving path consumes these objects. The separate read-only registry verifier
+can inspect stored objects. Schema-1 bundles still combine serving inputs,
 evidence, and issuance metadata; `STATUS=tested*` still controls launch
 eligibility; and `--validated` retains its legacy command meaning. No current
 profile or bundle is automatically assigned the new `Validated` status.
@@ -101,15 +102,16 @@ must be chronologically later and acyclic. Criterion results are recomputed
 from frozen thresholds and every applicable contract requirement. The explicit
 base-status assertion fails if it differs from the derived result. The
 module has no I/O; its review fields are a schema shape, not proof that
-repository review or physical behavior occurred. Evidence capture/persistence,
-trusted publication, status projection, and serving-eligibility migration
-remain implementation gaps.
+repository review or physical behavior occurred. Read-only trusted
+persistence and verification of stored ADR 0004 objects is implemented under
+`models/model-serving-releases/`. Evidence capture, decision issuance, catalog
+or operator status projection, and serving-eligibility migration remain
+implementation gaps.
 
-One current fail-closed limitation is deliberate: the comparable-predecessor
-resolver rejects a predecessor decision that itself has supersession links.
-Each `predecessor_evidence_registry` entry carries the exact `release`,
-`contract`, `evidence_bundle`, `run_records`, and `decision`, but not the full
-prior-decision evidence lineage needed to validate those links semantically.
+A predecessor decision that itself has supersession links must supply
+complete `prior_decision_sources` with exact prior release, contract, bundle,
+runs, and decision objects. Incomplete lineage, shape-only prior decisions,
+cycles, and backdated supersession fail closed.
 
 These changes remain schema version 1 because no ADR 0004 object was issued or
 persisted before this pre-issuance correction. The older schema-1 seals and
@@ -1242,10 +1244,11 @@ Current documentation interprets results in the four ADR-0002 scopes: catalog
 and artifact service, serving integration, model qualification, and
 release/promotion. Legacy catalog and operator surfaces do not yet expose
 scope-specific statuses. The pure ADR 0004 criteria, evidence artifacts, and
-run records do expose and validate `qualification_scope`, but no trusted
-persistence or projection path consumes it. Evidence in one scope remains
-valid while its measured inputs and contracts are unchanged; a failure
-elsewhere blocks a combined claim only when that claim requires both scopes.
+run records expose and validate `qualification_scope`, and the read-only
+registry verifies that structure for stored objects. No catalog/operator
+projection path consumes it yet. Evidence in one scope remains valid while
+its measured inputs and contracts are unchanged; a failure elsewhere blocks
+a combined claim only when that claim requires both scopes.
 
 The following is the implementation/evidence state as of the snapshot date.
 The Qwen 1.7B two-node `STATUS=tested` row is a historical runtime-profile
@@ -1709,11 +1712,11 @@ while adding canonical criterion scopes, automatic observation inclusion and
 adjudication, reviewed predecessor lineage, structural compatibility checks,
 sanitized command descriptors, and chronological acyclic supersession. No ADR
 0004 objects were issued or persisted before the correction; legacy schema-1
-seals/bundles and raw evidence remain untouched. Evidence
-capture/persistence, trusted publication, status projection, and serving
-migration remain accepted work rather than open policy questions. The remaining
-questions concern that implementation shape and unrelated catalog/live-mount
-policy.
+seals/bundles and raw evidence remain untouched. Read-only persistence and
+verification of those objects is implemented. Evidence capture, decision
+issuance, catalog/operator status projection, and serving migration remain
+accepted work rather than open policy questions. The remaining questions
+concern that implementation shape and unrelated catalog/live-mount policy.
 
 ### Catalog and release identity
 
@@ -1917,8 +1920,8 @@ The implementation described here is primarily defined by:
 - [ADR 0004](./decisions/0004-model-serving-release-validation.md)
   — accepted Model Serving Release identity, evidence, status, onboarding, and
   subsystem-GA boundaries; descriptor, contract, run, bundle, and decision
-  schemas implemented, with capture/persistence, trusted publication, status
-  projection, and serving migration pending;
+  schemas implemented; read-only persistence and verification implemented;
+  capture, issuance, status projection, and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

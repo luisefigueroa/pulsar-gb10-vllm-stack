@@ -83,8 +83,12 @@ language for new features without an explicit decision.
   contract schema version 1. `scripts/model_validation_evidence.py` owns the
   content-addressed evidence-artifact, immutable run-record, validation-bundle,
   and reviewed-decision schema version 1. Keep both modules pure and
-  non-issuing; later capture/persistence and status-projection layers must
-  validate through them rather than duplicating their identity or status rules.
+  non-issuing. `scripts/model_serving_release_registry.py` owns read-only
+  filesystem loading, content verification, graph assembly, and inspection of
+  stored ADR 0004 objects under `models/model-serving-releases/`. Evidence
+  capture, decision issuance, catalog/operator status projection, and
+  serving-eligibility migration remain pending and must validate through the
+  pure schema modules rather than duplicating their identity or status rules.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -260,14 +264,19 @@ unless that authority is explicitly part of the approved plan.
   still pass trusted publication privacy review. Pure
   schema validation does not prove that a supplied digest names the checked-out
   executable or that no unknown private identifier escaped structural checks.
-  These builders do not capture or persist evidence, prove that review occurred,
-  issue a trusted decision, or change serving eligibility. Current
+  These builders do not capture evidence, issue a trusted decision, or change
+  serving eligibility. Read-only trusted persistence can verify exact reviewed
+  objects under `models/model-serving-releases/` without projecting catalog
+  status or changing serving eligibility. Inspection of a stored release is
+  informational: absence of a reviewed decision is not `Untested`, and
+  multiple contract lineages or unsuperseded heads stay ambiguous. Current
   `STATUS=tested*`, `--validated`, expected seals, and schema-1 bundles remain
-  legacy implementation contracts until persistence/status migration lands.
-  Do not automatically relabel an existing profile or bundle `Validated`.
-  The corrected ADR 0004 objects remain schema version 1 because none was
-  issued or persisted before the correction; existing legacy schema-1
-  seals/bundles and raw evidence remain untouched.
+  legacy implementation contracts until catalog/operator projection and
+  serving-eligibility migration land. Do not automatically relabel an existing
+  profile or bundle `Validated`. The corrected ADR 0004 objects remain schema
+  version 1 because none was issued or persisted before the correction;
+  existing legacy schema-1 seals/bundles and raw evidence remain untouched.
+  The tracked ADR 0004 registry currently stores no issued object.
 - `STATUS` / `docs/VALIDATION.md` / wizard allowlists change only with reproducible evidence. Preserve failed and partial runs; do not rewrite failures as passes.
 - Selftests prove control-plane contracts; they do **not** replace physical gates for serving or storage claims (`docs/REVALIDATE.md`).
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
@@ -323,9 +332,12 @@ this work; the skill is procedural and does not outrank these sources.
   cannot create or replace it. Under ADR 0004, the implemented separate release
   descriptor owns the release ID, the implemented Validation Contract freezes
   its criteria, and the implemented evidence layer validates immutable run,
-  bundle, and decision objects. No trusted persistence path consumes those
-  objects yet; evidence capture, issuance/publication, catalog status projection,
-  and serving-eligibility migration remain pending.
+  bundle, and decision objects. Read-only trusted persistence can verify
+  those objects under `models/model-serving-releases/`; that store is
+  currently empty. Caller-supplied predecessor and decision registries remain
+  validation input, not trusted persistence. Evidence capture, decision
+  issuance/publication, catalog/operator status projection, and
+  serving-eligibility migration remain pending.
 - A deterministic release candidate has no authority by itself. Trusted
   issuance remains a reviewed change that binds lab evidence; candidate tools
   must fail if output claims review/promotion or targets trusted directories.

@@ -122,17 +122,22 @@ version identities, closed operations/resources, and typed criterion/site
 references. Its fixed-ID and adversarial fixtures are also
 under `scripts/testlib/`.
 
-**Current implementation boundary:** these schemas are pure contracts, not a
-trusted release registry. No operator CLI captures or persists them, no profile
-references a new decision, and no serving gate consumes one. The decision
-schema can validate a syntactically reviewed outcome but cannot prove that
-repository review or physical qualification occurred. Capture/persistence,
-trusted publication, catalog/operator status projection, and
-serving-eligibility migration remain pending. Existing schema-1 bundles and
-`STATUS=tested*` behavior remain unchanged legacy contracts; no current profile
-is automatically `Validated`. These corrected ADR 0004 objects remain schema
-version 1 because none was issued or persisted before the correction. Existing
-legacy schema-1 seals/bundles and raw evidence are not rewritten.
+**Current implementation boundary:** the schema modules remain pure contracts.
+Read-only trusted persistence and verification now live under
+`models/model-serving-releases/` and
+`scripts/model-serving-release-registry.sh`. That layer can load, verify, and
+inspect stored objects; it does not capture evidence, issue a decision,
+project catalog or operator status, or change serving eligibility. No profile
+references a new decision, and no serving gate consumes one. Review-metadata
+shape checks cannot prove that repository review or physical qualification
+occurred. Evidence capture, decision issuance, catalog/operator status
+projection, and serving-eligibility migration remain pending. Existing
+schema-1 bundles and `STATUS=tested*` behavior remain unchanged legacy
+contracts; no current profile is automatically `Validated`. These corrected
+ADR 0004 objects remain schema version 1 because none was issued or persisted
+before the correction. The tracked ADR 0004 store currently contains no issued
+object. Existing legacy schema-1 seals/bundles and raw evidence are not
+rewritten.
 
 ---
 
@@ -1022,17 +1027,20 @@ affected Model Serving Release and its frozen Validation Contract.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Evidence capture/persistence, trusted decision publication,
-  catalog/operator status projection, and serving-eligibility stages defined by
-  ADR 0004. Release, frozen-contract, immutable run-record, new bundle, and
-  reviewed-decision schema version 1 are implemented as pure contracts; current
-  schema-1 bundles and `STATUS=tested*` remain legacy implementation contracts
+- Evidence capture, decision issuance, catalog/operator status projection,
+  and serving-eligibility stages defined by ADR 0004. Release,
+  frozen-contract, immutable run-record, new bundle, and reviewed-decision
+  schema version 1 are implemented as pure contracts; read-only persistence
+  and verification of those objects is implemented under
+  `models/model-serving-releases/`; current schema-1 bundles and
+  `STATUS=tested*` remain legacy implementation contracts
 - Initial reviewed two-rank `library-hot` GA closure in section 7.1; remote
   one-rank placement remains outside the initial GA scope
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
-- Stable persistence and CLI guarantees for machine-readable JSON objects
-  beyond the pure ADR 0004 release/contract validators and health schema 1
+- Capture, issuance, catalog/operator projection, and serving-eligibility
+  CLI guarantees beyond the read-only ADR 0004 registry verifier and health
+  schema 1
 - Review the explicit `--allow-unvalidated` experiment policy before promotion
 - Complete the remaining guided/default promotion matrix after bounded
   subsystem GA, without treating a subsystem pass as Model Serving Release
@@ -1098,3 +1106,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-14 | Implemented ADR 0004 stage 1 as pure Python release-descriptor and frozen Validation Contract schemas with fixed deterministic IDs and fail-closed tests. The release ID hashes exactly the Model Artifact Set, normalized serving recipe/access contract, digest-pinned runtime compatibility envelope, and privacy-safe supported geometry. Contract checks require all core/prerequisite dimensions, exact same-boot equality, reviewed provenance, and protocol/geometry-bound relative budgets. Legacy schema-1 artifacts and serving/status behavior are unchanged; no physical qualification or `Validated` decision was produced. |
 | 2026-08-14 | Implemented ADR 0004 stage 2 as pure Python content-addressed evidence-artifact, immutable run-record, validation-bundle, and reviewed-decision schemas. Cross-link verification binds release, frozen contract, exact run/artifact sets, observed rank/runtime and distribution provenance, frozen protocols/sample sizes/thresholds, required context and soak observations, comparable-predecessor regression evidence, review/privacy state, and immutable supersession. The supplied base-status assertion is independently derived and mismatches fail. The implementation performs no capture, persistence, trusted issuance, catalog projection, profile migration, or physical qualification; existing schema-1 and serving behavior remain unchanged. |
 | 2026-08-14 | Corrected the unissued ADR 0004 schema-1 contracts before persistence: criterion scopes are canonical; catalog/preparation evidence cannot satisfy validation criteria; the review-derived provenance criterion is closed; release/contract values reject recognized private data; every post-barrier attempt declares and exactly accounts for its criteria; every applicable observation is included unless explicitly excluded with evidence; conflicts use deterministic adjudication; relative baselines bind a reviewed predecessor contract/bundle/decision/run whose relevant criterion passed; runtime and architecture/geometry checks remain structural; command evidence uses closed typed descriptors; and supersession is later and acyclic. No ADR 0004 object had been issued or persisted, so schema version 1 remains appropriate. Legacy schema-1 seals/bundles and raw evidence are untouched, and no physical claim follows from this correction. |
+| 2026-08-14 | Implemented the read-only trusted-persistence foundation for ADR 0004 objects: tracked namespaces under `models/model-serving-releases/`, fail-closed filesystem and graph verification, publishable evidence hashing, predecessor-decision lineage validation, closed review-reference grammar, and `verify` / `show-release` / `show-decision` inspection. The store contains no issued object. Evidence capture, decision issuance, catalog/operator projection, serving-eligibility migration, and physical qualification remain pending. |

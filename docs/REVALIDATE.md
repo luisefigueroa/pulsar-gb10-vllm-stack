@@ -47,8 +47,10 @@ validation-decision, status-derivation, and supersession schemas are implemented
 in `scripts/model_validation_evidence.py`. Together they perform no command
 execution, evidence capture, persistence, trusted issuance, profile update, or
 serving gate. A syntactically reviewed decision cannot prove physical behavior
-or that repository review occurred. Capture/persistence, trusted publication,
-CLI orchestration, status projection, and serving migration remain pending.
+or that repository review occurred. Read-only persistence and verification of
+stored ADR 0004 objects is implemented under
+`models/model-serving-releases/`. Evidence capture, decision issuance,
+catalog/operator status projection, and serving migration remain pending.
 Existing bundles, seals, profiles, and historical evidence remain unchanged and
 must not be automatically relabeled `Validated`. The corrected ADR 0004
 objects remain schema version 1 because none was issued or persisted before
@@ -62,7 +64,8 @@ binds all of its exact inputs in the current serving schema. In the ADR 0004
 model, the implemented release descriptor binds the four-part identity and the
 implemented Validation Contract freezes criteria. The implemented stage-2
 schemas separately bind immutable attempts, evidence sets, and reviewed
-decisions, but no current capture or trusted persistence path emits them.
+decisions. Read-only verification can inspect stored objects, but no capture
+or issuance path emits them.
 Reusable subsystem evidence is not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
@@ -159,10 +162,9 @@ evidence bundle, validation decision, and exact run. The relevant predecessor
 throughput or latency criterion must have passed in that decision. The
 predecessor release itself need not be globally `Validated`; unrelated criteria
 do not invalidate a criterion-specific baseline. The benchmark protocol and
-supported geometry must still be identical. The current pure resolver fails
-closed if the selected predecessor decision itself has supersession links,
-because its source registry does not yet carry the complete prior-decision
-evidence lineage needed to validate them.
+supported geometry must still be identical. A predecessor decision with
+supersession links must supply complete `prior_decision_sources` covering
+that lineage; incomplete, cyclic, or backdated lineage fails closed.
 
 Observed runtime compatibility and architecture/geometry are checked
 structurally against the release envelope. This can reject an incompatible run
@@ -186,9 +188,13 @@ chronology and an acyclic relationship; readers project the older one as
 `decision_evidence_registry` are complete caller-supplied source registries for
 pure validation; neither is trusted persistence or evidence of issuance.
 
-These functions validate supplied JSON-compatible objects only. Until capture
-and persistence land, continue retaining the existing raw/sanitized artifacts
-and current schema-1 release materials described below. Do not create a
+These functions validate supplied JSON-compatible objects only.
+`predecessor_evidence_registry` and `decision_evidence_registry` are
+caller-supplied validation input, not the trusted store. Read-only
+verification of stored ADR 0004 objects is implemented under
+`models/model-serving-releases/` and is currently empty. Until capture and
+issuance land, continue retaining the existing raw/sanitized artifacts and
+current schema-1 release materials described below. Do not create a
 `Validated` claim merely by calling a builder or copying a synthetic document.
 
 Structural privacy checks are fail-closed for recognized credential, path,

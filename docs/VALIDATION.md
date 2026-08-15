@@ -30,8 +30,10 @@ pass. A relative baseline binds the reviewed predecessor contract, bundle,
 decision, and exact run whose relevant criterion passed; the predecessor does
 not need an overall `Validated` decision. Missing, conflicted, or over-budget
 evidence cannot produce `Validated`.
-Evidence capture/persistence, trusted publication, catalog/operator status
-projection, and serving migration remain pending. Strict same-boot exactness
+Read-only persistence and verification of stored ADR 0004 objects is
+implemented under `models/model-serving-releases/`. Evidence capture,
+decision issuance, catalog/operator status projection, and serving migration
+remain pending. Strict same-boot exactness
 remains mandatory for a future trusted `Validated` decision, and FP-equivalent
 output remains diagnostic rather than a strict pass. The deterministic schema
 selftests are control-plane evidence only; a syntactically valid decision does
@@ -48,8 +50,11 @@ deployment-only forms, while trusted capture and publication privacy review
 remain required.
 
 These pre-issuance corrections remain schema version 1 because no ADR 0004
-object was issued or persisted. Existing legacy schema-1 seals/bundles and all
-raw or historical evidence remain untouched.
+object was issued or persisted. The tracked registry can verify stored
+objects but currently contains none. Existing legacy schema-1 seals/bundles
+and all raw or historical evidence remain untouched. Reviewer and
+`review_reference` use a closed privacy-safe grammar; that shape check cannot
+prove review occurred.
 
 ### Qualification scopes
 

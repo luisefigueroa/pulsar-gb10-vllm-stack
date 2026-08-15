@@ -4,9 +4,10 @@
 - **Date:** 2026-08-14
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
-  validation-decision schemas implemented; evidence capture/persistence,
-  trusted publication, catalog/operator status projection, and
-  serving-eligibility migration pending
+  validation-decision schemas implemented; read-only trusted persistence
+  and verification implemented under `models/model-serving-releases/`;
+  evidence capture, decision issuance, catalog/operator status projection,
+  and serving-eligibility migration pending
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -320,10 +321,15 @@ They are legacy combined identity/evidence artifacts and are not rehashed,
 rewritten, or automatically converted. Stage 1 adds a separate release
 descriptor and frozen Validation Contract; stage 2 adds run records, evidence
 bundles, validation decisions, and their cross-links. Both pure-schema stages
-are implemented, but neither is a trusted persistence or issuance path.
-Existing `STATUS=tested*`, `--validated`, reviewed seals, and legacy-unsealed
-behavior retain their current implementation meaning until that migration
-lands. No existing profile is automatically relabeled `Validated`.
+are implemented. Read-only trusted persistence and verification for those
+objects now live under `models/model-serving-releases/` and
+`scripts/model_serving_release_registry.py`. That layer does not capture
+evidence, issue a decision, project catalog status, or change serving
+eligibility. Existing `STATUS=tested*`, `--validated`, reviewed seals, and
+legacy-unsealed behavior retain their current implementation meaning until
+catalog/operator projection and serving-eligibility migration land. No
+existing profile is automatically relabeled `Validated`. The tracked ADR
+0004 store currently contains no issued object.
 
 ### 5. Distribution is preparation provenance, not release status
 
@@ -452,11 +458,14 @@ predecessor. Relative evaluation accepts an external
 `predecessor_evidence_registry`; each entry must contain the exact `release`,
 `contract`, `evidence_bundle`, `run_records`, and `decision` source set named
 by the frozen predecessor IDs. The registry is validation input, not trusted
-persistence or part of the current decision. The current resolver fails closed
-when that predecessor decision itself has supersession links because the
-five-object source set does not contain the complete prior-decision evidence
-lineage needed to validate those links. Supporting that case requires an
-explicit registry-contract extension; it is not permission to ignore lineage.
+persistence or part of the current decision. When a predecessor decision
+itself has supersession links, the matching source set must also carry
+complete `prior_decision_sources`: each nested entry is a full source set
+for a prior decision in that same release/contract lineage. The resolver
+validates chronology, same-release/contract constraints, acyclicity, exact
+bundle/runs, and recursive predecessor requirements. Shape-only prior
+decisions and incomplete lineage fail closed. This is a caller-supplied
+registry-contract extension, not a persisted schema-version change.
 Later decisions carry immutable
 backward supersession links; chronology must be strictly later and the
 relationship must remain acyclic. Effective `Superseded` projection accepts a
@@ -466,8 +475,34 @@ decision or establish that any supplied registry was repository-issued.
 Stage 2 still performs no command execution, evidence capture, filesystem or
 network I/O, trusted publication, catalog update, profile edit, or serving
 gate. A syntactically valid review block or `Validated` fixture is not proof
-that repository review or physical qualification occurred. No current release
-received an ADR 0004 decision from this implementation unit.
+that repository review or physical qualification occurred. Reviewer must be a
+privacy-safe identifier. `review_reference` uses a closed repository-review
+grammar (`pr:<id>`, `commit:<40-or-64 hex>`, or
+`repository-review:<identifier>`). Shape validation cannot prove the named
+review occurred. No current release received an ADR 0004 decision from this
+implementation unit.
+
+Read-only trusted persistence is implemented by
+`scripts/model_serving_release_registry.py` and
+`scripts/model-serving-release-registry.sh`. The tracked store is
+`models/model-serving-releases/` with separately tracked namespaces
+`descriptors/`, `contracts/`, `run-records/`, `evidence-bundles/`, and
+`decisions/`. The commands are `verify`, `show-release`, and
+`show-decision`. This layer verifies filesystem layout, content IDs, the
+object graph, and publishable evidence hashes. A stored Validation Contract
+with a required relative-performance gate must resolve and semantically
+validate every frozen predecessor source even before a current decision
+exists. More than one later decision that directly supersedes the same
+record fails verify through the canonical supersession check. It does not capture evidence,
+issue a decision, project catalog or operator status, or change serving
+eligibility. Inspection of a release is informational: one contract lineage
+with one unsuperseded reviewed decision may display that decision's
+evidence-derived effective status; no reviewed decision is a neutral
+no-reviewed-decision state, never inferred `Untested`; multiple contract
+lineages or unsuperseded heads are ambiguous and fail closed when one
+reviewed status is requested. ADR 0004 roadmap item 3 remains catalog and
+operator status projection, then later serving-eligibility migration. The
+tracked store currently contains no issued object.
 
 ### Pre-issuance schema correction
 
@@ -494,7 +529,10 @@ Implement this decision in focused, reviewable units:
    status derivation, and explicit supersession;
 3. project the new statuses into catalog and operator surfaces, then migrate
    serving eligibility only through explicit reviewed decisions—never by
-   converting `STATUS=tested*` automatically;
+   converting `STATUS=tested*` automatically. Read-only trusted persistence
+   and verification of stored ADR 0004 objects is implemented as a focused
+   foundation for this item; catalog/operator projection and serving
+   migration remain pending;
 4. create the supervised `pulsar-model-onboarding` skill around the supported
    subsystem CLIs and confirmation boundaries; and
 5. complete and publish the separate bounded `library-hot` GA closure evidence.
@@ -578,7 +616,8 @@ mandatory.
   status, provided the pre-qualification verification barrier holds.
 - Current commands and legacy schemas continue to work during migration, but
   their `tested`/`validated` labels must not be presented as implementation of
-  this ADR until trusted object persistence, status projection, and serving
-  enforcement exist.
+  this ADR until catalog/operator status projection and serving enforcement
+  exist. Read-only persistence and verification of stored ADR 0004 objects
+  is implemented; it does not change those legacy labels.
 - Physical qualification is still required for physical claims. Documentation
   and selftests alone cannot produce a `Validated` decision.

@@ -8,9 +8,11 @@ particular, no row is automatically `Validated`: that status belongs to one
 **Model Serving Release**, the immutable combination of exact model identity,
 exact serving recipe, runtime/image identity, and supported hardware geometry,
 after every frozen criterion and review requirement passes. Changing any one
-component creates a new release. Pure version-1 schema validation exists, but
-trusted release-object persistence, publication, status projection, and
-serving admission do not; no current row is silently migrated.
+component creates a new release. Pure version-1 schema validation and
+read-only verification of stored ADR 0004 objects exist, but evidence
+capture, trusted publication, catalog/operator status projection, and
+serving admission do not; no current row is silently migrated. The tracked
+ADR 0004 store currently contains no issued object.
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for

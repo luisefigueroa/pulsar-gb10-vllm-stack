@@ -1050,6 +1050,40 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                 required_kernel_features=[1],  # type: ignore[list-item]
             )
 
+    def test_public_string_helper_matches_private_alias(self) -> None:
+        public = model_serving_release.validate_public_string_value
+        private = model_serving_release._validate_public_string_value
+        self.assertEqual(
+            public("fixture-public-id", label="sample"),
+            "fixture-public-id",
+        )
+        self.assertEqual(
+            public("fixture-public-id", label="sample"),
+            private("fixture-public-id", label="sample"),
+        )
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            "must be a string",
+        ):
+            public(1, label="sample")
+        for value in (
+            "token=secret",
+            "/home/operator/private-result.json",
+            "https://lab.internal:8000",
+            "node-a.local",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "private, secret, or deployment-only",
+                ):
+                    public(value, label="sample")
+                with self.assertRaisesRegex(
+                    model_serving_release.ModelServingReleaseError,
+                    "private, secret, or deployment-only",
+                ):
+                    private(value, label="sample")
+
     def test_published_schema_one_artifacts_remain_valid_unchanged(self) -> None:
         seals = sorted((REPO_ROOT / "models" / "seals").glob("*.json"))
         bundles = sorted(

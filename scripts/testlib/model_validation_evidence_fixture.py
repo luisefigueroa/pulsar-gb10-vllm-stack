@@ -748,11 +748,48 @@ def evidence_source(
     bundle: dict[str, Any],
     run_records: list[dict[str, Any]],
     decision: dict[str, Any],
+    prior_decision_sources: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    source = {
         "release": release,
         "contract": contract,
         "evidence_bundle": bundle,
         "run_records": run_records,
         "decision": decision,
     }
+    if prior_decision_sources:
+        source["prior_decision_sources"] = sorted(
+            prior_decision_sources,
+            key=lambda item: item["decision"]["decision_id"],
+        )
+    return source
+
+
+def build_superseding_predecessor_source() -> dict[str, Any]:
+    """Return a predecessor source whose decision has complete lineage."""
+    base = build_predecessor_source()
+    later = build_decision(
+        release=base["release"],
+        contract=base["contract"],
+        artifacts=base["evidence_bundle"]["evidence_artifacts"],
+        run_records=base["run_records"],
+        bundle=base["evidence_bundle"],
+        supersedes=[base["decision"]],
+        reviewed_at="2026-08-14T16:00:00Z",
+    )
+    return evidence_source(
+        release=base["release"],
+        contract=base["contract"],
+        bundle=base["evidence_bundle"],
+        run_records=base["run_records"],
+        decision=later,
+        prior_decision_sources=[
+            evidence_source(
+                release=base["release"],
+                contract=base["contract"],
+                bundle=base["evidence_bundle"],
+                run_records=base["run_records"],
+                decision=base["decision"],
+            )
+        ],
+    )

@@ -37,6 +37,7 @@ enforcement:
 | Identity schema (`scripts/model_identity.py`) | Owns canonical profile, validation-bundle, and expected-seal schemas and IDs |
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns pure release-descriptor and frozen Validation Contract schema version 1; performs no I/O, issuance, or status assignment |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns pure evidence-artifact, immutable run-record, new validation-bundle, reviewed-decision, status-derivation, and supersession schema version 1; performs no capture, persistence, or trusted issuance |
+| ADR 0004 registry (`scripts/model-serving-release-registry.sh`) | Read-only load, verify, and inspect stored objects under `models/model-serving-releases/`; does not capture evidence, issue a decision, project catalog status, or authorize serving |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
@@ -109,17 +110,18 @@ accepts a `predecessor_evidence_registry` whose entries contain the exact
 `release`, `contract`, `evidence_bundle`, `run_records`, and `decision` source
 set. Effective supersession accepts a fully validated
 `decision_evidence_registry`. These registries are caller-supplied validation
-inputs, not a trusted store or proof of issuance. The current predecessor
-resolver rejects a predecessor decision that itself has supersession links:
-the five-key predecessor source entry does not include the full prior-decision
-evidence lineage required to validate them.
+inputs, not a trusted store or proof of issuance. A predecessor decision
+with supersession links must carry complete `prior_decision_sources` so
+chronology, same-release/contract constraints, acyclicity, exact bundle/runs,
+and recursive predecessor requirements can be checked.
 
 The fixed deterministic fixture and mutation suite are
 `scripts/testlib/model_serving_release_fixture.py` and
 `scripts/testlib/test_model_serving_release.py`. They prove schema and hashing
 contracts only. They do not prove physical behavior, issue a release, create a
-reviewed decision, or alter the current serving path. There is intentionally no
-operator CLI or trusted output directory for these objects in stage 1.
+reviewed decision, or alter the current serving path. Stage 1 still has no
+writer. Read-only verification of later stored objects uses
+`scripts/model-serving-release-registry.sh`.
 
 `scripts/testlib/model_validation_evidence_fixture.py` and
 `scripts/testlib/test_model_validation_evidence.py` fix the stage-2 IDs and
@@ -146,11 +148,14 @@ backward; readers project the older decision as `Superseded` without changing
 the older bytes. These remain control-plane schema tests, not evidence capture
 or physical qualification.
 
-No current CLI captures or persists the new objects, and no trusted directory,
-catalog field, profile reference, or serving gate consumes them. A locally
-constructed decision whose fields say `Validated` is only a syntactically
-consistent document until repository review deliberately publishes it through
-a future trusted persistence path.
+Read-only persistence and verification for stored ADR 0004 objects now live
+under `models/model-serving-releases/` and
+`scripts/model-serving-release-registry.sh`. That CLI does not capture
+evidence, issue a decision, or change serving eligibility. The tracked store
+currently contains no issued object. No catalog field, profile reference, or
+serving gate consumes an ADR 0004 decision. A locally constructed decision
+whose fields say `Validated` is only a syntactically consistent document until
+repository review deliberately publishes it into that store.
 
 These structural checks reject known leak classes; they do not inspect the
 working tree to prove that a supplied program digest is correct and cannot
