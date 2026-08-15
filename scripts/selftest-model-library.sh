@@ -153,6 +153,16 @@ assert_true "model-library.sh help" bash -c "'$REPO_DIR/scripts/model-library.sh
 assert_true "model-library.sh is executable" test -x "$REPO_DIR/scripts/model-library.sh"
 assert_true "validation-bundle verify documented in CLI" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'validation-bundle verify'"
+reviewed_list=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
+  "$REPO_DIR/scripts/model-library.sh" catalog list --reviewed-identity --json)
+validated_alias_list=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
+  "$REPO_DIR/scripts/model-library.sh" catalog list --validated --json)
+reviewed_count=$(printf '%s' "$reviewed_list" | \
+  python3 -c 'import json,sys; print(len(json.load(sys.stdin)["models"]))')
+assert_eq "catalog list accepts reviewed-identity filter" \
+  "$reviewed_count" "0"
+assert_eq "catalog list validated alias matches reviewed-identity filter" \
+  "$validated_alias_list" "$reviewed_list"
 bundle_sealed_state=$("$REPO_DIR/scripts/model-library.sh" \
   validation-bundle verify qwen3-1.7b --json |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')

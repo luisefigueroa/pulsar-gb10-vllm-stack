@@ -555,7 +555,7 @@ cmd_catalog_list() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) args+=(--json) ;;
-      --validated) args+=(--validated) ;;
+      --reviewed-identity|--validated) args+=(--reviewed-identity) ;;
       -h|--help) usage; return 0 ;;
       *) die "unknown arg: $1" ;;
     esac
