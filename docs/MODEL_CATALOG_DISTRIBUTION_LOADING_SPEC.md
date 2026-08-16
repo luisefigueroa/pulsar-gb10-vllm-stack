@@ -19,7 +19,7 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-15 |
+| Snapshot date | 2026-08-16 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -137,7 +137,10 @@ independently verified, atomic publication path. The journal is isolated under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision.
-Trusted decision issuance remains an implementation gap.
+Maintainer-only issuance staging can propose exact registry objects from a
+verified capture candidate plus explicit review input. A successful local
+command is not trusted until repository review and merge. The tracked
+registry remains empty and no current profile is bound.
 
 A predecessor decision that itself has supersession links must supply
 complete `prior_decision_sources` with exact prior release, contract, bundle,
@@ -1771,8 +1774,10 @@ sanitized command descriptors, and chronological acyclic supersession. No ADR
 seals/bundles and raw evidence remain untouched. Read-only persistence and
 verification of those objects is implemented. Local evidence-capture
 candidate persistence and source-neutral release-plan candidate persistence
-are implemented and unreviewed. Decision issuance,
-and serving migration remain accepted work rather than open policy questions.
+are implemented and unreviewed. Maintainer-only issuance staging can
+propose registry objects, but a local command is not trusted until
+repository review and merge. Serving migration remains accepted work
+rather than an open policy question.
 Advisory catalog/operator status projection is implemented for explicitly
 bound profiles without changing legacy recommendation order or serving
 permission. The remaining questions
@@ -2002,8 +2007,9 @@ The implementation described here is primarily defined by:
   and unreviewed;
   advisory status projection implemented for explicitly bound profiles;
   supervised `pulsar-model-onboarding` skill implemented as control-plane
-  orchestration with missing unsealed acquisition explicitly stopped; trusted
-  issuance and serving migration pending;
+  orchestration with missing unsealed acquisition explicitly stopped;
+  maintainer issuance staging implemented as an untrusted local proposal;
+  serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

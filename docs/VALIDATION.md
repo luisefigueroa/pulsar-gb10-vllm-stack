@@ -50,15 +50,18 @@ no physical DGX claim and create no release decision. It can reuse one complete
 exact eligible home only after full verification against a reviewed expected
 manifest independent of the observed tree; catalog state and a self-observed
 manifest alone are insufficient. Missing unsealed acquisition is explicitly
-stopped. Its journal uses a dedicated workflow namespace. Trusted decision
-issuance remains pending.
+stopped. Its journal uses a dedicated workflow namespace. Maintainer-only
+issuance staging is implemented as a deterministic control-plane workflow
+that can propose registry objects; a successful local command is not trusted
+until repository review and merge, does not by itself create a reviewed
+production object, and makes no physical DGX claim.
 Projection is deterministic control-plane behavior only and serving permission
 is status-independent. Strict same-boot exactness
 remains mandatory for a future trusted `Validated` decision, and FP-equivalent
 output remains diagnostic rather than a strict pass. The deterministic schema
-selftests are control-plane evidence only; a syntactically valid decision does
-not prove review or physical behavior and adds no physical or
-model-qualification result to this ledger. Runtime compatibility and
+and issuance-staging selftests are control-plane evidence only; a syntactically
+valid decision does not prove review or physical behavior and adds no physical
+or model-qualification result to this ledger. Runtime compatibility and
 architecture/geometry checks are structural only; physical DGX behavior still
 needs physical evidence. Supersession must be chronologically later and
 acyclic. Every post-barrier non-preparation attempt hash-binds its attempted

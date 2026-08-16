@@ -294,6 +294,7 @@ def _inputs_from_record(
     source_key: str,
     repository_path: str,
     extra_fields: dict[str, Any] | None = None,
+    extra_protected: dict[str, Any] | None = None,
     attempt_name: str,
 ) -> CaptureInputs:
     plan_dir, candidate = write_release_plan_candidate(
@@ -305,6 +306,7 @@ def _inputs_from_record(
         contract=contract,
         source_key=source_key,
         repository_path=repository_path,
+        extra_protected=extra_protected,
     )
     if extra_fields:
         attempt.update(extra_fields)
@@ -320,6 +322,20 @@ def _inputs_from_record(
     )
 
 
+def review_protected_source(
+    *,
+    source_key: str = "provenance-review",
+    label: str = "provenance-security-review",
+) -> dict[str, Any]:
+    return {
+        "source_key": source_key,
+        "class": "protected",
+        "qualification_scope": "release-promotion",
+        "media_type": "application/json",
+        "content_sha256": evidence_fixture.digest(f"content:{label}"),
+    }
+
+
 def passing_criterion_spec(
     criterion_id: str,
     *,
@@ -331,6 +347,7 @@ def passing_criterion_spec(
     observation_completion: str | None = None,
     observation_reason: str | None = None,
     extra_fields: dict[str, Any] | None = None,
+    extra_protected: dict[str, Any] | None = None,
 ) -> CaptureInputs:
     release = release or release_fixture.build_release()
     contract = contract or release_fixture.build_contract(release=release)
@@ -364,6 +381,7 @@ def passing_criterion_spec(
         source_key=criterion_id,
         repository_path=relative,
         extra_fields=extra_fields,
+        extra_protected=extra_protected,
         attempt_name=criterion_id,
     )
 
@@ -407,6 +425,7 @@ def prebarrier_spec(
     *,
     release: dict[str, Any] | None = None,
     contract: dict[str, Any] | None = None,
+    extra_protected: dict[str, Any] | None = None,
 ) -> CaptureInputs:
     release = release or release_fixture.build_release()
     contract = contract or release_fixture.build_contract(release=release)
@@ -426,6 +445,7 @@ def prebarrier_spec(
         contract=contract,
         source_key="preparation-failure",
         repository_path=relative,
+        extra_protected=extra_protected,
         attempt_name="preparation-failure",
     )
 

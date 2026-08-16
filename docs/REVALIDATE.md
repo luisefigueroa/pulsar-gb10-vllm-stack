@@ -59,7 +59,9 @@ launch. A syntactically reviewed decision cannot prove physical behavior
 or that repository review occurred. Read-only persistence and verification of
 stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
-persistence is implemented and remains unreviewed. Closed validator
+persistence is implemented and remains unreviewed. Maintainer-only issuance
+staging can propose those objects locally; repository review and merge remain
+the trust event. Closed validator
 measurements and attempt-only spec composition are implemented for strict
 same-boot and absolute throughput/latency; they do not issue status or prove
 physical behavior. Advisory catalog/operator
@@ -77,8 +79,13 @@ observed tree; catalog state and a self-observed manifest alone are
 insufficient. Missing unsealed acquisition remains an explicit implementation
 gap, and direct durable-cache download is forbidden. Its journal is isolated
 under `experiments/model-onboarding/workflows/`. Deterministic skill and journal
-tests make no physical DGX claim and create no release decision. Trusted
-decision issuance remains pending.
+tests make no physical DGX claim and create no release decision. Maintainer-only
+issuance staging can propose exact registry objects from a verified capture
+candidate plus explicit review input. A successful local command is not
+trusted until repository review and merge, does not edit a profile, and
+does not by itself create a reviewed production object.
+`MODEL_SERVING_RELEASE_ID` may be bound
+only in the reviewed publication that stores and verifies the exact lineage.
 Existing bundles, seals, profiles, and historical evidence remain unchanged and
 must not be automatically relabeled `Validated`. The corrected ADR 0004
 objects remain schema version 1 because none was issued or persisted before

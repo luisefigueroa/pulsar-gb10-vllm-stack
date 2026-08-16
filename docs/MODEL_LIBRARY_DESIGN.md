@@ -172,8 +172,10 @@ current unsealed subsystem supplies private staging, independent completeness
 verification, and atomic publication for that case. Its journal lives under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
-release decision. Trusted decision
-issuance remains pending. Existing schema-1 bundles and `STATUS=tested*`
+release decision. Maintainer-only issuance
+staging can propose exact registry objects from a verified capture candidate
+plus explicit review input; a successful local command is not trusted until
+repository review and merge, and the tracked store remains empty. Existing schema-1 bundles and `STATUS=tested*`
 labels remain separate legacy contracts and retain recommendation order; no
 current profile is automatically `Validated`. Serving permission is
 status-independent. These corrected
@@ -650,7 +652,8 @@ status that must equal the outcome independently derived from those inputs.
 Read-only trusted persistence and advisory catalog/operator projection are now
 implemented. Local release planning, validator measurements, attempt
 composition, and evidence-capture candidate persistence remain unreviewed and
-non-issuing. Trusted decision issuance is the next authority boundary; serving
+non-issuing. Maintainer-only issuance staging can write an untrusted
+proposal; repository review and merge remain the authority boundary. Serving
 permission remains status-independent. Existing schema-1 bundles remain
 immutable legacy combined artifacts and are not converted in place.
 
@@ -1101,23 +1104,26 @@ experimental. The guided and fresh-cluster default remains replicated copies.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Trusted decision issuance defined by ADR 0004. Release,
-  frozen-contract, immutable run-record, new bundle, and reviewed-decision
-  schema version 1 are implemented as pure contracts; read-only persistence
-  and verification of those objects is implemented under
-  `models/model-serving-releases/`; local evidence-capture candidate
-  persistence is implemented and unreviewed; advisory catalog/operator status
-  projection is implemented for explicitly bound profiles; the supervised
-  `pulsar-model-onboarding` skill is implemented as non-authorizing
-  control-plane orchestration; current schema-1
-  bundles and `STATUS=tested*` remain legacy implementation contracts
+- Trusted publication of a Model Serving Release still requires repository
+  review and merge. The maintainer issuance workflow can now stage an
+  untrusted proposal from a verified capture candidate plus explicit review
+  input; the tracked store remains empty and no current profile is bound.
+  Release, frozen-contract, immutable run-record, new bundle, and
+  reviewed-decision schema version 1 remain the pure contracts; read-only
+  persistence and verification remain under `models/model-serving-releases/`;
+  local evidence-capture candidate persistence remains unreviewed; advisory
+  catalog/operator status projection remains for explicitly bound profiles;
+  the supervised `pulsar-model-onboarding` skill remains non-authorizing
+  control-plane orchestration; current schema-1 bundles and `STATUS=tested*`
+  remain legacy implementation contracts
 - Physical serving-integration evidence for remote one-rank `library-hot`;
   it remains experimental and outside the completed two-rank GA scope
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
-- Issuance and publication guarantees beyond the read-only ADR 0004 registry
-  verifier, its advisory projection, the local
-  evidence-capture candidate workflow, and health schema 1
+- Issuance and publication guarantees beyond local untrusted staging, the
+  read-only ADR 0004 registry verifier, its advisory projection, the local
+  evidence-capture candidate workflow, and health schema 1. A staged
+  proposal is not trusted until repository review and merge.
 - Complete the remaining guided/default promotion matrix after bounded
   subsystem GA, without treating a subsystem pass as Model Serving Release
   validation
@@ -1193,3 +1199,4 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-15 | Corrected the unmerged measurement foundation after review: benchmark request count must be at least the largest declared concurrency at the CLI, measurement, and invocation-plan boundaries; unreadable measurement evidence fails through the sanitized error path without publishing an attempt; and SIGINT/SIGTERM stop `run-gates` before any later gate while preserving already-written partial output. Control-plane tests only; no physical or status claim changed. |
 | 2026-08-15 | Implemented ADR 0004 stage 4 as the repository-local `pulsar-model-onboarding` skill. It supervises a brand-new unsealed model through a separately reviewed draft profile, exact-home assessment or safe reuse, explicit qualifying distribution, verification, unreviewed release/contract planning, launch, sequential supported measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup. It permits reuse only after full verification against a reviewed expected manifest independent of the observed tree; a shallow catalog label and self-observed manifest are insufficient. It stops when no such home exists because the current sealed-only acquisition service is the only path with private staging, independent completeness verification, and atomic publication; a direct durable-cache download is forbidden. It collaborates at material decisions and has no seal, status, binding, registry, or promotion authority. Current automated mapping covers only strict same-boot and absolute throughput/latency. The default unsealed replicated path is not an exact ADR 0004 qualification attempt. The skill-local journal is isolated under `experiments/model-onboarding/workflows/`, is recovery state rather than evidence, and cannot collide with default `<profile>/<release-id>` plan output. Deterministic skill and journal tests make no physical DGX claim and create no release decision. |
 | 2026-08-16 | **Bounded `library-hot` GA completed:** the reviewed two-rank path now requires an exact home symlink with no copy fallback and physically passed 30-minute serving, exact restart, forced replacement failure, persisted new-process recovery, reviewed-identity re-verification, owned cleanup, and one-home closeout. The corrected soak completed 587 requests with zero errors and retained its 1.14 GiB memory-shrink warning. Remote one-rank and legacy-unsealed use remain experimental; replicated remains the guided default; no Model Serving Release status changed. |
+| 2026-08-16 | Implemented maintainer-only ADR 0004 issuance staging: `plan` previews and `stage` writes an untrusted proposal from one independently verified capture candidate plus a closed review declaration. Pure schema modules derive status. Writes are content-addressed and idempotent; an interrupted stage may be retried without deleting unrelated files; the normal registry verifier does not accept an incomplete proposal. The command does not edit a profile, bind `MODEL_SERVING_RELEASE_ID`, or add a production registry object. Local success is not review or physical qualification. |

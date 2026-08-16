@@ -40,6 +40,7 @@ or planner candidate ID.
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns evidence-artifact, run-record, evidence-bundle, and reviewed-decision schema version 1 |
 | Capture persistence (`scripts/model-serving-release-capture.sh`) | Plans, captures, assembles, and verifies unreviewed candidates under a gitignored output boundary |
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only verification of reviewed objects under `models/model-serving-releases/`; this tool never writes it |
+| Issuance staging (`scripts/model-serving-release-issue.sh`) | Separate maintainer workflow that can stage an untrusted proposal from a verified capture candidate; capture still never writes the registry |
 | Validator measurements (`validate/compare_captures.py`, `validate/bench_serve.py`) | Optional closed measurement documents for `compare-captures` and `benchmark-serving`. Exit zero or a selftest is not a criterion pass. |
 | Attempt composition (`scripts/model-serving-release-attempt.sh`) | Maps verified release-plan criteria plus caller context and validator measurements into existing attempt-only specs. This slice requires publishable `results/` files: the supplied measurement path and evidence `repository_path` must name the same stably read file. Generated specs are capture-validated against those current bytes, then published as one exclusive two-file directory under `experiments/model-serving-release-attempts/` or a safe explicit outside path. The attempt spec carries no precomputed publishable digest; later capture independently re-reads the file and derives the digest. Emits metrics and completion only. |
 
@@ -290,7 +291,11 @@ existing candidate or any existing ancestor that contains
 - Claim physical DGX, model-download, container, or remote behavior
 - Route through `./pulsar` or the wizard
 
-Trusted privacy review and decision issuance/publication remain later units.
+Capture still does not issue a decision. Maintainer issuance staging is a
+separate workflow in
+[MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md);
+a successful local issue command is not trusted until repository review and
+merge.
 The attempt composer covers only strict same-boot plus absolute
 throughput/latency in this slice. Protected digest locators are not accepted
 as measurement evidence here. Composition proves the measurement and evidence

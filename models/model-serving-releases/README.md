@@ -52,8 +52,12 @@ decision, and no current profile binds a release ID. Do not add a `Validated`
 fixture here. Local ADR 0004
 evidence-capture candidate persistence writes only under gitignored
 `experiments/model-serving-release-captures/` (or an explicit safe external
-directory) and must never write this registry. Legacy schema-1 seals and
-combined bundles remain under `models/seals/` and
+directory) and must never write this registry. The maintainer issuance
+workflow can stage an untrusted proposal into these namespaces; repository
+review and merge remain the trust event. That workflow is documented in
+[MODEL_SERVING_RELEASE_ISSUANCE.md](../../docs/MODEL_SERVING_RELEASE_ISSUANCE.md)
+and this implementation introduced no production object. Legacy schema-1
+seals and combined bundles remain under `models/seals/` and
 `models/validation-bundles/` and are not reused for ADR 0004 objects.
 
 See [ADR 0004](../../docs/decisions/0004-model-serving-release-validation.md).

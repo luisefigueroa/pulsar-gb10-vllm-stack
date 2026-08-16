@@ -250,7 +250,9 @@ Local ADR 0004 evidence-capture candidate persistence can record unreviewed
 run and bundle candidates without writing that registry or launching a model.
 Advisory catalog/operator status projection is implemented for an explicitly
 bound release; current profiles are unbound and therefore display a neutral
-release state. Trusted decision issuance/publication remains unfinished.
+release state. Maintainer-only issuance staging can propose registry objects;
+a successful local command is not trusted until repository review and merge,
+and the tracked store remains empty.
 Serving is status-independent, while concrete identity, recipe, topology,
 capacity, security, and lifecycle checks still fail closed. No schema object or selftest
 establishes physical DGX behavior.

@@ -62,4 +62,7 @@ No seal was issued. No validation decision was issued. No status was
 assigned. No profile was bound to a release. Nothing was published into
 the trusted registry. No path was promoted. No physical behavior is
 claimed. Deterministic skill or journal checks create no release decision
-and make no physical DGX claim.
+and make no physical DGX claim. Trusted issuance is a separate
+maintainer workflow (`scripts/model-serving-release-issue.sh`); this
+skill does not run it. A staged local proposal is not trusted until
+repository review and merge.
