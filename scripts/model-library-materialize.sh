@@ -72,3 +72,15 @@ materialize_tree_on_rank() {
      echo rsync" \
     | { read -r method || method=rsync; log "rank $rank materialize=${method} → $hub_dest"; }
 }
+
+# Materialize the planned runtime view for one rank. Rank role, rather than a
+# source-path naming convention, decides whether this must be a durable-home
+# symlink or a copied non-home view.
+materialize_runtime_view_on_rank() {
+  local rank="${1:?}" home_rank="${2:?}" source="${3:?}" hub_dest="${4:?}"
+  local mode=force-copy
+  if [ "$rank" = "$home_rank" ]; then
+    mode=durable-home-symlink
+  fi
+  materialize_tree_on_rank "$rank" "$source" "$hub_dest" "$mode"
+}

@@ -1829,8 +1829,8 @@ copy_hub_to_rank() {
 
   # Home rank: the runtime view must be an exact symlink to the durable home.
   if [ "$target_rank" = "$home_rank" ]; then
-    materialize_tree_on_rank \
-      "$target_rank" "$hub_source" "$hub_dest" durable-home-symlink
+    materialize_runtime_view_on_rank \
+      "$target_rank" "$home_rank" "$hub_source" "$hub_dest"
     return 0
   fi
 
@@ -2060,12 +2060,6 @@ phase_record() {
       printf '%s\t%s\n' "$name" "$seconds" >>"$ACTIVATE_PHASE_LOG"
     fi
   fi
-}
-
-# Copy into hot using per-rank source path (local hub or transfer mount).
-copy_from_source_on_rank() {
-  local rank="${1:?}" source="${2:?}" hub_dest="${3:?}"
-  materialize_tree_on_rank "$rank" "$source" "$hub_dest" force-copy
 }
 
 fabric_release_transfer() {
@@ -2549,7 +2543,8 @@ print("re-run with --yes to execute (no silent fallback to copy)")
         set -euo pipefail
         log "fabric materialize → rank $rank from $source"
         rt0=$(date +%s)
-        copy_from_source_on_rank "$rank" "$source" "$hub_dest"
+        materialize_runtime_view_on_rank \
+          "$rank" "$home_rank" "$source" "$hub_dest"
         write_stamp_on_rank "$rank" "$instance" "$verifying_stamp_json"
         rt1=$(date +%s)
         phase_record "transfer_rank_${rank}" "$((rt1 - rt0))"

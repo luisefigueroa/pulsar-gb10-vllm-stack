@@ -719,7 +719,10 @@ assert_true "parallel copy uses size-balanced blob planner" \
 assert_true "parallel relay geometry fails closed" \
   grep -q 'does not support remote-home to remote-target relay' "$REPO_DIR/scripts/model-library.sh"
 assert_true "home materialize requires exact symlink" \
-  grep -q durable-home-symlink "$REPO_DIR/scripts/model-library.sh"
+  grep -q durable-home-symlink "$REPO_DIR/scripts/model-library-materialize.sh"
+assert_true "fabric materialize uses explicit home-rank selection" \
+  grep -q '"$rank" "$home_rank" "$source" "$hub_dest"' \
+    "$REPO_DIR/scripts/model-library.sh"
 assert_true "prepare materializes ranks in parallel" \
   grep -q 'pids+=("$!")' "$REPO_DIR/scripts/model-library.sh"
 

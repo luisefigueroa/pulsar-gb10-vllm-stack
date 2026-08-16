@@ -22,13 +22,13 @@ printf 'local\n' >"$STATE/local-home/weight"
 printf 'remote\n' >"$STATE/remote-home/weight"
 printf 'transfer\n' >"$STATE/.transfer/source/weight"
 
-materialize_tree_on_rank \
-  0 "$STATE/local-home" "$STATE/local-view" durable-home-symlink
+materialize_runtime_view_on_rank \
+  0 0 "$STATE/local-home" "$STATE/local-view"
 [ -L "$STATE/local-view" ]
 [ "$(readlink -- "$STATE/local-view")" = "$STATE/local-home" ]
 
-materialize_tree_on_rank \
-  1 "$STATE/remote-home" "$STATE/remote-view" durable-home-symlink
+materialize_runtime_view_on_rank \
+  1 1 "$STATE/remote-home" "$STATE/remote-view"
 [ -L "$STATE/remote-view" ]
 [ "$(readlink -- "$STATE/remote-view")" = "$STATE/remote-home" ]
 
@@ -38,16 +38,16 @@ chmod +x "$STATE/bin/ln"
 original_path=$PATH
 PATH="$STATE/bin:$original_path"
 
-if materialize_tree_on_rank \
-    0 "$STATE/local-home" "$STATE/local-failed" durable-home-symlink; then
+if materialize_runtime_view_on_rank \
+    0 0 "$STATE/local-home" "$STATE/local-failed"; then
   echo "local durable-home materialization unexpectedly copied after symlink failure" >&2
   exit 1
 fi
 [ ! -e "$STATE/local-failed" ]
 [ ! -L "$STATE/local-failed" ]
 
-if materialize_tree_on_rank \
-    1 "$STATE/remote-home" "$STATE/remote-failed" durable-home-symlink \
+if materialize_runtime_view_on_rank \
+    1 1 "$STATE/remote-home" "$STATE/remote-failed" \
     2>"$STATE/remote-failed.err"; then
   echo "remote durable-home materialization unexpectedly copied after symlink failure" >&2
   exit 1
@@ -57,11 +57,17 @@ fi
 grep -q 'durable-home view requires an exact symlink' "$STATE/remote-failed.err"
 
 PATH=$original_path
-materialize_tree_on_rank \
-  0 "$STATE/.transfer/source" "$STATE/copied-view" force-copy
+materialize_runtime_view_on_rank \
+  0 1 "$STATE/.transfer/source" "$STATE/copied-view"
 [ -d "$STATE/copied-view" ]
 [ ! -L "$STATE/copied-view" ]
 grep -qx transfer "$STATE/copied-view/weight"
+
+materialize_runtime_view_on_rank \
+  1 0 "$STATE/.transfer/source" "$STATE/remote-copied-view"
+[ -d "$STATE/remote-copied-view" ]
+[ ! -L "$STATE/remote-copied-view" ]
+grep -qx transfer "$STATE/remote-copied-view/weight"
 
 if materialize_tree_on_rank \
     0 "$STATE/local-home" "$STATE/invalid-view" unexpected-mode; then
