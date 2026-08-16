@@ -25,7 +25,7 @@ TOPOLOGY = "2" * 64
 REVISION = "3" * 40
 SEAL = "4" * 64
 BUNDLE = "5" * 64
-CONTENT = "6" * 64
+CONTENT = "6" * 12
 MANIFEST = "7" * 64
 
 
@@ -242,6 +242,11 @@ class ReplacementTransactionTests(unittest.TestCase):
         saved = tx.load_json(path)
         saved["previous_service"]["weight"]["runtime_views"] = []
         with self.assertRaisesRegex(tx.TransactionError, "runtime views are incomplete"):
+            tx.validate_transaction(saved)
+
+        saved = tx.load_json(path)
+        saved["previous_service"]["weight"]["content_id"] = "6" * 64
+        with self.assertRaisesRegex(tx.TransactionError, "saved content identity"):
             tx.validate_transaction(saved)
 
         path.unlink()

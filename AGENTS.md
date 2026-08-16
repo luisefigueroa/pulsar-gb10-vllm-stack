@@ -20,20 +20,22 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Experimental model library<br/>catalog · identity · prepare · hot views"] -. explicit opt-in .-> artifacts
+  library["Model library<br/>two-rank GA · other scopes experimental"] -. explicit opt-in .-> artifacts
   fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
 
-  classDef experimental stroke-dasharray: 5 5;
-  class library,fabric experimental;
+  classDef optin stroke-dasharray: 5 5;
+  class library,fabric optin;
 ```
 
 Solid arrows show the promoted control and evidence flow. Dashed arrows are
-explicit experimental weight paths; neither is a silent fallback or wizard
-default. Control SSH, inference NCCL/RoCE, and weight transfer remain distinct
-data planes even when they involve the same machines.
+explicit non-default weight paths. The reviewed two-rank `library-hot` path is
+GA; remote one-rank and legacy-unsealed uses remain experimental. Live fabric
+also remains experimental. None is a silent fallback or wizard default.
+Control SSH, inference NCCL/RoCE, and weight transfer remain distinct data
+planes even when they involve the same machines.
 
 ## Build, Test, and Development Commands
 
@@ -485,11 +487,12 @@ this work; the skill is procedural and does not outrank these sources.
 - Warm-home pinning retains non-home hot copies but still requires the durable
   home. Home-loss resilience and extra durable replicas are separate, explicit
   policies on distinct failure domains.
-- When an operator explicitly chooses experimental reviewed-profile model
-  preparation, use topology-bound `ssh-roce` copy with eight streams and no
-  automatic fallback, as recorded in ADR 0003. This transport policy does not
-  create a missing durable home, promote `library-hot`, or change the replicated
-  guided default.
+- For an explicitly chosen reviewed multi-rank model preparation, use
+  topology-bound `ssh-roce` copy with eight streams and no automatic fallback,
+  as recorded in ADR 0003. The reviewed two-rank `library-hot` path is GA but
+  remains explicit and non-default. Remote one-rank and legacy-unsealed uses
+  remain experimental. This transport policy does not create a missing durable
+  home or change the replicated guided default.
 - Distribution transport is run provenance, not Model Serving Release
   identity. Experimental distribution subsystems are allowed when explicitly
   selected, but qualification starts only after exact content and the intended

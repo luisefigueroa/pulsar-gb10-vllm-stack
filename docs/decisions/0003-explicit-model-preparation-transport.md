@@ -1,4 +1,4 @@
-# ADR 0003: Transport policy for explicit experimental model preparation
+# ADR 0003: Transport policy for explicit reviewed model preparation
 
 - Status: Accepted
 - Date: 2026-08-13
@@ -16,11 +16,12 @@ did not improve the median. Topology-bound SSH identity, transfer integrity,
 capacity admission, exact-seal verification, interruption/retry, and the
 one-home lifecycle have applicable evidence.
 
-That catalog/artifact and serving-integration evidence is enough to choose a
-bounded transfer policy for an operator who explicitly opts into experimental
-model preparation. It is not enough to promote `library-hot`, replace the
+That catalog/artifact and serving-integration evidence was enough to choose a
+bounded transfer policy for an operator who explicitly opts into reviewed model
+preparation. At adoption it was not enough to make `library-hot` GA, replace the
 replicated guided default, or waive the failed DeepSeek strict-determinism gate
-and remaining release work.
+and remaining release work. The 2026-08-16 implementation note records the
+later bounded two-rank GA closure without changing this transport choice.
 
 At the time of this decision, the implementation also had an important
 onboarding boundary: catalog refresh
@@ -33,7 +34,7 @@ service without rewriting this decision's original context.
 
 ## Decision
 
-When an operator explicitly selects experimental multi-rank model preparation
+When an operator explicitly selects reviewed multi-rank model preparation
 for an eligible reviewed profile, Pulsar uses this fixed policy:
 
 1. require confirmed topology with enrolled and verified schema-2 SSH trust;
@@ -60,12 +61,11 @@ maintainer-directed experiments. One-shot `nfs-rdma` transfer and long-lived
 live NFS/RDMA mounts remain separate experiments. None is an automatic
 fallback for this policy.
 
-This decision fixes the policy used by the interactive experimental action. It
+This decision fixes the policy used by the interactive explicit action. It
 does not change the low-level CLI's compatibility defaults, create a durable
 home, start a container, qualify a model, change profile status, or promote a
-storage path. Replicated weights remain the guided serving and fresh-cluster
-default until the model-library path separately earns release promotion and a
-complete durable-home acquisition workflow exists.
+storage path by itself. Replicated weights remain the guided serving and
+fresh-cluster default.
 
 ## Rejected alternatives
 
@@ -96,10 +96,10 @@ complete durable-home acquisition workflow exists.
 
 ## Revisit triggers
 
-Revisit this policy when a supported one-home acquisition service lands, when
-new counterbalanced full-model evidence supports a different stream count or
-transport, when remote-home-to-remote-target copy is supported, or when
-the bounded `library-hot` subsystem completes its initial GA closure.
+Revisit this policy when new counterbalanced full-model evidence supports a
+different stream count or transport, or when remote-home-to-remote-target copy
+is supported. The one-home acquisition and bounded two-rank GA triggers have
+been satisfied without changing this transport policy.
 
 ## Implementation note — 2026-08-13
 
@@ -113,10 +113,10 @@ explicit registration. This satisfies the onboarding implementation and
 evidence trigger but does not change this ADR's preparation transport:
 acquisition has no inter-rank model copy, while subsequent multi-rank
 preparation still uses topology-bound eight-stream SSH-over-RoCE with no
-fallback. Combined release promotion remains a separate pending gate.
+fallback. Model Serving Release qualification remains separate.
 
-The serving wizard now consumes this fixed policy after a user explicitly
-chooses **distributed catalog (experimental)**. The preparation action itself
+The serving wizard consumed this fixed policy after a user explicitly chose
+**distributed catalog (experimental)** at this stage. The preparation action itself
 still starts nothing. After fresh health proves every exact runtime view ready,
 the wizard may pass `--weight-source library-hot` to the existing launcher only
 after its separate final start/replace confirmation. Replicated weights remain
@@ -139,3 +139,14 @@ same-boot failure still blocks `Validated` for that exact release, but it is not
 a catalog/distribution failure and no longer blocks the separately scoped
 initial two-rank `library-hot` GA closure. Passing that closure will not make
 the path a guided default or waive release-specific qualification.
+
+## GA closure note — 2026-08-16
+
+The reviewed two-rank `library-hot` path completed the separate ADR 0004 GA
+closure. Exact home-symlink behavior, 30-minute serving, restart, forced launch
+failure, persisted recovery in a new wizard process, identity re-verification,
+owned cleanup, and one-home closeout passed. The fixed eight-stream
+SSH-over-RoCE policy above remains unchanged. The wizard now labels this exact
+scope **two-rank GA · explicit**. Remote one-rank and legacy-unsealed use remain
+experimental, replicated serving remains the guided default, and no Model
+Serving Release status changed.

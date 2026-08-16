@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_NAME=model-library
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/model-library-materialize.sh"
 
 PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
@@ -107,8 +109,10 @@ Notes:
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
     (1..16). The low-level CLI default remains ssh-control with one stream
-    (ADR 0003 compatibility). Interactive reviewed preparation is fixed at
-    ssh-roce / 8 streams with no fallback; that does not promote library-hot.
+    (ADR 0003 compatibility). Interactive reviewed multi-rank preparation is
+    fixed at ssh-roce / 8 streams with no fallback. Reviewed two-rank
+    library-hot is GA, explicit, and non-default; one-rank and legacy-unsealed
+    use remain experimental.
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails closed.
   • prepare --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
@@ -1823,9 +1827,10 @@ copy_hub_to_rank() {
     mode_tag+="_streams${COPY_STREAMS}"
   fi
 
-  # Home rank: zero-copy symlink / reflink when possible.
+  # Home rank: the runtime view must be an exact symlink to the durable home.
   if [ "$target_rank" = "$home_rank" ]; then
-    materialize_tree_on_rank "$target_rank" "$hub_source" "$hub_dest" auto
+    materialize_runtime_view_on_rank \
+      "$target_rank" "$home_rank" "$hub_source" "$hub_dest"
     return 0
   fi
 
@@ -2055,85 +2060,6 @@ phase_record() {
       printf '%s\t%s\n' "$name" "$seconds" >>"$ACTIVATE_PHASE_LOG"
     fi
   fi
-}
-
-# Materialize source tree into hub_dest on rank.
-# mode: auto | force-copy
-# For durable home on the same rank (not under .transfer/), prefer symlink (zero-copy)
-# then reflink, then cp -a, then rsync.
-materialize_tree_on_rank() {
-  local rank="${1:?}" source="${2:?}" hub_dest="${3:?}" mode="${4:-auto}"
-  local dest_parent qsrc qdst qparent home_local=0 method
-  dest_parent=$(dirname "$hub_dest")
-  qsrc=$(printf '%q' "$source")
-  qdst=$(printf '%q' "$hub_dest")
-  qparent=$(printf '%q' "$dest_parent")
-
-  if [ "$mode" = auto ] && [[ "$source" != *"/.transfer/"* ]]; then
-    home_local=1
-  fi
-
-  # Local rank 0
-  if [ "$rank" = 0 ]; then
-    mkdir -p "$dest_parent"
-    rm -rf "$hub_dest"
-    if [ "$home_local" = 1 ]; then
-      if ln -sfn "$source" "$hub_dest" 2>/dev/null; then
-        log "rank 0 materialize=symlink_home → $hub_dest"
-        return 0
-      fi
-      if cp -a --reflink=always "$source" "$hub_dest" 2>/dev/null; then
-        log "rank 0 materialize=reflink → $hub_dest"
-        return 0
-      fi
-      if cp -a --reflink=auto "$source" "$hub_dest" 2>/dev/null; then
-        log "rank 0 materialize=cp_reflink_auto → $hub_dest"
-        return 0
-      fi
-      if cp -a "$source" "$hub_dest" 2>/dev/null; then
-        log "rank 0 materialize=cp_a → $hub_dest"
-        return 0
-      fi
-    fi
-    mkdir -p "$hub_dest"
-    rsync -a --delete "$source"/ "$hub_dest"/
-    log "rank 0 materialize=rsync → $hub_dest"
-    return 0
-  fi
-
-  # Remote rank: single ssh script for materialize
-  if [ "$home_local" = 1 ]; then
-    ssh_node "$rank" \
-      "set -euo pipefail
-       mkdir -p $qparent
-       rm -rf $qdst
-       if ln -sfn $qsrc $qdst 2>/dev/null; then echo symlink_home; exit 0; fi
-       if cp -a --reflink=always $qsrc $qdst 2>/dev/null; then echo reflink; exit 0; fi
-       if cp -a --reflink=auto $qsrc $qdst 2>/dev/null; then echo cp_reflink_auto; exit 0; fi
-       if cp -a $qsrc $qdst 2>/dev/null; then echo cp_a; exit 0; fi
-       mkdir -p $qdst
-       rsync -a --delete $qsrc/ $qdst/
-       echo rsync" \
-      | { read -r method || method=rsync; log "rank $rank materialize=${method} → $hub_dest"; }
-    return 0
-  fi
-
-  # NFS mount / remote path: fresh dest + rsync (or cp -a)
-  ssh_node "$rank" \
-    "set -euo pipefail
-     mkdir -p $qparent
-     rm -rf $qdst
-     mkdir -p $qdst
-     if cp -a $qsrc/. $qdst/ 2>/dev/null; then echo cp_a; exit 0; fi
-     rsync -a --delete $qsrc/ $qdst/
-     echo rsync" \
-    | { read -r method || method=rsync; log "rank $rank materialize=${method} → $hub_dest"; }
-}
-
-# Copy into hot using per-rank source path (local hub or transfer mount).
-copy_from_source_on_rank() {
-  local rank="${1:?}" source="${2:?}" hub_dest="${3:?}"
-  materialize_tree_on_rank "$rank" "$source" "$hub_dest" auto
 }
 
 fabric_release_transfer() {
@@ -2617,7 +2543,8 @@ print("re-run with --yes to execute (no silent fallback to copy)")
         set -euo pipefail
         log "fabric materialize → rank $rank from $source"
         rt0=$(date +%s)
-        copy_from_source_on_rank "$rank" "$source" "$hub_dest"
+        materialize_runtime_view_on_rank \
+          "$rank" "$home_rank" "$source" "$hub_dest"
         write_stamp_on_rank "$rank" "$instance" "$verifying_stamp_json"
         rt1=$(date +%s)
         phase_record "transfer_rank_${rank}" "$((rt1 - rt0))"

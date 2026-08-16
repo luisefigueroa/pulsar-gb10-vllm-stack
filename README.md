@@ -36,20 +36,22 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Experimental model library<br/>catalog · identity · prepare · hot views"] -. explicit opt-in .-> artifacts
+  library["Model library<br/>two-rank GA · other scopes experimental"] -. explicit opt-in .-> artifacts
   fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
 
-  classDef experimental stroke-dasharray: 5 5;
-  class library,fabric experimental;
+  classDef optin stroke-dasharray: 5 5;
+  class library,fabric optin;
 ```
 
 Solid arrows show the promoted control and evidence flow. Dashed arrows are
-explicit experimental weight paths; neither is a silent fallback or wizard
-default. Control SSH, inference NCCL/RoCE, and weight transfer remain distinct
-data planes even when they involve the same machines.
+explicit non-default weight paths. The reviewed two-rank `library-hot` path is
+GA; remote one-rank and legacy-unsealed uses remain experimental. Live fabric
+also remains experimental. None is a silent fallback or wizard default.
+Control SSH, inference NCCL/RoCE, and weight transfer remain distinct data
+planes even when they involve the same machines.
 
 ## What sets this stack apart
 
@@ -116,7 +118,7 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 
 # Operator home (neutral workflow menu — no doctor/preflight until you pick)
 ./pulsar
-# Browse model storage; optional refresh/preparation is explicit and experimental
+# Browse model storage; refresh/preparation is explicit and never starts serving
 ./pulsar models
 # Direct serve/switch wizard (doctor + preflight; not the no-arg home)
 ./pulsar wizard
@@ -131,13 +133,14 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 **Operator home (`./pulsar`):** workflow menu — Current system status (default),
 Serve or switch a model, Stop a serving model, Models & storage, Maintenance,
 Diagnostics, Exit. Models & storage browses cached exact identity,
-durable-home/runtime placement, and findings; it labels the distributed catalog
+durable-home/runtime placement, and findings. It labels reviewed two-rank
+`library-hot` as GA and explicit; one-rank and legacy-unsealed use remain
 experimental. Browsing and health rechecks are read-only. A separate,
 confirmation-gated refresh can rescan confirmed ranks and update only the
 cached catalog; it never runs automatically. A second confirmed action can
 prepare a serving profile with reviewed identity using eight-stream
 SSH-over-RoCE and no fallback. It verifies and budgets rank-local views but does
-not start serving, qualify the model, promote the storage path, or change the
+not start serving, qualify the model, change its release status, or change the
 replicated guided default. Retention, cleanup, repair, and durable-home removal
 remain separate direct-CLI workflows.
 Home is read-only by default; it does not run doctor/inventory until you choose.
@@ -252,8 +255,8 @@ Serving is status-independent, while concrete identity, recipe, topology,
 capacity, security, and lifecycle checks still fail closed. No schema object or selftest
 establishes physical DGX behavior.
 
-**Experimental storage research:** replicated local Hugging Face caches remain
-the default. A separate, unpromoted NFSv4.2/RDMA path can keep one
+**Additional storage paths:** replicated local Hugging Face caches remain the
+default. A separate, unpromoted NFSv4.2/RDMA path can keep one
 authoritative copy, mount exact clients read-only over confirmed RoCE rails,
 seal it with SHA-256 manifests, and benchmark two or three storage consumers.
 It requires explicit `--weight-source fabric`; the wizard never selects it or
@@ -267,22 +270,23 @@ seal and validation bundle; its sealed `library-hot` preparation and launch
 reported `identity=match`. The flagship `deepseek-v4-flash` profile carries
 the second issued identity; its post-issuance physical enforcement and
 one-home lifecycle gates passed in the catalog and serving-integration scopes.
-The exact DeepSeek Model Serving Release failed strict same-boot determinism and
-did not run the remaining soak, so it cannot be called `Validated`; that result
-does not invalidate the distribution subsystem. Initial reviewed two-rank
-`library-hot` GA still requires one closure task covering fail-closed home view,
-sustained serving/restart, forced replacement failure with exact rollback,
-identity re-verification, cleanup, and one-home closeout. Remote one-rank
-placement is outside that initial GA scope, and `library-hot` remains neither
-GA nor a promoted default today. Profiles without seals remain
-legacy-unsealed. Sealed replicated caches now enforce the
+The exact DeepSeek Model Serving Release failed strict same-boot determinism, so
+it cannot be called `Validated`; that result does not invalidate the
+distribution subsystem. The reviewed two-rank `library-hot` path completed its
+separate GA closure on 2026-08-16: exact home symlink behavior, 30-minute
+serving, restart, forced launch failure with persisted exact recovery, identity
+re-verification, owned cleanup, and one-home closeout passed. The 30-minute run
+completed 587 requests with no errors and retained a 1.14 GiB memory-shrink
+warning for review. Remote one-rank placement and legacy-unsealed use remain
+experimental. `library-hot` remains explicit and non-default. Sealed replicated
+caches now enforce the
 reviewed commit/manifest with full verification, a rank-local witness, and
 exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
 paths remain unbound. See
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
 [docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). For an existing
-eligible primary home, the explicit experimental preparation policy is
-topology-bound SSH-over-RoCE with eight streams and no fallback. Enroll and
+eligible primary home, reviewed multi-rank preparation is topology-bound
+SSH-over-RoCE with eight streams and no fallback. Enroll and
 check SSH trust first, then use the exact preparation command:
 
 ```bash
@@ -296,7 +300,7 @@ scripts/model-library.sh prepare <multi-rank-sealed-profile> \
 Catalog refresh inventories existing homes; it does not download a model or
 create the required durable home. The replicated quick start above therefore
 remains the guided fresh-cluster workflow. An operator deliberately using the
-experimental distributed library can now create exactly one reviewed home,
+distributed library can create exactly one reviewed home,
 then explicitly register and prepare it:
 
 ```bash

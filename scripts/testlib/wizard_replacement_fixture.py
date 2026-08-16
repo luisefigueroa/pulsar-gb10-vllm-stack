@@ -13,7 +13,7 @@ PROFILE = "deepseek-v4-flash"
 REVISION = "7" * 40
 SEAL_ID = "a" * 64
 BUNDLE_ID = "b" * 64
-CONTENT_ID = "c" * 64
+CONTENT_ID = "c" * 12
 
 
 def load(path: str) -> dict[str, Any]:

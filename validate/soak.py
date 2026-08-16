@@ -124,7 +124,11 @@ def main():
     api_key = resolve_api_key(a.api_key)
 
     threads = [
-        threading.Thread(target=worker, args=(a.url, a.model, i), daemon=True)
+        threading.Thread(
+            target=worker,
+            args=(a.url, a.model, i, api_key),
+            daemon=True,
+        )
         for i in range(a.concurrency)
     ]
     for t in threads:

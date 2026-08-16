@@ -154,7 +154,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("MODELS & STORAGE", output)
         self.assertIn("replicated local model copies", prose)
         self.assertIn("guided default", prose)
-        self.assertIn("experimental inventory", prose)
+        self.assertIn("read-only inventory", prose)
         self.assertIn("does not automatically refresh", prose)
         self.assertIn("start a model", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
@@ -279,7 +279,8 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("one durable home", prose)
         self.assertIn("only on non-home", prose)
         self.assertIn("still requires the durable home", prose)
-        self.assertIn("remain experimental", prose)
+        self.assertIn("two-rank library-hot path is GA", prose)
+        self.assertIn("One-rank and legacy-unsealed uses remain experimental", prose)
 
     def test_refresh_preview_is_explicit_bounded_and_width_aware(self) -> None:
         output = capture(
@@ -349,13 +350,13 @@ class ModelStorageContracts(unittest.TestCase):
             width=48,
         )
         prose = normalized(output)
-        self.assertIn("PREPARE FOR EXPERIMENTAL SERVING", output)
+        self.assertIn("PREPARE FOR TWO-RANK GA SERVING", output)
         self.assertIn("SSH over confirmed RoCE · 8 streams", prose)
         self.assertIn("fallback none", prose)
         self.assertIn("167 GiB on each non-home", prose)
         self.assertIn("full-verify the durable home", prose)
-        self.assertIn("does not start a model", prose)
-        self.assertIn("does not qualify or promote", prose)
+        self.assertIn("does not start or qualify a model", prose)
+        self.assertIn("does not change the guided default", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
     def test_serving_check_requires_exact_ready_views(self) -> None:
@@ -394,6 +395,10 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertEqual(ready["transfer"], "none · durable-home local view")
         self.assertEqual(ready["prepare_transport"], "ssh-control")
         self.assertEqual(ready["copy_streams"], 1)
+        preview = capture(
+            model_storage.render_serving_preparation, ready, width=48
+        )
+        self.assertIn("DISTRIBUTED CATALOG · EXPERIMENTAL ONE-RANK", preview)
 
         blocked = model_storage.serving_preparation_check(
             report, profiles, "one-node-sealed", target_rank=0
@@ -402,13 +407,13 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertEqual(blocked["home_rank"], 1)
         self.assertIn("durable-home node", " ".join(blocked["blockers"]))
 
-    def test_serving_preview_preserves_experimental_claim_boundary(self) -> None:
+    def test_serving_preview_preserves_two_rank_ga_claim_boundary(self) -> None:
         check = model_storage.serving_preparation_check(
             healthy_report(), serving_profiles(), "deepseek-v4-flash"
         )
         output = capture(model_storage.render_serving_preparation, check, width=48)
         prose = normalized(output)
-        self.assertIn("DISTRIBUTED CATALOG · EXPERIMENTAL", output)
+        self.assertIn("DISTRIBUTED CATALOG · TWO-RANK GA · EXPLICIT", output)
         self.assertIn("exact, witnessed runtime views", prose)
         self.assertIn("durable home remains required", prose)
         self.assertIn("not a promoted default", prose)

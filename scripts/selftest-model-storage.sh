@@ -146,7 +146,7 @@ echo "OK   Gum chooser returns the selected duplicate-label index"
 run_view healthy.json 0 $'1\n2\n6\n' "$STATE/healthy.out"
 [ "$VIEW_RC" -eq 0 ]
 assert_contains "$STATE/healthy.out" 'guided default'   "guided replicated default remains visible"
-assert_contains "$STATE/healthy.out" 'experimental inventory'   "catalog view is visibly experimental"
+assert_contains "$STATE/healthy.out" 'read-only inventory'   "catalog view is visibly read-only"
 assert_contains "$STATE/healthy.out" 'MODEL STORAGE DETAIL'   "exact-model detail is reachable"
 assert_contains "$STATE/healthy.out" 'durable home|durable-home'   "durable-home dependency is visible"
 [ "$(wc -l <"$LOG")" -eq 1 ]
@@ -160,15 +160,15 @@ echo "OK   ordinary browsing never prepares model files"
 run_view unprepared.json 0 $'1\n1\nn\n6\n' "$STATE/prepare-decline.out"
 [ "$VIEW_RC" -eq 0 ]
 [ ! -s "$PREPARE_LOG" ]
-assert_contains "$STATE/prepare-decline.out" 'PREPARE FOR EXPERIMENTAL SERVING' \
-  "preparation is visibly experimental before confirmation"
+assert_contains "$STATE/prepare-decline.out" 'PREPARE FOR TWO-RANK GA SERVING' \
+  "preparation shows the bounded two-rank GA scope before confirmation"
 assert_contains "$STATE/prepare-decline.out" 'SSH over confirmed RoCE.*8 streams' \
   "preparation preview exposes the fixed transfer policy"
 assert_contains "$STATE/prepare-decline.out" 'fallback[[:space:]]+none' \
   "preparation preview promises no silent transfer fallback"
 assert_contains "$STATE/prepare-decline.out" '167 GiB on each non-home' \
   "preparation preview estimates non-home storage"
-assert_contains "$STATE/prepare-decline.out" 'does not start a model' \
+assert_contains "$STATE/prepare-decline.out" 'does not start or qualify a model' \
   "preparation preview preserves the launch boundary"
 echo "OK   declined confirmation leaves model files unchanged"
 
@@ -215,7 +215,7 @@ assert_not_contains "$STATE/stale-detail.out" '^home[[:space:]]+node 2' \
   "stale topology never labels a cached home as a current node"
 [ ! -s "$PREPARE_LOG" ]
 assert_contains "$STATE/stale-detail.out" 'Preparation blocked' \
-  "stale topology disables experimental preparation"
+  "stale topology disables distributed catalog preparation"
 
 run_view collision.json 0 $'2\n1\n7\n' "$STATE/collision.out"
 [ "$VIEW_RC" -eq 0 ]

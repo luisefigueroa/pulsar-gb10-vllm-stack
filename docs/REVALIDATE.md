@@ -574,12 +574,18 @@ unpinned purge, and return to one durable home; see
 The new remote one-node wizard path still needs its own serving-integration
 repeat before that placement receives a physical claim. The short-lived exact
 replacement transaction has deterministic Python, inventory, replicated-switch,
-and catalog rollback coverage. Because it changes pre-stop retention and
-failed-launch recovery, repeat a physical two-node `library-hot` replacement
-failure/rollback plus interrupted recovery before claiming that new failure
-path on DGX hardware. Existing successful-launch and model-qualification
-evidence is not relabeled as that result. Neither gate promotes
-the storage path or supplies model-qualification evidence.
+and catalog rollback coverage. Its physical two-rank repeat passed on
+2026-08-16: a forced target launch failure left a persisted stopped transaction
+and pinned exact views; a new wizard process restored the captured contract,
+removed the transaction, and restored ephemeral retention. The same closure run
+also passed exact home-symlink behavior, 30-minute serving with zero request
+errors, restart, identity re-verification, owned cleanup, and one-home closeout.
+The 1.14 GiB memory-shrink warning remains recorded. See
+`results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
+This makes the reviewed two-rank subsystem GA and records bounded
+model-qualification evidence for the soak and stability observations. It does
+not satisfy the release-specific soak criterion, confer `Validated`, or change
+the guided default. Remote one-rank and legacy-unsealed use remain experimental.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local
