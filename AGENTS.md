@@ -173,6 +173,27 @@ language for new features without an explicit decision.
 
 Treat human-readable command-line output as a primary product requirement. Optimize interactive and human-facing output for fast scanning with clear information hierarchy, semantic line breaks, hanging indentation, consistent labels, and readable behavior at narrow terminal widths. Avoid dense key/value streams, uncontrolled wrapping, and meaning conveyed by color alone. Keep machine-readable output, such as JSON, separate and stable. For every CLI-facing change, review the rendered human output explicitly and test representative narrow terminal widths.
 
+### Plain technical language
+
+Use the project's canonical terms and status names exactly as defined, while
+explaining them in straightforward language.
+
+- Lead with what happens, what it affects, and the condition that causes it.
+- On first use of a specialized term, immediately explain it in ordinary words.
+- Preserve defined terms such as `Model Serving Release`, `Validated`,
+  `library-hot`, and `rank`; do not replace them with approximate synonyms.
+- Prefer concrete wording such as "preparation fails if the model identity
+  cannot be verified" over shorthand such as "fails closed."
+- When `fail closed` is the relevant policy term, retain it where policy
+  precision matters and explain the behavior: the operation fails if the
+  required condition cannot be verified, and it does not use a fallback.
+- Explain scope words such as "bounded," "reviewed," and "two-rank" when their
+  practical limits may not be obvious.
+- Avoid dense noun phrases, unexplained abbreviations, and implementation terms
+  when a direct description communicates the same behavior.
+- Never simplify wording in a way that changes an agreed definition,
+  validation requirement, authority boundary, or status meaning.
+
 ## Testing Guidelines
 
 Run `scripts/selftest.sh` for every script or config change. Changes affecting serving behavior must also follow `docs/REVALIDATE.md`; record reproducible outputs under `results/` and update `docs/VALIDATION.md`. There is no percentage coverage target: promotion depends on correctness, determinism, benchmark, long-context, and soak evidence appropriate to the change.
