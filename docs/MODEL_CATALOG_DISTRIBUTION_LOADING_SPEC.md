@@ -180,8 +180,9 @@ The current system supports four practical storage origins:
    One durable home per exact revision; the home rank uses a symlink/view, and
    only non-home ranks receive sealed-hot copies. Acquisition is explicit
    `home add`; preparation does not create the home. Launch uses
-   `--weight-source library-hot`. Experimental and not promoted; the wizard
-   may offer it only as a labeled second choice.
+   `--weight-source library-hot`. The reviewed two-rank path is GA, explicit,
+   and non-default; remote one-rank and legacy-unsealed use remain experimental.
+   The wizard may offer it only as a clearly labeled second choice.
 4. **Hugging Face repository, single-copy live fabric.** One serving rank is
    explicitly configured as owner. Only the selected model repository subtree
    is exported to exact client RoCE addresses. Clients hard-mount it read-only
@@ -206,7 +207,7 @@ flowchart TD
     S{"Weight path"}
     R["Replicated HF repository\none complete local copy per serving rank"]
     C["Operator-mounted catalog path\npre-existing on every serving rank"]
-    L["Experimental library-hot\ndurable home + sealed-hot views"]
+    L["Library-hot\nreviewed two-rank GA · other scopes experimental"]
     F["Experimental single-copy fabric\none owner, read-only NFS/RDMA clients"]
     G["Fail-closed preflight\nstatus, topology, image, weights, memory, network"]
     V["vLLM containers\nlocal rank 0 API plus remote headless ranks"]
@@ -544,18 +545,18 @@ stale. See §15.10.
 
 ### 7.1 Comparison
 
-| Property | Replicated HF cache | Absolute-path catalog | Experimental library-hot | Experimental live fabric |
+| Property | Replicated HF cache | Absolute-path catalog | Library-hot | Experimental live fabric |
 |---|---|---|---|---|
 | Guided default | Yes | Yes when an exact serving profile already references it | No; wizard second choice only | No; CLI only |
 | Model origin | Hugging Face repository ID | Operator-managed absolute path | Hugging Face repository ID (reviewed revision) | Hugging Face repository ID |
 | Durable copies | One full repository per serving node | Defined by external catalog operator | One durable home; sealed-hot only on non-home ranks | One authoritative repository on owner; complete client replicas forbidden |
 | Distribution | Controller downloads, then `rsync`s selected repository to remote ranks | Out of scope; mount/provision before Pulsar | Explicit `home add`; prepare copies non-home ranks | Owner-only download; NFS/RDMA export/mount applied explicitly |
 | Container view | Legacy-unsealed: full local HF home, writable. Sealed: selected repository read-only and exact snapshot path | Site catalog mounted read-only | Exact snapshot read-only; home rank uses a durable-home view | Only selected HF repository mounted read-only at its exact cache location; broader HF home excluded |
-| Cryptographic seal | Yes only when the profile references a reviewed expected seal; otherwise structural legacy behavior | No | Yes; reviewed expected seal required for promoted prepare | Yes, exact revision/file set/sizes/SHA-256 of locally observed owner bytes |
+| Cryptographic seal | Yes only when the profile references a reviewed expected seal; otherwise structural legacy behavior | No | Yes; reviewed expected seal required for the GA scope, while legacy-unsealed use remains experimental | Yes, exact revision/file set/sizes/SHA-256 of locally observed owner bytes |
 | Cold-start home/owner dependency | No after local staging | Depends on external catalog | Yes; durable home required | Yes |
 | Steady-state home/owner dependency | None | Depends on external catalog semantics | Home still required; pin retains hot copies but is not home-loss resilience | Loaded service may continue, but reload/restart and hard-mounted I/O depend on owner |
 | Automatic fallback | Not applicable | None | None | None; explicit replicated staging and launch required |
-| Current status | Promoted | Per-profile validation | Experimental, not promoted | Experimental |
+| Current status | Promoted | Per-profile validation | Reviewed two-rank GA; explicit and non-default. Remote one-rank and legacy-unsealed use remain experimental. | Experimental |
 
 ### 7.2 Default replicated Hugging Face workflow
 
@@ -968,11 +969,13 @@ health. It never starts a model. Preparation success is catalog/artifact state,
 not model qualification, release promotion, or a change to the replicated
 guided default. Pin, purge, repair, and home deletion stay outside this surface.
 
-### 9.8 Experimental catalog serving in the wizard
+### 9.8 Explicit catalog serving in the wizard
 
 The serving wizard exposes the catalog only for a Hugging Face serving profile
 with reviewed identity; status does not participate. Replicated local copies remain the first,
-recommended selection. Choosing **distributed catalog (experimental)** reads
+recommended selection. A reviewed two-rank profile shows **distributed catalog
+(two-rank GA · explicit)**. A one-rank profile remains labeled experimental.
+Choosing the distributed catalog reads
 the current health report and displays the exact model revision and manifest,
 durable-home and target ranks, runtime-view readiness, transfer policy, and
 absence of fallback. Stale topology, unresolved primary state, identity
@@ -985,7 +988,7 @@ ready by itself: the wizard collects fresh health and requires exact ready
 views on every selected rank. Weight preflight and launch then receive
 `--weight-source library-hot`; launch remains behind the ordinary separate
 start/replace confirmation. Preparation never implies model qualification or
-release promotion.
+changes the Model Serving Release status or guided default.
 
 For a one-node profile, the durable-home rank is the only valid catalog serving
 rank and preparation creates no second hot copy or bulk transfer. A different
@@ -1342,9 +1345,10 @@ run fits the declared envelope. It does not add a physical PASS row below.
 | Persistent primary and guarded reconciliation | PASS, deterministic and three-node physical targeting | Exact-revision selections persist across refresh, stale choices fail closed, clear restores operator-required state, cleanup prints no deletion command before selection, and selected-primary removal is blocked. A disposable physical repeat also proved direct pre-selection refusal, refresh persistence, selected-primary refusal, exact non-primary deletion, sibling preservation, and one-home catalog state. |
 | Flagship DeepSeek one-home steady state | PASS on the real two-node serving geometry | The existing duplicate was reconciled to one persistent rank-1 durable home. Rank 0 then received an eight-stream SSH-over-RoCE sealed-hot copy in 73 seconds; full verification completed in 47 seconds and preparation in 120 seconds. Both ranks used zero-byte unchanged witnesses and read-only exact-snapshot mounts; first health, all eight warmup phases, completion smoke, owned stop/purge, and final healthy one-home inventory passed. This closes physical duplicate reconciliation, not strict determinism, sustained soak, or guided/default promotion. |
 | Flagship DeepSeek strict `library-hot` determinism | FAIL on the exact reviewed GA identity | With profile-default DSpark k=5, same-boot captures produced 11/30 exact texts and 4/30 identical records; the strict gate failed. A forced no-spec diagnostic improved to 26/30 exact texts and 25/30 identical records but still failed strict identity. Both runs used the same exact seal, image, geometry, and durable-home/sealed-hot views. The result blocks `Validated` for this Model Serving Release and shows that a preview/GA naming mix-up cannot explain away the current variance. It does not block the separate distribution-subsystem GA closure. Sustained soak was not run. |
+| Reviewed two-rank `library-hot` GA closure | PASS with reviewed memory finding | The home rank now requires an exact symlink with no copy fallback. The exact reviewed DeepSeek path passed preparation, 30-minute c=5 serving with 587 completions and zero errors, restart, forced replacement launch failure, persisted new-process recovery, identity re-verification, owned cleanup, and one-home closeout. The soak retained a 1.14 GiB first-to-last-decile memory-shrink warning. Remote one-rank and legacy-unsealed use remain experimental; no Model Serving Release status or default changed. |
 | Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
 | Read-only health and legacy-hot repair | PASS, deterministic and three-node physical | Stable sanitized health schema 1, Doctor warnings, shallow no-hash observations, repair-ID binding, stopped-container/pinned blockers, local and remote removal, atomic no-follow retirement, sibling preservation, preserved-untracked attention, and the affected exact-home removal subset passed. No production content was removed. |
-| Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. The exact wizard replacement transaction passes deterministic capture, drift/refusal, catalog retention, failed-launch rollback, and recovery contracts; its physical DGX failure-path repeat remains pending. |
+| Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. The exact wizard replacement transaction passes deterministic capture, drift/refusal, catalog retention, failed-launch rollback, and recovery contracts; its physical two-rank failure and new-process recovery repeat now also passes. |
 
 The headless boot issue is currently classified as an owner operating-system
 boot-policy problem, not loss of model bytes or failed NFS recovery. That
@@ -1923,8 +1927,8 @@ The implementation described here is primarily defined by:
 - [`scripts/lib.sh`](../scripts/lib.sh) — profile, status, placement, memory,
   SSH, and lifecycle contracts;
 - [`scripts/list-models.sh`](../scripts/list-models.sh) — catalog views;
-- [`wizard.sh`](../wizard.sh) — guided replicated workflow plus explicit,
-  experimental reviewed-profile `library-hot` selection;
+- [`wizard.sh`](../wizard.sh) — guided replicated workflow plus explicit
+  `library-hot` selection: reviewed two-rank GA and experimental one-rank;
 - [`scripts/pull-weights.sh`](../scripts/pull-weights.sh) and
   [`scripts/check-weights.sh`](../scripts/check-weights.sh) — default
   preparation/readiness;
@@ -2034,7 +2038,7 @@ Catalog-loss restart (legacy-unsealed `qwen3-1.7b-2node`) and `library-hot`
 replicated 20 GB flagship later recorded 447k at
 `results/needle-dsv4-20gb-447k.log`.
 
-Those wins are not a promotion. The durable-home symlink,
+Those earlier wins did not by themselves establish GA. The durable-home symlink,
 expected-seal/exact-revision enforcement, validation-bundle/live-profile
 binding, untrusted deterministic release-candidate assembly, and rank-local
 witness fast path are implemented. Candidate tooling cannot issue or publish a
@@ -2054,14 +2058,15 @@ implemented with a filesystem reserve instead of the obsolete 100 GiB fixed
 default. The non-mutating
 flagship capacity artifact passed exact home-zero and non-home manifest
 accounting, default-reserve preservation, explicit hard-cap refusal, and
-unchanged hot ownership. The exact-GA strict DeepSeek determinism gate failed;
-sustained soak was not run, so that exact Model Serving Release cannot be
-called `Validated`. Under ADR 0004 this does not invalidate the distribution
-subsystem or block its bounded initial two-rank GA closure. That closure still
-must remove the home-rank reflink/copy fallback and physically prove sustained
-serving/restart, forced replacement failure with exact rollback, identity
-re-verification, cleanup, and one-home closeout. Remote one-rank placement is
-outside the initial GA scope. Live NFS/RDMA additionally
+unchanged hot ownership. The exact-release strict DeepSeek determinism gate
+failed, so that Model Serving Release cannot be called `Validated`. Under ADR
+0004 this does not invalidate the distribution subsystem. The separate bounded
+two-rank GA closure completed on 2026-08-16: the home-rank copy fallback was
+removed, and the exact reviewed path passed 30-minute serving, restart, forced
+replacement launch failure, persisted exact recovery in a new wizard process,
+identity re-verification, cleanup, and one-home closeout. The soak completed 587
+requests with zero errors and retained its 1.14 GiB memory-shrink warning.
+Remote one-rank and legacy-unsealed use remain experimental. Live NFS/RDMA additionally
 retains its owner-recovery and three-node validation work. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing. For sealed
@@ -2069,8 +2074,8 @@ retains its owner-recovery and three-node validation work. The accurate product 
 > retain historical legacy-unsealed behavior. Model-library code recognizes
 > reviewed seal/bundles for diagnostic `qwen3-1.7b` and flagship
 > `deepseek-v4-flash`; both have completed their applicable post-issuance
-> physical enforcement gates. Sealed local-hot preparation over
-> SSH-over-RoCE remains a measured subsystem approaching its bounded GA closure,
-> and live NFS/RDMA is a separate documented experiment. Neither is a promoted
-> default, and no current profile has been automatically relabeled with the new
-> Model Serving Release statuses.
+> physical enforcement gates. Sealed local-hot preparation over SSH-over-RoCE
+> is GA for reviewed two-rank profiles, remains explicit and non-default, and
+> keeps remote one-rank and legacy-unsealed use experimental. Live NFS/RDMA is a
+> separate documented experiment. No current profile has been automatically
+> relabeled with the new Model Serving Release statuses.

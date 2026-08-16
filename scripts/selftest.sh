@@ -87,6 +87,8 @@ run "model library durable-home acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_home_acquisition.py"
 run "model library durable-home acquisition public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-acquisition.sh"
+run "model library runtime-view materialization" \
+  "$REPO_DIR/scripts/selftest-model-library-materialize.sh"
 run "model library persistent-primary contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_primary.py"
 run "model library hot-budget contracts" \
@@ -107,7 +109,7 @@ run "lifecycle ownership" "$REPO_DIR/scripts/selftest-lifecycle-ownership.sh"
 run "serving replacement transaction contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_replacement_transaction.py"
 run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
-run "wizard experimental model-library serving" \
+run "wizard explicit model-library serving" \
   "$REPO_DIR/scripts/selftest-wizard-model-library.sh"
 run "library-hot stop retention policy" \
   python3 "$REPO_DIR/scripts/testlib/test_down_hot_policy.py"
@@ -140,6 +142,8 @@ run "soak exit policy (syntax + help)" bash -c '
   python3 -m py_compile "'"$REPO_DIR"'/validate/soak.py"
   python3 "'"$REPO_DIR"'/validate/soak.py" --help | grep -q max-errors
 '
+run "soak worker startup contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_soak.py"
 
 run "bench_serve asyncio API" bash -c '
   grep -q get_running_loop "'"$REPO_DIR"'/validate/bench_serve.py"

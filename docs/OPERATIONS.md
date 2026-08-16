@@ -142,7 +142,8 @@ Menu (default cursor: status):
 2. **Serve or switch a model** — enters `wizard.sh` (its doctor/preflight)
 3. **Stop a serving model** — inventory-safe active managed only; confirm → `down.sh`
 4. **Models & storage** — cached identity, placement, runtime views, and findings
-   (browsing is read-only; refresh/preparation are explicit and experimental)
+   (browsing is read-only; refresh/preparation are explicit; reviewed two-rank
+   `library-hot` is GA, while one-rank and legacy-unsealed use are experimental)
 5. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
 6. **Diagnostics** — run doctor, detailed inventory (read-only)
 7. **Exit**
@@ -157,11 +158,12 @@ maintenance; there is no automatic cleanup on doctor or startup.
 `scripts/model-storage.sh`, an interactive projection of the cached
 model-library health report. Browsing keeps **replicated local model copies**
 visible as the guided serving default and labels the distributed catalog as
-experimental. It shows cached age and topology compatibility, profile and exact
-model/revision/manifest identity, durable-home and primary state, per-rank
-runtime source/retention/identity/witness state, active references, and
-structured findings. Rank labels are generic; site identities and paths stay
-out of the public report.
+two-rank GA or experimental according to its exact scope. It shows cached age
+and topology compatibility, profile and exact model/revision/manifest identity,
+durable-home and primary state, per-rank runtime
+source/retention/identity/witness state, active references, and structured
+findings. Rank labels are generic; site identities and paths stay out of the
+public report.
 If the cached catalog no longer matches the confirmed topology, model identity
 remains visible but home and primary node placement is marked stale and hidden
 until the operator explicitly refreshes the catalog.
@@ -180,9 +182,10 @@ direct CLI workflows except for the two bounded actions described below.
 delegates to the atomic all-confirmed-rank catalog refresh and then obtains a
 new sanitized health report. It does not move model bytes.
 
-**Prepare for experimental serving** appears only for a serving profile
-that is associated with the exact catalog entry and carries a reviewed expected
-seal. Before confirmation the view shows the exact model revision and manifest,
+**Prepare for two-rank GA serving** or **Prepare for experimental one-rank
+serving** appears only for a serving profile that is associated with the exact
+catalog entry and carries a reviewed expected seal. Before confirmation the
+view shows the exact model revision and manifest,
 durable-home dependency, serving node count, approximate non-home storage, and
 fixed transfer policy. Multi-node preparation uses SSH over the confirmed RoCE
 plane, eight streams, and no fallback. Confirmation delegates to:
@@ -207,13 +210,15 @@ only after the all-rank barrier, and rolls back or leaves explicit incomplete
 state on failure. The interactive surface always obtains fresh health after the
 attempt. It provides no validation-status override, transport picker, fallback,
 or automatic launch. Success means the artifacts are prepared, not that a model
-was started, qualified, or that `library-hot` was promoted.
+was started, qualified, assigned a release status, or made the guided default.
 
 ### Serving-wizard storage choice
 
 `./pulsar wizard` keeps **Replicated local copies (recommended)** as its first
-storage choice. An eligible reviewed profile also shows **Distributed catalog
-(experimental)**. The latter reads current catalog health, displays exact
+storage choice. An eligible reviewed two-rank profile also shows **Distributed
+catalog (two-rank GA · explicit)**. A reviewed one-rank profile remains labeled
+experimental because that placement is outside the completed GA scope. The
+distributed choice reads current catalog health, displays exact
 revision/manifest and durable-home dependency, and either proves the selected
 views ready or offers the bounded preparation above. It never refreshes the
 catalog automatically and never falls back to replicated copies. After
@@ -224,7 +229,7 @@ For one-node catalog serving, select the durable-home node; Pulsar refuses a
 non-home rank rather than creating a second hot copy. Preparation uses
 `ssh-control` with one stream as a no-bulk-transfer local-view operation. For
 multi-node profiles, non-home copies use `ssh-roce` with eight streams. Neither
-case promotes `library-hot` or changes model qualification.
+case changes Model Serving Release status or the guided default.
 
 ### Quick status semantics
 
@@ -558,10 +563,10 @@ artifacts, destructive replica cleanup, owner/link fault semantics, and
 recovery are in
 [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
-**Library-hot (federated catalog + local hot staging):** experimental path
-aligned with [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). The fixed
-transport policy for an explicitly selected reviewed-profile preparation is
-recorded in
+**Library-hot (federated catalog + local hot staging):** the reviewed two-rank
+path is GA, explicit, and non-default. Remote one-rank and legacy-unsealed use
+remain experimental. The fixed transport policy for an explicitly selected
+reviewed multi-rank preparation is recorded in
 [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 
 "Prepare model for serving" is the operator-facing term for resolving the exact
@@ -725,13 +730,14 @@ invalid scans fail closed; model files and the replicated serving default are
 not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
 or deletes a model, and it never runs automatically.
 
-From an exact model detail, **Prepare for experimental serving** is a second
-separate default-no action. It is offered only for reviewed-seal serving
-profiles and delegates to the fixed eight-stream SSH-over-RoCE preparation
-command documented above. The service revalidates exact identity, topology,
+From an exact model detail, the labeled preparation option is a second separate
+default-no action. It is offered only for reviewed-seal serving profiles and
+delegates to the fixed eight-stream SSH-over-RoCE preparation command documented
+above for multi-rank profiles. The service revalidates exact identity, topology,
 capacity, and all-rank completion; there is no fallback. The action does not
-launch or promote the model. Pin, purge, repair, and durable-home removal remain
-direct CLI operations.
+launch or qualify the model, assign a release status, or change the guided
+default. Pin, purge, repair, and durable-home removal remain direct CLI
+operations.
 
 Schema-1/2 hot metadata is obsolete and cannot launch. If health marks an
 instance repairable, inspect and remove only by its freshly issued ID:

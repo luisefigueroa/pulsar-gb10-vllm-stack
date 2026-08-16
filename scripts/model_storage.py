@@ -468,7 +468,7 @@ def serving_preparation_check(
             "home_rank": check.get("home_rank"),
             "target_ranks": targets,
             "blockers": check.get("blockers") or [
-                "experimental preparation is unavailable"
+                "distributed catalog preparation is unavailable"
             ],
         }
     return {
@@ -555,7 +555,7 @@ def render_summary(report: dict[str, Any], width: int | None = None) -> None:
     catalog = report["catalog"]
     term.emit("MODELS & STORAGE")
     term.field("serving", "replicated local model copies · guided default")
-    term.field("catalog", f"{state.replace('-', ' ')} · experimental inventory")
+    term.field("catalog", f"{state.replace('-', ' ')} · read-only inventory")
     term.field("cached", _status_label(catalog.get("status")))
     if catalog.get("status") == "cached":
         term.field("refreshed", _catalog_age(catalog.get("refreshed_at")))
@@ -672,12 +672,12 @@ def render_detail(
             "Dependency: no complete durable home is currently available for this exact revision."
         )
     term.emit(
-        "Claim boundary: catalog identity and runtime views do not establish model qualification or storage-path promotion."
+        "Claim boundary: catalog identity and runtime views do not establish model qualification, assign a release status, or change the guided default."
     )
 
     check = preparation_check(report, profiles, index)
     term.blank()
-    term.emit("Experimental preparation")
+    term.emit("Preparation options")
     if check["state"] == "available":
         for candidate in check["candidates"]:
             state = (
@@ -748,7 +748,7 @@ def render_about(width: int | None = None) -> None:
     term.field("pin", "retains non-home hot copies but still requires the durable home")
     term.blank()
     term.emit(
-        "The distributed catalog and library-hot path remain experimental. Browsing them does not change serving policy or qualify a model."
+        "The reviewed two-rank library-hot path is GA but remains explicit and non-default. One-rank and legacy-unsealed uses remain experimental. Browsing does not change serving policy or qualify a model."
     )
 
 
@@ -781,9 +781,12 @@ def prepare_choice_labels(check: dict[str, Any]) -> list[str]:
     labels: list[str] = []
     for candidate in check.get("candidates") or []:
         verb = "Verify" if candidate.get("already_prepared") else "Prepare"
-        labels.append(
-            f"{verb} {candidate['profile']} for experimental serving"
+        scope = (
+            "two-rank GA serving"
+            if int(candidate.get("nodes") or 0) == 2
+            else "experimental one-rank serving"
         )
+        labels.append(f"{verb} {candidate['profile']} for {scope}")
     return labels
 
 
@@ -806,7 +809,12 @@ def render_preparation(
     check = preparation_check(report, profiles, model_index)
     candidate = selected_preparation_candidate(check, candidate_index)
     term = TerminalWriter(width=width)
-    term.emit("PREPARE FOR EXPERIMENTAL SERVING")
+    heading = (
+        "PREPARE FOR TWO-RANK GA SERVING"
+        if int(candidate.get("nodes") or 0) == 2
+        else "PREPARE FOR EXPERIMENTAL ONE-RANK SERVING"
+    )
+    term.emit(heading)
     term.field("profile", candidate["profile"])
     term.field("model", check["model_id"])
     term.field("revision", check.get("revision") or "unknown")
@@ -839,7 +847,7 @@ def render_preparation(
         "The preparation service will full-verify the durable home, check exact live capacity on every serving node, transfer only non-home bytes, and publish ready views only after every rank verifies."
     )
     term.emit(
-        "This does not start a model. The home remains required, and successful preparation does not qualify or promote this storage path."
+        "This does not start or qualify a model. The home remains required, and successful preparation does not change the guided default."
     )
 
 
@@ -847,7 +855,13 @@ def render_serving_preparation(
     check: dict[str, Any], width: int | None = None
 ) -> None:
     term = TerminalWriter(width=width)
-    term.emit("DISTRIBUTED CATALOG · EXPERIMENTAL")
+    targets = check.get("target_ranks") or []
+    heading = (
+        "DISTRIBUTED CATALOG · TWO-RANK GA · EXPLICIT"
+        if len(targets) == 2
+        else "DISTRIBUTED CATALOG · EXPERIMENTAL ONE-RANK"
+    )
+    term.emit(heading)
     term.field("profile", check.get("profile") or "unknown")
     if check.get("model_id"):
         term.field("model", check["model_id"])
@@ -857,7 +871,6 @@ def render_serving_preparation(
         term.field("manifest", check["expected_manifest"])
     if isinstance(check.get("home_rank"), int):
         term.field("durable home", _node_label(int(check["home_rank"])))
-    targets = check.get("target_ranks") or []
     if targets:
         term.field(
             "serving nodes",

@@ -3,7 +3,7 @@
 > **Authority: canonical model-library architecture.**
 > The storage, identity, dependency, and lifecycle decisions in this document
 > are normative for future implementation. Sections explicitly labeled
-> **current implementation** describe the unpromoted experiment and do not
+> **current implementation** describe the implemented maturity boundary and do not
 > override the accepted target. Replicated local caches remain the guided
 > default until every promotion gate passes. Operator commands and current
 > limitations are documented in [OPERATIONS.md](./OPERATIONS.md); the distinct
@@ -20,7 +20,7 @@
 > [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 > Qualification scope and evidence reuse are governed by
 > [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md).
-> The transport policy for an explicitly selected experimental preparation is
+> The transport policy for explicitly selected reviewed multi-rank preparation is
 > recorded in
 > [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 > Model Serving Release identity, validation contracts, decision statuses, and
@@ -29,15 +29,16 @@
 
 | Field | Value |
 |---|---|
-| Authority | Accepted architecture; current implementation remains experimental |
-| Status | Implemented experiment (not yet GA or a guided default); reviewed identities are issued for `qwen3-1.7b` and flagship `deepseek-v4-flash`, and both passed applicable physical `library-hot` enforcement. The bounded two-rank subsystem has one combined GA closure task remaining. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation or subsystem-GA blocker. |
-| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14 |
+| Authority | Accepted architecture; reviewed two-rank `library-hot` is GA, explicit, and non-default; other scopes are identified below |
+| Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles. Remote one-rank and legacy-unsealed use remain experimental, and replicated serving remains the guided default. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
+| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md) |
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
-| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; and the supervised `pulsar-model-onboarding` orchestration skill |
+| GA today | Reviewed two-rank `library-hot`: one exact durable home, exact home symlink, sealed-hot copy on the non-home rank, reviewed identity, fixed eight-stream SSH-over-RoCE preparation, exact restart, persisted replacement recovery, and owned cleanup. It remains explicit and non-default. |
+| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; and the supervised `pulsar-model-onboarding` orchestration skill |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -419,7 +420,7 @@ Current `resolve` / catalog lookup does **not** download from Hugging Face:
 3. Else fail closed with an explicit reason
 ```
 
-Hub acquisition is a separate command: experimental
+Hub acquisition is a separate explicit command:
 `scripts/model-library.sh home add` creates exactly one reviewed durable home;
 the guided replicated path uses `scripts/pull-weights.sh`. Neither is a
 silent resolve fallback.
@@ -712,15 +713,15 @@ The warm-home rank uses its existing `durable-home` view.
 | Transfer | Current CLI shape | Network/path claim | Promotion role |
 |---|---|---|---|
 | `ssh-control` | copy backend over confirmed control SSH | Management LAN | Baseline, diagnostic, and explicit comparison path |
-| `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Fixed eight-stream policy for the explicit interactive experiment; still unpromoted as a storage path |
+| `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Fixed eight-stream policy for explicit reviewed multi-rank preparation; GA for the reviewed two-rank `library-hot` scope |
 | `nfs-rdma` | fabric backend, then release | Short-lived NFSv4.2/RDMA transfer plane | Separate candidate |
 | `live-mount` | `--weight-source fabric` | Long-lived NFSv4.2/RDMA runtime dependency | Separate experiment |
 
 Neither transfer replaces NCCL inference traffic. No candidate may silently
 fall back to control transfer, TCP NFS, replicated pulls, or a different
 runtime source. ADR 0003 chooses `ssh-roce` with eight streams only after an
-operator explicitly selects experimental preparation and an eligible durable
-home already exists; it does not alter the replicated guided default.
+operator explicitly selects reviewed multi-rank preparation and an eligible
+durable home already exists; it does not alter the replicated guided default.
 
 ### 4.7 Release timing
 
@@ -828,10 +829,11 @@ confirmation-gated **Refresh distributed catalog** action delegates to the
 existing all-confirmed-rank refresh service, preserves exact-revision primary
 selections, and then renders a new sanitized health report. Refresh is never
 automatic; incomplete topology or rank observation fails closed. The
-projection labels replicated serving as the guided default and the distributed
-catalog as experimental.
+projection labels replicated serving as the guided default, reviewed two-rank
+`library-hot` as GA and explicit, and one-rank use as experimental.
 
-An exact model detail may also offer **Prepare for experimental serving** when
+An exact model detail may also offer **Prepare for two-rank GA serving** or
+**Prepare for experimental one-rank serving**, according to profile geometry, when
 the catalog mapping is current and the matching serving profile carries
 a reviewed expected seal. This is a separate default-no mutation, fixed to the
 accepted eight-stream SSH-over-RoCE copy policy for non-home ranks with no
@@ -845,12 +847,13 @@ validation-status allowlist. That service remains the
 authority for full verification, exact all-rank storage admission, topology and
 primary checks, rollback, and witness publication. The interaction never adds
 validation-status override, starts serving, changes the replicated recommended default, or
-claims model qualification or storage-path promotion. Retention, repair, purge,
+claims model qualification. Retention, repair, purge,
 and durable-home removal remain separate direct-CLI operations.
 
 The serving wizard is a distinct consumer of the same readiness contract. For
 an eligible reviewed profile it offers replicated weights first and an
-explicit **distributed catalog (experimental)** choice second. The wizard
+explicit distributed-catalog choice second. It labels the reviewed two-rank
+path **two-rank GA · explicit** and a one-rank path experimental. The wizard
 shows exact revision/manifest identity, durable-home dependency, selected
 ranks, fixed transfer policy, and no-fallback behavior. It may invoke the same
 preparation service after a default-no confirmation, but it re-reads health and
@@ -890,7 +893,7 @@ Pulsar's discovery boundary.
 
 | Path | Role under this direction |
 |---|---|
-| Replicated `pull-weights` + local launch | **Remains default** until a library+prepare path earns promotion |
+| Replicated `pull-weights` + local launch | **Remains the guided and fresh-cluster default** |
 | Live `--weight-source fabric` | **Experimental** proof/ops path; long-lived mount under vLLM is **not** the agreed product identity |
 | Site cold path confs | Optional cold tier; keep working |
 | Topology rails and NFS/RDMA helpers | Reused by fabric **preparation**; model-library schema-3 hot state carries full SHA-256 observed content plus optional expected-seal provenance, while live-fabric configuration identity remains separate |
@@ -958,8 +961,8 @@ particular model/runtime decision. The initial GA scope is the reviewed
 two-rank path; remote one-rank placement remains outside it. The exact DeepSeek
 same-boot determinism failure remains valid model-qualification evidence and
 blocks that release from `Validated`, but it does not invalidate catalog or
-serving-integration results and is not a subsystem-GA blocker. Passing bounded
-subsystem GA also does not make `library-hot` the default or only path.
+serving-integration results and was not a subsystem-GA blocker. Bounded
+subsystem GA does not make `library-hot` the default or only path.
 
 The combined promotion claim first requires these SSH identity controls:
 
@@ -1038,11 +1041,12 @@ rank 1 as the one persistent durable home. A clean two-rank repeat then passed
 eight-stream SSH-over-RoCE preparation, exact full verification,
 durable-home/sealed-hot placement, zero-byte witnesses, read-only exact-snapshot
 launch, warmup, completion smoke, owned stop, hot purge, and return to one
-durable copy. The subsequent exact-GA same-boot strict-determinism gate failed:
+durable copy. The subsequent exact-release same-boot strict-determinism gate failed:
 profile-default DSpark k=5 produced 11/30 exact texts and 4/30 fully identical
 records, while a forced no-spec diagnostic improved to 26/30 and 25/30 without
-passing strict identity. Sustained soak was not run; no profile or path was
-promoted.
+passing strict identity. That Model Serving Release result remains failed. A
+later subsystem-only closure ran the separate sustained serving, restart,
+recovery, identity, and cleanup gates described below.
 See
 `results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`
 and
@@ -1058,23 +1062,35 @@ changed. See
 Failed or incomplete evidence is not rewritten because an architectural
 blocker changed.
 
-### 7.1 Initial `library-hot` GA closure
+### 7.1 Initial `library-hot` GA closure — completed 2026-08-16
 
-One combined task remains before the bounded reviewed two-rank subsystem may be
-called GA:
+The bounded reviewed two-rank subsystem completed its combined GA task:
 
 ```text
-[ ] Remove home-rank reflink/copy fallback; failed durable-home symlink closes
-[ ] Sustain physical serving, then restart the same prepared release
-[ ] Force replacement failure and restore the exact captured launch contract
-[ ] Reverify the reviewed identity through preparation, serving, and rollback
-[ ] Prove owned cleanup and the final one-durable-home/no-unpinned-hot state
-[ ] Publish sanitized evidence scoped to catalog/artifact and serving integration
+[x] Remove home-rank reflink/copy fallback; failed durable-home symlink stops preparation
+[x] Sustain physical serving, then restart the same prepared release
+[x] Force replacement failure and restore the exact captured launch contract
+[x] Reverify the reviewed identity through preparation, serving, and rollback
+[x] Prove owned cleanup and the final one-durable-home/no-unpinned-hot state
+[x] Publish sanitized evidence scoped to catalog/artifact and serving integration
 ```
 
-This task does not rerun or waive release-specific accuracy, strict
-same-boot reproducibility, throughput, or latency gates. Those belong to the
-affected Model Serving Release and its frozen Validation Contract.
+The physical run used the exact reviewed two-rank DeepSeek profile. Preparation
+created a sealed-hot non-home view and an exact durable-home symlink, then both
+ranks matched the reviewed manifest. The service reached health, completed all
+warmup phases, handled 587 requests with zero errors over 30 minutes, restarted,
+and recovered the captured contract in a new wizard process after a deliberately
+failed replacement launch. Cleanup removed the owned service and both unpinned
+views while preserving one identity-matched durable home. The soak retained a
+1.14 GiB first-to-last-decile memory-shrink warning; it is not hidden or
+reclassified as a request failure. See
+`results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
+
+This task did not rerun or waive release-specific accuracy, strict same-boot
+reproducibility, throughput, latency, long-context, or Model Serving Release
+soak criteria. Those belong to the affected Model Serving Release and its
+frozen Validation Contract. Remote one-rank and legacy-unsealed use remain
+experimental. The guided and fresh-cluster default remains replicated copies.
 
 ---
 
@@ -1094,8 +1110,8 @@ affected Model Serving Release and its frozen Validation Contract.
   `pulsar-model-onboarding` skill is implemented as non-authorizing
   control-plane orchestration; current schema-1
   bundles and `STATUS=tested*` remain legacy implementation contracts
-- Initial reviewed two-rank `library-hot` GA closure in section 7.1; remote
-  one-rank placement remains outside the initial GA scope
+- Physical serving-integration evidence for remote one-rank `library-hot`;
+  it remains experimental and outside the completed two-rank GA scope
 - Issue remaining supported profiles over time
 - Per-rank runtime-source/witness labels and unmanaged-reader observability
 - Issuance and publication guarantees beyond the read-only ADR 0004 registry
@@ -1175,3 +1191,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-15 | Hardened that foundation fail-closed: invocation plans are closed and type-checked before argv emission; run-gates refuses a failed or empty bench-argv instead of keeping the default sweep; compose requires the measurement path and publishable evidence path to name the same stably read file, capture-validates both specs, then publishes one exclusive two-file directory. Writes use descriptor-rooted no-follow parents. Compare/bench persist incomplete `--result-json` on ordinary failure; missing validator output is refused rather than invented. The attempt spec still has no precomputed digest, so later capture must re-read the file. Protected locators remain out of this slice. Control-plane tests only. |
 | 2026-08-15 | Corrected the unmerged measurement foundation after review: benchmark request count must be at least the largest declared concurrency at the CLI, measurement, and invocation-plan boundaries; unreadable measurement evidence fails through the sanitized error path without publishing an attempt; and SIGINT/SIGTERM stop `run-gates` before any later gate while preserving already-written partial output. Control-plane tests only; no physical or status claim changed. |
 | 2026-08-15 | Implemented ADR 0004 stage 4 as the repository-local `pulsar-model-onboarding` skill. It supervises a brand-new unsealed model through a separately reviewed draft profile, exact-home assessment or safe reuse, explicit qualifying distribution, verification, unreviewed release/contract planning, launch, sequential supported measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup. It permits reuse only after full verification against a reviewed expected manifest independent of the observed tree; a shallow catalog label and self-observed manifest are insufficient. It stops when no such home exists because the current sealed-only acquisition service is the only path with private staging, independent completeness verification, and atomic publication; a direct durable-cache download is forbidden. It collaborates at material decisions and has no seal, status, binding, registry, or promotion authority. Current automated mapping covers only strict same-boot and absolute throughput/latency. The default unsealed replicated path is not an exact ADR 0004 qualification attempt. The skill-local journal is isolated under `experiments/model-onboarding/workflows/`, is recovery state rather than evidence, and cannot collide with default `<profile>/<release-id>` plan output. Deterministic skill and journal tests make no physical DGX claim and create no release decision. |
+| 2026-08-16 | **Bounded `library-hot` GA completed:** the reviewed two-rank path now requires an exact home symlink with no copy fallback and physically passed 30-minute serving, exact restart, forced replacement failure, persisted new-process recovery, reviewed-identity re-verification, owned cleanup, and one-home closeout. The corrected soak completed 587 requests with zero errors and retained its 1.14 GiB memory-shrink warning. Remote one-rank and legacy-unsealed use remain experimental; replicated remains the guided default; no Model Serving Release status changed. |

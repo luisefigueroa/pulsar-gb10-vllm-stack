@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "kind": "pulsar-model-library-library-hot-ga-closure",
+  "recorded_at": "2026-08-16",
+  "status": "pass",
+  "qualification_scopes": [
+    "catalog-artifact",
+    "serving-integration"
+  ],
+  "subsystem_decision": {
+    "maturity": "ga",
+    "scope": "reviewed two-rank library-hot",
+    "serving_selection": "explicit and non-default",
+    "remote_one_rank": "experimental and outside this GA scope",
+    "legacy_unsealed": "experimental and outside this GA scope",
+    "model_serving_release_status_changed": false,
+    "guided_default_changed": false
+  },
+  "model_identity": {
+    "profile": "deepseek-v4-flash",
+    "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "revision": "7872f01b1d1fe23eabc4c98b48bffcef5a386062",
+    "manifest_id": "27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e",
+    "manifest_file_count": 74,
+    "manifest_total_bytes": 166898661074,
+    "seal_id": "1ba9ca8e3c34a9143588cc1315474e9cca0724351f0856caed5bb1116b89555a",
+    "validation_bundle_id": "8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236",
+    "image_digest": "sha256:260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2",
+    "geometry": {
+      "hardware": "NVIDIA GB10",
+      "serving_ranks": 2,
+      "tensor_parallel_size": 2,
+      "additional_confirmed_systems_used_for_serving": 0
+    }
+  },
+  "implementation_gates": {
+    "durable_home_view": {
+      "required_type": "exact symlink",
+      "copy_or_reflink_fallback_removed": true,
+      "failed_symlink_behavior": "preparation fails and removes the incomplete destination",
+      "local_and_remote_failure_contracts_tested": true,
+      "physical_home_rank_result": "exact symlink"
+    },
+    "replacement_transaction": {
+      "library_content_id_contract": "12 lowercase hexadecimal characters",
+      "inventory_and_saved_transaction_validation_agree": true,
+      "tamper_contract_tested": true
+    },
+    "soak_client": {
+      "resolved_api_key_is_passed_to_each_worker": true,
+      "worker_signature_regression_tested": true
+    }
+  },
+  "initial_state": {
+    "catalog_health": "healthy",
+    "managed_target_services": 0,
+    "hot_views": 0,
+    "durable_home_count": 1,
+    "durable_home_rank": 1,
+    "duplicate_home_state": "none"
+  },
+  "preparation": {
+    "command": "scripts/model-library.sh prepare deepseek-v4-flash --backend copy --transport ssh-roce --copy-streams 8 --yes --time",
+    "backend": "copy",
+    "transport": "ssh-roce",
+    "copy_streams_requested": 8,
+    "copy_streams_effective": 8,
+    "fallback_used": false,
+    "rank_views": [
+      {
+        "rank": 0,
+        "runtime_source": "sealed-hot",
+        "required_bytes": 166898661074
+      },
+      {
+        "rank": 1,
+        "runtime_source": "durable-home",
+        "required_bytes": 0
+      }
+    ],
+    "transfer_rank_0_seconds": 74,
+    "home_view_rank_1_seconds": 1,
+    "transfer_all_seconds": 74,
+    "full_verify_seconds": 47,
+    "wall_seconds": 121,
+    "identity_status_each_rank": "match",
+    "reserve_preserved_on_each_selected_rank": true
+  },
+  "initial_serve": {
+    "command": "scripts/up.sh deepseek-v4-flash --weight-source library-hot --yes",
+    "managed_rank_count": 2,
+    "first_health_seconds": 403.886,
+    "warmup_phase_count": 8,
+    "warmup_seconds": 28.0,
+    "completion_smoke": "pass",
+    "weight_source": "library-hot",
+    "identity_status": "match"
+  },
+  "sustained_serving": {
+    "command": "python3 validate/soak.py --model deepseek-v4-flash --minutes 30 --concurrency 5 --max-errors 0",
+    "minutes": 30.0,
+    "concurrency": 5,
+    "completed_requests": 587,
+    "error_count": 0,
+    "resource_samples": 60,
+    "exit_policy_result": "pass",
+    "mem_available_start_gib": 6.59,
+    "mem_available_end_gib": 5.71,
+    "first_to_last_decile_shrink_gib": 1.14,
+    "first_to_last_decile_shrink_pct": 16.63,
+    "memory_finding": true,
+    "gpu_temperature_max_c": 82,
+    "sm_clock_min_mhz": 2392,
+    "post_soak_api_health": "pass",
+    "post_soak_identity_status": "match"
+  },
+  "exact_restart": {
+    "owned_stop": "pass",
+    "prepared_views_pinned_before_stop": true,
+    "stopped_service_count": 0,
+    "restart_first_health_seconds": 413.421,
+    "launcher_warmup_phase_count": 8,
+    "launcher_warmup_seconds": 35.7,
+    "additional_short_warmup": "pass",
+    "identity_status_after_restart": "match"
+  },
+  "forced_failure_and_persisted_recovery": {
+    "production_wizard_used": true,
+    "forced_target_launch_result": "failed as requested",
+    "fallback_launch_attempted": false,
+    "temporary_view_retention": "pinned",
+    "transaction_phase_after_exit": "stopped",
+    "managed_target_services_after_exit": 0,
+    "new_wizard_process_detected_transaction": true,
+    "recovery_selection": "restore previous exact service",
+    "recovery_first_health_seconds": 413.751,
+    "recovery_warmup_phase_count": 8,
+    "recovery_warmup_seconds": 49.3,
+    "recovery_completion_smoke": "pass",
+    "captured_launch_contract_matches_after_recovery": true,
+    "captured_weight_source_matches_after_recovery": true,
+    "captured_speculative_decode_state_matches_after_recovery": true,
+    "captured_identity_matches_after_recovery": true,
+    "transaction_removed_after_recovery": true,
+    "original_ephemeral_retention_restored": true
+  },
+  "cleanup": {
+    "command": "scripts/down.sh deepseek-v4-flash",
+    "owned_target_service_absent": true,
+    "unrelated_unmanaged_container_left_unchanged": true,
+    "hot_view_count": 0,
+    "catalog_health": "healthy",
+    "durable_home_count": 1,
+    "durable_home_rank": 1,
+    "durable_home_identity_status": "match",
+    "durable_home_manifest_verifier": "reviewed exact identity with rank-local witness",
+    "durable_home_removed": false
+  },
+  "preserved_findings": [
+    {
+      "scope": "validation client",
+      "result": "failed attempt",
+      "detail": "The first soak invocation created worker threads without the required API-key argument, so no workload was generated. The client was fixed and regression-tested before the 30-minute run. This was not recorded as a service failure."
+    },
+    {
+      "scope": "serving stability",
+      "result": "pass with reviewed memory finding",
+      "detail": "The corrected 30-minute run completed 587 requests with zero errors. MemAvailable first-to-last decile shrink was 1.14 GiB (16.63%), which the soak policy records as a warning unless --fail-on-mem-shrink is selected. The finding remains visible."
+    },
+    {
+      "scope": "replacement transaction",
+      "result": "failed pre-stop attempt",
+      "detail": "The first forced-failure attempt rejected the real 12-character library content ID as if it were a 64-character digest. The service remained running because the wizard stopped before mutation. The schema contract was corrected and regression-tested before the successful failure-and-recovery repeat."
+    },
+    {
+      "scope": "final durable-home verification",
+      "result": "retried",
+      "detail": "The first post-cleanup verifier invocation detected a missing witness and started full SHA-256 verification but returned no controller JSON. The immediately repeated reviewed verifier used the resulting rank-local witness and returned identity_status=match for the exact manifest."
+    }
+  ],
+  "claims": {
+    "proves": [
+      "the reviewed two-rank library-hot subsystem meets its initial GA closure gates",
+      "home-rank preparation uses an exact durable-home symlink and does not copy when symlink creation or verification fails",
+      "the exact reviewed model can sustain concurrent serving with zero request errors, restart from retained prepared views, and preserve identity",
+      "a forced replacement launch failure leaves an exact persisted recovery transaction and a new wizard process restores the captured service contract",
+      "owned cleanup removes the target service and unpinned hot views while preserving one exact durable home"
+    ],
+    "does_not_prove": [
+      "Validated status for this or any Model Serving Release",
+      "accuracy, strict same-boot reproducibility, release throughput, release latency, long context, or release-specific soak criteria",
+      "remote one-rank library-hot serving integration",
+      "legacy-unsealed library-hot behavior as GA",
+      "durable-home-loss resilience",
+      "a guided, recommended, or automatic storage default"
+    ]
+  },
+  "privacy": {
+    "reviewed": true,
+    "omitted": [
+      "hostnames",
+      "IP addresses",
+      "SSH aliases and keys",
+      "node IDs",
+      "topology IDs",
+      "absolute paths",
+      "filesystem identifiers",
+      "container IDs",
+      "transaction IDs",
+      "witness IDs",
+      "sample timestamps"
+    ]
+  }
+}

@@ -456,21 +456,25 @@ were distributed. Conversely, `library-hot` subsystem maturity does not depend
 on a particular model/runtime passing strict determinism.
 
 The initial `library-hot` GA scope is the reviewed two-rank path. Remote
-one-rank placement is outside that initial scope. One combined GA closure task
-remains:
+one-rank placement is outside that initial scope. The combined GA closure task
+completed on 2026-08-16:
 
-1. remove the home-rank reflink/copy fallback so a failed durable-home symlink
-   fails closed;
-2. physically exercise sustained serving and restart;
-3. force a replacement failure and prove exact rollback;
-4. reverify identity through the lifecycle;
-5. prove owned cleanup and final one-home state; and
-6. publish sanitized evidence for those exact claims.
+1. the home-rank reflink/copy fallback was removed, so preparation fails if the
+   exact durable-home symlink cannot be created and verified;
+2. sustained serving and exact restart passed physically;
+3. a forced replacement launch failure left a persisted stopped transaction,
+   and a new wizard process restored the exact captured contract;
+4. reviewed identity matched through preparation, serving, restart, recovery,
+   and final durable-home verification;
+5. owned cleanup removed the target service and unpinned hot views while
+   preserving one durable home; and
+6. sanitized catalog/artifact and serving-integration evidence was published at
+   `results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
 
-Passing that task can make the bounded subsystem GA. It does not automatically
-make `library-hot` the default or only path, and it does not convert the
-DeepSeek strict-determinism failure into a pass. That failure belongs to the
-affected Model Serving Release.
+The reviewed two-rank subsystem is therefore GA. It remains explicit and
+non-default. Remote one-rank and legacy-unsealed use remain experimental. This
+decision does not convert the DeepSeek strict-determinism failure into a pass;
+that failure belongs to the affected Model Serving Release.
 
 ## Staged implementation
 
@@ -660,7 +664,10 @@ Implement this decision in focused, reviewable units:
    The skill-local journal is isolated under the `workflows/` namespace and
    is recovery state, not evidence. Deterministic skill/journal tests make no
    physical DGX claim; and
-5. complete and publish the separate bounded `library-hot` GA closure evidence.
+5. **Implemented:** complete and publish the separate bounded `library-hot` GA
+   closure evidence. The reviewed two-rank subsystem is GA, while remote
+   one-rank and legacy-unsealed use remain experimental. This stage did not
+   issue a Model Serving Release decision or change the guided default.
 
 Each unit must update the canonical design, current implementation spec,
 operator/revalidation docs, validation ledger, and evidence index when its

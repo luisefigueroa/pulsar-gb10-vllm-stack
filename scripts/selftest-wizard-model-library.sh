@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Experimental distributed-catalog serving-wizard scenarios.
+# Explicit distributed-catalog serving-wizard scenarios.
 # Uses only sanitized fixtures and command shims; no Docker, SSH, GPU, model
 # bytes, or live catalog state is touched.
 set -euo pipefail
@@ -394,15 +394,15 @@ assert_contains "$STATE/logs/output.log" 'Tested—criteria not met' \
 assert_empty "$STATE/logs/health.log" "replicated choice does not inspect catalog health"
 assert_empty "$STATE/logs/prepare.log" "replicated choice does not prepare catalog views"
 assert_contains "$STATE/logs/weights.log" '^deepseek-v4-flash --json$' \
-  "replicated preflight does not carry experimental source"
+  "replicated preflight does not carry the library-hot source"
 assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
   "replicated launch remains unchanged"
 
-echo "=== explicit experimental preparation and launch ==="
+echo "=== explicit two-rank GA preparation and launch ==="
 run_wizard unprepared.json 0 0 $'2\n2\ny\n\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
-assert_contains "$STATE/logs/output.log" 'DISTRIBUTED CATALOG.*EXPERIMENTAL' \
-  "wizard labels the catalog path experimental"
+assert_contains "$STATE/logs/output.log" 'DISTRIBUTED CATALOG.*TWO-RANK GA.*EXPLICIT' \
+  "wizard labels the bounded two-rank GA scope"
 assert_contains "$STATE/logs/output.log" 'durable home remains required' \
   "wizard discloses the durable-home dependency"
 assert_contains "$STATE/logs/output.log" '^durable home[[:space:]]+node 2' \
@@ -412,7 +412,7 @@ assert_contains "$STATE/logs/prepare.log" \
   "wizard delegates the accepted eight-stream RoCE preparation policy"
 assert_contains "$STATE/logs/weights.log" \
   '^deepseek-v4-flash --weight-source library-hot --json$' \
-  "weight preflight receives the explicit experimental source"
+  "weight preflight receives the explicit two-rank GA source"
 assert_contains "$STATE/logs/up.log" \
   '^deepseek-v4-flash --weight-source library-hot --yes$' \
   "launch receives library-hot only after separate confirmation"
@@ -431,7 +431,7 @@ assert_contains "$STATE/logs/output.log" 'preparation failed' \
   "preparation failure is visible"
 assert_empty "$STATE/logs/up.log" "preparation failure cannot launch"
 
-echo "=== confirmed experimental restart retains prepared views ==="
+echo "=== confirmed two-rank GA restart retains prepared views ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.running"
 run_wizard healthy-active.json 0 0 $'2\n2\n1\n\ny\n' \
   "$STATE/inventory.json.running"
@@ -441,7 +441,7 @@ assert_contains "$STATE/logs/down.log" \
   "same-source restart pins prepared views before stop"
 assert_contains "$STATE/logs/up.log" \
   '^deepseek-v4-flash --weight-source library-hot --yes$' \
-  "restart preserves the explicit experimental source"
+  "restart preserves the explicit two-rank GA source"
 
 echo "=== failed replacement restores exact catalog contract ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.rollback"
@@ -466,7 +466,7 @@ run_wizard one-health.json 0 0 $'1\n1\n2\n1\ny\n' \
   "$STATE/inventory.json" "$STATE/reports/one-profiles.json"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" \
-  'selected durable-home node for experimental catalog serving: fixture-one' \
+  'selected durable-home node for experimental one-rank catalog serving: fixture-one' \
   "wizard makes the home-node placement change visible"
 assert_empty "$STATE/logs/prepare.log" \
   "ready one-node durable-home view needs no materialization"

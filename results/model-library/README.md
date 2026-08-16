@@ -95,9 +95,9 @@ and chronologically later acyclic supersession. None of these control-plane test
 substitutes for physical DGX evidence.
 
 ADR 0003 selects a transfer policy within the accepted catalog/artifact scope;
-it does not reinterpret the failed DeepSeek determinism artifact, establish a
-missing durable home, promote `library-hot`, or change the replicated guided
-default. Historical transport comparisons retain their recorded outcomes.
+by itself it did not reinterpret the failed DeepSeek determinism artifact,
+establish a missing durable home, make `library-hot` GA, or change the replicated
+guided default. Historical transport comparisons retain their recorded outcomes.
 
 The interactive **Models & storage** catalog-refresh wiring added on 2026-08-12
 reuses the existing atomic all-rank refresh contract and adds no physical
@@ -108,7 +108,7 @@ health report. The physical health/repair artifact indexed below remains the
 applicable underlying rank-observation evidence; this UI integration is not a
 storage-path promotion.
 
-The subsequent experimental-preparation wiring reuses the exact physically
+The subsequent, then-experimental preparation wiring reuses the exact physically
 measured eight-stream SSH-over-RoCE preparation service. Deterministic contracts
 prove reviewed-profile eligibility, exact revision/manifest disclosure,
 default-no confirmation, fixed no-fallback argv (eight-stream SSH-over-RoCE for
@@ -118,8 +118,8 @@ changes no identity, admission, transfer, rollback, witness, or lifecycle algori
 adds no separate physical artifact. The flagship one-home lifecycle artifact
 below remains the applicable physical preparation evidence.
 
-The serving wizard subsequently gained a separate experimental storage-source
-choice. Deterministic scenarios prove that replicated remains first/recommended,
+The serving wizard subsequently gained a separate storage-source choice, which
+was experimental at that stage. Deterministic scenarios prove that replicated remains first/recommended,
 blocked catalog health cannot fall through silently, optional preparation uses
 the fixed eight-stream SSH-over-RoCE policy, fresh exact readiness is required,
 and launch remains separately confirmed. One-node catalog serving is bound to
@@ -132,17 +132,21 @@ read-only exact-snapshot serving, eight warmup phases, completion smoke, and
 the interactive ordinary-stop purge all passed. The run returned to one
 durable home with no hot instances. The new remote one-node wizard path still
 needs its own physical serving-integration repeat before that placement can
-make a physical claim, and none of this changes the failed determinism or
-promotion status.
+make a physical claim. The later closure artifact below makes only the reviewed
+two-rank path GA and changes neither the failed determinism result nor the
+guided default.
 
 Wizard replacement is now a short-lived fail-closed transaction rather than a
 restart reconstructed from current defaults. Deterministic contracts cover
 capture of the exact live launch contract, placement, storage source,
 speculative-decode state, catalog identity/runtime views, temporary retention,
 exact failed-launch rollback, and interrupted recovery. A physical two-node
-`library-hot` failed-replacement/rollback and interruption repeat remains
-pending; the earlier successful-launch artifact is not relabeled as that
-evidence and no storage-path or model promotion claim changes.
+`library-hot` failed-replacement and persisted new-process recovery repeat
+passed on 2026-08-16. That run also closed the exact home-symlink, 30-minute
+serving, restart, identity, cleanup, and one-home gates. The earlier
+successful-launch artifact is not relabeled as that evidence. Remote one-rank
+and legacy-unsealed use remain experimental, and no Model Serving Release
+status or guided default changed.
 
 The 2026-08-10 promotion assessment remains immutable historical evidence. Its
 recommendation to materialize the home rank is **superseded by ADR 0001**. Its
@@ -239,14 +243,16 @@ and 25/30 complete records without reaching strict identity. Both runs used the
 same reviewed GA revision, seal, image, geometry, and rank-local storage views;
 therefore the current result cannot be dismissed as only a preview/GA profile
 name mix-up. The service remained healthy, no fatal runtime signature appeared,
-and cleanup restored one durable home with no hot instances. Sustained soak was
-not run after this blocking failure.
+and cleanup restored one durable home with no hot instances. Release-
+qualification soak was not run after this blocking failure. The later
+30-minute subsystem closure run is catalog/artifact and serving-integration
+evidence and does not replace that release-specific missing criterion.
 
 Under ADR 0004 this failure blocks `Validated` for that exact Model Serving
 Release. It does not invalidate the already measured catalog/artifact or
-serving-integration behavior and does not block the separately scoped initial
-two-rank `library-hot` subsystem GA closure. Remote one-rank placement remains
-outside that initial GA scope.
+serving-integration behavior. The separately scoped two-rank `library-hot`
+subsystem GA closure later passed. Remote one-rank and legacy-unsealed use
+remain outside that GA scope.
 
 The active-use durable-home removal guard subsequently passed deterministic and
 three-node physical checks using only disposable synthetic repositories. Its
@@ -278,9 +284,10 @@ duplicate was changed by this work.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
-| [`deepseek-v4-flash-serving-wizard-gate-20260813.json`](./deepseek-v4-flash-serving-wizard-gate-20260813.json) | Production interactive serving-wizard and operator-home stop flow for the exact sealed DeepSeek GA profile: explicit experimental choice, fixed preparation, exact readiness, read-only launch, warmup, completion, owned stop, purge, and one-home closeout | Current two-node serving-integration PASS; remote one-node wizard placement, model qualification, and storage-path promotion remain open | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
+| [`deepseek-v4-flash-library-hot-ga-closure-20260816.json`](./deepseek-v4-flash-library-hot-ga-closure-20260816.json) | Reviewed two-rank exact home-symlink behavior, preparation, 30-minute serving, restart, forced replacement failure, persisted new-process recovery, identity re-verification, owned cleanup, and final one-home state | PASS with reviewed 1.14 GiB memory-shrink warning; reviewed two-rank `library-hot` is GA, explicit, and non-default. Remote one-rank and legacy-unsealed use remain experimental; no Model Serving Release status changed | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, transactions, witnesses, filesystem identity, and sample timestamps omitted |
+| [`deepseek-v4-flash-serving-wizard-gate-20260813.json`](./deepseek-v4-flash-serving-wizard-gate-20260813.json) | Production interactive serving-wizard and operator-home stop flow for the exact sealed DeepSeek GA profile: explicit experimental choice at that time, fixed preparation, exact readiness, read-only launch, warmup, completion, owned stop, purge, and one-home closeout | Current two-node serving-integration PASS; this earlier artifact did not alone establish the later GA closure. Remote one-node wizard placement and model qualification remain open. | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`deepseek-v4-flash-library-hot-determinism-20260812.json`](./deepseek-v4-flash-library-hot-determinism-20260812.json) | Exact sealed DeepSeek GA same-boot strict captures with profile-default DSpark plus forced no-spec diagnostic, standard benchmarks, and clean one-home closeout | Current strict determinism FAIL; no-spec improves but does not eliminate variance; `Validated` is blocked for this exact release while subsystem GA remains separate | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
-| [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; release qualification and guided/default promotion remain open; subsystem GA closure is separate | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
+| [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; this earlier artifact did not alone establish the later GA closure. Release qualification and guided/default selection remain separate. | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`model-library-health-legacy-repair-gate-20260812.json`](./model-library-health-legacy-repair-gate-20260812.json) | Three-node read-only health, repair-ID-bound schema-1/2 removal, stopped-container/pinned blockers, no-follow/sibling preservation, and exact disposable-home removal; synthetic data only | Current health/legacy-repair physical PASS; no real cleanup, reconciliation, or storage-path promotion | Reviewed; site topology, paths, hosts, nodes, containers, repair IDs, and filesystem identity omitted |
 | [`model-library-primary-selection-reconciliation-gate-20260812.json`](./model-library-primary-selection-reconciliation-gate-20260812.json) | Three-node persistent exact-revision selection and guarded non-primary reconciliation; disposable synthetic HF-layout repositories only | Current selected-primary targeting PASS; existing DeepSeek duplicate unchanged; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; paired physical enforcement artifact now passes; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |

@@ -237,6 +237,14 @@ reset_weight_source() {
   LIBRARY_CHECK_JSON=""
 }
 
+library_hot_scope_label() {
+  if [ "$NODES" -eq 2 ]; then
+    printf '%s\n' "two-rank GA · explicit"
+  else
+    printf '%s\n' "experimental one-rank · outside two-rank GA"
+  fi
+}
+
 collect_library_serving_check() {
   local health_file="$WIZARD_WORK_DIR/library-health.json"
   local profiles_file="$WIZARD_WORK_DIR/library-profiles.json"
@@ -303,14 +311,17 @@ select_weight_source() {
   fi
 
   local choice state transport streams target_rank home_rank prepare_rc=0
+  local scope_label choice_label
   local -a node_args=()
+  scope_label=$(library_hot_scope_label)
+  choice_label="Distributed catalog ($scope_label)"
   render_human_section "WEIGHT STORAGE" \
     "Default" "replicated local copies on every serving node" \
-    "Optional" "distributed catalog · experimental · explicit" \
+    "Optional" "distributed catalog · $scope_label" \
     "Fallback" "none; the selected policy must pass its own checks"
   choice=$(choose "Choose model storage for $NAME" \
     "Replicated local copies (recommended)" \
-    "Distributed catalog (experimental)" \
+    "$choice_label" \
     "Choose another model")
   case "$choice" in
     Replicated*) return 0 ;;
@@ -330,7 +341,7 @@ select_weight_source() {
     if [ "$NODES" -eq 1 ] && [[ "$home_rank" =~ ^[0-9]+$ ]] \
         && [ "$home_rank" != "$SINGLE_NODE_INDEX" ]; then
       choice=$(choose "Catalog serving must use the durable-home node — what next?" \
-        "Use the durable-home node for this experimental service" \
+        "Use the durable-home node for this experimental one-rank service" \
         "Use replicated local copies on the selected node (recommended)" \
         "Choose another model" \
         "Exit")
@@ -339,7 +350,7 @@ select_weight_source() {
           resolve_single_node_placement "$home_rank" \
             || die "the catalog durable-home node is no longer a valid confirmed placement"
           adopt_resolved_single_node_placement
-          log "selected durable-home node for experimental catalog serving: $PLACEMENT_HOSTNAME"
+          log "selected durable-home node for experimental one-rank catalog serving: $PLACEMENT_HOSTNAME"
           collect_library_serving_check \
             || die "catalog readiness became unavailable after changing placement"
           echo
@@ -358,7 +369,7 @@ select_weight_source() {
   fi
   if [ "$state" = needs-preparation ]; then
     if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
-      log "experimental preparation declined; no model files were changed"
+      log "distributed catalog preparation declined; no model files were changed"
       choose_replicated_or_leave
       return $?
     fi
@@ -370,7 +381,7 @@ select_weight_source() {
       [ -n "$target_rank" ] || target_rank="$SINGLE_NODE_INDEX"
       node_args=(--node "$target_rank")
     fi
-    log "preparing exact experimental runtime views; serving is not started yet…"
+    log "preparing exact $scope_label runtime views; serving is not started yet…"
     set +e
     cmd_model_library_prepare prepare "$NAME" \
       --backend copy --transport "$transport" --copy-streams "$streams" \
@@ -394,7 +405,7 @@ select_weight_source() {
   fi
   WEIGHT_SOURCE=library-hot
   WEIGHT_ARGS=(--weight-source library-hot)
-  log "selected distributed catalog storage (experimental; no fallback)"
+  log "selected distributed catalog storage ($scope_label; no fallback)"
   return 0
 }
 

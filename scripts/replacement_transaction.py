@@ -22,6 +22,7 @@ from typing import Any
 SCHEMA_VERSION = 1
 KIND = "pulsar-serving-replacement-transaction"
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+CONTENT_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40,64}$")
 SAFE_PROFILE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TRANSACTION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -48,6 +49,12 @@ def require_digest(value: Any, label: str, *, optional: bool = False) -> str | N
     if optional and value in (None, ""):
         return None
     if not isinstance(value, str) or DIGEST_RE.fullmatch(value) is None:
+        fail(f"{label} is missing or invalid")
+    return value
+
+
+def require_content_id(value: Any, label: str) -> str:
+    if not isinstance(value, str) or CONTENT_ID_RE.fullmatch(value) is None:
         fail(f"{label} is missing or invalid")
     return value
 
@@ -178,7 +185,9 @@ def library_contract(
         fail("library-backed service identity is not an exact match")
     seal = require_digest(service.get("model_seal_id"), "model seal")
     bundle = require_digest(service.get("validation_bundle_id"), "validation bundle")
-    content = require_digest(service.get("weight_configuration_id"), "weight configuration")
+    content = require_content_id(
+        service.get("weight_configuration_id"), "weight configuration"
+    )
     owner = service.get("weight_owner_node_id")
     if not isinstance(owner, str) or not owner:
         fail("library-backed service has no durable-home identity")
@@ -314,9 +323,9 @@ def validate_transaction(value: Any) -> dict[str, Any]:
             ("model_seal_id", "saved model seal"),
             ("validation_bundle_id", "saved validation bundle"),
             ("manifest_id", "saved manifest"),
-            ("content_id", "saved content identity"),
         ):
             require_digest(weight.get(key), label)
+        require_content_id(weight.get("content_id"), "saved content identity")
         if not isinstance(weight.get("home_node_id"), str) or not weight["home_node_id"]:
             fail("saved durable-home identity is invalid")
         if weight.get("original_retention") not in {"ephemeral", "pinned"}:
