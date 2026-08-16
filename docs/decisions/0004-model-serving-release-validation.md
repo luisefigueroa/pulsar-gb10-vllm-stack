@@ -15,8 +15,9 @@
   closed validator-measurement documents and attempt-only spec composition
   implemented for strict same-boot and absolute throughput/latency;
   advisory catalog/operator ADR 0004 status projection implemented for
-  explicitly bound profiles; trusted decision issuance pending;
-  status-independent serving policy implemented
+  explicitly bound profiles; supervised `pulsar-model-onboarding` skill
+  implemented as control-plane orchestration; trusted decision issuance
+  pending; status-independent serving policy implemented
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -422,11 +423,17 @@ initial authority model; cryptographic signing is deferred.
 
 ### 7. The onboarding skill is orchestration, not authority
 
-The future supervised end-to-end skill is named
-`pulsar-model-onboarding`. It should use available subsystems for acquisition,
+The supervised end-to-end skill is named
+`pulsar-model-onboarding`. It uses available subsystems for exact-home reuse,
 distribution across serving ranks, verification, launch, testing, evidence
 capture, and cleanup. Experimental subsystems are allowed when explicitly
-selected and their contracts fit the task.
+selected and their contracts fit the task. Missing unsealed acquisition stops
+until a subsystem supplies private same-filesystem staging, a repeated all-rank
+absence check, independent completeness verification, and atomic publication;
+direct durable-cache download is not an accepted substitute.
+An existing home is reusable only after full verification against a reviewed
+expected manifest that is independent of the observed tree. A shallow catalog
+label and a manifest generated from that same tree are insufficient.
 
 The skill is recipe-bound and may not silently change transport, storage
 policy, runtime source, geometry, or validation criteria. It asks for operator
@@ -434,6 +441,13 @@ confirmation before large acquisition, launch, and destructive cleanup. It has
 no authority to issue seals, assign `Validated`, or promote a serving path;
 those remain reviewed repository decisions. Reusable product behavior belongs
 in Pulsar subsystems, while the skill supervises and composes those subsystems.
+Current automated measurement mapping covers only strict same-boot and
+absolute throughput/latency. The default unsealed replicated path may be
+served with its honest label but is not an exact ADR 0004 qualification
+attempt. The skill-local journal is isolated under
+`experiments/model-onboarding/workflows/`; it is orchestration recovery state,
+not a sixth ADR object. Deterministic skill and journal tests make no physical
+DGX claim and create no release decision.
 
 ### 8. `library-hot` subsystem GA is a separate decision
 
@@ -634,8 +648,18 @@ Implement this decision in focused, reviewable units:
    `Untested`. Read-only trusted persistence and verification supply the
    projected result. Local evidence-capture candidate persistence remains
    separate and does not project status or launch a release;
-4. create the supervised `pulsar-model-onboarding` skill around the supported
-   subsystem CLIs and confirmation boundaries; and
+4. **Implemented:** create the supervised `pulsar-model-onboarding` skill
+   around the supported subsystem CLIs and confirmation boundaries. The
+   skill is control-plane orchestration only: it never issues a seal or
+   validation decision, assigns status, binds a profile to a release,
+   writes the trusted registry, promotes a path, or claims physical
+   behavior. Current automated mapping covers only strict same-boot and
+   absolute throughput/latency. The default unsealed replicated path is
+   not an exact ADR 0004 qualification attempt. Missing unsealed acquisition
+   stops until a safe staged and independently verified subsystem exists.
+   The skill-local journal is isolated under the `workflows/` namespace and
+   is recovery state, not evidence. Deterministic skill/journal tests make no
+   physical DGX claim; and
 5. complete and publish the separate bounded `library-hot` GA closure evidence.
 
 Each unit must update the canonical design, current implementation spec,

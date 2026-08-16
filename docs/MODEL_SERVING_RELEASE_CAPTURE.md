@@ -86,9 +86,11 @@ attempt IDs/timestamps for `compare-captures` and `benchmark-serving`, typed
 command environment/site options, and one publishable `application/json`
 evidence source under `results/` for each operation. Its source paths must name
 the same files supplied on the measurement flags. This low-level context is
-expected to be assembled by the future supervised onboarding workflow; the
+assembled by the supervised `pulsar-model-onboarding` skill; the
 composer validates it but does not discover topology, launch a server, infer
-attempt timestamps, or create missing validator output.
+attempt timestamps, or create missing validator output. The skill records
+separate wall-clock UTC start/end timestamps for compare and benchmark and
+must not invent a missing validator measurement.
 
 If `validate/run-gates.sh` receives SIGINT or SIGTERM, it stops before starting
 another gate and exits with the signal-compatible status. Any validator output
@@ -310,3 +312,6 @@ Focused contracts live in
 `scripts/testlib/test_model_serving_release_attempt.py`; all are wired into
 `scripts/selftest.sh`. They prove control-plane measurement, composition,
 capture, persistence, and verification behavior only.
+The supervised `pulsar-model-onboarding` skill composes these commands and
+has its own control-plane tests; those tests make no physical DGX claim and
+create no release decision.

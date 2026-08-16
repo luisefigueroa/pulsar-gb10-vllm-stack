@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pulsar Model Onboarding"
+  short_description: "Supervise exact model onboarding and evidence"
+  default_prompt: "Use $pulsar-model-onboarding to onboard a brand-new, not-yet-sealed model through a separately reviewed draft profile, exact-home assessment or safe reuse, qualifying distribution, verification, release planning, launch, supported measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup."

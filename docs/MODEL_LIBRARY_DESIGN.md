@@ -37,7 +37,7 @@
 | Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
-| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; and maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates |
+| Experimental today | `scripts/model-library.sh` catalog/cold/prepare/hot/pin workflows; `--weight-mode library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; and the supervised `pulsar-model-onboarding` orchestration skill |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -156,7 +156,22 @@ status, decision, or serving permission, and ordinary `validate/run-gates.sh`
 remains a human path that does not require a release plan.
 No profile currently binds a release and the tracked store is empty, so the
 current projection is neutral. Review-metadata shape checks cannot prove that
-repository review or physical qualification occurred. Trusted decision
+repository review or physical qualification occurred. The supervised
+`pulsar-model-onboarding` skill is implemented as control-plane orchestration
+around those CLIs. It collaborates at material decisions and never issues a
+seal or validation decision, assigns status, binds a profile, writes the
+trusted registry, promotes a path, or claims physical behavior. Current
+automated mapping covers only strict same-boot and absolute
+throughput/latency. The default unsealed replicated path is not an exact
+ADR 0004 qualification attempt. The skill can reuse one complete exact eligible
+home only after full verification against a reviewed expected manifest
+independent of the observed tree; a shallow catalog label and self-observed
+manifest are insufficient. It stops when no such home exists because no
+current unsealed subsystem supplies private staging, independent completeness
+verification, and atomic publication for that case. Its journal lives under
+`experiments/model-onboarding/workflows/` and is recovery state, not evidence.
+Deterministic skill and journal tests make no physical DGX claim and create no
+release decision. Trusted decision
 issuance remains pending. Existing schema-1 bundles and `STATUS=tested*`
 labels remain separate legacy contracts and retain recommendation order; no
 current profile is automatically `Validated`. Serving permission is
@@ -1075,7 +1090,9 @@ affected Model Serving Release and its frozen Validation Contract.
   and verification of those objects is implemented under
   `models/model-serving-releases/`; local evidence-capture candidate
   persistence is implemented and unreviewed; advisory catalog/operator status
-  projection is implemented for explicitly bound profiles; current schema-1
+  projection is implemented for explicitly bound profiles; the supervised
+  `pulsar-model-onboarding` skill is implemented as non-authorizing
+  control-plane orchestration; current schema-1
   bundles and `STATUS=tested*` remain legacy implementation contracts
 - Initial reviewed two-rank `library-hot` GA closure in section 7.1; remote
   one-rank placement remains outside the initial GA scope
@@ -1157,3 +1174,4 @@ affected Model Serving Release and its frozen Validation Contract.
 | 2026-08-15 | Implemented the first reusable measurement and attempt-composition foundation for a future `pulsar-model-onboarding` skill: `validate/compare_captures.py` and `validate/bench_serve.py` can emit closed versioned measurement documents; `validate/run-gates.sh` can optionally preserve them without requiring a release plan; and `scripts/model-serving-release-attempt.sh` composes those measurements into existing ADR 0004 attempt-only specs. Mapping is limited to strict same-boot, absolute throughput, and absolute latency. Missing, corrupt, interrupted, short-sample, or protocol-mismatched work stays incomplete/inconclusive. Capture still derives program versions and evidence digests. No status, decision, trusted publication, physical claim, or serving gate was added. |
 | 2026-08-15 | Hardened that foundation fail-closed: invocation plans are closed and type-checked before argv emission; run-gates refuses a failed or empty bench-argv instead of keeping the default sweep; compose requires the measurement path and publishable evidence path to name the same stably read file, capture-validates both specs, then publishes one exclusive two-file directory. Writes use descriptor-rooted no-follow parents. Compare/bench persist incomplete `--result-json` on ordinary failure; missing validator output is refused rather than invented. The attempt spec still has no precomputed digest, so later capture must re-read the file. Protected locators remain out of this slice. Control-plane tests only. |
 | 2026-08-15 | Corrected the unmerged measurement foundation after review: benchmark request count must be at least the largest declared concurrency at the CLI, measurement, and invocation-plan boundaries; unreadable measurement evidence fails through the sanitized error path without publishing an attempt; and SIGINT/SIGTERM stop `run-gates` before any later gate while preserving already-written partial output. Control-plane tests only; no physical or status claim changed. |
+| 2026-08-15 | Implemented ADR 0004 stage 4 as the repository-local `pulsar-model-onboarding` skill. It supervises a brand-new unsealed model through a separately reviewed draft profile, exact-home assessment or safe reuse, explicit qualifying distribution, verification, unreviewed release/contract planning, launch, sequential supported measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup. It permits reuse only after full verification against a reviewed expected manifest independent of the observed tree; a shallow catalog label and self-observed manifest are insufficient. It stops when no such home exists because the current sealed-only acquisition service is the only path with private staging, independent completeness verification, and atomic publication; a direct durable-cache download is forbidden. It collaborates at material decisions and has no seal, status, binding, registry, or promotion authority. Current automated mapping covers only strict same-boot and absolute throughput/latency. The default unsealed replicated path is not an exact ADR 0004 qualification attempt. The skill-local journal is isolated under `experiments/model-onboarding/workflows/`, is recovery state rather than evidence, and cannot collide with default `<profile>/<release-id>` plan output. Deterministic skill and journal tests make no physical DGX claim and create no release decision. |

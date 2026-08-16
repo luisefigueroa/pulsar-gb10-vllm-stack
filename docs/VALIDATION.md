@@ -43,7 +43,15 @@ documents are not a ledger pass and do not issue status. Advisory
 catalog/operator projection is implemented for profiles
 explicitly bound by `MODEL_SERVING_RELEASE_ID`; no binding and no reviewed
 decision are neutral, not inferred as `Untested`. Current profiles are unbound
-and the tracked registry is empty. Trusted decision issuance remains pending.
+and the tracked registry is empty. The supervised `pulsar-model-onboarding`
+skill is implemented as control-plane orchestration only; it does not issue
+status or prove physical behavior. Deterministic skill and journal tests make
+no physical DGX claim and create no release decision. It can reuse one complete
+exact eligible home only after full verification against a reviewed expected
+manifest independent of the observed tree; catalog state and a self-observed
+manifest alone are insufficient. Missing unsealed acquisition is explicitly
+stopped. Its journal uses a dedicated workflow namespace. Trusted decision
+issuance remains pending.
 Projection is deterministic control-plane behavior only and serving permission
 is status-independent. Strict same-boot exactness
 remains mandatory for a future trusted `Validated` decision, and FP-equivalent
@@ -104,6 +112,7 @@ their current scope and interpretation.
 |---|---|---|
 | Model Serving Release and legacy profile status inform operators but do not authorize serving | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-status-gate.sh`, the model catalog scope checks, `scripts/selftest-wizard-switch.sh`, `scripts/selftest-wizard-model-library.sh`, and model-library identity tests prove that all status labels remain available, visible, and launchable with respect to status; a profile labeled `Tested—criteria not met` is exercised through the guided replicated path. Legacy `--force` and `--allow-unvalidated` status overrides are compatibility no-ops. Exact identity mismatches and concrete recipe, runtime, topology, capacity, security, ownership, and lifecycle failures still fail closed in their owning paths. These deterministic tests do not launch a model, prove physical DGX behavior, change any release status, or add model-qualification evidence. |
 | Source-neutral unreviewed release planning | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/testlib/test_model_serving_release.py` and `scripts/testlib/test_model_serving_release_plan.py` prove deterministic complete-manifest identity, profile/runtime/geometry cross-checks, unreviewed output, and trusted-directory refusal. The planner does not acquire or inspect source bytes, capture results, issue a decision, or prove physical behavior. |
+| Supervised `pulsar-model-onboarding` skill | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-model-onboarding-skill.sh` checks that the documented skill procedure requires the draft-profile PR stop/resume boundary, refuses direct durable-cache acquisition for a missing unsealed home, permits reuse only after full verification against a reviewed expected manifest independent of the observed tree, requires exact qualifying paths, explicit no-fallback distribution, separate confirmations, contract-driven sequential measurements, same-boot reobservation, non-authority/status behavior, and ownership-safe cleanup. `scripts/testlib/test_onboarding_journal.py` exercises journal integrity, privacy contracts, and separation from default release-plan output. These deterministic tests make no physical DGX claim and create no release decision. |
 
 ## Current ship set (read this first)
 

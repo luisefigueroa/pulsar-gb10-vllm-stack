@@ -77,6 +77,10 @@ run "validator measurement contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_validator_measurement.py"
 run "Model Serving Release attempt composition" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_attempt.py"
+run "Model Serving Release onboarding skill" \
+  "$REPO_DIR/scripts/selftest-model-onboarding-skill.sh"
+run "Model Serving Release onboarding journal" \
+  python3 "$REPO_DIR/scripts/testlib/test_onboarding_journal.py"
 run "model library durable-home removal contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_home_removal.py"
 run "model library durable-home acquisition contracts" \
