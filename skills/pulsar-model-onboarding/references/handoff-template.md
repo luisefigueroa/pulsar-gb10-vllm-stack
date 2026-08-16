@@ -20,6 +20,7 @@ handoff is not a validation decision and does not assign status.
 List only artifacts that actually exist. Use repository-relative paths.
 
 - Catalog/artifact:
+- Exact home: reviewed expected-manifest verification for reuse, or acquisition gap
 - Serving integration:
 - Strict same-boot compare measurement:
 - Absolute throughput/latency benchmark:

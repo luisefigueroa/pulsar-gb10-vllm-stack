@@ -31,6 +31,8 @@ Publish a ready-for-review PR and stop. Do not initialize the journal.
 - Create a new feature branch.
 - Initialize the journal bound to workflow ID, profile, public model ID,
   and the merged repository/profile base commit.
+- Keep it under `experiments/model-onboarding/workflows/<workflow-id>/`, not
+  the planner's `experiments/model-onboarding/<profile>/<release-id>/` tree.
 - Resume identity must match on every later `verify`.
 
 ## 3. Criteria input
@@ -52,19 +54,24 @@ Agree and record this complete input before testing. The Validation Contract
 is not frozen until the planner later combines it with the exact artifact
 manifest, runtime envelope, and selected access contract.
 
-## 4. Acquisition
+## 4. Exact-home assessment and safe reuse
 
 1. Resolve the selector to an exact Hugging Face commit. Do not treat
    `refs/main` as identity.
-2. Refresh the catalog and observe all confirmed serving ranks before adding
-   bytes. Reuse one complete exact home only after an explicit choice. Refuse
+2. Refresh the catalog and observe all confirmed serving ranks before reuse.
+   Do not trust the catalog's shallow `complete` label alone. Reuse one exact
+   home only after full verification against a reviewed expected manifest that
+   is independent of the observed tree, plus an explicit choice. Refuse a
+   missing reviewed expected manifest, failed or incomplete verification,
    partial, wrong-revision, duplicate, or out-of-geometry durable homes.
-3. Obtain a separate large-acquisition confirmation if a download is needed.
-4. Discover `hf`, `huggingface-cli`, or `$HOME/.hf-cli/venv/bin/hf`.
-5. Download `--revision <commit>` into the chosen serving-rank durable HF
-   hub cache. Do not create a controller extra copy.
-6. If the selected target is remote, or `home add` cannot be used because
-   the profile has no reviewed seal, stop with the implementation gap.
+3. If no independently verified reusable complete exact home exists, stop with
+   the implementation gap. Current `home add` requires a reviewed expected seal.
+4. Do not download directly into the durable cache. A safe future unsealed
+   acquisition path must use private same-filesystem staging, repeat the
+   all-rank absence check, verify completeness independently, and publish
+   atomically. It also requires a separate large-acquisition confirmation.
+5. Do not treat a catalog `complete` label or the later self-observed manifest
+   as independent acquisition completeness proof.
 
 ## 5. Catalog and manifest
 
@@ -76,7 +83,8 @@ scripts/model-release.sh manifest <profile> \
 ```
 
 Refuse another revision, ambiguity, a partial tree, or a durable
-duplicate. Do not mutate `refs/main`.
+duplicate. Do not mutate `refs/main`. The manifest records exact identity of
+the reused tree; it does not prove that an earlier download was complete.
 
 ## 6. Distribution choice
 

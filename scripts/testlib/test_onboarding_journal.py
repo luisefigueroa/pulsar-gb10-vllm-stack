@@ -51,7 +51,11 @@ class OnboardingJournalTests(unittest.TestCase):
         self.repo = self.tmpdir / "repo"
         self.repo.mkdir()
         self.journal_dir = (
-            self.repo / "experiments" / "model-onboarding" / "example-new-model"
+            self.repo
+            / "experiments"
+            / "model-onboarding"
+            / "workflows"
+            / "example-new-model"
         )
         self.addCleanup(self._cleanup)
 
@@ -303,6 +307,79 @@ class OnboardingJournalTests(unittest.TestCase):
 
     def test_unsafe_paths_and_symlinks(self) -> None:
         self.initialize()
+        planner_default = (
+            self.repo
+            / "experiments"
+            / "model-onboarding"
+            / IDENTITY["profile"]
+            / DIGEST
+        )
+        planner_default.mkdir(parents=True)
+        code, _out, err = self.run_main(
+            ["verify", "--json", "--journal-dir", str(self.journal_dir)]
+        )
+        self.assertEqual(code, 0, err)
+
+        colliding_legacy_dir = (
+            self.repo
+            / "experiments"
+            / "model-onboarding"
+            / "legacy-collision"
+        )
+        code, _out, err = self.run_main(
+            [
+                "initialize",
+                "--json",
+                "--repo-root",
+                str(self.repo),
+                "--journal-dir",
+                str(colliding_legacy_dir),
+                "--workflow-id",
+                "legacy-collision",
+                "--profile",
+                "legacy-collision",
+                "--public-model-id",
+                IDENTITY["public_model_id"],
+                "--repository-base-commit",
+                COMMIT,
+                "--profile-base-commit",
+                COMMIT,
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("experiments/model-onboarding/workflows/", err)
+
+        nested_workflow_dir = (
+            self.repo
+            / "experiments"
+            / "model-onboarding"
+            / "workflows"
+            / "profile"
+            / DIGEST
+        )
+        code, _out, err = self.run_main(
+            [
+                "initialize",
+                "--json",
+                "--repo-root",
+                str(self.repo),
+                "--journal-dir",
+                str(nested_workflow_dir),
+                "--workflow-id",
+                "nested-collision",
+                "--profile",
+                IDENTITY["profile"],
+                "--public-model-id",
+                IDENTITY["public_model_id"],
+                "--repository-base-commit",
+                COMMIT,
+                "--profile-base-commit",
+                COMMIT,
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("directly under", err)
+
         models_dir = self.repo / "models" / "shadow"
         code, _out, err = self.run_main(
             [

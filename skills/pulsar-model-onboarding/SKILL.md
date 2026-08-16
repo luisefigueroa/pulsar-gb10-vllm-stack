@@ -1,6 +1,6 @@
 ---
 name: pulsar-model-onboarding
-description: Supervise onboarding of a brand-new, not-yet-sealed Pulsar model through a separately reviewed draft profile, exact acquisition, explicit qualifying distribution, verification, Model Serving Release planning, launch, currently supported physical measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup. Use for new-model onboarding, qualification planning, Model Serving Release evidence collection, resuming an interrupted onboarding, or when the user runs /pulsar-model-onboarding.
+description: Supervise onboarding of a brand-new, not-yet-sealed Pulsar model through a separately reviewed draft profile, exact artifact acquisition assessment or safe reuse, explicit qualifying distribution, verification, Model Serving Release planning, launch, currently supported physical measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup. Use for new-model onboarding, qualification planning, Model Serving Release evidence collection, resuming an interrupted onboarding, or when the user runs /pulsar-model-onboarding.
 ---
 
 # Pulsar Model Onboarding
@@ -87,7 +87,9 @@ python3 skills/pulsar-model-onboarding/scripts/onboarding_journal.py initialize 
   --profile-base-commit <merged-main-sha>
 ```
 
-Default state is gitignored `experiments/model-onboarding/<workflow-id>/`.
+Default state is gitignored
+`experiments/model-onboarding/workflows/<workflow-id>/`. This namespace is
+separate from the planner's `<profile>/<release-id>/` default.
 Bind later exact revision, release ID, and contract ID as journal `ids`
 when they exist. On resume, `verify` the journal against the base identity and
 each ID already known, for example `--id exact_revision=<commit> --id
@@ -106,29 +108,28 @@ latency**. Other required criteria remain unevaluated/incomplete until
 separately captured. Relative performance is **N/A** unless a valid reviewed
 comparable predecessor is explicitly supplied.
 
-### 4. Exact acquisition
+### 4. Exact-home assessment and safe reuse
 
 Resolve the upstream selector to an immutable exact Hugging Face commit.
 Refresh the catalog first and observe every confirmed serving rank. If that
-exact revision already has one complete durable home on an eligible serving
-rank, explicitly choose whether to reuse it and skip the download. Refuse a
-partial tree, another revision presented as the target, a duplicate durable
-home, or a home outside the supported serving geometry.
+exact revision already has one durable home on an eligible serving rank, do not
+trust the catalog's shallow `complete` label by itself. Reuse requires full
+verification against a reviewed expected manifest that is independent of the
+observed tree, followed by an explicit operator choice. Refuse a missing
+reviewed expected manifest, failed or incomplete verification, a partial tree,
+another revision presented as the target, a duplicate durable home, or a home
+outside the supported serving geometry.
 
-After a separate **large acquisition** confirmation, download that commit
-into the **chosen serving-rank** durable HF hub cache layout
-(`hub/models--namespace--name/snapshots/<commit>`), not an extra controller
-copy and not the wrong cache nesting.
-
-Use existing Hugging Face CLI discovery/auth conventions (`hf`,
-`huggingface-cli`, or `$HOME/.hf-cli/venv/bin/hf`). Do not add a general
-product acquisition service.
-
-`scripts/model-library.sh home add` requires a reviewed expected seal. It
-cannot acquire a brand-new unsealed model. If the selected target is a
-remote serving rank, or another case where safe exact acquisition cannot be
-composed from current CLIs, **stop with the implementation gap**. Do not
-silently select another node, transport, storage policy, or copy.
+If no independently verified reusable complete exact home exists, **stop with
+the implementation gap**. `scripts/model-library.sh home add` requires a
+reviewed expected seal, and no current subsystem safely acquires a brand-new
+unsealed model through private same-filesystem staging, a repeated all-rank
+absence check, independent completeness verification, and atomic durable-home
+publication. Do not run a Hugging Face download directly into the durable
+cache, and do not treat a catalog label or self-observed manifest as independent
+proof that an interrupted download is complete. Do not silently select another
+node, transport, storage policy, or copy. A future supported large-acquisition
+path still requires its own confirmation.
 
 ### 5. Catalog, resolve, manifest
 
@@ -144,7 +145,8 @@ scripts/model-release.sh manifest <profile> \
 ```
 
 Use `manifest` only to build and full-verify the complete unreviewed
-manifest consumed by the ADR planner.
+manifest consumed by the ADR planner. It records the reused tree's exact
+identity; it does not retroactively prove acquisition completeness.
 
 ### 6. Select qualifying runtime access
 

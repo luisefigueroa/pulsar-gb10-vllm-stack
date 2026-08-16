@@ -145,8 +145,15 @@ language for new features without an explicit decision.
   skill-local append-only workflow journal (orchestration recovery state).
   It is not a sixth ADR object, not evidence, and not a status authority.
   Default local journal state belongs under gitignored
-  `experiments/model-onboarding/`. Deterministic skill and journal tests make
-  no physical DGX claim and create no release decision.
+  `experiments/model-onboarding/workflows/`, separate from release-plan
+  candidate directories. The current skill can reuse one complete exact
+  eligible home only after full verification against a reviewed expected
+  manifest independent of the observed tree; the shallow catalog label and a
+  self-observed manifest are not that proof. Missing unsealed acquisition
+  remains an explicit implementation gap: the skill must not download
+  directly into durable storage.
+  Deterministic skill and journal tests make no physical DGX claim and create
+  no release decision.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -426,7 +433,10 @@ this work; the skill is procedural and does not outrank these sources.
   trusted decision issuance/publication remains pending. The supervised
   `pulsar-model-onboarding` skill is implemented as control-plane
   orchestration around those CLIs; it does not issue a decision, assign
-  status, or bind a profile. Deterministic skill and journal tests make no
+  status, or bind a profile. It can reuse one complete exact eligible home only
+  after full verification against a reviewed expected manifest independent of
+  the observed tree; safe staged acquisition for a missing unsealed home
+  remains an implementation gap. Deterministic skill and journal tests make no
   physical DGX claim. No current profile is
   bound and the tracked store is empty, so current projections are neutral.
   Expected-seal identity and validation status are independent contracts: a

@@ -28,7 +28,7 @@ JOURNAL_KIND = "pulsar-model-onboarding-journal"
 EVENT_KIND = "pulsar-model-onboarding-journal-event"
 HEADER_NAME = "header.json"
 EVENTS_NAME = "events.jsonl"
-DEFAULT_RELATIVE_ROOT = Path("experiments") / "model-onboarding"
+DEFAULT_RELATIVE_ROOT = Path("experiments") / "model-onboarding" / "workflows"
 GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOW_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
@@ -418,8 +418,15 @@ def validate_journal_location(path: Path, *, repo_root: Path) -> Path:
     if any(relative == forbidden or forbidden in relative.parents
            for forbidden in FORBIDDEN_RELATIVE_ROOTS):
         fail("journal directory is not under a permitted local-state boundary")
-    if relative.parts[:2] != DEFAULT_RELATIVE_ROOT.parts:
-        fail("in-repository journals must stay under experiments/model-onboarding/")
+    prefix_length = len(DEFAULT_RELATIVE_ROOT.parts)
+    if (
+        relative.parts[:prefix_length] != DEFAULT_RELATIVE_ROOT.parts
+        or len(relative.parts) != prefix_length + 1
+    ):
+        fail(
+            "in-repository journals must stay directly under "
+            "experiments/model-onboarding/workflows/"
+        )
     return resolved
 
 

@@ -80,10 +80,27 @@ grep -Fq 'local-verified-readonly' "$skill" \
   || fail "skill must bind library-hot to local-verified-readonly"
 grep -Fq 'live-remote-readonly' "$skill" \
   || fail "skill must bind live fabric to live-remote-readonly"
-grep -Fq 'implementation gap' "$skill" \
+grep -Fq 'If no independently verified reusable complete exact home exists' "$skill" \
   || fail "skill must stop on an uncomposable acquisition target"
 grep -Fq 'observe every confirmed serving rank' "$skill" \
   || fail "skill must check for durable homes before acquisition"
+grep -Fq "catalog's shallow \`complete\` label" "$skill" \
+  || fail "skill must not equate the shallow catalog label with completeness"
+grep -Fq 'independent' "$skill" \
+  || fail "skill must require independent completeness evidence before reuse"
+grep -Fq 'reviewed expected manifest that is independent of the' "$skill" \
+  || fail "skill must name the reviewed independent reuse evidence"
+grep -Fq 'no current subsystem safely acquires' "$skill" \
+  || fail "skill must expose the missing unsealed acquisition subsystem"
+grep -Fq 'Do not run a' "$skill" \
+  || fail "skill must forbid direct durable-cache acquisition"
+grep -Fq 'Hugging Face download directly into the durable' "$skill" \
+  || fail "skill must name the unsafe direct-download path"
+grep -Fq 'catalog label or self-observed manifest as independent' "$skill" \
+  || fail "skill must not use catalog/observed state as completeness authority"
+if grep -Fq 'download that commit' "$skill"; then
+  fail "skill must not instruct direct unsealed acquisition"
+fi
 grep -Fq 'scripts/model-serving-release-plan.sh build' "$skill" \
   || fail "skill must build the release plan after exact inputs exist"
 grep -Fq 'scripts/model-serving-release-plan.sh verify' "$skill" \
@@ -168,8 +185,8 @@ grep -Fq 'Refuse' "$skill" \
 
 grep -Fq 'not a sixth ADR object' "$skill" \
   || fail "skill must not treat the journal as an ADR object"
-grep -Fq 'experiments/model-onboarding/' "$skill" \
-  || fail "skill must keep journal state under experiments/model-onboarding/"
+grep -Fq 'experiments/model-onboarding/workflows/' "$skill" \
+  || fail "skill must isolate journal state below the workflows namespace"
 
 grep -Fq 'STATUS="untested"' "$phases" \
   || fail "phase checklist must repeat the draft-profile STATUS contract"

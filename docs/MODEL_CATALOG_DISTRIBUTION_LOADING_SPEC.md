@@ -128,9 +128,15 @@ orchestration around those CLIs. It never issues a seal or validation
 decision, assigns status, binds a profile, writes the trusted registry,
 promotes a path, or claims physical behavior. Current automated mapping covers
 only strict same-boot and absolute throughput/latency. The default unsealed
-replicated path is not an exact ADR 0004 qualification attempt. The
-skill-local journal is recovery state, not evidence. Deterministic skill and
-journal tests make no physical DGX claim and create no release decision.
+replicated path is not an exact ADR 0004 qualification attempt. One complete
+exact eligible home may be reused only after full verification against a
+reviewed expected manifest independent of the observed tree; shallow catalog
+state and a self-observed manifest are insufficient. Missing unsealed
+acquisition stops because no current subsystem provides the required staged,
+independently verified, atomic publication path. The journal is isolated under
+`experiments/model-onboarding/workflows/` and is recovery state, not evidence.
+Deterministic skill and journal tests make no physical DGX claim and create no
+release decision.
 Trusted decision issuance remains an implementation gap.
 
 A predecessor decision that itself has supersession links must supply
@@ -1992,7 +1998,8 @@ The implementation described here is primarily defined by:
   and unreviewed;
   advisory status projection implemented for explicitly bound profiles;
   supervised `pulsar-model-onboarding` skill implemented as control-plane
-  orchestration; trusted issuance and serving migration pending;
+  orchestration with missing unsealed acquisition explicitly stopped; trusted
+  issuance and serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
   — archived exploration of transfer/materialize options;
 - [`docs/VALIDATION.md`](./VALIDATION.md) — validation ledger; and

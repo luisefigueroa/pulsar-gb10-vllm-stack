@@ -71,9 +71,14 @@ status, binds a profile, writes the trusted registry, promotes a path, or
 claims physical behavior. Current automated mapping covers only strict
 same-boot and absolute throughput/latency; the skill invokes greedy capture,
 compare, and benchmark sequentially rather than using `validate/run-gates.sh`
-as an ADR attempt wrapper. Deterministic skill and journal tests make no
-physical DGX claim and create no release decision. Trusted decision
-issuance remains pending.
+as an ADR attempt wrapper. It can reuse one complete exact eligible home only
+after full verification against a reviewed expected manifest independent of the
+observed tree; catalog state and a self-observed manifest alone are
+insufficient. Missing unsealed acquisition remains an explicit implementation
+gap, and direct durable-cache download is forbidden. Its journal is isolated
+under `experiments/model-onboarding/workflows/`. Deterministic skill and journal
+tests make no physical DGX claim and create no release decision. Trusted
+decision issuance remains pending.
 Existing bundles, seals, profiles, and historical evidence remain unchanged and
 must not be automatically relabeled `Validated`. The corrected ADR 0004
 objects remain schema version 1 because none was issued or persisted before

@@ -110,16 +110,22 @@ exactly; incomplete attempts use inconclusive observations. Structural privacy
 rejection does not replace the mandatory publication privacy audit.
 
 The supervised skill is `skills/pulsar-model-onboarding/`. It composes
-available acquisition, distribution, verification, launch, test, evidence, and
-cleanup subsystems, including explicitly selected Experimental ones. It is
+available artifact reuse, distribution, verification, launch, test, evidence,
+and cleanup subsystems, including explicitly selected Experimental ones. It is
 orchestration only: it never issues a seal or validation decision, assigns
 status, binds a profile to a release, writes the trusted registry, promotes a
 path, or claims physical behavior. Current automated mapping covers only
 strict same-boot and absolute throughput/latency. The default unsealed
 replicated path may still be served with its honest label but is not an exact
-ADR 0004 qualification attempt. The skill-local journal is recovery state, not
-evidence. Deterministic skill and journal tests make no physical DGX claim
-and create no release decision.
+ADR 0004 qualification attempt. The skill may reuse one complete exact eligible
+home only after full verification against a reviewed expected manifest
+independent of the observed tree; catalog state and a self-observed manifest
+alone are insufficient. If no such home exists, it stops because there is no
+current unsealed acquisition subsystem with private staging, independent
+completeness verification, and atomic publication. Its recovery journal lives
+under `experiments/model-onboarding/workflows/`, separate from release-plan output.
+Deterministic skill and journal tests make no physical DGX claim and create no
+release decision.
 
 **Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
 `./` with `wizard.sh` as an argument, yielding `-bash: ./: Is a directory`.
