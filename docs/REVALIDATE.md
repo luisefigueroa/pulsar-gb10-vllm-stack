@@ -582,9 +582,10 @@ also passed exact home-symlink behavior, 30-minute serving with zero request
 errors, restart, identity re-verification, owned cleanup, and one-home closeout.
 The 1.14 GiB memory-shrink warning remains recorded. See
 `results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
-This makes the reviewed two-rank subsystem GA but supplies no Model Serving
-Release qualification evidence and does not change the guided default. Remote
-one-rank and legacy-unsealed use remain experimental.
+This makes the reviewed two-rank subsystem GA and records bounded
+model-qualification evidence for the soak and stability observations. It does
+not satisfy the release-specific soak criterion, confer `Validated`, or change
+the guided default. Remote one-rank and legacy-unsealed use remain experimental.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local

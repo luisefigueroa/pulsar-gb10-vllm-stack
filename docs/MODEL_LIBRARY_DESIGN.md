@@ -1072,7 +1072,8 @@ The bounded reviewed two-rank subsystem completed its combined GA task:
 [x] Force replacement failure and restore the exact captured launch contract
 [x] Reverify the reviewed identity through preparation, serving, and rollback
 [x] Prove owned cleanup and the final one-durable-home/no-unpinned-hot state
-[x] Publish sanitized evidence scoped to catalog/artifact and serving integration
+[x] Publish sanitized evidence scoped to catalog/artifact, serving integration,
+    and model qualification for the bounded soak and stability observations
 ```
 
 The physical run used the exact reviewed two-rank DeepSeek profile. Preparation

@@ -5,7 +5,8 @@
   "status": "pass",
   "qualification_scopes": [
     "catalog-artifact",
-    "serving-integration"
+    "serving-integration",
+    "model-qualification"
   ],
   "subsystem_decision": {
     "maturity": "ga",

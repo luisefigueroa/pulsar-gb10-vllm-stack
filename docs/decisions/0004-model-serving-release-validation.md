@@ -468,7 +468,8 @@ completed on 2026-08-16:
    and final durable-home verification;
 5. owned cleanup removed the target service and unpinned hot views while
    preserving one durable home; and
-6. sanitized catalog/artifact and serving-integration evidence was published at
+6. sanitized catalog/artifact, serving-integration, and model-qualification
+   evidence for the bounded soak and stability observations was published at
    `results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
 
 The reviewed two-rank subsystem is therefore GA. It remains explicit and
