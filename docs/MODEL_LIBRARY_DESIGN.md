@@ -38,7 +38,7 @@
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
 | GA today | Reviewed two-rank `library-hot`: one exact durable home, exact home symlink, sealed-hot copy on the non-home rank, reviewed identity, fixed eight-stream SSH-over-RoCE preparation, exact restart, persisted replacement recovery, and owned cleanup. It remains explicit and non-default. |
-| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; and the supervised `pulsar-model-onboarding` orchestration skill |
+| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; the supervised `pulsar-model-onboarding` orchestration skill; and internal source-attested Hugging Face v1 acquisition planning contracts without a public unsealed CLI |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -167,9 +167,15 @@ throughput/latency. The default unsealed replicated path is not an exact
 ADR 0004 qualification attempt. The skill can reuse one complete exact eligible
 home only after full verification against a reviewed expected manifest
 independent of the observed tree; a shallow catalog label and self-observed
-manifest are insufficient. It stops when no such home exists because no
-current unsealed subsystem supplies private staging, independent completeness
-verification, and atomic publication for that case. Its journal lives under
+manifest are insufficient. Accepted policy now allows a source-attested home
+created by the future acquisition workflow to be resumed or reused only after
+a complete offline rehash against its valid immutable receipt for the same
+public source identity. Unknown and pre-existing homes still need that
+reviewed expected manifest. Internal Hugging Face v1 source, identity, and
+approval contracts exist for planning that path. Public source-attested
+`home add` execution, receipts, `home verify`, and skill composition are not
+implemented, so the skill still stops when no independently verified reusable
+home exists. Its journal lives under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision. Maintainer-only issuance
@@ -471,6 +477,17 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   repeats the all-rank no-home check, performs full SHA-256 verification, and
   atomically renames the repository into its durable HF home. Catalog refresh,
   hot preparation, launch, and fallback are separate actions.
+  Accepted policy also allows a source-attested exact upstream tree to be
+  adopted by that same staging, complete inventory/set check, complete
+  SHA-256, all-rank absence recheck, and atomic publication sequence without
+  creating reviewed identity, a seal, status, serving permission, or a Model
+  Serving Release decision. Internal Hugging Face v1 source, identity
+  precedence, and privacy-safe approval contracts exist for that planning
+  path. The public command still has no unsealed `--revision` or `--plan`
+  mode, writes no receipt, and does not change prepare. Future onboarding
+  must refresh the catalog and verify or prepare the exact
+  `model_id@commit`; it must not rely on mutable `refs/main` or
+  profile-only resolution.
 - Catalog entries are **labeled**:
 
 | Label | Meaning |
@@ -1200,3 +1217,4 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-15 | Implemented ADR 0004 stage 4 as the repository-local `pulsar-model-onboarding` skill. It supervises a brand-new unsealed model through a separately reviewed draft profile, exact-home assessment or safe reuse, explicit qualifying distribution, verification, unreviewed release/contract planning, launch, sequential supported measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup. It permits reuse only after full verification against a reviewed expected manifest independent of the observed tree; a shallow catalog label and self-observed manifest are insufficient. It stops when no such home exists because the current sealed-only acquisition service is the only path with private staging, independent completeness verification, and atomic publication; a direct durable-cache download is forbidden. It collaborates at material decisions and has no seal, status, binding, registry, or promotion authority. Current automated mapping covers only strict same-boot and absolute throughput/latency. The default unsealed replicated path is not an exact ADR 0004 qualification attempt. The skill-local journal is isolated under `experiments/model-onboarding/workflows/`, is recovery state rather than evidence, and cannot collide with default `<profile>/<release-id>` plan output. Deterministic skill and journal tests make no physical DGX claim and create no release decision. |
 | 2026-08-16 | **Bounded `library-hot` GA completed:** the reviewed two-rank path now requires an exact home symlink with no copy fallback and physically passed 30-minute serving, exact restart, forced replacement failure, persisted new-process recovery, reviewed-identity re-verification, owned cleanup, and one-home closeout. The corrected soak completed 587 requests with zero errors and retained its 1.14 GiB memory-shrink warning. Remote one-rank and legacy-unsealed use remain experimental; replicated remains the guided default; no Model Serving Release status changed. |
 | 2026-08-16 | Implemented maintainer-only ADR 0004 issuance staging: `plan` previews and `stage` writes an untrusted proposal from one independently verified capture candidate plus a closed review declaration. Pure schema modules derive status. Writes are content-addressed and idempotent; an interrupted stage may be retried without deleting unrelated files; the normal registry verifier does not accept an incomplete proposal. The command does not edit a profile, bind `MODEL_SERVING_RELEASE_ID`, or add a production registry object. Local success is not review or physical qualification. |
+| 2026-08-17 | Accepted source-attested acquisition policy and added internal Hugging Face v1 planning contracts: a versioned source/inventory schema, identity precedence for a reviewed Model Serving Release binding then a legacy expected seal then unbound source-attested identity, and a privacy-safe approval identifier that binds source, commit, inventory, rank, geometry, capacity, policy, and internal topology generation without emitting site identity. Sealed `home add` schemas and behavior are unchanged. Public unsealed execution, receipts, `home verify`, prepare-time exact-revision enforcement, skill composition, and physical Hub/DGX evidence remain later work. |

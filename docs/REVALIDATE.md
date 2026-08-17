@@ -76,8 +76,9 @@ compare, and benchmark sequentially rather than using `validate/run-gates.sh`
 as an ADR attempt wrapper. It can reuse one complete exact eligible home only
 after full verification against a reviewed expected manifest independent of the
 observed tree; catalog state and a self-observed manifest alone are
-insufficient. Missing unsealed acquisition remains an explicit implementation
-gap, and direct durable-cache download is forbidden. Its journal is isolated
+insufficient. Internal source-attested planning contracts exist; public
+unsealed acquisition, receipts, and skill composition remain an explicit
+implementation gap, and direct durable-cache download is forbidden. Its journal is isolated
 under `experiments/model-onboarding/workflows/`. Deterministic skill and journal
 tests make no physical DGX claim and create no release decision. Maintainer-only
 issuance staging can propose exact registry objects from a verified capture

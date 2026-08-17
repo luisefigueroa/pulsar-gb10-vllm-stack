@@ -19,7 +19,7 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-16 |
+| Snapshot date | 2026-08-17 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -35,7 +35,7 @@ externally.
 
 ## 1. Authority and review scope
 
-This snapshot supports review of twelve implementation areas:
+This snapshot supports review of thirteen implementation areas:
 
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
@@ -50,8 +50,10 @@ This snapshot supports review of twelve implementation areas:
 9. local source-neutral ADR 0004 release-plan candidate persistence;
 10. local unreviewed ADR 0004 evidence-capture candidate persistence;
 11. advisory catalog/operator status projection for explicitly bound releases;
+12. the supervised `pulsar-model-onboarding` control-plane orchestration skill;
     and
-12. the supervised `pulsar-model-onboarding` control-plane orchestration skill.
+13. internal source-attested Hugging Face v1 acquisition planning contracts
+    without a public unsealed CLI, receipts, or skill composition.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -131,9 +133,13 @@ only strict same-boot and absolute throughput/latency. The default unsealed
 replicated path is not an exact ADR 0004 qualification attempt. One complete
 exact eligible home may be reused only after full verification against a
 reviewed expected manifest independent of the observed tree; shallow catalog
-state and a self-observed manifest are insufficient. Missing unsealed
-acquisition stops because no current subsystem provides the required staged,
-independently verified, atomic publication path. The journal is isolated under
+state and a self-observed manifest are insufficient. A source-attested home
+created by the future acquisition workflow may be reused only after a
+complete offline rehash against its valid immutable receipt for the same
+public source identity. Internal Hugging Face v1 source, identity-precedence,
+and privacy-safe approval contracts exist for planning that path. Public
+source-attested execution, receipts, `home verify`, and skill composition are
+not implemented, so missing unsealed acquisition still stops. The journal is isolated under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision.
@@ -1641,7 +1647,10 @@ stale and suppresses cached node mapping until an explicit catalog refresh.
 
 The current system also provides a distinct durable-home acquisition service:
 `scripts/model-library.sh home add <sealed-profile>`. It accepts no unvalidated
-bypass. The Bash boundary observes the Hugging Face cache environment and CLI
+bypass and still has no public unsealed `--revision` or `--plan` mode.
+Internal Hugging Face v1 source, identity, and approval contracts exist for
+a later source-attested path; they do not change this sealed command.
+The Bash boundary observes the Hugging Face cache environment and CLI
 availability on every confirmed rank; Python validates the reviewed identity,
 capacity, exact rank/node mapping, one-home state, and placement decision. For
 a one-node profile, every confirmed rank is a candidate serving placement; the
@@ -2007,7 +2016,9 @@ The implementation described here is primarily defined by:
   and unreviewed;
   advisory status projection implemented for explicitly bound profiles;
   supervised `pulsar-model-onboarding` skill implemented as control-plane
-  orchestration with missing unsealed acquisition explicitly stopped;
+  orchestration with public source-attested acquisition still unavailable;
+  internal Hugging Face v1 source/identity/approval planning contracts
+  implemented without a public unsealed CLI;
   maintainer issuance staging implemented as an untrusted local proposal;
   serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)

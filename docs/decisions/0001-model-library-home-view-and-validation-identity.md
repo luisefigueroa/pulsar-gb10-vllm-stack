@@ -107,3 +107,21 @@ issuance staging can propose registry objects, but a local command is not
 trusted until repository review and merge. Serving permission is status-independent; these objects still govern
 identity verification and evidence claims. Existing schema-1 bundles and seals
 remain immutable legacy artifacts.
+
+## Interpretation note — 2026-08-17
+
+Source-attested acquisition may atomically adopt a verified exact upstream
+tree into the managed durable root. The accepted sequence is private
+same-filesystem staging, a complete upstream inventory and set check, complete
+SHA-256 of every file, an all-rank absence recheck, and atomic publication.
+That adoption creates observed and source identity only. It does not create
+the lab trust root, a reviewed seal, provenance/security approval, validation
+status, serving permission, or a Model Serving Release decision.
+
+This interpretation does not weaken decision 4. Locally observed or
+source-attested content may match a later reviewed identity, but it cannot
+replace or create that identity. A catalog label or a manifest generated from
+the current tree is still not a lab trust root.
+
+Public source-attested execution, receipts, and skill composition remain a
+later implementation unit. Sealed `home add` behavior is unchanged.

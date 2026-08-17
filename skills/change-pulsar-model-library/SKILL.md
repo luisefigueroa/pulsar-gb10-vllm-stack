@@ -126,12 +126,23 @@ Map the proposed work across these independent axes before editing:
 
 - durable ownership and placement;
 - origin, transfer, runtime source, and retention;
-- expected identity, observed identity, validation bundle, and witness state;
+- expected identity, observed identity, source-attested identity, validation
+  bundle, and witness state;
 - control, inference, and weight-transfer planes;
 - rank geometry, topology identity, and trust boundaries;
 - preparation, launch, pin, purge, restart, home loss, and rollback;
 - human CLI behavior and machine-readable schemas; and
 - experimental, candidate, promoted, and historically tested claims.
+
+Reviewed Model Serving Release bindings, legacy expected seals, and unbound
+source-attested identity are distinct. Source-attested adoption is
+`catalog-artifact` observed/source identity only: it does not create a seal,
+status, serving permission, or a Model Serving Release decision. Unknown and
+pre-existing homes still require a reviewed expected manifest independent of
+the observed tree. A home created by source-attested acquisition may be reused
+only after a complete offline rehash against its valid receipt. Public
+source-attested execution, receipts, and skill composition remain an
+implementation gap until that later unit lands.
 
 Call out implementation gaps instead of writing as though accepted target
 behavior already exists. Identify trust-boundary and destructive-lifecycle
