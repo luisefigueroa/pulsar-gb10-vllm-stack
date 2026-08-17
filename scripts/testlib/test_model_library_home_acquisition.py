@@ -529,13 +529,27 @@ class SourceAttestedAcquisitionContracts(unittest.TestCase):
         self.assertEqual(lfs_entry["sha256"], "2" * 64)
         self.assertNotIn("git_oid", lfs_entry)
 
-    def test_malformed_duplicate_unsafe_and_zero_byte_inventory_rejected(
-        self,
-    ) -> None:
+    def test_zero_byte_inventory_entry_allowed_with_positive_aggregate(self) -> None:
+        source = self._source(
+            inventory=[self._git_entry(size=0), self._lfs_entry()]
+        )
+        self.assertEqual(source["file_count"], 2)
+        self.assertEqual(source["content_bytes"], 64)
+        self.assertEqual(source["inventory"][0]["size"], 0)
+
+    def test_negative_and_zero_total_inventory_rejected(self) -> None:
         with self.assertRaisesRegex(
-            source_attested.SourceAttestedAcquisitionError, "zero|positive"
+            source_attested.SourceAttestedAcquisitionError, "non-negative"
+        ):
+            self._source(
+                inventory=[self._git_entry(size=-1), self._lfs_entry()]
+            )
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "positive"
         ):
             self._source(inventory=[self._git_entry(size=0)])
+
+    def test_malformed_duplicate_and_unsafe_inventory_rejected(self) -> None:
         with self.assertRaisesRegex(
             source_attested.SourceAttestedAcquisitionError, "unique"
         ):

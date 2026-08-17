@@ -235,6 +235,12 @@ def _require_positive_int(value: Any, *, label: str) -> int:
     return value
 
 
+def _require_non_negative_int(value: Any, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        fail(f"{label} must be a non-negative integer")
+    return value
+
+
 def _require_rank(value: Any, *, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         fail(f"{label} must be a non-negative rank number")
@@ -334,7 +340,9 @@ def normalize_huggingface_v1_inventory_entry(
 ) -> dict[str, Any]:
     """Normalize one upstream inventory row without inventing a SHA-256."""
     relative = _validate_inventory_path(path, label="inventory path")
-    byte_count = _require_positive_int(size, label=f"inventory size for {relative}")
+    byte_count = _require_non_negative_int(
+        size, label=f"inventory size for {relative}"
+    )
     if blob_kind == HF_V1_BLOB_GIT:
         if sha256 is not None:
             fail(
