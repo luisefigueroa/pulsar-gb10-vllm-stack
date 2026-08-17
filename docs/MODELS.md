@@ -14,9 +14,10 @@ start output can project a reviewed decision only when a profile explicitly
 binds its exact release through `MODEL_SERVING_RELEASE_ID`. No current profile
 is bound and the tracked store is empty, so current rows display the neutral
 `No release binding` state. Local evidence-capture candidate persistence is
-unreviewed and does not change this table. Trusted decision issuance remains
-pending; serving permission is status-independent and no current row is
-silently relabeled.
+unreviewed and does not change this table. Maintainer-only issuance staging
+can propose registry objects, but a local command is not trusted until
+repository review and merge; serving permission is status-independent and no
+current row is silently relabeled.
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for

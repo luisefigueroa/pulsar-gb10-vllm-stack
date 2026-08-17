@@ -62,10 +62,12 @@ filter. Neither status field grants or denies serving. Existing reviewed
 seals/bundles are not automatically `Validated`.
 
 The current `./pulsar` commands do not capture or publish ADR 0004 objects or
-issue decisions. Local ADR 0004 release planning, attempt composition, and
-evidence-capture candidate persistence are separate maintainer commands and
-launch nothing; see [MODEL_RELEASE.md](./MODEL_RELEASE.md) and
-[MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md).
+issue decisions. Local ADR 0004 release planning, attempt composition,
+evidence-capture candidate persistence, and issuance staging are separate
+maintainer commands and launch nothing; see [MODEL_RELEASE.md](./MODEL_RELEASE.md),
+[MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md), and
+[MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md).
+A staged local proposal is not trusted until repository review and merge.
 A schema-valid local decision is not proof of maintainer review or physical
 qualification.
 

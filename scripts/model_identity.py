@@ -44,8 +44,8 @@ def pretty_json_bytes(value: Any) -> bytes:
     """Return deterministic pretty JSON bytes for published candidate files.
 
     Identity digests stay on compact ``canonical_json_digest``. This encoder is
-    only the shared publication form used by unreviewed planner and capture
-    candidates.
+    the shared publication form used by unreviewed planner and capture
+    candidates and by staged issuance proposals.
     """
     return (
         json.dumps(

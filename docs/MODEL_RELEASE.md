@@ -43,6 +43,7 @@ enforcement:
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns pure evidence-artifact, immutable run-record, new validation-bundle, reviewed-decision, status-derivation, and supersession schema version 1; performs no capture, persistence, or trusted issuance |
 | ADR 0004 registry (`scripts/model-serving-release-registry.sh`) | Read-only load, verify, and inspect stored objects under `models/model-serving-releases/`; supplies advisory projection for explicitly bound profiles but does not capture evidence, issue a decision, authorize serving, or launch a release |
 | ADR 0004 evidence-capture candidates (`scripts/model-serving-release-capture.sh`) | Composes a verified release-plan candidate with an attempt-only spec; local unreviewed persistence of run records, content-addressed evidence, and assembled bundles; never writes the tracked registry or launches a release |
+| ADR 0004 issuance staging (`scripts/model-serving-release-issue.sh`) | Maintainer-only plan/stage of untrusted registry proposals from a verified capture candidate plus a closed review declaration; local success is not repository review, serving authorization, or physical qualification |
 | Release candidate (`scripts/model-release.sh`, `scripts/model_release.py`) | Hashes an exact local snapshot and assembles internally consistent, explicitly untrusted candidate documents |
 | Library runtime (`scripts/model-library.sh`, `scripts/model_library.py`) | Enforces repository-reviewed seals/bundles during catalog, preparation, and launch |
 | Release review | Combines every required subsystem scope before changing `STATUS`, guided exposure, or defaults |
@@ -408,7 +409,9 @@ unreviewed authority state. Any profile drift or document tampering fails.
 
 ## Review and issuance
 
-The repository does not automate trusted issuance or publication. Every
+The repository can stage an untrusted ADR 0004 issuance proposal with
+`scripts/model-serving-release-issue.sh`. That local command is not trusted
+until repository review and merge. Every
 release pull request must receive maintainer review that confirms:
 
 - the manifest came from the exact snapshot used by the recorded lab run;

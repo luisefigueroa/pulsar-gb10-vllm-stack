@@ -5,6 +5,8 @@ This module loads, verifies, and inspects immutable reviewed objects from a
 tracked registry.  Its verified inspection result is the read-only source for
 catalog and operator status projection.  It does not capture evidence, issue a
 decision, change recommendation policy, authorize serving, or launch a release.
+A public in-memory graph validator may check a prospective assembly of stored
+plus proposed objects; no write command belongs here.
 Schema ownership remains in the pure modules: this layer only assembles
 caller-visible source sets and asks those validators to check them.
 
@@ -500,13 +502,39 @@ def _validate_graph_objects(graph: RegistryGraph) -> None:
         )
 
 
-def load_registry(repo_root: Path) -> RegistryGraph:
-    """Scan, identity-check, and fully validate the stored object graph."""
-    graph = scan_registry(repo_root)
+def validate_registry_graph(
+    graph: RegistryGraph,
+) -> RegistryGraph:
+    """Validate an in-memory registry graph using the stored-registry rules.
+
+    The graph may be a scanned checkout or a prospective assembly of existing
+    verified objects plus proposed objects. This entry point does not write.
+    Publishable evidence must already exist at its repository-relative path
+    and match the declared digest.
+    """
     _validate_graph_objects(graph)
     _validate_relative_performance_contracts(graph)
     _validate_unique_direct_superseders(graph)
     return graph
+
+
+def load_registry(repo_root: Path) -> RegistryGraph:
+    """Scan, identity-check, and fully validate the stored object graph."""
+    return validate_registry_graph(scan_registry(repo_root))
+
+
+def decision_source_set(
+    graph: RegistryGraph, decision: dict[str, Any]
+) -> dict[str, Any]:
+    """Assemble one decision's caller-visible source set from a loaded graph."""
+    return _source_set_for_decision(decision, graph)
+
+
+def predecessor_source_sets(
+    graph: RegistryGraph, contract: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Resolve the contract's frozen predecessor chain from a loaded graph."""
+    return _predecessor_registry_for(contract, graph)
 
 
 def _decisions_for_release(

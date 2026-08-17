@@ -16,8 +16,10 @@
   implemented for strict same-boot and absolute throughput/latency;
   advisory catalog/operator ADR 0004 status projection implemented for
   explicitly bound profiles; supervised `pulsar-model-onboarding` skill
-  implemented as control-plane orchestration; trusted decision issuance
-  pending; status-independent serving policy implemented
+  implemented as control-plane orchestration; maintainer-only issuance
+  staging implemented as an untrusted local proposal whose trust event is
+  repository review and merge; tracked store remains empty and unbound;
+  status-independent serving policy implemented
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),

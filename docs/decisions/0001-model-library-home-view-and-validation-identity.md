@@ -102,7 +102,8 @@ Their pure schema contracts are now implemented. Read-only trusted
 persistence and verification of those objects is implemented and currently
 empty. Local evidence-capture candidate persistence is implemented and
 unreviewed. Advisory catalog/operator projection is implemented for profiles
-explicitly bound to a release ID; no current profile is bound. Trusted
-issuance/publication remains pending. Serving permission is status-independent; these objects still govern
+explicitly bound to a release ID; no current profile is bound. Maintainer
+issuance staging can propose registry objects, but a local command is not
+trusted until repository review and merge. Serving permission is status-independent; these objects still govern
 identity verification and evidence claims. Existing schema-1 bundles and seals
 remain immutable legacy artifacts.

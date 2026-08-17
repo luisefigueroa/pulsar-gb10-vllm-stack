@@ -129,7 +129,9 @@ unchanged. None of the ADR 0004 objects is issued or referenced by the
 current seal path. Read-only persistence and verification of those objects
 is implemented under `models/model-serving-releases/` and is currently empty.
 Local evidence-capture candidate persistence is implemented and unreviewed.
-Issuance/publication and status projection remain pending. Serving permission
+Advisory projection exists for an explicit reviewed profile binding, and
+maintainer issuance staging can propose registry objects, but a local command
+is not trusted until repository review and merge. Serving permission
 is status-independent. Candidate tooling, schema builders, and local content
 verification may demonstrate internal consistency or a content match, but a
 locally constructed decision cannot establish reviewer authority or assign a

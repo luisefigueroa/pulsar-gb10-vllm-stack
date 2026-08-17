@@ -73,6 +73,10 @@ run "Model Serving Release trusted-persistence registry" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_registry.py"
 run "Model Serving Release evidence-capture candidate persistence" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_capture.py"
+run "Model Serving Release issuance staging" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_issue.py"
+run "Model Serving Release issuance public CLI" \
+  "$REPO_DIR/scripts/selftest-model-serving-release-issue.sh"
 run "validator measurement contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_validator_measurement.py"
 run "Model Serving Release attempt composition" \

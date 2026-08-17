@@ -121,9 +121,16 @@ language for new features without an explicit decision.
   runs, and independently verifies the unreviewed candidate. It must not write
   the tracked registry, issue a decision, change catalog or profile status,
   launch a release, persist a planner path or planner candidate ID, or issue
-  `Untested`. Trusted
-  decision issuance remains pending and must validate through the pure schema
-  modules rather than duplicating their identity or status rules.
+  `Untested`.
+  `scripts/model-serving-release-issue.sh` owns maintainer-only ADR 0004
+  issuance staging: it turns one independently verified unreviewed
+  evidence-capture candidate plus an explicit review declaration into a
+  staged proposal of the exact content-addressed registry objects and any
+  privacy-cleared publishable evidence. The existing pure schema modules
+  derive the decision status. A successful local command does not establish
+  trust; repository review and merge are the trust event. It must not mutate
+  the capture candidate, edit a profile, authorize serving, or claim physical
+  behavior. Status remains advisory.
   `validate/validator_measurement.py` owns the closed, versioned, status-neutral
   measurement documents emitted by `validate/compare_captures.py` and
   `validate/bench_serve.py`. `scripts/model_serving_release_attempt.py` owns the
@@ -453,7 +460,9 @@ this work; the skill is procedural and does not outrank these sources.
   absolute throughput/latency; they do not issue status or prove physical
   behavior. Read-only
   catalog/operator projection is implemented for an explicitly bound release;
-  trusted decision issuance/publication remains pending. The supervised
+  maintainer-only issuance staging can propose reviewed registry objects, but
+  a local command is not the trust event and this repository still stores no
+  issued object. The supervised
   `pulsar-model-onboarding` skill is implemented as control-plane
   orchestration around those CLIs; it does not issue a decision, assign
   status, or bind a profile. It can reuse one complete exact eligible home only
