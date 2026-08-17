@@ -75,6 +75,7 @@ def commit_all(repo_root: pathlib.Path, message: str) -> None:
 
 def seed_issue_repo(repo_root: pathlib.Path, *, git: bool = True) -> pathlib.Path:
     capture_fixture.seed_capture_repo(repo_root)
+    (repo_root / ".gitignore").write_text("/experiments/\n", encoding="utf-8")
     if git:
         init_git_repo(repo_root)
     return repo_root
