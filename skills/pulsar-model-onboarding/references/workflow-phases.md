@@ -54,37 +54,64 @@ Agree and record this complete input before testing. The Validation Contract
 is not frozen until the planner later combines it with the exact artifact
 manifest, runtime envelope, and selected access contract.
 
-## 4. Exact-home assessment and safe reuse
+## 4. Exact-home assessment, source-attested acquisition, and safe reuse
 
-1. Resolve the selector to an exact Hugging Face commit. Do not treat
+1. Refresh the catalog and observe all confirmed serving ranks before reuse.
+2. If the repository is absent everywhere, run a read-only source-attested
+   plan. It resolves the selector to an exact Hugging Face commit, reads the
+   complete upstream Git/LFS inventory on the selected rank, and chooses an
+   eligible durable-home rank without downloading model bytes:
+
+   ```text
+   scripts/model-library.sh home add <profile> \
+     --revision <selector> --plan --json
+   ```
+
+3. Review the plan's exact commit, file and byte counts, selected rank,
+   serving ranks, identity class, and no-promotion boundary. Do not treat
    `refs/main` as identity.
-2. Refresh the catalog and observe all confirmed serving ranks before reuse.
-   Do not trust the catalog's shallow `complete` label alone. Reuse one exact
-   home only after full verification against a reviewed expected manifest that
-   is independent of the observed tree, plus an explicit choice. Refuse a
-   missing reviewed expected manifest, failed or incomplete verification,
-   partial, wrong-revision, duplicate, or out-of-geometry durable homes.
-3. If no independently verified reusable complete exact home exists, stop with
-   the implementation gap. Current `home add` requires a reviewed expected seal.
-4. Do not download directly into the durable cache. A safe future unsealed
-   acquisition path must use private same-filesystem staging, repeat the
-   all-rank absence check, verify completeness independently, and publish
-   atomically. It also requires a separate large-acquisition confirmation.
-5. Do not treat a catalog `complete` label or the later self-observed manifest
-   as independent acquisition completeness proof.
+4. Obtain the separate large-acquisition confirmation. Then pass the exact
+   commit from the plan, not the mutable selector:
+
+   ```text
+   scripts/model-library.sh home add <profile> \
+     --revision <exact-commit-from-plan> --yes --json
+   ```
+
+5. The service uses the selected rank's local Hugging Face authentication and
+   private same-filesystem staging. It checks the complete upstream inventory,
+   Hugging Face missing/extra verification, and every file digest; repeats the
+   all-rank absence check; writes an immutable receipt; and publishes with an
+   atomic no-replace rename. Do not download directly into the durable cache.
+6. Record the result's exact revision, `source_digest`, `approval_id`, and
+   `receipt_id` in the journal. Acquisition is catalog/artifact evidence only;
+   it does not issue a seal or decision, assign status, promote a path, prove
+   physical behavior, refresh the catalog, prepare a runtime view, or launch.
+7. Reuse a source-attested home only after
+   `scripts/model-library.sh home verify <model_id@revision> --json` completes
+   an offline full SHA-256 rehash against its immutable receipt. An older or
+   otherwise pre-existing home still requires full verification against a
+   reviewed expected manifest independent of the observed tree.
+8. Refuse a missing required receipt or reviewed manifest, failed or incomplete
+   verification, partial or wrong-revision content, a duplicate durable home,
+   or an out-of-geometry home. Do not treat a catalog `complete` label or a
+   later self-observed manifest as independent completeness proof.
 
 ## 5. Catalog and manifest
 
 ```text
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <model_id@revision>
+scripts/model-library.sh home verify <model_id@revision> --json
 scripts/model-release.sh manifest <profile> \
   --hub-path <hub-path> --revision <exact-commit>
 ```
 
 Refuse another revision, ambiguity, a partial tree, or a durable
-duplicate. Do not mutate `refs/main`. The manifest records exact identity of
-the reused tree; it does not prove that an earlier download was complete.
+duplicate. Do not mutate `refs/main`. Run `home verify` for source-attested
+content; use the applicable reviewed expected-manifest verification for older
+content. The later manifest records exact identity of the verified tree; it
+does not replace the independent acquisition proof.
 
 ## 6. Distribution choice
 

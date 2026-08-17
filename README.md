@@ -302,16 +302,31 @@ scripts/model-library.sh prepare <multi-rank-sealed-profile> \
 Catalog refresh inventories existing homes; it does not download a model or
 create the required durable home. The replicated quick start above therefore
 remains the guided fresh-cluster workflow. An operator deliberately using the
-distributed library can create exactly one reviewed home,
-then explicitly register and prepare it:
+distributed library can create exactly one durable home, then explicitly
+register and prepare it. A sealed profile uses its reviewed identity:
 
 ```bash
 scripts/model-library.sh home add <sealed-profile> --yes
 scripts/model-library.sh catalog refresh
 ```
 
-The selected target rank downloads and full-verifies the exact reviewed commit;
-this does not create hot copies, start serving, or promote the path. A reviewed
+For a brand-new unsealed profile, first inspect a read-only source-attested
+plan, then separately confirm the exact commit shown by that plan:
+
+```bash
+scripts/model-library.sh home add <profile> \
+  --revision <selector> --plan --json
+scripts/model-library.sh home add <profile> \
+  --revision <exact-commit-from-plan> --yes --json
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh home verify <model_id@exact-commit> --json
+```
+
+The selected target rank downloads and full-verifies the exact commit. The
+unsealed path binds complete upstream inventory and observed bytes in an
+immutable site-local receipt; acquisition creates source/catalog evidence, not
+a reviewed seal or validation decision. Neither path creates hot copies,
+starts serving, or promotes the path. A reviewed
 single-rank profile has no non-home target and therefore uses no RoCE copy;
 prepare that local runtime view with `--transport ssh-control` instead. See
 [ADR 0003](docs/decisions/0003-explicit-model-preparation-transport.md) and

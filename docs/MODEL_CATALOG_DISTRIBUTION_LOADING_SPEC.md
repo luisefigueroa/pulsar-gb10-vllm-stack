@@ -52,8 +52,9 @@ This snapshot supports review of thirteen implementation areas:
 11. advisory catalog/operator status projection for explicitly bound releases;
 12. the supervised `pulsar-model-onboarding` control-plane orchestration skill;
     and
-13. internal source-attested Hugging Face v1 acquisition planning contracts
-    without a public unsealed CLI, receipts, or skill composition.
+13. source-attested Hugging Face v1 planning and separately confirmed
+    acquisition, immutable receipts, offline home verification, exact prepare
+    binding, and onboarding-skill composition.
 
 The accepted model-library direction is no longer an open peer-review question:
 one durable home per exact revision, a validated durable-home view on the home
@@ -130,16 +131,16 @@ orchestration around those CLIs. It never issues a seal or validation
 decision, assigns status, binds a profile, writes the trusted registry,
 promotes a path, or claims physical behavior. Current automated mapping covers
 only strict same-boot and absolute throughput/latency. The default unsealed
-replicated path is not an exact ADR 0004 qualification attempt. One complete
-exact eligible home may be reused only after full verification against a
-reviewed expected manifest independent of the observed tree; shallow catalog
-state and a self-observed manifest are insufficient. A source-attested home
-created by the future acquisition workflow may be reused only after a
-complete offline rehash against its valid immutable receipt for the same
-public source identity. Internal Hugging Face v1 source, identity-precedence,
-and privacy-safe approval contracts exist for planning that path. Public
-source-attested execution, receipts, `home verify`, and skill composition are
-not implemented, so missing unsealed acquisition still stops. The journal is isolated under
+replicated path is not an exact ADR 0004 qualification attempt. For an absent
+brand-new unsealed Hugging Face repository, the skill may compose the
+source-attested read-only plan and separately confirmed exact-commit
+acquisition. A home created by that service may be reused only after a complete
+offline rehash against its valid immutable receipt for the same public source
+identity. An unknown or pre-existing home still requires full verification
+against a reviewed expected manifest independent of the observed tree;
+shallow catalog state and a self-observed manifest are insufficient. The
+acquisition produces catalog/artifact evidence only and creates no seal,
+status, decision, serving permission, promotion, or physical claim. The journal is isolated under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision.
@@ -1645,11 +1646,12 @@ Cached home and primary ranks are interpreted only when
 `catalog.topology_compatible=true`. The interactive renderer marks placement
 stale and suppresses cached node mapping until an explicit catalog refresh.
 
-The current system also provides a distinct durable-home acquisition service:
-`scripts/model-library.sh home add <sealed-profile>`. It accepts no unvalidated
-bypass and still has no public unsealed `--revision` or `--plan` mode.
-Internal Hugging Face v1 source, identity, and approval contracts exist for
-a later source-attested path; they do not change this sealed command.
+The current system also provides a distinct durable-home acquisition service.
+The sealed form is `scripts/model-library.sh home add <sealed-profile>` and
+retains its reviewed expected-manifest gate. For an absent brand-new unsealed
+Hugging Face repository, `home add <profile> --revision <selector> --plan`
+produces a read-only public plan; separately confirmed execution uses
+`--revision <exact-commit> --yes`.
 The Bash boundary observes the Hugging Face cache environment and CLI
 availability on every confirmed rank; Python validates the reviewed identity,
 capacity, exact rank/node mapping, one-home state, and placement decision. For
@@ -1658,20 +1660,27 @@ selected home rank becomes that profile's sole serving rank. Multi-node
 candidates remain the exact contiguous profile ranks. With no override the
 eligible candidate with the most free space is selected; `--node` is exact,
 must remain in the applicable geometry, and never falls back. The selected rank
-downloads the immutable commit
-into a plan-owned private cache below the final hub filesystem. After download,
-Pulsar repeats the all-rank target-absence check, full-hashes the expected
-manifest under stable metadata, and atomically renames only the repository into
-its durable HF location. A failed download or verification removes only the
-owned staging tree; an existing or raced repository path fails closed. The
-command discovers `hf`, `huggingface-cli`, or Pulsar's managed user-venv CLI on
-the selected target. It does not create hot content, prepare a runtime view,
-issue a witness, start serving, alter status, or refresh the catalog.
-Deterministic Python and thin public-CLI contracts pass. The three-node physical
-catalog/artifact gate also passed target-side exact download, interruption
-cleanup, explicit and automatic remote placement, full verification, atomic
-publication, explicit refresh, and final one-home state. This closes the
-acquisition evidence gap but not serving integration or release promotion.
+downloads the immutable commit into a plan-owned private cache below the final
+hub filesystem. The sealed path full-verifies its reviewed manifest. The
+source-attested plan uses the selected rank's modern `hf` Python environment to
+resolve the exact commit and complete upstream Git/LFS inventory without a
+token argument or byte download. Its execution uses target-local
+authentication; confines model, Xet, and asset caches to private
+same-filesystem staging; checks the upstream file set and Hugging Face
+missing/extra result; and hashes every file. Both paths repeat the all-rank
+target-absence check before publication. Source-attested execution writes an
+immutable site-local receipt, then publishes with an atomic no-replace rename;
+`home verify <model_id@commit>` later performs a receipt-backed offline full
+rehash and set check. A failed download or verification removes only the owned
+staging tree; an existing or raced repository path fails. Sealed acquisition
+discovers `hf`, `huggingface-cli`, or Pulsar's managed user-venv CLI; the
+source-attested path requires modern `hf` or the managed `hf`. Neither path
+creates hot content, prepares a runtime view, issues a witness, starts serving,
+alters status, or refreshes the catalog. Deterministic Python and thin
+public-CLI contracts pass. The earlier three-node physical catalog/artifact
+gate covers only sealed acquisition. Physical source-attested Hub/DGX
+acquisition remains pending, so its deterministic result does not claim
+serving integration or release promotion.
 
 `./pulsar models` and operator-home **Models & storage** now consume that
 public report through `scripts/model-storage.sh` plus the width-aware
@@ -2016,9 +2025,9 @@ The implementation described here is primarily defined by:
   and unreviewed;
   advisory status projection implemented for explicitly bound profiles;
   supervised `pulsar-model-onboarding` skill implemented as control-plane
-  orchestration with public source-attested acquisition still unavailable;
-  internal Hugging Face v1 source/identity/approval planning contracts
-  implemented without a public unsealed CLI;
+  orchestration with source-attested planning, separately confirmed
+  exact-commit acquisition, immutable receipts, offline home verification,
+  and exact prepare binding; physical source-attested Hub/DGX evidence pending;
   maintainer issuance staging implemented as an untrusted local proposal;
   serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)

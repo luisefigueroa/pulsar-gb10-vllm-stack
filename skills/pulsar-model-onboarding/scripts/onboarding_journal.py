@@ -93,11 +93,17 @@ ALLOWED_ID_KEYS = {
     "run_record_id",
     "manifest_digest",
     "image_digest",
+    "receipt_id",
+    "source_digest",
+    "approval_id",
 }
 BOUND_ID_KEYS = {
     "exact_revision",
     "release_id",
     "contract_id",
+    "receipt_id",
+    "source_digest",
+    "approval_id",
 }
 HEADER_FIELDS = {
     "schema_version",
@@ -297,6 +303,9 @@ def validate_ids(value: Any) -> dict[str, str]:
             "bundle_id",
             "run_record_id",
             "manifest_digest",
+            "receipt_id",
+            "source_digest",
+            "approval_id",
         }:
             if model_identity.SHA256_HEX_RE.fullmatch(text) is None:
                 fail(f"ids.{key} must be a SHA-256 hex digest")

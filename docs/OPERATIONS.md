@@ -119,15 +119,15 @@ status, binds a profile to a release, writes the trusted registry, promotes a
 path, or claims physical behavior. Current automated mapping covers only
 strict same-boot and absolute throughput/latency. The default unsealed
 replicated path may still be served with its honest label but is not an exact
-ADR 0004 qualification attempt. The skill may reuse one complete exact eligible
-home only after full verification against a reviewed expected manifest
+ADR 0004 qualification attempt. For an absent brand-new unsealed Hugging Face
+repository, the skill may plan and, after a separate confirmation, run the
+source-attested exact-commit acquisition service. Reuse of that home requires
+receipt-backed offline full verification. An unknown or pre-existing home
+still requires full verification against a reviewed expected manifest
 independent of the observed tree; catalog state and a self-observed manifest
-alone are insufficient. Accepted policy allows a later source-attested home
-to be reused only after a complete offline rehash against its valid receipt
-for the same public source identity. Internal planning contracts for that
-path exist; public source-attested `home add`, receipts, and skill
-composition are not implemented, so the skill still stops when no
-independently verified reusable home exists. Its recovery journal lives
+alone are insufficient. The acquisition creates catalog/artifact evidence
+only, not a seal, status, decision, serving permission, promotion, or physical
+claim. Its recovery journal lives
 under `experiments/model-onboarding/workflows/`, separate from release-plan output.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision.
@@ -614,8 +614,8 @@ than inheriting the reviewed-profile recipe. The deprecated
 Catalog refresh inventories existing durable homes; it does not download model
 bytes or create a primary home. Preparation therefore requires an eligible
 exact home to exist already. The guided fresh-cluster path remains replicated
-`pull-weights.sh`. An operator deliberately using the experimental distributed
-library can now establish one reviewed home separately:
+`pull-weights.sh`. An operator deliberately using the distributed library can
+establish one durable home separately. For sealed profiles:
 
 ```bash
 # Optional --node RANK|NODE_ID overrides most-free-space placement.
@@ -625,14 +625,34 @@ scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <sealed-profile>
 ```
 
-Public `home add` remains sealed-only. Accepted policy allows a source-attested
-exact upstream tree to be adopted later by the same private-staging, complete
-verification, and atomic-publication sequence without creating a seal, status,
-serving permission, or Model Serving Release decision. Internal Hugging Face
-v1 source, identity, and approval contracts exist for that planning path.
-There is no public `--revision` or `--plan` mode yet. Future onboarding must
-refresh the catalog and verify or prepare the exact `model_id@commit`; it must
-not rely on mutable `refs/main` or profile-only resolution.
+For a brand-new unsealed profile whose repository is absent everywhere, plan
+first. The plan is read-only and resolves the selector to an exact commit:
+
+```bash
+scripts/model-library.sh home add <profile> \
+  --revision <selector> --plan --json
+```
+
+Review the exact commit, complete upstream file/byte counts, selected rank, and
+serving geometry. After a separate large-download confirmation, execute with
+the exact commit from that plan, not a mutable branch or tag:
+
+```bash
+scripts/model-library.sh home add <profile> \
+  --revision <exact-commit-from-plan> --yes --json
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh catalog show <model_id@exact-commit>
+scripts/model-library.sh home verify <model_id@exact-commit> --json
+```
+
+The selected rank resolves public metadata and downloads using its own
+Hugging Face authentication. Pulsar does not accept, print, persist, or move a
+token. Model and transient Xet/asset bytes stay in private same-filesystem
+staging until complete inventory and SHA-256 verification, a repeated all-rank
+absence check, immutable-receipt publication, and atomic no-replace home
+publication succeed. Acquisition does not refresh, prepare, launch, or grant
+reviewed authority. `home verify` is offline and rehashes the complete tree
+against the receipt before later reuse.
 
 `home add` inspects every confirmed rank and refuses existing repository paths,
 unobservable nodes, insufficient capacity, missing target-side Hugging Face
@@ -643,10 +663,10 @@ the profile's exact serving ranks so preparation retains the one-home plus N−1
 hot-copy contract. The chosen rank needs upstream access and
 its own Hugging Face authentication when the repository is gated. Pulsar checks
 the target's PATH and its managed `$HOME/.hf-cli/venv/bin/hf` installation. It
-downloads
-the exact reviewed commit into a private directory on the destination
-filesystem, repeats the cluster-wide duplicate check, full-verifies the lab
-manifest, and atomically publishes one durable HF repository. It never copies
+downloads the exact commit into a private directory on the destination
+filesystem, repeats the cluster-wide duplicate check, and performs the
+applicable sealed or source-attested full verification before atomically
+publishing one durable HF repository. It never copies
 through the controller, chooses a second node after failure, creates hot data,
 prepares a view, launches, or changes validation status. Download/verification
 failure removes only the current plan's staging directory. If cleanup reports
@@ -671,7 +691,7 @@ qualification scope:
 | Check or action | Evidence scope | Claim boundary |
 |---|---|---|
 | `health`, catalog refresh, primary state | Catalog/artifact inventory and policy state | Does not prove that a model can serve correctly |
-| `home add` exact download, verification, and publication | Catalog/artifact acquisition | Does not prepare a runtime view, qualify the model, or promote the storage path |
+| `home add` exact download, verification, receipt when source-attested, and publication | Catalog/artifact acquisition | Does not prepare a runtime view, qualify the model, grant reviewed identity, or promote the storage path |
 | Preparation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
 | Exact-source launch, health, warmup, completion smoke, owned stop | Serving integration | Does not prove accuracy, determinism, performance, context, or soak |
 | `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe. Ordinary invocation stays human-compatible and does not require a release plan. Optional `--measurement-dir` writes closed compare/bench measurement files under `results/` or a safe explicit outside path; optional `--invocation-plan` is an explicit contract-driven bench overlay and fails closed instead of changing the default sweep. |

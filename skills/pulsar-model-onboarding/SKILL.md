@@ -16,7 +16,7 @@ acting. ADR 0004 section 7 and staged item 4 govern this skill. Reuse
 `scripts/model-serving-release-capture.sh`, `scripts/model-library.sh`,
 `scripts/up.sh`, the normal stop path, and
 `validate/{greedy_capture.py,compare_captures.py,bench_serve.py}`. Do not
-duplicate their schemas or add a product acquisition service.
+duplicate their schemas or bypass the model-library acquisition service.
 
 Detailed phase checklists live in
 [references/workflow-phases.md](references/workflow-phases.md). The handoff
@@ -90,9 +90,10 @@ python3 skills/pulsar-model-onboarding/scripts/onboarding_journal.py initialize 
 Default state is gitignored
 `experiments/model-onboarding/workflows/<workflow-id>/`. This namespace is
 separate from the planner's `<profile>/<release-id>/` default.
-Bind later exact revision, release ID, and contract ID as journal `ids`
-when they exist. On resume, `verify` the journal against the base identity and
-each ID already known, for example `--id exact_revision=<commit> --id
+Bind later exact revision, source digest, acquisition approval, receipt,
+release ID, and contract ID as journal `ids` when they exist. On resume,
+`verify` the journal against the base identity and each ID already known, for
+example `--id exact_revision=<commit> --id receipt_id=<digest> --id
 release_id=<id> --id contract_id=<id>`, before appending. Stop on identity
 mismatch, an attempted ID rebind, tamper, truncation, or a broken hash/sequence
 chain.
@@ -110,43 +111,70 @@ comparable predecessor is explicitly supplied.
 
 ### 4. Exact-home assessment and safe reuse
 
-Resolve the upstream selector to an immutable exact Hugging Face commit.
-Refresh the catalog first and observe every confirmed serving rank. If that
-exact revision already has one durable home on an eligible serving rank, do not
-trust the catalog's shallow `complete` label by itself. Reuse requires full
-verification against a reviewed expected manifest that is independent of the
-observed tree, followed by an explicit operator choice. Refuse a missing
-reviewed expected manifest, failed or incomplete verification, a partial tree,
-another revision presented as the target, a duplicate durable home, or a home
-outside the supported serving geometry.
+Refresh the catalog and observe every confirmed serving rank first. If one exact home
+already exists, follow the reuse rules below. If the repository path is absent
+on every rank, resolve the upstream selector through a read-only
+source-attested plan:
 
-If no independently verified reusable complete exact home exists, **stop with
-the implementation gap**. `scripts/model-library.sh home add` requires a
-reviewed expected seal, and no current subsystem safely acquires a brand-new
-unsealed model through private same-filesystem staging, a repeated all-rank
-absence check, independent completeness verification, and atomic durable-home
-publication. Do not run a Hugging Face download directly into the durable
-cache, and do not treat a catalog label or self-observed manifest as independent
-proof that an interrupted download is complete. Do not silently select another
-node, transport, storage policy, or copy. A future supported large-acquisition
-path still requires its own confirmation.
+```text
+scripts/model-library.sh home add <profile> --revision <selector> --plan --json
+```
+
+The plan resolves the selector to one immutable commit, reads the complete
+upstream Git/LFS inventory on a confirmed rank, observes every confirmed rank,
+and selects one eligible durable-home rank. It does not download model bytes.
+Review its exact commit, file and byte counts, selected rank, serving ranks,
+identity class, and explicit no-promotion boundary.
+
+The source-attested plan refuses to create a duplicate if a repository appears
+between assessment and planning. Reuse a home created by this service only after
+`home verify` completes an offline full SHA-256 rehash against its immutable
+site-local receipt. An older or otherwise pre-existing home still requires a
+reviewed expected manifest that is independent of the observed tree. Refuse a missing
+required receipt or reviewed manifest, failed verification, a partial tree,
+another revision, a duplicate durable home, or an out-of-geometry home.
+Neither the catalog's shallow `complete` label nor a self-observed manifest is
+independent completeness evidence for an older home.
+
+If the exact home is absent, ask for the separate **large acquisition**
+confirmation against the exact commit shown by the plan. After confirmation,
+pass that commit—not the mutable selector—to the supported service:
+
+```text
+scripts/model-library.sh home add <profile> \
+  --revision <exact-commit-from-plan> --yes --json
+```
+
+The service rechecks the source and topology, downloads on the selected rank
+using that rank's local Hugging Face authentication, confines model and Xet
+cache bytes to private same-filesystem staging, verifies the complete upstream
+inventory, runs Hugging Face missing/extra verification, hashes every file,
+rechecks all-rank absence, writes the immutable site-local receipt, and then
+publishes the home atomically. It does not refresh the catalog, prepare a
+runtime view, launch, issue a seal or decision, assign status, or promote a
+path. Record the result's exact revision, `source_digest`, `approval_id`, and
+`receipt_id` in the journal. Do not run a Hugging Face download directly into
+the durable cache or silently select another node, transport, storage policy,
+or copy.
 
 ### 5. Catalog, resolve, manifest
 
 Explicitly refresh the catalog, re-resolve the exact `model_id@revision`,
-and refuse another revision, ambiguity, a partial tree, or a durable
-duplicate:
+run the receipt-backed offline verification for a source-attested home, and
+refuse another revision, ambiguity, a partial tree, or a durable duplicate:
 
 ```text
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <model_id@revision>
+scripts/model-library.sh home verify <model_id@revision> --json
 scripts/model-release.sh manifest <profile> \
   --hub-path <hub/models--namespace--name> --revision <exact-commit>
 ```
 
-Use `manifest` only to build and full-verify the complete unreviewed
-manifest consumed by the ADR planner. It records the reused tree's exact
-identity; it does not retroactively prove acquisition completeness.
+Use `manifest` only after the applicable independent reuse check passed. It
+builds and full-verifies the complete unreviewed manifest consumed by the ADR
+planner. It records the tree's exact identity; it does not replace the
+source-attested receipt or retroactively prove an unknown acquisition.
 
 ### 6. Select qualifying runtime access
 

@@ -155,25 +155,34 @@ language for new features without an explicit decision.
   It is not a sixth ADR object, not evidence, and not a status authority.
   Default local journal state belongs under gitignored
   `experiments/model-onboarding/workflows/`, separate from release-plan
-  candidate directories. The current skill can reuse one complete exact
-  eligible home only after full verification against a reviewed expected
-  manifest independent of the observed tree; the shallow catalog label and a
-  self-observed manifest are not that proof. A home created by source-attested
-  acquisition may later be resumed or reused only after a complete offline
-  rehash against its valid immutable site-local receipt for the same public
-  source identity. Internal Hugging Face v1 source, identity, and approval
-  contracts exist for that planning path; public source-attested `home add`
-  execution, receipts, `home verify`, and skill composition remain an
-  explicit implementation gap. The skill must not download directly into
-  durable storage.
+  candidate directories. For an absent brand-new unsealed repository, the
+  skill may compose the source-attested `home add --revision` service: first a
+  read-only plan, then a separately confirmed exact-commit acquisition. The
+  service resolves and records the complete public Hugging Face Git/LFS
+  inventory on the selected rank, uses that rank's local authentication,
+  confines downloads and transient caches to private same-filesystem staging,
+  verifies the upstream set and every SHA-256, rechecks all-rank absence,
+  writes an immutable site-local receipt, and publishes with an atomic
+  no-replace rename. It does not refresh the catalog, prepare a runtime view,
+  launch, or create reviewed authority. A home created this way may later be
+  resumed or reused only after `home verify` completes an offline full rehash
+  against that receipt. An unknown or pre-existing home still requires full
+  verification against a reviewed expected manifest independent of the
+  observed tree; the shallow catalog label and a self-observed manifest are
+  not that proof. The skill must never download directly into durable storage.
   Deterministic skill and journal tests make no physical DGX claim and create
   no release decision.
   `scripts/model_library_source_attested.py` owns the closed version-1
-  Hugging Face acquisition-source, acquisition-identity, and privacy-safe
-  approval schemas used by the future source-attested path. It is pure and
-  internal in the current slice: it does not call the Hub, expose a public
-  unsealed CLI, download or publish a home, write a receipt, prepare a model,
-  or issue reviewed identity or status.
+  Hugging Face source, identity, public plan, privacy-safe approval, immutable
+  receipt, result, and home-verification schemas for that path. The thin Bash
+  boundary selects the target and orchestrates its local `hf` CLI;
+  `scripts/hf_source_inventory.py` uses the target's Hugging Face Python
+  environment to resolve public source metadata without accepting a token.
+  Source-attested acquisition creates observed/source identity and
+  catalog-artifact evidence only. It does not issue reviewed identity, a seal,
+  status, serving permission, a Model Serving Release decision, or physical
+  evidence. Receipt-backed prepare requires the exact model ID, exact commit,
+  and receipt manifest together.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -476,17 +485,17 @@ this work; the skill is procedural and does not outrank these sources.
   issued object. The supervised
   `pulsar-model-onboarding` skill is implemented as control-plane
   orchestration around those CLIs; it does not issue a decision, assign
-  status, or bind a profile. It can reuse one complete exact eligible home only
-  after full verification against a reviewed expected manifest independent of
-  the observed tree. Accepted policy now allows a source-attested tree to be
-  atomically adopted into managed durable storage after complete source and
-  byte verification; that adoption creates observed and source identity only
-  and does not create a seal, status, serving permission, or Model Serving
-  Release decision. Internal Hugging Face v1 source, identity-precedence, and
-  privacy-safe approval contracts exist. Public source-attested execution,
-  receipts, `home verify`, prepare-time exact-revision enforcement, and skill
-  composition remain an implementation gap. Deterministic skill and journal
-  tests make no physical DGX claim. No current profile is
+  status, or bind a profile. It can plan and, after a separate confirmation,
+  acquire one absent brand-new unsealed exact Hugging Face revision through
+  the source-attested service. Complete source and byte verification followed
+  by an immutable receipt creates observed/source identity and catalog-artifact
+  evidence only; it does not create a seal, status, serving permission, or
+  Model Serving Release decision. Reuse requires receipt-backed offline full
+  verification. Unknown and pre-existing homes still require a reviewed
+  expected manifest independent of the observed tree. Prepare-time resolution
+  for receipt-backed content requires the exact model ID and commit. These
+  deterministic controls make no physical Hub, DGX, serving-integration, or
+  model-qualification claim. No current profile is
   bound and the tracked store is empty, so current projections are neutral.
   Expected-seal identity and validation status are independent contracts: a
   future non-tested profile may carry a reviewed seal, and a matching seal does
@@ -502,14 +511,17 @@ this work; the skill is procedural and does not outrank these sources.
   same-filesystem private staging, recheck absence elsewhere, full-verify the
   expected seal, then publish atomically. Accepted policy also allows a
   source-attested exact upstream tree to follow that same staging, complete
-  inventory/set check, complete SHA-256, all-rank absence recheck, and atomic
-  publication sequence. Source-attested adoption is observed/source identity
-  only. The public `home add` command still accepts only a sealed profile;
-  the unsealed planning and execution CLI is not implemented. The home must
-  be one of the current profile's serving ranks so active storage remains one
-  home plus N−1 hot copies. Do not silently choose another node,
+  inventory/set check, complete SHA-256, all-rank absence recheck, immutable
+  receipt, and atomic no-replace publication sequence. Source-attested adoption
+  is observed/source identity only. Public `home add <unsealed-profile>
+  --revision <selector> --plan` is read-only; execution requires `--yes` and
+  repeats source and topology checks before downloading the exact commit on
+  the selected rank. `home verify <model_id@commit>` performs receipt-backed
+  offline full verification. The home must be one of the current profile's
+  serving ranks so active storage remains one home plus N−1 hot copies. Do not
+  silently choose another node,
   create a controller copy, refresh the catalog, prepare hot views, or launch.
-  Future onboarding must refresh the catalog and verify or prepare the exact
+  Onboarding must explicitly refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.
 - Only non-home ranks receive temporary or pinned sealed-hot copies. Symlinks

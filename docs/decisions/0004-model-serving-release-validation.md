@@ -23,8 +23,10 @@
   staging implemented as an untrusted local proposal whose trust event is
   repository review and merge; tracked store remains empty and unbound;
   status-independent serving policy implemented;
-  internal source-attested Hugging Face v1 planning contracts implemented
-  without a public unsealed acquisition CLI, receipts, or skill composition
+  source-attested Hugging Face v1 planning, separately confirmed acquisition,
+  immutable receipts, offline home verification, exact prepare binding, and
+  onboarding-skill composition implemented as deterministic control-plane
+  behavior; physical Hub/DGX acquisition evidence remains pending
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -431,14 +433,16 @@ initial authority model; cryptographic signing is deferred.
 ### 7. The onboarding skill is orchestration, not authority
 
 The supervised end-to-end skill is named
-`pulsar-model-onboarding`. It uses available subsystems for exact-home reuse,
-distribution across serving ranks, verification, launch, testing, evidence
-capture, and cleanup. Experimental subsystems are allowed when explicitly
-selected and their contracts fit the task. Missing unsealed acquisition stops
-until a subsystem supplies private same-filesystem staging, a repeated all-rank
-absence check, independent completeness verification, and atomic publication;
-direct durable-cache download is not an accepted substitute.
-An existing home is reusable only after full verification against a reviewed
+`pulsar-model-onboarding`. It uses available subsystems for source-attested
+acquisition or exact-home reuse, distribution across serving ranks,
+verification, launch, testing, evidence capture, and cleanup. Experimental
+subsystems are allowed when explicitly selected and their contracts fit the
+task. For an absent brand-new unsealed Hugging Face home, the skill composes a
+read-only exact-source plan and requires a separate confirmation before the
+acquisition service downloads the exact commit. Direct durable-cache download
+is not an accepted substitute. A source-attested home is reusable only after
+offline full verification against its valid immutable receipt. An unknown or
+pre-existing home is reusable only after full verification against a reviewed
 expected manifest that is independent of the observed tree. A shallow catalog
 label and a manifest generated from that same tree are insufficient.
 
@@ -450,11 +454,15 @@ or reused only after a complete offline rehash against its valid immutable
 site-local receipt for the same public source identity. A catalog label or a
 manifest generated from the current tree remains insufficient.
 
-Candidate tooling may resolve and hash an immutable upstream revision for
-that planning path. It still may not issue trust, a seal, status, serving
-permission, or a Model Serving Release decision. Public source-attested
-execution, receipts, `home verify`, and skill composition remain a later
-unit. This note does not authorize a public unsealed CLI.
+The implemented source-attested control plane resolves and hashes an immutable
+upstream revision, downloads through target-local authentication into private
+same-filesystem staging after confirmation, checks the complete upstream set,
+repeats all-rank absence, writes the immutable receipt, and publishes with an
+atomic no-replace rename. `home verify` performs the later receipt-backed
+offline full rehash, and receipt-backed prepare requires the exact model ID
+and commit. This tooling still may not issue trust, a seal, status, serving
+permission, or a Model Serving Release decision. Its deterministic tests do
+not prove physical Hub/DGX behavior.
 
 The skill is recipe-bound and may not silently change transport, storage
 policy, runtime source, geometry, or validation criteria. It asks for operator
@@ -681,8 +689,10 @@ Implement this decision in focused, reviewable units:
    writes the trusted registry, promotes a path, or claims physical
    behavior. Current automated mapping covers only strict same-boot and
    absolute throughput/latency. The default unsealed replicated path is
-   not an exact ADR 0004 qualification attempt. Missing unsealed acquisition
-   stops until a safe staged and independently verified subsystem exists.
+   not an exact ADR 0004 qualification attempt. The skill may compose the
+   source-attested service for an absent exact Hugging Face home, but that
+   acquisition remains catalog/artifact evidence and creates no validation
+   authority or physical claim.
    The skill-local journal is isolated under the `workflows/` namespace and
    is recovery state, not evidence. Deterministic skill/journal tests make no
    physical DGX claim; and

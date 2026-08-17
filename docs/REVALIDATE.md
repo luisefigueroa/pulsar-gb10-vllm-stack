@@ -73,12 +73,15 @@ status, binds a profile, writes the trusted registry, promotes a path, or
 claims physical behavior. Current automated mapping covers only strict
 same-boot and absolute throughput/latency; the skill invokes greedy capture,
 compare, and benchmark sequentially rather than using `validate/run-gates.sh`
-as an ADR attempt wrapper. It can reuse one complete exact eligible home only
-after full verification against a reviewed expected manifest independent of the
-observed tree; catalog state and a self-observed manifest alone are
-insufficient. Internal source-attested planning contracts exist; public
-unsealed acquisition, receipts, and skill composition remain an explicit
-implementation gap, and direct durable-cache download is forbidden. Its journal is isolated
+as an ADR attempt wrapper. For an absent brand-new unsealed Hugging Face
+repository, it may compose the source-attested read-only plan and separately
+confirmed exact-commit acquisition. Reuse of that home requires
+receipt-backed offline full verification. Unknown and pre-existing homes still
+require full verification against a reviewed expected manifest independent of
+the observed tree; catalog state and a self-observed manifest alone are
+insufficient. Direct durable-cache download remains forbidden. Source-attested
+deterministic tests are control-plane evidence only; the physical gate below
+remains pending. Its journal is isolated
 under `experiments/model-onboarding/workflows/`. Deterministic skill and journal
 tests make no physical DGX claim and create no release decision. Maintainer-only
 issuance staging can propose exact registry objects from a verified capture
@@ -543,6 +546,27 @@ durable home separately before running preparation.
       non-home durable repository or hot copy created; and
     - the result states that catalog refresh, preparation, launch, model
       qualification, and release promotion did not occur.
+14. source-attested durable-home acquisition when source resolution, inventory,
+    receipt, offline verification, or exact prepare binding changes:
+    - a read-only plan resolves the supplied selector to one exact public commit
+      and complete upstream Git/LFS file inventory on the selected rank without
+      downloading model bytes;
+    - execution requires a separate confirmation and uses that exact commit;
+    - authentication remains on the selected rank and no credential is passed,
+      logged, or persisted by Pulsar;
+    - model, Xet, and asset bytes remain in private same-filesystem staging;
+    - the upstream inventory, Hugging Face missing/extra result, local file set,
+      sizes, Git/LFS identities, and every SHA-256 match before publication;
+    - every confirmed rank is reobserved and an existing or raced repository
+      blocks publication;
+    - an immutable site-local receipt is written before an atomic no-replace
+      rename publishes the one durable home;
+    - `home verify <model_id@commit>` completes an offline full rehash against
+      the receipt, and prepare accepts the receipt-backed home only with that
+      exact model ID and commit; and
+    - the result states that catalog refresh, preparation, launch, reviewed
+      identity, model qualification, status, decision, and promotion did not
+      occur.
 
 The reviewed acquisition contract passed this three-node physical gate on
 2026-08-13 using the sealed `qwen3-1.7b` profile. The run proved guarded removal
@@ -572,7 +596,10 @@ removal. See
 `results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
 
 Gate 13 has deterministic Python and thin public-CLI coverage plus the physical
-Qwen acquisition artifact cited above. Gate 12 has deterministic wizard,
+Qwen acquisition artifact cited above. Gate 14 has deterministic Python and
+thin public-CLI coverage. Its real Hub/DGX acquisition, receipt-backed restart,
+catalog refresh, exact prepare, and cleanup repeat remains pending; deterministic
+selftests must not be cited as proof of those physical behaviors. Gate 12 has deterministic wizard,
 placement, and lifecycle coverage. Its production two-node DeepSeek wizard
 flow passed physically on 2026-08-13, including explicit source selection,
 separate preparation and launch confirmations, fresh exact readiness,
