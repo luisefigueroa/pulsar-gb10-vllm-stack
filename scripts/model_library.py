@@ -70,6 +70,12 @@ HOME_ACQUISITION_RECHECK_KIND = "pulsar-model-library-home-acquisition-recheck"
 HOME_ACQUISITION_MARKER_KIND = "pulsar-model-library-home-acquisition-marker"
 HOME_ACQUISITION_RESULT_KIND = "pulsar-model-library-home-acquisition-result"
 HOME_ACQUISITION_MIN_HEADROOM_BYTES = 5 * 1024**3
+# Source-attested Hugging Face v1 planning contracts live in
+# model_library_source_attested.py. They use a separate schema/kind and must
+# not change this sealed plan/result contract. This module does not import
+# that planner, expose a public unsealed CLI, or stream those helpers to
+# remote inspection.
+
 HOT_BUDGET_SCHEMA_VERSION = 1
 HOT_BUDGET_OBSERVATION_KIND = "pulsar-model-library-hot-budget-observation"
 HOT_BUDGET_PLAN_KIND = "pulsar-model-library-hot-budget-plan"

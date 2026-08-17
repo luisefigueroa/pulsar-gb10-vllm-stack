@@ -158,11 +158,22 @@ language for new features without an explicit decision.
   candidate directories. The current skill can reuse one complete exact
   eligible home only after full verification against a reviewed expected
   manifest independent of the observed tree; the shallow catalog label and a
-  self-observed manifest are not that proof. Missing unsealed acquisition
-  remains an explicit implementation gap: the skill must not download
-  directly into durable storage.
+  self-observed manifest are not that proof. A home created by source-attested
+  acquisition may later be resumed or reused only after a complete offline
+  rehash against its valid immutable site-local receipt for the same public
+  source identity. Internal Hugging Face v1 source, identity, and approval
+  contracts exist for that planning path; public source-attested `home add`
+  execution, receipts, `home verify`, and skill composition remain an
+  explicit implementation gap. The skill must not download directly into
+  durable storage.
   Deterministic skill and journal tests make no physical DGX claim and create
   no release decision.
+  `scripts/model_library_source_attested.py` owns the closed version-1
+  Hugging Face acquisition-source, acquisition-identity, and privacy-safe
+  approval schemas used by the future source-attested path. It is pure and
+  internal in the current slice: it does not call the Hub, expose a public
+  unsealed CLI, download or publish a home, write a receipt, prepare a model,
+  or issue reviewed identity or status.
 - New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as weight
   fabric.
@@ -467,9 +478,15 @@ this work; the skill is procedural and does not outrank these sources.
   orchestration around those CLIs; it does not issue a decision, assign
   status, or bind a profile. It can reuse one complete exact eligible home only
   after full verification against a reviewed expected manifest independent of
-  the observed tree; safe staged acquisition for a missing unsealed home
-  remains an implementation gap. Deterministic skill and journal tests make no
-  physical DGX claim. No current profile is
+  the observed tree. Accepted policy now allows a source-attested tree to be
+  atomically adopted into managed durable storage after complete source and
+  byte verification; that adoption creates observed and source identity only
+  and does not create a seal, status, serving permission, or Model Serving
+  Release decision. Internal Hugging Face v1 source, identity-precedence, and
+  privacy-safe approval contracts exist. Public source-attested execution,
+  receipts, `home verify`, prepare-time exact-revision enforcement, and skill
+  composition remain an implementation gap. Deterministic skill and journal
+  tests make no physical DGX claim. No current profile is
   bound and the tracked store is empty, so current projections are neutral.
   Expected-seal identity and validation status are independent contracts: a
   future non-tested profile may carry a reviewed seal, and a matching seal does
@@ -483,10 +500,18 @@ this work; the skill is procedural and does not outrank these sources.
 - Reviewed upstream acquisition creates exactly one durable home: observe every
   confirmed rank, download the immutable commit on the selected target into
   same-filesystem private staging, recheck absence elsewhere, full-verify the
-  expected seal, then publish atomically. The home must be one of the current
-  profile's serving ranks so active storage remains one home plus N−1 hot
-  copies. Do not silently choose another node,
+  expected seal, then publish atomically. Accepted policy also allows a
+  source-attested exact upstream tree to follow that same staging, complete
+  inventory/set check, complete SHA-256, all-rank absence recheck, and atomic
+  publication sequence. Source-attested adoption is observed/source identity
+  only. The public `home add` command still accepts only a sealed profile;
+  the unsealed planning and execution CLI is not implemented. The home must
+  be one of the current profile's serving ranks so active storage remains one
+  home plus N−1 hot copies. Do not silently choose another node,
   create a controller copy, refresh the catalog, prepare hot views, or launch.
+  Future onboarding must refresh the catalog and verify or prepare the exact
+  `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
+  resolution.
 - Only non-home ranks receive temporary or pinned sealed-hot copies. Symlinks
   and bind mounts are runtime views, not extra ownership or resilience.
 - Full content verification happens at trust boundaries. A serve-time metadata

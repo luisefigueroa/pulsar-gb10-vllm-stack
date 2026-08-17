@@ -122,9 +122,12 @@ replicated path may still be served with its honest label but is not an exact
 ADR 0004 qualification attempt. The skill may reuse one complete exact eligible
 home only after full verification against a reviewed expected manifest
 independent of the observed tree; catalog state and a self-observed manifest
-alone are insufficient. If no such home exists, it stops because there is no
-current unsealed acquisition subsystem with private staging, independent
-completeness verification, and atomic publication. Its recovery journal lives
+alone are insufficient. Accepted policy allows a later source-attested home
+to be reused only after a complete offline rehash against its valid receipt
+for the same public source identity. Internal planning contracts for that
+path exist; public source-attested `home add`, receipts, and skill
+composition are not implemented, so the skill still stops when no
+independently verified reusable home exists. Its recovery journal lives
 under `experiments/model-onboarding/workflows/`, separate from release-plan output.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision.
@@ -621,6 +624,15 @@ scripts/model-library.sh home add <sealed-profile> --yes
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <sealed-profile>
 ```
+
+Public `home add` remains sealed-only. Accepted policy allows a source-attested
+exact upstream tree to be adopted later by the same private-staging, complete
+verification, and atomic-publication sequence without creating a seal, status,
+serving permission, or Model Serving Release decision. Internal Hugging Face
+v1 source, identity, and approval contracts exist for that planning path.
+There is no public `--revision` or `--plan` mode yet. Future onboarding must
+refresh the catalog and verify or prepare the exact `model_id@commit`; it must
+not rely on mutable `refs/main` or profile-only resolution.
 
 `home add` inspects every confirmed rank and refuses existing repository paths,
 unobservable nodes, insufficient capacity, missing target-side Hugging Face

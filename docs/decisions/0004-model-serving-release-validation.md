@@ -3,7 +3,10 @@
 - **Status:** Accepted
 - **Date:** 2026-08-14
 - **Amended:** 2026-08-15 — validation status is advisory, not serving
-  authorization; primary model identity is source-neutral
+  authorization; primary model identity is source-neutral.
+  2026-08-17 — a home created by source-attested acquisition may be reused
+  only after a complete offline rehash against its valid receipt; unknown
+  and pre-existing homes still require a reviewed expected manifest
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
@@ -19,7 +22,9 @@
   implemented as control-plane orchestration; maintainer-only issuance
   staging implemented as an untrusted local proposal whose trust event is
   repository review and merge; tracked store remains empty and unbound;
-  status-independent serving policy implemented
+  status-independent serving policy implemented;
+  internal source-attested Hugging Face v1 planning contracts implemented
+  without a public unsealed acquisition CLI, receipts, or skill composition
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
@@ -436,6 +441,20 @@ direct durable-cache download is not an accepted substitute.
 An existing home is reusable only after full verification against a reviewed
 expected manifest that is independent of the observed tree. A shallow catalog
 label and a manifest generated from that same tree are insufficient.
+
+### Interpretation note — 2026-08-17
+
+An unknown or pre-existing home retains the reviewed-expected-manifest reuse
+rule above. A source-attested home created by this workflow may be resumed
+or reused only after a complete offline rehash against its valid immutable
+site-local receipt for the same public source identity. A catalog label or a
+manifest generated from the current tree remains insufficient.
+
+Candidate tooling may resolve and hash an immutable upstream revision for
+that planning path. It still may not issue trust, a seal, status, serving
+permission, or a Model Serving Release decision. Public source-attested
+execution, receipts, `home verify`, and skill composition remain a later
+unit. This note does not authorize a public unsealed CLI.
 
 The skill is recipe-bound and may not silently change transport, storage
 policy, runtime source, geometry, or validation criteria. It asks for operator

@@ -49,8 +49,10 @@ status or prove physical behavior. Deterministic skill and journal tests make
 no physical DGX claim and create no release decision. It can reuse one complete
 exact eligible home only after full verification against a reviewed expected
 manifest independent of the observed tree; catalog state and a self-observed
-manifest alone are insufficient. Missing unsealed acquisition is explicitly
-stopped. Its journal uses a dedicated workflow namespace. Maintainer-only
+manifest alone are insufficient. Internal source-attested planning contracts
+exist; public unsealed acquisition, receipts, and skill composition remain
+unimplemented, so missing unsealed acquisition is still explicitly stopped.
+Its journal uses a dedicated workflow namespace. Maintainer-only
 issuance staging is implemented as a deterministic control-plane workflow
 that can propose registry objects; a successful local command is not trusted
 until repository review and merge, does not by itself create a reviewed

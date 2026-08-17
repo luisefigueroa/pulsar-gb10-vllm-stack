@@ -506,6 +506,16 @@ def _validate_public_json(value: Any, *, label: str) -> None:
     fail(f"{label} contains unsupported JSON value {type(value).__name__}")
 
 
+def validate_public_json_value(value: Any, *, label: str) -> None:
+    """Apply the release schema's structural privacy screen to public JSON.
+
+    This is a reusable schema helper. It rejects recognized credentials,
+    deployment-only values, private field names, floats, and unsupported JSON
+    types; trusted publication still requires the repository privacy review.
+    """
+    _validate_public_json(value, label=label)
+
+
 def _validate_artifact(artifact: Any, *, index: int) -> dict[str, Any]:
     if not isinstance(artifact, dict):
         fail(f"model artifact set artifacts[{index}] must be an object")
