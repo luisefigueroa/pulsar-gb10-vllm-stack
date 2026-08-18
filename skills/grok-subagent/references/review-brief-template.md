@@ -4,12 +4,12 @@ Fill every applicable section. Remove placeholders and irrelevant sections
 before sending the brief to Grok.
 
 ```text
-Act as an independent, read-only implementation reviewer for the sanitized
-review tree at <sanitized-review-tree>. Inspect only that tree; do not assume
+Act as an independent, read-only implementation reviewer for the privacy-cleared
+review root at <privacy-cleared-review-root>. Inspect only that root; do not assume
 the facts or proposed direction below are correct. Do not read gitignored
 site-local files such as `.env`, `.cluster-topology.json`,
 `.cluster-ssh-config`, `.weight-fabric/`, or `.model-library/`, and do not
-search outside the provided tree. Do not edit files, create branches,
+search outside the provided root. Do not edit files, create branches,
 mutate Git or GitHub state, operate infrastructure, or make external changes.
 Return a concrete final report, not progress notes.
 

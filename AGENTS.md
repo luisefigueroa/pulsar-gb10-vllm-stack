@@ -290,15 +290,21 @@ These rules exist because silent fallbacks, wrong networks, and unowned cleanup 
 
 When a user requests a Grok review or delegated implementation, use
 `skills/grok-subagent/SKILL.md`. The first pass stays read-only against a
-sanitized review tree. Reconcile its findings against repository authority and
-obtain explicit agreement before editing. After approval, Grok may implement
-the agreed unit directly in a clean dedicated feature worktree that passes the
-skill's privacy preflight, and may run in-scope local tests or bounded
-subagents. The primary agent reviews the resulting diff and authoritative test
-results without needlessly reimplementing the change, and retains publication
-responsibility. Grok must not receive secrets or site-local state, expand
-policy or scope without approval, or operate external/privileged infrastructure
-unless that authority is explicitly part of the approved plan.
+privacy-cleared root: a tracked-files-only tree for review-only work, or a clean
+dedicated feature worktree when approved implementation is anticipated.
+Reconcile its findings against repository authority and obtain explicit
+agreement before editing. After approval, Grok may resume the same session in
+the same preflighted worktree with implementation permissions, and may run
+in-scope local tests or bounded subagents. Use a fresh compact handoff instead
+when the review is large, the head or scope changed, or review used a temporary
+tracked-only tree. The primary agent reviews the resulting diff and
+authoritative test results without needlessly reimplementing the change, and
+retains commit and publication responsibility. A temporary worktree branch may
+be pushed by normal refspec to the original remote PR branch; never force a
+concurrent update, and fast-forward the original local worktree afterward only
+when its tracked state is clean. Grok must not receive secrets or site-local
+state, expand policy or scope without approval, or operate external/privileged
+infrastructure unless that authority is explicitly part of the approved plan.
 
 ### Fail closed; no silent policy changes
 
