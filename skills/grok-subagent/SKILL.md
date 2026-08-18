@@ -1,6 +1,6 @@
 ---
 name: grok-subagent
-description: Use the local Grok CLI for an independent read-only implementation review, reconcile its findings with repository evidence, obtain user approval, and optionally delegate the approved implementation to Grok in a privacy-cleared feature worktree before focused verification and publication. Use when a user asks for a Grok subagent, Grok review or second opinion, the Grok 4.6/xhigh workflow, or Grok to implement an agreed change after review.
+description: Use the local Grok CLI for an independent read-only implementation review, reconcile its findings with repository evidence, obtain user approval, and optionally continue the same Grok session in the same privacy-cleared feature worktree for approved implementation before focused verification and publication. Use when a user asks for a Grok subagent, Grok review or second opinion, the Grok 4.6/xhigh workflow, or Grok to implement an agreed change after review.
 ---
 
 # Use Grok for Review and Approved Implementation
@@ -22,9 +22,10 @@ unit. Repository authority and verified evidence remain controlling.
 4. Keep the first Grok pass read-only. Do not let it edit files, mutate Git or
    GitHub state, operate infrastructure, or change external state.
 5. Remove secrets, credentials, private topology, stable site identifiers, and
-   unnecessary proprietary data. Never point the review pass at the live
-   worktree: gitignored files remain readable there unless a kernel sandbox
-   prevents it.
+   unnecessary proprietary data. Never point Grok at an existing operator
+   worktree. Use either a tracked-files-only review tree or a fresh dedicated
+   feature worktree that passes the privacy preflight with no tracked,
+   untracked, or ignored state.
 
 Encourage useful alternatives, including conflicts with the tentative
 direction. Require Grok to label conflicts with accepted repository decisions.
@@ -48,20 +49,45 @@ is unavailable or authentication fails, report the blocker.
 checks, use `grok --version`, the installed `~/.grok/CHANGELOG.md`, and the
 official changelog as a fallback.
 
-## Run the read-only review
+## Choose one privacy-cleared review root
 
-Create a temporary tree of tracked worktree files only, outside the live
-repository:
+For a review-only request, create a temporary tree of tracked worktree files
+outside the live repository:
 
 ```bash
-review_tree=$(scripts/prepare-grok-review-tree.sh --print-dest)
+review_root=$(scripts/prepare-grok-review-tree.sh --print-dest)
 ```
 
 If the helper cannot build a clean tree, stop. Verify that `.git`, `.env`,
 `.cluster-topology.json`, `.cluster-ssh-config`, `.weight-fabric/`,
 `.model-library/`, `experiments/`, raw results, and other gitignored site state
-are absent. Do not pass the live repository path or unrelated credentials into
-the Grok process. Preserve only the authentication mechanism Grok itself needs.
+are absent.
+
+When the user expects Grok to implement after review, prefer one fresh
+dedicated feature worktree for both phases. Record the exact reviewed commit
+and original remote PR branch, create a temporary local feature branch from
+that commit, and run the preflight **before review**:
+
+```bash
+reviewed_head=$(git rev-parse HEAD)
+original_branch=$(git branch --show-current)
+case "$original_branch" in
+  main|master) original_remote_branch="" ;;
+  *) original_remote_branch="$original_branch" ;;
+esac
+git worktree add -b "$grok_work_branch" "$shared_worktree" "$reviewed_head"
+skills/grok-subagent/scripts/preflight-implementation-worktree.sh \
+  --repo-root "$shared_worktree" \
+  --expected-head "$reviewed_head"
+review_root="$shared_worktree"
+```
+
+Do not check out the original local branch in two worktrees. The temporary
+branch exists only to host review, implementation, verification, and a commit.
+Do not pass an existing operator worktree or unrelated credentials into Grok.
+Preserve only the authentication mechanism Grok itself needs.
+
+## Run the read-only review
 
 Fill [references/review-brief-template.md](references/review-brief-template.md)
 and save the completed brief in a temporary file outside the repository. Use a
@@ -73,7 +99,7 @@ grok_review_session_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
 env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN \
     -u VLLM_API_KEY -u API_KEY -u OPENAI_API_KEY \
     -u GITHUB_TOKEN -u GH_TOKEN \
-  grok --cwd "$review_tree" \
+  grok --cwd "$review_root" \
     --session-id "$grok_review_session_id" \
     --model grok-4.6 \
     --reasoning-effort xhigh \
@@ -100,7 +126,7 @@ session for one tool-free synthesis turn using the same model, reasoning,
 sandbox, memory, and web settings:
 
 ```bash
-grok --cwd "$review_tree" \
+grok --cwd "$review_root" \
   --resume "$grok_review_session_id" \
   --model grok-4.6 \
   --reasoning-effort xhigh \
@@ -140,40 +166,38 @@ After Grok reports:
 
 This pause is mandatory even when Grok agrees with the tentative direction.
 
-## Delegate the approved implementation
+## Continue the approved implementation
 
 After approval, let Grok implement directly when that saves time. Do not make
 the primary agent retype or manually import a patch by default.
 
-Use a clean, dedicated feature worktree at the exact reviewed base. Before
-exposing it to Grok, run:
+When review used the shared worktree, verify immediately before granting write
+access that its HEAD still equals the reviewed commit and that the privacy
+preflight still passes. A changed head or any tracked, untracked, or ignored
+state stops the transition:
 
 ```bash
 skills/grok-subagent/scripts/preflight-implementation-worktree.sh \
-  --repo-root "$implementation_worktree" \
+  --repo-root "$shared_worktree" \
   --expected-head "$reviewed_head"
 ```
 
-The preflight requires a non-default branch, the reviewed commit, and no
-tracked changes, untracked files, or ignored state. If it fails, do not delete
-or move user data to make it pass. Create a fresh dedicated worktree or return
-to the user if that would change scope. Once it passes, Grok may edit that
-worktree directly and run the approved local checks.
+Resume the **same review session** in the **same shared worktree** when the
+review was bounded, the head and approved scope are unchanged, and preserving
+context is useful. The approval pause remains mandatory; only the permission
+envelope changes.
 
 Fill
 [references/implementation-brief-template.md](references/implementation-brief-template.md)
-with the reconciled plan. Start a named implementation session; a concise
-handoff is preferable to weakening worktree isolation merely to reuse review
-context:
+with the reconciled plan. Resume with the implementation restrictions and no
+`--restore-code`; the shared worktree already contains the reviewed code:
 
 ```bash
-grok_implementation_session_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
-
 env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN \
     -u VLLM_API_KEY -u API_KEY -u OPENAI_API_KEY \
     -u GITHUB_TOKEN -u GH_TOKEN \
-  grok --cwd "$implementation_worktree" \
-    --session-id "$grok_implementation_session_id" \
+  grok --cwd "$shared_worktree" \
+    --resume "$grok_review_session_id" \
     --model grok-4.6 \
     --reasoning-effort xhigh \
     --permission-mode auto \
@@ -191,6 +215,15 @@ env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN \
     --output-format plain \
     --prompt-file "$implementation_prompt_file"
 ```
+
+Use a fresh implementation session with a compact approved brief instead when
+the review was long or noisy, hit recovery limits, the head or scope changed,
+or implementation was not anticipated and review used a tracked-only tree.
+When review already used the shared worktree, keep that same worktree even if
+the session is fresh. Otherwise create a dedicated worktree at the exact
+approved head. In either case rerun the preflight first. If it fails, do not
+delete or move user data to make it pass. Do not reuse context by exposing an
+existing operator worktree.
 
 This phase intentionally allows normal read, edit, shell, test, formatting,
 and bounded subagent behavior inside the cleared worktree. Let Grok make
@@ -218,6 +251,23 @@ A fresh Grok diff review is optional and risk-based, not mandatory. The primary
 agent retains responsibility for final repository compliance and handles
 commit, push, PR creation, and review responses under the repository's normal
 publication policy.
+
+When the shared worktree was created from an already checked-out non-default PR
+branch and the user authorized updating that PR, commit on the temporary local
+branch and push its HEAD directly to the original remote branch:
+
+```bash
+git push origin HEAD:"$original_remote_branch"
+```
+
+Confirm that the remote branch still has the reviewed ancestry first. Use a
+normal push and let a non-fast-forward update fail; never force merely to
+preserve the handoff. If the remote advanced, stop, reconcile against the new
+head, and rerun affected verification. The original local worktree remains
+behind after the push and must later be fast-forwarded only when its tracked
+state is clean. When `original_remote_branch` is empty because review began on
+`main` or `master`, publish the temporary feature branch through the normal new
+PR workflow; never target the default branch with this refspec shortcut.
 
 In the final handoff, distinguish Grok's review advice, Grok-authored changes,
 and independently verified evidence. State whether the delivered change still

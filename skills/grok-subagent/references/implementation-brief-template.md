@@ -8,6 +8,8 @@ before sending the brief to Grok.
 Act as the delegated implementer for the approved change in your current clean
 feature worktree. The independent review is complete, its findings were checked
 against repository authority, and the user approved the reconciled plan below.
+If this resumes the review session, retain useful code context but treat the
+approved plan below as controlling over tentative review alternatives.
 Implement that plan directly, run the relevant local checks, and return a
 concise handoff. Do not revisit settled policy merely because another design is
 possible.

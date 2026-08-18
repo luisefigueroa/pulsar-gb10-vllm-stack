@@ -25,9 +25,9 @@ implementation_preflight="$REPO_DIR/skills/grok-subagent/scripts/preflight-imple
   || fail "missing executable $implementation_preflight"
 
 grep -Fq 'scripts/prepare-grok-review-tree.sh' "$skill" \
-  || fail "skill must prepare a sanitized review tree via the helper"
-grep -Fq -- '--cwd "$review_tree"' "$skill" \
-  || fail "skill must point grok --cwd at the sanitized review tree"
+  || fail "skill must retain the tracked-only review option"
+grep -Fq -- '--cwd "$review_root"' "$skill" \
+  || fail "read-only review must target the privacy-cleared root"
 if grep -Fq -- '--cwd "$review_repo_root"' "$skill"; then
   fail "skill must not launch Grok against the live repository root"
 fi
@@ -52,19 +52,29 @@ grep -Fq '`grok -p` they are sent to the model as ordinary prompt text' "$skill"
 grep -Fq 'Explicitly ask the user to approve or revise' "$skill" \
   || fail "skill must preserve the user approval boundary"
 grep -Fq 'preflight-implementation-worktree.sh' "$skill" \
-  || fail "implementation must run the privacy preflight"
-grep -Fq -- '--cwd "$implementation_worktree"' "$skill" \
-  || fail "approved implementation must target the cleared feature worktree"
+  || fail "shared review/implementation must run the privacy preflight"
+grep -Fq -- '--cwd "$shared_worktree"' "$skill" \
+  || fail "approved implementation must stay in the reviewed worktree"
+grep -Fq -- '--resume "$grok_review_session_id"' "$skill" \
+  || fail "approved implementation must support the same review session"
+grep -Fq 'main|master) original_remote_branch=""' "$skill" \
+  || fail "skill must refuse the refspec shortcut for default branches"
+grep -Fq 'git push origin HEAD:"$original_remote_branch"' "$skill" \
+  || fail "skill must push the temporary HEAD to the original remote branch"
+grep -Fq 'never force' "$skill" \
+  || fail "skill must forbid force-pushing the handoff"
+grep -Fq 'never target the default branch' "$skill" \
+  || fail "skill must keep default-branch publication on the normal PR path"
 grep -Fq 'Do not make' "$skill" \
   || fail "skill must avoid default manual patch re-entry"
 
 if grep -Fq 'Inspect the repository yourself' "$brief"; then
   fail "brief must not ask Grok to inspect the live repository"
 fi
-grep -Fq '<sanitized-review-tree>' "$brief" \
-  || fail "brief must inspect only the sanitized review tree"
-grep -Fq 'Inspect only that tree' "$brief" \
-  || fail "brief must tell Grok not to inspect the live repository"
+grep -Fq '<privacy-cleared-review-root>' "$brief" \
+  || fail "brief must identify the privacy-cleared review root"
+grep -Fq 'Inspect only that root' "$brief" \
+  || fail "brief must constrain Grok to the cleared root"
 grep -Fq '.env' "$brief" \
   || fail "brief must forbid reading .env"
 grep -Fq '.cluster-topology.json' "$brief" \
@@ -137,7 +147,7 @@ preflight_output=$(
     --repo-root "$implementation_repo" \
     --expected-head "$reviewed_head"
 )
-grep -Fq 'Grok implementation worktree preflight OK' <<<"$preflight_output" \
+grep -Fq 'Grok shared worktree preflight OK' <<<"$preflight_output" \
   || fail "implementation preflight did not accept a clean feature branch"
 
 printf 'secret\n' >"$implementation_repo/.env"

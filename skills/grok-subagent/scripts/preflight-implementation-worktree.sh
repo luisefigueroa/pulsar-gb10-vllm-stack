@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Fail-closed privacy and branch check before Grok receives write access.
+# Fail-closed privacy and branch check before Grok reviews or receives write access.
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Check a worktree before delegated Grok implementation
+Check a shared worktree before delegated Grok review or implementation
 
 Usage:
   preflight-implementation-worktree.sh [--repo-root DIR]
@@ -72,7 +72,7 @@ if [ -n "$(git -C "$root" status --porcelain=v1 --ignored --untracked-files=all)
 fi
 
 cat <<EOF
-Grok implementation worktree preflight OK
+Grok shared worktree preflight OK
   root: $root
   branch: $branch
   head: $head_commit
