@@ -54,7 +54,11 @@ def fetch_inventory(model_id: str, selector: str) -> dict[str, Any]:
         fail(f"the selected hf installation cannot import huggingface_hub: {exc}")
 
     api = HfApi()
-    info = api.model_info(model_id, revision=selector, expand=["sha"])
+    # expand= returns only the requested fields; private must be requested
+    # explicitly so a missing attribute is not mistaken for a public repo.
+    info = api.model_info(model_id, revision=selector, expand=["sha", "private"])
+    if getattr(info, "private", None) is not False:
+        fail("Hugging Face repository is not public")
     commit = getattr(info, "sha", None)
     if not isinstance(commit, str) or not commit:
         fail("Hugging Face did not resolve the selector to a commit")

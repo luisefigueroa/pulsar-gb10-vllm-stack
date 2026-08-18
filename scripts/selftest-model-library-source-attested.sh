@@ -27,9 +27,9 @@ fi
 grep -q -- '--revision' "$STATE/no-revision.err"
 [ ! -s "$STATE/hf.log" ]
 
-# A selected remote rank must independently resolve the same source before the
-# read-only plan is shown. This exercises the streamed metadata helper without
-# downloading model bytes.
+# An explicit --node resolves source metadata only on that reviewed rank
+# before the read-only plan is shown. This exercises the streamed metadata
+# helper without downloading model bytes or asking another rank.
 python3 - "$REPO_DIR" "$STATE/remote" <<'PY'
 import pathlib
 import sys
@@ -68,11 +68,59 @@ plan = json.load(open(sys.argv[1], encoding="utf-8"))
 assert plan["approval"]["selected_rank"] == 1
 assert plan["source"]["snapshot_revision"] == "a" * 40
 PY
-[ "$(grep -c 'source-inventory --model-id' "$STATE/remote/hf.log")" -eq 2 ]
+[ "$(grep -c 'source-inventory --model-id' "$STATE/remote/hf.log")" -eq 1 ]
 grep -q -- '--model-id nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4' \
   "$STATE/remote/ssh.log"
 if grep -q 'download nvidia/' "$STATE/remote/hf.log"; then
   echo "remote plan mode downloaded model bytes" >&2
+  exit 1
+fi
+
+# Automatic placement must treat a metadata failure as making only that
+# candidate ineligible. Rank 0 cannot resolve; rank 1 can, so rank 1 is
+# selected and no model bytes move.
+python3 - "$REPO_DIR" "$STATE/auto-meta" <<'PY'
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib import model_library_source_attested_fixture as fixture
+
+fixture.write_cli_fixture(pathlib.Path(sys.argv[2]), ranks=2)
+PY
+mkdir -p "$STATE/auto-meta/home"
+AUTO_ENV=(
+  "PATH=$STATE/auto-meta/bin:$PATH"
+  "CLUSTER_TOPOLOGY_FILE=$STATE/auto-meta/topology.json"
+  "HF_CACHE=$STATE/auto-meta/cache"
+  "MODEL_LIBRARY_DIR=$STATE/auto-meta/library"
+  "MODEL_LIBRARY_CATALOG=$STATE/auto-meta/library/catalog.json"
+  "MOCK_HF_LOG=$STATE/auto-meta/hf.log"
+  "MOCK_SSH_LOG=$STATE/auto-meta/ssh.log"
+  "MOCK_REMOTE_HF_CACHE=$STATE/auto-meta/cache-1"
+  "MOCK_REMOTE_HOME=$STATE/auto-meta/home"
+  "MOCK_HF_INVENTORY_FAIL_IF_CACHE=$STATE/auto-meta/cache"
+  "PULSAR_SSH=$STATE/auto-meta/bin/ssh"
+  "PULSAR_HF_SOURCE_INVENTORY_PY=$STATE/auto-meta/bin/hf-source-inventory.py"
+)
+if ! env "${AUTO_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+    --revision main --plan --json \
+    >"$STATE/auto-meta/plan.json" 2>"$STATE/auto-meta/plan.err"; then
+  echo "automatic metadata-eligibility plan failed" >&2
+  sed -n '1,120p' "$STATE/auto-meta/plan.err" >&2
+  exit 1
+fi
+python3 - "$STATE/auto-meta/plan.json" <<'PY'
+import json
+import sys
+
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+assert plan["approval"]["selected_rank"] == 1
+assert plan["source"]["snapshot_revision"] == "a" * 40
+PY
+[ "$(grep -c 'source-inventory --model-id' "$STATE/auto-meta/hf.log")" -eq 1 ]
+if grep -q 'download nvidia/' "$STATE/auto-meta/hf.log"; then
+  echo "automatic metadata-eligibility plan downloaded model bytes" >&2
   exit 1
 fi
 

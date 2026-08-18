@@ -252,6 +252,9 @@ import os
 import sys
 
 args = sys.argv[1:]
+fail_cache = os.environ.get("MOCK_HF_INVENTORY_FAIL_IF_CACHE", "")
+if fail_cache and os.environ.get("HF_CACHE") == fail_cache:
+    raise SystemExit(1)
 with open(os.environ["MOCK_HF_LOG"], "a", encoding="utf-8") as handle:
     handle.write("source-inventory " + " ".join(args) + "\\n")
 print(json.dumps({json.dumps({"id": info["id"], "sha": info["sha"], "siblings": tree})}))

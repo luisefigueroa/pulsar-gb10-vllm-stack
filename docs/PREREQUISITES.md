@@ -290,7 +290,8 @@ scripts/model-library.sh catalog refresh
 scripts/model-library.sh home add <profile> \
   --revision <selector> --plan --json
 scripts/model-library.sh home add <profile> \
-  --revision <exact-commit-from-plan> --yes --json
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes --json
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh home verify <model_id@exact-commit> --json
 ```

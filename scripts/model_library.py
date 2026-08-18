@@ -75,6 +75,7 @@ HOME_ACQUISITION_RESULT_KIND = "pulsar-model-library-home-acquisition-result"
 HOME_ACQUISITION_MIN_HEADROOM_BYTES = 5 * 1024**3
 OWNED_HUB_STAGING_SCHEMA_VERSION = 1
 OWNED_HUB_STAGING_KIND = "pulsar-model-library-owned-hub-staging"
+RENAME_NOREPLACE = 1
 # Source-attested Hugging Face v1 planning contracts live in
 # model_library_source_attested.py. They use a separate schema/kind and must
 # not change this sealed plan/result contract. This module does not import
@@ -6547,31 +6548,42 @@ def _rename_directory_noreplace(source: pathlib.Path, target: pathlib.Path) -> N
     libc = ctypes.CDLL(libc_name, use_errno=True)
     if not hasattr(libc, "renameat2"):
         fail("home add: exclusive durable-home publication requires renameat2")
+    renameat2 = libc.renameat2
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
     source_fd = os.open(
         source.parent,
         os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
     )
-    target_fd = os.open(
-        target.parent,
-        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
-    )
     try:
-        result = libc.renameat2(
-            source_fd,
-            os.fsencode(source.name),
-            target_fd,
-            os.fsencode(target.name),
-            1,
+        target_fd = os.open(
+            target.parent,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
         )
-        if result != 0:
-            error = ctypes.get_errno()
-            if error in {errno.EEXIST, errno.ENOTEMPTY}:
-                fail("home add: durable repository appeared before publication")
-            fail("home add: exclusive durable-home publication failed")
-        os.fsync(source_fd)
-        os.fsync(target_fd)
+        try:
+            result = renameat2(
+                source_fd,
+                os.fsencode(source.name),
+                target_fd,
+                os.fsencode(target.name),
+                RENAME_NOREPLACE,
+            )
+            if result != 0:
+                error = ctypes.get_errno()
+                if error in {errno.EEXIST, errno.ENOTEMPTY}:
+                    fail("home add: durable repository appeared before publication")
+                fail("home add: exclusive durable-home publication failed")
+            os.fsync(source_fd)
+            os.fsync(target_fd)
+        finally:
+            os.close(target_fd)
     finally:
-        os.close(target_fd)
         os.close(source_fd)
 
 

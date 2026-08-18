@@ -111,9 +111,11 @@ Notes:
     home. For a one-node profile, that rank may be any confirmed rank; for
     multi-node profiles it remains in the exact profile geometry. With no
     --node override, the eligible serving rank with the most free space is
-    selected. Download uses private same-filesystem staging and target-local
-    modern hf. It creates no hot copies, starts nothing, never refreshes
-    the catalog, and does not create a seal or status.
+    selected. Eligibility includes target-local metadata access; an explicit
+    --node resolves metadata only on that rank. Download uses private
+    same-filesystem staging and target-local modern hf. It creates no hot
+    copies, starts nothing, never refreshes the catalog, and does not create
+    a seal or status.
   • home verify rehashes a receipt-created home against its immutable
     receipt. Unknown or pre-existing homes still need a reviewed expected
     manifest. Verification assigns no status.
@@ -1471,8 +1473,13 @@ run_hf_on_rank() {
 
 resolve_source_attested_source_on_rank() {
   local rank="${1:?}" hf_cli="${2:?}" model_id="${3:?}" selector="${4:?}"
-  local inventory_file command cli_ref
-  inventory_file="${5:?}/repo-inventory.json"
+  local work_dir="${5:?}" allow_fail=0
+  local inventory_file command cli_ref parsed
+  if [ "${6:-}" = "--allow-fail" ]; then
+    allow_fail=1
+  fi
+  mkdir -p "$work_dir"
+  inventory_file="$work_dir/repo-inventory.json"
   [ -f "$HF_SOURCE_INVENTORY_PY" ] \
     || die "home add: Hugging Face source-inventory helper is missing"
   if [ "$hf_cli" = hf ]; then
@@ -1493,16 +1500,24 @@ resolve_source_attested_source_on_rank() {
   command+='[ -x "$py" ]; export HF_HUB_OFFLINE=0; exec "$py" - '
   command+="$(printf -- '%q ' --model-id "$model_id" --selector "$selector")"
   if [ "$rank" = 0 ]; then
-    bash -c "$command" <"$HF_SOURCE_INVENTORY_PY" >"$inventory_file" \
-      || die "home add: could not resolve the complete Hugging Face inventory"
+    if ! bash -c "$command" <"$HF_SOURCE_INVENTORY_PY" >"$inventory_file"; then
+      [ "$allow_fail" = 1 ] && return 1
+      die "home add: could not resolve the complete Hugging Face inventory"
+    fi
   else
-    ssh_node "$rank" "$command" <"$HF_SOURCE_INVENTORY_PY" >"$inventory_file" \
-      || die "home add: could not resolve the complete Hugging Face inventory"
+    if ! ssh_node "$rank" "$command" <"$HF_SOURCE_INVENTORY_PY" >"$inventory_file"; then
+      [ "$allow_fail" = 1 ] && return 1
+      die "home add: could not resolve the complete Hugging Face inventory"
+    fi
   fi
-  python3 "$SOURCE_ATTESTED_PY" parse-source \
+  if ! parsed=$(python3 "$SOURCE_ATTESTED_PY" parse-source \
     --model-id "$model_id" \
     --selector "$selector" \
-    --repo-info "$inventory_file"
+    --repo-info "$inventory_file"); then
+    [ "$allow_fail" = 1 ] && return 1
+    die "home add: could not build the Hugging Face v1 source inventory"
+  fi
+  printf '%s\n' "$parsed"
 }
 
 cmd_home_add_source_attested() (
@@ -1513,8 +1528,10 @@ cmd_home_add_source_attested() (
   local content_bytes revision selected_rank selected_node selected_hf
   local hub_root target_hub staging_json staging_root
   local observed_json receipt_json result_json approval_id
-  local metadata_rank metadata_hf seal_args=()
+  local seal_args=() geometry_text match in_geometry geometry_rank
+  local rank hf_cli source_try metadata_csv
   local cleanup_needed=0
+  local -a geometry_ranks=() metadata_ranks=()
 
   [ "$plan_only" = 0 ] || [ "$yes" = 0 ] \
     || die "home add --plan is read-only and cannot be combined with --yes"
@@ -1547,22 +1564,66 @@ cmd_home_add_source_attested() (
   trap cleanup_source_attested_home_add EXIT
   trap 'exit 130' INT TERM
 
-  metadata_rank=""
-  local rank hf_cli
-  for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
-    IFS=$'\t' read -r _ hf_cli < <(home_acquisition_rank_environment "$rank")
-    if modern_source_attested_hf_cli "$hf_cli"; then
-      metadata_rank="$rank"
-      metadata_hf="$hf_cli"
-      break
-    fi
-  done
-  [ -n "$metadata_rank" ] \
-    || die "home add: modern hf is not installed on any confirmed rank"
+  geometry_text=$(python3 "$SOURCE_ATTESTED_PY" geometry-ranks \
+    --confirmed-count "$CLUSTER_TOPOLOGY_COUNT" \
+    --serving-nodes "$NODES") \
+    || die "home add: profile serving geometry exceeds confirmed contiguous ranks"
+  read -r -a geometry_ranks <<<"$geometry_text"
+  [ "${#geometry_ranks[@]}" -gt 0 ] \
+    || die "home add: profile serving geometry exceeds confirmed contiguous ranks"
 
-  source_json=$(resolve_source_attested_source_on_rank \
-    "$metadata_rank" "$metadata_hf" "$model_id" "$selector" "$tmp") \
-    || die "home add: could not build the Hugging Face v1 source inventory"
+  mkdir -p "$tmp/sources"
+  if [ -n "$node_selector" ]; then
+    match=""
+    for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+      if [ "$node_selector" = "$rank" ] \
+          || [ "$node_selector" = "${CLUSTER_NODE_IDS[$rank]:-}" ]; then
+        if [ -n "$match" ] && [ "$match" != "$rank" ]; then
+          die "home add: --node must match exactly one confirmed rank or node ID"
+        fi
+        match="$rank"
+      fi
+    done
+    [ -n "$match" ] \
+      || die "home add: --node must match exactly one confirmed rank or node ID"
+    in_geometry=0
+    for geometry_rank in "${geometry_ranks[@]}"; do
+      if [ "$geometry_rank" = "$match" ]; then
+        in_geometry=1
+        break
+      fi
+    done
+    [ "$in_geometry" = 1 ] \
+      || die "home add: selected rank is outside the profile serving geometry"
+    IFS=$'\t' read -r _ hf_cli < <(home_acquisition_rank_environment "$match")
+    modern_source_attested_hf_cli "$hf_cli" \
+      || die "home add: selected rank does not have modern hf"
+    source_json=$(resolve_source_attested_source_on_rank \
+      "$match" "$hf_cli" "$model_id" "$selector" "$tmp/sources/work-$match") \
+      || die "home add: could not build the Hugging Face v1 source inventory"
+    printf '%s\n' "$source_json" >"$tmp/sources/rank-$match.json"
+    metadata_ranks=("$match")
+  else
+    for rank in "${geometry_ranks[@]}"; do
+      IFS=$'\t' read -r _ hf_cli < <(home_acquisition_rank_environment "$rank")
+      if ! modern_source_attested_hf_cli "$hf_cli"; then
+        continue
+      fi
+      if source_try=$(resolve_source_attested_source_on_rank \
+        "$rank" "$hf_cli" "$model_id" "$selector" \
+        "$tmp/sources/work-$rank" --allow-fail); then
+        printf '%s\n' "$source_try" >"$tmp/sources/rank-$rank.json"
+        metadata_ranks+=("$rank")
+      else
+        log "rank $rank: Hugging Face source metadata is unavailable; this rank is not eligible" >&2
+      fi
+    done
+    [ "${#metadata_ranks[@]}" -gt 0 ] \
+      || die "home add: no eligible rank could resolve Hugging Face source metadata"
+    source_json=$(python3 "$SOURCE_ATTESTED_PY" unique-source \
+      --sources-dir "$tmp/sources") \
+      || die "home add: candidate ranks resolved disagreeing Hugging Face source metadata"
+  fi
   printf '%s\n' "$source_json" >"$tmp/source.json"
   revision=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_revision"])' \
     <"$tmp/source.json")
@@ -1593,6 +1654,8 @@ cmd_home_add_source_attested() (
     --handle-file "$handle_file"
   )
   [ -z "$node_selector" ] || plan_args+=(--node "$node_selector")
+  metadata_csv=$(IFS=,; printf '%s' "${metadata_ranks[*]}")
+  plan_args+=(--metadata-resolved-ranks "$metadata_csv")
   plan_args+=(--json)
   plan_json=$(python3 "$SOURCE_ATTESTED_PY" "${plan_args[@]}")
   printf '%s\n' "$plan_json" >"$tmp/plan.json"
@@ -1610,30 +1673,8 @@ cmd_home_add_source_attested() (
     <"$tmp/plan.json")
   modern_source_attested_hf_cli "$selected_hf" \
     || die "home add: selected rank does not have modern hf"
-
-  # Capacity planning may need one metadata-capable rank before target
-  # selection. Before presenting the plan, make the selected rank independently
-  # resolve the identical source through its own hf environment.
-  if [ "$selected_rank" != "$metadata_rank" ]; then
-    mkdir -p "$tmp/selected"
-    source_json=$(resolve_source_attested_source_on_rank \
-      "$selected_rank" "$selected_hf" "$model_id" "$selector" "$tmp/selected") \
-      || die "home add: selected rank could not resolve the Hugging Face source"
-    printf '%s\n' "$source_json" >"$tmp/selected-source.json"
-    identity_json=$(python3 "$SOURCE_ATTESTED_PY" resolve-identity \
-      --source "$tmp/selected-source.json" \
-      --profile "$profile" \
-      --repo-root "$REPO_DIR" \
-      --release-id "${MODEL_SERVING_RELEASE_ID:-}" \
-      "${seal_args[@]}")
-    printf '%s\n' "$identity_json" >"$tmp/selected-identity.json"
-    python3 "$SOURCE_ATTESTED_PY" verify-approval \
-      --plan "$tmp/plan.json" \
-      --source "$tmp/selected-source.json" \
-      --identity "$tmp/selected-identity.json" \
-      --topology-generation "$CLUSTER_TOPOLOGY_ID" >/dev/null \
-      || die "home add: selected-rank source differs from the acquisition plan"
-  fi
+  [ -f "$tmp/sources/rank-$selected_rank.json" ] \
+    || die "home add: selected rank did not independently resolve Hugging Face source metadata"
 
   if [ "$json" = 0 ]; then
     python3 "$SOURCE_ATTESTED_PY" render-plan --plan "$tmp/plan.json"
@@ -1824,7 +1865,6 @@ cmd_home_add() (
   require_py
   load_cluster_topology >/dev/null \
     || die "home add: confirmed topology required"
-  load_conf "$profile"
   [ "$(model_source_kind)" = hf ] \
     || die "home add: $profile is not a Hugging Face model profile"
   [ -n "${EXPECTED_MODEL_SEAL:-}" ] \

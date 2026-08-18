@@ -548,10 +548,13 @@ durable home separately before running preparation.
       qualification, and release promotion did not occur.
 14. source-attested durable-home acquisition when source resolution, inventory,
     receipt, offline verification, or exact prepare binding changes:
-    - a read-only plan resolves the supplied selector to one exact public commit
-      and complete upstream Git/LFS file inventory on the selected rank without
-      downloading model bytes;
-    - execution requires a separate confirmation and uses that exact commit;
+    - a read-only plan asks in-geometry candidates with modern `hf` to resolve
+      the supplied selector and complete upstream Git/LFS file inventory without
+      downloading model bytes; failed candidates become ineligible, successful
+      candidates must agree, and the selected target must already have produced
+      that matching source;
+    - execution requires a separate confirmation, uses that exact commit, and
+      binds the reviewed rank;
     - authentication remains on the selected rank and no credential is passed,
       logged, or persisted by Pulsar;
     - model, Xet, and asset bytes remain in private same-filesystem staging;

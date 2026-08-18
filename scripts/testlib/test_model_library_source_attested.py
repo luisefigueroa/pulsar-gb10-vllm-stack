@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import copy
+import ctypes
+import errno
 import json
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 import sys
@@ -61,6 +64,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
             serving_nodes=kwargs.pop("serving_nodes", 1),
             topology_generation=kwargs.pop("topology_generation", "d" * 64),
             node_selector=kwargs.pop("node_selector", ""),
+            metadata_resolved_ranks=kwargs.pop("metadata_resolved_ranks", None),
         )
 
     def _receipt(self, hub: pathlib.Path | None = None) -> dict[str, object]:
@@ -151,6 +155,61 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
             "approval profile differs from its identity",
         ):
             source_attested.validate_source_attested_acquisition_plan(tampered)
+
+    def test_metadata_failure_does_not_force_another_rank(self) -> None:
+        plan, _handle = self._plan(metadata_resolved_ranks=[1])
+        self.assertEqual(plan["approval"]["selected_rank"], 1)
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "no eligible"
+        ):
+            self._plan(metadata_resolved_ranks=[])
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError,
+            "source metadata is unavailable",
+        ):
+            self._plan(node_selector="0", metadata_resolved_ranks=[1])
+
+    def test_unique_source_requires_matching_content(self) -> None:
+        first = self.source
+        second = fixture.build_source(selector="v1")
+        self.assertEqual(
+            source_attested.unique_source_attested_source([first, second]),
+            first,
+        )
+        other = fixture.build_source(
+            inventory=[
+                source_attested.normalize_huggingface_v1_inventory_entry(
+                    path="other.bin",
+                    size=4,
+                    blob_kind=source_attested.HF_V1_BLOB_GIT,
+                    git_oid="c" * 40,
+                )
+            ]
+        )
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "disagreeing"
+        ):
+            source_attested.unique_source_attested_source([first, other])
+
+    def test_geometry_ranks_follow_profile_serving_nodes(self) -> None:
+        self.assertEqual(
+            source_attested.source_attested_geometry_ranks(
+                [0, 1, 2], serving_nodes=1
+            ),
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            source_attested.source_attested_geometry_ranks(
+                [0, 1, 2], serving_nodes=2
+            ),
+            [0, 1],
+        )
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "serving geometry"
+        ):
+            source_attested.source_attested_geometry_ranks(
+                [0, 1], serving_nodes=3
+            )
 
     def test_occupied_or_huggingface_cli_is_ineligible(self) -> None:
         with self.assertRaisesRegex(
@@ -276,7 +335,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
         self.assertTrue(staged_hub.is_dir())
 
-    def test_receipt_collision_and_tampered_home_refused(self) -> None:
+    def test_compatible_receipts_are_preserved_and_lookup_is_stable(self) -> None:
         receipt = self._receipt()
         source_attested.write_source_attested_receipt(self.library_dir, receipt)
         other_source = fixture.build_source(selector="v1")
@@ -304,10 +363,24 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
             approval=plan["approval"],
             observed_manifest=observed["manifest"],
         )
-        with self.assertRaisesRegex(
-            source_attested.SourceAttestedAcquisitionError, "different source-attested"
-        ):
-            source_attested.write_source_attested_receipt(self.library_dir, other)
+        self.assertNotEqual(receipt["receipt_id"], other["receipt_id"])
+        written = source_attested.write_source_attested_receipt(
+            self.library_dir, other
+        )
+        self.assertEqual(written["receipt_id"], other["receipt_id"])
+        store = source_attested.source_attested_receipt_store(self.library_dir)
+        self.assertTrue((store / f"{receipt['receipt_id']}.json").is_file())
+        self.assertTrue((store / f"{other['receipt_id']}.json").is_file())
+        found = source_attested.find_source_attested_receipt(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+        )
+        self.assertIsNotNone(found)
+        self.assertEqual(
+            found["receipt_id"],
+            min(receipt["receipt_id"], other["receipt_id"]),
+        )
         tampered = copy.deepcopy(observed["manifest"])
         tampered["files"][0]["sha256"] = "f" * 64
         tampered["manifest_id"] = model_library.snapshot_manifest_id(tampered)
@@ -320,6 +393,65 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
                 model_id=self.model_id,
                 snapshot_revision=fixture.COMMIT,
             )
+
+    def test_incompatible_receipt_is_refused_and_existing_files_remain(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        other_source = fixture.build_source(
+            selector="v1",
+            inventory=[
+                source_attested.normalize_huggingface_v1_inventory_entry(
+                    path="config.json",
+                    size=12,
+                    blob_kind=source_attested.HF_V1_BLOB_GIT,
+                    git_oid="c" * 40,
+                ),
+                source_attested.normalize_huggingface_v1_inventory_entry(
+                    path="model.safetensors",
+                    size=8,
+                    blob_kind=source_attested.HF_V1_BLOB_LFS,
+                    sha256="1" * 64,
+                ),
+            ],
+        )
+        other_identity = source_attested.resolve_huggingface_v1_acquisition_identity(
+            source=other_source, profile=self.profile
+        )
+        plan, _handle = source_attested.plan_source_attested_acquisition(
+            source=other_source,
+            identity=other_identity,
+            observations=self._observations(),
+            serving_nodes=1,
+            topology_generation="d" * 64,
+        )
+        observed_manifest = {
+            "schema_version": 1,
+            "kind": "model-library-snapshot-manifest",
+            "model_id": self.model_id,
+            "snapshot_revision": fixture.COMMIT,
+            "files": [
+                {"path": "config.json", "size": 12, "sha256": "2" * 64},
+                {"path": "model.safetensors", "size": 8, "sha256": "1" * 64},
+            ],
+            "file_count": 2,
+            "total_bytes": 20,
+        }
+        observed_manifest["manifest_id"] = model_library.snapshot_manifest_id(
+            observed_manifest
+        )
+        other = source_attested.build_source_attested_acquisition_receipt(
+            source=other_source,
+            identity=other_identity,
+            approval=plan["approval"],
+            observed_manifest=observed_manifest,
+        )
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "incompatible"
+        ):
+            source_attested.write_source_attested_receipt(self.library_dir, other)
+        store = source_attested.source_attested_receipt_store(self.library_dir)
+        self.assertTrue((store / f"{receipt['receipt_id']}.json").is_file())
+        self.assertFalse((store / f"{other['receipt_id']}.json").exists())
 
     def test_missing_extra_and_tamper_detected(self) -> None:
         observed = [
@@ -509,6 +641,69 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         self.assertNotIn("node_id", blob)
         self.assertNotIn("cache_root", blob)
         self.assertNotIn("topology_id", blob)
+
+
+class RenameDirectoryNoreplaceTests(unittest.TestCase):
+    def test_second_open_failure_closes_source_fd(self) -> None:
+        opened: list[pathlib.Path] = []
+        closed: list[int] = []
+
+        def fake_open(path, flags, *args, **kwargs):
+            opened.append(pathlib.Path(path))
+            if len(opened) == 1:
+                return 11
+            raise OSError(errno.EACCES, "denied")
+
+        libc = mock.Mock()
+        libc.renameat2 = mock.Mock()
+        with (
+            mock.patch("scripts.model_library.ctypes.util.find_library", return_value="libc.so.6"),
+            mock.patch("scripts.model_library.ctypes.CDLL", return_value=libc),
+            mock.patch("scripts.model_library.os.open", side_effect=fake_open),
+            mock.patch("scripts.model_library.os.close", side_effect=closed.append),
+        ):
+            with self.assertRaises(OSError):
+                model_library._rename_directory_noreplace(
+                    pathlib.Path("/tmp/src/dir"),
+                    pathlib.Path("/tmp/dst/dir"),
+                )
+        self.assertEqual(closed, [11])
+        libc.renameat2.assert_not_called()
+
+    def test_renameat2_signature_is_assigned_before_use(self) -> None:
+        fds = iter((20, 21))
+        libc = mock.Mock()
+        renameat2 = mock.Mock(return_value=0)
+        libc.renameat2 = renameat2
+        with (
+            mock.patch("scripts.model_library.ctypes.util.find_library", return_value="libc.so.6"),
+            mock.patch("scripts.model_library.ctypes.CDLL", return_value=libc),
+            mock.patch("scripts.model_library.os.open", side_effect=lambda *args, **kwargs: next(fds)),
+            mock.patch("scripts.model_library.os.close"),
+            mock.patch("scripts.model_library.os.fsync"),
+        ):
+            model_library._rename_directory_noreplace(
+                pathlib.Path("/tmp/src/dir"),
+                pathlib.Path("/tmp/dst/dir"),
+            )
+        self.assertEqual(
+            renameat2.argtypes,
+            [
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+            ],
+        )
+        self.assertEqual(renameat2.restype, ctypes.c_int)
+        renameat2.assert_called_once_with(
+            20,
+            b"dir",
+            21,
+            b"dir",
+            model_library.RENAME_NOREPLACE,
+        )
 
 
 if __name__ == "__main__":

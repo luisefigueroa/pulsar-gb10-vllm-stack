@@ -93,6 +93,8 @@ run "model library durable-home acquisition public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-acquisition.sh"
 run "model library source-attested acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_source_attested.py"
+run "model library Hugging Face source-inventory contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_hf_source_inventory.py"
 run "model library source-attested acquisition public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-source-attested.sh"
 run "model library runtime-view materialization" \

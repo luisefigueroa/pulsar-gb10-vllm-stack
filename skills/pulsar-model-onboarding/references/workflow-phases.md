@@ -58,9 +58,11 @@ manifest, runtime envelope, and selected access contract.
 
 1. Refresh the catalog and observe all confirmed serving ranks before reuse.
 2. If the repository is absent everywhere, run a read-only source-attested
-   plan. It resolves the selector to an exact Hugging Face commit, reads the
-   complete upstream Git/LFS inventory on the selected rank, and chooses an
-   eligible durable-home rank without downloading model bytes:
+   plan. It asks in-geometry candidate ranks with modern `hf` to resolve the
+   selector and complete upstream Git/LFS inventory. A rank that cannot resolve
+   the source is ineligible, every successful rank must report the same source,
+   and the plan chooses an eligible durable-home rank that already resolved it.
+   It does not download model bytes:
 
    ```text
    scripts/model-library.sh home add <profile> \
@@ -75,7 +77,8 @@ manifest, runtime envelope, and selected access contract.
 
    ```text
    scripts/model-library.sh home add <profile> \
-     --revision <exact-commit-from-plan> --yes --json
+     --revision <exact-commit-from-plan> \
+     --node <selected-rank-from-plan> --yes --json
    ```
 
 5. The service uses the selected rank's local Hugging Face authentication and

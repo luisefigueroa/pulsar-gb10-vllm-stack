@@ -90,8 +90,12 @@ grep -Fq 'independent' "$skill" \
   || fail "skill must require independent completeness evidence before reuse"
 grep -Fq 'reviewed expected manifest that is independent of the' "$skill" \
   || fail "skill must name the reviewed independent reuse evidence"
-grep -Fq -- '--revision <exact-commit-from-plan> --yes --json' "$skill" \
+grep -Fq -- '--revision <exact-commit-from-plan>' "$skill" \
   || fail "skill must acquire the exact planned commit after confirmation"
+grep -Fq -- '--node <selected-rank-from-plan>' "$skill" \
+  || fail "skill must bind execution to the reviewed rank"
+grep -Fq -- '--node <selected-rank-from-plan>' "$phases" \
+  || fail "phase checklist must bind execution to the reviewed rank"
 grep -Fq 'home verify <model_id@revision> --json' "$skill" \
   || fail "skill must require receipt-backed offline verification"
 grep -Fq '`source_digest`, `approval_id`, and' "$skill" \

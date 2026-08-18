@@ -477,7 +477,10 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   repository path anywhere blocks duplicate creation; an explicit ineligible
   or out-of-geometry `--node` fails without choosing another rank. The
   chosen rank must have a Hugging Face CLI, sufficient space for the complete
-  manifest plus staging headroom, and upstream access/authentication. Download
+  manifest plus staging headroom, and target-local metadata access. Automatic
+  placement treats a metadata or access failure as making only that candidate
+  ineligible; successful candidates must agree on the exact commit and
+  inventory. An explicit `--node` resolves metadata only on that rank. Download
   failure removes only plan-owned private staging. The source-attested plan
   resolves a mutable selector to an exact commit and complete upstream Git/LFS
   inventory on the selected rank without accepting or moving a token.

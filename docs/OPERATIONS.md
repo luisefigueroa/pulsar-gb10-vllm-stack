@@ -635,24 +635,25 @@ scripts/model-library.sh home add <profile> \
 
 Review the exact commit, complete upstream file/byte counts, selected rank, and
 serving geometry. After a separate large-download confirmation, execute with
-the exact commit from that plan, not a mutable branch or tag:
+the exact commit and reviewed rank from that plan, not a mutable branch or tag:
 
 ```bash
 scripts/model-library.sh home add <profile> \
-  --revision <exact-commit-from-plan> --yes --json
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes --json
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <model_id@exact-commit>
 scripts/model-library.sh home verify <model_id@exact-commit> --json
 ```
 
-The selected rank resolves public metadata and downloads using its own
-Hugging Face authentication. Pulsar does not accept, print, persist, or move a
-token. Model and transient Xet/asset bytes stay in private same-filesystem
-staging until complete inventory and SHA-256 verification, a repeated all-rank
-absence check, immutable-receipt publication, and atomic no-replace home
-publication succeed. Acquisition does not refresh, prepare, launch, or grant
-reviewed authority. `home verify` is offline and rehashes the complete tree
-against the receipt before later reuse.
+The selected rank must already have resolved public metadata before the plan
+is shown, and it downloads using its own Hugging Face authentication. Pulsar
+does not accept, print, persist, or move a token. Model and transient Xet/asset
+bytes stay in private same-filesystem staging until complete inventory and
+SHA-256 verification, a repeated all-rank absence check, immutable-receipt
+publication, and atomic no-replace home publication succeed. Acquisition does
+not refresh, prepare, launch, or grant reviewed authority. `home verify` is
+offline and rehashes the complete tree against the receipt before later reuse.
 
 `home add` inspects every confirmed rank and refuses existing repository paths,
 unobservable nodes, insufficient capacity, missing target-side Hugging Face

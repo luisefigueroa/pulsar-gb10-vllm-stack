@@ -1458,17 +1458,15 @@ def _observation_rank(observation: dict[str, Any]) -> int:
     return _require_rank(observation.get("rank"), label="observation rank")
 
 
-def select_source_attested_target(
-    observations: list[dict[str, Any]],
+def source_attested_geometry_ranks(
+    confirmed_ranks: list[int],
     *,
     serving_nodes: int,
-    required_free_bytes: int,
-    node_selector: str = "",
-) -> tuple[dict[str, Any], str, list[int]]:
-    """Select one eligible rank from already-collected observations."""
-    if not isinstance(observations, list) or not observations:
+) -> list[int]:
+    """Return the serving-geometry ranks that may host a durable home."""
+    if not isinstance(confirmed_ranks, list) or not confirmed_ranks:
         fail("home add: not every confirmed rank was observed")
-    ranks = [_observation_rank(item) for item in observations]
+    ranks = [_require_rank(item, label="confirmed rank") for item in confirmed_ranks]
     if ranks != sorted(set(ranks)):
         fail("home add: rank observations must be uniquely sorted")
     if (
@@ -1479,6 +1477,72 @@ def select_source_attested_target(
         or (serving_nodes > 1 and ranks[:serving_nodes] != list(range(serving_nodes)))
     ):
         fail("home add: profile serving geometry exceeds confirmed contiguous ranks")
+    if serving_nodes == 1:
+        return list(ranks)
+    return list(range(serving_nodes))
+
+
+def huggingface_v1_source_content_identity(source: dict[str, Any]) -> dict[str, Any]:
+    """Return the selector-neutral source bytes used for candidate agreement."""
+    source = validate_huggingface_v1_acquisition_source(source)
+    return {
+        "model_id": source["model_id"],
+        "snapshot_revision": source["snapshot_revision"],
+        "inventory": source["inventory"],
+        "inventory_digest": source["inventory_digest"],
+        "file_count": source["file_count"],
+        "content_bytes": source["content_bytes"],
+    }
+
+
+def unique_source_attested_source(sources: list[dict[str, Any]]) -> dict[str, Any]:
+    """Require every successful candidate to report the same source content."""
+    if not isinstance(sources, list) or not sources:
+        fail("home add: no candidate rank resolved Hugging Face source metadata")
+    normalized = [
+        validate_huggingface_v1_acquisition_source(item) for item in sources
+    ]
+    first = huggingface_v1_source_content_identity(normalized[0])
+    for item in normalized[1:]:
+        if huggingface_v1_source_content_identity(item) != first:
+            fail(
+                "home add: candidate ranks resolved disagreeing Hugging Face "
+                "source metadata"
+            )
+    return normalized[0]
+
+
+def parse_metadata_resolved_ranks(value: str | None) -> list[int] | None:
+    if value is None or value == "":
+        return None
+    ranks: list[int] = []
+    for part in value.split(","):
+        token = part.strip()
+        if not token:
+            fail("metadata-resolved ranks contain an empty entry")
+        if not token.isdigit():
+            fail("metadata-resolved ranks must be non-negative rank numbers")
+        ranks.append(_require_rank(int(token), label="metadata-resolved rank"))
+    if ranks != sorted(set(ranks)):
+        fail("metadata-resolved ranks must be uniquely sorted")
+    return ranks
+
+
+def select_source_attested_target(
+    observations: list[dict[str, Any]],
+    *,
+    serving_nodes: int,
+    required_free_bytes: int,
+    node_selector: str = "",
+    metadata_resolved_ranks: list[int] | None = None,
+) -> tuple[dict[str, Any], str, list[int]]:
+    """Select one eligible rank from already-collected observations."""
+    if not isinstance(observations, list) or not observations:
+        fail("home add: not every confirmed rank was observed")
+    ranks = [_observation_rank(item) for item in observations]
+    candidate_ranks = source_attested_geometry_ranks(
+        ranks, serving_nodes=serving_nodes
+    )
     occupied = [
         item
         for item in observations
@@ -1490,9 +1554,14 @@ def select_source_attested_target(
             "home add: repository path already exists on confirmed rank(s) "
             f"{found}; run catalog refresh and reconcile existing content"
         )
-    candidate_ranks = ranks if serving_nodes == 1 else list(range(serving_nodes))
+    metadata_set = (
+        None
+        if metadata_resolved_ranks is None
+        else set(metadata_resolved_ranks)
+    )
 
     def eligible(item: dict[str, Any]) -> bool:
+        rank = _observation_rank(item)
         return bool(
             item.get("target_state") == "absent"
             and item.get("writable")
@@ -1500,6 +1569,7 @@ def select_source_attested_target(
             and isinstance(item.get("available_bytes"), int)
             and not isinstance(item.get("available_bytes"), bool)
             and item["available_bytes"] >= required_free_bytes
+            and (metadata_set is None or rank in metadata_set)
         )
 
     if node_selector:
@@ -1518,6 +1588,11 @@ def select_source_attested_target(
             detail = selected.get("detail") or "target check failed"
             if not valid_source_attested_hf_cli(selected.get("hf_cli")):
                 detail = "modern hf CLI is not installed on this rank"
+            elif (
+                metadata_set is not None
+                and _observation_rank(selected) not in metadata_set
+            ):
+                detail = "Hugging Face source metadata is unavailable on this rank"
             fail(
                 f"home add: selected rank {_observation_rank(selected)} is not "
                 f"eligible: {detail}"
@@ -1560,6 +1635,7 @@ def plan_source_attested_acquisition(
     serving_nodes: int,
     topology_generation: str,
     node_selector: str = "",
+    metadata_resolved_ranks: list[int] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build the public plan and a private execution handle."""
     source = validate_huggingface_v1_acquisition_source(source)
@@ -1570,6 +1646,7 @@ def plan_source_attested_acquisition(
         serving_nodes=serving_nodes,
         required_free_bytes=required_free,
         node_selector=node_selector,
+        metadata_resolved_ranks=metadata_resolved_ranks,
     )
     approval = build_source_attested_acquisition_approval(
         source=source,
@@ -1937,13 +2014,13 @@ def write_source_attested_receipt(
     receipt = validate_source_attested_acquisition_receipt(receipt)
     store = _ensure_receipt_store(library_dir)
     path = store / f"{receipt['receipt_id']}.json"
-    existing_identity = find_source_attested_receipt(
+    for existing in list_source_attested_receipts_for_revision(
         library_dir,
         model_id=receipt["model_id"],
         snapshot_revision=receipt["snapshot_revision"],
-    )
-    if existing_identity is not None and existing_identity["receipt_id"] != receipt["receipt_id"]:
-        fail("home add: a different source-attested receipt already exists")
+    ):
+        if not source_attested_receipts_are_content_compatible(existing, receipt):
+            fail("home add: an incompatible source-attested receipt already exists")
     if path.exists() or path.is_symlink():
         existing = load_source_attested_receipt(library_dir, receipt["receipt_id"])
         if existing != receipt:
@@ -1970,40 +2047,80 @@ def load_source_attested_receipt(
     return _load_receipt_path(path)
 
 
+def source_attested_receipts_are_content_compatible(
+    left: dict[str, Any],
+    right: dict[str, Any],
+) -> bool:
+    """Compare byte identity, ignoring selector and placement context."""
+    left = validate_source_attested_acquisition_receipt(left)
+    right = validate_source_attested_acquisition_receipt(right)
+    return (
+        left["model_id"] == right["model_id"]
+        and left["snapshot_revision"] == right["snapshot_revision"]
+        and left["source"]["inventory_digest"] == right["source"]["inventory_digest"]
+        and left["source"]["inventory"] == right["source"]["inventory"]
+        and left["observed_manifest"] == right["observed_manifest"]
+    )
+
+
+def _listed_source_attested_receipts(
+    library_dir: str | pathlib.Path,
+) -> list[dict[str, Any]]:
+    store = source_attested_receipt_store(library_dir)
+    try:
+        store_info = store.lstat()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        fail(f"source-attested receipt store is unavailable: {exc}")
+    if stat.S_ISLNK(store_info.st_mode) or not stat.S_ISDIR(store_info.st_mode):
+        fail("source-attested receipt store is not a regular directory")
+    receipt_name = re.compile(r"^[0-9a-f]{64}\.json$")
+    receipts: list[dict[str, Any]] = []
+    for path in sorted(store.iterdir()):
+        if receipt_name.fullmatch(path.name) is None:
+            fail(f"source-attested receipt store contains an unexpected entry: {path.name}")
+        receipts.append(_load_receipt_path(path))
+    return receipts
+
+
+def list_source_attested_receipts_for_revision(
+    library_dir: str | pathlib.Path,
+    *,
+    model_id: str,
+    snapshot_revision: str,
+) -> list[dict[str, Any]]:
+    _validate_hf_model_id(model_id, label="receipt model_id")
+    _validate_commit(snapshot_revision, label="receipt snapshot_revision")
+    matches = [
+        item
+        for item in _listed_source_attested_receipts(library_dir)
+        if item["model_id"] == model_id
+        and item["snapshot_revision"] == snapshot_revision
+    ]
+    if not matches:
+        return []
+    first = matches[0]
+    for item in matches[1:]:
+        if not source_attested_receipts_are_content_compatible(first, item):
+            fail("home add: incompatible source-attested receipts for this revision")
+    return matches
+
+
 def find_source_attested_receipt(
     library_dir: str | pathlib.Path,
     *,
     model_id: str,
     snapshot_revision: str,
 ) -> dict[str, Any] | None:
-    _validate_hf_model_id(model_id, label="receipt model_id")
-    _validate_commit(snapshot_revision, label="receipt snapshot_revision")
-    store = source_attested_receipt_store(library_dir)
-    try:
-        store_info = store.lstat()
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        fail(f"source-attested receipt store is unavailable: {exc}")
-    if stat.S_ISLNK(store_info.st_mode) or not stat.S_ISDIR(store_info.st_mode):
-        fail("source-attested receipt store is not a regular directory")
-    matches: list[dict[str, Any]] = []
-    receipt_name = re.compile(r"^[0-9a-f]{64}\.json$")
-    for path in sorted(store.iterdir()):
-        if receipt_name.fullmatch(path.name) is None:
-            fail(f"source-attested receipt store contains an unexpected entry: {path.name}")
-        candidate = _load_receipt_path(path)
-        if (
-            candidate["model_id"] == model_id
-            and candidate["snapshot_revision"] == snapshot_revision
-        ):
-            matches.append(candidate)
+    matches = list_source_attested_receipts_for_revision(
+        library_dir,
+        model_id=model_id,
+        snapshot_revision=snapshot_revision,
+    )
     if not matches:
         return None
-    receipt_ids = {item["receipt_id"] for item in matches}
-    if len(receipt_ids) != 1:
-        fail("home add: conflicting source-attested receipts for this revision")
-    return matches[0]
+    return min(matches, key=lambda item: item["receipt_id"])
 
 
 def verify_source_attested_home(
@@ -2218,6 +2335,29 @@ def _write_json(value: Any) -> int:
     return 0
 
 
+def cmd_geometry_ranks(args: argparse.Namespace) -> int:
+    ranks = source_attested_geometry_ranks(
+        list(range(args.confirmed_count)),
+        serving_nodes=args.serving_nodes,
+    )
+    sys.stdout.write(" ".join(str(rank) for rank in ranks) + "\n")
+    return 0
+
+
+def cmd_unique_source(args: argparse.Namespace) -> int:
+    root = pathlib.Path(args.sources_dir)
+    sources: list[dict[str, Any]] = []
+    name = re.compile(r"^rank-[0-9]+\.json$")
+    for path in sorted(root.iterdir()):
+        if name.fullmatch(path.name) is None:
+            continue
+        item = _load_json_path(path, label=f"source {path.name}")
+        if not isinstance(item, dict):
+            fail(f"{path.name} is not a source object")
+        sources.append(item)
+    return _write_json(unique_source_attested_source(sources))
+
+
 def cmd_parse_source(args: argparse.Namespace) -> int:
     source = build_huggingface_v1_source_from_adapter(
         model_id=args.model_id,
@@ -2265,6 +2405,9 @@ def cmd_plan(args: argparse.Namespace) -> int:
         serving_nodes=args.serving_nodes,
         topology_generation=args.topology_generation,
         node_selector=args.node,
+        metadata_resolved_ranks=parse_metadata_resolved_ranks(
+            args.metadata_resolved_ranks
+        ),
     )
     if args.handle_file:
         pathlib.Path(args.handle_file).write_text(_pretty_json(handle), encoding="utf-8")
@@ -2389,6 +2532,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    geometry = sub.add_parser("geometry-ranks")
+    geometry.add_argument("--confirmed-count", type=int, required=True)
+    geometry.add_argument("--serving-nodes", type=int, required=True)
+    geometry.set_defaults(func=cmd_geometry_ranks)
+
+    unique_source = sub.add_parser("unique-source")
+    unique_source.add_argument("--sources-dir", required=True)
+    unique_source.set_defaults(func=cmd_unique_source)
+
     parse_source = sub.add_parser("parse-source")
     parse_source.add_argument("--model-id", required=True)
     parse_source.add_argument("--selector", required=True)
@@ -2411,6 +2563,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--topology-generation", required=True)
     plan.add_argument("--serving-nodes", type=int, required=True)
     plan.add_argument("--node", default="")
+    plan.add_argument("--metadata-resolved-ranks", default="")
     plan.add_argument("--handle-file")
     plan.add_argument("--json", action="store_true")
     plan.set_defaults(func=cmd_plan)

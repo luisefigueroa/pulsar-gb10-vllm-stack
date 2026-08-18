@@ -120,9 +120,12 @@ source-attested plan:
 scripts/model-library.sh home add <profile> --revision <selector> --plan --json
 ```
 
-The plan resolves the selector to one immutable commit, reads the complete
-upstream Git/LFS inventory on a confirmed rank, observes every confirmed rank,
-and selects one eligible durable-home rank. It does not download model bytes.
+The plan asks in-geometry candidate ranks with modern `hf` to resolve the
+selector and complete upstream Git/LFS inventory. A rank that cannot resolve
+the source is ineligible, and every successful rank must report the same
+source. The plan observes every confirmed rank and selects one eligible
+durable-home rank that already resolved that source. It does not download
+model bytes.
 Review its exact commit, file and byte counts, selected rank, serving ranks,
 identity class, and explicit no-promotion boundary.
 
@@ -142,11 +145,12 @@ pass that commit—not the mutable selector—to the supported service:
 
 ```text
 scripts/model-library.sh home add <profile> \
-  --revision <exact-commit-from-plan> --yes --json
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes --json
 ```
 
-The service rechecks the source and topology, downloads on the selected rank
-using that rank's local Hugging Face authentication, confines model and Xet
+The service rechecks the source and topology on that reviewed rank, downloads
+there using that rank's local Hugging Face authentication, confines model and Xet
 cache bytes to private same-filesystem staging, verifies the complete upstream
 inventory, runs Hugging Face missing/extra verification, hashes every file,
 rechecks all-rank absence, writes the immutable site-local receipt, and then

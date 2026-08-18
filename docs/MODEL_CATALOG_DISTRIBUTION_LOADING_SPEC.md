@@ -1651,7 +1651,7 @@ The sealed form is `scripts/model-library.sh home add <sealed-profile>` and
 retains its reviewed expected-manifest gate. For an absent brand-new unsealed
 Hugging Face repository, `home add <profile> --revision <selector> --plan`
 produces a read-only public plan; separately confirmed execution uses
-`--revision <exact-commit> --yes`.
+`--revision <exact-commit> --node <selected-rank> --yes`.
 The Bash boundary observes the Hugging Face cache environment and CLI
 availability on every confirmed rank; Python validates the reviewed identity,
 capacity, exact rank/node mapping, one-home state, and placement decision. For
@@ -1662,9 +1662,15 @@ eligible candidate with the most free space is selected; `--node` is exact,
 must remain in the applicable geometry, and never falls back. The selected rank
 downloads the immutable commit into a plan-owned private cache below the final
 hub filesystem. The sealed path full-verifies its reviewed manifest. The
-source-attested plan uses the selected rank's modern `hf` Python environment to
-resolve the exact commit and complete upstream Git/LFS inventory without a
-token argument or byte download. Its execution uses target-local
+source-attested plan uses target-local modern `hf` to resolve the exact
+commit and complete upstream Git/LFS inventory without a token argument or
+byte download. An explicit `--node` resolves metadata only on that rank.
+Automatic placement attempts the same resolution on each in-geometry
+candidate that has modern `hf`; a metadata failure makes only that candidate
+ineligible, and every successful candidate must report the same commit,
+inventory digest, and normalized source content. The selected target must
+already have produced that matching source before the plan is shown. Its
+execution uses target-local
 authentication; confines model, Xet, and asset caches to private
 same-filesystem staging; checks the upstream file set and Hugging Face
 missing/extra result; and hashes every file. Both paths repeat the all-rank
