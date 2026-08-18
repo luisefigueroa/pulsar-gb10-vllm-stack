@@ -2,9 +2,10 @@
 """Source-attested Hugging Face v1 acquisition contracts.
 
 This module owns the closed version-1 source inventory, identity
-precedence, privacy-safe approval, public plan, immutable receipt, and
-offline verification helpers. It parses Hub metadata JSON and manages
-site-local receipts, but it does not call the Hub, accept a token, refresh the
+precedence, privacy-safe approval, public plan, immutable receipt,
+site-local current-home attachment, and offline verification helpers. It
+parses Hub metadata JSON and manages site-local receipts and current-home
+attachments, but it does not call the Hub, accept a token, refresh the
 catalog, prepare a runtime view, launch, assign status, or issue a Model
 Serving Release decision.
 
@@ -54,6 +55,19 @@ SOURCE_ATTESTED_ACQUISITION_RESULT_KIND = (
 SOURCE_ATTESTED_HOME_VERIFY_KIND = (
     "pulsar-model-library-source-attested-home-verify-result"
 )
+SOURCE_ATTESTED_HOME_ATTACHMENT_KIND = (
+    "pulsar-model-library-source-attested-home-attachment"
+)
+SOURCE_ATTESTED_HOME_ATTACHMENT_KEY_KIND = (
+    "pulsar-model-library-source-attested-home-attachment-key"
+)
+SOURCE_ATTESTED_HOME_ATTACHMENT_RESULT_KIND = (
+    "pulsar-model-library-source-attested-home-attachment-result"
+)
+SOURCE_ATTESTED_HOME_AUTHORITY_KIND = (
+    "pulsar-model-library-source-attested-home-authority"
+)
+LIVE_DIRECTORY_IDENTITY_KIND = "pulsar-model-library-live-directory-identity"
 UNSUPPORTED_SOURCE_FORM = "unsupported Hugging Face source object form"
 ALL_ZERO_GIT_OID = "0" * 40
 ALL_ZERO_SHA256 = "0" * 64
@@ -197,6 +211,53 @@ SOURCE_ATTESTED_VERIFY_FIELDS = {
     "file_count",
     "bytes_hashed",
 }
+SOURCE_ATTESTED_HOME_ATTACHMENT_FIELDS = {
+    "schema_version",
+    "kind",
+    "attachment_key",
+    "receipt_id",
+    "model_id",
+    "snapshot_revision",
+    "inventory_digest",
+    "observed_manifest_id",
+    "selected_rank",
+    "node_id",
+    "durable_home_path",
+    "directory_identity",
+}
+SOURCE_ATTESTED_DIRECTORY_IDENTITY_FIELDS = {"device", "inode", "ctime_ns"}
+LIVE_DIRECTORY_IDENTITY_FIELDS = {
+    "schema_version",
+    "kind",
+    "path",
+    "device",
+    "inode",
+    "ctime_ns",
+}
+SOURCE_ATTESTED_HOME_ATTACHMENT_RESULT_FIELDS = {
+    "schema_version",
+    "kind",
+    "state",
+    "receipt_id",
+    "model_id",
+    "snapshot_revision",
+}
+HOME_AUTHORITY_ATTACHED = "attached"
+HOME_AUTHORITY_NONE = "no-authority"
+HOME_AUTHORITY_MISSING_ATTACHMENT = "missing-attachment"
+HOME_AUTHORITY_STALE_ATTACHMENT = "stale-attachment"
+HOME_AUTHORITY_MISSING_RECEIPT = "missing-receipt"
+HOME_AUTHORITY_INCOMPATIBLE_RECEIPT = "incompatible-receipt"
+HOME_AUTHORITY_REASONS = {
+    HOME_AUTHORITY_MISSING_ATTACHMENT,
+    HOME_AUTHORITY_STALE_ATTACHMENT,
+    HOME_AUTHORITY_MISSING_RECEIPT,
+    HOME_AUTHORITY_INCOMPATIBLE_RECEIPT,
+}
+STORE_FINAL_NAME_RE = re.compile(r"^[0-9a-f]{64}\.json$")
+STORE_WRITER_TEMP_RE = re.compile(
+    r"^\.[0-9a-f]{64}\.json\.[0-9]+\.[0-9a-f]{16}\.tmp$"
+)
 SOURCE_ATTESTED_APPROVAL_FIELDS = {
     "schema_version",
     "kind",
@@ -1906,7 +1967,18 @@ def source_attested_receipt_store(library_dir: str | pathlib.Path) -> pathlib.Pa
     return pathlib.Path(library_dir) / "source-attested-receipts"
 
 
-def _ensure_receipt_store(library_dir: str | pathlib.Path) -> pathlib.Path:
+def source_attested_home_attachment_store(
+    library_dir: str | pathlib.Path,
+) -> pathlib.Path:
+    return pathlib.Path(library_dir) / "source-attested-home-attachments"
+
+
+def _ensure_private_store(
+    library_dir: str | pathlib.Path,
+    store_name: str,
+    *,
+    label: str,
+) -> pathlib.Path:
     library = pathlib.Path(library_dir)
     library.mkdir(parents=True, exist_ok=True)
     try:
@@ -1915,24 +1987,77 @@ def _ensure_receipt_store(library_dir: str | pathlib.Path) -> pathlib.Path:
         fail(f"source-attested library directory is unavailable: {exc}")
     if stat.S_ISLNK(library_info.st_mode) or not stat.S_ISDIR(library_info.st_mode):
         fail("source-attested library directory is not a regular directory")
-    store = source_attested_receipt_store(library)
+    store = library / store_name
     try:
         os.mkdir(store, 0o700)
     except FileExistsError:
         pass
     except OSError as exc:
-        fail(f"source-attested receipt store cannot be created: {exc}")
+        fail(f"{label} cannot be created: {exc}")
     try:
         info = store.lstat()
     except OSError as exc:
-        fail(f"source-attested receipt store is unavailable: {exc}")
+        fail(f"{label} is unavailable: {exc}")
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-        fail("source-attested receipt store is not a regular directory")
+        fail(f"{label} is not a regular directory")
     try:
         os.chmod(store, 0o700, follow_symlinks=False)
     except OSError as exc:
-        fail(f"source-attested receipt store permissions cannot be set: {exc}")
+        fail(f"{label} permissions cannot be set: {exc}")
     return store
+
+
+def _ensure_receipt_store(library_dir: str | pathlib.Path) -> pathlib.Path:
+    return _ensure_private_store(
+        library_dir,
+        "source-attested-receipts",
+        label="source-attested receipt store",
+    )
+
+
+def _ensure_home_attachment_store(library_dir: str | pathlib.Path) -> pathlib.Path:
+    return _ensure_private_store(
+        library_dir,
+        "source-attested-home-attachments",
+        label="source-attested home-attachment store",
+    )
+
+
+def _iter_private_store_final_paths(
+    store: pathlib.Path,
+    *,
+    label: str,
+) -> list[pathlib.Path]:
+    try:
+        store_info = store.lstat()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        fail(f"{label} is unavailable: {exc}")
+    if stat.S_ISLNK(store_info.st_mode) or not stat.S_ISDIR(store_info.st_mode):
+        fail(f"{label} is not a regular directory")
+    try:
+        names = sorted(os.listdir(store))
+    except OSError as exc:
+        fail(f"{label} is unreadable: {exc}")
+    finals: list[pathlib.Path] = []
+    for name in names:
+        path = store / name
+        try:
+            info = path.lstat()
+        except OSError:
+            fail(f"{label} entry is unreadable")
+        if STORE_FINAL_NAME_RE.fullmatch(name) is not None:
+            if not stat.S_ISREG(info.st_mode):
+                fail(f"{label} contains a non-regular final document")
+            finals.append(path)
+            continue
+        if STORE_WRITER_TEMP_RE.fullmatch(name) is not None:
+            if not stat.S_ISREG(info.st_mode):
+                fail(f"{label} contains a non-regular writer temp")
+            continue
+        fail(f"{label} contains an unexpected entry: {name}")
+    return finals
 
 
 def _load_receipt_path(path: pathlib.Path) -> dict[str, Any]:
@@ -2067,21 +2192,12 @@ def _listed_source_attested_receipts(
     library_dir: str | pathlib.Path,
 ) -> list[dict[str, Any]]:
     store = source_attested_receipt_store(library_dir)
-    try:
-        store_info = store.lstat()
-    except FileNotFoundError:
-        return []
-    except OSError as exc:
-        fail(f"source-attested receipt store is unavailable: {exc}")
-    if stat.S_ISLNK(store_info.st_mode) or not stat.S_ISDIR(store_info.st_mode):
-        fail("source-attested receipt store is not a regular directory")
-    receipt_name = re.compile(r"^[0-9a-f]{64}\.json$")
-    receipts: list[dict[str, Any]] = []
-    for path in sorted(store.iterdir()):
-        if receipt_name.fullmatch(path.name) is None:
-            fail(f"source-attested receipt store contains an unexpected entry: {path.name}")
-        receipts.append(_load_receipt_path(path))
-    return receipts
+    return [
+        _load_receipt_path(path)
+        for path in _iter_private_store_final_paths(
+            store, label="source-attested receipt store"
+        )
+    ]
 
 
 def list_source_attested_receipts_for_revision(
@@ -2113,6 +2229,12 @@ def find_source_attested_receipt(
     model_id: str,
     snapshot_revision: str,
 ) -> dict[str, Any] | None:
+    """Return one stored receipt for the revision, if any.
+
+    This is historical store lookup, not live-home authority. Multiple
+    compatible receipts may exist; the current-home attachment selects the
+    publication that owns the live directory.
+    """
     matches = list_source_attested_receipts_for_revision(
         library_dir,
         model_id=model_id,
@@ -2121,6 +2243,519 @@ def find_source_attested_receipt(
     if not matches:
         return None
     return min(matches, key=lambda item: item["receipt_id"])
+
+
+def source_attested_home_attachment_key(
+    *,
+    model_id: str,
+    snapshot_revision: str,
+) -> str:
+    _validate_hf_model_id(model_id, label="attachment model_id")
+    _validate_commit(snapshot_revision, label="attachment snapshot_revision")
+    return model_identity.canonical_json_digest(
+        {
+            "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+            "kind": SOURCE_ATTESTED_HOME_ATTACHMENT_KEY_KIND,
+            "model_id": model_id,
+            "snapshot_revision": snapshot_revision,
+        }
+    )
+
+
+def _require_private_node_id(value: Any) -> str:
+    if not isinstance(value, str) or not value or value.strip() != value:
+        fail("current-home attachment node identity is invalid")
+    if any(character in value for character in ("\x00", "\n", "\r")):
+        fail("current-home attachment node identity is invalid")
+    return value
+
+
+def _require_durable_home_path(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        fail("current-home attachment durable-home path is invalid")
+    if any(character in value for character in ("\x00", "\n", "\r")):
+        fail("current-home attachment durable-home path is invalid")
+    try:
+        from scripts import immutable_descriptor_dir as descriptor_dir
+    except ModuleNotFoundError:
+        import immutable_descriptor_dir as descriptor_dir  # type: ignore[no-redef]
+    try:
+        normalized = descriptor_dir.safe_absolute(
+            pathlib.Path(value), label="durable-home path"
+        )
+    except descriptor_dir.ImmutableDescriptorDirectoryError:
+        fail("current-home attachment durable-home path is invalid")
+    if str(normalized) != value:
+        fail("current-home attachment durable-home path is invalid")
+    return value
+
+
+def _require_identity_int(value: Any, *, label: str, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        fail(f"{label} is invalid")
+    return value
+
+
+def _validate_directory_identity(value: Any) -> dict[str, Any]:
+    identity = _require_fields(
+        value,
+        SOURCE_ATTESTED_DIRECTORY_IDENTITY_FIELDS,
+        label="current-home directory identity",
+    )
+    return {
+        "device": _require_identity_int(
+            identity["device"], label="current-home directory device"
+        ),
+        "inode": _require_identity_int(
+            identity["inode"], label="current-home directory inode", minimum=1
+        ),
+        "ctime_ns": _require_identity_int(
+            identity["ctime_ns"], label="current-home directory ctime"
+        ),
+    }
+
+
+def validate_live_directory_identity(value: Any) -> dict[str, Any]:
+    identity = _require_fields(
+        value, LIVE_DIRECTORY_IDENTITY_FIELDS, label="live directory identity"
+    )
+    if identity.get("schema_version") != SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION:
+        fail("live directory identity schema is unsupported")
+    if identity.get("kind") != LIVE_DIRECTORY_IDENTITY_KIND:
+        fail("live directory identity kind is invalid")
+    path = _require_durable_home_path(identity.get("path"))
+    fields = _validate_directory_identity(
+        {
+            "device": identity.get("device"),
+            "inode": identity.get("inode"),
+            "ctime_ns": identity.get("ctime_ns"),
+        }
+    )
+    return {
+        "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+        "kind": LIVE_DIRECTORY_IDENTITY_KIND,
+        "path": path,
+        **fields,
+    }
+
+
+def validate_source_attested_home_attachment(value: Any) -> dict[str, Any]:
+    attachment = _require_fields(
+        value,
+        SOURCE_ATTESTED_HOME_ATTACHMENT_FIELDS,
+        label="current-home attachment",
+    )
+    if attachment.get("schema_version") != SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION:
+        fail("current-home attachment schema is unsupported")
+    if attachment.get("kind") != SOURCE_ATTESTED_HOME_ATTACHMENT_KIND:
+        fail("current-home attachment kind is invalid")
+    model_id = _validate_hf_model_id(
+        attachment.get("model_id"), label="attachment model_id"
+    )
+    snapshot_revision = _validate_commit(
+        attachment.get("snapshot_revision"), label="attachment snapshot_revision"
+    )
+    attachment_key = _validate_hex_id(
+        attachment.get("attachment_key"), label="attachment_key"
+    )
+    expected_key = source_attested_home_attachment_key(
+        model_id=model_id, snapshot_revision=snapshot_revision
+    )
+    if attachment_key != expected_key:
+        fail("current-home attachment key does not match its model revision")
+    _validate_hex_id(attachment.get("receipt_id"), label="attachment receipt_id")
+    _validate_hex_id(
+        attachment.get("inventory_digest"), label="attachment inventory_digest"
+    )
+    _validate_hex_id(
+        attachment.get("observed_manifest_id"),
+        label="attachment observed_manifest_id",
+    )
+    _require_rank(attachment.get("selected_rank"), label="attachment selected_rank")
+    _require_private_node_id(attachment.get("node_id"))
+    _require_durable_home_path(attachment.get("durable_home_path"))
+    attachment["directory_identity"] = _validate_directory_identity(
+        attachment.get("directory_identity")
+    )
+    return attachment
+
+
+def build_source_attested_home_attachment(
+    *,
+    receipt: dict[str, Any],
+    node_id: str,
+    durable_home_path: str,
+    directory_identity: dict[str, Any],
+) -> dict[str, Any]:
+    receipt = validate_source_attested_acquisition_receipt(receipt)
+    attachment = {
+        "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+        "kind": SOURCE_ATTESTED_HOME_ATTACHMENT_KIND,
+        "attachment_key": source_attested_home_attachment_key(
+            model_id=receipt["model_id"],
+            snapshot_revision=receipt["snapshot_revision"],
+        ),
+        "receipt_id": receipt["receipt_id"],
+        "model_id": receipt["model_id"],
+        "snapshot_revision": receipt["snapshot_revision"],
+        "inventory_digest": receipt["source"]["inventory_digest"],
+        "observed_manifest_id": receipt["observed_manifest"]["manifest_id"],
+        "selected_rank": receipt["selected_rank"],
+        "node_id": _require_private_node_id(node_id),
+        "durable_home_path": _require_durable_home_path(durable_home_path),
+        "directory_identity": _validate_directory_identity(directory_identity),
+    }
+    return validate_source_attested_home_attachment(attachment)
+
+
+def _load_attachment_path(path: pathlib.Path) -> dict[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        fail(f"current-home attachment is unreadable: {exc}")
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            fail("current-home attachment is not a regular file")
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            raw = handle.read()
+        after = os.fstat(fd)
+        stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in stable):
+            fail("current-home attachment changed during read")
+    finally:
+        os.close(fd)
+    attachment = validate_source_attested_home_attachment(
+        _load_json_value(raw, label="current-home attachment")
+    )
+    if path.name != f"{attachment['attachment_key']}.json":
+        fail("current-home attachment filename does not match its key")
+    return attachment
+
+
+def _write_attachment_replace(path: pathlib.Path, attachment: dict[str, Any]) -> None:
+    raw = model_identity.pretty_json_bytes(attachment)
+    store_fd = os.open(
+        path.parent,
+        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    temp_name = f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    temp_created = False
+    try:
+        fd = os.open(
+            temp_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=store_fd,
+        )
+        temp_created = True
+        try:
+            view = memoryview(raw)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.rename(temp_name, path.name, src_dir_fd=store_fd, dst_dir_fd=store_fd)
+        temp_created = False
+        os.fsync(store_fd)
+    finally:
+        if temp_created:
+            try:
+                os.unlink(temp_name, dir_fd=store_fd)
+            except OSError:
+                pass
+        os.close(store_fd)
+
+
+def write_source_attested_home_attachment(
+    library_dir: str | pathlib.Path,
+    *,
+    receipt: dict[str, Any],
+    node_id: str,
+    durable_home_path: str,
+    directory_identity: dict[str, Any],
+) -> dict[str, Any]:
+    attachment = build_source_attested_home_attachment(
+        receipt=receipt,
+        node_id=node_id,
+        durable_home_path=durable_home_path,
+        directory_identity=directory_identity,
+    )
+    store = _ensure_home_attachment_store(library_dir)
+    _iter_private_store_final_paths(
+        store, label="source-attested home-attachment store"
+    )
+    path = store / f"{attachment['attachment_key']}.json"
+    _write_attachment_replace(path, attachment)
+    return attachment
+
+
+def _attachment_matches_target(
+    attachment: dict[str, Any],
+    *,
+    model_id: str,
+    snapshot_revision: str,
+    selected_rank: int,
+    node_id: str,
+    durable_home_path: str,
+) -> bool:
+    return (
+        attachment["model_id"] == model_id
+        and attachment["snapshot_revision"] == snapshot_revision
+        and attachment["selected_rank"] == selected_rank
+        and attachment["node_id"] == node_id
+        and attachment["durable_home_path"] == durable_home_path
+    )
+
+
+def _listed_source_attested_home_attachments(
+    library_dir: str | pathlib.Path,
+) -> list[dict[str, Any]]:
+    store = source_attested_home_attachment_store(library_dir)
+    return [
+        _load_attachment_path(path)
+        for path in _iter_private_store_final_paths(
+            store, label="source-attested home-attachment store"
+        )
+    ]
+
+
+def load_source_attested_home_attachment(
+    library_dir: str | pathlib.Path,
+    *,
+    model_id: str,
+    snapshot_revision: str,
+) -> dict[str, Any] | None:
+    key = source_attested_home_attachment_key(
+        model_id=model_id, snapshot_revision=snapshot_revision
+    )
+    attachments = _listed_source_attested_home_attachments(library_dir)
+    matches = [item for item in attachments if item["attachment_key"] == key]
+    if not matches:
+        return None
+    if len(matches) != 1:
+        fail("current-home attachment store has conflicting documents")
+    return matches[0]
+
+
+def attach_source_attested_home_from_publication(
+    library_dir: str | pathlib.Path,
+    *,
+    receipt: dict[str, Any],
+    node_id: str,
+    publish_result: dict[str, Any],
+) -> dict[str, Any]:
+    receipt = validate_source_attested_acquisition_receipt(receipt)
+    if not isinstance(publish_result, dict):
+        fail("publication result is not an object")
+    if publish_result.get("state") != "published":
+        fail("publication result is not a published home")
+    if publish_result.get("rank") != receipt["selected_rank"]:
+        fail("publication rank differs from the receipt")
+    identity = validate_live_directory_identity(
+        publish_result.get("directory_identity")
+    )
+    target_hub = publish_result.get("target_hub")
+    if target_hub != identity["path"]:
+        fail("publication target differs from the published directory")
+    return write_source_attested_home_attachment(
+        library_dir,
+        receipt=receipt,
+        node_id=node_id,
+        durable_home_path=identity["path"],
+        directory_identity={
+            "device": identity["device"],
+            "inode": identity["inode"],
+            "ctime_ns": identity["ctime_ns"],
+        },
+    )
+
+
+def _home_authority_result(
+    *,
+    state: str,
+    reason: str | None = None,
+    receipt: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if state == HOME_AUTHORITY_ATTACHED:
+        if receipt is None or reason is not None:
+            fail("attached home authority result is incomplete")
+        return {
+            "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+            "kind": SOURCE_ATTESTED_HOME_AUTHORITY_KIND,
+            "state": HOME_AUTHORITY_ATTACHED,
+            "reason": None,
+            "receipt": validate_source_attested_acquisition_receipt(receipt),
+        }
+    if state != HOME_AUTHORITY_NONE or reason not in HOME_AUTHORITY_REASONS:
+        fail("home authority result is invalid")
+    if receipt is not None:
+        fail("no-authority result must not include a receipt")
+    return {
+        "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+        "kind": SOURCE_ATTESTED_HOME_AUTHORITY_KIND,
+        "state": HOME_AUTHORITY_NONE,
+        "reason": reason,
+        "receipt": None,
+    }
+
+
+def resolve_attached_source_attested_receipt(
+    library_dir: str | pathlib.Path,
+    *,
+    model_id: str,
+    snapshot_revision: str,
+    selected_rank: int,
+    node_id: str,
+    durable_home_path: str,
+    live_identity: dict[str, Any],
+) -> dict[str, Any]:
+    _validate_hf_model_id(model_id, label="authority model_id")
+    _validate_commit(snapshot_revision, label="authority snapshot_revision")
+    selected_rank = _require_rank(selected_rank, label="authority selected_rank")
+    node_id = _require_private_node_id(node_id)
+    durable_home_path = _require_durable_home_path(durable_home_path)
+    live = validate_live_directory_identity(live_identity)
+    attachment = load_source_attested_home_attachment(
+        library_dir,
+        model_id=model_id,
+        snapshot_revision=snapshot_revision,
+    )
+    if attachment is None:
+        return _home_authority_result(
+            state=HOME_AUTHORITY_NONE, reason=HOME_AUTHORITY_MISSING_ATTACHMENT
+        )
+    live_fields = {
+        "device": live["device"],
+        "inode": live["inode"],
+        "ctime_ns": live["ctime_ns"],
+    }
+    if (
+        not _attachment_matches_target(
+            attachment,
+            model_id=model_id,
+            snapshot_revision=snapshot_revision,
+            selected_rank=selected_rank,
+            node_id=node_id,
+            durable_home_path=durable_home_path,
+        )
+        or live["path"] != attachment["durable_home_path"]
+        or live_fields != attachment["directory_identity"]
+    ):
+        return _home_authority_result(
+            state=HOME_AUTHORITY_NONE, reason=HOME_AUTHORITY_STALE_ATTACHMENT
+        )
+    receipt_path = (
+        source_attested_receipt_store(library_dir) / f"{attachment['receipt_id']}.json"
+    )
+    try:
+        receipt_info = receipt_path.lstat()
+    except FileNotFoundError:
+        return _home_authority_result(
+            state=HOME_AUTHORITY_NONE, reason=HOME_AUTHORITY_MISSING_RECEIPT
+        )
+    except OSError as exc:
+        fail(f"source-attested receipt is unreadable: {exc}")
+    if not stat.S_ISREG(receipt_info.st_mode):
+        fail("source-attested receipt is not a regular file")
+    receipt = load_source_attested_receipt(library_dir, attachment["receipt_id"])
+    if (
+        receipt["model_id"] != attachment["model_id"]
+        or receipt["snapshot_revision"] != attachment["snapshot_revision"]
+        or receipt["selected_rank"] != attachment["selected_rank"]
+        or receipt["source"]["inventory_digest"] != attachment["inventory_digest"]
+        or receipt["observed_manifest"]["manifest_id"]
+        != attachment["observed_manifest_id"]
+    ):
+        return _home_authority_result(
+            state=HOME_AUTHORITY_NONE, reason=HOME_AUTHORITY_INCOMPATIBLE_RECEIPT
+        )
+    return _home_authority_result(state=HOME_AUTHORITY_ATTACHED, receipt=receipt)
+
+
+def _unlink_store_document(
+    store: pathlib.Path,
+    name: str,
+    *,
+    label: str,
+) -> bool:
+    """Unlink one final store document through the directory fd and fsync it.
+
+    Returns True when the name was removed. Missing is False. A non-regular
+    or unreadable store fails instead of following a symlink.
+    """
+    if STORE_FINAL_NAME_RE.fullmatch(name) is None:
+        fail(f"{label} detach name is invalid")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        store_fd = os.open(store, flags)
+    except OSError as exc:
+        fail(f"{label} is unavailable: {exc}")
+    try:
+        try:
+            info = os.stat(name, dir_fd=store_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            fail(f"{label} entry is unreadable: {exc}")
+        if not stat.S_ISREG(info.st_mode):
+            fail(f"{label} contains a non-regular final document")
+        os.unlink(name, dir_fd=store_fd)
+        os.fsync(store_fd)
+        return True
+    finally:
+        os.close(store_fd)
+
+
+def detach_source_attested_home_attachment(
+    library_dir: str | pathlib.Path,
+    *,
+    model_id: str,
+    snapshot_revision: str,
+    selected_rank: int,
+    node_id: str,
+    durable_home_path: str,
+) -> dict[str, Any]:
+    _validate_hf_model_id(model_id, label="detach model_id")
+    _validate_commit(snapshot_revision, label="detach snapshot_revision")
+    selected_rank = _require_rank(selected_rank, label="detach selected_rank")
+    node_id = _require_private_node_id(node_id)
+    durable_home_path = _require_durable_home_path(durable_home_path)
+    attachment = load_source_attested_home_attachment(
+        library_dir,
+        model_id=model_id,
+        snapshot_revision=snapshot_revision,
+    )
+    result = {
+        "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+        "kind": SOURCE_ATTESTED_HOME_ATTACHMENT_RESULT_KIND,
+        "state": "absent",
+        "receipt_id": None,
+        "model_id": model_id,
+        "snapshot_revision": snapshot_revision,
+    }
+    if attachment is None:
+        return result
+    if not _attachment_matches_target(
+        attachment,
+        model_id=model_id,
+        snapshot_revision=snapshot_revision,
+        selected_rank=selected_rank,
+        node_id=node_id,
+        durable_home_path=durable_home_path,
+    ):
+        return result
+    store = source_attested_home_attachment_store(library_dir)
+    name = f"{attachment['attachment_key']}.json"
+    if _unlink_store_document(
+        store, name, label="source-attested home-attachment store"
+    ):
+        result["state"] = "detached"
+        result["receipt_id"] = attachment["receipt_id"]
+    return result
 
 
 def verify_source_attested_home(
@@ -2461,6 +3096,73 @@ def cmd_build_receipt(args: argparse.Namespace) -> int:
     return _write_json(receipt)
 
 
+def _receipt_from_authority(authority: dict[str, Any]) -> dict[str, Any] | None:
+    if authority.get("state") == HOME_AUTHORITY_ATTACHED:
+        return authority.get("receipt")
+    return None
+
+
+def cmd_attach_current_home(args: argparse.Namespace) -> int:
+    receipt = validate_source_attested_acquisition_receipt(
+        _read_arg_json(args.receipt, label="receipt")
+    )
+    publish_result = _read_arg_json(args.publish_result, label="publication result")
+    attachment = attach_source_attested_home_from_publication(
+        args.library_dir,
+        receipt=receipt,
+        node_id=args.node_id,
+        publish_result=publish_result,
+    )
+    result = {
+        "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+        "kind": SOURCE_ATTESTED_HOME_ATTACHMENT_RESULT_KIND,
+        "state": "attached",
+        "receipt_id": attachment["receipt_id"],
+        "model_id": attachment["model_id"],
+        "snapshot_revision": attachment["snapshot_revision"],
+    }
+    _public_json(result, label="current-home attachment result")
+    return _write_json(result)
+
+
+def cmd_resolve_attached_receipt(args: argparse.Namespace) -> int:
+    authority = resolve_attached_source_attested_receipt(
+        args.library_dir,
+        model_id=args.model_id,
+        snapshot_revision=args.revision,
+        selected_rank=args.rank,
+        node_id=args.node_id,
+        durable_home_path=args.durable_home_path,
+        live_identity=_read_arg_json(args.live_identity, label="live directory identity"),
+    )
+    receipt = _receipt_from_authority(authority)
+    if receipt is None and not args.allow_missing:
+        fail("source-attested receipt has no current-home authority")
+    return _write_json(receipt)
+
+
+def cmd_detach_current_home(args: argparse.Namespace) -> int:
+    result = detach_source_attested_home_attachment(
+        args.library_dir,
+        model_id=args.model_id,
+        snapshot_revision=args.revision,
+        selected_rank=args.rank,
+        node_id=args.node_id,
+        durable_home_path=args.durable_home_path,
+    )
+    public = {
+        "schema_version": result["schema_version"],
+        "kind": result["kind"],
+        "state": result["state"],
+        "model_id": result["model_id"],
+        "snapshot_revision": result["snapshot_revision"],
+    }
+    if result.get("receipt_id"):
+        public["receipt_id"] = result["receipt_id"]
+    _public_json(public, label="current-home detach result")
+    return _write_json(public)
+
+
 def cmd_find_receipt(args: argparse.Namespace) -> int:
     if args.receipt_id:
         receipt = load_source_attested_receipt(args.library_dir, args.receipt_id)
@@ -2595,6 +3297,33 @@ def build_parser() -> argparse.ArgumentParser:
     find_receipt.add_argument("--revision")
     find_receipt.add_argument("--allow-missing", action="store_true")
     find_receipt.set_defaults(func=cmd_find_receipt)
+
+    attach_home = sub.add_parser("attach-current-home")
+    attach_home.add_argument("--library-dir", required=True)
+    attach_home.add_argument("--receipt", required=True)
+    attach_home.add_argument("--publish-result", required=True)
+    attach_home.add_argument("--node-id", required=True)
+    attach_home.set_defaults(func=cmd_attach_current_home)
+
+    resolve_attached = sub.add_parser("resolve-attached-receipt")
+    resolve_attached.add_argument("--library-dir", required=True)
+    resolve_attached.add_argument("--model-id", required=True)
+    resolve_attached.add_argument("--revision", required=True)
+    resolve_attached.add_argument("--rank", type=int, required=True)
+    resolve_attached.add_argument("--node-id", required=True)
+    resolve_attached.add_argument("--durable-home-path", required=True)
+    resolve_attached.add_argument("--live-identity", required=True)
+    resolve_attached.add_argument("--allow-missing", action="store_true")
+    resolve_attached.set_defaults(func=cmd_resolve_attached_receipt)
+
+    detach_home = sub.add_parser("detach-current-home")
+    detach_home.add_argument("--library-dir", required=True)
+    detach_home.add_argument("--model-id", required=True)
+    detach_home.add_argument("--revision", required=True)
+    detach_home.add_argument("--rank", type=int, required=True)
+    detach_home.add_argument("--node-id", required=True)
+    detach_home.add_argument("--durable-home-path", required=True)
+    detach_home.set_defaults(func=cmd_detach_current_home)
 
     verify_home = sub.add_parser("verify-home")
     verify_home.add_argument("--receipt", required=True)

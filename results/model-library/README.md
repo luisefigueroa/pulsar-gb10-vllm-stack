@@ -202,13 +202,15 @@ source-attested acquisition of an absent brand-new unsealed Hugging Face home.
 It covers read-only exact-commit and complete Git/LFS inventory planning,
 privacy-safe approval, target-local authentication boundaries, private
 same-filesystem staging, complete set and digest verification, repeated
-all-rank absence, immutable receipts, atomic no-replace publication,
-receipt-backed offline `home verify`, exact prepare binding, and onboarding
-skill composition. These tests use fixtures; no real model was downloaded and
-no physical Hub/DGX, serving-integration, model-qualification, reviewed
-identity, status, decision, or promotion evidence was produced. A publishable
-physical artifact must not be added until Gate 14 in `docs/REVALIDATE.md` is
-actually run and privacy-reviewed.
+all-rank absence, immutable receipts, atomic no-replace publication, private
+current-home attachment to the exact published directory, refusal to apply a
+historical receipt to an unknown or restored tree, receipt-backed offline
+`home verify`, exact prepare binding, and onboarding skill composition. These
+tests use fixtures; no real model was downloaded and no physical Hub/DGX,
+serving-integration, model-qualification, reviewed identity, status, decision,
+or promotion evidence was produced. A publishable physical artifact must not
+be added until Gate 14 in `docs/REVALIDATE.md` is actually run and
+privacy-reviewed.
 
 On 2026-08-12, the flagship `deepseek-v4-flash` GA profile became the second
 reviewed identity. Its release candidate reproduced byte-for-byte and the

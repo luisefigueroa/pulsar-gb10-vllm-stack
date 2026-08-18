@@ -131,11 +131,12 @@ identity class, and explicit no-promotion boundary.
 
 The source-attested plan refuses to create a duplicate if a repository appears
 between assessment and planning. Reuse a home created by this service only after
-`home verify` completes an offline full SHA-256 rehash against its immutable
-site-local receipt. An older or otherwise pre-existing home still requires a
-reviewed expected manifest that is independent of the observed tree. Refuse a missing
-required receipt or reviewed manifest, failed verification, a partial tree,
-another revision, a duplicate durable home, or an out-of-geometry home.
+`home verify` completes an offline full SHA-256 rehash against the immutable
+site-local receipt attached to that exact live directory. An older or
+otherwise pre-existing home still requires a
+reviewed expected manifest that is independent of the observed tree. Refuse a
+missing required receipt or reviewed manifest, failed verification, a partial
+tree, another revision, a duplicate durable home, or an out-of-geometry home.
 Neither the catalog's shallow `complete` label nor a self-observed manifest is
 independent completeness evidence for an older home.
 
@@ -153,8 +154,9 @@ The service rechecks the source and topology on that reviewed rank, downloads
 there using that rank's local Hugging Face authentication, confines model and Xet
 cache bytes to private same-filesystem staging, verifies the complete upstream
 inventory, runs Hugging Face missing/extra verification, hashes every file,
-rechecks all-rank absence, writes the immutable site-local receipt, and then
-publishes the home atomically. It does not refresh the catalog, prepare a
+rechecks all-rank absence, writes the immutable site-local receipt, publishes
+the home atomically, and binds that receipt to the exact published directory.
+It does not refresh the catalog, prepare a
 runtime view, launch, issue a seal or decision, assign status, or promote a
 path. Record the result's exact revision, `source_digest`, `approval_id`, and
 `receipt_id` in the journal. Do not run a Hugging Face download directly into

@@ -84,15 +84,17 @@ manifest, runtime envelope, and selected access contract.
 5. The service uses the selected rank's local Hugging Face authentication and
    private same-filesystem staging. It checks the complete upstream inventory,
    Hugging Face missing/extra verification, and every file digest; repeats the
-   all-rank absence check; writes an immutable receipt; and publishes with an
-   atomic no-replace rename. Do not download directly into the durable cache.
+   all-rank absence check; writes an immutable receipt; publishes with an
+   atomic no-replace rename; and binds that receipt to the exact published
+   directory. Do not download directly into the durable cache.
 6. Record the result's exact revision, `source_digest`, `approval_id`, and
    `receipt_id` in the journal. Acquisition is catalog/artifact evidence only;
    it does not issue a seal or decision, assign status, promote a path, prove
    physical behavior, refresh the catalog, prepare a runtime view, or launch.
 7. Reuse a source-attested home only after
    `scripts/model-library.sh home verify <model_id@revision> --json` completes
-   an offline full SHA-256 rehash against its immutable receipt. An older or
+   an offline full SHA-256 rehash against the immutable receipt attached to
+   that exact live directory. An older or
    otherwise pre-existing home still requires full verification against a
    reviewed expected manifest independent of the observed tree.
 8. Refuse a missing required receipt or reviewed manifest, failed or incomplete

@@ -7,7 +7,9 @@ import copy
 import ctypes
 import errno
 import json
+import os
 import pathlib
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -371,15 +373,14 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         store = source_attested.source_attested_receipt_store(self.library_dir)
         self.assertTrue((store / f"{receipt['receipt_id']}.json").is_file())
         self.assertTrue((store / f"{other['receipt_id']}.json").is_file())
-        found = source_attested.find_source_attested_receipt(
+        listed = source_attested.list_source_attested_receipts_for_revision(
             self.library_dir,
             model_id=self.model_id,
             snapshot_revision=fixture.COMMIT,
         )
-        self.assertIsNotNone(found)
         self.assertEqual(
-            found["receipt_id"],
-            min(receipt["receipt_id"], other["receipt_id"]),
+            {item["receipt_id"] for item in listed},
+            {receipt["receipt_id"], other["receipt_id"]},
         )
         tampered = copy.deepcopy(observed["manifest"])
         tampered["files"][0]["sha256"] = "f" * 64
@@ -638,9 +639,688 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         )
         self.assertFalse(result["catalog_refreshed"])
         blob = json.dumps(result)
-        self.assertNotIn("node_id", blob)
-        self.assertNotIn("cache_root", blob)
-        self.assertNotIn("topology_id", blob)
+        for banned in (
+            "node_id",
+            "cache_root",
+            "topology_id",
+            "device",
+            "inode",
+            "ctime_ns",
+            "durable_home_path",
+            "source-attested-home-attachments",
+        ):
+            self.assertNotIn(banned, blob)
+
+    def test_prepare_without_receipt_manifest_stays_unsealed(self) -> None:
+        catalog_path = self.root / "catalog-unsealed.json"
+        models_dir = self.root / "models-unsealed"
+        models_dir.mkdir()
+        (models_dir / f"{self.profile}.conf").write_text(
+            f'MODEL="{self.model_id}"\nSTATUS="untested"\nNODES=1\n',
+            encoding="utf-8",
+        )
+        hub = self.root / "hub-unsealed"
+        fixture.write_snapshot_hub(hub)
+        inventory = model_library.inspect_snapshot_blob_identities(
+            hub,
+            model_id=self.model_id,
+            revision=fixture.COMMIT,
+            allow_empty_files=True,
+        )
+        home_inventory = {
+            "schema_version": 2,
+            "kind": "model-library-home-inventory",
+            "rank": 0,
+            "node_id": "node-0",
+            "hub_path": str(hub),
+            "model_id": self.model_id,
+            "state": "complete",
+            "revision": fixture.COMMIT,
+            "content_digest": inventory["manifest"]["manifest_id"],
+            "bytes_logical": inventory["manifest"]["total_bytes"],
+            "integrity_manifest": inventory["manifest"],
+        }
+        catalog = {
+            "schema_version": 2,
+            "generated_at": "2026-08-17T00:00:00.000Z",
+            "topology_id": "d" * 64,
+            "models": [
+                {
+                    "model_id": self.model_id,
+                    "revision": fixture.COMMIT,
+                    "identity_key": f"{self.model_id}@{fixture.COMMIT}",
+                    "validation": "unvalidated",
+                    "profiles": [self.profile],
+                    "profile_validation": [],
+                    "homes": [
+                        {
+                            "rank": 0,
+                            "node_id": "node-0",
+                            "hostname": "fixture-0",
+                            "ssh_host": "local",
+                            "cache_root": str(self.root / "cache-0"),
+                            "hub_path": str(hub),
+                            "state": "complete",
+                            "bytes": inventory["manifest"]["total_bytes"],
+                            "primary": True,
+                        }
+                    ],
+                    "duplicate": False,
+                    "has_primary": True,
+                    "primary_selection": {
+                        "status": "selected",
+                        "node_id": "node-0",
+                        "mode": "automatic-single-home",
+                    },
+                }
+            ],
+            "primary_selections": [],
+        }
+        model_library.atomic_write_json(catalog_path, catalog)
+        plan = model_library.plan_activate(
+            catalog_path=str(catalog_path),
+            profile=self.profile,
+            topology_id="d" * 64,
+            hot_root=str(self.root / "hot-unsealed"),
+            models_dir=models_dir,
+            nodes=1,
+            home_inventory=home_inventory,
+        )
+        self.assertEqual(plan["revision"], fixture.COMMIT)
+        self.assertNotIn("receipt_id", json.dumps(plan))
+
+
+def _writer_temp_name(final_stem: str, *, pid: int = 9, token: str = "0123456789abcdef") -> str:
+    return f".{final_stem}.json.{pid}.{token}.tmp"
+
+
+class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = pathlib.Path(self.temporary.name)
+        self.model_id = "Fixture/Unbound-Model"
+        self.profile = "unbound-fixture"
+        self.source = fixture.build_source(model_id=self.model_id)
+        self.identity = source_attested.resolve_huggingface_v1_acquisition_identity(
+            source=self.source, profile=self.profile
+        )
+        self.library_dir = self.root / "library"
+        self.node_id = "node-1"
+        self.rank = 1
+
+    def _observations(self) -> list[dict[str, object]]:
+        rows = []
+        for rank in (0, 1):
+            cache = self.root / f"cache-{rank}"
+            cache.mkdir(exist_ok=True)
+            rows.append(
+                fixture.observation(
+                    cache,
+                    rank=rank,
+                    node_id=f"node-{rank}",
+                    model_id=self.model_id,
+                    revision=self.source["snapshot_revision"],
+                    content_bytes=self.source["content_bytes"],
+                    available_bytes=20 * 1024**3 if rank == 1 else 8 * 1024**3,
+                    hf_cli="hf",
+                )
+            )
+        return rows
+
+    def _receipt(self, *, selector: str = "main") -> dict[str, object]:
+        source = (
+            self.source
+            if selector == self.source["selector"]
+            else fixture.build_source(model_id=self.model_id, selector=selector)
+        )
+        identity = source_attested.resolve_huggingface_v1_acquisition_identity(
+            source=source, profile=self.profile
+        )
+        plan, _handle = source_attested.plan_source_attested_acquisition(
+            source=source,
+            identity=identity,
+            observations=self._observations(),
+            serving_nodes=1,
+            topology_generation="d" * 64,
+        )
+        hub = self.root / f"hub-{selector}"
+        fixture.write_snapshot_hub(hub)
+        observed = model_library.inspect_snapshot_blob_identities(
+            hub,
+            model_id=self.model_id,
+            revision=fixture.COMMIT,
+            allow_empty_files=True,
+        )
+        return source_attested.build_source_attested_acquisition_receipt(
+            source=source,
+            identity=identity,
+            approval=plan["approval"],
+            observed_manifest=observed["manifest"],
+        )
+
+    def _publish(self, *, owner_id: str, hub_root: pathlib.Path) -> dict[str, object]:
+        staging_result = model_library.create_owned_hub_staging(
+            hub_root,
+            owner_id=owner_id,
+            rank=self.rank,
+            node_id=self.node_id,
+        )
+        staging = pathlib.Path(staging_result["staging_root"])
+        staged = staging / model_library.model_id_to_hub_dirname(self.model_id)
+        fixture.write_snapshot_hub(staged)
+        target = hub_root / model_library.model_id_to_hub_dirname(self.model_id)
+        return model_library.publish_owned_hub_staging(
+            staging,
+            owner_id=owner_id,
+            rank=self.rank,
+            node_id=self.node_id,
+            model_id=self.model_id,
+            target_hub=target,
+            hub_root=hub_root,
+        )
+
+    def _attach(self, receipt: dict[str, object], published: dict[str, object]) -> dict[str, object]:
+        return source_attested.attach_source_attested_home_from_publication(
+            self.library_dir,
+            receipt=receipt,
+            node_id=self.node_id,
+            publish_result=published,
+        )
+
+    def _resolve(
+        self,
+        published: dict[str, object],
+        *,
+        rank: int | None = None,
+        node_id: str | None = None,
+        path: str | None = None,
+        live: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        identity = live or published["directory_identity"]
+        return source_attested.resolve_attached_source_attested_receipt(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+            selected_rank=self.rank if rank is None else rank,
+            node_id=self.node_id if node_id is None else node_id,
+            durable_home_path=published["target_hub"] if path is None else path,
+            live_identity=identity,
+        )
+
+    def test_publish_attach_and_live_identity_selects_receipt(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="a" * 64, hub_root=self.root / "hub-root")
+        attachment = self._attach(receipt, published)
+        self.assertEqual(attachment["receipt_id"], receipt["receipt_id"])
+        live = model_library.inspect_live_directory_identity(published["target_hub"])
+        self.assertEqual(live["device"], published["directory_identity"]["device"])
+        self.assertEqual(live["inode"], published["directory_identity"]["inode"])
+        self.assertEqual(live["ctime_ns"], published["directory_identity"]["ctime_ns"])
+        authority = self._resolve(published, live=live)
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_ATTACHED)
+        self.assertEqual(authority["receipt"]["receipt_id"], receipt["receipt_id"])
+        result = source_attested.build_source_attested_acquisition_result(
+            receipt=receipt, state="published", staging_cleanup="removed"
+        )
+        public = json.dumps(result) + json.dumps(receipt)
+        for banned in (
+            self.node_id,
+            published["target_hub"],
+            "ctime_ns",
+            '"device"',
+            '"inode"',
+            str(live["inode"]),
+        ):
+            self.assertNotIn(banned, public)
+
+    def test_orphan_receipt_and_matching_external_tree_have_no_authority(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        external = self.root / "external-home"
+        fixture.write_snapshot_hub(external)
+        live = model_library.inspect_live_directory_identity(external)
+        authority = source_attested.resolve_attached_source_attested_receipt(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+            selected_rank=self.rank,
+            node_id=self.node_id,
+            durable_home_path=str(external),
+            live_identity=live,
+        )
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_NONE)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_MISSING_ATTACHMENT
+        )
+        self.assertIsNone(
+            source_attested.load_source_attested_home_attachment(
+                self.library_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+            )
+        )
+
+    def test_same_path_new_inode_or_ctime_has_no_authority(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="b" * 64, hub_root=self.root / "ctime-root")
+        self._attach(receipt, published)
+        target = pathlib.Path(published["target_hub"])
+        os.chmod(target, 0o700)
+        live = model_library.inspect_live_directory_identity(target)
+        authority = self._resolve(published, live=live)
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_NONE)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_STALE_ATTACHMENT
+        )
+
+        shutil.rmtree(target)
+        fixture.write_snapshot_hub(target)
+        replaced = model_library.inspect_live_directory_identity(target)
+        authority = self._resolve(published, live=replaced)
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_NONE)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_STALE_ATTACHMENT
+        )
+
+    def test_path_node_rank_and_identity_mismatches_have_no_authority(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="c" * 64, hub_root=self.root / "mismatch-root")
+        self._attach(receipt, published)
+        live = published["directory_identity"]
+        other_path = str(self.root / "other-home")
+        pathlib.Path(other_path).mkdir()
+        cases = [
+            {"rank": 0},
+            {"node_id": "node-other"},
+            {"path": other_path},
+            {
+                "live": {
+                    **live,
+                    "device": live["device"] + 1,
+                }
+            },
+            {
+                "live": {
+                    **live,
+                    "inode": live["inode"] + 1,
+                }
+            },
+            {
+                "live": {
+                    **live,
+                    "ctime_ns": live["ctime_ns"] + 1,
+                }
+            },
+        ]
+        for kwargs in cases:
+            authority = self._resolve(published, **kwargs)
+            self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_NONE)
+            self.assertEqual(
+                authority["reason"], source_attested.HOME_AUTHORITY_STALE_ATTACHMENT
+            )
+
+    def test_attachment_selects_receipt_not_lexicographic_minimum(self) -> None:
+        first = self._receipt(selector="main")
+        second = self._receipt(selector="v1")
+        self.assertNotEqual(first["receipt_id"], second["receipt_id"])
+        source_attested.write_source_attested_receipt(self.library_dir, first)
+        source_attested.write_source_attested_receipt(self.library_dir, second)
+        published = self._publish(owner_id="d" * 64, hub_root=self.root / "multi-root")
+        chosen = max((first, second), key=lambda item: item["receipt_id"])
+        self._attach(chosen, published)
+        authority = self._resolve(published)
+        self.assertEqual(authority["receipt"]["receipt_id"], chosen["receipt_id"])
+        self.assertNotEqual(
+            authority["receipt"]["receipt_id"],
+            min(first["receipt_id"], second["receipt_id"]),
+        )
+
+    def test_missing_or_incompatible_named_receipt_has_no_authority(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="5" * 64, hub_root=self.root / "named-receipt")
+        attachment = self._attach(receipt, published)
+        store = source_attested.source_attested_receipt_store(self.library_dir)
+        receipt_path = store / f"{receipt['receipt_id']}.json"
+        receipt_path.unlink()
+        authority = self._resolve(published)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_MISSING_RECEIPT
+        )
+
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        attachment_path = (
+            source_attested.source_attested_home_attachment_store(self.library_dir)
+            / f"{attachment['attachment_key']}.json"
+        )
+        tampered = json.loads(attachment_path.read_text(encoding="utf-8"))
+        tampered["inventory_digest"] = "f" * 64
+        attachment_path.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
+        authority = self._resolve(published)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_INCOMPATIBLE_RECEIPT
+        )
+
+    def test_missing_attachment_never_auto_attaches(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="e" * 64, hub_root=self.root / "no-attach")
+        authority = self._resolve(published)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_MISSING_ATTACHMENT
+        )
+        self.assertIsNone(
+            source_attested.load_source_attested_home_attachment(
+                self.library_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+            )
+        )
+        store = source_attested.source_attested_home_attachment_store(self.library_dir)
+        self.assertFalse(store.exists() and any(store.iterdir()))
+
+    def test_supported_remove_detaches_before_mutation_and_keeps_receipts(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="f" * 64, hub_root=self.root / "remove-root")
+        self._attach(receipt, published)
+        detached = source_attested.detach_source_attested_home_attachment(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+            selected_rank=self.rank,
+            node_id=self.node_id,
+            durable_home_path=published["target_hub"],
+        )
+        self.assertEqual(detached["state"], "detached")
+        self.assertTrue(pathlib.Path(published["target_hub"]).is_dir())
+        authority = self._resolve(published)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_MISSING_ATTACHMENT
+        )
+        store = source_attested.source_attested_receipt_store(self.library_dir)
+        self.assertTrue((store / f"{receipt['receipt_id']}.json").is_file())
+
+        again = source_attested.detach_source_attested_home_attachment(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+            selected_rank=self.rank,
+            node_id=self.node_id,
+            durable_home_path=published["target_hub"],
+        )
+        self.assertEqual(again["state"], "absent")
+
+    def test_detach_unlinks_via_store_fd_and_fsyncs_directory(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="6" * 64, hub_root=self.root / "fsync-root")
+        attachment = self._attach(receipt, published)
+        opened: list[tuple[int, int | None, int]] = []
+        unlinked: list[tuple[str, int | None]] = []
+        synced: list[int] = []
+        real_open = os.open
+        real_unlink = os.unlink
+        real_fsync = os.fsync
+
+        def fake_open(path, flags, *args, dir_fd=None, **kwargs):
+            fd = real_open(path, flags, *args, dir_fd=dir_fd, **kwargs)
+            opened.append((flags, dir_fd, fd))
+            return fd
+
+        def fake_unlink(name, *, dir_fd=None):
+            unlinked.append((name, dir_fd))
+            return real_unlink(name, dir_fd=dir_fd)
+
+        def fake_fsync(fd):
+            synced.append(fd)
+            return real_fsync(fd)
+
+        with (
+            mock.patch(
+                "scripts.model_library_source_attested.os.open",
+                side_effect=fake_open,
+            ),
+            mock.patch(
+                "scripts.model_library_source_attested.os.unlink",
+                side_effect=fake_unlink,
+            ),
+            mock.patch(
+                "scripts.model_library_source_attested.os.fsync",
+                side_effect=fake_fsync,
+            ),
+        ):
+            detached = source_attested.detach_source_attested_home_attachment(
+                self.library_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+                selected_rank=self.rank,
+                node_id=self.node_id,
+                durable_home_path=published["target_hub"],
+            )
+        self.assertEqual(detached["state"], "detached")
+        store_fds = [
+            fd
+            for flags, dir_fd, fd in opened
+            if dir_fd is None and flags & os.O_DIRECTORY
+        ]
+        self.assertEqual(len(store_fds), 1)
+        self.assertIn((f"{attachment['attachment_key']}.json", store_fds[0]), unlinked)
+        self.assertIn(store_fds[0], synced)
+        self.assertFalse(
+            (
+                source_attested.source_attested_home_attachment_store(self.library_dir)
+                / f"{attachment['attachment_key']}.json"
+            ).exists()
+        )
+
+    def test_selected_rank_mismatch_is_incompatible_receipt(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="7" * 64, hub_root=self.root / "rank-mismatch")
+        attachment = self._attach(receipt, published)
+        self.assertEqual(receipt["selected_rank"], self.rank)
+        attachment_path = (
+            source_attested.source_attested_home_attachment_store(self.library_dir)
+            / f"{attachment['attachment_key']}.json"
+        )
+        tampered = json.loads(attachment_path.read_text(encoding="utf-8"))
+        tampered["selected_rank"] = 0
+        attachment_path.write_text(
+            json.dumps(tampered, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        authority = self._resolve(published, rank=0)
+        self.assertEqual(
+            authority["reason"], source_attested.HOME_AUTHORITY_INCOMPATIBLE_RECEIPT
+        )
+
+    def test_noncanonical_paths_are_rejected(self) -> None:
+        canonical = "/var/tmp/pulsar-canonical-home"
+        self.assertEqual(
+            source_attested._require_durable_home_path(canonical), canonical
+        )
+        for bad in (
+            "/var/tmp/pulsar-canonical-home/.",
+            "/var/tmp/pulsar-canonical-home/./nested",
+            "/var/tmp/foo/../pulsar-canonical-home",
+            "/var/tmp/pulsar-canonical-home/",
+            "//var/tmp/pulsar-canonical-home",
+            "relative/home",
+            "/var/tmp/pulsar-canonical-home/..",
+        ):
+            with self.assertRaisesRegex(
+                source_attested.SourceAttestedAcquisitionError,
+                "durable-home path is invalid",
+            ):
+                source_attested._require_durable_home_path(bad)
+
+        hub = self.root / "canonical-live"
+        hub.mkdir()
+        live = model_library.inspect_live_directory_identity(hub)
+        self.assertEqual(live["path"], str(hub))
+        for bad in (
+            f"{hub}/.",
+            f"{hub}/",
+            f"{hub}/../{hub.name}",
+        ):
+            with self.assertRaisesRegex(
+                model_library.ModelLibraryError, "canonical|absolute"
+            ):
+                model_library.inspect_live_directory_identity(bad)
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError,
+            "durable-home path is invalid",
+        ):
+            source_attested.validate_live_directory_identity(
+                {**live, "path": f"{hub}/."}
+            )
+
+    def test_remove_failure_after_detach_leaves_unbound_home(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="1" * 64, hub_root=self.root / "fail-remove")
+        self._attach(receipt, published)
+        source_attested.detach_source_attested_home_attachment(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+            selected_rank=self.rank,
+            node_id=self.node_id,
+            durable_home_path=published["target_hub"],
+        )
+        self.assertTrue(pathlib.Path(published["target_hub"]).is_dir())
+        authority = self._resolve(published)
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_NONE)
+
+    def test_reacquisition_writes_new_attachment_and_keeps_old_receipts(self) -> None:
+        first = self._receipt(selector="main")
+        source_attested.write_source_attested_receipt(self.library_dir, first)
+        first_pub = self._publish(owner_id="2" * 64, hub_root=self.root / "readd-a")
+        self._attach(first, first_pub)
+        source_attested.detach_source_attested_home_attachment(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+            selected_rank=self.rank,
+            node_id=self.node_id,
+            durable_home_path=first_pub["target_hub"],
+        )
+        second = self._receipt(selector="v1")
+        source_attested.write_source_attested_receipt(self.library_dir, second)
+        second_pub = self._publish(owner_id="3" * 64, hub_root=self.root / "readd-b")
+        self._attach(second, second_pub)
+        authority = self._resolve(second_pub)
+        self.assertEqual(authority["receipt"]["receipt_id"], second["receipt_id"])
+        store = source_attested.source_attested_receipt_store(self.library_dir)
+        self.assertTrue((store / f"{first['receipt_id']}.json").is_file())
+        self.assertTrue((store / f"{second['receipt_id']}.json").is_file())
+
+    def test_regular_writer_temp_is_ignored_and_temp_only_store_is_empty(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        store = source_attested.source_attested_receipt_store(self.library_dir)
+        temp_name = _writer_temp_name(receipt["receipt_id"])
+        temp_path = store / temp_name
+        temp_path.write_text("{not-a-receipt", encoding="utf-8")
+        os.chmod(temp_path, 0o600)
+        found = source_attested.find_source_attested_receipt(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+        )
+        self.assertEqual(found["receipt_id"], receipt["receipt_id"])
+
+        empty_dir = self.root / "temp-only-library"
+        empty_store = source_attested.source_attested_receipt_store(empty_dir)
+        empty_store.mkdir(parents=True)
+        os.chmod(empty_store, 0o700)
+        leftover = empty_store / _writer_temp_name("a" * 64)
+        leftover.write_text("{also-not-a-receipt", encoding="utf-8")
+        self.assertEqual(
+            source_attested.list_source_attested_receipts_for_revision(
+                empty_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+            ),
+            [],
+        )
+        written = source_attested.write_source_attested_receipt(empty_dir, receipt)
+        self.assertEqual(written["receipt_id"], receipt["receipt_id"])
+        self.assertTrue((empty_store / f"{receipt['receipt_id']}.json").is_file())
+        self.assertTrue(leftover.is_file())
+
+    def test_temp_shaped_symlink_directory_and_unrelated_entries_fail(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        store = source_attested.source_attested_receipt_store(self.library_dir)
+
+        symlink_name = _writer_temp_name("b" * 64)
+        (store / symlink_name).symlink_to(store / f"{receipt['receipt_id']}.json")
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "non-regular writer temp"
+        ):
+            source_attested.find_source_attested_receipt(
+                self.library_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+            )
+        (store / symlink_name).unlink()
+
+        dir_name = _writer_temp_name("c" * 64)
+        (store / dir_name).mkdir()
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "non-regular writer temp"
+        ):
+            source_attested.find_source_attested_receipt(
+                self.library_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+            )
+        (store / dir_name).rmdir()
+
+        (store / "unexpected.tmp").write_text("nope", encoding="utf-8")
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "unexpected entry"
+        ):
+            source_attested.find_source_attested_receipt(
+                self.library_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+            )
+
+    def test_attachment_store_ignores_writer_temp_and_rejects_malformed(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="4" * 64, hub_root=self.root / "attach-temp")
+        attachment = self._attach(receipt, published)
+        store = source_attested.source_attested_home_attachment_store(self.library_dir)
+        leftover = store / _writer_temp_name(attachment["attachment_key"])
+        leftover.write_text("{not-an-attachment", encoding="utf-8")
+        authority = self._resolve(published)
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_ATTACHED)
+
+        (store / "unexpected.tmp").write_text("nope", encoding="utf-8")
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError, "unexpected entry"
+        ):
+            self._resolve(published)
+
+    def test_live_directory_inspect_refuses_symlink_and_file(self) -> None:
+        path = self.root / "not-dir"
+        path.write_text("file", encoding="utf-8")
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a directory"):
+            model_library.inspect_live_directory_identity(path)
+        linked = self.root / "linked-dir"
+        real = self.root / "real-dir"
+        real.mkdir()
+        linked.symlink_to(real)
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "symlink"):
+            model_library.inspect_live_directory_identity(linked)
 
 
 class RenameDirectoryNoreplaceTests(unittest.TestCase):

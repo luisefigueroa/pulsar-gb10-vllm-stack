@@ -82,9 +82,10 @@ exactly one durable HF repository. For a brand-new unsealed profile,
 `--revision <selector> --plan` first resolves a complete public Git/LFS inventory
 to an exact commit without downloading model bytes. Separately confirmed
 execution uses the selected rank's local authentication, verifies the complete
-upstream set and every SHA-256, writes an immutable site-local receipt, and uses
-an atomic no-replace publication. `home verify` later performs an offline full
-rehash against that receipt. Neither path creates hot copies or refreshes the
+upstream set and every SHA-256, writes an immutable site-local receipt, uses
+an atomic no-replace publication, and binds that receipt to the exact
+published directory. `home verify` later performs an offline full
+rehash against the attached receipt. Neither path creates hot copies or refreshes the
 catalog, so registration remains the operator's explicit next action. Target capability
 discovery accepts the CLI on PATH or Pulsar's managed user-venv installation;
 it does not move controller authentication to the selected rank.
@@ -173,8 +174,9 @@ throughput/latency. The default unsealed replicated path is not an exact
 ADR 0004 qualification attempt. For an absent repository, the skill composes
 the source-attested read-only plan and separately confirmed exact-commit
 acquisition. A source-attested home may be resumed or reused only after a
-complete offline rehash against its valid immutable receipt for the same
-public source identity. Unknown and pre-existing homes still require full
+complete offline rehash against the valid immutable receipt attached to that
+exact live directory for the same public source identity. Unknown,
+restored, replaced, or otherwise unbound homes still require full
 verification against a reviewed expected manifest independent of the observed
 tree; a shallow catalog label and self-observed manifest are insufficient.
 The acquisition is catalog/artifact evidence only and creates no seal, status,
@@ -487,9 +489,11 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   Execution confines model and transient cache bytes to plan-owned private
   same-filesystem staging, checks the complete upstream set and Hugging Face
   missing/extra result, hashes every file, repeats the all-rank no-home check,
-  writes an immutable site-local receipt, and publishes with an atomic
-  no-replace rename. `home verify` later performs an offline full rehash and
-  exact set check against that receipt. Source-attested acquisition creates
+  writes an immutable site-local receipt, publishes with an atomic
+  no-replace rename, and binds that receipt to the exact published directory
+  through a private current-home attachment. `home verify` later performs an
+  offline full rehash and exact set check against the receipt attached to
+  that live directory. Source-attested acquisition creates
   observed/source identity and catalog-artifact evidence only; it does not
   create reviewed identity, a seal, status, serving permission, a Model
   Serving Release decision, or physical evidence. Catalog refresh, hot
@@ -717,8 +721,10 @@ For `identity_status=match`, that manifest is bound to the lab-issued expected
 seal. A `legacy-unsealed` path never becomes validated through a witness.
 Sealed `home add` also uses this reviewed manifest as its publication gate. The
 source-attested path instead binds its complete upstream inventory and observed
-manifest in an immutable receipt, which is required for later offline `home
-verify` and exact prepare. Both paths hash the private target-rank staging tree
+manifest in an immutable receipt, then attaches that receipt to the exact
+published directory. Later offline `home verify` and exact prepare use that
+current attachment, not a matching tree or the lexicographically first stored
+receipt. Both paths hash the private target-rank staging tree
 before publication; neither creates a serve witness because no runtime view has
 been prepared yet.
 The seal points one-way to a content-addressed schema-1 validation bundle.
@@ -1231,3 +1237,4 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-16 | Implemented maintainer-only ADR 0004 issuance staging: `plan` previews and `stage` writes an untrusted proposal from one independently verified capture candidate plus a closed review declaration. Pure schema modules derive status. Writes are content-addressed and idempotent; an interrupted stage may be retried without deleting unrelated files; the normal registry verifier does not accept an incomplete proposal. The command does not edit a profile, bind `MODEL_SERVING_RELEASE_ID`, or add a production registry object. Local success is not review or physical qualification. |
 | 2026-08-17 | Accepted source-attested acquisition policy and added internal Hugging Face v1 planning contracts: a versioned source/inventory schema, identity precedence for a reviewed Model Serving Release binding then a legacy expected seal then unbound source-attested identity, and a privacy-safe approval identifier that binds source, commit, inventory, rank, geometry, capacity, policy, and internal topology generation without emitting site identity. Sealed `home add` schemas and behavior are unchanged. Public unsealed execution, receipts, `home verify`, prepare-time exact-revision enforcement, skill composition, and physical Hub/DGX evidence remain later work. |
 | 2026-08-17 | Implemented the public source-attested acquisition control plane for an absent brand-new unsealed Hugging Face home: read-only exact-commit/inventory planning on the selected rank, separate confirmation, target-local authentication, private same-filesystem download and transient caches, complete Git/LFS and SHA-256 verification, repeated all-rank absence, immutable site-local receipt, atomic no-replace publication, receipt-backed offline `home verify`, exact prepare binding, and onboarding-skill composition. Deterministic tests pass. No physical Hub/DGX acquisition, serving integration, model qualification, seal, status, decision, permission, or promotion claim was produced. |
+| 2026-08-17 | Bound source-attested receipt authority to the exact live durable-home directory published by that acquisition. A private site-local current-home attachment, written only after successful no-replace publication, selects the owning receipt. Missing, stale, restored, or replaced trees have no receipt authority and still require a reviewed expected manifest. Supported home removal detaches the pointer before mutation and keeps immutable receipts. Interrupted writer temps that match the exclusive writer grammar are ignored during enumeration. Control-plane implemented; physical Hub/DGX gate pending. |

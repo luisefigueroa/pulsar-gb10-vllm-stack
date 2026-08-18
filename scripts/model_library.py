@@ -75,6 +75,8 @@ HOME_ACQUISITION_RESULT_KIND = "pulsar-model-library-home-acquisition-result"
 HOME_ACQUISITION_MIN_HEADROOM_BYTES = 5 * 1024**3
 OWNED_HUB_STAGING_SCHEMA_VERSION = 1
 OWNED_HUB_STAGING_KIND = "pulsar-model-library-owned-hub-staging"
+LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION = 1
+LIVE_DIRECTORY_IDENTITY_KIND = "pulsar-model-library-live-directory-identity"
 RENAME_NOREPLACE = 1
 # Source-attested Hugging Face v1 planning contracts live in
 # model_library_source_attested.py. They use a separate schema/kind and must
@@ -5095,6 +5097,73 @@ def purge_hot_instance(
     shutil.rmtree(instance_dir)
 
 
+def _require_canonical_absolute_path(path: str | pathlib.Path, *, label: str) -> str:
+    """Require a normalized absolute path with no dot, dot-dot, or aliasing."""
+    raw = str(path) if isinstance(path, pathlib.Path) else path
+    if not isinstance(raw, str) or not raw:
+        fail(f"{label}: path must be absolute")
+    if any(character in raw for character in ("\x00", "\n", "\r")):
+        fail(f"{label}: path is not canonical")
+    candidate = pathlib.Path(raw)
+    if not candidate.is_absolute():
+        fail(f"{label}: path must be absolute")
+    parts = candidate.parts[1:]
+    if any(part in {"", ".", ".."} for part in parts):
+        fail(f"{label}: path is not canonical")
+    normalized = str(pathlib.Path("/").joinpath(*parts)) if parts else "/"
+    if normalized != raw:
+        fail(f"{label}: path is not canonical")
+    return raw
+
+
+def inspect_live_directory_identity(path: str | pathlib.Path) -> dict[str, Any]:
+    """Return a private no-follow identity for one live directory.
+
+    This is a rank-local inspection helper. It must not be persisted in
+    catalog.json or the model tree, and public CLI results must not echo it.
+    """
+    target = pathlib.Path(_require_canonical_absolute_path(path, label="live directory"))
+    try:
+        before = target.lstat()
+    except FileNotFoundError:
+        fail("live directory: path is missing")
+    except OSError:
+        fail("live directory: path is unavailable")
+    if stat.S_ISLNK(before.st_mode):
+        fail("live directory: path must not be a symlink")
+    if not stat.S_ISDIR(before.st_mode):
+        fail("live directory: path is not a directory")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target, flags)
+    except FileNotFoundError:
+        fail("live directory: path is missing")
+    except NotADirectoryError:
+        fail("live directory: path is not a directory")
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.EINVAL}:
+            fail("live directory: path must not be a symlink")
+        fail("live directory: path is unavailable")
+    try:
+        info = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISDIR(info.st_mode)
+        or (info.st_dev, info.st_ino) != (before.st_dev, before.st_ino)
+    ):
+        fail("live directory: path is not a regular directory")
+    return {
+        "schema_version": LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION,
+        "kind": LIVE_DIRECTORY_IDENTITY_KIND,
+        "path": str(target),
+        "device": int(info.st_dev),
+        "inode": int(info.st_ino),
+        "ctime_ns": int(info.st_ctime_ns),
+    }
+
+
 def _lstat_kind(path: pathlib.Path) -> tuple[str, os.stat_result | None]:
     try:
         metadata = path.lstat()
@@ -6633,6 +6702,10 @@ def publish_owned_hub_staging(
             os.close(parent_fd)
     except OSError:
         cleanup_state = "incomplete"
+    try:
+        directory_identity = inspect_live_directory_identity(target)
+    except ModelLibraryError as exc:
+        fail(f"home add: published directory identity is unavailable: {exc}")
     return {
         "schema_version": OWNED_HUB_STAGING_SCHEMA_VERSION,
         "kind": OWNED_HUB_STAGING_KIND,
@@ -6641,6 +6714,7 @@ def publish_owned_hub_staging(
         "rank": rank,
         "target_hub": str(target),
         "staging_cleanup": cleanup_state,
+        "directory_identity": directory_identity,
     }
 
 
@@ -7916,6 +7990,12 @@ def cmd_publish_owned_hub_staging(args: argparse.Namespace) -> int:
         target_hub=args.target_hub,
         hub_root=args.hub_root or None,
     )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_inspect_live_directory_identity(args: argparse.Namespace) -> int:
+    result = inspect_live_directory_identity(args.path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -9369,6 +9449,13 @@ def build_parser() -> argparse.ArgumentParser:
     owned_publish.add_argument("--target-hub", required=True)
     owned_publish.add_argument("--hub-root", default="")
     owned_publish.set_defaults(func=cmd_publish_owned_hub_staging)
+
+    live_identity = sub.add_parser(
+        "inspect-live-directory-identity",
+        help="Inspect one live directory with no-follow device/inode identity",
+    )
+    live_identity.add_argument("--path", required=True)
+    live_identity.set_defaults(func=cmd_inspect_live_directory_identity)
 
     inspect_identities = sub.add_parser(
         "inspect-snapshot-blob-identities",

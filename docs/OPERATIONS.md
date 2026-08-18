@@ -122,8 +122,9 @@ replicated path may still be served with its honest label but is not an exact
 ADR 0004 qualification attempt. For an absent brand-new unsealed Hugging Face
 repository, the skill may plan and, after a separate confirmation, run the
 source-attested exact-commit acquisition service. Reuse of that home requires
-receipt-backed offline full verification. An unknown or pre-existing home
-still requires full verification against a reviewed expected manifest
+receipt-backed offline full verification against the receipt attached to the
+exact live directory. An unknown, restored, replaced, or otherwise unbound
+home still requires full verification against a reviewed expected manifest
 independent of the observed tree; catalog state and a self-observed manifest
 alone are insufficient. The acquisition creates catalog/artifact evidence
 only, not a seal, status, decision, serving permission, promotion, or physical
@@ -651,9 +652,12 @@ is shown, and it downloads using its own Hugging Face authentication. Pulsar
 does not accept, print, persist, or move a token. Model and transient Xet/asset
 bytes stay in private same-filesystem staging until complete inventory and
 SHA-256 verification, a repeated all-rank absence check, immutable-receipt
-publication, and atomic no-replace home publication succeed. Acquisition does
+publication, atomic no-replace home publication, and a private current-home
+attachment succeed. Acquisition does
 not refresh, prepare, launch, or grant reviewed authority. `home verify` is
-offline and rehashes the complete tree against the receipt before later reuse.
+offline and rehashes the complete tree against the attached receipt before
+later reuse. A matching tree without that live-directory attachment is
+treated as unknown.
 
 `home add` inspects every confirmed rank and refuses existing repository paths,
 unobservable nodes, insufficient capacity, missing target-side Hugging Face
@@ -672,6 +676,21 @@ through the controller, chooses a second node after failure, creates hot data,
 prepares a view, launches, or changes validation status. Download/verification
 failure removes only the current plan's staging directory. If cleanup reports
 incomplete, inspect that exact `.pulsar-acquire-*` directory before retrying.
+
+Source-attested crash and retry behavior:
+
+- A leftover exclusive writer temp next to receipts or attachments is ignored
+  during enumeration and does not block a later write.
+- A receipt without a published home is an orphan history record. Retry may
+  reuse that receipt, publish, and attach.
+- A published home without a current attachment is unbound. Do not reconstruct
+  the attachment from matching bytes. Remove the home with supported
+  `home remove` and re-add, or use a reviewed expected manifest.
+- Supported `home remove --yes` detaches the current pointer before the
+  directory mutation and keeps receipts. `home check` and a declined remove
+  do not detach. If removal fails after detach, the surviving home is unbound.
+- Legitimate remove and re-add writes a new attachment for the new directory
+  identity. Older compatible receipts remain history.
 
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the

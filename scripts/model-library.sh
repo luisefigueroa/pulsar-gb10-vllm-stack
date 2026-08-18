@@ -108,17 +108,18 @@ Notes:
     --revision. --plan is read-only and prints the public source-attested
     plan without downloading model bytes. Execution needs --yes (or a
     confirmation) and writes an immutable receipt before publishing the
-    home. For a one-node profile, that rank may be any confirmed rank; for
-    multi-node profiles it remains in the exact profile geometry. With no
-    --node override, the eligible serving rank with the most free space is
+    home, then binds that receipt to the exact published directory. For a
+    one-node profile, that rank may be any confirmed rank; for multi-node
+    profiles it remains in the exact profile geometry. With no --node
+    override, the eligible serving rank with the most free space is
     selected. Eligibility includes target-local metadata access; an explicit
     --node resolves metadata only on that rank. Download uses private
     same-filesystem staging and target-local modern hf. It creates no hot
     copies, starts nothing, never refreshes the catalog, and does not create
     a seal or status.
-  • home verify rehashes a receipt-created home against its immutable
-    receipt. Unknown or pre-existing homes still need a reviewed expected
-    manifest. Verification assigns no status.
+  • home verify rehashes a receipt-created home against the receipt bound to
+    that exact live directory. An unknown, restored, or replaced tree still
+    needs a reviewed expected manifest. Verification assigns no status.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -308,22 +309,49 @@ inspect_catalog_home() {
   printf '%s\n' "$out"
 }
 
+resolve_attached_source_attested_receipt() {
+  local model_id="${1:?}" revision="${2:?}" rank="${3:?}" node_id="${4:?}"
+  local hub_path="${5:?}" workdir="${6:?}" context="${7:?}"
+  run_model_library_on_rank "$rank" \
+    inspect-live-directory-identity \
+    --path "$hub_path" >"$workdir/live-identity.json" \
+    || die "$context: could not inspect the durable home directory"
+  python3 "$SOURCE_ATTESTED_PY" resolve-attached-receipt \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --rank "$rank" \
+    --node-id "$node_id" \
+    --durable-home-path "$hub_path" \
+    --live-identity "$workdir/live-identity.json" \
+    --allow-missing
+}
+
 library_plan_activate() {
   local profile="${1:?profile required}"
   shift
   local home_inventory model_id revision receipt_json manifest_json
+  local home_rank node_id hub_path tmp
   home_inventory=$(inspect_catalog_home "$profile") || return 1
   model_id=$(printf '%s' "$home_inventory" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["model_id"])')
   revision=$(printf '%s' "$home_inventory" | python3 -c \
     'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  home_rank=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["rank"])')
+  node_id=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["node_id"])')
+  hub_path=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["hub_path"])')
   local -a extra=()
-  receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
-      --library-dir "$LIBRARY_DIR" \
-      --model-id "$model_id" \
-      --revision "$revision" \
-      --allow-missing) \
-    || die "prepare: source-attested receipt lookup failed"
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-prepare-receipt.XXXXXX")
+  if ! receipt_json=$(resolve_attached_source_attested_receipt \
+      "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
+      "$tmp" "prepare"); then
+    rm -rf "$tmp"
+    die "prepare: source-attested receipt lookup failed"
+  fi
+  rm -rf "$tmp"
   if [ "$receipt_json" != null ]; then
     manifest_json=$(printf '%s' "$receipt_json" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
@@ -1805,6 +1833,13 @@ sa.compare_observed_manifest_to_expected(
     --hub-root "$hub_root" >"$tmp/publish.json" \
     || die "home add: verification or atomic publication failed; private staging cleanup was attempted"
   cleanup_needed=0
+  if ! python3 "$SOURCE_ATTESTED_PY" attach-current-home \
+      --library-dir "$LIBRARY_DIR" \
+      --receipt "$tmp/receipt.json" \
+      --publish-result "$tmp/publish.json" \
+      --node-id "$selected_node" >"$tmp/attach.json"; then
+    die "home add: durable home published but the current-home attachment was not written; the home is unbound. Remove it with a supported home remove, then re-add, or use a reviewed expected manifest. Do not reconstruct the attachment from matching bytes."
+  fi
   local staging_cleanup
   staging_cleanup=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("staging_cleanup") or "removed")' \
     <"$tmp/publish.json")
@@ -2004,11 +2039,9 @@ cmd_home_verify() (
     || die "home verify: catalog entry lacks an exact snapshot revision"
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-verify.XXXXXX")
   trap 'if [ -n "${tmp:-}" ]; then rm -rf "$tmp"; fi' EXIT
-  receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
-      --library-dir "$LIBRARY_DIR" \
-      --model-id "$model_id" \
-      --revision "$revision" \
-      --allow-missing) \
+  receipt_json=$(resolve_attached_source_attested_receipt \
+      "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
+      "$tmp" "home verify") \
     || die "home verify: source-attested receipt lookup failed"
   if [ "$receipt_json" != null ]; then
     printf '%s\n' "$receipt_json" >"$tmp/receipt.json"
@@ -2130,10 +2163,31 @@ cmd_home_remove() {
   [ "$yes" = 1 ] \
     || die "home removal requires --yes after reviewing the eligible plan"
 
+  local detach_model detach_revision detach_rank detach_node detach_path
+  detach_model=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["model_id"])')
+  detach_revision=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["revision"])')
+  detach_rank=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["rank"])')
+  detach_node=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["node_id"])')
+  detach_path=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["hub_path"])')
+  python3 "$SOURCE_ATTESTED_PY" detach-current-home \
+      --library-dir "$LIBRARY_DIR" \
+      --model-id "$detach_model" \
+      --revision "$detach_revision" \
+      --rank "$detach_rank" \
+      --node-id "$detach_node" \
+      --durable-home-path "$detach_path" \
+      >/dev/null \
+    || die "home removal: current-home attachment store is unusable; receipts were not changed and the home was not removed"
+
   result_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-home-removed.XXXXXX")
   trap 'rm -f "$result_file"' RETURN
   execute_home_removal_on_rank "$plan" >"$result_file" \
-    || die "home removal failed; inspect the reported retirement path before retrying"
+    || die "home removal failed after detaching any current-home attachment; receipts were kept. If the home remains, it is unbound. Retry supported removal or use a reviewed expected manifest. Do not reconstruct the attachment from matching bytes."
   if ! cmd_catalog_refresh >/dev/null; then
     die "home was removed, but catalog refresh failed; run catalog refresh before serving"
   fi

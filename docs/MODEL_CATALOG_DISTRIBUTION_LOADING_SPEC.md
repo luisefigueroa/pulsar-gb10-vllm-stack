@@ -53,7 +53,8 @@ This snapshot supports review of thirteen implementation areas:
 12. the supervised `pulsar-model-onboarding` control-plane orchestration skill;
     and
 13. source-attested Hugging Face v1 planning and separately confirmed
-    acquisition, immutable receipts, offline home verification, exact prepare
+    acquisition, immutable receipts, private current-home attachment to the
+    exact published directory, offline home verification, exact prepare
     binding, and onboarding-skill composition.
 
 The accepted model-library direction is no longer an open peer-review question:
@@ -135,12 +136,13 @@ replicated path is not an exact ADR 0004 qualification attempt. For an absent
 brand-new unsealed Hugging Face repository, the skill may compose the
 source-attested read-only plan and separately confirmed exact-commit
 acquisition. A home created by that service may be reused only after a complete
-offline rehash against its valid immutable receipt for the same public source
-identity. An unknown or pre-existing home still requires full verification
-against a reviewed expected manifest independent of the observed tree;
-shallow catalog state and a self-observed manifest are insufficient. The
-acquisition produces catalog/artifact evidence only and creates no seal,
-status, decision, serving permission, promotion, or physical claim. The journal is isolated under
+offline rehash against the valid immutable receipt attached to that live
+directory for the same public source identity. An unknown or pre-existing
+home still requires full verification against a reviewed expected manifest
+independent of the observed tree; shallow catalog state and a self-observed
+manifest are insufficient. The acquisition produces catalog/artifact evidence
+only and creates no seal, status, decision, serving permission, promotion, or
+physical claim. The journal is isolated under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision.
@@ -1675,10 +1677,12 @@ authentication; confines model, Xet, and asset caches to private
 same-filesystem staging; checks the upstream file set and Hugging Face
 missing/extra result; and hashes every file. Both paths repeat the all-rank
 target-absence check before publication. Source-attested execution writes an
-immutable site-local receipt, then publishes with an atomic no-replace rename;
-`home verify <model_id@commit>` later performs a receipt-backed offline full
-rehash and set check. A failed download or verification removes only the owned
-staging tree; an existing or raced repository path fails. Sealed acquisition
+immutable site-local receipt, then publishes with an atomic no-replace rename
+and binds that receipt to the exact published directory through a private
+current-home attachment; `home verify <model_id@commit>` later performs a
+receipt-backed offline full rehash and set check only when that attachment
+still names the live directory. A failed download or verification removes only
+the owned staging tree; an existing or raced repository path fails. Sealed acquisition
 discovers `hf`, `huggingface-cli`, or Pulsar's managed user-venv CLI; the
 source-attested path requires modern `hf` or the managed `hf`. Neither path
 creates hot content, prepares a runtime view, issues a witness, starts serving,
@@ -2032,7 +2036,8 @@ The implementation described here is primarily defined by:
   advisory status projection implemented for explicitly bound profiles;
   supervised `pulsar-model-onboarding` skill implemented as control-plane
   orchestration with source-attested planning, separately confirmed
-  exact-commit acquisition, immutable receipts, offline home verification,
+  exact-commit acquisition, immutable receipts, current-home attachment to the
+  live published directory, offline home verification,
   and exact prepare binding; physical source-attested Hub/DGX evidence pending;
   maintainer issuance staging implemented as an untrusted local proposal;
   serving migration pending;

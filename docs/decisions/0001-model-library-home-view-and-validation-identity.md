@@ -131,7 +131,9 @@ resolves an exact upstream commit and complete Git/LFS inventory without
 downloading model bytes. Separately confirmed execution uses the selected
 rank's local authentication and private same-filesystem staging, verifies the
 complete upstream set and every SHA-256, repeats the all-rank absence check,
-writes an immutable site-local receipt, and publishes with an atomic
-no-replace rename. `home verify` performs the required later offline full
-rehash. Sealed `home add` remains compatible. Deterministic tests do not prove
-physical Hub or DGX behavior and none of the trust exclusions above changed.
+writes an immutable site-local receipt, publishes with an atomic no-replace
+rename, and binds that receipt to the exact published directory through a
+private current-home attachment. `home verify` performs the required later
+offline full rehash only when that attachment still matches the live home.
+Sealed `home add` remains compatible. Deterministic tests do not prove physical
+Hub or DGX behavior and none of the trust exclusions above changed.

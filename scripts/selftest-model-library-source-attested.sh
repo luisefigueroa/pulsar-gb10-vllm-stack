@@ -186,6 +186,10 @@ assert len(result["approval_id"]) == 64
 assert result["catalog_refreshed"] is False
 assert "node_id" not in result
 assert "cache_root" not in result
+blob = open(sys.argv[1], encoding="utf-8").read()
+for banned in ("device", "inode", "ctime_ns", "durable_home_path",
+               "source-attested-home-attachments"):
+    assert banned not in blob, banned
 PY
 grep -q -- 'download nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4' "$STATE/hf.log"
 grep -q -- '--revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$STATE/hf.log"
@@ -200,8 +204,20 @@ fi
 test -d "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4/snapshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 receipts=$(find "$STATE/library/source-attested-receipts" -name '*.json' | wc -l)
 [ "$receipts" -eq 1 ]
+attachments=$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)
+[ "$attachments" -eq 1 ]
 
 env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
+# An interrupted writer temp next to the final receipt must not block verify.
+python3 - "$STATE/library/source-attested-receipts" <<'PY'
+import pathlib
+import sys
+
+store = pathlib.Path(sys.argv[1])
+receipt = next(store.glob("[0-9a-f]*.json"))
+temp = store / f".{receipt.name}.9.0123456789abcdef.tmp"
+temp.write_text("{not-a-receipt", encoding="utf-8")
+PY
 env "${BASE_ENV[@]}" "$LIBRARY" home verify \
   'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
   --json >"$STATE/verify.json"
@@ -209,6 +225,68 @@ python3 - "$STATE/verify.json" <<'PY'
 import json, sys
 result = json.load(open(sys.argv[1], encoding="utf-8"))
 assert result["kind"] == "pulsar-model-library-source-attested-home-verify-result"
+assert result["state"] == "verified"
+blob = open(sys.argv[1], encoding="utf-8").read()
+for banned in ("node_id", "device", "inode", "ctime_ns", "durable_home_path"):
+    assert banned not in blob, banned
+PY
+
+# Plan/check paths must not detach; detach happens only after --yes and before
+# the removal mutation.
+python3 - "$REPO_DIR/scripts/model-library.sh" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+check_body = text[text.index("cmd_home_check()") : text.index("cmd_home_remove()")]
+assert "detach-current-home" not in check_body
+remove_body = text[text.index("cmd_home_remove()") : text.index("copy_ssh_data_host()")]
+assert remove_body.index("home removal requires --yes") < remove_body.index(
+    "detach-current-home"
+)
+assert remove_body.index("detach-current-home") < remove_body.index(
+    "execute_home_removal_on_rank"
+)
+PY
+
+# Removing the current attachment unbinds the live home. Matching bytes do not
+# restore receipt authority.
+rm -f "$STATE/library/source-attested-home-attachments"/*.json
+if env "${BASE_ENV[@]}" "$LIBRARY" home verify \
+    'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+    >"$STATE/unbound.out" 2>"$STATE/unbound.err"; then
+  echo "unbound home verify unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -q 'unknown or pre-existing home requires a reviewed expected manifest' \
+  "$STATE/unbound.err"
+[ "$(find "$STATE/library/source-attested-receipts" -name '*.json' | wc -l)" -eq 1 ]
+[ "$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)" -eq 0 ]
+
+# Reacquisition after supported-style removal writes a new attachment and keeps
+# the earlier receipt.
+rm -rf "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
+env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
+: >"$STATE/hf.log"
+env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+  --revision main --yes --json \
+  >"$STATE/readd.json" 2>"$STATE/readd.err"
+python3 - "$STATE/readd.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "published"
+assert "node_id" not in result
+assert "ctime_ns" not in open(sys.argv[1], encoding="utf-8").read()
+PY
+[ "$(find "$STATE/library/source-attested-receipts" -name '*.json' | wc -l)" -eq 1 ]
+[ "$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)" -eq 1 ]
+env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
+env "${BASE_ENV[@]}" "$LIBRARY" home verify \
+  'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  --json >"$STATE/readd-verify.json"
+python3 - "$STATE/readd-verify.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
 assert result["state"] == "verified"
 PY
 

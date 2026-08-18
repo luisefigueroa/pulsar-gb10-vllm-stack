@@ -162,19 +162,23 @@ language for new features without an explicit decision.
   inventory on the selected rank, uses that rank's local authentication,
   confines downloads and transient caches to private same-filesystem staging,
   verifies the upstream set and every SHA-256, rechecks all-rank absence,
-  writes an immutable site-local receipt, and publishes with an atomic
-  no-replace rename. It does not refresh the catalog, prepare a runtime view,
-  launch, or create reviewed authority. A home created this way may later be
-  resumed or reused only after `home verify` completes an offline full rehash
-  against that receipt. An unknown or pre-existing home still requires full
-  verification against a reviewed expected manifest independent of the
-  observed tree; the shallow catalog label and a self-observed manifest are
-  not that proof. The skill must never download directly into durable storage.
+  writes an immutable site-local receipt, publishes with an atomic
+  no-replace rename, and binds that receipt to the exact published directory
+  through a private current-home attachment. It does not refresh the catalog,
+  prepare a runtime view, launch, or create reviewed authority. A home
+  created this way may later be resumed or reused only after `home verify`
+  completes an offline full rehash against the receipt attached to that live
+  directory. An unknown, restored, replaced, or otherwise unbound home still
+  requires full verification against a reviewed expected manifest independent
+  of the observed tree; the shallow catalog label and a self-observed
+  manifest are not that proof. The skill must never download directly into
+  durable storage.
   Deterministic skill and journal tests make no physical DGX claim and create
   no release decision.
   `scripts/model_library_source_attested.py` owns the closed version-1
   Hugging Face source, identity, public plan, privacy-safe approval, immutable
-  receipt, result, and home-verification schemas for that path. The thin Bash
+  receipt, private current-home attachment, result, and home-verification
+  schemas for that path. The thin Bash
   boundary selects the target and orchestrates its local `hf` CLI;
   `scripts/hf_source_inventory.py` uses the target's Hugging Face Python
   environment to resolve public source metadata without accepting a token.
@@ -491,9 +495,11 @@ this work; the skill is procedural and does not outrank these sources.
   by an immutable receipt creates observed/source identity and catalog-artifact
   evidence only; it does not create a seal, status, serving permission, or
   Model Serving Release decision. Reuse requires receipt-backed offline full
-  verification. Unknown and pre-existing homes still require a reviewed
-  expected manifest independent of the observed tree. Prepare-time resolution
-  for receipt-backed content requires the exact model ID and commit. These
+  verification against the receipt attached to the exact live directory.
+  Unknown, restored, replaced, or otherwise unbound homes still require a
+  reviewed expected manifest independent of the observed tree. Prepare-time
+  resolution for receipt-backed content requires the attached receipt plus
+  the exact model ID and commit. These
   deterministic controls make no physical Hub, DGX, serving-integration, or
   model-qualification claim. No current profile is
   bound and the tracked store is empty, so current projections are neutral.
@@ -512,12 +518,14 @@ this work; the skill is procedural and does not outrank these sources.
   expected seal, then publish atomically. Accepted policy also allows a
   source-attested exact upstream tree to follow that same staging, complete
   inventory/set check, complete SHA-256, all-rank absence recheck, immutable
-  receipt, and atomic no-replace publication sequence. Source-attested adoption
-  is observed/source identity only. Public `home add <unsealed-profile>
-  --revision <selector> --plan` is read-only; execution requires `--yes` and
-  repeats source and topology checks before downloading the exact commit on
-  the selected rank. `home verify <model_id@commit>` performs receipt-backed
-  offline full verification. The home must be one of the current profile's
+  receipt, atomic no-replace publication, and private current-home attachment
+  sequence. Source-attested adoption is observed/source identity only. Public
+  `home add <unsealed-profile> --revision <selector> --plan` is read-only;
+  execution requires `--yes` and repeats source and topology checks before
+  downloading the exact commit on the selected rank.
+  `home verify <model_id@commit>` performs receipt-backed offline full
+  verification only when the current attachment still names that live
+  directory. The home must be one of the current profile's
   serving ranks so active storage remains one home plus N−1 hot copies. Do not
   silently choose another node,
   create a controller copy, refresh the catalog, prepare hot views, or launch.
