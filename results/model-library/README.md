@@ -206,11 +206,11 @@ all-rank absence, immutable receipts, atomic no-replace publication, private
 current-home attachment to the exact published directory, refusal to apply a
 historical receipt to an unknown or restored tree, receipt-backed offline
 `home verify`, exact prepare binding, and onboarding skill composition. These
-tests use fixtures; no real model was downloaded and no physical Hub/DGX,
-serving-integration, model-qualification, reviewed identity, status, decision,
-or promotion evidence was produced. A publishable physical artifact must not
-be added until Gate 14 in `docs/REVALIDATE.md` is actually run and
-privacy-reviewed.
+tests use fixtures and make no physical claim by themselves. The later
+privacy-reviewed Nemotron Nano artifact physically passes the bounded one-node
+rank-0 Gate 14 catalog/artifact lifecycle. It does not establish remote-target
+or asymmetric-credential behavior, serving integration, model qualification,
+reviewed identity, status, decision, or promotion.
 
 On 2026-08-12, the flagship `deepseek-v4-flash` GA profile became the second
 reviewed identity. Its release candidate reproduced byte-for-byte and the
@@ -299,6 +299,7 @@ duplicate was changed by this work.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
+| [`nemotron-3-nano-source-attested-gate-20260817.json`](./nemotron-3-nano-source-attested-gate-20260817.json) | Three-rank bounded source-attested Gate 14 for the one-node Nemotron Nano profile on rank 0: legacy-home refusal/removal, exact public source plan, two full acquisitions, receipt and live-directory attachment, offline rehash, prepare/reuse, active-view blocker, controlled attachment absence, guarded cleanup, receipt preservation, reacquisition, and final one-home/no-hot state | Current bounded catalog/artifact PASS. Remote target, asymmetric credentials, actual external new-inode restore, serving integration, model qualification, status, and promotion remain open or unclaimed. | Reviewed; raw private logs, hostnames, addresses, node/topology IDs, absolute paths, attachment body, filesystem identity, and credentials omitted; selected raw artifacts retained only by SHA-256 |
 | [`deepseek-v4-flash-library-hot-ga-closure-20260816.json`](./deepseek-v4-flash-library-hot-ga-closure-20260816.json) | Reviewed two-rank exact home-symlink behavior, preparation, 30-minute serving, restart, forced replacement failure, persisted new-process recovery, identity re-verification, owned cleanup, and final one-home state | PASS with reviewed 1.14 GiB memory-shrink warning; reviewed two-rank `library-hot` is GA, explicit, and non-default. Remote one-rank and legacy-unsealed use remain experimental; no Model Serving Release status changed | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, transactions, witnesses, filesystem identity, and sample timestamps omitted |
 | [`deepseek-v4-flash-serving-wizard-gate-20260813.json`](./deepseek-v4-flash-serving-wizard-gate-20260813.json) | Production interactive serving-wizard and operator-home stop flow for the exact sealed DeepSeek GA profile: explicit experimental choice at that time, fixed preparation, exact readiness, read-only launch, warmup, completion, owned stop, purge, and one-home closeout | Current two-node serving-integration PASS; this earlier artifact did not alone establish the later GA closure. Remote one-node wizard placement and model qualification remain open. | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`deepseek-v4-flash-library-hot-determinism-20260812.json`](./deepseek-v4-flash-library-hot-determinism-20260812.json) | Exact sealed DeepSeek GA same-boot strict captures with profile-default DSpark plus forced no-spec diagnostic, standard benchmarks, and clean one-home closeout | Current strict determinism FAIL; no-spec improves but does not eliminate variance; `Validated` is blocked for this exact release while subsystem GA remains separate | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |

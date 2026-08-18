@@ -38,7 +38,7 @@
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
 | GA today | Reviewed two-rank `library-hot`: one exact durable home, exact home symlink, sealed-hot copy on the non-home rank, reviewed identity, fixed eight-stream SSH-over-RoCE preparation, exact restart, persisted replacement recovery, and owned cleanup. It remains explicit and non-default. |
-| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; the supervised `pulsar-model-onboarding` orchestration skill; and source-attested Hugging Face v1 acquisition for an absent brand-new unsealed home (deterministic control plane implemented; physical Hub/DGX gate pending) |
+| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; the supervised `pulsar-model-onboarding` orchestration skill; and source-attested Hugging Face v1 acquisition for an absent brand-new unsealed home (bounded one-node rank-0 Gate 14 physically passed; remote target and asymmetric credentials remain pending) |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -183,7 +183,11 @@ The acquisition is catalog/artifact evidence only and creates no seal, status,
 decision, serving permission, or physical claim. Its journal lives under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
-release decision. Maintainer-only issuance
+release decision. The separate Nemotron Nano Gate 14 artifact physically
+passes the bounded one-node rank-0 acquisition, attachment, verification,
+prepare/reuse, cleanup, and reacquisition lifecycle across three confirmed
+ranks. It does not cover a remote target or asymmetric credentials and makes no
+serving or Model Serving Release claim. Maintainer-only issuance
 staging can propose exact registry objects from a verified capture candidate
 plus explicit review input; a successful local command is not trusted until
 repository review and merge, and the tracked store remains empty. Existing schema-1 bundles and `STATUS=tested*`
@@ -1135,6 +1139,9 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 
 ## 8. Remaining deferred work
 
+- Physical source-attested acquisition on a remote durable-home target and
+  asymmetric per-rank Hugging Face credentials; the bounded one-node rank-0
+  Gate 14 lifecycle has passed
 - Physical serving-integration repeat for the new remote one-node wizard path;
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
@@ -1238,3 +1245,4 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-17 | Accepted source-attested acquisition policy and added internal Hugging Face v1 planning contracts: a versioned source/inventory schema, identity precedence for a reviewed Model Serving Release binding then a legacy expected seal then unbound source-attested identity, and a privacy-safe approval identifier that binds source, commit, inventory, rank, geometry, capacity, policy, and internal topology generation without emitting site identity. Sealed `home add` schemas and behavior are unchanged. Public unsealed execution, receipts, `home verify`, prepare-time exact-revision enforcement, skill composition, and physical Hub/DGX evidence remain later work. |
 | 2026-08-17 | Implemented the public source-attested acquisition control plane for an absent brand-new unsealed Hugging Face home: read-only exact-commit/inventory planning on the selected rank, separate confirmation, target-local authentication, private same-filesystem download and transient caches, complete Git/LFS and SHA-256 verification, repeated all-rank absence, immutable site-local receipt, atomic no-replace publication, receipt-backed offline `home verify`, exact prepare binding, and onboarding-skill composition. Deterministic tests pass. No physical Hub/DGX acquisition, serving integration, model qualification, seal, status, decision, permission, or promotion claim was produced. |
 | 2026-08-17 | Bound source-attested receipt authority to the exact live durable-home directory published by that acquisition. A private site-local current-home attachment, written only after successful no-replace publication, selects the owning receipt. Missing, stale, restored, or replaced trees have no receipt authority and still require a reviewed expected manifest. Supported home removal detaches the pointer before mutation and keeps immutable receipts. Interrupted writer temps that match the exclusive writer grammar are ignored during enumeration. Control-plane implemented; physical Hub/DGX gate pending. |
+| 2026-08-17 | The bounded Nemotron Nano source-attested Gate 14 physically passed on a three-rank topology with a one-node rank-0 target: legacy-home refusal/removal, exact public source resolution, two complete 19,362,748,480-byte acquisitions, immutable receipt plus current-home attachment, independent offline rehash, exact prepare/reuse without download, active-view removal blocker, controlled missing-attachment refusal, guarded detach/removal, receipt preservation, reacquisition, and final healthy one-home/no-hot state. Remote target execution, asymmetric credentials, an actual external new-inode restore, serving integration, model qualification, status, and promotion were not run or claimed. |

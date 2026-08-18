@@ -602,10 +602,15 @@ removal. See
 `results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
 
 Gate 13 has deterministic Python and thin public-CLI coverage plus the physical
-Qwen acquisition artifact cited above. Gate 14 has deterministic Python and
-thin public-CLI coverage. Its real Hub/DGX acquisition, receipt-backed restart,
-catalog refresh, exact prepare, and cleanup repeat remains pending; deterministic
-selftests must not be cited as proof of those physical behaviors. Gate 12 has deterministic wizard,
+Qwen acquisition artifact cited above. Gate 14 has deterministic Python,
+thin public-CLI coverage, and a bounded physical Nemotron Nano pass for a
+one-node rank-0 target across three confirmed ranks. The run covered two real
+Hub acquisitions, current-home attachment authority and controlled absence,
+offline full rehash, catalog refresh, exact prepare/reuse, guarded cleanup,
+receipt preservation, reacquisition, and final one-home/no-hot state. Remote
+target execution, asymmetric credentials, and an actual external new-inode
+restore remain physically pending; deterministic selftests must not be cited
+as proof of those behaviors. Gate 12 has deterministic wizard,
 placement, and lifecycle coverage. Its production two-node DeepSeek wizard
 flow passed physically on 2026-08-13, including explicit source selection,
 separate preparation and launch confirmations, fresh exact readiness,
