@@ -130,6 +130,18 @@ a validation-status allowlist. Model Serving Release status never grants or
 denies serving; profiles that do not use this path remain available through
 another compatible weight source when its operational checks pass.
 
+## Implementation note — 2026-08-17
+
+The acquisition service also supports an absent brand-new unsealed Hugging
+Face home through a read-only source-attested plan and separately confirmed
+exact-commit execution. It verifies the complete upstream inventory and local
+bytes, writes an immutable receipt before atomic publication, attaches that
+receipt to the exact published directory, and requires the attachment to match
+before receipt-backed offline verification or exact prepare. This is
+catalog/artifact work on the selected rank; it does not copy a model between
+ranks and therefore does not change the preparation transport fixed by this
+ADR. Deterministic tests do not prove physical Hub/DGX behavior.
+
 ## Interpretation note — 2026-08-14
 
 ADR 0004 separates distribution-subsystem maturity from Model Serving Release

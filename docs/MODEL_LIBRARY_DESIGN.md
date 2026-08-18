@@ -38,7 +38,7 @@
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
 | GA today | Reviewed two-rank `library-hot`: one exact durable home, exact home symlink, sealed-hot copy on the non-home rank, reviewed identity, fixed eight-stream SSH-over-RoCE preparation, exact restart, persisted replacement recovery, and owned cleanup. It remains explicit and non-default. |
-| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; the supervised `pulsar-model-onboarding` orchestration skill; and internal source-attested Hugging Face v1 acquisition planning contracts without a public unsealed CLI |
+| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; the supervised `pulsar-model-onboarding` orchestration skill; and source-attested Hugging Face v1 acquisition for an absent brand-new unsealed home (deterministic control plane implemented; physical Hub/DGX gate pending) |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -72,14 +72,21 @@ profile. Sealed replicated profiles now request the exact commit during
 download, full-verify the controller copy and every copied rank, create a
 rank-local witness outside the copied repository, and launch the exact snapshot
 through a read-only repository mount with the same revision/seal/bundle labels.
-The distributed library now has a separate reviewed-profile acquisition
-service: `home add` observes every confirmed rank, allows a one-node profile on
+The distributed library has a separate acquisition service: `home add`
+observes every confirmed rank, allows a one-node profile on
 any confirmed rank while preserving exact multi-node geometry, selects the
 eligible candidate with the most free space unless `--node` overrides it, and downloads there
 into private same-filesystem staging, rechecks that no home appeared elsewhere,
-full-verifies the expected manifest, and atomically publishes exactly one
-durable HF repository. It neither creates hot copies nor refreshes the catalog,
-so registration remains the operator's explicit next action. Target capability
+full-verifies the expected manifest for sealed content, and atomically publishes
+exactly one durable HF repository. For a brand-new unsealed profile,
+`--revision <selector> --plan` first resolves a complete public Git/LFS inventory
+to an exact commit without downloading model bytes. Separately confirmed
+execution uses the selected rank's local authentication, verifies the complete
+upstream set and every SHA-256, writes an immutable site-local receipt, uses
+an atomic no-replace publication, and binds that receipt to the exact
+published directory. `home verify` later performs an offline full
+rehash against the attached receipt. Neither path creates hot copies or refreshes the
+catalog, so registration remains the operator's explicit next action. Target capability
 discovery accepts the CLI on PATH or Pulsar's managed user-venv installation;
 it does not move controller authentication to the selected rank.
 Legacy-unsealed replicated profiles retain their structural `refs/main`
@@ -164,18 +171,16 @@ seal or validation decision, assigns status, binds a profile, writes the
 trusted registry, promotes a path, or claims physical behavior. Current
 automated mapping covers only strict same-boot and absolute
 throughput/latency. The default unsealed replicated path is not an exact
-ADR 0004 qualification attempt. The skill can reuse one complete exact eligible
-home only after full verification against a reviewed expected manifest
-independent of the observed tree; a shallow catalog label and self-observed
-manifest are insufficient. Accepted policy now allows a source-attested home
-created by the future acquisition workflow to be resumed or reused only after
-a complete offline rehash against its valid immutable receipt for the same
-public source identity. Unknown and pre-existing homes still need that
-reviewed expected manifest. Internal Hugging Face v1 source, identity, and
-approval contracts exist for planning that path. Public source-attested
-`home add` execution, receipts, `home verify`, and skill composition are not
-implemented, so the skill still stops when no independently verified reusable
-home exists. Its journal lives under
+ADR 0004 qualification attempt. For an absent repository, the skill composes
+the source-attested read-only plan and separately confirmed exact-commit
+acquisition. A source-attested home may be resumed or reused only after a
+complete offline rehash against the valid immutable receipt attached to that
+exact live directory for the same public source identity. Unknown,
+restored, replaced, or otherwise unbound homes still require full
+verification against a reviewed expected manifest independent of the observed
+tree; a shallow catalog label and self-observed manifest are insufficient.
+The acquisition is catalog/artifact evidence only and creates no seal, status,
+decision, serving permission, or physical claim. Its journal lives under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
 Deterministic skill and journal tests make no physical DGX claim and create no
 release decision. Maintainer-only issuance
@@ -463,7 +468,9 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   the HF cache filesystem among writable confirmed nodes; operator override
   `--node <id>`.
 - **Implemented acquisition boundary:** `home add <sealed-profile>` accepts
-  only a reviewed expected seal and exact commit. Every confirmed rank must be
+  a reviewed expected seal and exact commit. `home add <unsealed-profile>
+  --revision <selector> --plan` is a read-only source-attested plan; execution
+  requires a separate confirmation and `--yes`. Every confirmed rank must be
   observable. A one-node profile may establish its sole serving placement on
   any confirmed rank; automatic placement chooses the eligible rank with the
   most free space, while `--node` binds an exact remote or local placement.
@@ -472,19 +479,25 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   repository path anywhere blocks duplicate creation; an explicit ineligible
   or out-of-geometry `--node` fails without choosing another rank. The
   chosen rank must have a Hugging Face CLI, sufficient space for the complete
-  manifest plus staging headroom, and upstream access/authentication. Download
-  failure removes only plan-owned private staging. Before publication Pulsar
-  repeats the all-rank no-home check, performs full SHA-256 verification, and
-  atomically renames the repository into its durable HF home. Catalog refresh,
-  hot preparation, launch, and fallback are separate actions.
-  Accepted policy also allows a source-attested exact upstream tree to be
-  adopted by that same staging, complete inventory/set check, complete
-  SHA-256, all-rank absence recheck, and atomic publication sequence without
-  creating reviewed identity, a seal, status, serving permission, or a Model
-  Serving Release decision. Internal Hugging Face v1 source, identity
-  precedence, and privacy-safe approval contracts exist for that planning
-  path. The public command still has no unsealed `--revision` or `--plan`
-  mode, writes no receipt, and does not change prepare. Future onboarding
+  manifest plus staging headroom, and target-local metadata access. Automatic
+  placement treats a metadata or access failure as making only that candidate
+  ineligible; successful candidates must agree on the exact commit and
+  inventory. An explicit `--node` resolves metadata only on that rank. Download
+  failure removes only plan-owned private staging. The source-attested plan
+  resolves a mutable selector to an exact commit and complete upstream Git/LFS
+  inventory on the selected rank without accepting or moving a token.
+  Execution confines model and transient cache bytes to plan-owned private
+  same-filesystem staging, checks the complete upstream set and Hugging Face
+  missing/extra result, hashes every file, repeats the all-rank no-home check,
+  writes an immutable site-local receipt, publishes with an atomic
+  no-replace rename, and binds that receipt to the exact published directory
+  through a private current-home attachment. `home verify` later performs an
+  offline full rehash and exact set check against the receipt attached to
+  that live directory. Source-attested acquisition creates
+  observed/source identity and catalog-artifact evidence only; it does not
+  create reviewed identity, a seal, status, serving permission, a Model
+  Serving Release decision, or physical evidence. Catalog refresh, hot
+  preparation, launch, and fallback are separate actions. Onboarding
   must refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or
   profile-only resolution.
@@ -706,9 +719,14 @@ under stable metadata, and atomically refreshes the witness only on success.
 Launch then passes the exact snapshot path through a read-only repository view.
 For `identity_status=match`, that manifest is bound to the lab-issued expected
 seal. A `legacy-unsealed` path never becomes validated through a witness.
-`home add` also uses this reviewed manifest as its publication gate. It hashes
-the private target-rank staging tree before a same-filesystem rename; it does
-not create a serve witness because no runtime view has been prepared yet.
+Sealed `home add` also uses this reviewed manifest as its publication gate. The
+source-attested path instead binds its complete upstream inventory and observed
+manifest in an immutable receipt, then attaches that receipt to the exact
+published directory. Later offline `home verify` and exact prepare use that
+current attachment, not a matching tree or the lexicographically first stored
+receipt. Both paths hash the private target-rank staging tree
+before publication; neither creates a serve witness because no runtime view has
+been prepared yet.
 The seal points one-way to a content-addressed schema-1 validation bundle.
 Profile load verifies the bundle ID, exact primary model projection,
 provenance/evidence parity, declared external-artifact identities/digests, and
@@ -1218,3 +1236,5 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-16 | **Bounded `library-hot` GA completed:** the reviewed two-rank path now requires an exact home symlink with no copy fallback and physically passed 30-minute serving, exact restart, forced replacement failure, persisted new-process recovery, reviewed-identity re-verification, owned cleanup, and one-home closeout. The corrected soak completed 587 requests with zero errors and retained its 1.14 GiB memory-shrink warning. Remote one-rank and legacy-unsealed use remain experimental; replicated remains the guided default; no Model Serving Release status changed. |
 | 2026-08-16 | Implemented maintainer-only ADR 0004 issuance staging: `plan` previews and `stage` writes an untrusted proposal from one independently verified capture candidate plus a closed review declaration. Pure schema modules derive status. Writes are content-addressed and idempotent; an interrupted stage may be retried without deleting unrelated files; the normal registry verifier does not accept an incomplete proposal. The command does not edit a profile, bind `MODEL_SERVING_RELEASE_ID`, or add a production registry object. Local success is not review or physical qualification. |
 | 2026-08-17 | Accepted source-attested acquisition policy and added internal Hugging Face v1 planning contracts: a versioned source/inventory schema, identity precedence for a reviewed Model Serving Release binding then a legacy expected seal then unbound source-attested identity, and a privacy-safe approval identifier that binds source, commit, inventory, rank, geometry, capacity, policy, and internal topology generation without emitting site identity. Sealed `home add` schemas and behavior are unchanged. Public unsealed execution, receipts, `home verify`, prepare-time exact-revision enforcement, skill composition, and physical Hub/DGX evidence remain later work. |
+| 2026-08-17 | Implemented the public source-attested acquisition control plane for an absent brand-new unsealed Hugging Face home: read-only exact-commit/inventory planning on the selected rank, separate confirmation, target-local authentication, private same-filesystem download and transient caches, complete Git/LFS and SHA-256 verification, repeated all-rank absence, immutable site-local receipt, atomic no-replace publication, receipt-backed offline `home verify`, exact prepare binding, and onboarding-skill composition. Deterministic tests pass. No physical Hub/DGX acquisition, serving integration, model qualification, seal, status, decision, permission, or promotion claim was produced. |
+| 2026-08-17 | Bound source-attested receipt authority to the exact live durable-home directory published by that acquisition. A private site-local current-home attachment, written only after successful no-replace publication, selects the owning receipt. Missing, stale, restored, or replaced trees have no receipt authority and still require a reviewed expected manifest. Supported home removal detaches the pointer before mutation and keeps immutable receipts. Interrupted writer temps that match the exclusive writer grammar are ignored during enumeration. Control-plane implemented; physical Hub/DGX gate pending. |

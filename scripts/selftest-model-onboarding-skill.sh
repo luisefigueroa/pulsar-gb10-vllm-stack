@@ -80,8 +80,8 @@ grep -Fq 'local-verified-readonly' "$skill" \
   || fail "skill must bind library-hot to local-verified-readonly"
 grep -Fq 'live-remote-readonly' "$skill" \
   || fail "skill must bind live fabric to live-remote-readonly"
-grep -Fq 'If no independently verified reusable complete exact home exists' "$skill" \
-  || fail "skill must stop on an uncomposable acquisition target"
+grep -Fq 'scripts/model-library.sh home add <profile> --revision <selector> --plan --json' "$skill" \
+  || fail "skill must compose the read-only source-attested acquisition plan"
 grep -Fq 'observe every confirmed serving rank' "$skill" \
   || fail "skill must check for durable homes before acquisition"
 grep -Fq "catalog's shallow \`complete\` label" "$skill" \
@@ -90,17 +90,32 @@ grep -Fq 'independent' "$skill" \
   || fail "skill must require independent completeness evidence before reuse"
 grep -Fq 'reviewed expected manifest that is independent of the' "$skill" \
   || fail "skill must name the reviewed independent reuse evidence"
-grep -Fq 'no current subsystem safely acquires' "$skill" \
-  || fail "skill must expose the missing unsealed acquisition subsystem"
+grep -Fq -- '--revision <exact-commit-from-plan>' "$skill" \
+  || fail "skill must acquire the exact planned commit after confirmation"
+grep -Fq -- '--node <selected-rank-from-plan>' "$skill" \
+  || fail "skill must bind execution to the reviewed rank"
+grep -Fq -- '--node <selected-rank-from-plan>' "$phases" \
+  || fail "phase checklist must bind execution to the reviewed rank"
+grep -Fq 'home verify <model_id@revision> --json' "$skill" \
+  || fail "skill must require receipt-backed offline verification"
+grep -Fq '`source_digest`, `approval_id`, and' "$skill" \
+  || fail "skill must journal the acquisition source and approval identities"
+grep -Fq '`receipt_id` in the journal' "$skill" \
+  || fail "skill must journal the immutable receipt identity"
 grep -Fq 'Do not run a' "$skill" \
   || fail "skill must forbid direct durable-cache acquisition"
-grep -Fq 'Hugging Face download directly into the durable' "$skill" \
+grep -Fq 'Hugging Face download directly into' "$skill" \
   || fail "skill must name the unsafe direct-download path"
-grep -Fq 'catalog label or self-observed manifest as independent' "$skill" \
+grep -Fq 'self-observed manifest is' "$skill" \
   || fail "skill must not use catalog/observed state as completeness authority"
-if grep -Fq 'download that commit' "$skill"; then
-  fail "skill must not instruct direct unsealed acquisition"
-fi
+grep -Fq 'using that rank' "$skill" \
+  || fail "skill must keep source authentication on the selected rank"
+grep -Fq 'local Hugging Face authentication' "$skill" \
+  || fail "skill must keep source authentication on the selected rank"
+grep -Fq 'private same-filesystem staging' "$skill" \
+  || fail "skill must describe isolated acquisition staging"
+grep -Fq 'does not refresh the catalog' "$skill" \
+  || fail "skill must keep acquisition separate from catalog refresh"
 grep -Fq 'scripts/model-serving-release-plan.sh build' "$skill" \
   || fail "skill must build the release plan after exact inputs exist"
 grep -Fq 'scripts/model-serving-release-plan.sh verify' "$skill" \

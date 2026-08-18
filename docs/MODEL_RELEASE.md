@@ -178,11 +178,13 @@ Under ADR 0004, the supervised operator workflow is the separate
 `pulsar-model-onboarding` skill. It may compose exact-home reuse, distribution,
 verification, launch, tests, and evidence capture—including explicitly
 selected Experimental subsystems—but it does not inherit trusted issuance,
-validation, or promotion authority from this maintainer tool. Reuse first
-requires full verification against a reviewed expected manifest independent of
-the observed tree. Missing unsealed acquisition stops because no current
-subsystem provides a safe staged, independently verified, atomic publication
-path. Current automated mapping
+validation, or promotion authority from this maintainer tool. For an absent
+brand-new unsealed Hugging Face repository, the skill may compose the
+source-attested read-only plan and separately confirmed exact-commit
+acquisition. Reuse of that home requires receipt-backed offline full
+verification. Unknown and pre-existing homes still require full verification
+against a reviewed expected manifest independent of the observed tree. The
+acquisition creates catalog/artifact evidence only. Current automated mapping
 covers only strict same-boot and absolute throughput/latency. Deterministic
 skill and journal tests make no physical DGX claim and create no release
 decision.

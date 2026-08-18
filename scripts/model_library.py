@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
+import ctypes.util
+import errno
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -70,11 +73,16 @@ HOME_ACQUISITION_RECHECK_KIND = "pulsar-model-library-home-acquisition-recheck"
 HOME_ACQUISITION_MARKER_KIND = "pulsar-model-library-home-acquisition-marker"
 HOME_ACQUISITION_RESULT_KIND = "pulsar-model-library-home-acquisition-result"
 HOME_ACQUISITION_MIN_HEADROOM_BYTES = 5 * 1024**3
+OWNED_HUB_STAGING_SCHEMA_VERSION = 1
+OWNED_HUB_STAGING_KIND = "pulsar-model-library-owned-hub-staging"
+LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION = 1
+LIVE_DIRECTORY_IDENTITY_KIND = "pulsar-model-library-live-directory-identity"
+RENAME_NOREPLACE = 1
 # Source-attested Hugging Face v1 planning contracts live in
 # model_library_source_attested.py. They use a separate schema/kind and must
 # not change this sealed plan/result contract. This module does not import
-# that planner, expose a public unsealed CLI, or stream those helpers to
-# remote inspection.
+# that planner; the Bash boundary composes these generic remote primitives
+# with the separate schema owner.
 
 HOT_BUDGET_SCHEMA_VERSION = 1
 HOT_BUDGET_OBSERVATION_KIND = "pulsar-model-library-hot-budget-observation"
@@ -1969,6 +1977,7 @@ def resolve_entry(
     *,
     model_id: str | None = None,
     profile: str | None = None,
+    identity_key: str | None = None,
     absolute_path: str | None = None,
     cold_root: str | None | object = ...,
     models_dir: str | pathlib.Path | None = None,
@@ -1995,9 +2004,14 @@ def resolve_entry(
 
     warm_error: str | None = None
     if catalog is not None and not absolute_path:
-        entry = find_model_entry(catalog, model_id=model_id, profile=profile)
+        entry = find_model_entry(
+            catalog,
+            model_id=model_id,
+            profile=profile,
+            identity_key=identity_key,
+        )
         if entry is None:
-            target = profile or model_id or "?"
+            target = identity_key or profile or model_id or "?"
             warm_error = f"resolve: {target}: not found in warm catalog"
         else:
             complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
@@ -2705,6 +2719,7 @@ def _build_manifest_from_files(
     revision: str,
     files: list[tuple[str, pathlib.Path]],
     lfs_blob_root: pathlib.Path | None,
+    allow_empty_files: bool = False,
 ) -> dict[str, Any]:
     if not model_id:
         fail("integrity: model_id is required")
@@ -2722,7 +2737,7 @@ def _build_manifest_from_files(
             size = resolved.stat().st_size
         except OSError as exc:
             fail(f"integrity: cannot stat {resolved}: {exc}")
-        if size <= 0:
+        if size < 0 or (size == 0 and not allow_empty_files):
             fail(f"integrity: empty snapshot file: {relative}")
         if (
             resolved_lfs_root is not None
@@ -2754,6 +2769,7 @@ def build_snapshot_manifest(
     *,
     model_id: str,
     revision: str | None = None,
+    allow_empty_files: bool = False,
 ) -> dict[str, Any]:
     hub = pathlib.Path(hub_path)
     revision, files = iter_snapshot_files(hub, revision=revision)
@@ -2762,7 +2778,69 @@ def build_snapshot_manifest(
         revision=revision,
         files=files,
         lfs_blob_root=hub / "blobs",
+        allow_empty_files=allow_empty_files,
     )
+
+
+def inspect_snapshot_blob_identities(
+    hub_path: str | pathlib.Path,
+    *,
+    model_id: str,
+    revision: str | None = None,
+    allow_empty_files: bool = True,
+) -> dict[str, Any]:
+    """Return SHA-256, Git blob IDs, and the snapshot manifest for one hub."""
+    hub = pathlib.Path(hub_path)
+    revision, files = iter_snapshot_files(hub, revision=revision)
+    observed: list[dict[str, Any]] = []
+    for relative, resolved in files:
+        try:
+            before = resolved.stat()
+            sha256 = hashlib.sha256()
+            git_oid = hashlib.sha1(
+                f"blob {before.st_size}\0".encode("ascii")
+            )
+            with resolved.open("rb") as handle:
+                while chunk := handle.read(8 * 1024 * 1024):
+                    sha256.update(chunk)
+                    git_oid.update(chunk)
+                after = os.fstat(handle.fileno())
+        except OSError as exc:
+            fail(f"integrity: cannot read {resolved}: {exc}")
+        stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in stable_fields):
+            fail(f"integrity: file changed while hashing: {resolved}")
+        size = before.st_size
+        if size < 0 or (size == 0 and not allow_empty_files):
+            fail(f"integrity: empty snapshot file: {relative}")
+        observed.append(
+            {
+                "path": relative,
+                "size": size,
+                "sha256": sha256.hexdigest(),
+                "git_oid": git_oid.hexdigest(),
+            }
+        )
+    manifest: dict[str, Any] = {
+        "schema_version": SNAPSHOT_MANIFEST_SCHEMA_VERSION,
+        "kind": SNAPSHOT_MANIFEST_KIND,
+        "model_id": model_id,
+        "snapshot_revision": revision,
+        "files": [
+            {key: item[key] for key in ("path", "size", "sha256")}
+            for item in observed
+        ],
+        "file_count": len(observed),
+        "total_bytes": sum(item["size"] for item in observed),
+    }
+    manifest["manifest_id"] = snapshot_manifest_id(manifest)
+    validate_snapshot_manifest(manifest)
+    return {
+        "model_id": model_id,
+        "snapshot_revision": revision,
+        "files": observed,
+        "manifest": manifest,
+    }
 
 
 def build_flat_snapshot_manifest(
@@ -2827,7 +2905,7 @@ def validate_snapshot_manifest(manifest: Any) -> dict[str, Any]:
             fail(f"integrity: unsafe or duplicate manifest path: {relative}")
         observed.add(relative)
         size = item.get("size")
-        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
             fail(f"integrity: invalid manifest size for {relative}")
         checksum = item.get("sha256")
         if not isinstance(checksum, str) or SHA256_HEX_RE.fullmatch(checksum) is None:
@@ -3294,8 +3372,8 @@ def validate_hot_witness(witness: Any) -> dict[str, Any]:
             value = item.get(number_field)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 fail(f"witness: invalid {number_field} for {relative}")
-        if item["size"] < 1:
-            fail(f"witness: invalid size for {relative}")
+        # A complete snapshot may legitimately contain tracked zero-byte files;
+        # the manifest and full hash still bind those entries exactly.
         total_bytes += item["size"]
     if observed_paths != sorted(observed_paths):
         fail("witness: files are not sorted")
@@ -3827,6 +3905,7 @@ def inspect_hub_inventory(
     node_id: str,
     model_id: str | None = None,
     revision: str | None = None,
+    allow_empty_files: bool = False,
 ) -> dict[str, Any]:
     """Inspect and seal one catalog home on the node that owns its path."""
     path = pathlib.Path(hub_path)
@@ -3864,6 +3943,7 @@ def inspect_hub_inventory(
             path,
             model_id=resolved_model_id,
             revision=selected_revision,
+            allow_empty_files=allow_empty_files,
         )
         result["content_digest"] = manifest["manifest_id"]
         result["bytes_logical"] = manifest["total_bytes"]
@@ -4615,6 +4695,8 @@ def plan_activate(
     rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
     fabric_port: int = DEFAULT_FABRIC_PORT,
     home_inventory: dict[str, Any] | None = None,
+    require_exact_revision: str | None = None,
+    expected_integrity_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a model-preparation plan JSON for bash to execute (copy/fabric + stamp)."""
     backend, transport = resolve_activate_transport(backend, transport)
@@ -4648,6 +4730,23 @@ def plan_activate(
         home_inventory,
         model_id=resolved["model_id"],
     )
+    if (require_exact_revision is None) != (expected_integrity_manifest is None):
+        fail("prepare: source-attested revision and receipt manifest must be supplied together")
+    if require_exact_revision:
+        if re.fullmatch(r"[0-9a-f]{40}", require_exact_revision) is None:
+            fail("prepare: source-attested identity requires one exact 40-hex commit")
+        if resolved.get("revision") != require_exact_revision:
+            fail("prepare: catalog revision is not the exact source-attested commit")
+        if resolved.get("identity_key") != f"{resolved['model_id']}@{require_exact_revision}":
+            fail("prepare: catalog identity is not the exact model_id@commit")
+        if integrity_manifest.get("snapshot_revision") != require_exact_revision:
+            fail("prepare: home manifest revision is not the exact commit")
+    if expected_integrity_manifest is not None:
+        expected = validate_snapshot_manifest(expected_integrity_manifest)
+        if integrity_manifest.get("manifest_id") != expected.get("manifest_id"):
+            fail("prepare: receipt-backed home rehash differs from the receipt")
+        if integrity_manifest.get("files") != expected.get("files"):
+            fail("prepare: receipt-backed home file set differs from the receipt")
     validation = require_activation_identity(
         profile_data,
         integrity_manifest,
@@ -4998,6 +5097,73 @@ def purge_hot_instance(
             fail("purge: instance is pinned; pass --force-unpin to remove")
     # Safety: only delete under hot root pattern
     shutil.rmtree(instance_dir)
+
+
+def _require_canonical_absolute_path(path: str | pathlib.Path, *, label: str) -> str:
+    """Require a normalized absolute path with no dot, dot-dot, or aliasing."""
+    raw = str(path) if isinstance(path, pathlib.Path) else path
+    if not isinstance(raw, str) or not raw:
+        fail(f"{label}: path must be absolute")
+    if any(character in raw for character in ("\x00", "\n", "\r")):
+        fail(f"{label}: path is not canonical")
+    candidate = pathlib.Path(raw)
+    if not candidate.is_absolute():
+        fail(f"{label}: path must be absolute")
+    parts = candidate.parts[1:]
+    if any(part in {"", ".", ".."} for part in parts):
+        fail(f"{label}: path is not canonical")
+    normalized = str(pathlib.Path("/").joinpath(*parts)) if parts else "/"
+    if normalized != raw:
+        fail(f"{label}: path is not canonical")
+    return raw
+
+
+def inspect_live_directory_identity(path: str | pathlib.Path) -> dict[str, Any]:
+    """Return a private no-follow identity for one live directory.
+
+    This is a rank-local inspection helper. It must not be persisted in
+    catalog.json or the model tree, and public CLI results must not echo it.
+    """
+    target = pathlib.Path(_require_canonical_absolute_path(path, label="live directory"))
+    try:
+        before = target.lstat()
+    except FileNotFoundError:
+        fail("live directory: path is missing")
+    except OSError:
+        fail("live directory: path is unavailable")
+    if stat.S_ISLNK(before.st_mode):
+        fail("live directory: path must not be a symlink")
+    if not stat.S_ISDIR(before.st_mode):
+        fail("live directory: path is not a directory")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target, flags)
+    except FileNotFoundError:
+        fail("live directory: path is missing")
+    except NotADirectoryError:
+        fail("live directory: path is not a directory")
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.EINVAL}:
+            fail("live directory: path must not be a symlink")
+        fail("live directory: path is unavailable")
+    try:
+        info = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISDIR(info.st_mode)
+        or (info.st_dev, info.st_ino) != (before.st_dev, before.st_ino)
+    ):
+        fail("live directory: path is not a regular directory")
+    return {
+        "schema_version": LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION,
+        "kind": LIVE_DIRECTORY_IDENTITY_KIND,
+        "path": str(target),
+        "device": int(info.st_dev),
+        "inode": int(info.st_ino),
+        "ctime_ns": int(info.st_ctime_ns),
+    }
 
 
 def _lstat_kind(path: pathlib.Path) -> tuple[str, os.stat_result | None]:
@@ -6214,7 +6380,10 @@ def _validate_home_acquisition_staging(
         fail("home add: staging root is outside the managed hub root")
     if _lstat_kind(staging)[0] != "directory":
         fail("home add: staging root is not an exact directory")
-    marker = load_json(staging / ".pulsar-home-acquisition.json")
+    marker_path = staging / ".pulsar-home-acquisition.json"
+    if _lstat_kind(marker_path)[0] != "file":
+        fail("home add: staging ownership marker is not a regular file")
+    marker = load_json(marker_path)
     expected = {
         "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
         "kind": HOME_ACQUISITION_MARKER_KIND,
@@ -6336,6 +6505,284 @@ def execute_home_acquisition(
         "bytes_hashed": verification["bytes_hashed"],
         "staging_cleanup": cleanup_state,
         "catalog_refreshed": False,
+    }
+
+
+def create_owned_hub_staging(
+    hub_root: str | pathlib.Path,
+    *,
+    owner_id: str,
+    rank: int,
+    node_id: str,
+) -> dict[str, Any]:
+    """Create same-filesystem private staging owned by an approval/receipt id."""
+    if SHA256_HEX_RE.fullmatch(str(owner_id) or "") is None:
+        fail("home add: staging owner identity is invalid")
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank < 0:
+        fail("home add: rank is invalid")
+    if not isinstance(node_id, str) or not node_id:
+        fail("home add: node identity is invalid")
+    root = pathlib.Path(hub_root)
+    if not root.is_absolute():
+        fail("home add: hub root must be absolute")
+    root.mkdir(parents=True, exist_ok=True)
+    if _lstat_kind(root)[0] != "directory":
+        fail("home add: managed hub root is not an exact directory")
+    staging = pathlib.Path(tempfile.mkdtemp(prefix=".pulsar-acquire-", dir=str(root)))
+    marker = {
+        "schema_version": OWNED_HUB_STAGING_SCHEMA_VERSION,
+        "kind": OWNED_HUB_STAGING_KIND,
+        "owner_id": owner_id,
+        "rank": rank,
+        "node_id": node_id,
+        "created_at": utc_now(),
+    }
+    atomic_write_json(staging / ".pulsar-home-acquisition.json", marker)
+    return {
+        "schema_version": OWNED_HUB_STAGING_SCHEMA_VERSION,
+        "kind": OWNED_HUB_STAGING_KIND,
+        "owner_id": owner_id,
+        "rank": rank,
+        "node_id": node_id,
+        "staging_root": str(staging),
+    }
+
+
+def _validate_owned_hub_staging(
+    staging_root: str | pathlib.Path,
+    *,
+    owner_id: str,
+    rank: int,
+    node_id: str,
+    hub_root: str | pathlib.Path | None = None,
+) -> pathlib.Path:
+    staging = pathlib.Path(staging_root)
+    if not staging.is_absolute() or not staging.name.startswith(".pulsar-acquire-"):
+        fail("home add: staging root is outside the managed hub root")
+    if hub_root is not None and staging.parent != pathlib.Path(hub_root):
+        fail("home add: staging root is outside the managed hub root")
+    if _lstat_kind(staging)[0] != "directory":
+        fail("home add: staging root is not an exact directory")
+    marker_path = staging / ".pulsar-home-acquisition.json"
+    if _lstat_kind(marker_path)[0] != "file":
+        fail("home add: staging ownership marker is not a regular file")
+    marker = load_json(marker_path)
+    expected = {
+        "schema_version": OWNED_HUB_STAGING_SCHEMA_VERSION,
+        "kind": OWNED_HUB_STAGING_KIND,
+        "owner_id": owner_id,
+        "rank": rank,
+        "node_id": node_id,
+    }
+    if not isinstance(marker, dict) or any(
+        marker.get(field) != value for field, value in expected.items()
+    ):
+        fail("home add: staging ownership marker does not match the approval")
+    return staging
+
+
+def cleanup_owned_hub_staging(
+    staging_root: str | pathlib.Path,
+    *,
+    owner_id: str,
+    rank: int,
+    node_id: str,
+    hub_root: str | pathlib.Path | None = None,
+) -> dict[str, Any]:
+    staging = _validate_owned_hub_staging(
+        staging_root,
+        owner_id=owner_id,
+        rank=rank,
+        node_id=node_id,
+        hub_root=hub_root,
+    )
+    shutil.rmtree(staging)
+    parent_fd = os.open(staging.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+    return {
+        "schema_version": OWNED_HUB_STAGING_SCHEMA_VERSION,
+        "kind": OWNED_HUB_STAGING_KIND,
+        "state": "staging-removed",
+        "owner_id": owner_id,
+        "rank": rank,
+    }
+
+
+def _rename_directory_noreplace(source: pathlib.Path, target: pathlib.Path) -> None:
+    """Atomically move one directory without replacing an existing target."""
+    libc_name = ctypes.util.find_library("c")
+    if libc_name is None:
+        fail("home add: exclusive durable-home publication is unavailable")
+    libc = ctypes.CDLL(libc_name, use_errno=True)
+    if not hasattr(libc, "renameat2"):
+        fail("home add: exclusive durable-home publication requires renameat2")
+    renameat2 = libc.renameat2
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    source_fd = os.open(
+        source.parent,
+        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        target_fd = os.open(
+            target.parent,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            result = renameat2(
+                source_fd,
+                os.fsencode(source.name),
+                target_fd,
+                os.fsencode(target.name),
+                RENAME_NOREPLACE,
+            )
+            if result != 0:
+                error = ctypes.get_errno()
+                if error in {errno.EEXIST, errno.ENOTEMPTY}:
+                    fail("home add: durable repository appeared before publication")
+                fail("home add: exclusive durable-home publication failed")
+            os.fsync(source_fd)
+            os.fsync(target_fd)
+        finally:
+            os.close(target_fd)
+    finally:
+        os.close(source_fd)
+
+
+def publish_owned_hub_staging(
+    staging_root: str | pathlib.Path,
+    *,
+    owner_id: str,
+    rank: int,
+    node_id: str,
+    model_id: str,
+    target_hub: str | pathlib.Path,
+    hub_root: str | pathlib.Path | None = None,
+) -> dict[str, Any]:
+    staging = _validate_owned_hub_staging(
+        staging_root,
+        owner_id=owner_id,
+        rank=rank,
+        node_id=node_id,
+        hub_root=hub_root,
+    )
+    staged_hub = staging / model_id_to_hub_dirname(model_id)
+    if _lstat_kind(staged_hub)[0] != "directory":
+        fail("home add: Hugging Face download did not create the expected repository")
+    target = pathlib.Path(target_hub)
+    expected_root = pathlib.Path(hub_root) if hub_root is not None else staging.parent
+    expected_target = expected_root / model_id_to_hub_dirname(model_id)
+    if (
+        not target.is_absolute()
+        or not expected_root.is_absolute()
+        or target != expected_target
+        or staging.parent != expected_root
+    ):
+        fail("home add: durable repository target differs from the managed hub root")
+    if _lstat_kind(target)[0] != "missing":
+        fail("home add: durable repository appeared before publication")
+    target_path = _require_canonical_absolute_path(target, label="published directory")
+    directory_fd = -1
+    try:
+        try:
+            directory_fd = os.open(
+                staged_hub,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+            )
+            before = os.fstat(directory_fd)
+            if not stat.S_ISDIR(before.st_mode):
+                fail("home add: staged repository is not a directory")
+            _rename_directory_noreplace(staged_hub, target)
+            after = os.fstat(directory_fd)
+            if not stat.S_ISDIR(after.st_mode):
+                fail("home add: published repository is not a directory")
+            directory_identity = {
+                "schema_version": LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION,
+                "kind": LIVE_DIRECTORY_IDENTITY_KIND,
+                "path": target_path,
+                "device": int(after.st_dev),
+                "inode": int(after.st_ino),
+                "ctime_ns": int(after.st_ctime_ns),
+            }
+        except OSError as exc:
+            fail(f"home add: atomic durable-home publication failed: {exc}")
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
+    cleanup_state = "removed"
+    try:
+        shutil.rmtree(staging)
+        parent_fd = os.open(staging.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError:
+        cleanup_state = "incomplete"
+    return {
+        "schema_version": OWNED_HUB_STAGING_SCHEMA_VERSION,
+        "kind": OWNED_HUB_STAGING_KIND,
+        "state": "published",
+        "owner_id": owner_id,
+        "rank": rank,
+        "target_hub": str(target),
+        "staging_cleanup": cleanup_state,
+        "directory_identity": directory_identity,
+    }
+
+
+def recheck_home_acquisition_absence(
+    *,
+    topology_file: str | pathlib.Path,
+    topology_id: str,
+    observations_dir: str | pathlib.Path,
+    model_id: str,
+    revision: str,
+    required_content_bytes: int,
+    selected_rank: int,
+    selected_node_id: str,
+    selected_target_hub: str,
+) -> dict[str, Any]:
+    topology = load_topology_for_plan(topology_file)
+    if topology.get("topology_id") != topology_id:
+        fail("home add: confirmed topology changed before publication")
+    observations = _load_home_acquisition_observations(
+        observations_dir,
+        topology,
+        model_id=model_id,
+        revision=revision,
+        required_content_bytes=required_content_bytes,
+    )
+    occupied = [item for item in observations if item.get("target_state") != "absent"]
+    if occupied:
+        ranks = ", ".join(str(item["rank"]) for item in occupied)
+        fail(
+            "home add: repository path appeared on confirmed rank(s) "
+            f"{ranks} during download; refusing duplicate-home publication"
+        )
+    selected = [
+        item
+        for item in observations
+        if item["rank"] == selected_rank
+        and item["node_id"] == selected_node_id
+        and item["target_hub"] == selected_target_hub
+    ]
+    if len(selected) != 1:
+        fail("home add: selected durable-home target changed before publication")
+    return {
+        "schema_version": HOME_ACQUISITION_SCHEMA_VERSION,
+        "kind": HOME_ACQUISITION_RECHECK_KIND,
+        "state": "publication-clear",
+        "observed_ranks": len(observations),
     }
 
 
@@ -7532,6 +7979,76 @@ def cmd_execute_home_acquisition(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_create_owned_hub_staging(args: argparse.Namespace) -> int:
+    result = create_owned_hub_staging(
+        args.hub_root,
+        owner_id=args.owner_id,
+        rank=args.rank,
+        node_id=args.node_id,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_cleanup_owned_hub_staging(args: argparse.Namespace) -> int:
+    result = cleanup_owned_hub_staging(
+        args.staging_root,
+        owner_id=args.owner_id,
+        rank=args.rank,
+        node_id=args.node_id,
+        hub_root=args.hub_root or None,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_publish_owned_hub_staging(args: argparse.Namespace) -> int:
+    result = publish_owned_hub_staging(
+        args.staging_root,
+        owner_id=args.owner_id,
+        rank=args.rank,
+        node_id=args.node_id,
+        model_id=args.model_id,
+        target_hub=args.target_hub,
+        hub_root=args.hub_root or None,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_inspect_live_directory_identity(args: argparse.Namespace) -> int:
+    result = inspect_live_directory_identity(args.path)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_inspect_snapshot_blob_identities(args: argparse.Namespace) -> int:
+    result = inspect_snapshot_blob_identities(
+        args.hub_path,
+        model_id=args.model_id,
+        revision=args.revision,
+        allow_empty_files=args.allow_empty_files,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_recheck_home_acquisition_absence(args: argparse.Namespace) -> int:
+    result = recheck_home_acquisition_absence(
+        topology_file=args.topology_file,
+        topology_id=args.topology_id,
+        observations_dir=args.observations_dir,
+        model_id=args.model_id,
+        revision=args.revision,
+        required_content_bytes=args.required_content_bytes,
+        selected_rank=args.selected_rank,
+        selected_node_id=args.selected_node_id,
+        selected_target_hub=args.selected_target_hub,
+    )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_render_home_acquisition_result(args: argparse.Namespace) -> int:
     result = load_json(args.result_file)
     if (
@@ -7808,10 +8325,13 @@ def cmd_resolve(args: argparse.Namespace) -> int:
             fail(f"resolve: catalog missing: {args.catalog}")
     model_id = args.model
     profile = args.profile
+    identity_key = None
     absolute_path = None
     if args.query:
         if args.query.startswith("/"):
             absolute_path = args.query
+        elif "@" in args.query:
+            identity_key = args.query
         elif "/" in args.query:
             model_id = args.query
         else:
@@ -7827,6 +8347,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         catalog,
         model_id=model_id,
         profile=profile,
+        identity_key=identity_key,
         absolute_path=absolute_path,
         cold_root=cold_root,
         models_dir=getattr(args, "models_dir", None) or None,
@@ -8108,6 +8629,7 @@ def cmd_inspect_hub(args: argparse.Namespace) -> int:
         node_id=args.node_id,
         model_id=args.model_id or None,
         revision=args.revision or None,
+        allow_empty_files=args.allow_empty_files,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -8123,6 +8645,14 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
             fail(f"home-inventory-json: {exc}")
         if not isinstance(home_inventory, dict):
             fail("home-inventory-json must be an object")
+    expected_manifest = None
+    if getattr(args, "expected_integrity_manifest_json", ""):
+        try:
+            expected_manifest = json.loads(args.expected_integrity_manifest_json)
+        except json.JSONDecodeError as exc:
+            fail(f"expected-integrity-manifest-json: {exc}")
+        if not isinstance(expected_manifest, dict):
+            fail("expected-integrity-manifest-json must be an object")
     plan = plan_activate(
         catalog_path=args.catalog,
         profile=args.profile,
@@ -8138,6 +8668,8 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
         rail_index=args.rail_index,
         fabric_port=args.fabric_port,
         home_inventory=home_inventory,
+        require_exact_revision=getattr(args, "require_exact_revision", None) or None,
+        expected_integrity_manifest=expected_manifest,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -8907,6 +9439,72 @@ def build_parser() -> argparse.ArgumentParser:
     acquisition_result.add_argument("--json", action="store_true")
     acquisition_result.set_defaults(func=cmd_render_home_acquisition_result)
 
+    owned_create = sub.add_parser(
+        "create-owned-hub-staging",
+        help="Create approval-owned same-filesystem acquisition staging",
+    )
+    owned_create.add_argument("--hub-root", required=True)
+    owned_create.add_argument("--owner-id", required=True)
+    owned_create.add_argument("--rank", type=int, required=True)
+    owned_create.add_argument("--node-id", required=True)
+    owned_create.set_defaults(func=cmd_create_owned_hub_staging)
+
+    owned_cleanup = sub.add_parser(
+        "cleanup-owned-hub-staging",
+        help="Remove one approval-owned incomplete acquisition staging tree",
+    )
+    owned_cleanup.add_argument("--staging-root", required=True)
+    owned_cleanup.add_argument("--owner-id", required=True)
+    owned_cleanup.add_argument("--rank", type=int, required=True)
+    owned_cleanup.add_argument("--node-id", required=True)
+    owned_cleanup.add_argument("--hub-root", default="")
+    owned_cleanup.set_defaults(func=cmd_cleanup_owned_hub_staging)
+
+    owned_publish = sub.add_parser(
+        "publish-owned-hub-staging",
+        help="Atomically publish one approval-owned staged hub",
+    )
+    owned_publish.add_argument("--staging-root", required=True)
+    owned_publish.add_argument("--owner-id", required=True)
+    owned_publish.add_argument("--rank", type=int, required=True)
+    owned_publish.add_argument("--node-id", required=True)
+    owned_publish.add_argument("--model-id", required=True)
+    owned_publish.add_argument("--target-hub", required=True)
+    owned_publish.add_argument("--hub-root", default="")
+    owned_publish.set_defaults(func=cmd_publish_owned_hub_staging)
+
+    live_identity = sub.add_parser(
+        "inspect-live-directory-identity",
+        help="Inspect one live directory with no-follow device/inode identity",
+    )
+    live_identity.add_argument("--path", required=True)
+    live_identity.set_defaults(func=cmd_inspect_live_directory_identity)
+
+    inspect_identities = sub.add_parser(
+        "inspect-snapshot-blob-identities",
+        help="Hash one staged hub snapshot and report Git/LFS identities",
+    )
+    inspect_identities.add_argument("--hub-path", required=True)
+    inspect_identities.add_argument("--model-id", required=True)
+    inspect_identities.add_argument("--revision", required=True)
+    inspect_identities.add_argument("--allow-empty-files", action="store_true")
+    inspect_identities.set_defaults(func=cmd_inspect_snapshot_blob_identities)
+
+    absence_recheck = sub.add_parser(
+        "recheck-home-acquisition-absence",
+        help="Recheck every confirmed rank before source-attested publication",
+    )
+    absence_recheck.add_argument("--topology-file", required=True)
+    absence_recheck.add_argument("--topology-id", required=True)
+    absence_recheck.add_argument("--observations-dir", required=True)
+    absence_recheck.add_argument("--model-id", required=True)
+    absence_recheck.add_argument("--revision", required=True)
+    absence_recheck.add_argument("--required-content-bytes", type=int, required=True)
+    absence_recheck.add_argument("--selected-rank", type=int, required=True)
+    absence_recheck.add_argument("--selected-node-id", required=True)
+    absence_recheck.add_argument("--selected-target-hub", required=True)
+    absence_recheck.set_defaults(func=cmd_recheck_home_acquisition_absence)
+
     home_target = sub.add_parser(
         "resolve-home-removal-target",
         help="Resolve one exact durable home for guarded removal",
@@ -8993,6 +9591,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--revision",
         default="",
         help="Exact snapshot revision to inspect (never inferred from mutable main)",
+    )
+    inspect.add_argument(
+        "--allow-empty-files",
+        action="store_true",
+        help="Permit tracked zero-byte files in the complete snapshot manifest",
     )
     inspect.set_defaults(func=cmd_inspect_hub)
 
@@ -9257,6 +9860,16 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--fabric-port", type=int, default=DEFAULT_FABRIC_PORT)
     plan.add_argument(
         "--home-inventory-json",
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    plan.add_argument(
+        "--require-exact-revision",
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    plan.add_argument(
+        "--expected-integrity-manifest-json",
         default="",
         help=argparse.SUPPRESS,
     )

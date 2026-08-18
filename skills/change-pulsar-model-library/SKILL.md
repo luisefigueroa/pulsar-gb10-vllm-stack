@@ -140,9 +140,12 @@ source-attested identity are distinct. Source-attested adoption is
 status, serving permission, or a Model Serving Release decision. Unknown and
 pre-existing homes still require a reviewed expected manifest independent of
 the observed tree. A home created by source-attested acquisition may be reused
-only after a complete offline rehash against its valid receipt. Public
-source-attested execution, receipts, and skill composition remain an
-implementation gap until that later unit lands.
+only after a complete offline rehash against its valid receipt. The public
+read-only plan, separately confirmed exact-commit acquisition, immutable
+receipt, offline `home verify`, exact prepare binding, and onboarding-skill
+composition are implemented as deterministic control-plane behavior. They make
+no physical Hub/DGX, serving-integration, model-qualification, status, or
+promotion claim.
 
 Call out implementation gaps instead of writing as though accepted target
 behavior already exists. Identify trust-boundary and destructive-lifecycle

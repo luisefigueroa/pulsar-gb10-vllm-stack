@@ -131,6 +131,35 @@ class ModelLibraryWitnessContracts(unittest.TestCase):
         self.assertEqual(served["integrity"]["bytes_hashed"], 0)
         self.assertEqual(served["witness"]["status"], "match")
 
+    def test_zero_byte_snapshot_files_are_valid_witness_entries(self) -> None:
+        empty = self.snapshot / "empty.txt"
+        empty.write_bytes(b"")
+        self.manifest = model_library.build_snapshot_manifest(
+            self.durable_hub,
+            model_id=self.model_id,
+            revision=self.revision,
+            allow_empty_files=True,
+        )
+        self.stamp["content_digest"] = self.manifest["manifest_id"]
+        self.stamp["integrity"]["manifest"] = self.manifest
+        self.stamp["validation"]["observed_seal"] = (
+            model_library.observed_model_seal_projection(self.manifest)
+        )
+        self.stamp["bytes_logical"] = self.manifest["total_bytes"]
+        self.stamp["budget_bytes_accounted"] = self.manifest["total_bytes"]
+        model_library.write_hot_stamp(self.instance, self.stamp)
+
+        refreshed = self.refresh()
+        self.assertEqual(refreshed["integrity"]["mode"], "full")
+        witness = model_library.load_hot_witness(self.instance)
+        self.assertEqual(
+            next(item for item in witness["files"] if item["path"] == "empty.txt")[
+                "size"
+            ],
+            0,
+        )
+        self.assertEqual(self.serve()["integrity"]["mode"], "witness")
+
     def test_missing_witness_visibly_full_verifies_and_refreshes(self) -> None:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

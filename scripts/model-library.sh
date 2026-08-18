@@ -9,6 +9,8 @@ SCRIPT_NAME=model-library
 . "$REPO_DIR/scripts/model-library-materialize.sh"
 
 PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
+SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library_source_attested.py}"
+HF_SOURCE_INVENTORY_PY="${PULSAR_HF_SOURCE_INVENTORY_PY:-$REPO_DIR/scripts/hf_source_inventory.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
 CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-$LIBRARY_DIR/catalog.json}"
 HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
@@ -40,8 +42,10 @@ Usage:
   scripts/model-library.sh validation-bundle verify <profile> [--json]
   scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
-  scripts/model-library.sh home add <sealed-profile>
-      [--node RANK|NODE_ID] [--yes] [--json]
+  scripts/model-library.sh home add <profile>
+      [--revision SELECTOR] [--node RANK|NODE_ID] [--plan] [--yes] [--json]
+  scripts/model-library.sh home verify <profile|model_id|model_id@revision>
+      [--json]
   scripts/model-library.sh home check <profile|model_id|model_id@revision>
       [--node RANK|NODE_ID] [--allow-last-home] [--json]
   scripts/model-library.sh home remove <profile|model_id|model_id@revision>
@@ -98,13 +102,24 @@ Notes:
     Removal is exact-repository-only, refuses multi-revision hub trees, and
     needs --allow-last-home before deleting the final durable copy. Duplicate
     removal requires a selected primary and can target only a non-primary home.
-  • home add downloads one exact reviewed revision directly on one selected
-    serving rank. For a one-node profile, that rank may be any confirmed rank;
-    for multi-node profiles it remains in the exact profile geometry. With no
-    --node override, the eligible serving rank with the most free space is
-    selected. Download uses private same-filesystem staging;
-    full SHA-256 verification precedes atomic durable-home publication. It
-    creates no hot copies, starts nothing, and never refreshes the catalog.
+  • home add downloads one exact revision directly on one selected serving
+    rank. A reviewed sealed profile without --revision keeps the existing
+    sealed path. A Hugging Face profile without a reviewed seal requires
+    --revision. --plan is read-only and prints the public source-attested
+    plan without downloading model bytes. Execution needs --yes (or a
+    confirmation) and writes an immutable receipt before publishing the
+    home, then binds that receipt to the exact published directory. For a
+    one-node profile, that rank may be any confirmed rank; for multi-node
+    profiles it remains in the exact profile geometry. With no --node
+    override, the eligible serving rank with the most free space is
+    selected. Eligibility includes target-local metadata access; an explicit
+    --node resolves metadata only on that rank. Download uses private
+    same-filesystem staging and target-local modern hf. It creates no hot
+    copies, starts nothing, never refreshes the catalog, and does not create
+    a seal or status.
+  • home verify rehashes a receipt-created home against the receipt bound to
+    that exact live directory. An unknown, restored, or replaced tree still
+    needs a reviewed expected manifest. Verification assigns no status.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -275,7 +290,8 @@ inspect_catalog_home() {
       --rank "$home_rank" \
       --node-id "$node_id" \
       --model-id "$model_id" \
-      --revision "$revision"
+      --revision "$revision" \
+      --allow-empty-files
     return
   fi
   command=$(
@@ -284,7 +300,8 @@ inspect_catalog_home() {
       --rank "$home_rank" \
       --node-id "$node_id" \
       --model-id "$model_id" \
-      --revision "$revision"
+      --revision "$revision" \
+      --allow-empty-files
   )
   if ! out=$(
     ssh_node "$home_rank" "$command" <"$PY_TOOL"
@@ -294,16 +311,75 @@ inspect_catalog_home() {
   printf '%s\n' "$out"
 }
 
+resolve_attached_source_attested_receipt() {
+  local model_id="${1:?}" revision="${2:?}" rank="${3:?}" node_id="${4:?}"
+  local hub_path="${5:?}" workdir="${6:?}" context="${7:?}"
+  local attachment_present
+  attachment_present=$(python3 "$SOURCE_ATTESTED_PY" \
+    has-current-home-attachment \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision")
+  case "$attachment_present" in
+    false)
+      printf '%s\n' null
+      return 0
+      ;;
+    true) ;;
+    *) die "$context: current-home attachment probe returned an invalid result" ;;
+  esac
+  run_model_library_on_rank "$rank" \
+    inspect-live-directory-identity \
+    --path "$hub_path" >"$workdir/live-identity.json" \
+    || die "$context: could not inspect the durable home directory"
+  python3 "$SOURCE_ATTESTED_PY" resolve-attached-receipt \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --rank "$rank" \
+    --node-id "$node_id" \
+    --durable-home-path "$hub_path" \
+    --live-identity "$workdir/live-identity.json" \
+    --allow-missing
+}
+
 library_plan_activate() {
   local profile="${1:?profile required}"
   shift
-  local home_inventory
+  local home_inventory model_id revision receipt_json manifest_json
+  local home_rank node_id hub_path tmp
   home_inventory=$(inspect_catalog_home "$profile") || return 1
+  model_id=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  revision=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  home_rank=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["rank"])')
+  node_id=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["node_id"])')
+  hub_path=$(printf '%s' "$home_inventory" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["hub_path"])')
+  local -a extra=()
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-prepare-receipt.XXXXXX")
+  if ! receipt_json=$(resolve_attached_source_attested_receipt \
+      "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
+      "$tmp" "prepare"); then
+    rm -rf "$tmp"
+    die "prepare: source-attested receipt lookup failed"
+  fi
+  rm -rf "$tmp"
+  if [ "$receipt_json" != null ]; then
+    manifest_json=$(printf '%s' "$receipt_json" | python3 -c \
+      'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
+    extra+=(--require-exact-revision "$revision")
+    extra+=(--expected-integrity-manifest-json "$manifest_json")
+  fi
   python3 "$PY_TOOL" plan-activate \
     --catalog "$CATALOG_FILE" \
     --profile "$profile" \
     --models-dir "$REPO_DIR/models" \
     --home-inventory-json "$home_inventory" \
+    "${extra[@]}" \
     "$@"
 }
 
@@ -1408,9 +1484,395 @@ download_home_acquisition_on_rank() {
   ssh_node "$rank" "$command" >&2
 }
 
+modern_source_attested_hf_cli() {
+  local hf_cli="${1:-}"
+  [ "$hf_cli" = hf ] && return 0
+  [ -n "$hf_cli" ] || return 1
+  case "$hf_cli" in
+    */.hf-cli/venv/bin/hf) return 0 ;;
+  esac
+  return 1
+}
+
+run_hf_on_rank() {
+  local rank="${1:?}" hf_cli="${2:?}" staging_root="${3:?}"
+  shift 3
+  local -a args=("$hf_cli" "$@")
+  local command xet_cache assets_cache
+  xet_cache="$staging_root/.pulsar-xet-cache"
+  assets_cache="$staging_root/.pulsar-assets-cache"
+  if [ "$rank" = 0 ]; then
+    HF_HUB_OFFLINE=0 \
+      HF_XET_CACHE="$xet_cache" \
+      HF_ASSETS_CACHE="$assets_cache" \
+      "${args[@]}"
+    return
+  fi
+  command="export HF_HUB_OFFLINE=0; "
+  command+="export HF_XET_CACHE=$(printf '%q' "$xet_cache"); "
+  command+="export HF_ASSETS_CACHE=$(printf '%q' "$assets_cache"); "
+  command+="$(shell_join_q "${args[@]}")"
+  ssh_node "$rank" "$command"
+}
+
+resolve_source_attested_source_on_rank() {
+  local rank="${1:?}" hf_cli="${2:?}" model_id="${3:?}" selector="${4:?}"
+  local work_dir="${5:?}" allow_fail=0
+  local inventory_file command cli_ref parsed
+  if [ "${6:-}" = "--allow-fail" ]; then
+    allow_fail=1
+  fi
+  mkdir -p "$work_dir"
+  inventory_file="$work_dir/repo-inventory.json"
+  [ -f "$HF_SOURCE_INVENTORY_PY" ] \
+    || die "home add: Hugging Face source-inventory helper is missing"
+  if [ "$hf_cli" = hf ]; then
+    cli_ref='$(command -v hf)'
+  else
+    cli_ref=$(printf '%q' "$hf_cli")
+  fi
+  # The selected hf executable's shebang identifies the environment that owns
+  # huggingface_hub. The helper is streamed to that interpreter; no token or
+  # helper path is sent to another rank.
+  command='set -eu; cli='"$cli_ref"'; '
+  command+='[ -n "$cli" ] && [ -f "$cli" ]; '
+  command+='resolved=$(readlink -f -- "$cli"); first=$(head -n 1 -- "$resolved"); '
+  command+='case "$first" in "#!/usr/bin/env python3") py=$(command -v python3) ;; '
+  command+='"#!"/*) py=${first#\#!} ;; *) exit 64 ;; esac; '
+  command+='case "$py" in *[[:space:]]*) exit 64 ;; esac; '
+  command+='case "${py##*/}" in python|python3|python3.*) ;; *) exit 64 ;; esac; '
+  command+='[ -x "$py" ]; export HF_HUB_OFFLINE=0; exec "$py" - '
+  command+="$(printf -- '%q ' --model-id "$model_id" --selector "$selector")"
+  if [ "$rank" = 0 ]; then
+    if ! bash -c "$command" <"$HF_SOURCE_INVENTORY_PY" >"$inventory_file"; then
+      [ "$allow_fail" = 1 ] && return 1
+      die "home add: could not resolve the complete Hugging Face inventory"
+    fi
+  else
+    if ! ssh_node "$rank" "$command" <"$HF_SOURCE_INVENTORY_PY" >"$inventory_file"; then
+      [ "$allow_fail" = 1 ] && return 1
+      die "home add: could not resolve the complete Hugging Face inventory"
+    fi
+  fi
+  if ! parsed=$(python3 "$SOURCE_ATTESTED_PY" parse-source \
+    --model-id "$model_id" \
+    --selector "$selector" \
+    --repo-info "$inventory_file"); then
+    [ "$allow_fail" = 1 ] && return 1
+    die "home add: could not build the Hugging Face v1 source inventory"
+  fi
+  printf '%s\n' "$parsed"
+}
+
+cmd_home_add_source_attested() (
+  set -euo pipefail
+  local profile="${1:?}" selector="${2:?}" node_selector="${3:-}"
+  local plan_only="${4:-0}" yes="${5:-0}" json="${6:-0}"
+  local tmp model_id source_json identity_json plan_json handle_file
+  local content_bytes revision selected_rank selected_node selected_hf
+  local hub_root target_hub staging_json staging_root
+  local observed_json receipt_json result_json approval_id
+  local seal_args=() geometry_text match in_geometry geometry_rank
+  local rank hf_cli source_try metadata_csv
+  local cleanup_needed=0
+  local -a geometry_ranks=() metadata_ranks=()
+
+  [ "$plan_only" = 0 ] || [ "$yes" = 0 ] \
+    || die "home add --plan is read-only and cannot be combined with --yes"
+  [ "$json" = 0 ] || [ "$plan_only" = 1 ] || [ "$yes" = 1 ] \
+    || die "home add --json requires --yes so stdout remains one result document"
+  require_py
+  load_cluster_topology >/dev/null \
+    || die "home add: confirmed topology required"
+  load_conf "$profile"
+  [ "$(model_source_kind)" = hf ] \
+    || die "home add: $profile is not a Hugging Face model profile"
+  model_id="$MODEL"
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-add.XXXXXX")
+  handle_file="$tmp/handle.json"
+  # Invoked indirectly by the EXIT trap below.
+  # shellcheck disable=SC2317
+  cleanup_source_attested_home_add() {
+    if [ "$cleanup_needed" = 1 ] && [ -n "${staging_root:-}" ]; then
+      run_model_library_on_rank "$selected_rank" \
+        cleanup-owned-hub-staging \
+        --staging-root "$staging_root" \
+        --owner-id "$approval_id" \
+        --rank "$selected_rank" \
+        --node-id "$selected_node" \
+        --hub-root "$hub_root" >/dev/null 2>&1 \
+        || log "rank $selected_rank: incomplete acquisition staging requires manual inspection" >&2
+    fi
+    rm -rf "$tmp"
+  }
+  trap cleanup_source_attested_home_add EXIT
+  trap 'exit 130' INT TERM
+
+  geometry_text=$(python3 "$SOURCE_ATTESTED_PY" geometry-ranks \
+    --confirmed-count "$CLUSTER_TOPOLOGY_COUNT" \
+    --serving-nodes "$NODES") \
+    || die "home add: profile serving geometry exceeds confirmed contiguous ranks"
+  read -r -a geometry_ranks <<<"$geometry_text"
+  [ "${#geometry_ranks[@]}" -gt 0 ] \
+    || die "home add: profile serving geometry exceeds confirmed contiguous ranks"
+
+  mkdir -p "$tmp/sources"
+  if [ -n "$node_selector" ]; then
+    match=""
+    for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+      if [ "$node_selector" = "$rank" ] \
+          || [ "$node_selector" = "${CLUSTER_NODE_IDS[$rank]:-}" ]; then
+        if [ -n "$match" ] && [ "$match" != "$rank" ]; then
+          die "home add: --node must match exactly one confirmed rank or node ID"
+        fi
+        match="$rank"
+      fi
+    done
+    [ -n "$match" ] \
+      || die "home add: --node must match exactly one confirmed rank or node ID"
+    in_geometry=0
+    for geometry_rank in "${geometry_ranks[@]}"; do
+      if [ "$geometry_rank" = "$match" ]; then
+        in_geometry=1
+        break
+      fi
+    done
+    [ "$in_geometry" = 1 ] \
+      || die "home add: selected rank is outside the profile serving geometry"
+    IFS=$'\t' read -r _ hf_cli < <(home_acquisition_rank_environment "$match")
+    modern_source_attested_hf_cli "$hf_cli" \
+      || die "home add: selected rank does not have modern hf"
+    source_json=$(resolve_source_attested_source_on_rank \
+      "$match" "$hf_cli" "$model_id" "$selector" "$tmp/sources/work-$match") \
+      || die "home add: could not build the Hugging Face v1 source inventory"
+    printf '%s\n' "$source_json" >"$tmp/sources/rank-$match.json"
+    metadata_ranks=("$match")
+  else
+    for rank in "${geometry_ranks[@]}"; do
+      IFS=$'\t' read -r _ hf_cli < <(home_acquisition_rank_environment "$rank")
+      if ! modern_source_attested_hf_cli "$hf_cli"; then
+        continue
+      fi
+      if source_try=$(resolve_source_attested_source_on_rank \
+        "$rank" "$hf_cli" "$model_id" "$selector" \
+        "$tmp/sources/work-$rank" --allow-fail); then
+        printf '%s\n' "$source_try" >"$tmp/sources/rank-$rank.json"
+        metadata_ranks+=("$rank")
+      else
+        log "rank $rank: Hugging Face source metadata is unavailable; this rank is not eligible" >&2
+      fi
+    done
+    [ "${#metadata_ranks[@]}" -gt 0 ] \
+      || die "home add: no eligible rank could resolve Hugging Face source metadata"
+    source_json=$(python3 "$SOURCE_ATTESTED_PY" unique-source \
+      --sources-dir "$tmp/sources") \
+      || die "home add: candidate ranks resolved disagreeing Hugging Face source metadata"
+  fi
+  printf '%s\n' "$source_json" >"$tmp/source.json"
+  revision=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_revision"])' \
+    <"$tmp/source.json")
+  content_bytes=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["content_bytes"])' \
+    <"$tmp/source.json")
+
+  if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+    seal_args+=(--expected-seal "$REPO_DIR/models/$EXPECTED_MODEL_SEAL")
+  fi
+  identity_json=$(python3 "$SOURCE_ATTESTED_PY" resolve-identity \
+    --source "$tmp/source.json" \
+    --profile "$profile" \
+    --repo-root "$REPO_DIR" \
+    --release-id "${MODEL_SERVING_RELEASE_ID:-}" \
+    "${seal_args[@]}")
+  printf '%s\n' "$identity_json" >"$tmp/identity.json"
+
+  collect_home_acquisition_observations \
+    "$tmp/obs" "$model_id" "$revision" "$content_bytes"
+
+  local -a plan_args=(
+    plan
+    --source "$tmp/source.json"
+    --identity "$tmp/identity.json"
+    --observations-dir "$tmp/obs"
+    --topology-generation "$CLUSTER_TOPOLOGY_ID"
+    --serving-nodes "$NODES"
+    --handle-file "$handle_file"
+  )
+  [ -z "$node_selector" ] || plan_args+=(--node "$node_selector")
+  metadata_csv=$(IFS=,; printf '%s' "${metadata_ranks[*]}")
+  plan_args+=(--metadata-resolved-ranks "$metadata_csv")
+  plan_args+=(--json)
+  plan_json=$(python3 "$SOURCE_ATTESTED_PY" "${plan_args[@]}")
+  printf '%s\n' "$plan_json" >"$tmp/plan.json"
+  selected_rank=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["selected_rank"])' \
+    <"$handle_file")
+  selected_node=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])' \
+    <"$handle_file")
+  selected_hf=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["hf_cli"])' \
+    <"$handle_file")
+  hub_root=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_root"])' \
+    <"$handle_file")
+  target_hub=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["target_hub"])' \
+    <"$handle_file")
+  approval_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["approval"]["approval_id"])' \
+    <"$tmp/plan.json")
+  modern_source_attested_hf_cli "$selected_hf" \
+    || die "home add: selected rank does not have modern hf"
+  [ -f "$tmp/sources/rank-$selected_rank.json" ] \
+    || die "home add: selected rank did not independently resolve Hugging Face source metadata"
+
+  if [ "$json" = 0 ]; then
+    python3 "$SOURCE_ATTESTED_PY" render-plan --plan "$tmp/plan.json"
+  fi
+  if [ "$plan_only" = 1 ]; then
+    if [ "$json" = 1 ]; then
+      printf '%s\n' "$plan_json"
+    fi
+    return 0
+  fi
+  if [ "$json" = 0 ]; then
+    library_confirm "$yes" "Download this exact revision?"
+  fi
+
+  mkdir -p "$tmp/live"
+  source_json=$(resolve_source_attested_source_on_rank \
+    "$selected_rank" "$selected_hf" "$model_id" "$selector" "$tmp/live") \
+    || die "home add: selected rank could not re-resolve the Hugging Face source"
+  printf '%s\n' "$source_json" >"$tmp/live-source.json"
+  identity_json=$(python3 "$SOURCE_ATTESTED_PY" resolve-identity \
+    --source "$tmp/live-source.json" \
+    --profile "$profile" \
+    --repo-root "$REPO_DIR" \
+    --release-id "${MODEL_SERVING_RELEASE_ID:-}" \
+    "${seal_args[@]}")
+  printf '%s\n' "$identity_json" >"$tmp/live-identity.json"
+  python3 "$SOURCE_ATTESTED_PY" verify-approval \
+    --plan "$tmp/plan.json" \
+    --source "$tmp/live-source.json" \
+    --identity "$tmp/live-identity.json" \
+    --topology-generation "$CLUSTER_TOPOLOGY_ID" >/dev/null \
+    || die "home add: live source, identity, or topology no longer match the plan"
+
+  staging_json=$(run_model_library_on_rank "$selected_rank" \
+    create-owned-hub-staging \
+    --hub-root "$hub_root" \
+    --owner-id "$approval_id" \
+    --rank "$selected_rank" \
+    --node-id "$selected_node") \
+    || die "home add: could not create plan-owned staging on rank $selected_rank"
+  staging_root=$(printf '%s' "$staging_json" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["staging_root"])')
+  cleanup_needed=1
+
+  log "rank $selected_rank: downloading exact revision $revision into private staging" >&2
+  run_hf_on_rank "$selected_rank" "$selected_hf" "$staging_root" download "$model_id" \
+    --revision "$revision" --cache-dir "$staging_root" --quiet >&2 \
+    || die "home add: Hugging Face download failed; private staging cleanup was attempted"
+
+  local staged_hub
+  staged_hub=$(python3 -c \
+    'import sys
+sys.path.insert(0, sys.argv[1])
+import model_library
+print(model_library.model_id_to_hub_dirname(sys.argv[2]))' \
+    "$REPO_DIR/scripts" "$model_id")
+  staged_hub="$staging_root/$staged_hub"
+
+  observed_json=$(run_model_library_on_rank "$selected_rank" \
+    inspect-snapshot-blob-identities \
+    --hub-path "$staged_hub" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --allow-empty-files) \
+    || die "home add: staged snapshot could not be hashed"
+  printf '%s\n' "$observed_json" >"$tmp/observed.json"
+  python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["files"]))' \
+    <"$tmp/observed.json" >"$tmp/observed-files.json"
+  python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["inventory"]))' \
+    <"$tmp/live-source.json" >"$tmp/inventory.json"
+  python3 "$SOURCE_ATTESTED_PY" compare-inventory \
+    --inventory "$tmp/inventory.json" \
+    --observed "$tmp/observed-files.json" >/dev/null \
+    || die "home add: staged files do not match the upstream inventory"
+
+  run_hf_on_rank "$selected_rank" "$selected_hf" "$staging_root" cache verify "$model_id" \
+    --revision "$revision" --cache-dir "$staging_root" \
+    --fail-on-missing-files --fail-on-extra-files >&2 \
+    || die "home add: hf cache verify failed; private staging cleanup was attempted"
+
+  python3 -c '
+import json,sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import model_library_source_attested as sa
+identity = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+observed = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+sa.compare_observed_manifest_to_expected(
+    observed["manifest"],
+    expected_manifest_id=identity.get("expected_manifest_id"),
+)
+' "$REPO_DIR/scripts" "$tmp/live-identity.json" "$tmp/observed.json"
+
+  collect_home_acquisition_observations \
+    "$tmp/recheck" "$model_id" "$revision" "$content_bytes"
+  python3 "$PY_TOOL" recheck-home-acquisition-absence \
+    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --observations-dir "$tmp/recheck" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --required-content-bytes "$content_bytes" \
+    --selected-rank "$selected_rank" \
+    --selected-node-id "$selected_node" \
+    --selected-target-hub "$target_hub" >/dev/null \
+    || die "home add: one-home publication recheck failed; private staging cleanup was attempted"
+
+  python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["manifest"]))' \
+    <"$tmp/observed.json" >"$tmp/manifest.json"
+  python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["approval"]))' \
+    <"$tmp/plan.json" >"$tmp/approval.json"
+  receipt_json=$(python3 "$SOURCE_ATTESTED_PY" build-receipt \
+    --source "$tmp/live-source.json" \
+    --identity "$tmp/live-identity.json" \
+    --approval "$tmp/approval.json" \
+    --manifest "$tmp/manifest.json" \
+    --library-dir "$LIBRARY_DIR")
+  printf '%s\n' "$receipt_json" >"$tmp/receipt.json"
+
+  run_model_library_on_rank "$selected_rank" \
+    publish-owned-hub-staging \
+    --staging-root "$staging_root" \
+    --owner-id "$approval_id" \
+    --rank "$selected_rank" \
+    --node-id "$selected_node" \
+    --model-id "$model_id" \
+    --target-hub "$target_hub" \
+    --hub-root "$hub_root" >"$tmp/publish.json" \
+    || die "home add: verification or atomic publication failed; private staging cleanup was attempted"
+  cleanup_needed=0
+  if ! python3 "$SOURCE_ATTESTED_PY" attach-current-home \
+      --library-dir "$LIBRARY_DIR" \
+      --receipt "$tmp/receipt.json" \
+      --publish-result "$tmp/publish.json" \
+      --node-id "$selected_node" >"$tmp/attach.json"; then
+    die "home add: durable home published but the current-home attachment was not written; the home is unbound. Remove it with a supported home remove, then re-add, or use a reviewed expected manifest. Do not reconstruct the attachment from matching bytes."
+  fi
+  local staging_cleanup
+  staging_cleanup=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("staging_cleanup") or "removed")' \
+    <"$tmp/publish.json")
+  result_json=$(python3 "$SOURCE_ATTESTED_PY" build-result \
+    --receipt "$tmp/receipt.json" \
+    --state published \
+    --staging-cleanup "$staging_cleanup")
+  if [ "$json" = 1 ]; then
+    python3 "$SOURCE_ATTESTED_PY" render-result --result /dev/stdin --json <<<"$result_json"
+  else
+    python3 "$SOURCE_ATTESTED_PY" render-result --result /dev/stdin <<<"$result_json"
+  fi
+)
+
 cmd_home_add() (
   set -euo pipefail
-  local profile="" node_selector="" yes=0 json=0
+  local profile="" node_selector="" yes=0 json=0 plan_only=0 revision_selector=""
   local tmp identity_plan_b64 content_bytes revision model_id
   local plan plan_b64
   local target_rank target_node target_hf staging_json staging_root result_file
@@ -1423,6 +1885,12 @@ cmd_home_add() (
         [ $# -gt 0 ] || die "--node needs a rank or node ID"
         node_selector="$1"
         ;;
+      --revision)
+        shift
+        [ $# -gt 0 ] || die "--revision needs a Hugging Face selector or commit"
+        revision_selector="$1"
+        ;;
+      --plan) plan_only=1 ;;
       --yes|-y) yes=1 ;;
       --json) json=1 ;;
       -h|--help) usage; return 0 ;;
@@ -1431,13 +1899,23 @@ cmd_home_add() (
     shift
   done
   [ -n "$profile" ] \
-    || die "usage: home add <sealed-profile> [--node RANK|NODE_ID] [--yes] [--json]"
+    || die "usage: home add <profile> [--revision SELECTOR] [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
+  load_conf "$profile"
+  if [ -n "$revision_selector" ] || [ -z "${EXPECTED_MODEL_SEAL:-}" ]; then
+    [ -n "$revision_selector" ] \
+      || die "home add: $profile has no reviewed expected model seal; pass --revision SELECTOR"
+    cmd_home_add_source_attested \
+      "$profile" "$revision_selector" "$node_selector" \
+      "$plan_only" "$yes" "$json"
+    return
+  fi
+  [ "$plan_only" = 0 ] \
+    || die "home add --plan requires --revision on the source-attested path"
   [ "$json" = 0 ] || [ "$yes" = 1 ] \
     || die "home add --json requires --yes so stdout remains one result document"
   require_py
   load_cluster_topology >/dev/null \
     || die "home add: confirmed topology required"
-  load_conf "$profile"
   [ "$(model_source_kind)" = hf ] \
     || die "home add: $profile is not a Hugging Face model profile"
   [ -n "${EXPECTED_MODEL_SEAL:-}" ] \
@@ -1538,6 +2016,112 @@ cmd_home_add() (
   fi
 )
 
+cmd_home_verify() (
+  local query="" json=0 resolved model_id revision home_rank node_id hub_path
+  local receipt_json observed_json tmp
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] \
+    || die "usage: home verify <profile|model_id|model_id@revision> [--json]"
+  require_py
+  ensure_catalog
+  load_cluster_topology >/dev/null \
+    || die "home verify: confirmed topology required"
+  resolved=$(
+    python3 "$PY_TOOL" resolve \
+      --catalog "$CATALOG_FILE" \
+      "$query" \
+      --models-dir "$REPO_DIR/models" \
+      --no-cold \
+      --json
+  ) || die "home verify: could not resolve $query"
+  model_id=$(printf '%s' "$resolved" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  revision=$(printf '%s' "$resolved" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  home_rank=$(printf '%s' "$resolved" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
+  node_id=$(printf '%s' "$resolved" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["home"]["node_id"])')
+  hub_path=$(printf '%s' "$resolved" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["home"]["hub_path"])')
+  [ -n "$revision" ] \
+    || die "home verify: catalog entry lacks an exact snapshot revision"
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-verify.XXXXXX")
+  trap 'if [ -n "${tmp:-}" ]; then rm -rf "$tmp"; fi' EXIT
+  receipt_json=$(resolve_attached_source_attested_receipt \
+      "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
+      "$tmp" "home verify") \
+    || die "home verify: source-attested receipt lookup failed"
+  if [ "$receipt_json" != null ]; then
+    printf '%s\n' "$receipt_json" >"$tmp/receipt.json"
+    observed_json=$(run_model_library_on_rank "$home_rank" \
+      inspect-snapshot-blob-identities \
+      --hub-path "$hub_path" \
+      --model-id "$model_id" \
+      --revision "$revision" \
+      --allow-empty-files) \
+      || die "home verify: could not rehash the durable home"
+    printf '%s\n' "$observed_json" >"$tmp/observed.json"
+    python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["manifest"]))' \
+      <"$tmp/observed.json" >"$tmp/manifest.json"
+    local -a verify_args=(
+      verify-home
+      --receipt "$tmp/receipt.json"
+      --manifest "$tmp/manifest.json"
+      --model-id "$model_id"
+      --revision "$revision"
+    )
+    [ "$json" = 0 ] || verify_args+=(--json)
+    python3 "$SOURCE_ATTESTED_PY" "${verify_args[@]}"
+    return 0
+  fi
+  if [[ "$query" != */* ]] && [[ "$query" != *@* ]]; then
+    load_conf "$query"
+    if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+      observed_json=$(run_model_library_on_rank "$home_rank" \
+        inspect-hub \
+        --hub-path "$hub_path" \
+        --rank "$home_rank" \
+        --node-id "$node_id" \
+        --model-id "$model_id" \
+        --revision "$revision") \
+        || die "home verify: could not inspect the durable home"
+      python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import model_library
+inventory = json.loads(sys.argv[2])
+expected = model_library.load_profile_expected_snapshot_manifest(sys.argv[4], sys.argv[3])
+observed = inventory.get("integrity_manifest") or {}
+if observed.get("manifest_id") != expected.get("manifest_id"):
+    raise SystemExit(
+        "home verify: offline SHA-256 rehash differs from the reviewed "
+        "expected manifest"
+    )
+print(json.dumps({
+    "schema_version": 1,
+    "kind": "pulsar-model-library-expected-manifest-home-verify-result",
+    "state": "verified",
+    "model_id": observed.get("model_id"),
+    "snapshot_revision": observed.get("snapshot_revision"),
+    "manifest_id": observed.get("manifest_id"),
+    "file_count": observed.get("file_count"),
+    "bytes_hashed": observed.get("total_bytes"),
+}, indent=2, sort_keys=True))
+' "$REPO_DIR/scripts" "$observed_json" "$query" "$REPO_DIR/models"
+      return 0
+    fi
+  fi
+  die "home verify: unknown or pre-existing home requires a reviewed expected manifest"
+)
+
 cmd_home_check() {
   local query="" node_selector="" allow_last_home=0 json=0 plan state
   while [ $# -gt 0 ]; do
@@ -1595,10 +2179,31 @@ cmd_home_remove() {
   [ "$yes" = 1 ] \
     || die "home removal requires --yes after reviewing the eligible plan"
 
+  local detach_model detach_revision detach_rank detach_node detach_path
+  detach_model=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["model_id"])')
+  detach_revision=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["revision"])')
+  detach_rank=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["rank"])')
+  detach_node=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["node_id"])')
+  detach_path=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["hub_path"])')
+  python3 "$SOURCE_ATTESTED_PY" detach-current-home \
+      --library-dir "$LIBRARY_DIR" \
+      --model-id "$detach_model" \
+      --revision "$detach_revision" \
+      --rank "$detach_rank" \
+      --node-id "$detach_node" \
+      --durable-home-path "$detach_path" \
+      >/dev/null \
+    || die "home removal: current-home attachment store is unusable; receipts were not changed and the home was not removed"
+
   result_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-home-removed.XXXXXX")
   trap 'rm -f "$result_file"' RETURN
   execute_home_removal_on_rank "$plan" >"$result_file" \
-    || die "home removal failed; inspect the reported retirement path before retrying"
+    || die "home removal failed after detaching any current-home attachment; receipts were kept. If the home remains, it is unbound. Retry supported removal or use a reviewed expected manifest. Do not reconstruct the attachment from matching bytes."
   if ! cmd_catalog_refresh >/dev/null; then
     die "home was removed, but catalog refresh failed; run catalog refresh before serving"
   fi
@@ -3300,6 +3905,7 @@ main() {
       shift
       case "$home_sub" in
         add) cmd_home_add "$@" ;;
+        verify) cmd_home_verify "$@" ;;
         check) cmd_home_check "$@" ;;
         remove) cmd_home_remove "$@" ;;
         *) usage; exit 2 ;;

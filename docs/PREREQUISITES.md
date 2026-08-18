@@ -119,7 +119,10 @@ Minimum to serve one model on the box where you run the script:
      upstream access, and any repository authentication on its selected target
      rank; it never transports credentials from the controller. Acquisition
      discovers `hf`, `huggingface-cli`, or Pulsar's managed
-     `$HOME/.hf-cli/venv/bin/hf` installation on that target.
+     `$HOME/.hf-cli/venv/bin/hf` installation on that target for sealed
+     acquisition. Source-attested unsealed planning requires modern `hf` or
+     the managed `hf` because it resolves the complete upstream Git/LFS
+     inventory through that Python environment. It accepts no token argument.
    - Hugging Face cache under `$HF_CACHE/hub/models--ORG--NAME`
      (default `HF_CACHE=$HOME/.cache/huggingface`), **or**
    - Use `scripts/pull-weights.sh <profile> --yes` for downloads. It passes
@@ -282,6 +285,15 @@ PULSAR_VERBOSE=1 scripts/pull-weights.sh deepseek-v4-flash --yes
 # Explicit experimental distributed library: one reviewed durable home only.
 scripts/model-library.sh home add <sealed-profile> --yes
 scripts/model-library.sh catalog refresh
+
+# Brand-new unsealed home: inspect first, then confirm the exact commit.
+scripts/model-library.sh home add <profile> \
+  --revision <selector> --plan --json
+scripts/model-library.sh home add <profile> \
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes --json
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh home verify <model_id@exact-commit> --json
 ```
 
 The normal view uses width-aware Pulsar sections instead of streaming
@@ -290,8 +302,12 @@ For a one-node profile, `home add` defaults to the eligible confirmed rank with
 the most free space and `--node RANK|NODE_ID` may select any exact confirmed
 rank. Multi-node profiles remain limited to their exact serving geometry. An
 explicit override never falls back. The command uses
-same-filesystem private staging and full expected-manifest verification before
-atomic publication. The replicated flow remains the guided default.
+same-filesystem private staging and full verification before atomic
+publication. Sealed acquisition uses the reviewed expected manifest.
+Source-attested acquisition verifies the complete upstream inventory and
+every file, writes an immutable receipt, and requires receipt-backed offline
+verification for reuse. It creates no seal, validation decision, or physical
+claim. The replicated flow remains the guided default.
 
 NFS-catalog models (e.g. Laguna) expect the path already present under
 `MODELS_NFS` as referenced in the conf.

@@ -91,5 +91,5 @@ fi
 grep -q 'catalog refresh' "$STATE/occupied.err"
 [ ! -s "$STATE/hf.log" ]
 
-"$LIBRARY" --help | grep -q 'home add <sealed-profile>'
+"$LIBRARY" --help | grep -q 'home add <profile>'
 echo "model-library acquisition shell scenarios: PASS"

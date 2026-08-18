@@ -155,6 +155,12 @@ class OnboardingJournalTests(unittest.TestCase):
                 "--id",
                 f"exact_revision={REVISION}",
                 "--id",
+                f"source_digest={DIGEST}",
+                "--id",
+                f"approval_id={'e' * 64}",
+                "--id",
+                f"receipt_id={'f' * 64}",
+                "--id",
                 f"release_id={DIGEST}",
                 "--reference",
                 "experiments/model-onboarding/example/release.json",
@@ -172,6 +178,12 @@ class OnboardingJournalTests(unittest.TestCase):
                 *self.identity_args(),
                 "--id",
                 f"exact_revision={REVISION}",
+                "--id",
+                f"source_digest={DIGEST}",
+                "--id",
+                f"approval_id={'e' * 64}",
+                "--id",
+                f"receipt_id={'f' * 64}",
                 "--id",
                 f"release_id={DIGEST}",
             ]
@@ -216,6 +228,12 @@ class OnboardingJournalTests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertIn("cannot rebind exact_revision", err)
+
+        code, _out, err = self.append(
+            extra=["--id", f"receipt_id={'1' * 64}"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("cannot rebind receipt_id", err)
 
         code, _out, err = self.run_main(
             [
