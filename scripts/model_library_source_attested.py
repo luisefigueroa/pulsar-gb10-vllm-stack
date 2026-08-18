@@ -3141,6 +3141,15 @@ def cmd_resolve_attached_receipt(args: argparse.Namespace) -> int:
     return _write_json(receipt)
 
 
+def cmd_has_current_home_attachment(args: argparse.Namespace) -> int:
+    attachment = load_source_attested_home_attachment(
+        args.library_dir,
+        model_id=args.model_id,
+        snapshot_revision=args.revision,
+    )
+    return _write_json(attachment is not None)
+
+
 def cmd_detach_current_home(args: argparse.Namespace) -> int:
     result = detach_source_attested_home_attachment(
         args.library_dir,
@@ -3315,6 +3324,15 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_attached.add_argument("--live-identity", required=True)
     resolve_attached.add_argument("--allow-missing", action="store_true")
     resolve_attached.set_defaults(func=cmd_resolve_attached_receipt)
+
+    attachment_probe = sub.add_parser(
+        "has-current-home-attachment",
+        help="Check whether an exact model revision has a current-home attachment",
+    )
+    attachment_probe.add_argument("--library-dir", required=True)
+    attachment_probe.add_argument("--model-id", required=True)
+    attachment_probe.add_argument("--revision", required=True)
+    attachment_probe.set_defaults(func=cmd_has_current_home_attachment)
 
     detach_home = sub.add_parser("detach-current-home")
     detach_home.add_argument("--library-dir", required=True)

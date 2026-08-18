@@ -53,6 +53,27 @@ REMOTE_ENV=(
   "PULSAR_SSH=$STATE/remote/bin/ssh"
   "PULSAR_HF_SOURCE_INVENTORY_PY=$STATE/remote/bin/hf-source-inventory.py"
 )
+
+# Sealed/no-attachment flows must not perform a remote live-directory probe just
+# to discover that the source-attested authority is absent. A failing SSH path
+# therefore still returns the local no-authority result.
+no_attachment_probe=$(env \
+  "${REMOTE_ENV[@]}" \
+  "MODEL_LIBRARY_DIR=$STATE/no-attachment-library" \
+  PULSAR_SSH=/bin/false \
+  bash -c '
+    library_script="$1"
+    probe_workdir="$2"
+    set -- --help
+    source "$library_script" >/dev/null
+    load_cluster_topology >/dev/null
+    resolve_attached_source_attested_receipt \
+      "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4" \
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      1 node-1 /does/not/exist "$probe_workdir" "no-attachment probe"
+  ' _ "$LIBRARY" "$STATE/no-attachment-work")
+[ "$no_attachment_probe" = null ]
+
 if ! env "${REMOTE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
     --revision main --node 1 --plan --json \
     >"$STATE/remote/plan.json" 2>"$STATE/remote/plan.err"; then
@@ -208,6 +229,14 @@ attachments=$(find "$STATE/library/source-attested-home-attachments" -name '*.js
 [ "$attachments" -eq 1 ]
 
 env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
+# Receipt-backed preparation must carry tracked zero-byte files through the
+# witness/full-verification barrier, not only through source acquisition.
+env "${BASE_ENV[@]}" \
+  PULSAR_HOT_ROOT="$STATE/hot" \
+  PULSAR_HOT_RESERVE_BYTES=0 \
+  PULSAR_HOT_BUDGET_BYTES=1000000 \
+  "$LIBRARY" prepare nemotron-3-nano-30b-nvfp4 \
+  --transport ssh-control --yes >/dev/null
 # An interrupted writer temp next to the final receipt must not block verify.
 python3 - "$STATE/library/source-attested-receipts" <<'PY'
 import pathlib

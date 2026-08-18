@@ -729,6 +729,27 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         self.assertEqual(plan["revision"], fixture.COMMIT)
         self.assertNotIn("receipt_id", json.dumps(plan))
 
+    def test_hub_inventory_can_preserve_empty_files_for_receipt_prepare(self) -> None:
+        hub = self.root / "empty-file-hub"
+        fixture.write_snapshot_hub(hub)
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "empty"):
+            model_library.inspect_hub_inventory(
+                hub,
+                rank=0,
+                node_id="node-0",
+                model_id=self.model_id,
+                revision=fixture.COMMIT,
+            )
+        inventory = model_library.inspect_hub_inventory(
+            hub,
+            rank=0,
+            node_id="node-0",
+            model_id=self.model_id,
+            revision=fixture.COMMIT,
+            allow_empty_files=True,
+        )
+        self.assertEqual(inventory["integrity_manifest"]["file_count"], 3)
+
 
 def _writer_temp_name(final_stem: str, *, pid: int = 9, token: str = "0123456789abcdef") -> str:
     return f".{final_stem}.json.{pid}.{token}.tmp"
@@ -874,6 +895,31 @@ class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
             str(live["inode"]),
         ):
             self.assertNotIn(banned, public)
+
+    def test_publication_does_not_depend_on_post_rename_path_probe(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        hub_root = self.root / "post-rename-probe"
+        target = hub_root / model_library.model_id_to_hub_dirname(self.model_id)
+        real_inspect = model_library.inspect_live_directory_identity
+
+        def reject_target(path: str | pathlib.Path) -> dict[str, object]:
+            if pathlib.Path(path) == target:
+                raise model_library.ModelLibraryError(
+                    "simulated post-rename probe failure"
+                )
+            return real_inspect(path)
+
+        with mock.patch(
+            "scripts.model_library.inspect_live_directory_identity",
+            side_effect=reject_target,
+        ):
+            published = self._publish(owner_id="7" * 64, hub_root=hub_root)
+        self.assertTrue(target.is_dir())
+        self.assertEqual(published["directory_identity"]["path"], str(target))
+        self._attach(receipt, published)
+        authority = self._resolve(published)
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_ATTACHED)
 
     def test_orphan_receipt_and_matching_external_tree_have_no_authority(self) -> None:
         receipt = self._receipt()

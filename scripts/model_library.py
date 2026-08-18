@@ -3372,8 +3372,8 @@ def validate_hot_witness(witness: Any) -> dict[str, Any]:
             value = item.get(number_field)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 fail(f"witness: invalid {number_field} for {relative}")
-        if item["size"] < 1:
-            fail(f"witness: invalid size for {relative}")
+        # A complete snapshot may legitimately contain tracked zero-byte files;
+        # the manifest and full hash still bind those entries exactly.
         total_bytes += item["size"]
     if observed_paths != sorted(observed_paths):
         fail("witness: files are not sorted")
@@ -3905,6 +3905,7 @@ def inspect_hub_inventory(
     node_id: str,
     model_id: str | None = None,
     revision: str | None = None,
+    allow_empty_files: bool = False,
 ) -> dict[str, Any]:
     """Inspect and seal one catalog home on the node that owns its path."""
     path = pathlib.Path(hub_path)
@@ -3942,6 +3943,7 @@ def inspect_hub_inventory(
             path,
             model_id=resolved_model_id,
             revision=selected_revision,
+            allow_empty_files=allow_empty_files,
         )
         result["content_digest"] = manifest["manifest_id"]
         result["bytes_logical"] = manifest["total_bytes"]
@@ -6688,10 +6690,34 @@ def publish_owned_hub_staging(
         fail("home add: durable repository target differs from the managed hub root")
     if _lstat_kind(target)[0] != "missing":
         fail("home add: durable repository appeared before publication")
+    target_path = _require_canonical_absolute_path(target, label="published directory")
+    directory_fd = -1
     try:
-        _rename_directory_noreplace(staged_hub, target)
-    except OSError as exc:
-        fail(f"home add: atomic durable-home publication failed: {exc}")
+        try:
+            directory_fd = os.open(
+                staged_hub,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+            )
+            before = os.fstat(directory_fd)
+            if not stat.S_ISDIR(before.st_mode):
+                fail("home add: staged repository is not a directory")
+            _rename_directory_noreplace(staged_hub, target)
+            after = os.fstat(directory_fd)
+            if not stat.S_ISDIR(after.st_mode):
+                fail("home add: published repository is not a directory")
+            directory_identity = {
+                "schema_version": LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION,
+                "kind": LIVE_DIRECTORY_IDENTITY_KIND,
+                "path": target_path,
+                "device": int(after.st_dev),
+                "inode": int(after.st_ino),
+                "ctime_ns": int(after.st_ctime_ns),
+            }
+        except OSError as exc:
+            fail(f"home add: atomic durable-home publication failed: {exc}")
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
     cleanup_state = "removed"
     try:
         shutil.rmtree(staging)
@@ -6702,10 +6728,6 @@ def publish_owned_hub_staging(
             os.close(parent_fd)
     except OSError:
         cleanup_state = "incomplete"
-    try:
-        directory_identity = inspect_live_directory_identity(target)
-    except ModelLibraryError as exc:
-        fail(f"home add: published directory identity is unavailable: {exc}")
     return {
         "schema_version": OWNED_HUB_STAGING_SCHEMA_VERSION,
         "kind": OWNED_HUB_STAGING_KIND,
@@ -8607,6 +8629,7 @@ def cmd_inspect_hub(args: argparse.Namespace) -> int:
         node_id=args.node_id,
         model_id=args.model_id or None,
         revision=args.revision or None,
+        allow_empty_files=args.allow_empty_files,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -9568,6 +9591,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--revision",
         default="",
         help="Exact snapshot revision to inspect (never inferred from mutable main)",
+    )
+    inspect.add_argument(
+        "--allow-empty-files",
+        action="store_true",
+        help="Permit tracked zero-byte files in the complete snapshot manifest",
     )
     inspect.set_defaults(func=cmd_inspect_hub)
 

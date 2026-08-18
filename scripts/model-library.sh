@@ -290,7 +290,8 @@ inspect_catalog_home() {
       --rank "$home_rank" \
       --node-id "$node_id" \
       --model-id "$model_id" \
-      --revision "$revision"
+      --revision "$revision" \
+      --allow-empty-files
     return
   fi
   command=$(
@@ -299,7 +300,8 @@ inspect_catalog_home() {
       --rank "$home_rank" \
       --node-id "$node_id" \
       --model-id "$model_id" \
-      --revision "$revision"
+      --revision "$revision" \
+      --allow-empty-files
   )
   if ! out=$(
     ssh_node "$home_rank" "$command" <"$PY_TOOL"
@@ -312,6 +314,20 @@ inspect_catalog_home() {
 resolve_attached_source_attested_receipt() {
   local model_id="${1:?}" revision="${2:?}" rank="${3:?}" node_id="${4:?}"
   local hub_path="${5:?}" workdir="${6:?}" context="${7:?}"
+  local attachment_present
+  attachment_present=$(python3 "$SOURCE_ATTESTED_PY" \
+    has-current-home-attachment \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision")
+  case "$attachment_present" in
+    false)
+      printf '%s\n' null
+      return 0
+      ;;
+    true) ;;
+    *) die "$context: current-home attachment probe returned an invalid result" ;;
+  esac
   run_model_library_on_rank "$rank" \
     inspect-live-directory-identity \
     --path "$hub_path" >"$workdir/live-identity.json" \
