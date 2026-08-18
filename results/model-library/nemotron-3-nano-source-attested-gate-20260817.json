@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "kind": "pulsar-model-library-source-attested-acquisition-physical-gate",
+  "date": "2026-08-17",
+  "status": "pass",
+  "scope": {
+    "qualification": "catalog-artifact",
+    "profile": "nemotron-3-nano-30b-nvfp4",
+    "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
+    "revision": "ce1b118ae66ec705d02c241525192832eb045fd3",
+    "source_inventory_digest": "4a8e8afdad28f8976c5048bc96af97fae038bc3bf0617772d7afa6d55d3304ca",
+    "source_digest": "e42930c4f3b68e516b1c3d197bba5873dd5ea4f7431768452351bc20c1ddf073",
+    "receipt_id": "23bd639fe5339c316e213db74b5748fb2ea13525e978dc9dbdcf75f50d1e1b1e",
+    "file_count": 18,
+    "content_bytes": 19362748480,
+    "confirmed_rank_count": 3,
+    "profile_node_count": 1,
+    "target_rank": 0,
+    "target_was_controller_rank": true,
+    "repository_commit": "9066168fc8f1a162b77a8dd29e4972ca1e1523f6",
+    "production_model_state_changed": true
+  },
+  "preconditions": {
+    "initial_catalog_health": "healthy",
+    "initial_legacy_home_count": 1,
+    "initial_legacy_home_rank": 0,
+    "initial_hot_instance_count": 0,
+    "managed_container_reference_count": 0,
+    "legacy_home_receipt_authority": "rejected-as-unknown",
+    "guarded_last_home_removal_eligible": true,
+    "all_confirmed_ranks_observed": true
+  },
+  "procedure": [
+    {
+      "step": 1,
+      "command": "scripts/model-library.sh home verify nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@ce1b118ae66ec705d02c241525192832eb045fd3 --json",
+      "purpose": "Confirm the pre-existing legacy home cannot inherit source-attested receipt authority."
+    },
+    {
+      "step": 2,
+      "command": "scripts/model-library.sh home remove nemotron-3-nano-30b-nvfp4 --allow-last-home --yes",
+      "purpose": "Remove the prior final legacy home through the guarded lifecycle service."
+    },
+    {
+      "step": 3,
+      "command": "scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --revision main --plan --json",
+      "purpose": "Resolve a mutable selector to one exact public commit and complete upstream inventory without downloading model bytes."
+    },
+    {
+      "step": 4,
+      "command": "scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --revision ce1b118ae66ec705d02c241525192832eb045fd3 --node 0 --yes --json",
+      "purpose": "Acquire, fully verify, receipt, atomically publish, and attach the exact target-side home."
+    },
+    {
+      "step": 5,
+      "command": "scripts/model-library.sh catalog refresh",
+      "purpose": "Register the acquired home as a separate explicit action."
+    },
+    {
+      "step": 6,
+      "command": "scripts/model-library.sh home verify nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@ce1b118ae66ec705d02c241525192832eb045fd3 --json",
+      "purpose": "Perform an independent offline full rehash against the receipt attached to the live directory."
+    },
+    {
+      "step": 7,
+      "command": "scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes",
+      "purpose": "Create and verify the exact one-rank durable-home runtime view without launching a server."
+    },
+    {
+      "step": 8,
+      "command": "scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes",
+      "purpose": "Repeat preparation in a new process and verify stable reuse without acquisition or source change."
+    },
+    {
+      "step": 9,
+      "command": "maintainer-controlled current-home attachment absence injection",
+      "purpose": "Prove the unchanged matching tree is rejected as unknown without the private current-home attachment, then restore the exact attachment."
+    },
+    {
+      "step": 10,
+      "command": "scripts/model-library.sh purge-hot nemotron-3-nano-30b-nvfp4 --yes",
+      "purpose": "Remove the ephemeral runtime view while preserving the durable home."
+    },
+    {
+      "step": 11,
+      "command": "scripts/model-library.sh home remove nemotron-3-nano-30b-nvfp4 --allow-last-home --yes",
+      "purpose": "Detach the current-home pointer, preserve immutable receipts, and remove the durable home through the guarded service."
+    },
+    {
+      "step": 12,
+      "command": "scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --revision ce1b118ae66ec705d02c241525192832eb045fd3 --node 0 --yes --json",
+      "purpose": "Reacquire the same exact source and create the new current-home attachment while retaining receipt history."
+    },
+    {
+      "step": 13,
+      "command": "scripts/model-library.sh catalog refresh",
+      "purpose": "Register the reacquired home as a separate explicit action."
+    },
+    {
+      "step": 14,
+      "command": "scripts/model-library.sh home verify nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@ce1b118ae66ec705d02c241525192832eb045fd3 --json",
+      "purpose": "Rehash the reacquired home against the receipt selected by its new current-home attachment."
+    }
+  ],
+  "attempts": [
+    {
+      "name": "first-source-attested-acquisition",
+      "selection": "operator-override",
+      "target_rank": 0,
+      "exact_revision_matched": true,
+      "download_completed": true,
+      "file_count": 18,
+      "bytes_hashed": 19362748480,
+      "upstream_inventory_matched": true,
+      "all_rank_absence_recheck_passed": true,
+      "atomic_publication_succeeded": true,
+      "receipt_written": true,
+      "current_home_attachment_written": true,
+      "staging_cleanup": "removed",
+      "catalog_refreshed_by_acquisition": false,
+      "offline_full_rehash_passed": true
+    },
+    {
+      "name": "attachment-authority-fault",
+      "matching_tree_remained_present": true,
+      "current_home_attachment_temporarily_absent": true,
+      "home_verify_exit_code": 1,
+      "matching_tree_rejected_as_unknown": true,
+      "exact_attachment_restored": true,
+      "restored_attachment_full_rehash_passed": true,
+      "restored_attachment_bytes_hashed": 19362748480
+    },
+    {
+      "name": "receipt-backed-prepare-reuse",
+      "first_prepare_succeeded": true,
+      "repeat_prepare_succeeded": true,
+      "runtime_source": "durable-home",
+      "runtime_view_rank": 0,
+      "witness_matched": true,
+      "download_invoked": false,
+      "removal_blocked_while_runtime_view_present": true,
+      "runtime_view_purge_succeeded": true
+    },
+    {
+      "name": "guarded-removal-and-reacquisition",
+      "removal_plan_state": "eligible",
+      "removal_plan_blocker_count": 0,
+      "removal_observed_rank_count": 3,
+      "guarded_last_home_removal_succeeded": true,
+      "post_removal_home_count": 0,
+      "post_removal_attachment_count": 0,
+      "post_removal_receipt_count": 1,
+      "reacquisition_download_completed": true,
+      "reacquisition_bytes_hashed": 19362748480,
+      "reacquisition_atomic_publication_succeeded": true,
+      "reacquisition_attachment_written": true,
+      "reacquisition_staging_cleanup": "removed",
+      "immutable_receipt_idempotently_reused": true,
+      "reacquisition_offline_full_rehash_passed": true
+    }
+  ],
+  "checks": {
+    "pre_existing_home_did_not_inherit_receipt_authority": true,
+    "guarded_initial_last_home_removal_succeeded": true,
+    "read_only_plan_downloaded_no_model_bytes": true,
+    "selector_resolved_to_exact_commit": true,
+    "execution_bound_the_reviewed_rank": true,
+    "target_side_download_completed": true,
+    "complete_upstream_inventory_matched": true,
+    "complete_sha256_passed": true,
+    "publication_recheck_observed_every_confirmed_rank": true,
+    "atomic_no_replace_publication_succeeded": true,
+    "receipt_preceded_publication": true,
+    "current_home_attachment_followed_publication": true,
+    "acquisition_reported_catalog_unchanged": true,
+    "explicit_catalog_refresh_succeeded": true,
+    "receipt_backed_offline_full_rehash_passed": true,
+    "one_rank_exact_prepare_succeeded": true,
+    "repeat_prepare_reused_verified_view": true,
+    "prepare_invoked_no_download": true,
+    "active_view_blocked_home_removal": true,
+    "matching_unattached_tree_was_rejected": true,
+    "restored_attachment_reestablished_authority": true,
+    "runtime_view_purge_preserved_home": true,
+    "supported_removal_detached_attachment": true,
+    "supported_removal_preserved_receipt": true,
+    "reacquisition_created_current_attachment": true,
+    "final_receipt_and_attachment_agreed": true,
+    "final_catalog_topology_compatible": true,
+    "final_duplicate_home_state_was_none": true,
+    "final_hot_instance_count_was_zero": true,
+    "final_issue_count_was_zero": true
+  },
+  "final_state": {
+    "catalog_health": "healthy",
+    "durable_home_count": 1,
+    "durable_home_rank": 0,
+    "non_home_durable_copy_count": 0,
+    "hot_instance_count": 0,
+    "receipt_count": 1,
+    "current_home_attachment_count": 1,
+    "attachment_receipt_matched": true,
+    "offline_verified_bytes": 19362748480,
+    "model_started": false
+  },
+  "integrity": {
+    "program_sha256": {
+      "scripts/hf_source_inventory.py": "77436907eecba9e5ac3b338a94a816c21fb9405d1ad37583a36d7154d54dfad3",
+      "scripts/model-library.sh": "78ced304b0fb6d8118e7789fd0134f92a50604353113b4425e390f127d7e0eb8",
+      "scripts/model_library.py": "b2fbd4731ba0058c2a7c1cda0925f9a9956b4d2a0f9190322ebed0d31ce63320",
+      "scripts/model_library_source_attested.py": "ebc0f7ae29c7e7b3c28e3c4160eb1b3c150217f731b2796059094887da8be77c"
+    },
+    "retained_raw_artifact_sha256": {
+      "exact-plan.json": "d989954ea6165cbb8c81f82d9af6f7a5c19f73a190554a72a7200b244bc35502",
+      "acquisition-result.json": "e310897abb18e85b0a972a13e122bbce6a77a81b71c2e3118c4d59e41fc36d3a",
+      "home-verify-result.json": "9e7c19fa1f97ee3bbc275924e882fc2a9ce7a3b0bce3fda83ab905dba3d32208",
+      "prepare-first.stdout": "5ea64f2a76277d1a48dab2f1e39796b4178f299cd2b1134c0b062b8c65102544",
+      "prepare-repeat.stdout": "ce9c763ca49bfe59e21b9a1662fa03d9950a881b504cc1aa069b8f60a52096a8",
+      "unbound-verify.stderr": "6e173f0d3bf391ba95b71d1c4887e3182745e204e717b553582ef423f3220c67",
+      "restored-home-verify-result.json": "9e7c19fa1f97ee3bbc275924e882fc2a9ce7a3b0bce3fda83ab905dba3d32208",
+      "second-removal-plan.json": "701355b799581c3489bb1a795c240d3519ee540f89074535c508ca3718e3424d",
+      "second-removal.stdout": "5f0f160ef24d62e530a2ced4e5ce00c37566d5000066423f30821dee2d485c88",
+      "reacquisition-plan.json": "d989954ea6165cbb8c81f82d9af6f7a5c19f73a190554a72a7200b244bc35502",
+      "reacquisition-result.json": "e310897abb18e85b0a972a13e122bbce6a77a81b71c2e3118c4d59e41fc36d3a",
+      "reacquisition-home-verify-result.json": "9e7c19fa1f97ee3bbc275924e882fc2a9ce7a3b0bce3fda83ab905dba3d32208",
+      "final-health.json": "cf831b13a912919983e8a20fe4fce6484c56a0489254c48346ec7cbcfd4015c2"
+    },
+    "raw_artifacts_published": false
+  },
+  "claims": {
+    "catalog_artifact_source_attested_acquisition": "pass-bounded-rank0-target",
+    "serving_integration": "not_run",
+    "model_qualification": "not_run",
+    "release_promotion": "not_claimed",
+    "validation_status_changed": false,
+    "guided_default_changed": false
+  },
+  "privacy": {
+    "reviewed": true,
+    "configured_secret_values_omitted": true,
+    "credential_patterns_omitted": true,
+    "hostnames_omitted": true,
+    "ip_addresses_omitted": true,
+    "node_and_topology_ids_omitted": true,
+    "absolute_paths_omitted": true,
+    "filesystem_identity_omitted": true,
+    "private_attachment_body_omitted": true,
+    "raw_private_logs_omitted": true
+  },
+  "limitations": [
+    "The physical target was rank 0 for a one-node profile; remote target execution was not run.",
+    "All metadata-capable ranks resolved the same public source, but asymmetric per-rank Hugging Face credentials were not injected physically.",
+    "The attachment fault used controlled absence of the private attachment while the same live directory remained; a separate external restore with a new inode was not run physically.",
+    "Writer-temp crash recovery, incompatible attachment fields, and new-inode refusal remain deterministic control-plane evidence rather than physical fault injections.",
+    "No vLLM container was launched, no completion was requested, and no serving-integration or model-qualification criterion was evaluated.",
+    "This bounded catalog/artifact pass does not assign a Model Serving Release status or promote a storage or serving default."
+  ]
+}

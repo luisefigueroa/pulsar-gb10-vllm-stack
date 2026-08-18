@@ -505,9 +505,14 @@ this work; the skill is procedural and does not outrank these sources.
   Unknown, restored, replaced, or otherwise unbound homes still require a
   reviewed expected manifest independent of the observed tree. Prepare-time
   resolution for receipt-backed content requires the attached receipt plus
-  the exact model ID and commit. These
-  deterministic controls make no physical Hub, DGX, serving-integration, or
-  model-qualification claim. No current profile is
+  the exact model ID and commit. Deterministic controls alone make no physical
+  claim. The bounded Nemotron Nano Gate 14 artifact physically passes the
+  catalog/artifact lifecycle for a one-node rank-0 target across three
+  confirmed ranks, including acquisition, attachment authority, offline
+  verification, exact preparation/reuse, guarded cleanup, and reacquisition.
+  Remote target execution and asymmetric per-rank Hugging Face credentials
+  remain physically untested. The artifact makes no serving-integration,
+  model-qualification, status, or promotion claim. No current profile is
   bound and the tracked store is empty, so current projections are neutral.
   Expected-seal identity and validation status are independent contracts: a
   future non-tested profile may carry a reviewed seal, and a matching seal does

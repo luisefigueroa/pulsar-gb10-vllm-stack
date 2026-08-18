@@ -1360,6 +1360,7 @@ run fits the declared envelope. It does not add a physical PASS row below.
 | Reviewed two-rank `library-hot` GA closure | PASS with reviewed memory finding | The home rank now requires an exact symlink with no copy fallback. The exact reviewed DeepSeek path passed preparation, 30-minute c=5 serving with 587 completions and zero errors, restart, forced replacement launch failure, persisted new-process recovery, identity re-verification, owned cleanup, and one-home closeout. The soak retained a 1.14 GiB first-to-last-decile memory-shrink warning. Remote one-rank and legacy-unsealed use remain experimental; no Model Serving Release status or default changed. |
 | Durable-home active-use removal guard | PASS on three-node physical topology, including selected-primary repeat | The 2026-08-11 disposable baseline proved last-home acknowledgement, all hot states, running/stopped managed-container blockers, fail-closed legacy metadata, lifecycle locking, exact no-follow deletion, sibling preservation, and catalog refresh. The 2026-08-12 disposable repeat physically passed the later selected-primary targeting contract. No production home was removed. |
 | Read-only health and legacy-hot repair | PASS, deterministic and three-node physical | Stable sanitized health schema 1, Doctor warnings, shallow no-hash observations, repair-ID binding, stopped-container/pinned blockers, local and remote removal, atomic no-follow retirement, sibling preservation, preserved-untracked attention, and the affected exact-home removal subset passed. No production content was removed. |
+| Source-attested acquisition Gate 14 | PASS, bounded one-node rank-0 target on a three-rank topology | Nemotron Nano passed legacy-home refusal/removal, exact source planning, two full 19,362,748,480-byte Hub acquisitions, immutable receipt and current-home attachment, offline full rehash, exact prepare/reuse without download, active-view blocker, controlled attachment absence, guarded detach/removal, receipt preservation, reacquisition, and final healthy one-home/no-hot state. Remote target, asymmetric credentials, actual external new-inode restore, serving integration, model qualification, status, and promotion were not physically established. |
 | Full control-plane self-test | PASS | Bash/Python syntax, focused suites, ownership/lifecycle tests, and full `scripts/selftest.sh` pass for the current changes. The exact wizard replacement transaction passes deterministic capture, drift/refusal, catalog retention, failed-launch rollback, and recovery contracts; its physical two-rank failure and new-process recovery repeat now also passes. |
 
 The headless boot issue is currently classified as an owner operating-system
@@ -1688,9 +1689,13 @@ source-attested path requires modern `hf` or the managed `hf`. Neither path
 creates hot content, prepares a runtime view, issues a witness, starts serving,
 alters status, or refreshes the catalog. Deterministic Python and thin
 public-CLI contracts pass. The earlier three-node physical catalog/artifact
-gate covers only sealed acquisition. Physical source-attested Hub/DGX
-acquisition remains pending, so its deterministic result does not claim
-serving integration or release promotion.
+gate covers only sealed acquisition. A later bounded physical Gate 14 passes
+the one-node rank-0 source-attested lifecycle across three confirmed ranks,
+including two full Hub acquisitions, attachment authority, offline rehash,
+exact prepare/reuse, guarded cleanup, receipt preservation, and reacquisition.
+Remote target execution and asymmetric credentials remain physically pending.
+Neither the deterministic nor physical result claims serving integration or
+release promotion.
 
 `./pulsar models` and operator-home **Models & storage** now consume that
 public report through `scripts/model-storage.sh` plus the width-aware
@@ -2038,7 +2043,8 @@ The implementation described here is primarily defined by:
   orchestration with source-attested planning, separately confirmed
   exact-commit acquisition, immutable receipts, current-home attachment to the
   live published directory, offline home verification,
-  and exact prepare binding; physical source-attested Hub/DGX evidence pending;
+  and exact prepare binding; bounded one-node rank-0 physical Gate 14 passed,
+  while remote target and asymmetric-credential evidence remain pending;
   maintainer issuance staging implemented as an untrusted local proposal;
   serving migration pending;
 - [`docs/archive/WEIGHT_MATERIALIZE_DESIGN.md`](./archive/WEIGHT_MATERIALIZE_DESIGN.md)
