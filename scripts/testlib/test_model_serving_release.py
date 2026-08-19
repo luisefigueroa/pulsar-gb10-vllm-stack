@@ -174,11 +174,12 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
             self.release["release_id"],
         )
 
-    def test_runtime_access_contract_is_release_identity(self) -> None:
-        remote = fixture.build_release(
-            recipe=fixture.build_recipe(model_access_contract="live-remote-readonly")
-        )
-        self.assertNotEqual(remote["release_id"], self.release["release_id"])
+    def test_live_remote_readonly_is_retired_for_new_plans(self) -> None:
+        with self.assertRaisesRegex(
+            model_serving_release.ModelServingReleaseError,
+            r"retired \(ADR 0005\)",
+        ):
+            fixture.build_recipe(model_access_contract="live-remote-readonly")
 
     def test_content_addressed_model_can_be_the_primary_artifact(self) -> None:
         release = fixture.build_content_addressed_release()

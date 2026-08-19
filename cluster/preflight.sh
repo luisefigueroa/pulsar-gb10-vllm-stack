@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Read-only preflight for an exact configured multi-node profile.
-#   cluster/preflight.sh <model-name> [--weight-source replicated|fabric|library-hot]
+#   cluster/preflight.sh <model-name> [--weight-source replicated|library-hot]
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +24,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --weight-source)
       [ "$#" -ge 2 ] || {
-        echo "--weight-source requires replicated|fabric|library-hot" >&2
+        echo "--weight-source requires replicated|library-hot" >&2
         exit 2
       }
       WEIGHT_SOURCE="$2"
@@ -32,7 +32,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --weight-mode)
       [ "$#" -ge 2 ] || {
-        echo "--weight-mode requires library-hot (or replicated|fabric)" >&2
+        echo "--weight-mode requires library-hot (or replicated)" >&2
         exit 2
       }
       WEIGHT_SOURCE="$2"
@@ -43,8 +43,9 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$WEIGHT_SOURCE" in
-  replicated|fabric|library-hot) ;;
-  *) echo "--weight-source must be replicated, fabric, or library-hot" >&2; exit 2 ;;
+  replicated|library-hot) ;;
+  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
+  *) echo "--weight-source must be replicated or library-hot" >&2; exit 2 ;;
 esac
 [ "$EXPECTED_NODES" -gt 1 ] || {
   echo "[preflight] profile must require more than one node" >&2
@@ -181,14 +182,7 @@ if [ -n "$PROFILE" ]; then
       && ok "rank $rank: image $IMAGE" \
       || bad "rank $rank: image $IMAGE not present"
   done
-  if [ "$WEIGHT_SOURCE" = fabric ]; then
-    if "$PULSAR_WEIGHT_FABRIC_TOOL" check "$PROFILE" \
-        --serving-only >/dev/null; then
-      ok "single-copy weights: topology, RDMA mounts, manifest, and no replicas"
-    else
-      bad "single-copy weights are not launch-ready"
-    fi
-  elif [ "$WEIGHT_SOURCE" = library-hot ]; then
+  if [ "$WEIGHT_SOURCE" = library-hot ]; then
     if "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" \
         --weight-source library-hot >/dev/null; then
       ok "library-hot: ready hot staging for $PROFILE"

@@ -121,11 +121,10 @@ compatibility path; it cannot represent an N-node mesh.
 - Weights over a 1 GbE-class admin link are slow on cold load; keep HF cache /
   local copies for hot models.
 - The three confirmed systems expose Linux NFSv4.2 client/server and
-  RPC-over-RDMA kernel support. The experimental one-copy design therefore
-  uses a read-only NFS/RDMA export on an exact pair-specific RoCE rail, never
-  the admin link. DGX Spark GDS is compatibility mode, so this is ordinary
-  POSIX/page-cache I/O rather than a direct-to-CUDA claim. See
-  [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
+  RPC-over-RDMA kernel support. Live NFS/RDMA under vLLM is retired as a
+  serving runtime source ([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)).
+  Historical notes: [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md). DGX Spark GDS is
+  compatibility mode; this is not a direct-to-CUDA claim.
 
 ## Prior art
 

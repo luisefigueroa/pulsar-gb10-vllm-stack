@@ -1,5 +1,10 @@
 # Two-node weight-fabric physical acceptance notes
 
+> **Superseded / not promoted.**
+> [ADR 0005](../../docs/decisions/0005-reject-live-nfs-rdma-serving.md)
+> rejects live NFS/RDMA serving. This file is historical evidence. Do not
+> rewrite the PASS/FAIL rows below. Do not promote from this file.
+
 Date: 2026-08-07  
 Repository base: `203dcd1`  
 Profile: `qwen3-1.7b-2node`  

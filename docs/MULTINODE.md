@@ -135,13 +135,11 @@ SSH identity, and model tensors stay on verified RoCE because the launcher
 forces the IB transport. Preflight rechecks every selected pair and rail on
 every launch, along with each control IP/interface binding.
 
-Experimental single-copy model initialization is a separate data-plane use of
-those same confirmed pair links. `--weight-source fabric` pins each NFS/RDMA
-client to one recorded RoCE rail and rejects TCP/control-LAN mounts; it does not
-change NCCL selection or the vLLM world size. A two-rank profile may configure
-a third storage-visible node for loading benchmarks without inventing TP=3.
-Replicated local caches remain the default. The wizard never selects fabric.
-See `WEIGHT_FABRIC.md`.
+Live NFS/RDMA under vLLM (`--weight-source fabric`) is retired as a serving
+runtime source ([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)).
+That does not change NCCL selection, topology discovery, or ADR 0003
+`ssh-roce` prepare. Replicated local caches remain the default. The wizard
+never selects live NFS. Historical notes: `WEIGHT_FABRIC.md`.
 
 A distinct experimental path is federated catalog serving (`library-hot`):
 one durable home, a symlink/view on that rank, and sealed-hot copies only on
@@ -228,16 +226,17 @@ cluster/start-cluster.sh deepseek-v4-flash
 cluster/stop-cluster.sh deepseek-v4-flash
 ```
 
-The live-fabric storage lifecycle is deliberately outside the wizard:
+Live NFS/RDMA serving is retired (ADR 0005). `scripts/up.sh <profile>
+--weight-source fabric` fails closed. Leftover mounts:
 
 ```bash
 scripts/weight-fabric.sh show <profile>
-scripts/up.sh <profile> --weight-source fabric
+scripts/weight-fabric.sh unmount <profile>
+scripts/weight-fabric.sh teardown <profile>
 ```
 
-Use `WEIGHT_FABRIC.md` for setup, teardown, integrity, benchmark, and failure
-recovery. The experimental catalog/`library-hot` path above is separate; the
-wizard may offer it only as an explicit labeled choice.
+The experimental catalog/`library-hot` path is separate; the wizard may offer
+it only as an explicit labeled choice.
 
 Always tear down a multi-node service before relaunching. A surviving remote
 rank can retain rendezvous state or RDMA resources and make the next launch

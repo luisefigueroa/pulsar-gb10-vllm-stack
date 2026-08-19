@@ -199,14 +199,14 @@ scripts/model-serving-release-plan.sh build <profile>
     --artifact-manifest FILE
     --runtime-envelope FILE
     --criteria FILE
-    --model-access-contract local-verified-readonly|live-remote-readonly
+    --model-access-contract local-verified-readonly
     [--artifact FILE --artifact-binding ARTIFACT_KEY=USE ...]
     [--artifact-reference ARTIFACT_KEY=PROFILE_REFERENCE ...]
     [--output-dir DIR] [--json]
 
 scripts/model-serving-release-plan.sh verify <profile>
     --candidate-dir DIR
-    --model-access-contract local-verified-readonly|live-remote-readonly
+    --model-access-contract local-verified-readonly
     [--artifact-reference ARTIFACT_KEY=PROFILE_REFERENCE ...]
     [--json]
 ```
@@ -278,8 +278,9 @@ candidate reproduced byte-for-byte before publication, the trusted bundle
 verifier returned `match`, and a post-issuance physical `library-hot`
 preparation/launch used those exact identities. This narrowly establishes the
 one-node diagnostic claim. It does not seal `qwen3-1.7b-2node`, promote the
-model-library path, or content-bind live-mount and legacy-unsealed replicated
-launches. The sealed replicated path now enforces this issued identity.
+model-library path, or content-bind legacy-unsealed replicated launches.
+Live-mount serving is retired (ADR 0005). The sealed replicated path now
+enforces this issued identity.
 
 The flagship `deepseek-v4-flash` profile is the second issued claim. Its
 reviewed trust roots are:

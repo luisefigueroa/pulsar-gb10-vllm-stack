@@ -46,6 +46,8 @@ ARTIFACT_USES = {
 }
 MODEL_ACCESS_CONTRACTS = {
     "local-verified-readonly",
+}
+RETIRED_MODEL_ACCESS_CONTRACTS = {
     "live-remote-readonly",
 }
 
@@ -892,7 +894,13 @@ def validate_serving_recipe(
             label=f"serving recipe memory_policy.{field}",
             allow_none=True,
         )
-    if recipe.get("model_access_contract") not in MODEL_ACCESS_CONTRACTS:
+    access_contract = recipe.get("model_access_contract")
+    if access_contract in RETIRED_MODEL_ACCESS_CONTRACTS:
+        fail(
+            "serving recipe model_access_contract live-remote-readonly is "
+            "retired (ADR 0005); use local-verified-readonly"
+        )
+    if access_contract not in MODEL_ACCESS_CONTRACTS:
         fail("serving recipe model_access_contract is unsupported")
     _validate_artifact_bindings(
         recipe.get("artifact_bindings"),

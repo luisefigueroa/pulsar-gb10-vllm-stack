@@ -16,13 +16,13 @@ Build and verify unreviewed Model Serving Release plans
 Usage:
   scripts/model-serving-release-plan.sh build <profile>
       --artifact-manifest FILE --runtime-envelope FILE --criteria FILE
-      --model-access-contract local-verified-readonly|live-remote-readonly
+      --model-access-contract local-verified-readonly
       [--artifact FILE --artifact-binding ARTIFACT_KEY=USE ...]
       [--artifact-reference ARTIFACT_KEY=PROFILE_REFERENCE ...]
       [--output-dir DIR] [--json]
   scripts/model-serving-release-plan.sh verify <profile>
       --candidate-dir DIR
-      --model-access-contract local-verified-readonly|live-remote-readonly
+      --model-access-contract local-verified-readonly
       [--artifact-reference ARTIFACT_KEY=PROFILE_REFERENCE ...]
       [--json]
 

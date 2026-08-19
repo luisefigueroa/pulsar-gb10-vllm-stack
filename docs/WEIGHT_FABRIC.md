@@ -1,14 +1,55 @@
-# Experimental single-copy weight fabric
+# Weight fabric (superseded live NFS/RDMA serving)
 
-> **Not promoted.** Replicated local Hugging Face caches remain the default.
-> This path is an explicit `--weight-source fabric` experiment until every
-> physical-hardware gate in this document has a reproducible artifact.
+> **Superseded / not promoted.**
+> [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) rejects live
+> NFSv4.2/RDMA under vLLM (`--weight-source fabric`, `live-remote-readonly`)
+> as a serving runtime source. Launch fails closed with no remap to
+> replicated. Historical measurements remain under
+> [results/weight-fabric/](../results/weight-fabric/) and are not promotion
+> evidence. The offering stop is
+> [PR #83](https://github.com/luisefigueroa/pulsar-gb10-vllm-stack/pull/83).
+>
+> **Keep:** NCCL/RoCE inference, `detect-fabric.sh` topology, ADR 0003
+> `ssh-roce` prepare, `library-hot` / `local-verified-readonly`, replicated
+> guided default.
+>
+> **Separate follow-up:** one-shot `nfs-rdma` prepare (`--backend fabric`).
+> Shared NFS helpers stay until that decision.
+>
+> Do not call ssh-roce “fabric” or “RoCE mount.”
 
-This feature keeps one authoritative model repository on a selected DGX Spark
-and presents it read-only to the other selected Sparks over a confirmed
-ConnectX-7/RoCE link. It concerns model storage and initialization only. It
-does not share KV cache, replace NCCL inference traffic, or claim direct RDMA
-into CUDA allocations.
+The rest of this file is a historical description of the retired live-mount
+experiment. It does not authorize serving. Product serving is `library-hot`
+or replicated.
+
+## Leftover site teardown (confirmation-gated)
+
+Only for a site that still has a leftover live-mount export or client mount
+from the retired experiment. This is not a serving workflow. Use values
+already stored in the site-local `.weight-fabric/` config for that exact
+profile. Do not invent hostnames, addresses, node IDs, or cache paths in
+publishable notes.
+
+1. Stop any Pulsar-managed service for that profile (`scripts/down.sh` /
+   `./pulsar stop`) and confirm inventory is clear.
+2. `scripts/weight-fabric.sh show <profile>` — read leftover config only.
+3. `scripts/weight-fabric.sh unmount <profile>` — confirmation-gated;
+   refuses if a container still uses the mount.
+4. `scripts/weight-fabric.sh teardown <profile>` — confirmation-gated;
+   removes only this configuration's export and mount state; preserves the
+   authoritative model tree.
+
+`--yes` is only for an already reviewed leftover-teardown runbook.
+`--interactive-sudo` keeps authentication in the operator terminal. Teardown
+does not remap to replicated or library-hot.
+
+---
+
+This historical design kept one authoritative model repository on a selected
+DGX Spark and presented it read-only to the other selected Sparks over a
+confirmed ConnectX-7/RoCE link. It concerned model storage and initialization
+only. It did not share KV cache, replace NCCL inference traffic, or claim
+direct RDMA into CUDA allocations.
 
 This document uses **live NFS/RDMA** for that long-lived runtime dependency.
 Do not conflate it with model-library one-shot `nfs-rdma` transfer followed by
@@ -16,8 +57,7 @@ release, or with `ssh-roce` (rsync over SSH/TCP pinned to a confirmed RoCE
 endpoint). Those are separate transfer/runtime combinations governed by
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). ADR 0003 fixes
 eight-stream `ssh-roce` only for the explicitly selected reviewed-profile
-preparation action; that action does not change the maturity of either this
-live fabric or `library-hot` by itself.
+preparation action.
 ADR 0004 treats that transfer as run provenance when it converges on the same
 verified local runtime-access contract and separates `library-hot` subsystem
 GA from Model Serving Release status.
@@ -127,7 +167,11 @@ nodes, the explicit setup command installs only missing `python3`,
 `python3-venv`, `nfs-common`, and owner `nfs-kernel-server` packages. It also
 creates an owner-user `$HOME/.hf-cli/venv` when no `hf` command exists:
 
+These setup/apply/benchmark commands now fail closed as a serving workflow
+(ADR 0005). The blocks below are historical.
+
 ```bash
+# historical; refused as a serving workflow
 scripts/weight-fabric.sh setup-prerequisites qwen3-1.7b-2node
 ```
 
@@ -172,65 +216,30 @@ Keep the API and NFS/RDMA service on a trusted lab network. The generated
 export is read-only and exact-address scoped, but it is not an authentication
 boundary against a hostile RoCE peer.
 
-## Configure and load one authoritative copy
+## Configure and load one authoritative copy (retired serving workflow)
 
-Choose an owner from the profile's serving ranks. `--storage-nodes 3` also
-prepares the idle third Spark as a read-only consumer; omit it for an exact
-two-node storage scope.
-
-```bash
-scripts/weight-fabric.sh configure qwen3-1.7b-2node \
-  --owner <topology-node-id> \
-  --storage-nodes 3
-
-scripts/weight-fabric.sh show qwen3-1.7b-2node
-scripts/weight-fabric.sh prerequisites qwen3-1.7b-2node
-scripts/weight-fabric.sh setup-prerequisites qwen3-1.7b-2node
-scripts/weight-fabric.sh download qwen3-1.7b-2node
-scripts/weight-fabric.sh apply qwen3-1.7b-2node
-scripts/weight-fabric.sh verify qwen3-1.7b-2node
-```
-
-`setup-prerequisites` can be omitted when the read-only check is already
-`ready`. `download` invokes the Hugging Face CLI only on the owner, then seals
-the snapshot; it fails closed if neither CLI name is discoverable.
-Before its first system write, `apply` verifies every client route, absence of
-durable replicas, mount-target ownership, and sudo readiness. It then installs
-configuration-specific files under
-`/etc/exports.d/` and `/etc/nfs.conf.d/`, starts the RDMA NFS listener, verifies
-the exact route, and mounts each client. Both commands require confirmation;
-`--yes` is available for an already reviewed runbook.
-
-Useful machine output:
+Configure/apply/download/check/verify serving commands fail closed (ADR 0005).
+The historical owner-export workflow is not a serving alternative. For leftover
+site state, use `show` then confirmation-gated `unmount` / `teardown`.
 
 ```bash
 scripts/weight-fabric.sh show qwen3-1.7b-2node --json
-scripts/weight-fabric.sh check qwen3-1.7b-2node --json
-scripts/check-weights.sh qwen3-1.7b-2node \
-  --weight-source fabric --json
 ```
 
-`check` covers all configured storage nodes. `check --serving-only` covers only
-the exact vLLM ranks. `verify` performs a full SHA-256 read on every configured
-node; routine launch uses the cheaper sealed metadata/file-size check.
+## Launch and lifecycle (retired)
 
-## Launch and lifecycle
-
-Fabric mode is explicit:
+`--weight-source fabric` is refused (ADR 0005). Historical launch examples
+are not a serving alternative. Use `library-hot` or replicated:
 
 ```bash
-scripts/up.sh qwen3-1.7b-2node --weight-source fabric
+scripts/up.sh qwen3-1.7b-2node --weight-source library-hot
 scripts/inventory.sh
 scripts/status.sh qwen3-1.7b-2node
 scripts/down.sh qwen3-1.7b-2node
 ```
 
-The wizard keeps replicated weights as the recommended default. It tells the operator
-that missing Hugging Face weights will be copied to every serving rank; it
-does not select or fall back to fabric mode. Use the CLI above for this
-experiment. The model's validation label is advisory and does not block the
-explicit fabric choice; fabric's own exact topology, identity, and lifecycle
-checks still fail closed.
+The wizard keeps replicated weights as the recommended default and never
+selects live NFS. Leftover mounts use the teardown section above.
 
 Stop the tracked service before storage teardown:
 
@@ -344,12 +353,8 @@ overwritten:
 scripts/weight-fabric.sh drop-caches qwen3-1.7b-2node \
   --serving-only --interactive-sudo --yes
 
-PULSAR_STARTUP_METRICS_FILE="$PWD/results/weight-fabric/qwen17b-fabric-startup.json" \
-PULSAR_STARTUP_TAG=qwen17b-fabric-cold \
-PULSAR_STARTUP_CACHE_STATE=cold \
-scripts/up.sh qwen3-1.7b-2node \
-  --weight-source fabric \
-  --skip-warmup
+# Historical. Live-mount launch is refused (ADR 0005).
+# scripts/up.sh qwen3-1.7b-2node --weight-source fabric --skip-warmup
 ```
 
 Repeat with `--weight-source replicated` and a different result path. Startup
@@ -396,10 +401,11 @@ injection only; never use a paced result as a throughput number. The low-level
 `weight_fabric.py io-benchmark` command exposes the same option for focused
 diagnostics.
 
-## Promotion gates
+## Promotion gates (retired / not promoted)
 
-Keep this feature experimental until artifacts cover both the two-node
-serving path and three-node concurrent loading:
+These gates stayed PENDING and were not promoted. ADR 0005 retires the
+live-mount serving path instead of waiting for them. Do not treat later
+`library-hot` GA as a promotion of this experiment. The historical list was:
 
 1. replicated-local and fabric cold benchmarks with the same revision;
 2. two-node and three-node interface-counter traffic proof;

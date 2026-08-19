@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Experimental single-copy Hugging Face cache over a confirmed RoCE rail.
+# Retired live NFS/RDMA serving workflow (ADR 0005).
 #
-# This tool never changes the validated replicated-cache default. System
-# changes require the explicit apply/teardown commands and confirmation.
+# Serving commands fail closed. Leftover site mounts may still be inspected
+# (show) or removed (unmount/teardown). One-shot nfs-rdma prepare lives in
+# model-library.sh and is not decided here. Replicated caches remain default.
 set -euo pipefail
 SCRIPT_NAME=weight-fabric
 # shellcheck disable=SC1091
@@ -21,56 +22,24 @@ esac
 
 usage() {
   cat <<'EOF'
-Experimental single-copy model weights over a confirmed RoCE rail
+Retired live NFS/RDMA serving workflow (ADR 0005)
+
+Live NFS/RDMA under vLLM is not a serving runtime source. Launch with
+library-hot or replicated. Leftover site mounts may be shown, unmounted, or
+torn down. One-shot nfs-rdma prepare is a separate experiment.
 
 Usage:
-  scripts/weight-fabric.sh configure <profile> --owner NODE_ID [options]
   scripts/weight-fabric.sh show <profile> [--json]
-  scripts/weight-fabric.sh prerequisites <profile> [--json]
-  scripts/weight-fabric.sh setup-prerequisites <profile> [--yes]
-  scripts/weight-fabric.sh download <profile> [--yes]
-  scripts/weight-fabric.sh seal <profile>
-  scripts/weight-fabric.sh apply <profile> [--yes]
-  scripts/weight-fabric.sh check <profile> [--full] [--json]
-  scripts/weight-fabric.sh verify <profile> [--json]
-  scripts/weight-fabric.sh benchmark <profile> --tag TAG [options]
-  scripts/weight-fabric.sh drop-caches <profile> [--all-configured] [--yes]
-  scripts/weight-fabric.sh purge-replicas <profile> [--yes]
   scripts/weight-fabric.sh unmount <profile> [--yes]
   scripts/weight-fabric.sh teardown <profile> [--yes]
 
-Configure options:
-  --owner NODE_ID       confirmed node that keeps the only durable model copy
-  --cache-root PATH     owner's HF home (default: current HF_CACHE)
-  --mount-root PATH     client mount parent
-  --storage-nodes N     confirmed nodes that can read the copy (default: profile)
-  --port PORT           NFS/RDMA service port (default: 20049)
-  --rail-index INDEX    deterministic pairwise rail (default: 0)
-  --replace             replace an existing site-local configuration
-
 Safety:
-  • NFSv4.2/RDMA is experimental and opt-in; replicated caches remain default.
-  • prerequisites is read-only; setup-prerequisites installs only missing
-    Ubuntu NFS/Python packages and an owner-user Hugging Face CLI environment.
-  • --interactive-sudo prompts in a terminal without changing sudoers. The
-    default is fail-closed passwordless sudo for unattended operation.
-  • apply exports read-only to exact client RoCE IPs and mounts with proto=rdma.
-  • launch checks reject topology drift, wrong routes/mounts, missing manifests,
-    and any full local model cache on a client.
-  • no command automatically falls back to the control LAN or creates replicas.
-
-Benchmark options:
-  --source MODE        fabric (default) or replicated
-  --serving-only       read concurrently on the profile's serving ranks
-  --all-configured     read concurrently on all configured storage nodes
-  --cold               drop Linux page caches first; refuses active Pulsar jobs
-  --verify-sha256      include SHA-256 CPU cost in each measured read
-  --max-mib-s RATE     pace reads for fault injection; never a throughput run
-  --output PATH        result directory (default: results/weight-fabric/TAG)
-  --yes                confirm --cold system-wide page-cache eviction
-
-Privilege option for setup/apply/cold-cache/unmount/teardown:
-  --interactive-sudo   prompt in the operator terminal; never stores passwords
+  • Serving/apply/mount/benchmark commands fail closed (ADR 0005).
+  • unmount refuses any client mount still used by a container.
+  • teardown removes only this configuration's export and mount state.
+  • --interactive-sudo prompts in a terminal; Pulsar stores no password.
+  • --yes is only for an already reviewed leftover-teardown runbook.
+  • no command remaps to replicated or library-hot.
 EOF
 }
 
@@ -1721,6 +1690,11 @@ command="${1:-}"
 shift
 [ "$command" = help ] || [ "$command" = -h ] || [ "$command" = --help ] \
   || acquire_model_library_lifecycle_lock shared
+case "$command" in
+  configure|prerequisites|setup-prerequisites|download|seal|apply|check|verify|benchmark|drop-caches|purge-replicas)
+    refuse_retired_live_nfs_serving_workflow
+    ;;
+esac
 case "$command" in
   configure)
     [ "$#" -ge 1 ] || die "configure requires a profile" 2

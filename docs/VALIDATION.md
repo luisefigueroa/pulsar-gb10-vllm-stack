@@ -187,8 +187,8 @@ post-issuance `library-hot` preparation/launch proved the same IDs physically.
 See the [model-library evidence index](../results/model-library/README.md).
 This is an identity issuance for a hidden diagnostic profile, not a
 `library-hot` promotion or a seal for the two-node Qwen profile. The sealed
-replicated control plane now enforces this issued identity; live mount and
-legacy-unsealed replicated profiles do not.
+replicated control plane now enforces this issued identity; live-mount serving
+is retired (ADR 0005) and legacy-unsealed replicated profiles do not.
 
 The replicated enforcement gate then passed physically on the exact issued
 Qwen snapshot: the first readiness check full-hashed all 4,079,450,110 bytes,

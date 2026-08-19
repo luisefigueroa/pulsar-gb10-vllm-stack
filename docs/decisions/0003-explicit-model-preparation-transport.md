@@ -4,6 +4,8 @@
 - Date: 2026-08-13
 - Amended by:
   [ADR 0004](./0004-model-serving-release-validation.md)
+  and
+  [ADR 0005](./0005-reject-live-nfs-rdma-serving.md)
 
 ## Context
 
@@ -162,3 +164,13 @@ SSH-over-RoCE policy above remains unchanged. The wizard now labels this exact
 scope **two-rank GA · explicit**. Remote one-rank and legacy-unsealed use remain
 experimental, replicated serving remains the guided default, and no Model
 Serving Release status changed.
+
+## Amendment — 2026-08-19
+
+[ADR 0005](./0005-reject-live-nfs-rdma-serving.md) rejects long-lived live
+NFS/RDMA under vLLM as a serving runtime source. The original sentence that
+kept live NFS/RDMA and one-shot `nfs-rdma` as “separate experiments” is
+amended only for the live-mount serving path. One-shot `nfs-rdma` prepare
+(`--backend fabric`) remains a separate experiment and is not decided here.
+This amendment does not change the eight-stream `ssh-roce` prepare policy,
+NCCL/RoCE inference, or topology discovery.

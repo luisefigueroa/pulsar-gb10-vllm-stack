@@ -31,12 +31,12 @@ flowchart LR
 
 Solid arrows show the promoted control and evidence flow. Dashed arrows are
 explicit non-default weight paths. The reviewed two-rank `library-hot` path is
-GA; remote one-rank and legacy-unsealed uses remain experimental. Do not offer
-live NFSv4.2/RDMA under vLLM (`--weight-source fabric`) as a serving or
-onboarding alternative: a crashed rank cannot cold-start without the owner
-export. The CLI remains until a retirement ADR. None is a silent fallback or
-wizard default. Control SSH, inference NCCL/RoCE, and weight transfer remain
-distinct data planes even when they involve the same machines.
+GA; remote one-rank and legacy-unsealed uses remain experimental. Live
+NFSv4.2/RDMA under vLLM (`--weight-source fabric`) is rejected as a serving
+runtime source (ADR 0005): a crashed rank cannot cold-start without the owner
+export. Launch fails closed; leftover unmount/teardown only. None is a silent
+fallback or wizard default. Control SSH, inference NCCL/RoCE, and weight
+transfer remain distinct data planes even when they involve the same machines.
 
 ## Build, Test, and Development Commands
 
@@ -565,13 +565,15 @@ this work; the skill is procedural and does not outrank these sources.
   remains explicit and non-default. Remote one-rank and legacy-unsealed uses
   remain experimental. This transport policy does not create a missing durable
   home or change the replicated guided default.
-- Do not offer live NFSv4.2/RDMA under vLLM (`--weight-source fabric`,
-  `live-remote-readonly`) as a serving or onboarding alternative. A crashed
+- Live NFSv4.2/RDMA under vLLM (`--weight-source fabric`,
+  `live-remote-readonly`) is rejected as a serving or onboarding alternative
+  ([ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md)). A crashed
   rank cannot cold-start without the owner export, NFS/RDMA stack, and exact
-  route. Replicated and `library-hot` already present local files. Leave the
-  experiment CLI in place until a retirement ADR; do not present it as a
-  choice. This does not retire `ssh-roce` copy, NCCL/RoCE inference, or
-  topology discovery (`detect-fabric.sh`).
+  route. Replicated and `library-hot` already present local files. Launch
+  fails closed with no remap. Leftover site mounts use confirmation-gated
+  unmount/teardown only. This does not retire `ssh-roce` copy, NCCL/RoCE
+  inference, or topology discovery (`detect-fabric.sh`). One-shot `nfs-rdma`
+  prepare remains a separate experiment.
 - Distribution transport is run provenance, not Model Serving Release
   identity. Qualification starts only after exact content and the intended
   runtime-access contract verify on every serving rank. A failure before that

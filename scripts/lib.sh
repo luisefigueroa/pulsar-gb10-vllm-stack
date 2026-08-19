@@ -862,6 +862,20 @@ print_shell_command_redacted() {
 PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
 PULSAR_SSH="${PULSAR_SSH:-ssh}"
 PULSAR_WEIGHT_FABRIC_TOOL="${PULSAR_WEIGHT_FABRIC_TOOL:-$REPO_DIR/scripts/weight-fabric.sh}"
+
+# ADR 0005: live NFS/RDMA under vLLM is not a serving runtime source.
+LIVE_NFS_SERVING_RETIRED_MESSAGE='live NFS/RDMA serving (--weight-source fabric) is retired (ADR 0005). A crashed rank cannot cold-start from a live mount. Use --weight-source library-hot or --weight-source replicated. This is not a remap to replicated. One-shot nfs-rdma prepare (--backend fabric) remains a separate experiment.'
+LIVE_NFS_SERVING_WORKFLOW_RETIRED_MESSAGE='live NFS/RDMA serving workflow is retired (ADR 0005). Use --weight-source library-hot or --weight-source replicated. Leftover site mounts: show, unmount, or teardown only (confirmation-gated). One-shot nfs-rdma prepare (--backend fabric) remains a separate experiment.'
+
+refuse_retired_live_nfs_serving_weight_source() {
+  local source="${1:-}"
+  [ "$source" = fabric ] || return 0
+  die "$LIVE_NFS_SERVING_RETIRED_MESSAGE" 2
+}
+
+refuse_retired_live_nfs_serving_workflow() {
+  die "$LIVE_NFS_SERVING_WORKFLOW_RETIRED_MESSAGE" 2
+}
 PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
 PULSAR_REPLICATED_WITNESS_ROOT="${PULSAR_REPLICATED_WITNESS_ROOT:-$HF_CACHE/.pulsar/replicated-witnesses}"

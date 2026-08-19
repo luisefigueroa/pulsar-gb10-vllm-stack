@@ -111,8 +111,8 @@ and references validation bundle
 `8fda1d93c5e08cbba18df5b26b0632354c6559ab939d3763dbdbdf38ead6b236`.
 Trusted lab issuance remains a reviewed release activity and is never derived
 from user state. Expected-seal enforcement applies to experimental
-`library-hot` and sealed replicated caches; live-mount launches remain
-unbound. See
+`library-hot` and sealed replicated caches; live-mount serving is retired
+(ADR 0005). See
 [validation-bundles/README.md](../validation-bundles/README.md) and
 [docs/MODEL_RELEASE.md](../../docs/MODEL_RELEASE.md). The witness is
 only an accelerator for identity previously established by full verification.

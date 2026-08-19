@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check whether exact-profile weights exist on every active rank.
 #   scripts/check-weights.sh <model-name> [--node NODE_ID]
-#                            [--weight-source replicated|fabric|library-hot] [--json]
+#                            [--weight-source replicated|library-hot] [--json]
 set -euo pipefail
 SCRIPT_NAME=check-weights
 # shellcheck disable=SC1091
@@ -22,12 +22,12 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated|fabric|library-hot" 2
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
     --weight-mode)
-      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated|fabric)" 2
+      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated)" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
@@ -38,8 +38,9 @@ done
 acquire_model_library_lifecycle_lock shared
 load_conf "$NAME"
 case "$WEIGHT_SOURCE" in
-  replicated|fabric|library-hot) ;;
-  *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
+  replicated|library-hot) ;;
+  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
+  *) die "--weight-source must be replicated or library-hot" 2 ;;
 esac
 if [ "$WEIGHT_SOURCE" = library-hot ]; then
   acquire_model_library_hot_lock shared
@@ -51,32 +52,7 @@ elif [ -n "$NODE_SELECTOR" ]; then
   die "--node is only valid for one-node profiles" 2
 fi
 
-if [ "$WEIGHT_SOURCE" = fabric ]; then
-  [ "$NODES" -gt 1 ] \
-    || die "fabric weights are only valid for multi-node profiles" 2
-  if [ "$JSON" = 1 ]; then
-    exec "$PULSAR_WEIGHT_FABRIC_TOOL" check "$NAME" \
-      --serving-only --json
-  fi
-  if [ "${QUIET:-0}" = 1 ]; then
-    fabric_json=""
-    fabric_rc=0
-    fabric_json=$(
-      "$PULSAR_WEIGHT_FABRIC_TOOL" check "$NAME" \
-        --serving-only --json 2>/dev/null
-    ) || fabric_rc=$?
-    fabric_state=$(printf '%s' "$fabric_json" | python3 -c \
-      'import json,sys; print(json.load(sys.stdin).get("state","invalid"))' \
-      2>/dev/null || echo invalid)
-    if [ "$fabric_rc" = 0 ]; then
-      echo "PASS  weights   source=fabric · NFS/RDMA · no replicas"
-    else
-      echo "FAIL  weights   source=fabric · state=$fabric_state"
-    fi
-    exit "$fabric_rc"
-  fi
-  exec "$PULSAR_WEIGHT_FABRIC_TOOL" check "$NAME" --serving-only
-fi
+
 
 if [ "$WEIGHT_SOURCE" = library-hot ]; then
   load_cluster_topology >/dev/null 2>&1 \
