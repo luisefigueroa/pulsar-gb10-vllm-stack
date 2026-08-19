@@ -1170,9 +1170,11 @@ A separate occupancy class covers a recognized incomplete or refs-only hub
 tree at that exact repository path: no complete snapshot of the named
 revision, no current-home attachment or receipt bound to the live directory,
 and no arbitrary non-empty unknown payload. Live inspection may bind
-`model_id@commit` from `refs/main` when that ref names one commit; an
+`model_id@commit` from `refs/main` when that ref names one 40-hex commit; an
 `@unknown` row that cannot be bound stays blocked and does not invent a
-seal. Complete homes never use the incomplete-occupancy path. Model-ID and
+seal. A leftover incomplete occupancy with a complete survivor of that bound
+commit is not last occupancy and does not use complete-home primary-selection
+policy. Complete homes never use the incomplete-occupancy path. Model-ID and
 profile queries must be unambiguous; `model_id@revision` is the
 destructive-workflow form.
 

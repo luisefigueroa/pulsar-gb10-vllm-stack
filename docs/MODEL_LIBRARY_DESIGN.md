@@ -817,8 +817,10 @@ selected snapshot revision, use non-symlinked `snapshots`/`refs` layout
 directories, and have no ref pointing elsewhere. A recognized incomplete or
 refs-only hub occupancy is a separate eligible class: the plan states that
 it retires that exact repository path so a later source-attested `home add`
-can proceed, and it still requires the eligible plan plus `--yes`. Complete
-homes do not use that class.
+can proceed, and it still requires the eligible plan plus `--yes`. Binding
+uses one 40-hex commit. A leftover stub with a complete survivor of that
+commit is not last occupancy and does not use complete-home primary policy.
+Complete homes do not use that class.
 Before deletion, the home node repeats the shape inspection, compares a
 metadata fingerprint, atomically renames the repository to a plan-bound
 retirement path, removes that path without following managed hot views, and

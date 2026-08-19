@@ -918,6 +918,81 @@ class IncompleteHubOccupancyRemoval(HomeRemovalFixture, unittest.TestCase):
         self.assertIn("unknown-revision", codes)
         self.assertEqual(inspection["state"], "blocked")
 
+    def test_non_40_hex_ref_stays_unbound_not_eligible(self) -> None:
+        for value in ("a" * 41, "a" * 64):
+            (self.hub / "refs" / "main").write_text(value + "\n", encoding="utf-8")
+            inspection = model_library.inspect_removable_home(
+                self.hub,
+                cache_root=self.cache_root,
+                model_id=self.model_id,
+                revision="unknown",
+                rank=0,
+                node_id=self.node_id,
+            )
+            codes = {item["code"] for item in inspection["blockers"]}
+            self.assertIn("unknown-revision", codes)
+            self.assertIsNone(inspection["bound_revision"])
+            self.assertEqual(inspection["state"], "blocked")
+
+    def test_blob_payload_mutation_after_plan_refuses_execute(self) -> None:
+        blobs = self.hub / "blobs"
+        blobs.mkdir()
+        blob = blobs / "payload"
+        blob.write_bytes(b"old-bytes")
+        plan = self._plan(allow_last_home=True)
+        self.assertEqual(plan["state"], "eligible")
+        self.assertEqual(plan["occupancy_class"], "incomplete-hub")
+        blob.write_bytes(b"new-bytes")
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "metadata changed",
+        ):
+            model_library.execute_home_removal_plan(
+                plan,
+                rank=0,
+                node_id=self.node_id,
+            )
+        self.assertTrue(self.hub.is_dir())
+        self.assertEqual(blob.read_bytes(), b"new-bytes")
+
+    def test_stub_with_complete_survivor_skips_primary_and_last_home(self) -> None:
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        catalog["models"].append(
+            {
+                "model_id": self.model_id,
+                "revision": self.revision,
+                "identity_key": f"{self.model_id}@{self.revision}",
+                "validation": "unvalidated",
+                "profiles": [],
+                "profile_validation": [],
+                "homes": [
+                    {
+                        "rank": 1,
+                        "node_id": "node-b",
+                        "hostname": "fixture-alternate",
+                        "ssh_host": "fixture-alternate",
+                        "cache_root": "/alternate/cache",
+                        "hub_path": "/alternate/cache/hub/models--Qwen--Qwen3-1.7B",
+                        "state": "complete",
+                        "bytes": 1,
+                        "active": True,
+                        "primary": True,
+                    }
+                ],
+                "duplicate": False,
+                "has_primary": True,
+                "on_disk": True,
+            }
+        )
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        plan = self._plan(allow_last_home=False, query=f"{self.model_id}@unknown")
+        self.assertEqual(plan["state"], "eligible")
+        self.assertEqual(plan["occupancy_class"], "incomplete-hub")
+        self.assertFalse(plan["target"]["last_durable_home"])
+        self.assertNotIn("last-durable-home", self._kinds(plan))
+        self.assertNotIn("primary-selection-required", self._kinds(plan))
+        self.assertNotIn("selected-primary-home", self._kinds(plan))
+
     def test_select_unknown_catalog_row_is_inspectable(self) -> None:
         target = model_library.select_home_removal_target(
             self.catalog_path,

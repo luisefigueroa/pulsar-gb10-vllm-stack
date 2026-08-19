@@ -98,7 +98,9 @@ UTC_TIMESTAMP_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
 )
 HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
-HF_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
+# Exact Hugging Face snapshot commit. Source-attested detach uses this form.
+# Do not treat 41–64 hex as a bound home-removal identity.
+HF_EXACT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
 UNBOUND_HOME_REVISIONS = frozenset({"", "unknown"})
@@ -6822,7 +6824,7 @@ def _bind_home_removal_revision(
     commits: list[str] = []
     for item in ref_targets:
         target = item.get("revision")
-        if isinstance(target, str) and HF_COMMIT_RE.fullmatch(target):
+        if isinstance(target, str) and HF_EXACT_COMMIT_RE.fullmatch(target):
             commits.append(target)
     unique = sorted(set(commits))
     if not _home_revision_is_unbound(requested):
@@ -7228,6 +7230,50 @@ def _path_metadata(path: pathlib.Path, *, relative_to: pathlib.Path) -> dict[str
     }
 
 
+def _collect_tree_fingerprint_paths(
+    root: pathlib.Path,
+) -> tuple[list[pathlib.Path], list[str]]:
+    """List a no-follow tree for fingerprinting. Errors are fail-closed."""
+    paths = [root]
+    errors: list[str] = []
+
+    def on_walk_error(exc: OSError) -> None:
+        errors.append(str(exc))
+
+    try:
+        root.lstat()
+    except OSError as exc:
+        return [], [f"cannot fingerprint {root}: {exc}"]
+    for dirpath, dirnames, filenames in os.walk(
+        root,
+        followlinks=False,
+        onerror=on_walk_error,
+    ):
+        current = pathlib.Path(dirpath)
+        kept: list[str] = []
+        for name in dirnames:
+            child = current / name
+            try:
+                child.lstat()
+            except OSError as exc:
+                errors.append(f"cannot fingerprint {child}: {exc}")
+                continue
+            paths.append(child)
+            if child.is_symlink():
+                continue
+            kept.append(name)
+        dirnames[:] = kept
+        for name in filenames:
+            child = current / name
+            try:
+                child.lstat()
+            except OSError as exc:
+                errors.append(f"cannot fingerprint {child}: {exc}")
+                continue
+            paths.append(child)
+    return paths, errors
+
+
 def inspect_removable_home(
     hub_path: str | pathlib.Path,
     *,
@@ -7467,6 +7513,15 @@ def inspect_removable_home(
                 )
     result["occupancy_class"] = occupancy_class
     result["occupancy_subtype"] = occupancy_subtype
+    if occupancy_class == INCOMPLETE_HUB_OCCUPANCY and (
+        not isinstance(bound, str) or HF_EXACT_COMMIT_RE.fullmatch(bound) is None
+    ):
+        block(
+            "unknown-revision",
+            "live inspection cannot bind one exact 40-hex snapshot revision "
+            "without inventing a seal",
+        )
+        result["bound_revision"] = None
     result["repository_bytes"] = tree_bytes(hub)
 
     snapshot = snapshots / (bound or requested_revision or "unknown")
@@ -7481,12 +7536,40 @@ def inspect_removable_home(
     if refs_present:
         fingerprint_paths.append(refs)
     fingerprint_paths.extend(ref_paths)
-    fingerprint_records: list[dict[str, Any]] = []
+    if occupancy_class == INCOMPLETE_HUB_OCCUPANCY:
+        payload_roots = [hub / "blobs"]
+        if snapshots_present:
+            payload_roots.append(snapshot)
+        for payload_root in payload_roots:
+            try:
+                payload_root.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                block(
+                    "metadata-unavailable",
+                    f"cannot fingerprint {payload_root}: {exc}",
+                )
+                continue
+            extra, walk_errors = _collect_tree_fingerprint_paths(payload_root)
+            fingerprint_paths.extend(extra)
+            for detail in walk_errors:
+                block("metadata-unavailable", detail)
+    unique_fingerprint_paths: list[pathlib.Path] = []
+    seen_fingerprint_paths: set[str] = set()
     for path in fingerprint_paths:
+        key = str(path)
+        if key in seen_fingerprint_paths:
+            continue
+        seen_fingerprint_paths.add(key)
+        unique_fingerprint_paths.append(path)
+    fingerprint_records: list[dict[str, Any]] = []
+    for path in unique_fingerprint_paths:
         try:
             fingerprint_records.append(_path_metadata(path, relative_to=hub))
         except (OSError, ValueError) as exc:
             block("metadata-unavailable", f"cannot fingerprint {path}: {exc}")
+    fingerprint_records.sort(key=lambda item: str(item.get("path") or ""))
     fingerprint_payload = {
         "model_id": model_id,
         "revision": result["revision"],
@@ -7495,6 +7578,7 @@ def inspect_removable_home(
         "canonical_hub_path": result["canonical_hub_path"],
         "snapshot_entries": result["snapshot_entries"],
         "ref_targets": result["ref_targets"],
+        "repository_bytes": result["repository_bytes"],
         "paths": fingerprint_records,
     }
     result["fingerprint"] = canonical_json_digest(fingerprint_payload)
@@ -7802,13 +7886,13 @@ def plan_home_removal(
     occupancy_subtype = inspection.get("occupancy_subtype")
     bound = inspection.get("bound_revision") or inspection.get("revision")
     if occupancy_class == INCOMPLETE_HUB_OCCUPANCY:
-        if not isinstance(bound, str) or HF_COMMIT_RE.fullmatch(bound) is None:
+        if not isinstance(bound, str) or HF_EXACT_COMMIT_RE.fullmatch(bound) is None:
             inspection.setdefault("blockers", []).append(
                 {
                     "code": "unknown-revision",
                     "detail": (
                         "incomplete occupancy retirement requires live inspection "
-                        "to bind one exact commit without inventing a seal"
+                        "to bind one exact 40-hex commit without inventing a seal"
                     ),
                 }
             )
@@ -7831,8 +7915,10 @@ def plan_home_removal(
                 )
             ]
             if bound_complete:
+                # A leftover stub is not last occupancy when a complete
+                # survivor already exists. Do not reuse complete-home
+                # duplicate/primary policy for this incomplete target.
                 target["last_durable_home"] = False
-                target["alternate_homes"] = bound_complete
     elif occupancy_class == COMPLETE_HOME_OCCUPANCY:
         target["occupancy_class"] = COMPLETE_HOME_OCCUPANCY
     target["occupancy_class"] = occupancy_class
@@ -7944,7 +8030,7 @@ def plan_home_removal(
                 "detail": last_home_detail,
             }
         )
-    if target["alternate_homes"] and (
+    if occupancy_class != INCOMPLETE_HUB_OCCUPANCY and target["alternate_homes"] and (
         target["primary_selection"].get("status") != "match"
         or not any(
             candidate.get("primary")
@@ -7962,7 +8048,11 @@ def plan_home_removal(
                 ),
             }
         )
-    if home.get("primary") and target["alternate_homes"]:
+    if (
+        occupancy_class != INCOMPLETE_HUB_OCCUPANCY
+        and home.get("primary")
+        and target["alternate_homes"]
+    ):
         blockers.append(
             {
                 "kind": "selected-primary-home",

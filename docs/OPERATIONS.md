@@ -845,14 +845,18 @@ A recognized incomplete or refs-only Hugging Face hub occupancy — typically
 complete durable home. The plan states the action (retire the incomplete
 tree so the exact repository path becomes absent and a later source-attested
 `home add` can proceed), the public model ID, the bound snapshot revision when
-live `refs/main` names one commit, the rank role, why it is eligible, what
+live `refs/main` names one 40-hex commit, the rank role, why it is eligible, what
 exact hub directory will be deleted, and what will not be deleted (sibling
 models, other revisions, hot trees, receipts history, running or unrelated
 containers). Last occupancy of that identity still needs `--allow-last-home`.
+A leftover incomplete occupancy is not last occupancy when a complete home of
+the bound commit already exists; retiring that stub does not require
+`--allow-last-home` or a primary-selection switch. Complete-home duplicate
+removal still needs an explicit primary.
 `home check` remains read-only. Without `--yes`, `home remove` changes
 nothing. Catalog refresh never auto-deletes. An arbitrary non-empty unknown
 tree, a multi-revision hub, a complete snapshot, a current-home attachment, or
-an unbound `@unknown` row that live inspection cannot bind to one commit
+an unbound `@unknown` row that live inspection cannot bind to one 40-hex commit
 stays fail-closed. Complete homes keep the complete-home removal contract.
 
 The removal command holds the exclusive lifecycle lock from observation through
