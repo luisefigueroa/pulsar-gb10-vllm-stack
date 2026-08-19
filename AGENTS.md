@@ -540,6 +540,12 @@ this work; the skill is procedural and does not outrank these sources.
   serving ranks so active storage remains one home plus N−1 hot copies. Do not
   silently choose another node,
   create a controller copy, refresh the catalog, prepare hot views, or launch.
+  Guarded `home check` / `home remove --yes` may retire a recognized
+  incomplete or refs-only Hugging Face hub occupancy that blocks
+  source-attested `home add`. That path is exact-repository-only, fail-closed,
+  and confirmation-gated: `home check` is read-only, `--yes` is required to
+  mutate, catalog refresh never auto-deletes, and complete-home removal is
+  unchanged.
   Onboarding must explicitly refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.

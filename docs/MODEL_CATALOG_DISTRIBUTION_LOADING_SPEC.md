@@ -302,8 +302,10 @@ that way.
 - **Confirmed topology**: a validated site manifest with stable identity and
   verified connectivity. A missing manifest is not “confirmed one node.”
 - **Home-removal plan**: one ephemeral decision document binding an exact
-  catalog home, repository metadata fingerprint, all-rank managed references,
-  last-home acknowledgement, and blockers. It is revalidated before mutation.
+  catalog home or recognized incomplete hub occupancy, occupancy class,
+  operator action, repository metadata fingerprint, all-rank managed
+  references, last-home acknowledgement, and blockers. It is revalidated
+  before mutation.
 - **Lifecycle lock**: repository-local shared/exclusive lock held by supported
   model readers/launchers and home removal respectively. It closes supported
   control-plane races; it does not inventory unmanaged operating-system users.
@@ -1160,11 +1162,21 @@ incompletely loaded service still depends on the configured source.
 ### 11.2 Durable-home removal
 
 The current public surface is `scripts/model-library.sh home check|remove`.
-Planning resolves one exact catalog identity and home, validates that the home
-is an exact non-symlinked HF repository child, and refuses a repository with
-multiple snapshot entries, a symlinked `snapshots`/`refs` layout, an incomplete
-snapshot, or any ref targeting another revision. Model-ID and profile queries
-must be unambiguous; `model_id@revision` is the destructive-workflow form.
+Planning resolves one exact catalog identity and occupancy. Complete homes
+must be an exact non-symlinked HF repository child and still refuse a
+repository with multiple snapshot entries, a symlinked `snapshots`/`refs`
+layout, an incomplete snapshot, or any ref targeting another revision.
+A separate occupancy class covers a recognized incomplete or refs-only hub
+tree at that exact repository path: no complete snapshot of the named
+revision, no current-home attachment or receipt bound to the live directory,
+and no arbitrary non-empty unknown payload. Live inspection may bind
+`model_id@commit` from `refs/main` when that ref names one 40-hex commit; an
+`@unknown` row that cannot be bound stays blocked and does not invent a
+seal. A leftover incomplete occupancy with a complete survivor of that bound
+commit is not last occupancy and does not use complete-home primary-selection
+policy. Complete homes never use the incomplete-occupancy path. Model-ID and
+profile queries must be unambiguous; `model_id@revision` is the
+destructive-workflow form.
 
 Every confirmed topology rank is then observed. Any schema-3 hot stamp whose
 `home_node_id` and model match becomes a blocker regardless of `ready`,
@@ -1176,9 +1188,13 @@ a contradictory observation contract aborts planning. Legacy, unreadable, or
 otherwise untrusted hot metadata remains a visible blocker rather than proving
 absence.
 
-The final complete durable home is an ordinary blocker unless the operator
-passes `--allow-last-home`; that acknowledgement states that the exact revision
-will become unavailable. `home remove` additionally requires `--yes`. Supported
+The final complete durable home, and the last occupancy of an incomplete
+identity, is an ordinary blocker unless the operator passes
+`--allow-last-home`; that acknowledgement states that the exact revision
+or incomplete hub path will become unavailable. `home remove` additionally
+requires `--yes`. `home check` prints the action, target identity, eligibility,
+and delete/retain scope before any mutation and never deletes. Catalog
+refresh never auto-removes an occupancy. Supported
 catalog, preparation, launch, readiness, download, and fabric entrypoints hold a
 shared lifecycle lock, while both home commands hold the exclusive lock from
 observation through mutation. This prevents a supported command from creating

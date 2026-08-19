@@ -810,10 +810,17 @@ pinned.
 **Current implementation:** `scripts/model-library.sh home check` builds a
 fail-closed plan from an authoritative home inspection plus hot-state and
 Docker observations on every confirmed node. `home remove ... --yes` executes
-only an eligible plan. A final durable copy requires the additional
-`--allow-last-home` acknowledgement. The target must be the exact catalogued
-HF repository, contain only the selected snapshot revision, use non-symlinked
-`snapshots`/`refs` layout directories, and have no ref pointing elsewhere.
+only an eligible plan. A final durable copy, or the last occupancy of an
+identity, requires the additional `--allow-last-home` acknowledgement. A
+complete home must be the exact catalogued HF repository, contain only the
+selected snapshot revision, use non-symlinked `snapshots`/`refs` layout
+directories, and have no ref pointing elsewhere. A recognized incomplete or
+refs-only hub occupancy is a separate eligible class: the plan states that
+it retires that exact repository path so a later source-attested `home add`
+can proceed, and it still requires the eligible plan plus `--yes`. Binding
+uses one 40-hex commit. A leftover stub with a complete survivor of that
+commit is not last occupancy and does not use complete-home primary policy.
+Complete homes do not use that class.
 Before deletion, the home node repeats the shape inspection, compares a
 metadata fingerprint, atomically renames the repository to a plan-bound
 retirement path, removes that path without following managed hot views, and
@@ -1246,3 +1253,4 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-17 | Implemented the public source-attested acquisition control plane for an absent brand-new unsealed Hugging Face home: read-only exact-commit/inventory planning on the selected rank, separate confirmation, target-local authentication, private same-filesystem download and transient caches, complete Git/LFS and SHA-256 verification, repeated all-rank absence, immutable site-local receipt, atomic no-replace publication, receipt-backed offline `home verify`, exact prepare binding, and onboarding-skill composition. Deterministic tests pass. No physical Hub/DGX acquisition, serving integration, model qualification, seal, status, decision, permission, or promotion claim was produced. |
 | 2026-08-17 | Bound source-attested receipt authority to the exact live durable-home directory published by that acquisition. A private site-local current-home attachment, written only after successful no-replace publication, selects the owning receipt. Missing, stale, restored, or replaced trees have no receipt authority and still require a reviewed expected manifest. Supported home removal detaches the pointer before mutation and keeps immutable receipts. Interrupted writer temps that match the exclusive writer grammar are ignored during enumeration. Control-plane implemented; physical Hub/DGX gate pending. |
 | 2026-08-17 | The bounded Nemotron Nano source-attested Gate 14 physically passed on a three-rank topology with a one-node rank-0 target: legacy-home refusal/removal, exact public source resolution, two complete 19,362,748,480-byte acquisitions, immutable receipt plus current-home attachment, independent offline rehash, exact prepare/reuse without download, active-view removal blocker, controlled missing-attachment refusal, guarded detach/removal, receipt preservation, reacquisition, and final healthy one-home/no-hot state. Remote target execution, asymmetric credentials, an actual external new-inode restore, serving integration, model qualification, status, and promotion were not run or claimed. |
+| 2026-08-18 | Guarded `home check` / `home remove --yes` can inspect and retire a recognized incomplete or refs-only Hugging Face hub occupancy that blocks source-attested `home add`. The plan states the retire-path-absent action, public model identity, bound commit when live `refs/main` names one, rank role, eligibility, and delete/retain scope. Last occupancy still needs `--allow-last-home`. `home check` is read-only; no `--yes` means no mutation; catalog refresh never auto-deletes. Complete homes, multi-revision trees, attached homes, and unbound `@unknown` rows stay on the previous fail-closed contract. Deterministic tests only; no physical Hub/DGX removal was run. |

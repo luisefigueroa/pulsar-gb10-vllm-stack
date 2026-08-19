@@ -100,8 +100,13 @@ Notes:
     confirmed nodes. Any dependent retained view blocks removal, including
     ready, verifying, or pinned hot state. Unobservable nodes fail closed.
     Removal is exact-repository-only, refuses multi-revision hub trees, and
-    needs --allow-last-home before deleting the final durable copy. Duplicate
+    needs --allow-last-home before deleting the final durable copy or the last
+    occupancy of an identity. A recognized incomplete or refs-only hub stub is
+    inspectable and retireable through the same read-only check then confirmed
+    remove --yes path so a later source-attested home add can occupy that
+    repository. Complete homes keep the complete-home contract. Duplicate
     removal requires a selected primary and can target only a non-primary home.
+    home check never mutates; without --yes, home remove changes nothing.
   • home add downloads one exact revision directly on one selected serving
     rank. A reviewed sealed profile without --revision keeps the existing
     sealed path. A Hugging Face profile without a reviewed seal requires
@@ -1350,7 +1355,7 @@ build_home_removal_plan() (
   model_id=$(printf '%s' "$target" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["model_id"])')
   revision=$(printf '%s' "$target" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["revision"])')
+    'import json,sys; print(json.load(sys.stdin).get("revision") or "unknown")')
   if ! [[ "$home_rank" =~ ^[0-9]+$ ]] \
       || [ "$home_rank" -ge "$CLUSTER_TOPOLOGY_COUNT" ]; then
     die "home removal: catalog home rank is outside confirmed topology"
@@ -1383,6 +1388,7 @@ build_home_removal_plan() (
     --models-dir "$REPO_DIR/models"
     --inspection-file "$tmp/inspection.json"
     --observations-dir "$tmp"
+    --library-dir "$LIBRARY_DIR"
   )
   [ -z "$node_selector" ] || plan_args+=(--node "$node_selector")
   [ "$allow_last_home" = 0 ] || plan_args+=(--allow-last-home)
@@ -2184,6 +2190,9 @@ cmd_home_remove() {
     'import json,sys; print(json.load(sys.stdin)["target"]["model_id"])')
   detach_revision=$(printf '%s' "$plan" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["target"]["revision"])')
+  if [ -z "$detach_revision" ] || [ "$detach_revision" = unknown ]; then
+    die "home removal: live inspection did not bind one exact revision; nothing was changed"
+  fi
   detach_rank=$(printf '%s' "$plan" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["target"]["home"]["rank"])')
   detach_node=$(printf '%s' "$plan" | python3 -c \
