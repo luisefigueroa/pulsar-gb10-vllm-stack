@@ -37,21 +37,22 @@ flowchart LR
   cluster --> runtime
 
   library["Model library<br/>two-rank GA · other scopes experimental"] -. explicit opt-in .-> artifacts
-  fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
 
   classDef optin stroke-dasharray: 5 5;
-  class library,fabric optin;
+  class library optin;
 ```
 
 Solid arrows show the promoted control and evidence flow. Dashed arrows are
 explicit non-default weight paths. The reviewed two-rank `library-hot` path is
-GA; remote one-rank and legacy-unsealed uses remain experimental. Live fabric
-also remains experimental. None is a silent fallback or wizard default.
-Control SSH, inference NCCL/RoCE, and weight transfer remain distinct data
-planes even when they involve the same machines.
+GA; remote one-rank and legacy-unsealed uses remain experimental. Do not offer
+live NFSv4.2/RDMA under vLLM (`--weight-source fabric`) as a serving or
+onboarding alternative: a crashed rank cannot cold-start without the owner
+export. The CLI remains until a retirement ADR. None is a silent fallback or
+wizard default. Control SSH, inference NCCL/RoCE, and weight transfer remain
+distinct data planes even when they involve the same machines.
 
 ## What sets this stack apart
 
@@ -258,11 +259,10 @@ capacity, security, and lifecycle checks still fail closed. No schema object or 
 establishes physical DGX behavior.
 
 **Additional storage paths:** replicated local Hugging Face caches remain the
-default. A separate, unpromoted NFSv4.2/RDMA path can keep one
-authoritative copy, mount exact clients read-only over confirmed RoCE rails,
-seal it with SHA-256 manifests, and benchmark two or three storage consumers.
-It requires explicit `--weight-source fabric`; the wizard never selects it or
-falls back to it. A distinct `library-hot` candidate keeps one durable home,
+default. Do not offer live NFSv4.2/RDMA under vLLM (`--weight-source fabric`)
+as a serving path: a crashed rank cannot cold-start without the owner export.
+That experiment remains in the tree until a retirement ADR. A distinct
+`library-hot` candidate keeps one durable home,
 uses a symlink view on that rank, and transfers sealed hot copies only to other
 ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
 create a rank-local witness after full verification, use a metadata fast path
