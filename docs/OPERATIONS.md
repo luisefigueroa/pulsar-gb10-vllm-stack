@@ -838,6 +838,23 @@ not only `pinned`, and managed containers remain blockers even when stopped
 because Docker can restart them later. The exact repository must contain only
 the selected snapshot revision and no ref may point to another revision.
 
+A recognized incomplete or refs-only Hugging Face hub occupancy — typically
+`refs/` plus `refs/main` and empty hub metadata, with no complete
+`snapshots/<commit>` payload — is inspectable and retireable through the same
+`home check` then `home remove ... --yes` path. That occupancy is not a
+complete durable home. The plan states the action (retire the incomplete
+tree so the exact repository path becomes absent and a later source-attested
+`home add` can proceed), the public model ID, the bound snapshot revision when
+live `refs/main` names one commit, the rank role, why it is eligible, what
+exact hub directory will be deleted, and what will not be deleted (sibling
+models, other revisions, hot trees, receipts history, running or unrelated
+containers). Last occupancy of that identity still needs `--allow-last-home`.
+`home check` remains read-only. Without `--yes`, `home remove` changes
+nothing. Catalog refresh never auto-deletes. An arbitrary non-empty unknown
+tree, a multi-revision hub, a complete snapshot, a current-home attachment, or
+an unbound `@unknown` row that live inspection cannot bind to one commit
+stays fail-closed. Complete homes keep the complete-home removal contract.
+
 The removal command holds the exclusive lifecycle lock from observation through
 deletion. Catalog refresh, primary mutation, and `home add` also take the
 exclusive form; supported catalog reads, preparation, launch, readiness,

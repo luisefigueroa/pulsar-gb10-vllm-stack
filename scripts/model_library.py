@@ -98,8 +98,15 @@ UTC_TIMESTAMP_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
 )
 HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
+HF_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
 SAFE_REV = re.compile(r"^[A-Za-z0-9._-]+$")
+UNBOUND_HOME_REVISIONS = frozenset({"", "unknown"})
+COMPLETE_HOME_OCCUPANCY = "complete-home"
+INCOMPLETE_HUB_OCCUPANCY = "incomplete-hub"
+UNRECOGNIZED_HUB_OCCUPANCY = "unrecognized"
+HF_HUB_LAYOUT_NAMES = frozenset({"refs", "snapshots", "blobs", ".no_exist", ".locks"})
+SOURCE_ATTESTED_HOME_ATTACHMENT_STORE = "source-attested-home-attachments"
 STATUS_TESTED = re.compile(r"^tested")
 DEFAULT_HOT_ROOT = "/var/tmp/pulsar-hot"
 DEFAULT_HOT_RESERVE_BYTES = 64 * 1024**3
@@ -6786,16 +6793,287 @@ def recheck_home_acquisition_absence(
     }
 
 
+def _home_revision_is_unbound(revision: Any) -> bool:
+    if revision is None:
+        return True
+    if not isinstance(revision, str):
+        return True
+    return revision.strip().lower() in UNBOUND_HOME_REVISIONS
+
+
+def _catalog_home_revision(entry: dict[str, Any]) -> str | None:
+    revision = entry.get("revision")
+    if _home_revision_is_unbound(revision):
+        return None
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        return None
+    return revision
+
+
+def _home_occupancy_usable(home: dict[str, Any]) -> bool:
+    required = ("rank", "node_id", "cache_root", "hub_path")
+    return all(home.get(name) not in (None, "") for name in required)
+
+
+def _bind_home_removal_revision(
+    requested: str | None,
+    ref_targets: list[dict[str, Any]],
+) -> str | None:
+    commits: list[str] = []
+    for item in ref_targets:
+        target = item.get("revision")
+        if isinstance(target, str) and HF_COMMIT_RE.fullmatch(target):
+            commits.append(target)
+    unique = sorted(set(commits))
+    if not _home_revision_is_unbound(requested):
+        assert requested is not None
+        if SAFE_REV.fullmatch(requested) is None:
+            return None
+        if unique and any(commit != requested for commit in unique):
+            return None
+        return requested
+    if len(unique) == 1:
+        return unique[0]
+    return None
+
+
+def _hub_has_regular_payload(path: pathlib.Path) -> bool:
+    if not path.is_dir() or path.is_symlink():
+        return False
+    try:
+        for root, dirnames, filenames in os.walk(path, followlinks=False):
+            current = pathlib.Path(root)
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if not (current / name).is_symlink()
+            ]
+            for name in filenames:
+                candidate = current / name
+                try:
+                    meta = candidate.lstat()
+                except OSError:
+                    return True
+                if stat.S_ISREG(meta.st_mode) and meta.st_size > 0:
+                    return True
+    except OSError:
+        return True
+    return False
+
+
+def _recognized_incomplete_hub_occupancy(
+    hub: pathlib.Path,
+    *,
+    bound_revision: str | None,
+    snapshot_entries: list[str],
+    ref_targets: list[dict[str, Any]],
+) -> tuple[str | None, str | None]:
+    """Return (subtype, rejection) for a recognized incomplete HF hub tree."""
+    if complete_snapshot_revisions(hub):
+        return None, "complete-snapshot-present"
+    try:
+        children = list(hub.iterdir())
+    except OSError as exc:
+        return None, f"unreadable:{exc}"
+    for child in children:
+        try:
+            meta = child.lstat()
+        except OSError as exc:
+            return None, f"unreadable:{exc}"
+        if stat.S_ISLNK(meta.st_mode):
+            return None, "top-level-symlink"
+        if child.name not in HF_HUB_LAYOUT_NAMES:
+            return None, f"unrecognized-top-level:{child.name}"
+    if snapshot_entries and (
+        not bound_revision
+        or any(name != bound_revision for name in snapshot_entries)
+    ):
+        return None, "foreign-or-unbound-snapshot"
+    has_snapshot = False
+    if bound_revision:
+        snapshot = hub / "snapshots" / bound_revision
+        try:
+            snap_meta = snapshot.lstat()
+        except FileNotFoundError:
+            snap_meta = None
+        except OSError as exc:
+            return None, f"unreadable:{exc}"
+        else:
+            if stat.S_ISLNK(snap_meta.st_mode):
+                return None, "snapshot-symlink"
+            has_snapshot = True
+            if hub_snapshot_state(hub, bound_revision) == "complete":
+                return None, "complete-snapshot-present"
+    has_blob_payload = _hub_has_regular_payload(hub / "blobs")
+    has_refs = bool(ref_targets) or (hub / "refs" / "main").is_file()
+    if not has_refs and not has_snapshot:
+        return None, "no-hf-hub-identity"
+    if not has_snapshot and not has_blob_payload:
+        return "refs-only", None
+    return "incomplete-snapshot", None
+
+
+def _incomplete_home_attachment_blockers(
+    library_dir: str | pathlib.Path | None,
+    *,
+    hub_path: str,
+    model_id: str,
+    revision: str,
+    rank: int,
+    node_id: str,
+) -> list[dict[str, Any]]:
+    """Fail closed unless the live directory has no current-home attachment."""
+    if library_dir in (None, ""):
+        return [
+            {
+                "kind": "current-home-unobservable",
+                "rank": rank,
+                "node_id": node_id,
+                "detail": (
+                    "cannot prove this incomplete occupancy has no current-home "
+                    "attachment; pass the site library directory to the planner"
+                ),
+            }
+        ]
+    store = pathlib.Path(library_dir) / SOURCE_ATTESTED_HOME_ATTACHMENT_STORE
+    try:
+        info = store.lstat()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        fail(f"home removal: current-home attachment store is unusable: {exc}")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("home removal: current-home attachment store is not a regular directory")
+    try:
+        entries = list(store.iterdir())
+    except OSError as exc:
+        fail(f"home removal: cannot enumerate current-home attachments: {exc}")
+    blockers: list[dict[str, Any]] = []
+    for path in entries:
+        name = path.name
+        if name.startswith(".") or not name.endswith(".json"):
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8")
+            document = json.loads(raw)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            fail(f"home removal: current-home attachment store is unusable: {exc}")
+        if not isinstance(document, dict):
+            fail("home removal: current-home attachment is not an object")
+        attached_path = document.get("durable_home_path")
+        same_path = attached_path == hub_path
+        same_identity = (
+            document.get("model_id") == model_id
+            and document.get("snapshot_revision") == revision
+            and same_path
+        )
+        if same_path or same_identity:
+            blockers.append(
+                {
+                    "kind": "current-home-attached",
+                    "rank": rank,
+                    "node_id": node_id,
+                    "detail": (
+                        "a current-home attachment still names this live "
+                        "directory; incomplete occupancy retirement refuses "
+                        "attached or receipt-bound homes"
+                    ),
+                }
+            )
+    return blockers
+
+
+def _home_removal_action(
+    *,
+    occupancy_class: str,
+    occupancy_subtype: str | None,
+    model_id: str,
+    revision: str,
+    last_durable_home: bool,
+) -> dict[str, Any]:
+    identity = f"{model_id}@{revision}" if not _home_revision_is_unbound(revision) else model_id
+    last_flag = " --allow-last-home" if last_durable_home else ""
+    confirmation = (
+        f"after reviewing an eligible plan, run scripts/model-library.sh "
+        f"home remove '{identity}'{last_flag} --yes; home check is read-only "
+        "and never mutates"
+    )
+    if occupancy_class == INCOMPLETE_HUB_OCCUPANCY:
+        stub = occupancy_subtype == "refs-only"
+        return {
+            "summary": (
+                "retire this incomplete/refs-only Hugging Face hub occupancy "
+                "so the exact repository path becomes absent"
+            ),
+            "enables": "later source-attested home add of the same repository",
+            "eligibility": [
+                "incomplete/partial hub tree",
+                "not a complete snapshot",
+                "no receipt or current-home attachment",
+                "no managed or hot dependents",
+                "exclusive exact-repository tree",
+            ],
+            "will_delete": (
+                "the exact hub repository directory, including this refs-only stub"
+                if stub
+                else "the exact hub repository directory, including this incomplete hub tree"
+            ),
+            "will_not_delete": [
+                "sibling models",
+                "other revisions",
+                "hot trees",
+                "receipts history",
+                "running or unrelated containers",
+            ],
+            "confirmation": confirmation,
+            "occupancy_class": occupancy_class,
+            "occupancy_subtype": occupancy_subtype,
+        }
+    return {
+        "summary": "retire this exact complete durable home repository",
+        "enables": None,
+        "eligibility": [
+            "exact single-revision complete snapshot",
+            "no managed or hot dependents",
+            "exclusive exact-repository tree",
+        ],
+        "will_delete": "the exact hub repository directory for this revision",
+        "will_not_delete": [
+            "sibling models",
+            "other revisions",
+            "hot trees",
+            "receipts history",
+            "running or unrelated containers",
+        ],
+        "confirmation": confirmation,
+        "occupancy_class": occupancy_class,
+        "occupancy_subtype": occupancy_subtype or "complete-snapshot",
+    }
+
+
 def select_home_removal_target(
     catalog_path: str | pathlib.Path,
     query: str,
     *,
     node_selector: str = "",
 ) -> dict[str, Any]:
-    """Resolve one exact durable hub home for a destructive operation."""
+    """Resolve one exact durable hub occupancy for a destructive operation."""
     catalog = load_catalog(catalog_path)
+    requested_revision: str | None = None
+    entry: dict[str, Any] | None = None
     if "@" in query:
         entry = find_model_entry(catalog, identity_key=query)
+        model_id, _sep, query_revision = query.partition("@")
+        if not _home_revision_is_unbound(query_revision) and SAFE_REV.fullmatch(
+            query_revision
+        ):
+            requested_revision = query_revision
+        if entry is None and requested_revision:
+            unknown = find_model_entry(
+                catalog, identity_key=f"{model_id}@unknown"
+            )
+            if unknown is not None:
+                entry = unknown
     elif "/" in query:
         entry = find_model_entry(catalog, model_id=query)
     else:
@@ -6803,42 +7081,69 @@ def select_home_removal_target(
     if entry is None:
         fail(f"home removal: no catalog entry matching {query!r}")
 
-    revision = entry.get("revision")
-    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
-        fail("home removal: catalog entry lacks an exact snapshot revision")
+    catalog_revision = _catalog_home_revision(entry)
+    homes = [dict(home) for home in entry.get("homes") or []]
     complete = [
-        dict(home)
-        for home in entry.get("homes") or []
-        if home.get("state") == "complete"
+        home
+        for home in homes
+        if home.get("state") == "complete" and _home_occupancy_usable(home)
     ]
-    if not complete:
-        fail("home removal: catalog entry has no complete durable home")
+    incomplete = [
+        home
+        for home in homes
+        if home.get("state") != "complete" and _home_occupancy_usable(home)
+    ]
+    if not complete and not incomplete:
+        fail("home removal: catalog entry has no inspectable durable occupancy")
 
     selected: dict[str, Any] | None = None
+    occupancy_class = COMPLETE_HOME_OCCUPANCY
     if node_selector:
-        matches = [
+        matches_complete = [
             home
             for home in complete
             if str(home.get("rank")) == node_selector
             or str(home.get("node_id") or "") == node_selector
         ]
+        matches_incomplete = [
+            home
+            for home in incomplete
+            if str(home.get("rank")) == node_selector
+            or str(home.get("node_id") or "") == node_selector
+        ]
+        matches = matches_complete + matches_incomplete
         if len(matches) != 1:
             fail(
-                "home removal: --node must match exactly one complete home "
+                "home removal: --node must match exactly one durable occupancy "
                 f"by rank or node ID (selector={node_selector!r})"
             )
         selected = matches[0]
+        occupancy_class = (
+            COMPLETE_HOME_OCCUPANCY
+            if matches_complete
+            else INCOMPLETE_HUB_OCCUPANCY
+        )
     elif len(complete) == 1:
         selected = complete[0]
-    else:
+        occupancy_class = COMPLETE_HOME_OCCUPANCY
+    elif len(complete) > 1:
         primaries = [home for home in complete if home.get("primary")]
         if len(primaries) == 1:
             selected = primaries[0]
+            occupancy_class = COMPLETE_HOME_OCCUPANCY
         else:
             fail(
                 "home removal: duplicate homes have no unique primary; "
                 "pass --node with the exact rank or node ID"
             )
+    elif len(incomplete) == 1:
+        selected = incomplete[0]
+        occupancy_class = INCOMPLETE_HUB_OCCUPANCY
+    else:
+        fail(
+            "home removal: multiple incomplete occupancies; "
+            "pass --node with the exact rank or node ID"
+        )
 
     assert selected is not None
     required = ("rank", "node_id", "cache_root", "hub_path")
@@ -6851,6 +7156,19 @@ def select_home_removal_target(
         fail("home removal: catalog home rank is invalid")
     selected["rank"] = rank
 
+    if occupancy_class == COMPLETE_HOME_OCCUPANCY and catalog_revision is None:
+        fail("home removal: catalog entry lacks an exact snapshot revision")
+
+    revision = catalog_revision or requested_revision or "unknown"
+    if occupancy_class == COMPLETE_HOME_OCCUPANCY:
+        if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+            fail("home removal: catalog entry lacks an exact snapshot revision")
+    identity_unbound = catalog_revision is None
+    if identity_unbound:
+        identity_key = str(entry.get("identity_key") or f"{entry['model_id']}@unknown")
+    else:
+        identity_key = str(entry.get("identity_key") or f"{entry['model_id']}@{revision}")
+
     alternates = [
         home
         for home in complete
@@ -6860,16 +7178,32 @@ def select_home_removal_target(
             and home.get("hub_path") == selected.get("hub_path")
         )
     ]
+    other_incomplete = [
+        home
+        for home in incomplete
+        if not (
+            int(home.get("rank", -1)) == rank
+            and home.get("node_id") == selected.get("node_id")
+            and home.get("hub_path") == selected.get("hub_path")
+        )
+    ]
+    if occupancy_class == COMPLETE_HOME_OCCUPANCY:
+        last_durable_home = not bool(alternates)
+    else:
+        last_durable_home = not bool(alternates or other_incomplete)
     return {
         "topology_id": catalog.get("topology_id") or "",
         "model_id": entry["model_id"],
         "revision": revision,
-        "identity_key": entry["identity_key"],
+        "catalog_revision": catalog_revision,
+        "identity_key": identity_key,
+        "identity_unbound": identity_unbound,
+        "occupancy_class": occupancy_class,
         "profiles": sorted(entry.get("profiles") or []),
         "primary_selection": entry.get("primary_selection") or {},
         "home": selected,
         "alternate_homes": alternates,
-        "last_durable_home": not bool(alternates),
+        "last_durable_home": last_durable_home,
     }
 
 
@@ -6906,7 +7240,9 @@ def inspect_removable_home(
     """Validate that an exact catalog home is a safely removable HF repo tree."""
     if HF_MODEL_ID_RE.fullmatch(model_id) is None:
         fail("home removal: model_id is invalid")
-    if SAFE_REV.fullmatch(revision) is None:
+    requested_revision = revision
+    unbound = _home_revision_is_unbound(revision)
+    if not unbound and SAFE_REV.fullmatch(revision) is None:
         fail("home removal: revision is invalid")
 
     hub = pathlib.Path(hub_path).expanduser()
@@ -6919,6 +7255,10 @@ def inspect_removable_home(
         "node_id": node_id,
         "model_id": model_id,
         "revision": revision,
+        "requested_revision": requested_revision,
+        "bound_revision": None,
+        "occupancy_class": UNRECOGNIZED_HUB_OCCUPANCY,
+        "occupancy_subtype": None,
         "cache_root": str(cache),
         "hub_path": str(hub),
         "canonical_hub_path": None,
@@ -6962,13 +7302,16 @@ def inspect_removable_home(
         block("canonical-path-unavailable", f"cannot resolve durable home: {exc}")
 
     snapshots = hub / "snapshots"
-    snapshot = snapshots / revision
+    snapshots_present = False
     snapshots_usable = False
     try:
         snapshots_meta = snapshots.lstat()
+    except FileNotFoundError:
+        pass
     except OSError as exc:
         block("snapshots-unavailable", f"cannot inspect snapshots directory: {exc}")
     else:
+        snapshots_present = True
         if stat.S_ISLNK(snapshots_meta.st_mode):
             block("snapshots-is-symlink", "snapshots directory must not be a symlink")
         elif not stat.S_ISDIR(snapshots_meta.st_mode):
@@ -6982,23 +7325,6 @@ def inspect_removable_home(
             result["snapshot_entries"] = [item.name for item in snapshot_children]
         except OSError as exc:
             block("snapshots-unavailable", f"cannot enumerate snapshots: {exc}")
-    unexpected = [item.name for item in snapshot_children if item.name != revision]
-    if unexpected:
-        block(
-            "multiple-snapshot-revisions",
-            "repository contains other snapshot entries: " + ", ".join(unexpected),
-        )
-    if snapshots_usable:
-        try:
-            snapshot_meta = snapshot.lstat()
-            if not stat.S_ISDIR(snapshot_meta.st_mode):
-                block("snapshot-not-directory", "exact snapshot is not a directory")
-        except OSError as exc:
-            block("snapshot-unavailable", f"cannot inspect exact snapshot: {exc}")
-        if hub_snapshot_state(hub, revision) != "complete":
-            block("snapshot-incomplete", "exact snapshot is not complete")
-    if _has_incomplete_marker(hub):
-        block("incomplete-download", "repository contains an .incomplete marker")
 
     refs = hub / "refs"
     ref_paths: list[pathlib.Path] = []
@@ -7059,21 +7385,102 @@ def inspect_removable_home(
             continue
         relative = ref_path.relative_to(hub).as_posix()
         ref_targets.append({"path": relative, "revision": target})
-        if target != revision:
-            block(
-                "ref-target-differs",
-                f"{relative} points to {target!r}, not {revision!r}",
-            )
     result["ref_targets"] = ref_targets
+
+    bound = _bind_home_removal_revision(
+        None if unbound else requested_revision,
+        ref_targets,
+    )
+    if bound is None and not unbound:
+        bound = requested_revision if SAFE_REV.fullmatch(requested_revision) else None
+    result["bound_revision"] = bound
+    if bound:
+        result["revision"] = bound
+    if bound is None:
+        block(
+            "unknown-revision",
+            "live inspection cannot bind one exact snapshot revision "
+            "without inventing a seal",
+        )
+    else:
+        unexpected = [
+            item.name for item in snapshot_children if item.name != bound
+        ]
+        if unexpected:
+            block(
+                "multiple-snapshot-revisions",
+                "repository contains other snapshot entries: " + ", ".join(unexpected),
+            )
+        for item in ref_targets:
+            if item["revision"] != bound:
+                block(
+                    "ref-target-differs",
+                    f"{item['path']} points to {item['revision']!r}, not {bound!r}",
+                )
+
+    complete_revisions = complete_snapshot_revisions(hub)
+    occupancy_class = UNRECOGNIZED_HUB_OCCUPANCY
+    occupancy_subtype: str | None = None
+    if bound and bound in complete_revisions:
+        occupancy_class = COMPLETE_HOME_OCCUPANCY
+        occupancy_subtype = "complete-snapshot"
+        snapshot = snapshots / bound
+        if snapshots_usable:
+            try:
+                snapshot_meta = snapshot.lstat()
+                if not stat.S_ISDIR(snapshot_meta.st_mode):
+                    block("snapshot-not-directory", "exact snapshot is not a directory")
+            except OSError as exc:
+                block("snapshot-unavailable", f"cannot inspect exact snapshot: {exc}")
+            if hub_snapshot_state(hub, bound) != "complete":
+                block("snapshot-incomplete", "exact snapshot is not complete")
+        else:
+            block("snapshots-unavailable", "cannot inspect snapshots directory")
+        if _has_incomplete_marker(hub):
+            block("incomplete-download", "repository contains an .incomplete marker")
+    elif complete_revisions:
+        occupancy_class = COMPLETE_HOME_OCCUPANCY
+        occupancy_subtype = "complete-snapshot"
+        block(
+            "complete-snapshot-present",
+            "a complete snapshot occupies this repository; "
+            "complete homes keep the complete-home removal contract",
+        )
+    else:
+        subtype, rejection = _recognized_incomplete_hub_occupancy(
+            hub,
+            bound_revision=bound,
+            snapshot_entries=result["snapshot_entries"],
+            ref_targets=ref_targets,
+        )
+        if subtype is not None:
+            occupancy_class = INCOMPLETE_HUB_OCCUPANCY
+            occupancy_subtype = subtype
+        else:
+            occupancy_class = UNRECOGNIZED_HUB_OCCUPANCY
+            occupancy_subtype = None
+            if rejection != "complete-snapshot-present":
+                block(
+                    "unrecognized-hub-tree",
+                    "hub tree is not a complete snapshot and not a recognized "
+                    f"incomplete occupancy ({rejection or 'unknown-shape'})",
+                )
+    result["occupancy_class"] = occupancy_class
+    result["occupancy_subtype"] = occupancy_subtype
     result["repository_bytes"] = tree_bytes(hub)
 
-    fingerprint_paths = [
-        hub,
-        snapshots,
-        snapshot,
-        *([refs] if refs_present else []),
-        *ref_paths,
-    ]
+    snapshot = snapshots / (bound or requested_revision or "unknown")
+    fingerprint_paths = [hub]
+    if snapshots_present:
+        fingerprint_paths.append(snapshots)
+    try:
+        snapshot.lstat()
+        fingerprint_paths.append(snapshot)
+    except OSError:
+        pass
+    if refs_present:
+        fingerprint_paths.append(refs)
+    fingerprint_paths.extend(ref_paths)
     fingerprint_records: list[dict[str, Any]] = []
     for path in fingerprint_paths:
         try:
@@ -7082,7 +7489,9 @@ def inspect_removable_home(
             block("metadata-unavailable", f"cannot fingerprint {path}: {exc}")
     fingerprint_payload = {
         "model_id": model_id,
-        "revision": revision,
+        "revision": result["revision"],
+        "occupancy_class": occupancy_class,
+        "occupancy_subtype": occupancy_subtype,
         "canonical_hub_path": result["canonical_hub_path"],
         "snapshot_entries": result["snapshot_entries"],
         "ref_targets": result["ref_targets"],
@@ -7348,6 +7757,7 @@ def plan_home_removal(
     observations_dir: str | pathlib.Path,
     node_selector: str = "",
     allow_last_home: bool = False,
+    library_dir: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
     topology = load_topology_for_plan(topology_file)
     live_topology_id = str(topology.get("topology_id") or "")
@@ -7373,12 +7783,60 @@ def plan_home_removal(
         ("rank", rank),
         ("node_id", home["node_id"]),
         ("model_id", target["model_id"]),
-        ("revision", target["revision"]),
         ("cache_root", home["cache_root"]),
         ("hub_path", home["hub_path"]),
     ):
         if inspection.get(field) != expected:
             fail(f"home removal: inspection {field} differs from catalog target")
+    if not _home_revision_is_unbound(target["revision"]):
+        inspected_revision = inspection.get("bound_revision") or inspection.get(
+            "revision"
+        )
+        if inspected_revision != target["revision"]:
+            fail("home removal: inspection revision differs from catalog target")
+    occupancy_class = (
+        inspection.get("occupancy_class")
+        or target.get("occupancy_class")
+        or COMPLETE_HOME_OCCUPANCY
+    )
+    occupancy_subtype = inspection.get("occupancy_subtype")
+    bound = inspection.get("bound_revision") or inspection.get("revision")
+    if occupancy_class == INCOMPLETE_HUB_OCCUPANCY:
+        if not isinstance(bound, str) or HF_COMMIT_RE.fullmatch(bound) is None:
+            inspection.setdefault("blockers", []).append(
+                {
+                    "code": "unknown-revision",
+                    "detail": (
+                        "incomplete occupancy retirement requires live inspection "
+                        "to bind one exact commit without inventing a seal"
+                    ),
+                }
+            )
+        else:
+            target["revision"] = bound
+            target["identity_key"] = f"{target['model_id']}@{bound}"
+            target["identity_unbound"] = False
+            catalog = load_catalog(catalog_path)
+            bound_entry = find_model_entry(
+                catalog, identity_key=f"{target['model_id']}@{bound}"
+            )
+            bound_complete = [
+                candidate
+                for candidate in (bound_entry or {}).get("homes") or []
+                if candidate.get("state") == "complete"
+                and not (
+                    int(candidate.get("rank", -1)) == rank
+                    and candidate.get("node_id") == home.get("node_id")
+                    and candidate.get("hub_path") == home.get("hub_path")
+                )
+            ]
+            if bound_complete:
+                target["last_durable_home"] = False
+                target["alternate_homes"] = bound_complete
+    elif occupancy_class == COMPLETE_HOME_OCCUPANCY:
+        target["occupancy_class"] = COMPLETE_HOME_OCCUPANCY
+    target["occupancy_class"] = occupancy_class
+    target["occupancy_subtype"] = occupancy_subtype
 
     observations = _load_home_reference_observations(observations_dir, topology)
     profile_models = _profile_model_map(models_dir)
@@ -7392,6 +7850,17 @@ def plan_home_removal(
                 "code": item.get("code"),
                 "detail": item.get("detail"),
             }
+        )
+    if occupancy_class == INCOMPLETE_HUB_OCCUPANCY:
+        blockers.extend(
+            _incomplete_home_attachment_blockers(
+                library_dir,
+                hub_path=str(home["hub_path"]),
+                model_id=str(target["model_id"]),
+                revision=str(target["revision"]),
+                rank=rank,
+                node_id=str(home["node_id"]),
+            )
         )
     observed_nodes: list[dict[str, Any]] = []
     for observation in observations:
@@ -7456,15 +7925,23 @@ def plan_home_removal(
         )
 
     if target["last_durable_home"] and not allow_last_home:
+        if occupancy_class == INCOMPLETE_HUB_OCCUPANCY:
+            last_home_detail = (
+                "this is the last occupancy of this identity; "
+                "pass --allow-last-home to acknowledge retiring the incomplete "
+                "hub path"
+            )
+        else:
+            last_home_detail = (
+                "this is the last complete durable home for the exact revision; "
+                "pass --allow-last-home to acknowledge model unavailability"
+            )
         blockers.append(
             {
                 "kind": "last-durable-home",
                 "rank": rank,
                 "node_id": home["node_id"],
-                "detail": (
-                    "this is the last complete durable home for the exact revision; "
-                    "pass --allow-last-home to acknowledge model unavailability"
-                ),
+                "detail": last_home_detail,
             }
         )
     if target["alternate_homes"] and (
@@ -7504,6 +7981,13 @@ def plan_home_removal(
             str(item.get("profile") or item.get("path") or ""),
         )
     )
+    action = _home_removal_action(
+        occupancy_class=occupancy_class,
+        occupancy_subtype=occupancy_subtype if isinstance(occupancy_subtype, str) else None,
+        model_id=str(target["model_id"]),
+        revision=str(target["revision"]),
+        last_durable_home=bool(target["last_durable_home"]),
+    )
     plan: dict[str, Any] = {
         "schema_version": HOME_REMOVAL_PLAN_SCHEMA_VERSION,
         "kind": HOME_REMOVAL_PLAN_KIND,
@@ -7514,6 +7998,8 @@ def plan_home_removal(
         "target": target,
         "inspection": inspection,
         "allow_last_home": allow_last_home,
+        "occupancy_class": occupancy_class,
+        "action": action,
         "observed_nodes": observed_nodes,
         "blockers": blockers,
     }
@@ -7527,14 +8013,71 @@ def render_home_removal_plan(plan: dict[str, Any]) -> None:
     term = TerminalWriter()
     target = plan["target"]
     home = target["home"]
-    term.emit(f"durable home removal  {str(plan['state']).upper()}")
-    term.field("model", target["model_id"])
-    term.field("revision", target["revision"])
-    term.field("home", f"rank {home['rank']} · node {str(home['node_id'])[:12]}")
-    term.field("path", home["hub_path"])
-    term.field("bytes", plan["inspection"].get("repository_bytes") or 0)
-    term.field("last home", "yes" if target["last_durable_home"] else "no")
-    term.field("probes", f"{len(plan.get('observed_nodes') or [])} confirmed nodes")
+    occupancy = plan.get("occupancy_class") or target.get("occupancy_class")
+    action = plan.get("action") or {}
+    if occupancy == INCOMPLETE_HUB_OCCUPANCY:
+        term.emit(f"incomplete hub occupancy  {str(plan['state']).upper()}")
+        term.blank()
+        term.emit("Action")
+        term.emit(
+            action.get("summary")
+            or (
+                "retire this incomplete/refs-only Hugging Face hub occupancy "
+                "so the exact repository path becomes absent"
+            ),
+            initial_indent="  ",
+            subsequent_indent="  ",
+        )
+        if action.get("enables"):
+            term.emit(
+                f"That enables a {action['enables']}.",
+                initial_indent="  ",
+                subsequent_indent="  ",
+            )
+        term.blank()
+        term.emit("Target")
+        term.field("model", target["model_id"], indent=2)
+        term.field("revision", target["revision"], indent=2)
+        term.field("rank", home["rank"], indent=2)
+        term.field(
+            "class",
+            target.get("occupancy_subtype") or action.get("occupancy_subtype") or occupancy,
+            indent=2,
+        )
+        term.blank()
+        term.emit("Why eligible")
+        for reason in action.get("eligibility") or []:
+            term.emit(reason, initial_indent="  ", subsequent_indent="  ")
+        term.blank()
+        term.emit("Will delete")
+        term.emit(
+            action.get("will_delete") or "the exact hub repository directory",
+            initial_indent="  ",
+            subsequent_indent="  ",
+        )
+        term.blank()
+        term.emit("Will not delete")
+        for item in action.get("will_not_delete") or []:
+            term.emit(item, initial_indent="  ", subsequent_indent="  ")
+        term.blank()
+        term.emit("Last confirmation")
+        term.emit(
+            action.get("confirmation")
+            or "home remove requires --yes after reviewing this eligible plan",
+            initial_indent="  ",
+            subsequent_indent="  ",
+        )
+        term.field("last occupancy", "yes" if target["last_durable_home"] else "no")
+        term.field("probes", f"{len(plan.get('observed_nodes') or [])} confirmed ranks")
+    else:
+        term.emit(f"durable home removal  {str(plan['state']).upper()}")
+        term.field("model", target["model_id"])
+        term.field("revision", target["revision"])
+        term.field("home", f"rank {home['rank']} · node {str(home['node_id'])[:12]}")
+        term.field("path", home["hub_path"])
+        term.field("bytes", plan["inspection"].get("repository_bytes") or 0)
+        term.field("last home", "yes" if target["last_durable_home"] else "no")
+        term.field("probes", f"{len(plan.get('observed_nodes') or [])} confirmed nodes")
     blockers = plan.get("blockers") or []
     if blockers:
         term.blank()
@@ -7602,6 +8145,18 @@ def execute_home_removal_plan(
     )
     if current.get("state") != "eligible":
         fail("home removal: durable-home shape changed before execution")
+    planned_occupancy = (
+        plan.get("occupancy_class")
+        or target.get("occupancy_class")
+        or COMPLETE_HOME_OCCUPANCY
+    )
+    current_occupancy = current.get("occupancy_class") or COMPLETE_HOME_OCCUPANCY
+    if planned_occupancy != current_occupancy:
+        fail("home removal: durable-home occupancy class changed before execution")
+    if planned_occupancy == COMPLETE_HOME_OCCUPANCY and current_occupancy != COMPLETE_HOME_OCCUPANCY:
+        fail("home removal: complete homes cannot use the incomplete-occupancy path")
+    if planned_occupancy == INCOMPLETE_HUB_OCCUPANCY and current_occupancy != INCOMPLETE_HUB_OCCUPANCY:
+        fail("home removal: complete or unrecognized trees cannot use the stub path")
     expected_fingerprint = (plan.get("inspection") or {}).get("fingerprint")
     if not expected_fingerprint or current.get("fingerprint") != expected_fingerprint:
         fail("home removal: durable-home metadata changed after the guard check")
@@ -8111,6 +8666,7 @@ def cmd_plan_home_removal(args: argparse.Namespace) -> int:
         observations_dir=args.observations_dir,
         node_selector=args.node,
         allow_last_home=args.allow_last_home,
+        library_dir=args.library_dir or None,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -9547,6 +10103,7 @@ def build_parser() -> argparse.ArgumentParser:
     home_plan.add_argument("--observations-dir", required=True)
     home_plan.add_argument("--node", default="")
     home_plan.add_argument("--allow-last-home", action="store_true")
+    home_plan.add_argument("--library-dir", default="")
     home_plan.add_argument("query")
     home_plan.set_defaults(func=cmd_plan_home_removal)
 

@@ -20,7 +20,7 @@ from scripts import model_library  # noqa: E402
 from scripts.topology_manifest import topology_digest  # noqa: E402
 
 
-class HomeRemovalContracts(unittest.TestCase):
+class HomeRemovalFixture:
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -172,15 +172,20 @@ class HomeRemovalContracts(unittest.TestCase):
         *,
         allow_last_home: bool = True,
         node_selector: str = "",
+        query: str = "qwen",
+        library_dir: pathlib.Path | None = None,
     ) -> dict[str, object]:
         inspection_path = self.root / "inspection.json"
         inspection_path.write_text(
             json.dumps(self._inspection()),
             encoding="utf-8",
         )
+        if library_dir is None:
+            library_dir = self.root / "library-dir"
+            library_dir.mkdir(exist_ok=True)
         return model_library.plan_home_removal(
             catalog_path=self.catalog_path,
-            query="qwen",
+            query=query,
             topology_file=self.topology_path,
             topology_id=self.topology_id,
             models_dir=self.models_dir,
@@ -188,15 +193,82 @@ class HomeRemovalContracts(unittest.TestCase):
             observations_dir=self.observations,
             node_selector=node_selector,
             allow_last_home=allow_last_home,
+            library_dir=library_dir,
         )
 
     @staticmethod
     def _kinds(plan: dict[str, object]) -> set[str]:
         return {item["kind"] for item in plan["blockers"]}  # type: ignore[index]
 
+    def _cli_environment(self) -> tuple[dict[str, str], pathlib.Path, pathlib.Path]:
+        mock_dir = self.root / "mock-bin"
+        mock_dir.mkdir(exist_ok=True)
+        ids_file = self.root / "docker.ids"
+        metadata_file = self.root / "docker.metadata.json"
+        ids_file.write_text("", encoding="utf-8")
+        metadata_file.write_text("", encoding="utf-8")
+        docker = mock_dir / "docker"
+        docker.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  info)
+    [ "${MOCK_DOCKER_INFO:-ok}" = ok ]
+    ;;
+  ps)
+    [ "${MOCK_DOCKER_INFO:-ok}" = ok ] || exit 1
+    [ ! -s "$MOCK_DOCKER_IDS_FILE" ] || cat "$MOCK_DOCKER_IDS_FILE"
+    ;;
+  inspect)
+    [ "${MOCK_DOCKER_INFO:-ok}" = ok ] || exit 1
+    [ -s "$MOCK_DOCKER_METADATA_FILE" ] || exit 1
+    cat "$MOCK_DOCKER_METADATA_FILE"
+    ;;
+  *) exit 1 ;;
+esac
+""",
+            encoding="utf-8",
+        )
+        docker.chmod(0o700)
+        state_dir = self.root / "library-state"
+        state_dir.mkdir()
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "CLUSTER_TOPOLOGY_FILE": str(self.topology_path),
+                "HF_CACHE": str(self.cache_root),
+                "MODEL_LIBRARY_CATALOG": str(self.catalog_path),
+                "MODEL_LIBRARY_DIR": str(state_dir),
+                "PULSAR_DOCKER": str(docker),
+                "PULSAR_HOT_ROOT": str(self.root / "cli-hot"),
+                "PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS": "0",
+                "MOCK_DOCKER_IDS_FILE": str(ids_file),
+                "MOCK_DOCKER_METADATA_FILE": str(metadata_file),
+            }
+        )
+        return environment, ids_file, metadata_file
+
+    def _run_library_cli(
+        self,
+        environment: dict[str, str],
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(REPO_ROOT / "scripts" / "model-library.sh"), *arguments],
+            cwd=REPO_ROOT,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+
+class HomeRemovalContracts(HomeRemovalFixture, unittest.TestCase):
     def test_exact_single_revision_home_is_eligible_shape(self) -> None:
         inspection = self._inspection()
         self.assertEqual(inspection["state"], "eligible")
+        self.assertEqual(inspection["occupancy_class"], "complete-home")
         self.assertEqual(inspection["snapshot_entries"], [self.revision])
         self.assertTrue(inspection["fingerprint"])
 
@@ -460,69 +532,6 @@ class HomeRemovalContracts(unittest.TestCase):
             )
         self.assertTrue(self.hub.is_dir())
 
-    def _cli_environment(self) -> tuple[dict[str, str], pathlib.Path, pathlib.Path]:
-        mock_dir = self.root / "mock-bin"
-        mock_dir.mkdir(exist_ok=True)
-        ids_file = self.root / "docker.ids"
-        metadata_file = self.root / "docker.metadata.json"
-        ids_file.write_text("", encoding="utf-8")
-        metadata_file.write_text("", encoding="utf-8")
-        docker = mock_dir / "docker"
-        docker.write_text(
-            """#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  info)
-    [ "${MOCK_DOCKER_INFO:-ok}" = ok ]
-    ;;
-  ps)
-    [ "${MOCK_DOCKER_INFO:-ok}" = ok ] || exit 1
-    [ ! -s "$MOCK_DOCKER_IDS_FILE" ] || cat "$MOCK_DOCKER_IDS_FILE"
-    ;;
-  inspect)
-    [ "${MOCK_DOCKER_INFO:-ok}" = ok ] || exit 1
-    [ -s "$MOCK_DOCKER_METADATA_FILE" ] || exit 1
-    cat "$MOCK_DOCKER_METADATA_FILE"
-    ;;
-  *) exit 1 ;;
-esac
-""",
-            encoding="utf-8",
-        )
-        docker.chmod(0o700)
-        state_dir = self.root / "library-state"
-        state_dir.mkdir()
-        environment = os.environ.copy()
-        environment.update(
-            {
-                "CLUSTER_TOPOLOGY_FILE": str(self.topology_path),
-                "HF_CACHE": str(self.cache_root),
-                "MODEL_LIBRARY_CATALOG": str(self.catalog_path),
-                "MODEL_LIBRARY_DIR": str(state_dir),
-                "PULSAR_DOCKER": str(docker),
-                "PULSAR_HOT_ROOT": str(self.root / "cli-hot"),
-                "PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS": "0",
-                "MOCK_DOCKER_IDS_FILE": str(ids_file),
-                "MOCK_DOCKER_METADATA_FILE": str(metadata_file),
-            }
-        )
-        return environment, ids_file, metadata_file
-
-    def _run_library_cli(
-        self,
-        environment: dict[str, str],
-        *arguments: str,
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [str(REPO_ROOT / "scripts" / "model-library.sh"), *arguments],
-            cwd=REPO_ROOT,
-            env=environment,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-
     def test_public_cli_blocks_hot_container_and_unobservable_docker(self) -> None:
         environment, ids_file, metadata_file = self._cli_environment()
         eligible = self._run_library_cli(
@@ -643,6 +652,285 @@ esac
         ):
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")
             self.assertIn("acquire_model_library_lifecycle_lock shared", text)
+
+
+class IncompleteHubOccupancyRemoval(HomeRemovalFixture, unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._convert_to_refs_only_stub()
+        self._write_incomplete_catalog()
+        self.sibling = (
+            self.cache_root / "hub" / "models--Sibling--KeepMe"
+        )
+        self.sibling.mkdir()
+        (self.sibling / "refs").mkdir()
+        (self.sibling / "refs" / "main").write_text("sibling-ref\n", encoding="utf-8")
+        (self.sibling / "keep.txt").write_text("sibling\n", encoding="utf-8")
+
+    def _convert_to_refs_only_stub(self) -> None:
+        snapshots = self.hub / "snapshots"
+        if snapshots.exists():
+            shutil.rmtree(snapshots)
+        blobs = self.hub / "blobs"
+        if blobs.exists():
+            shutil.rmtree(blobs)
+        refs = self.hub / "refs"
+        refs.mkdir(exist_ok=True)
+        (refs / "main").write_text(self.revision + "\n", encoding="utf-8")
+
+    def _write_incomplete_catalog(self) -> None:
+        catalog = {
+            "schema_version": 2,
+            "refreshed_at": "2026-08-11T00:00:00.000Z",
+            "topology_id": self.topology_id,
+            "primary_selections": [],
+            "models": [
+                {
+                    "model_id": self.model_id,
+                    "revision": None,
+                    "identity_key": f"{self.model_id}@unknown",
+                    "validation": "unvalidated",
+                    "profiles": ["qwen", "qwen3-1.7b"],
+                    "profile_validation": [],
+                    "homes": [
+                        {
+                            "rank": 0,
+                            "node_id": self.node_id,
+                            "hostname": "fixture-node",
+                            "ssh_host": "local",
+                            "cache_root": str(self.cache_root),
+                            "hub_path": str(self.hub),
+                            "state": "partial",
+                            "bytes": 0,
+                            "active": False,
+                            "primary": False,
+                        }
+                    ],
+                    "duplicate": False,
+                    "has_primary": False,
+                    "on_disk": False,
+                }
+            ],
+        }
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    def test_refs_only_stub_is_recognized_incomplete_occupancy(self) -> None:
+        inspection = self._inspection()
+        self.assertEqual(inspection["occupancy_class"], "incomplete-hub")
+        self.assertEqual(inspection["occupancy_subtype"], "refs-only")
+        self.assertEqual(inspection["state"], "eligible")
+        self.assertEqual(inspection["bound_revision"], self.revision)
+        self.assertEqual(inspection["snapshot_entries"], [])
+        self.assertEqual(inspection["repository_bytes"], len(self.revision) + 1)
+
+    def test_complete_or_multi_revision_trees_refuse_stub_classification(
+        self,
+    ) -> None:
+        complete = HomeRemovalContracts()
+        complete.setUp()
+        self.addCleanup(complete.temporary.cleanup)
+        inspection = complete._inspection()
+        self.assertEqual(inspection["occupancy_class"], "complete-home")
+        self.assertNotEqual(inspection["occupancy_class"], "incomplete-hub")
+
+        other = self.hub / "snapshots" / ("b" * 40)
+        other.mkdir(parents=True)
+        (other / "config.json").write_text("{}\n", encoding="utf-8")
+        blocked = model_library.inspect_removable_home(
+            self.hub,
+            cache_root=self.cache_root,
+            model_id=self.model_id,
+            revision=self.revision,
+            rank=0,
+            node_id=self.node_id,
+        )
+        codes = {item["code"] for item in blocked["blockers"]}
+        self.assertIn("multiple-snapshot-revisions", codes)
+        self.assertNotEqual(blocked["occupancy_class"], "incomplete-hub")
+        self.assertEqual(blocked["state"], "blocked")
+
+        shutil.rmtree(self.hub / "snapshots")
+        (self.hub / "notes.txt").write_text("not a hub payload\n", encoding="utf-8")
+        unknown = model_library.inspect_removable_home(
+            self.hub,
+            cache_root=self.cache_root,
+            model_id=self.model_id,
+            revision=self.revision,
+            rank=0,
+            node_id=self.node_id,
+        )
+        codes = {item["code"] for item in unknown["blockers"]}
+        self.assertIn("unrecognized-hub-tree", codes)
+        self.assertEqual(unknown["occupancy_class"], "unrecognized")
+        self.assertEqual(unknown["state"], "blocked")
+
+    def test_last_stub_occupancy_requires_allow_last_home(self) -> None:
+        blocked = self._plan(allow_last_home=False)
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertIn("last-durable-home", self._kinds(blocked))
+        self.assertEqual(blocked["occupancy_class"], "incomplete-hub")
+        self.assertIn("refs-only", blocked["action"]["will_delete"])
+        self.assertIn("retire this incomplete/refs-only", blocked["action"]["summary"])
+        self.assertIn("--yes", blocked["action"]["confirmation"])
+
+        eligible = self._plan(allow_last_home=True)
+        self.assertEqual(eligible["state"], "eligible")
+        self.assertEqual(eligible["blockers"], [])
+        self.assertEqual(eligible["target"]["revision"], self.revision)
+        self.assertTrue(eligible["target"]["last_durable_home"])
+
+    def test_current_home_attachment_blocks_stub_retirement(self) -> None:
+        library_dir = self.root / "attached-library"
+        store = library_dir / "source-attested-home-attachments"
+        store.mkdir(parents=True)
+        (store / "fixture.json").write_text(
+            json.dumps(
+                {
+                    "model_id": self.model_id,
+                    "snapshot_revision": self.revision,
+                    "durable_home_path": str(self.hub),
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan = self._plan(allow_last_home=True, library_dir=library_dir)
+        self.assertEqual(plan["state"], "blocked")
+        self.assertIn("current-home-attached", self._kinds(plan))
+
+    def test_missing_library_dir_fails_closed_for_stub(self) -> None:
+        inspection_path = self.root / "inspection.json"
+        inspection_path.write_text(json.dumps(self._inspection()), encoding="utf-8")
+        plan = model_library.plan_home_removal(
+            catalog_path=self.catalog_path,
+            query="qwen",
+            topology_file=self.topology_path,
+            topology_id=self.topology_id,
+            models_dir=self.models_dir,
+            inspection_path=inspection_path,
+            observations_dir=self.observations,
+            allow_last_home=True,
+            library_dir=None,
+        )
+        self.assertEqual(plan["state"], "blocked")
+        self.assertIn("current-home-unobservable", self._kinds(plan))
+
+    def test_unobservable_rank_fails_closed_for_stub(self) -> None:
+        (self.observations / "hot-0.json").unlink()
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "reference probes are incomplete",
+        ):
+            self._plan(allow_last_home=True)
+
+    def test_public_cli_stub_check_json_and_human_action(self) -> None:
+        environment, _ids_file, _metadata_file = self._cli_environment()
+        blocked = self._run_library_cli(
+            environment,
+            "home", "check", "qwen3-1.7b", "--json",
+        )
+        self.assertEqual(blocked.returncode, 1, blocked.stderr)
+        blocked_plan = json.loads(blocked.stdout)
+        self.assertEqual(blocked_plan["state"], "blocked")
+        self.assertIn("last-durable-home", self._kinds(blocked_plan))
+        self.assertEqual(blocked_plan["occupancy_class"], "incomplete-hub")
+
+        human = self._run_library_cli(
+            environment,
+            "home", "check", "qwen3-1.7b", "--allow-last-home",
+        )
+        self.assertEqual(human.returncode, 0, human.stderr)
+        self.assertIn("incomplete hub occupancy  ELIGIBLE", human.stdout)
+        self.assertIn("retire this incomplete/refs-only", human.stdout)
+        self.assertIn("Will delete", human.stdout)
+        self.assertIn("refs-only stub", human.stdout)
+        self.assertIn("Will not delete", human.stdout)
+        self.assertIn("home remove", human.stdout)
+        self.assertIn("--yes", human.stdout)
+        self.assertNotIn("192.0.2.10", human.stdout)
+
+        eligible = self._run_library_cli(
+            environment,
+            "home", "check", "qwen3-1.7b", "--allow-last-home", "--json",
+        )
+        self.assertEqual(eligible.returncode, 0, eligible.stderr)
+        plan = json.loads(eligible.stdout)
+        self.assertEqual(plan["state"], "eligible")
+        self.assertEqual(plan["occupancy_class"], "incomplete-hub")
+        self.assertEqual(plan["action"]["occupancy_subtype"], "refs-only")
+        self.assertIn("source-attested home add", plan["action"]["enables"])
+        self.assertIn("--yes", plan["action"]["confirmation"])
+
+    def test_public_cli_stub_remove_requires_yes_and_preserves_tree(self) -> None:
+        environment, _ids_file, _metadata_file = self._cli_environment()
+        refused = self._run_library_cli(
+            environment,
+            "home", "remove", "qwen3-1.7b", "--allow-last-home",
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(
+            "home removal requires --yes after reviewing the eligible plan",
+            refused.stderr,
+        )
+        self.assertTrue(self.hub.is_dir())
+        self.assertTrue((self.hub / "refs" / "main").is_file())
+        self.assertTrue(self.sibling.is_dir())
+
+    def test_public_cli_stub_remove_yes_deletes_only_that_hub(self) -> None:
+        environment, _ids_file, _metadata_file = self._cli_environment()
+        removed = self._run_library_cli(
+            environment,
+            "home", "remove", "qwen3-1.7b", "--allow-last-home", "--yes",
+        )
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertFalse(self.hub.exists())
+        self.assertTrue(self.sibling.is_dir())
+        self.assertTrue((self.sibling / "keep.txt").is_file())
+        self.assertTrue((self.cache_root / "hub").is_dir())
+
+    def test_public_cli_missing_topology_fails_closed(self) -> None:
+        environment, _ids_file, _metadata_file = self._cli_environment()
+        environment["CLUSTER_TOPOLOGY_FILE"] = str(self.root / "missing-topology.json")
+        check = self._run_library_cli(
+            environment,
+            "home", "check", "qwen3-1.7b", "--allow-last-home",
+        )
+        self.assertNotEqual(check.returncode, 0)
+        self.assertTrue(self.hub.is_dir())
+        remove = self._run_library_cli(
+            environment,
+            "home", "remove", "qwen3-1.7b", "--allow-last-home", "--yes",
+        )
+        self.assertNotEqual(remove.returncode, 0)
+        self.assertTrue(self.hub.is_dir())
+        self.assertTrue(self.sibling.is_dir())
+
+    def test_unknown_revision_without_bindable_ref_fails_closed(self) -> None:
+        (self.hub / "refs" / "main").write_text("not-a-commit\n", encoding="utf-8")
+        inspection = model_library.inspect_removable_home(
+            self.hub,
+            cache_root=self.cache_root,
+            model_id=self.model_id,
+            revision="unknown",
+            rank=0,
+            node_id=self.node_id,
+        )
+        codes = {item["code"] for item in inspection["blockers"]}
+        self.assertIn("unknown-revision", codes)
+        self.assertEqual(inspection["state"], "blocked")
+
+    def test_select_unknown_catalog_row_is_inspectable(self) -> None:
+        target = model_library.select_home_removal_target(
+            self.catalog_path,
+            "qwen",
+        )
+        self.assertEqual(target["occupancy_class"], "incomplete-hub")
+        self.assertTrue(target["identity_unbound"])
+        exact = model_library.select_home_removal_target(
+            self.catalog_path,
+            f"{self.model_id}@{self.revision}",
+        )
+        self.assertEqual(exact["home"]["hub_path"], str(self.hub))
+        self.assertEqual(exact["revision"], self.revision)
 
 
 if __name__ == "__main__":
