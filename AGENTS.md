@@ -21,21 +21,22 @@ flowchart LR
   cluster --> runtime
 
   library["Model library<br/>two-rank GA · other scopes experimental"] -. explicit opt-in .-> artifacts
-  fabric["Experimental live weight fabric<br/>NFSv4.2/RDMA over confirmed rails"] -. explicit opt-in .-> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
 
   classDef optin stroke-dasharray: 5 5;
-  class library,fabric optin;
+  class library optin;
 ```
 
 Solid arrows show the promoted control and evidence flow. Dashed arrows are
 explicit non-default weight paths. The reviewed two-rank `library-hot` path is
-GA; remote one-rank and legacy-unsealed uses remain experimental. Live fabric
-also remains experimental. None is a silent fallback or wizard default.
-Control SSH, inference NCCL/RoCE, and weight transfer remain distinct data
-planes even when they involve the same machines.
+GA; remote one-rank and legacy-unsealed uses remain experimental. Do not offer
+live NFSv4.2/RDMA under vLLM (`--weight-source fabric`) as a serving or
+onboarding alternative: a crashed rank cannot cold-start without the owner
+export. The CLI remains until a retirement ADR. None is a silent fallback or
+wizard default. Control SSH, inference NCCL/RoCE, and weight transfer remain
+distinct data planes even when they involve the same machines.
 
 ## Build, Test, and Development Commands
 
@@ -564,9 +565,15 @@ this work; the skill is procedural and does not outrank these sources.
   remains explicit and non-default. Remote one-rank and legacy-unsealed uses
   remain experimental. This transport policy does not create a missing durable
   home or change the replicated guided default.
+- Do not offer live NFSv4.2/RDMA under vLLM (`--weight-source fabric`,
+  `live-remote-readonly`) as a serving or onboarding alternative. A crashed
+  rank cannot cold-start without the owner export, NFS/RDMA stack, and exact
+  route. Replicated and `library-hot` already present local files. Leave the
+  experiment CLI in place until a retirement ADR; do not present it as a
+  choice. This does not retire `ssh-roce` copy, NCCL/RoCE inference, or
+  topology discovery (`detect-fabric.sh`).
 - Distribution transport is run provenance, not Model Serving Release
-  identity. Experimental distribution subsystems are allowed when explicitly
-  selected, but qualification starts only after exact content and the intended
+  identity. Qualification starts only after exact content and the intended
   runtime-access contract verify on every serving rank. A failure before that
   barrier is failed preparation and leaves the release `Untested`.
 - Preserve historical evidence and mark it superseded rather than rewriting it.

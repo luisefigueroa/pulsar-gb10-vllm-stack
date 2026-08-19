@@ -78,8 +78,20 @@ grep -Fq 'library-hot' "$skill" \
   || fail "skill must offer library-hot as a qualifying path"
 grep -Fq 'local-verified-readonly' "$skill" \
   || fail "skill must bind library-hot to local-verified-readonly"
-grep -Fq 'live-remote-readonly' "$skill" \
-  || fail "skill must bind live fabric to live-remote-readonly"
+grep -Fq 'Do not offer live NFS/RDMA' "$skill" \
+  || fail "skill must refuse live NFS/RDMA as a qualifying path"
+grep -Fq 'Do not offer live NFS/RDMA' "$phases" \
+  || fail "phase checklist must refuse live NFS/RDMA as a qualifying path"
+grep -Fq -- '--model-access-contract local-verified-readonly' "$skill" \
+  || fail "skill must bind the planner to local-verified-readonly"
+if grep -Fq -- 'local-verified-readonly|live-remote-readonly' "$skill" "$phases"
+then
+  fail "onboarding must not offer live-remote-readonly as a contract choice"
+fi
+if grep -Eq -- 'up\.sh.*--weight-source fabric' "$skill" "$phases"
+then
+  fail "onboarding must not launch with --weight-source fabric"
+fi
 grep -Fq 'scripts/model-library.sh home add <profile> --revision <selector> --plan --json' "$skill" \
   || fail "skill must compose the read-only source-attested acquisition plan"
 grep -Fq 'observe every confirmed serving rank' "$skill" \

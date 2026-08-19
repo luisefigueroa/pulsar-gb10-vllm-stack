@@ -29,6 +29,10 @@ template is [references/handoff-template.md](references/handoff-template.md).
   failures still fail closed.
 - Do not silently select another node, transport, storage policy, copy,
   runtime source, geometry, or validation criterion.
+- Do not offer live NFS/RDMA serving (`--weight-source fabric`,
+  `live-remote-readonly`) as a qualifying runtime-access path. A crashed
+  rank cannot cold-start without the owner export. Retirement of that
+  runtime source is a separate ADR.
 - Do not mutate `refs/main` to manufacture identity.
 - Do not use `validate/run-gates.sh` as the ADR attempt wrapper.
 - Do not invent a missing validator measurement or share one enclosing
@@ -184,16 +188,17 @@ source-attested receipt or retroactively prove an unknown acquisition.
 
 ### 6. Select qualifying runtime access
 
-For ADR qualification of a brand-new unsealed model, offer only an
-explicitly verified runtime-access path that matches the release recipe:
+For ADR qualification of a brand-new unsealed model, confirm
+`library-hot` as `local-verified-readonly` after the exact rank-local
+verified views exist.
 
-- `library-hot` as `local-verified-readonly`
-- explicitly selected live fabric as `live-remote-readonly` when its exact
-  contract is actually satisfied
+Do not offer live NFS/RDMA (`--weight-source fabric`,
+`live-remote-readonly`) as a serving or onboarding alternative. A crashed
+rank cannot cold-start without the owner's export, NFS/RDMA stack, and
+exact route. Replicated and `library-hot` already present local files.
 
 Name the chosen distribution/source and transport. There is no silent fallback
-and no automatic fallback. Experimental subsystems are allowed only when
-explicitly selected.
+and no automatic fallback.
 
 The current default unsealed replicated path follows mutable `refs/main`,
 mounts the writable HF home, and passes the repository ID. It may still be
@@ -211,10 +216,10 @@ scripts/model-serving-release-plan.sh build <profile> \
   --artifact-manifest <snapshot-manifest.json> \
   --runtime-envelope <runtime-envelope.json> \
   --criteria <criteria.json> \
-  --model-access-contract local-verified-readonly|live-remote-readonly
+  --model-access-contract local-verified-readonly
 scripts/model-serving-release-plan.sh verify <profile> \
   --candidate-dir <release-plan-dir> \
-  --model-access-contract local-verified-readonly|live-remote-readonly
+  --model-access-contract local-verified-readonly
 ```
 
 The structural runtime envelope and geometry do not prove physical behavior.
@@ -223,7 +228,7 @@ runtime/image identity, geometry, or selected access contract.
 
 ### 8. Prepare, verify every rank, then launch
 
-Invoke the owning library/fabric preparation subsystem for the selected path.
+Invoke the owning library preparation subsystem for the selected path.
 Do not duplicate its transfer, retention, or cleanup logic.
 
 Verify the exact all-rank runtime-access barrier before qualification. A
@@ -233,8 +238,6 @@ with the matching explicit weight source:
 
 ```text
 scripts/up.sh <profile> --weight-source library-hot
-# or, only when the live fabric contract is satisfied:
-scripts/up.sh <profile> --weight-source fabric
 ```
 
 ### 9. Same-boot identities
@@ -306,7 +309,7 @@ workflow is a later, separate trust event.
 
 Require a separate **destructive cleanup** confirmation. Use the normal
 stop path (`scripts/down.sh` / `./pulsar` stop). Then use the owning
-library/fabric cleanup only for resources this workflow created. Refuse
+library cleanup only for resources this workflow created. Refuse
 when a managed service still uses the resource. Do not `docker rm`
 unrelated workloads.
 

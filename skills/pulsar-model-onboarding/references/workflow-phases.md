@@ -120,10 +120,8 @@ does not replace the independent acquisition proof.
 
 ## 6. Distribution choice
 
-Ask which explicit path to use:
-
-- `library-hot` → `local-verified-readonly`
-- live fabric → `live-remote-readonly` only when that contract is satisfied
+Confirm `library-hot` → `local-verified-readonly`. Do not offer live NFS/RDMA
+serving (`--weight-source fabric`, `live-remote-readonly`).
 
 Record the source and transport. No silent fallback. No automatic
 fallback. The default unsealed replicated path follows mutable
@@ -139,25 +137,24 @@ unreviewed plan before testing:
 ```text
 scripts/model-serving-release-plan.sh build <profile> \
   --artifact-manifest FILE --runtime-envelope FILE --criteria FILE \
-  --model-access-contract local-verified-readonly|live-remote-readonly
+  --model-access-contract local-verified-readonly
 scripts/model-serving-release-plan.sh verify <profile> \
   --candidate-dir DIR \
-  --model-access-contract local-verified-readonly|live-remote-readonly
+  --model-access-contract local-verified-readonly
 ```
 
 The runtime envelope and geometry checks are structural, not physical proof.
 
 ## 8. Preparation, barrier, then launch
 
-1. Invoke the owning library/fabric preparation subsystem for the selected
+1. Invoke the owning library preparation subsystem for the selected
    path. Do not duplicate its transfer, retention, or cleanup logic.
 2. Verify exact content and the intended runtime-access contract on every
    serving rank.
 3. If that barrier fails, qualification did not start. Do not record a
    model-criterion failure.
 4. Obtain a separate launch confirmation.
-5. `scripts/up.sh <profile> --weight-source library-hot` or
-   `--weight-source fabric`.
+5. `scripts/up.sh <profile> --weight-source library-hot`.
 
 ## 9. Identities and measurements
 
