@@ -254,6 +254,32 @@ class ModelReleaseContracts(unittest.TestCase):
         self.assertIn("exact 40-64 hex HF commit", stderr)
         self.assertFalse(output.exists())
 
+    def test_manifest_hashes_attested_empty_snapshot_file(self) -> None:
+        (self.hub / "snapshots" / self.revision / "empty.txt").write_bytes(b"")
+        output = self.root / "experiments" / "release-candidates" / "empty-ok"
+        result, stdout, stderr = self.run_tool(
+            [
+                "manifest",
+                *self.common_args(),
+                "--hub-path",
+                str(self.hub),
+                "--revision",
+                self.revision,
+                "--output-dir",
+                str(output),
+                "--json",
+            ]
+        )
+        self.assertEqual(result, 0, stderr)
+        report = json.loads(stdout)
+        self.assertEqual(report["state"], "observed-unreviewed")
+        manifest = json.loads(
+            (output / "snapshot-manifest.json").read_text(encoding="utf-8")
+        )
+        empty = next(item for item in manifest["files"] if item["path"] == "empty.txt")
+        self.assertEqual(empty["size"], 0)
+        self.assertEqual(empty["sha256"], hashlib.sha256(b"").hexdigest())
+
     def test_manifest_full_hash_rejects_corrupt_lfs_blob(self) -> None:
         revision = "d" * 40
         hub = self.root / "corrupt" / model_library.model_id_to_hub_dirname(

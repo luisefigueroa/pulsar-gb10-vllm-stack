@@ -376,6 +376,7 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         args.hub_path,
         model_id=args.model_id,
         revision=revision,
+        allow_empty_files=True,
     )
     manifest = model_library.validate_snapshot_manifest(manifest)
     if manifest["snapshot_revision"] != revision:

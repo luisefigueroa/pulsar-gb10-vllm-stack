@@ -352,7 +352,9 @@ scripts/model-release.sh plan <profile> --json
 ```
 
 Hash the exact snapshot. The command does not follow `refs/main`; the commit is
-required explicitly.
+required explicitly. Empty snapshot files are hashed (size 0) so a
+source-attested home that already accepted them can produce an observed
+manifest; this still does not issue a seal or status.
 
 ```bash
 scripts/model-release.sh manifest <profile> \
