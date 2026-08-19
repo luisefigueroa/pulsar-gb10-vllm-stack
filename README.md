@@ -351,7 +351,7 @@ promote a claim and is not exposed through `pulsar`.
 | `scripts/model-library.sh health [--json]` | Sanitized cached-catalog and rank-local hot metadata health |
 | `scripts/list-models.sh` | Conf catalog |
 | `scripts/check-weights.sh` / `pull-weights.sh` | Artifact completeness / stage every exact rank |
-| `./pulsar weight-fabric` | Experimental single-copy NFS/RDMA lifecycle and evidence |
+| `./pulsar weight-fabric` | Leftover live-NFS show/unmount/teardown only (ADR 0005) |
 | `scripts/check-image.sh` / `sync-image.sh` | Image presence / stage every exact rank |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
 | `scripts/detect-fabric.sh` | Discover, verify, and confirm N-node topology |

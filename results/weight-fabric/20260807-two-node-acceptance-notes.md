@@ -465,4 +465,4 @@ relaunch, and correctness gates now pass.
 
 ## Final disposition
 
-Pending. Do not promote `--weight-source fabric` based on this file alone.
+**SUPERSEDED — not promoted.** Do not promote `--weight-source fabric` based on this file. ADR 0005 rejects live NFS/RDMA serving. Leave the PASS/FAIL rows above unchanged.

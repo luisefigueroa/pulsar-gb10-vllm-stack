@@ -548,7 +548,7 @@ deleting `known_hosts` entries. If replacement is legitimate, preserve the old
 and new fingerprints in the incident/change record and enroll only the key
 verified through an independent channel.
 
-### Experimental single-copy weights
+### Retired live NFS serving
 
 The wizard and ordinary launch default to replicated weights; the wizard may
 also present explicitly selected experimental storage choices.

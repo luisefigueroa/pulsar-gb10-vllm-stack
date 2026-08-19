@@ -236,7 +236,7 @@ traffic is kept on verified RoCE instead of silently falling back to that LAN.
 | Docker + NVIDIA support | Required independently on every node used by the profile |
 | Same image | `scripts/sync-image.sh <profile> --pull --yes` stages every required node |
 | Complete weights | `scripts/pull-weights.sh <profile> --yes` downloads here and copies to every other node used by the profile; NFS profiles must be mounted everywhere |
-| Experimental single-copy weights | Optional only: run `scripts/weight-fabric.sh prerequisites <profile>` after configuration; it checks per-node Python, sudo, NFSv4.2/RPC-RDMA, owner server tools, and owner-side `hf`, then offers guarded Ubuntu setup or exact manual guidance. Add `--interactive-sudo` for an attended terminal when existing policy requires a password; Pulsar does not store it or change sudoers. Follow `WEIGHT_FABRIC.md`. |
+| Retired live NFS serving | Not a serving path (ADR 0005). Leftover site mounts use confirmation-gated `scripts/weight-fabric.sh show\|unmount\|teardown` only. Follow `WEIGHT_FABRIC.md`. |
 | No stale managed container | A leftover container can retain rendezvous/RDMA state; stop the exact profile before relaunch |
 
 ```bash
@@ -263,7 +263,7 @@ prove per-rank HCAs or an N-node mesh. Migrate with `--write-topology`.
 | Path | Role |
 |------|------|
 | `$HOME/.cache/huggingface` | Default HF hub cache (mounted into containers) |
-| `.weight-fabric/` | Gitignored, topology-bound configs for the experimental single-copy path |
+| `.weight-fabric/` | Gitignored leftover live-mount configs; teardown only (ADR 0005) |
 | `/mnt/Models` | Optional NFS catalog (`Official Models/…`); required only for confs that point there |
 | Docker image store | Multi‑GB images on **each** node that will run a container |
 
