@@ -35,7 +35,7 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
 | `./pulsar status [model] [--node ID]` | → `scripts/status.sh` (may submit a completion) |
 | `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
-| `./pulsar weight-fabric [args]` | Experimental single-copy NFS/RDMA workflow → `scripts/weight-fabric.sh` |
+| `./pulsar weight-fabric [args]` | Leftover live-NFS show/unmount/teardown only (ADR 0005) → `scripts/weight-fabric.sh` |
 | `./pulsar help` | Concise usage |
 
 ### Model Serving Release policy versus current commands
@@ -548,25 +548,17 @@ deleting `known_hosts` entries. If replacement is legitimate, preserve the old
 and new fingerprints in the incident/change record and enroll only the key
 verified through an independent channel.
 
-### Experimental single-copy weights
+### Retired live NFS serving
 
 The wizard and ordinary launch default to replicated weights; the wizard may
 also present explicitly selected experimental storage choices.
 
-**Live fabric (NFS/RDMA under vLLM):** the opt-in command
-`scripts/up.sh <profile> --weight-source fabric` uses a topology-bound,
-read-only NFSv4.2/RDMA cache view and records its owner/config IDs in container
-labels and inventory. It never creates a replica or falls back automatically.
-Run `scripts/weight-fabric.sh prerequisites <profile>` for a read-only
-per-node setup report. The explicit `setup-prerequisites` command installs
-missing supported Ubuntu packages and an owner-user `hf` environment when
-passwordless sudo is available. On hosts whose existing policy requires a
-password, run attended setup and storage commands with `--interactive-sudo`;
-authentication stays in the operator terminal, Pulsar stores no password, and
-sudoers is unchanged. Otherwise the report gives manual commands and explains
-the remaining privilege requirement. Setup, exact commands, benchmark
-artifacts, destructive replica cleanup, owner/link fault semantics, and
-recovery are in
+**Live fabric (NFS/RDMA under vLLM):** retired as a serving runtime source
+([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)).
+`scripts/up.sh <profile> --weight-source fabric` fails closed. Use
+`--weight-source library-hot` or `--weight-source replicated`. This is not a
+remap to replicated. Leftover site mounts: confirmation-gated
+`scripts/weight-fabric.sh unmount|teardown` only. Historical notes:
 [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 **Library-hot (federated catalog + local hot staging):** the reviewed two-rank

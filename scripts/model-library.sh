@@ -157,7 +157,8 @@ Notes:
     space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
     PULSAR_HOT_RESERVE_BYTES explicitly overrides the reserve. No auto-eviction
     or capacity fallback occurs.
-  • Does not change the wizard's replicated default or --weight-source fabric.
+  • Does not change the wizard's replicated default. Live NFS serving
+    (--weight-source fabric) is retired (ADR 0005).
   • Compatibility: activate and bench-activate remain supported aliases for
     prepare and bench-prepare. Model preparation does not start a serving
     container or establish model qualification.

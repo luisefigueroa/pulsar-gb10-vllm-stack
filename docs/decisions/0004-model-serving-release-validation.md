@@ -6,7 +6,10 @@
   authorization; primary model identity is source-neutral.
   2026-08-17 — a home created by source-attested acquisition may be reused
   only after a complete offline rehash against its valid receipt; unknown
-  and pre-existing homes still require a reviewed expected manifest
+  and pre-existing homes still require a reviewed expected manifest.
+  2026-08-19 — [ADR 0005](./0005-reject-live-nfs-rdma-serving.md) rejects
+  `live-remote-readonly` for new qualifying plans; schema version 1 is
+  unchanged because the tracked registry is empty
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
@@ -91,6 +94,9 @@ Release when both present the exact verified content through an equivalent
 Physical placement, local path spelling, and the transport that moved the bytes
 do not change the release. A live remote mount or another active inference-time
 dependency is a different access contract and therefore a different release.
+[ADR 0005](./0005-reject-live-nfs-rdma-serving.md) later rejects
+`live-remote-readonly` as a serving/onboarding choice for new plans. Schema
+version 1 is unchanged; no issued registry object used that contract.
 
 Runtime/image identity includes the exact image digest and the compatibility
 envelope needed to run it safely, such as supported driver ABI or range,

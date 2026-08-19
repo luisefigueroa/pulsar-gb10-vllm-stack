@@ -13,6 +13,8 @@ selects experimental reviewed-profile preparation.
 [ADR 0004](./decisions/0004-model-serving-release-validation.md) defines the
 Model Serving Release identity, validation-contract, evidence, decision, and
 status model.
+[ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) rejects live
+NFS/RDMA under vLLM as a serving runtime source.
 This document describes current code, evidence, and known gaps. Where current
 behavior differs from the accepted target, the difference is labeled as an
 implementation gap rather than presented as a competing decision.
@@ -24,7 +26,7 @@ implementation gap rather than presented as a competing decision.
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
 | Additional catalog path | Operator-mounted absolute paths, conventionally under `/mnt/Models` |
-| Experimental storage paths | Federated durable home plus sealed local hot, and a distinct live NFSv4.2/RPC-RDMA owner path |
+| Experimental storage paths | Federated durable home plus sealed local hot. Live NFSv4.2/RPC-RDMA under vLLM is retired (ADR 0005). One-shot `nfs-rdma` prepare remains a separate experiment. |
 | Document status | Descriptive current-system specification; not a promotion or architecture claim |
 
 This document is intentionally self-contained. It describes what the current
@@ -40,7 +42,7 @@ This snapshot supports review of thirteen implementation areas:
 1. model-profile catalog behavior for geometry, runtime flags, memory budgets,
    and legacy validation status;
 2. the promoted replicated distribution path;
-3. the experimental live NFS/RDMA single-copy path;
+3. the retired live NFS/RDMA single-copy serving path (ADR 0005; historical);
 4. the experimental transfer-then-load model-library path;
 5. the maintainer-only legacy release identity and candidate-assembly service;
 6. the pure ADR 0004 release-descriptor and Validation Contract schemas;
@@ -80,7 +82,7 @@ one-home steady state. Profiles without a seal
 remain legacy-unsealed, and neither issuance nor gate promotes the
 model-library path.
 The replicated control plane applies the reviewed seal when a profile has one;
-live-mount launches remain unbound.
+live-mount serving is retired (ADR 0005).
 
 ADR 0004 stage 1 is implemented by `scripts/model_serving_release.py`: pure
 builders and fail-closed validators own the separate release descriptor and
@@ -220,7 +222,7 @@ flowchart TD
     R["Replicated HF repository\none complete local copy per serving rank"]
     C["Operator-mounted catalog path\npre-existing on every serving rank"]
     L["Library-hot\nreviewed two-rank GA · other scopes experimental"]
-    F["Experimental single-copy fabric\none owner, read-only NFS/RDMA clients"]
+    F["Retired live NFS/RDMA serving\nADR 0005 · launch fails closed"]
     G["Fail-closed preflight\nstatus, topology, image, weights, memory, network"]
     V["vLLM containers\nlocal rank 0 API plus remote headless ranks"]
     E["Health, smoke/warmup, validation, evidence"]
@@ -230,7 +232,7 @@ flowchart TD
     S --> R --> G
     S --> C --> G
     S --> L --> G
-    S --> F --> G
+    S -.-> F
     G --> V --> E
 ```
 
@@ -240,7 +242,7 @@ The system has three network planes that must not be conflated:
 |---|---|
 | Control | SSH, orchestration, Docker commands, inventory, and fault control. Schema 2 callers pass the stable alias; the generated `.cluster-ssh-config` pins `HostName` to the confirmed control address for cluster, image, inventory, weight, and model-library SSH. |
 | Inference data | NCCL/Gloo/vLLM distributed traffic. Multi-node profiles require a verified RoCE full mesh and select the confirmed HCAs/interfaces. |
-| Weight storage | Local filesystem in replicated/catalog mode; a selected RoCE rail carrying NFS/RDMA in experimental fabric mode. |
+| Weight storage | Local filesystem in replicated/catalog/`library-hot` mode. Live NFS/RDMA under vLLM is retired (ADR 0005). |
 
 The repository is required only on the controller. Remote ranks do not need a
 checkout: the controller constructs Docker commands and streams bounded helper
@@ -639,26 +641,30 @@ the broader configured catalog root into the container, not only the selected
 model subtree. Those responsibilities and the resulting trust boundary are
 external to Pulsar today.
 
-### 7.4 Experimental single-copy NFS/RDMA workflow
+### 7.4 Retired single-copy NFS/RDMA serving workflow
 
-The experimental path is designed to answer a specific question: can multiple
-GB10 ranks load one ordinary Hugging Face/SafeTensors repository over RoCE
-without converting the checkpoint or maintaining durable client replicas?
+This path is retired as a serving runtime source (ADR 0005). It was designed
+to answer whether multiple GB10 ranks could load one ordinary Hugging
+Face/SafeTensors repository over RoCE without converting the checkpoint or
+maintaining durable client replicas. Launch now fails closed.
 
 It does not share KV cache, replace NCCL inference traffic, stream tensors
 directly into the GPU, or use GPUDirect Storage. It preserves ordinary POSIX
 paths, symlinks, reads, and `mmap` behavior while changing the backing
 filesystem transport.
 
-Fabric mode currently supports only multi-node profiles whose `MODEL` is a
-two-component Hugging Face repository ID. It does not wrap absolute catalog
+This retired serving mode supported only multi-node profiles whose `MODEL` is
+a two-component Hugging Face repository ID. It did not wrap absolute catalog
 profiles or one-node profiles.
 
-## 8. Weight-fabric configuration specification
+## 8. Weight-fabric configuration specification (historical)
+
+Live-mount serving commands below fail closed (ADR 0005). This section
+describes the retired configuration object. It is not a serving runbook.
 
 ### 8.1 Configuration creation
 
-An operator first confirms cluster topology, then runs:
+Historically an operator first confirmed cluster topology, then ran:
 
 ```bash
 scripts/weight-fabric.sh configure <profile> \
@@ -891,21 +897,12 @@ operator provisions identical readable path on each serving node
 Pulsar provides guidance if the conventional catalog mount is absent but does
 not create, repair, authenticate, or validate the external catalog service.
 
-### 9.4 Experimental single-copy fabric
+### 9.4 Retired single-copy fabric serving
 
-```bash
-scripts/weight-fabric.sh configure <profile> \
-  --owner <topology-node-id> \
-  --storage-nodes <count>
-
-scripts/weight-fabric.sh prerequisites <profile>
-scripts/weight-fabric.sh setup-prerequisites <profile>   # only if needed
-scripts/weight-fabric.sh download <profile>
-scripts/weight-fabric.sh apply <profile>
-scripts/weight-fabric.sh verify <profile>
-
-scripts/up.sh <profile> --weight-source fabric
-```
+`scripts/up.sh <profile> --weight-source fabric` fails closed (ADR 0005).
+Configure/apply/download serving commands are refused. Leftover site mounts
+use `show` / `unmount` / `teardown` only. Historical workflow text is not a
+serving alternative.
 
 Prerequisite setup installs only missing Python/NFS packages and an owner-local
 Hugging Face CLI environment. The owner requires `nfs-kernel-server`; clients
@@ -928,7 +925,7 @@ Diagnostic canaries are intentionally absent from the serving wizard. An
 operator invokes them directly, for example:
 
 ```bash
-scripts/up.sh qwen3-1.7b-2node --weight-source fabric
+scripts/up.sh qwen3-1.7b-2node --weight-source library-hot
 ```
 
 This keeps storage and multi-node plumbing experiments from being presented as
@@ -1777,8 +1774,8 @@ and topology.
 These points combine current evidence with the accepted architecture:
 
 1. Keep replicated local HF caches as the guided default.
-2. Keep live NFS/RDMA an explicit advanced CLI path until its own promotion
-   gates pass.
+2. Live NFS/RDMA serving is rejected (ADR 0005). Launch fails closed. Do not
+   present it as an advanced serving alternative.
 3. Accept the measured 8-stream SSH-over-RoCE preparation and sealed local-hot
    results in the catalog/artifact and serving-integration scopes. Keep it as a
    separate release-promotion candidate; do not make it the recommended or
@@ -2125,8 +2122,9 @@ removed, and the exact reviewed path passed 30-minute serving, restart, forced
 replacement launch failure, persisted exact recovery in a new wizard process,
 identity re-verification, cleanup, and one-home closeout. The soak completed 587
 requests with zero errors and retained its 1.14 GiB memory-shrink warning.
-Remote one-rank and legacy-unsealed use remain experimental. Live NFS/RDMA additionally
-retains its owner-recovery and three-node validation work. The accurate product claim is:
+Remote one-rank and legacy-unsealed use remain experimental. Live NFS/RDMA
+serving is retired (ADR 0005); historical owner-recovery notes are superseded
+and not promoted. The accurate product claim is:
 
 > Replicated model-cache workflows remain promoted and user-facing. For sealed
 > profiles they enforce the reviewed exact identity; profiles without a seal
@@ -2135,6 +2133,6 @@ retains its owner-recovery and three-node validation work. The accurate product 
 > `deepseek-v4-flash`; both have completed their applicable post-issuance
 > physical enforcement gates. Sealed local-hot preparation over SSH-over-RoCE
 > is GA for reviewed two-rank profiles, remains explicit and non-default, and
-> keeps remote one-rank and legacy-unsealed use experimental. Live NFS/RDMA is a
-> separate documented experiment. No current profile has been automatically
+> keeps remote one-rank and legacy-unsealed use experimental. Live NFS/RDMA
+> serving is retired (ADR 0005). No current profile has been automatically
 > relabeled with the new Model Serving Release statuses.

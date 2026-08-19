@@ -16,7 +16,7 @@ do not quote them as today's geometry or spec-decode verdicts.
 | `dsv4-*.json`, `*-0731*`, `*-20gb*` | flagship captures and 0731 / 20 GB geometry gates. Canonical soak: `soak-dsv4-20gb-150min.json` (c=5, 3201 req). Pre-20 GB soaks remain historical. gsm8k 0.925 lives in `lm-eval-dsv4-0731-500kv/` (10 GB / 500K), not the 20 GB section |
 | `needle-dsv4-20gb-447k.log` | only shipped needle transcript: 20 GB DeepSeek 3/3 @447K. Qwen 27B / Laguna / Nano needle PASS rows in VALIDATION.md have no `results/` file |
 | `bench-*.json` | concurrency sweeps (validate/bench_serve.py, warmup per level) |
-| `weight-fabric/<tag>/` | experimental live NFS/RDMA storage bundles: public provenance/manifest, rank I/O/CPU/memory, interface counters, integrity, traffic proof, and privacy audit |
+| `weight-fabric/<tag>/` | **superseded** historical live NFS/RDMA serving evidence (ADR 0005); not a serving path. See [weight-fabric/README.md](./weight-fabric/README.md) |
 | `model-library/` | federated-library preparation, SSH-over-RoCE, topology trust, seals/bundles, and current/superseded evidence index (`model-library/README.md`) |
 | `soak-*.json` | soak reports (errors, memory drift, thermals) |
 | `lm-eval-*/` | gsm8k runs (5-shot, 200 samples). Current 0731 flagship: `lm-eval-dsv4-0731/` (0.935). `lm-eval-dsv4/` 0.970 is pre-0731. NOTE: `lm-eval-laguna/` is the INVALID 0.055 run (client-side tokenization bug, kept as evidence); `lm-eval-laguna-textmode/` is the valid one |

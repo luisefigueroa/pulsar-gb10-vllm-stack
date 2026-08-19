@@ -3,7 +3,7 @@
 #   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode] [--force]
 #                 [--skip-preflight]
 #                 [--skip-weights-check] [--accept-memory-warn] [--pull-image]
-#                 [--weight-source replicated|fabric|library-hot]
+#                 [--weight-source replicated|library-hot]
 #                 [--weight-mode library-hot]  (alias for --weight-source library-hot)
 #                 [--node NODE_ID] [--dry-run] [--yes] [--verbose]
 set -euo pipefail
@@ -27,12 +27,12 @@ while [ $# -gt 0 ]; do
     --accept-memory-warn) ACCEPT_MEM=1 ;;
     --pull-image) PULL_IMG=1 ;;
     --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated|fabric|library-hot" 2
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
     --weight-mode)
-      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated|fabric)" 2
+      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated)" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
@@ -53,7 +53,7 @@ usage: scripts/up.sh <model-name> [options]
   --dry-run              run checks only (no launch)
   --verbose              full check logs (default is one-line gates)
   --node NODE_ID          place a one-node profile on this confirmed physical node
-  --weight-source MODE    replicated (default), fabric, or library-hot
+  --weight-source MODE    replicated (default) or library-hot
   --weight-mode MODE      alias for --weight-source (library-hot recommended name)
   --accept-memory-warn   allow start on memory WARN
   --pull-image / --yes   attempt image pull/sync when missing
@@ -71,14 +71,13 @@ done
 acquire_model_library_lifecycle_lock shared
 load_conf "$NAME"
 case "$WEIGHT_SOURCE" in
-  replicated|fabric|library-hot) ;;
-  *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
+  replicated|library-hot) ;;
+  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
+  *) die "--weight-source must be replicated or library-hot" 2 ;;
 esac
 if [ "$WEIGHT_SOURCE" = library-hot ]; then
   acquire_model_library_hot_lock shared
 fi
-[ "$WEIGHT_SOURCE" != fabric ] || [ "$NODES" -gt 1 ] \
-  || die "fabric weights are only valid for multi-node profiles" 2
 WEIGHT_ARGS=(--weight-source "$WEIGHT_SOURCE")
 PLACEMENT_ARGS=()
 SERVICE_API_BASE="http://127.0.0.1:$PORT"
@@ -92,10 +91,7 @@ elif [ -n "$NODE_SELECTOR" ]; then
   die "--node is only valid for one-node profiles" 2
 fi
 resolve_spec_decode "$SPEC_MODE"
-case "$WEIGHT_SOURCE" in
-  fabric) load_model_serving_release_projection live-remote-readonly ;;
-  *) load_model_serving_release_projection local-verified-readonly ;;
-esac
+load_model_serving_release_projection local-verified-readonly
 export QUIET=1
 [ "$VERBOSE" = 1 ] && export QUIET=0
 
@@ -104,7 +100,6 @@ echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT"
 echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (advisory)"
 echo "│  legacy-status=$STATUS (advisory)"
 case "$WEIGHT_SOURCE" in
-  fabric) echo "│  weights=fabric (experimental · cold reads use RoCE)" ;;
   library-hot) echo "│  weights=library-hot (experimental · local hot staging)" ;;
   *) echo "│  weights=$WEIGHT_SOURCE" ;;
 esac
@@ -202,9 +197,6 @@ if [ "$SKIP_W" != 1 ]; then
     if [ "$w_state" = worker-unreachable ] || [ "$w_state" = rank-unreachable ] \
         || [ "$w_state" = unreachable ]; then
       die "one or more required ranks are unreachable — cannot verify weights"
-    fi
-    if [ "$WEIGHT_SOURCE" = fabric ]; then
-      die "single-copy fabric is not ready (state=$w_state) — run: scripts/weight-fabric.sh check $NAME"
     fi
     if [ "$WEIGHT_SOURCE" = library-hot ]; then
       die "library-hot model files are not prepared (state=$w_state) — run: scripts/model-library.sh prepare $NAME --yes"

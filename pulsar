@@ -8,7 +8,7 @@
 #   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
 #   ./pulsar status [model] [--node ID] → scripts/status.sh (optional completion)
 #   ./pulsar doctor [--json] → scripts/doctor.sh
-#   ./pulsar weight-fabric … → experimental single-copy weight workflow
+#   ./pulsar weight-fabric … → leftover live-NFS teardown only (ADR 0005)
 #   ./pulsar help
 #
 # Existing scripts under scripts/ remain the canonical implementations;
@@ -35,7 +35,7 @@ Usage:
                                 Probe containers + API (may run a completion)
   ./pulsar doctor [--json]     Read-only host, cluster, and library diagnostics
   ./pulsar weight-fabric [args]
-                                Experimental single-copy weight workflow
+                                Leftover live-NFS show/unmount/teardown only
   ./pulsar help                 This message
 
 Inventory options (passed through):
@@ -61,8 +61,9 @@ Notes:
     advertisement only — not an inference smoke). Full smoke is optional.
   • stop only removes containers that prove stack ownership
     (io.pulsar.gb10.managed=true + consistent profile/node-placement labels).
-  • weight-fabric is explicit and experimental; normal starts keep replicated
-    local caches unless --weight-source fabric is passed.
+  • live NFS/RDMA serving is retired (ADR 0005). weight-fabric remains only
+    for leftover show/unmount/teardown. Normal starts use replicated or
+    library-hot.
   • UI: GUM=0 / NO_COLOR / PULSAR_COLOR=never / TERM=dumb → plain menus
     (Gum not used). Color-enabled Gum always uses blue palette overrides;
     PULSAR_ACCENT overrides the accent (default 12).

@@ -47,12 +47,12 @@ flowchart LR
 
 Solid arrows show the promoted control and evidence flow. Dashed arrows are
 explicit non-default weight paths. The reviewed two-rank `library-hot` path is
-GA; remote one-rank and legacy-unsealed uses remain experimental. Do not offer
-live NFSv4.2/RDMA under vLLM (`--weight-source fabric`) as a serving or
-onboarding alternative: a crashed rank cannot cold-start without the owner
-export. The CLI remains until a retirement ADR. None is a silent fallback or
-wizard default. Control SSH, inference NCCL/RoCE, and weight transfer remain
-distinct data planes even when they involve the same machines.
+GA; remote one-rank and legacy-unsealed uses remain experimental. Live
+NFSv4.2/RDMA under vLLM (`--weight-source fabric`) is rejected as a serving
+runtime source (ADR 0005): a crashed rank cannot cold-start without the owner
+export. Launch fails closed; leftover unmount/teardown only. None is a silent
+fallback or wizard default. Control SSH, inference NCCL/RoCE, and weight
+transfer remain distinct data planes even when they involve the same machines.
 
 ## What sets this stack apart
 
@@ -259,9 +259,9 @@ capacity, security, and lifecycle checks still fail closed. No schema object or 
 establishes physical DGX behavior.
 
 **Additional storage paths:** replicated local Hugging Face caches remain the
-default. Do not offer live NFSv4.2/RDMA under vLLM (`--weight-source fabric`)
-as a serving path: a crashed rank cannot cold-start without the owner export.
-That experiment remains in the tree until a retirement ADR. A distinct
+default. Live NFSv4.2/RDMA under vLLM (`--weight-source fabric`) is rejected
+as a serving path (ADR 0005): a crashed rank cannot cold-start without the
+owner export. Launch fails closed with no remap. A distinct
 `library-hot` candidate keeps one durable home,
 uses a symlink view on that rank, and transfers sealed hot copies only to other
 ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
@@ -283,9 +283,10 @@ warning for review. Remote one-rank placement and legacy-unsealed use remain
 experimental. `library-hot` remains explicit and non-default. Sealed replicated
 caches now enforce the
 reviewed commit/manifest with full verification, a rank-local witness, and
-exact-snapshot read-only launch; legacy-unsealed replicated and live-mount
-paths remain unbound. See
-[docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md) and
+exact-snapshot read-only launch; legacy-unsealed replicated paths remain
+unbound, and live-mount serving is retired. See
+[ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md),
+[docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md), and
 [docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). For an existing
 eligible primary home, reviewed multi-rank preparation is topology-bound
 SSH-over-RoCE with eight streams and no fallback. Enroll and
@@ -350,7 +351,7 @@ promote a claim and is not exposed through `pulsar`.
 | `scripts/model-library.sh health [--json]` | Sanitized cached-catalog and rank-local hot metadata health |
 | `scripts/list-models.sh` | Conf catalog |
 | `scripts/check-weights.sh` / `pull-weights.sh` | Artifact completeness / stage every exact rank |
-| `./pulsar weight-fabric` | Experimental single-copy NFS/RDMA lifecycle and evidence |
+| `./pulsar weight-fabric` | Leftover live-NFS show/unmount/teardown only (ADR 0005) |
 | `scripts/check-image.sh` / `sync-image.sh` | Image presence / stage every exact rank |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
 | `scripts/detect-fabric.sh` | Discover, verify, and confirm N-node topology |

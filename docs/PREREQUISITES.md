@@ -236,7 +236,7 @@ traffic is kept on verified RoCE instead of silently falling back to that LAN.
 | Docker + NVIDIA support | Required independently on every node used by the profile |
 | Same image | `scripts/sync-image.sh <profile> --pull --yes` stages every required node |
 | Complete weights | `scripts/pull-weights.sh <profile> --yes` downloads here and copies to every other node used by the profile; NFS profiles must be mounted everywhere |
-| Experimental single-copy weights | Optional only: run `scripts/weight-fabric.sh prerequisites <profile>` after configuration; it checks per-node Python, sudo, NFSv4.2/RPC-RDMA, owner server tools, and owner-side `hf`, then offers guarded Ubuntu setup or exact manual guidance. Add `--interactive-sudo` for an attended terminal when existing policy requires a password; Pulsar does not store it or change sudoers. Follow `WEIGHT_FABRIC.md`. |
+| Retired live NFS serving | Not a serving path (ADR 0005). Leftover site mounts use confirmation-gated `scripts/weight-fabric.sh show\|unmount\|teardown` only. Follow `WEIGHT_FABRIC.md`. |
 | No stale managed container | A leftover container can retain rendezvous/RDMA state; stop the exact profile before relaunch |
 
 ```bash
@@ -263,7 +263,7 @@ prove per-rank HCAs or an N-node mesh. Migrate with `--write-topology`.
 | Path | Role |
 |------|------|
 | `$HOME/.cache/huggingface` | Default HF hub cache (mounted into containers) |
-| `.weight-fabric/` | Gitignored, topology-bound configs for the experimental single-copy path |
+| `.weight-fabric/` | Gitignored leftover live-mount configs; teardown only (ADR 0005) |
 | `/mnt/Models` | Optional NFS catalog (`Official Models/…`); required only for confs that point there |
 | Docker image store | Multi‑GB images on **each** node that will run a container |
 
@@ -364,7 +364,8 @@ not permission to serve an unmeasured geometry.
 |-----|------|
 | [HARDWARE.md](./HARDWARE.md) | Measured bandwidth, RoCE map, storage |
 | [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
-| [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Experimental one-copy NFS/RDMA design, operations, faults, and gates |
+| [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Superseded live NFS/RDMA serving notes and leftover teardown (ADR 0005) |
+| [decisions/0005-reject-live-nfs-rdma-serving.md](./decisions/0005-reject-live-nfs-rdma-serving.md) | Reject live-mount as a serving runtime source; keep ssh-roce / NCCL / topology |
 | [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, preparation/hot/pin policy; reviewed two-rank `library-hot` GA is explicit and non-default, while other scopes remain experimental |
 | [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: reviewed exact-content home symlink, non-home hot only, expected seal and serve-time witness |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |

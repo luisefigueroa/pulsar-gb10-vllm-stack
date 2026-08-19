@@ -7,8 +7,9 @@
 > override the accepted target. Replicated local caches remain the guided
 > default until every promotion gate passes. Operator commands and current
 > limitations are documented in [OPERATIONS.md](./OPERATIONS.md); the distinct
-> live NFS/RDMA path remains documented in
-> [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
+> live NFS/RDMA serving path is rejected by
+> [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical
+> notes remain in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 >
 > Exploratory drafts and rejected-or-deferred option lists are archived under
 > [docs/archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md).
@@ -26,6 +27,8 @@
 > Model Serving Release identity, validation contracts, decision statuses, and
 > the separation of distribution provenance from release identity are governed
 > by [ADR 0004](./decisions/0004-model-serving-release-validation.md).
+> Live NFS/RDMA serving is rejected by
+> [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md).
 
 | Field | Value |
 |---|---|
@@ -33,12 +36,13 @@
 | Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles. Remote one-rank and legacy-unsealed use remain experimental, and replicated serving remains the guided default. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16 |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md) |
-| Live experimental ops | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) |
+| Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
 | Default today | Replicated local Hugging Face caches |
 | GA today | Reviewed two-rank `library-hot`: one exact durable home, exact home symlink, sealed-hot copy on the non-home rank, reviewed identity, fixed eight-stream SSH-over-RoCE preparation, exact restart, persisted replacement recovery, and owned cleanup. It remains explicit and non-default. |
-| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; `--weight-source fabric` live NFSv4.2/RDMA; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; the supervised `pulsar-model-onboarding` orchestration skill; and source-attested Hugging Face v1 acquisition for an absent brand-new unsealed home (bounded one-node rank-0 Gate 14 physically passed; remote target and asymmetric credentials remain pending) |
+| Experimental or staged today | Remote one-rank and legacy-unsealed `library-hot`; one-shot `nfs-rdma` prepare (`--backend fabric`) as a separate follow-up; maintainer-only legacy `scripts/model-release.sh` candidate assembly; maintainer-only `scripts/model-serving-release-plan.sh` source-neutral ADR 0004 release planning; maintainer-only `scripts/model-serving-release-capture.sh` ADR 0004 evidence-capture candidates; the supervised `pulsar-model-onboarding` orchestration skill; and source-attested Hugging Face v1 acquisition for an absent brand-new unsealed home (bounded one-node rank-0 Gate 14 physically passed; remote target and asymmetric credentials remain pending) |
+| Retired serving path | Live `--weight-source fabric` / `live-remote-readonly` (ADR 0005). Launch fails closed. Historical `results/weight-fabric/` evidence is superseded and not promoted. |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -308,14 +312,16 @@ Do not conflate these three storage/runtime layers:
 **Product identity:** single-copy (federated) **library** + explicit **preparation**
 + rank-local runtime views + **purge/pin** policy.
 **Fabric / NFS/RDMA** is a transport, not the long-term product name. Live
-mount under vLLM remains an experiment ([WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md)).
+mount under vLLM is rejected as a serving runtime source
+([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)).
 
 ### 2.1 Terminology and independent axes
 
 - **Home** is the durable storage placement for one exact model revision. It
   may be any confirmed node and is not necessarily rank 0.
 - **Owner** is reserved for the node running a live export/service, such as the
-  experimental NFS/RDMA path. It is not a synonym for rank 0 or durable home.
+  retired NFS/RDMA serving path or leftover teardown. It is not a synonym for
+  rank 0 or durable home.
 - **Rank 0** is the API/control rank for the exact serving geometry.
 - **Origin** is `huggingface`, `cold-catalog`, or `managed-home`.
 - **Transfer** is `preexisting`, `ssh-control`, `ssh-roce`, or `nfs-rdma`.
@@ -756,8 +762,8 @@ The warm-home rank uses its existing `durable-home` view.
 |---|---|---|---|
 | `ssh-control` | copy backend over confirmed control SSH | Management LAN | Baseline, diagnostic, and explicit comparison path |
 | `ssh-roce` | copy backend with `--transport ssh-roce` | SSH/TCP pinned to confirmed RoCE endpoint | Fixed eight-stream policy for explicit reviewed multi-rank preparation; GA for the reviewed two-rank `library-hot` scope |
-| `nfs-rdma` | fabric backend, then release | Short-lived NFSv4.2/RDMA transfer plane | Separate candidate |
-| `live-mount` | `--weight-source fabric` | Long-lived NFSv4.2/RDMA runtime dependency | Separate experiment |
+| `nfs-rdma` | fabric backend, then release | Short-lived NFSv4.2/RDMA transfer plane | Separate candidate (not decided by ADR 0005) |
+| `live-mount` | `--weight-source fabric` | Long-lived NFSv4.2/RDMA runtime dependency | **Rejected** as a serving runtime source ([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)) |
 
 Neither transfer replaces NCCL inference traffic. No candidate may silently
 fall back to control transfer, TCP NFS, replicated pulls, or a different
@@ -943,7 +949,7 @@ Pulsar's discovery boundary.
 | Path | Role under this direction |
 |---|---|
 | Replicated `pull-weights` + local launch | **Remains the guided and fresh-cluster default** |
-| Live `--weight-source fabric` | **Experimental** proof/ops path; long-lived mount under vLLM is **not** the agreed product identity |
+| Live `--weight-source fabric` | **Rejected** as a serving runtime source (ADR 0005). Historical evidence remains; not promoted. |
 | Site cold path confs | Optional cold tier; keep working |
 | Topology rails and NFS/RDMA helpers | Reused by fabric **preparation**; model-library schema-3 hot state carries full SHA-256 observed content plus optional expected-seal provenance, while live-fabric configuration identity remains separate |
 | Materialize-as-only-mechanism drafts | Superseded as the top-level story; prepare+hot+pin is the product frame |
@@ -1254,3 +1260,4 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-17 | Bound source-attested receipt authority to the exact live durable-home directory published by that acquisition. A private site-local current-home attachment, written only after successful no-replace publication, selects the owning receipt. Missing, stale, restored, or replaced trees have no receipt authority and still require a reviewed expected manifest. Supported home removal detaches the pointer before mutation and keeps immutable receipts. Interrupted writer temps that match the exclusive writer grammar are ignored during enumeration. Control-plane implemented; physical Hub/DGX gate pending. |
 | 2026-08-17 | The bounded Nemotron Nano source-attested Gate 14 physically passed on a three-rank topology with a one-node rank-0 target: legacy-home refusal/removal, exact public source resolution, two complete 19,362,748,480-byte acquisitions, immutable receipt plus current-home attachment, independent offline rehash, exact prepare/reuse without download, active-view removal blocker, controlled missing-attachment refusal, guarded detach/removal, receipt preservation, reacquisition, and final healthy one-home/no-hot state. Remote target execution, asymmetric credentials, an actual external new-inode restore, serving integration, model qualification, status, and promotion were not run or claimed. |
 | 2026-08-18 | Guarded `home check` / `home remove --yes` can inspect and retire a recognized incomplete or refs-only Hugging Face hub occupancy that blocks source-attested `home add`. The plan states the retire-path-absent action, public model identity, bound commit when live `refs/main` names one, rank role, eligibility, and delete/retain scope. Last occupancy still needs `--allow-last-home`. `home check` is read-only; no `--yes` means no mutation; catalog refresh never auto-deletes. Complete homes, multi-revision trees, attached homes, and unbound `@unknown` rows stay on the previous fail-closed contract. Deterministic tests only; no physical Hub/DGX removal was run. |
+| 2026-08-19 | **ADR 0005 accepted:** reject live NFS/RDMA under vLLM (`--weight-source fabric`, `live-remote-readonly`) as a serving runtime source. Rank-local restart cannot cold-start without the owner export. Keep NCCL/RoCE, topology discovery, and ADR 0003 `ssh-roce` prepare. Launch fails closed with no remap. One-shot `nfs-rdma` prepare remains a separate experiment. Historical `results/weight-fabric/` evidence is superseded and not rewritten. |

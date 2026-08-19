@@ -2,7 +2,7 @@
 # Download HF weights locally, then copy the full hub tree to each selected
 # remote physical node. NFS/catalog profiles remain check-only.
 #   scripts/pull-weights.sh <model-name> [--node NODE_ID]
-#                           [--weight-source replicated|fabric] [--yes]
+#                           [--weight-source replicated] [--yes]
 set -euo pipefail
 SCRIPT_NAME=pull-weights
 # shellcheck disable=SC1091
@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated or fabric" 2
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
@@ -35,18 +35,10 @@ done
 acquire_model_library_lifecycle_lock shared
 load_conf "$NAME"
 case "$WEIGHT_SOURCE" in
-  replicated|fabric) ;;
-  *) die "--weight-source must be replicated or fabric" 2 ;;
+  replicated) ;;
+  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
+  *) die "--weight-source must be replicated" 2 ;;
 esac
-if [ "$WEIGHT_SOURCE" = fabric ]; then
-  [ -z "$NODE_SELECTOR" ] \
-    || die "--node cannot be combined with --weight-source fabric" 2
-  [ "$NODES" -gt 1 ] \
-    || die "fabric weights are only valid for multi-node profiles" 2
-  fabric_args=(download "$NAME")
-  [ "$YES" = 1 ] && fabric_args+=(--yes)
-  exec "$PULSAR_WEIGHT_FABRIC_TOOL" "${fabric_args[@]}"
-fi
 kind=$(model_source_kind)
 SEALED_REPLICATED=0
 TARGET_RANKS=()

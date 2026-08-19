@@ -76,6 +76,8 @@ Verify consistency across doctrine, code, UI, tests, operations, and evidence:
 - operator language says “prepare model for serving”; `activate` remains only a
   compatibility command/internal term;
 - no silent transport, storage, geometry, or cache fallback occurs;
+- live NFS/RDMA serving (`--weight-source fabric`, `live-remote-readonly`) is
+  rejected (ADR 0005) and is not offered as a serving alternative;
 - one durable home exists per exact revision by default;
 - the home rank uses its durable-home view, never a second hot copy;
 - only non-home ranks receive sealed-hot copies;

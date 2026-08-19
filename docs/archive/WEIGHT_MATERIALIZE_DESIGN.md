@@ -6,9 +6,10 @@
 > This file keeps early materialize sketches, option lists, and discussion
 > noise for archaeology. Do **not** treat it as the active design.
 >
-> Original status was “under future consideration.” Defaults and live fabric
-> ops remain as in [WEIGHT_FABRIC.md](../WEIGHT_FABRIC.md) until an explicit
-> implementation decision.
+> Original status was “under future consideration.” Live NFS/RDMA serving is
+> later rejected by
+> [ADR 0005](../decisions/0005-reject-live-nfs-rdma-serving.md). Historical
+> live-mount notes remain in [WEIGHT_FABRIC.md](../WEIGHT_FABRIC.md).
 
 | Field | Value |
 |---|---|
@@ -17,7 +18,7 @@
 | Related live design | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Related ops | [OPERATIONS.md](./OPERATIONS.md), [MULTINODE.md](./MULTINODE.md) |
 | Default today | Replicated local HF caches |
-| Experimental today | `--weight-source fabric` (live NFSv4.2/RDMA mount under vLLM) |
+| Experimental today (at capture) | `--weight-source fabric` (live NFSv4.2/RDMA mount under vLLM; later rejected by ADR 0005) |
 
 ---
 

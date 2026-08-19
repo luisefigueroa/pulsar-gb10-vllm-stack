@@ -70,7 +70,7 @@ the digest-pinned PR-41834 image, normalized two-node profile, and reviewed
 evidence. Profiles without seals—including `qwen3-1.7b-2node`—remain
 `legacy-unsealed`. Replicated download/readiness/launch enforces the
 reviewed seal for profiles that have one; unsealed replicated profiles and all
-current live-mount launches remain mutable and are not content-bound.
+live-mount serving is retired (ADR 0005).
 `STATUS=tested*` must not be interpreted as validating arbitrary bytes under
 the same repository ID. Do not generate an expected seal from a user cache;
 recover the lab artifact used for the run or revalidate the exact content.

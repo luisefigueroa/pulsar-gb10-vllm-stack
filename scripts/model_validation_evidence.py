@@ -510,11 +510,13 @@ def _validate_runtime_sources(
         fail("qualification barrier requires one runtime source for every rank")
     access_contract = release["serving_recipe"]["model_access_contract"]
     source_names = {item["source"] for item in value}
+    if access_contract == "live-remote-readonly":
+        fail(
+            "live-remote-readonly is retired as a serving access contract "
+            "(ADR 0005); use local-verified-readonly"
+        )
     if access_contract == "local-verified-readonly" and "live-mount" in source_names:
         fail("local verified release cannot use a live-mount runtime source")
-    if access_contract == "live-remote-readonly" and barrier_state == "passed":
-        if source_names != {"live-mount"}:
-            fail("live remote release requires live-mount on every serving rank")
     return value
 
 

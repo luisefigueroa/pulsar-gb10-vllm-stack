@@ -33,7 +33,7 @@ validation identity. The rank-local serve witness is implemented for
 only after full verification, while unchanged launch uses metadata and drift
 visibly rehashes before refresh. Sealed replicated download pins the exact
 commit and every materialized rank is verified. Legacy-unsealed replicated
-profiles and live-mount launch remain unbound.
+profiles remain unbound, and live-mount serving is retired (ADR 0005).
 The standalone bundle verifier is implemented. Maintainer-only
 `scripts/model-release.sh` can hash an exact commit and assemble/verify
 deterministic unreviewed candidates; trusted publication remains a deliberate
@@ -411,13 +411,14 @@ PP combination:
 
 No three-node serving profile is promoted by the current ledger.
 
-## 7. Experimental single-copy storage (conditional)
+## 7. Experimental catalog storage (conditional)
 
-Do not inherit **serving integration or model qualification** from the
-replicated-cache path for `--weight-source fabric` or `library-hot`. Generic
-catalog evidence may be reused only when its measured identity, placement,
-transfer, and lifecycle contracts are unchanged. Follow `WEIGHT_FABRIC.md`,
-`MODEL_LIBRARY_DESIGN.md`, and
+Live NFS/RDMA serving (`--weight-source fabric`) is retired (ADR 0005) and
+must not be used as a revalidation subject. Do not inherit **serving
+integration or model qualification** from the replicated-cache path for
+`library-hot`. Generic catalog evidence may be reused only when its measured
+identity, placement, transfer, and lifecycle contracts are unchanged. Follow
+`MODEL_LIBRARY_DESIGN.md` and
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
 preserve unique result bundles for the affected scopes:
 

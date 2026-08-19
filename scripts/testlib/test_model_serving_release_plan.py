@@ -304,7 +304,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
                 "--criteria",
                 str(criteria_path),
                 "--model-access-contract",
-                "live-remote-readonly",
+                "local-verified-readonly",
                 "--output-dir",
                 str(candidate_dir),
             )
@@ -325,10 +325,43 @@ class ModelServingReleasePlanTests(unittest.TestCase):
                 "--candidate-dir",
                 str(candidate_dir),
                 "--model-access-contract",
-                "live-remote-readonly",
+                "local-verified-readonly",
                 "--json",
             )
             self.assertEqual(json.loads(verification.stdout)["verification"], "passed")
+
+    def test_live_remote_readonly_is_rejected_for_new_plans(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = pathlib.Path(raw)
+            manifest_path = root / "manifest.json"
+            envelope_path = root / "runtime-envelope.json"
+            criteria_path = root / "criteria.json"
+            candidate_dir = root / "candidate"
+            write_json(manifest_path, manifest())
+            write_json(envelope_path, runtime_envelope())
+            write_json(criteria_path, criteria_input())
+            result = self.run_cli(
+                "build",
+                PROFILE,
+                "--artifact-manifest",
+                str(manifest_path),
+                "--runtime-envelope",
+                str(envelope_path),
+                "--criteria",
+                str(criteria_path),
+                "--model-access-contract",
+                "live-remote-readonly",
+                "--output-dir",
+                str(candidate_dir),
+                expect_success=False,
+            )
+            combined = f"{result.stdout}\n{result.stderr}"
+            self.assertTrue(
+                "live-remote-readonly" in combined
+                and ("invalid choice" in combined or "ADR 0005" in combined),
+                combined,
+            )
+            self.assertFalse(candidate_dir.exists())
 
     def test_each_additional_artifact_requires_one_binding(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

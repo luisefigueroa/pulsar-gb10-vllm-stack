@@ -3,7 +3,7 @@
 # then local rank 0 with the API. Every active rank is one GB10.
 #
 #   cluster/start-cluster.sh <model-name> [--spec-decode|--no-spec-decode]
-#                            [--weight-source replicated|fabric|library-hot]
+#                            [--weight-source replicated|library-hot]
 #                            [--skip-preflight] [--skip-warmup] [--dry-run]
 #
 # Backend: vLLM native --nnodes/--node-rank with the mp executor over RoCE.
@@ -30,12 +30,12 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1 ;;
     --force) : ;; # Backward-compatible no-op: status labels are advisory.
     --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated|fabric|library-hot" 2
+      [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
     --weight-mode)
-      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated|fabric)" 2
+      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated)" 2
       WEIGHT_SOURCE="$2"
       shift
       ;;
@@ -47,8 +47,9 @@ done
 acquire_model_library_lifecycle_lock shared
 load_conf "$MODEL_NAME"
 case "$WEIGHT_SOURCE" in
-  replicated|fabric|library-hot) ;;
-  *) die "--weight-source must be replicated, fabric, or library-hot" 2 ;;
+  replicated|library-hot) ;;
+  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
+  *) die "--weight-source must be replicated or library-hot" 2 ;;
 esac
 if [ "$WEIGHT_SOURCE" = library-hot ]; then
   acquire_model_library_hot_lock shared
@@ -93,30 +94,6 @@ if [ "$WEIGHT_SOURCE" = replicated ] && [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
   done
   runtime_model="$REPLICATED_CONTAINER_MODEL_PATH"
   SEALED_REPLICATED=1
-elif [ "$WEIGHT_SOURCE" = fabric ]; then
-  fabric_dir="${WEIGHT_FABRIC_DIR:-$REPO_DIR/.weight-fabric}"
-  fabric_config="${WEIGHT_FABRIC_CONFIG:-$fabric_dir/$MODEL_NAME.json}"
-  fabric_rows=$(
-    "$REPO_DIR/scripts/weight_fabric.py" rows \
-      "$fabric_config" "$CLUSTER_TOPOLOGY_FILE" \
-      --profile "$MODEL_NAME" --model "$MODEL" --nodes "$NODES"
-  ) || die "single-copy fabric configuration is missing, invalid, or stale"
-  while IFS=$'\t' read -r kind a b c d e f g h i j k l m n o p; do
-    case "$kind" in
-      META)
-        WEIGHT_CONFIG_ID="$a"
-        WEIGHT_OWNER_ID="$g"
-        ;;
-      RANK)
-        WEIGHT_CACHE_ROOTS["$a"]="$f"
-        WEIGHT_REPOSITORY_PATHS["$a"]="$f/hub/$model_cache_name"
-        ;;
-    esac
-  done <<<"$fabric_rows"
-  [ -n "$WEIGHT_CONFIG_ID" ] && [ -n "$WEIGHT_OWNER_ID" ] \
-    || die "single-copy fabric configuration has incomplete runtime rows"
-  "$PULSAR_WEIGHT_FABRIC_TOOL" check "$MODEL_NAME" --serving-only \
-    || die "single-copy fabric is not launch-ready"
 elif [ "$WEIGHT_SOURCE" = library-hot ]; then
   resolve_library_hot_for_profile "$MODEL_NAME"
   model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
@@ -141,7 +118,6 @@ fi
 
 echo "[cluster] exact profile: $MODEL_NAME · $NODES ranks · topology ${CLUSTER_TOPOLOGY_ID:0:12}"
 case "$WEIGHT_SOURCE" in
-  fabric) echo "[cluster] weights: fabric · NFS/RDMA · cold reads cross the fabric" ;;
   library-hot) echo "[cluster] weights: library-hot · local hot staging · home=${WEIGHT_OWNER_ID:0:12} · identity=$LIBRARY_HOT_IDENTITY_STATUS · revision=${LIBRARY_HOT_REVISION:0:12}" ;;
   replicated)
     if [ "$SEALED_REPLICATED" = 1 ]; then
@@ -177,9 +153,6 @@ build_docker_cmd() {
   local weight_volume="${weight_cache}:/root/.cache/huggingface"
   local model_cache_target
   if [ "$SEALED_REPLICATED" = 1 ]; then
-    model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
-    weight_volume="${WEIGHT_REPOSITORY_PATHS[$role_rank]}:${model_cache_target}:ro"
-  elif [ "$WEIGHT_SOURCE" = fabric ]; then
     model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
     weight_volume="${WEIGHT_REPOSITORY_PATHS[$role_rank]}:${model_cache_target}:ro"
   elif [ "$WEIGHT_SOURCE" = library-hot ]; then
@@ -223,14 +196,10 @@ build_docker_cmd() {
     -e "NCCL_DEBUG=${NCCL_DEBUG}"
   )
   cmd+=(--label "${PULSAR_WEIGHT_SOURCE_LABEL}=${WEIGHT_SOURCE}")
-  if [ "$WEIGHT_SOURCE" = fabric ] || [ "$WEIGHT_SOURCE" = library-hot ]; then
+  if [ "$WEIGHT_SOURCE" = library-hot ]; then
     cmd+=(
       --label "${PULSAR_WEIGHT_OWNER_LABEL}=${WEIGHT_OWNER_ID}"
       --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${WEIGHT_CONFIG_ID}"
-    )
-  fi
-  if [ "$WEIGHT_SOURCE" = library-hot ]; then
-    cmd+=(
       --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
       --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
     )
@@ -338,9 +307,6 @@ record_startup_metric() {
     --elapsed-seconds "$elapsed"
   )
   case "$WEIGHT_SOURCE" in
-    fabric)
-      metric_args+=(--configuration-id "$WEIGHT_CONFIG_ID")
-      ;;
     library-hot)
       metric_args+=(
         --content-id "$WEIGHT_CONFIG_ID"
