@@ -44,8 +44,8 @@ The user-reported "NVLink" between nodes is **not** what exists. Verified:
   node (Grace<->Blackwell).
 - ConnectX-7 (fw 28.45.4028), **two QSFP ports active per node, 200 Gb/s each**,
   direct-attached node-to-node (no switch):
-  - `enp1s0f0np0` = `rocep1s0f0`: `$HEAD_IP` <-> `$WORKER_IP` (RoCE rail 0)
-  - `enP2p1s0f0np0` = `roceP2p1s0f0`: second subnet on rail 1 (set in `.env` if used)
+  - `enp1s0f0np0` = `rocep1s0f0`: Node A <-> Node B (RoCE rail 0)
+  - `enP2p1s0f0np0` = `roceP2p1s0f0`: second subnet on rail 1
 - Link layer Ethernet (RoCE), MTU 1500 (active RDMA MTU 1024).
 - **Each NIC port sits on PCIe Gen5 x4** (`32.0 GT/s x4` from
   `/sys/class/infiniband/*/device`) → ~15.75 GB/s per-port ceiling. The "200GbE"
@@ -111,8 +111,9 @@ control-network routing, firewall, and latency part of launch readiness.
 
 Documentation examples use
 [TEST-NET](https://datatracker.ietf.org/doc/html/rfc5737) ranges only. Never
-commit real site addresses. Legacy `HEAD_IP`/`WORKER_IP` remains a two-node
-compatibility path; it cannot represent an N-node mesh.
+commit real site addresses. `HEAD_IP`/`WORKER_IP` environment variables are
+not honored for topology; multi-node operations require the confirmed
+manifest.
 
 ## Storage
 

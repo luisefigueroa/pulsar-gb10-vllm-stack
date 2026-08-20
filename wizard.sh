@@ -2234,7 +2234,7 @@ for model in models:
         worker-docker-error|rank-docker-error)
           die "Docker is unavailable on one or more cluster nodes required by this model"
           ;;
-        need-worker-ip|need-topology)
+        need-topology)
           die "fewer cluster nodes are confirmed than this model requires"
           ;;
         *)

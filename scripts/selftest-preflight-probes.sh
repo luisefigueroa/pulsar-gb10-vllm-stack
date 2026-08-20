@@ -7,6 +7,11 @@ STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-preflight-probes.XXXXXX")
 trap 'rm -rf "$STATE_DIR"' EXIT
 export CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
 
+# Confirmed two-node fixture manifest for multi-node probe scenarios.
+TOPOLOGY_FIXTURE="$STATE_DIR/topology.json"
+python3 "$REPO_DIR/scripts/testlib/topology_manifest_fixture.py" \
+  "$TOPOLOGY_FIXTURE" worker.test
+
 assert_json_state() {
   local body="$1" expected="$2" label="$3"
   BODY="$body" EXPECTED="$expected" python3 - <<'PY'
@@ -58,17 +63,36 @@ exit 0
 SHIM
 chmod +x "$STATE_DIR/ssh"
 
-# Every worker probe receives finite connection/liveness bounds.
+# Every remote-rank probe receives finite connection/liveness bounds.
 : >"$STATE_DIR/ssh.log"
 PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  WORKER_IP=worker.test bash -c \
-  '. "$1"; ssh_worker true' _ "$REPO_DIR/scripts/lib.sh"
+  CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" bash -c \
+  '. "$1"; ssh_node 1 true' _ "$REPO_DIR/scripts/lib.sh"
 grep -q -- '-o BatchMode=yes' "$STATE_DIR/ssh.log"
 grep -q -- '-o ConnectTimeout=8' "$STATE_DIR/ssh.log"
 grep -q -- '-o ConnectionAttempts=1' "$STATE_DIR/ssh.log"
 grep -q -- '-o ServerAliveCountMax=2' "$STATE_DIR/ssh.log"
 grep -Eq -- ' -- [^ ]+ true$' "$STATE_DIR/ssh.log"
-echo "OK   worker SSH is bounded"
+echo "OK   remote-rank SSH is bounded"
+
+# Legacy HEAD_IP/WORKER_IP env vars never substitute for a confirmed manifest:
+# a multi-node probe with no manifest refuses before any SSH work.
+: >"$STATE_DIR/ssh.log"
+set +e
+image_out=$(DOCKER_MODE=ok PULSAR_DOCKER="$STATE_DIR/docker" \
+  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
+  HEAD_IP=head.test WORKER_IP=worker.test \
+  "$REPO_DIR/scripts/check-image.sh" deepseek-v4-flash --json)
+image_rc=$?
+set -e
+[ "$image_rc" -ne 0 ]
+assert_json_state "$image_out" need-topology \
+  "legacy env vars cannot admit a multi-node image probe"
+if grep -Eq -- ' -- (head|worker)\.test ' "$STATE_DIR/ssh.log"; then
+  echo "FAIL legacy env endpoints must never receive SSH probes" >&2
+  exit 1
+fi
+echo "OK   legacy env endpoints receive no SSH probes"
 
 # Head Docker failure cannot become an empty, apparently safe inventory.
 set +e
@@ -103,7 +127,7 @@ assert_json_state "$image_out" head-docker-error \
 set +e
 image_out=$(DOCKER_MODE=ok PULSAR_DOCKER="$STATE_DIR/docker" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" SSH_MODE=down \
-  HEAD_IP=head.test WORKER_IP=worker.test \
+  CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   "$REPO_DIR/scripts/check-image.sh" deepseek-v4-flash --json)
 image_rc=$?
 set -e
@@ -185,7 +209,7 @@ printf 'test' >"$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs/main"
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/hf" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  SSH_MODE=weights-missing HEAD_IP=head.test WORKER_IP=worker.test \
+  SSH_MODE=weights-missing CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
 weights_rc=$?
 set -e
@@ -206,7 +230,7 @@ PY
 set +e
 weights_out=$(HF_CACHE="$STATE_DIR/empty-hf" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  SSH_MODE=weights-missing HEAD_IP=head.test WORKER_IP=worker.test \
+  SSH_MODE=weights-missing CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
 weights_rc=$?
 set -e

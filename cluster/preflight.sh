@@ -86,29 +86,21 @@ for ((rank = 0; rank < EXPECTED_NODES; rank++)); do
 done
 
 # Verify every selected pair and rail in both directions on every preflight.
-if [ "$CLUSTER_TOPOLOGY_SOURCE" = manifest ]; then
-  while IFS=$'\t' read -r source_rank _source_host target_rank target_ip network; do
-    [ -n "$source_rank" ] || continue
-    if [ "$source_rank" -ge "$EXPECTED_NODES" ] \
-        || [ "$target_rank" -ge "$EXPECTED_NODES" ]; then
-      continue
-    fi
-    command="ping -c1 -W2 $(printf '%q' "$target_ip") >/dev/null 2>&1"
-    if node_exec "$source_rank" "$command"; then
-      ok "rank $source_rank → rank $target_rank · $target_ip · $network"
-    else
-      bad "rank $source_rank cannot reach rank $target_rank · $target_ip · $network"
-    fi
-  done < <(python3 "$REPO_DIR/scripts/topology_manifest.py" \
-    ping-plan "$CLUSTER_TOPOLOGY_FILE")
-else
-  if ping -c1 -W2 "${CLUSTER_NODE_CONTROL_IPS[1]}" >/dev/null 2>&1; then
-    ok "legacy rank 0 → rank 1"
-  else
-    bad "legacy rank 0 cannot ping rank 1"
+# require_profile_topology already guarantees a confirmed manifest here.
+while IFS=$'\t' read -r source_rank _source_host target_rank target_ip network; do
+  [ -n "$source_rank" ] || continue
+  if [ "$source_rank" -ge "$EXPECTED_NODES" ] \
+      || [ "$target_rank" -ge "$EXPECTED_NODES" ]; then
+    continue
   fi
-  warn "legacy .env topology cannot prove per-pair rails; migrate with detect-fabric --write-topology"
-fi
+  command="ping -c1 -W2 $(printf '%q' "$target_ip") >/dev/null 2>&1"
+  if node_exec "$source_rank" "$command"; then
+    ok "rank $source_rank → rank $target_rank · $target_ip · $network"
+  else
+    bad "rank $source_rank cannot reach rank $target_rank · $target_ip · $network"
+  fi
+done < <(python3 "$REPO_DIR/scripts/topology_manifest.py" \
+  ping-plan "$CLUSTER_TOPOLOGY_FILE")
 
 echo "[preflight] per-node readiness"
 check_node() {

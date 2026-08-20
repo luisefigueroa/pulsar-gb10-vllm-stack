@@ -240,4 +240,45 @@ else
   exit 1
 fi
 
+# AUD-01: legacy HEAD_IP/WORKER_IP environment variables never confirm
+# membership. Every multi-node admission path refuses before network or
+# Docker work when the confirmed manifest is absent.
+legacy_rc=0
+legacy_out=$(CLUSTER_TOPOLOGY_FILE="$tmpdir/absent-topology.json" bash -c '
+  export HEAD_IP=192.0.2.1 WORKER_IP=192.0.2.2 NCCL_IB_HCA=hca0,hca1
+  . "'"$REPO_DIR"'/cluster/topology.sh"
+  require_profile_topology 2 roce-full-mesh 2
+' 2>&1) || legacy_rc=$?
+[ "$legacy_rc" -ne 0 ] \
+  || { echo "FAIL legacy env vars admitted a two-node profile topology" >&2; exit 1; }
+printf '%s\n' "$legacy_out" | grep -q 'detect-fabric.sh --write-topology' \
+  || { echo "FAIL refusal does not direct to confirmed discovery" >&2; exit 1; }
+
+: >"$runtime_log"
+legacy_rc=0
+CLUSTER_TOPOLOGY_FILE="$tmpdir/absent-topology.json" \
+  HEAD_IP=192.0.2.1 WORKER_IP=192.0.2.2 \
+  PULSAR_DOCKER="$docker_shim" PULSAR_SSH="$ssh_shim" \
+  RUNTIME_LOG="$runtime_log" \
+  "$REPO_DIR/cluster/preflight.sh" qwen3-1.7b-2node \
+  >/dev/null 2>&1 || legacy_rc=$?
+[ "$legacy_rc" -ne 0 ] \
+  || { echo "FAIL preflight accepted legacy env topology" >&2; exit 1; }
+[ ! -s "$runtime_log" ] \
+  || { echo "FAIL preflight probed hosts without a confirmed manifest" >&2; exit 1; }
+
+: >"$runtime_log"
+legacy_rc=0
+CLUSTER_TOPOLOGY_FILE="$tmpdir/absent-topology.json" \
+  HEAD_IP=192.0.2.1 WORKER_IP=192.0.2.2 \
+  PULSAR_DOCKER="$docker_shim" PULSAR_SSH="$ssh_shim" \
+  RUNTIME_LOG="$runtime_log" \
+  "$REPO_DIR/cluster/start-cluster.sh" qwen3-1.7b-2node \
+  --dry-run --skip-preflight --skip-warmup >/dev/null 2>&1 || legacy_rc=$?
+[ "$legacy_rc" -ne 0 ] \
+  || { echo "FAIL start-cluster accepted legacy env topology" >&2; exit 1; }
+[ ! -s "$runtime_log" ] \
+  || { echo "FAIL start-cluster probed hosts without a confirmed manifest" >&2; exit 1; }
+echo "OK   legacy env vars cannot admit multi-node launch paths"
+
 echo "selftest-topology PASS"
