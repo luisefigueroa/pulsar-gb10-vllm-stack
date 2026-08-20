@@ -47,19 +47,39 @@ fabric_config_path() {
 
 declare -ag WF_RANK_IDS=()
 declare -ag WF_RANK_ROLES=()
-declare -ag WF_RANK_SSH_HOSTS=()
+declare -ag WF_RANK_NODE_IDS=()
 declare -ag WF_RANK_HOSTNAMES=()
+declare -ag WF_RANK_EXEC_HOSTS=()
 
-# Read only the fields cleanup needs, straight from the site config. The
-# retired workflow revalidated configs against live topology; leftover
-# cleanup must keep working after membership changed, so it trusts the
-# recorded rank endpoints instead (validated to bare hostnames below).
+wf_config_field() {
+  # Whitespace-safe scalar extraction (paths may contain spaces).
+  FIELD="$1" python3 - "$WF_CONFIG_PATH" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = json.load(handle)
+value = config
+for part in os.environ["FIELD"].split("."):
+    value = value[part]
+sys.stdout.write(str(value))
+PY
+}
+
+# Read only the fields cleanup needs, straight from the site config, after
+# recomputing its content identity. Endpoints are then resolved through the
+# CONFIRMED topology by immutable node identity — a recorded ssh_host is
+# never trusted directly, so a reassigned hostname cannot receive privileged
+# cleanup (see AGENTS.md topology invariants).
 load_fabric() {
   local profile="${1:?profile required}" rows line
   WF_CONFIG_PATH=$(fabric_config_path "$profile")
   [ -f "$WF_CONFIG_PATH" ] \
     || die "no leftover fabric config for $profile at $WF_CONFIG_PATH"
   rows=$(python3 - "$WF_CONFIG_PATH" <<'PY'
+import base64
+import hashlib
 import json
 import sys
 
@@ -67,49 +87,58 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     config = json.load(handle)
 if config.get("schema_version") not in (1, 2):
     raise SystemExit("unsupported fabric config schema")
-transport = config["transport"]
+
+# Recompute the content identity exactly as the retired tool wrote it; an
+# edited or corrupted config must not steer privileged teardown.
+identity = {k: v for k, v in config.items() if k != "configuration_id"}
+canonical = json.dumps(
+    identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+).encode("utf-8")
+if hashlib.sha256(canonical).hexdigest() != config.get("configuration_id"):
+    raise SystemExit("configuration_id does not match config content")
+
+
+def b64(value):
+    return base64.b64encode(str(value).encode("utf-8")).decode("ascii")
+
+
 print("id", str(config["configuration_id"]))
-print("model", str(config["model"]))
-print("profile", str(config["profile"]))
-print("export", str(transport["export_path"]))
-print("mount", str(transport["mount_path"]))
-owner = config["owner"]
 for record in config["ranks"]:
     print(
         "rank",
         int(record["rank"]),
-        str(record["role"]),
-        str(record["ssh_host"]),
-        str(record["hostname"]),
+        b64(record["role"]),
+        b64(record["node_id"]),
+        b64(record["hostname"]),
     )
-print("ownerhost", str(owner["hostname"]))
 PY
-  ) || die "fabric config is unreadable: $WF_CONFIG_PATH"
+  ) || die "fabric config is invalid: $WF_CONFIG_PATH"
 
-  WF_CONFIG_ID="" WF_MODEL="" WF_PROFILE="" WF_EXPORT_PATH="" WF_MOUNT_PATH=""
-  WF_OWNER_HOSTNAME="" WF_OWNER_RANK=""
-  WF_RANK_IDS=() WF_RANK_ROLES=() WF_RANK_SSH_HOSTS=() WF_RANK_HOSTNAMES=()
-  local kind a b c d
+  WF_CONFIG_ID="" WF_OWNER_RANK=""
+  WF_RANK_IDS=() WF_RANK_ROLES=() WF_RANK_NODE_IDS=() WF_RANK_HOSTNAMES=()
+  WF_RANK_EXEC_HOSTS=()
+  local kind a b c d role
   while read -r kind a b c d; do
     case "$kind" in
       id) WF_CONFIG_ID="$a" ;;
-      model) WF_MODEL="$a" ;;
-      profile) WF_PROFILE="$a" ;;
-      export) WF_EXPORT_PATH="$a" ;;
-      mount) WF_MOUNT_PATH="$a" ;;
-      ownerhost) WF_OWNER_HOSTNAME="$a" ;;
       rank)
+        role=$(printf '%s' "$b" | base64 -d)
         WF_RANK_IDS+=("$a")
-        WF_RANK_ROLES+=("$b")
-        WF_RANK_SSH_HOSTS+=("$c")
-        WF_RANK_HOSTNAMES+=("$d")
-        [ "$b" = owner ] && WF_OWNER_RANK="$a"
+        WF_RANK_ROLES+=("$role")
+        WF_RANK_NODE_IDS+=("$(printf '%s' "$c" | base64 -d)")
+        WF_RANK_HOSTNAMES+=("$(printf '%s' "$d" | base64 -d)")
+        [ "$role" = owner ] && WF_OWNER_RANK="$a"
         ;;
     esac
   done <<<"$rows"
 
   [[ "$WF_CONFIG_ID" =~ ^[0-9a-f]{64}$ ]] \
     || die "fabric config id is invalid: $WF_CONFIG_PATH"
+  WF_MODEL=$(wf_config_field model)
+  WF_PROFILE=$(wf_config_field profile)
+  WF_EXPORT_PATH=$(wf_config_field transport.export_path)
+  WF_MOUNT_PATH=$(wf_config_field transport.mount_path)
+  WF_OWNER_HOSTNAME=$(wf_config_field owner.hostname)
   [ "$WF_PROFILE" = "$profile" ] \
     || die "fabric config names profile $WF_PROFILE, not $profile"
   [ -n "$WF_OWNER_RANK" ] || die "fabric config has no owner rank"
@@ -121,20 +150,40 @@ PY
     /*) ;;
     *) die "fabric mount path is not absolute" ;;
   esac
-  local index
-  for index in "${!WF_RANK_SSH_HOSTS[@]}"; do
-    [[ "${WF_RANK_SSH_HOSTS[$index]}" =~ ^[A-Za-z0-9._-]+$ ]] \
-      || die "rank ${WF_RANK_IDS[$index]} ssh host is not a bare hostname"
+
+  # Resolve every recorded rank to its CURRENT confirmed endpoint by node
+  # identity. A node that is no longer confirmed fails closed: re-confirm it
+  # (scripts/detect-fabric.sh --write-topology) or clean it up manually.
+  load_cluster_topology \
+    || die "leftover-fabric cleanup requires a confirmed topology manifest"
+  local index node_id confirmed resolved
+  for index in "${!WF_RANK_NODE_IDS[@]}"; do
+    node_id="${WF_RANK_NODE_IDS[$index]}"
+    resolved=""
+    for ((confirmed = 0; confirmed < CLUSTER_TOPOLOGY_COUNT; confirmed++)); do
+      if [ "${CLUSTER_NODE_IDS[$confirmed]:-}" = "$node_id" ]; then
+        resolved="${CLUSTER_NODE_SSH_HOSTS[$confirmed]:-}"
+        break
+      fi
+    done
+    [ -n "$resolved" ] \
+      || die "config rank ${WF_RANK_IDS[$index]} (node identity not in the confirmed topology) — re-confirm membership or clean up that machine manually"
+    if [ "$resolved" != local ]; then
+      [[ "$resolved" =~ ^[A-Za-z0-9._-]+$ ]] \
+        || die "confirmed endpoint for rank ${WF_RANK_IDS[$index]} is not a bare hostname"
+    fi
+    WF_RANK_EXEC_HOSTS+=("$resolved")
   done
 }
 
 node_exec() {
-  local rank="${1:?rank required}"
+  local rank="${1:?rank required}" endpoint
   shift
-  if [ "$rank" -eq 0 ]; then
+  endpoint="${WF_RANK_EXEC_HOSTS[$rank]:?rank endpoint unresolved}"
+  if [ "$endpoint" = local ]; then
     bash -c "$1"
   else
-    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "${WF_RANK_SSH_HOSTS[$rank]}" "$1"
+    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$endpoint" "$1"
   fi
 }
 

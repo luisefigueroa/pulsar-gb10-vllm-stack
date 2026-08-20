@@ -233,7 +233,7 @@ record_startup_metric() {
     --weight-source library-hot
     --nodes "$NODES"
     --topology-id "$CLUSTER_TOPOLOGY_ID"
-    --cache-state "${PULSAR_STARTUP_CACHE_STATE:-unspecified}"
+    --cache-state "${PULSAR_STARTUP_CACHE_STATE:-sealed-hot}"
     --started-at "$started_at"
     --first-healthy-at "$healthy_at"
     --elapsed-seconds "$elapsed"

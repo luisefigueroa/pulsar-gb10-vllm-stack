@@ -1371,6 +1371,16 @@ print("\t".join([cid, name, managed, conf, rank]))
 ' "$PULSAR_MANAGED_LABEL" "$PULSAR_CONF_LABEL" "$PULSAR_RANK_LABEL"
 }
 
+# Declared world size from ownership metadata (multi-node launches only).
+container_world_size_field() {
+  local metadata="${1:?}"
+  printf '%s' "$metadata" | python3 -c '
+import json, sys
+labels = json.load(sys.stdin).get("labels") or {}
+print(str(labels.get(sys.argv[1], "") or ""))
+' "$PULSAR_WORLD_SIZE_LABEL"
+}
+
 # Return the declared model-weight source from ownership metadata. The value
 # is provenance, not a mode: every managed launch since ADR 0006 writes
 # library-hot, and containers labeled replicated (or unlabeled, predating the
@@ -1521,9 +1531,24 @@ container_all_candidate_is_safe() {
   container_managed_label_is_true "$managed" || return 1
   [ -n "$conf" ] || return 1
   [ -n "$rank" ] || return 1
-  [ -f "$REPO_DIR/models/${conf}.conf" ] || return 1
-  placement_rank_allowed "$conf" "$rank" "$placement" || return 1
   local nodes
+  if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
+    # Retired profile (e.g. removed by ADR 0006): the conf file is gone, but
+    # ownership is still proven by labels, so the container must remain
+    # stoppable. Geometry comes from the container's own labels.
+    if [ "$rank" = single ]; then
+      placement_index_for_role "$placement" >/dev/null || return 1
+      container_single_node_identity_is_proven "$metadata" "$placement"
+      return
+    fi
+    nodes=$(container_world_size_field "$metadata")
+    [[ "$nodes" =~ ^[2-9][0-9]*$ ]] || return 1
+    [[ "$rank" =~ ^[0-9]+$ ]] && [ "$rank" -lt "$nodes" ] || return 1
+    load_cluster_topology || return 1
+    [ "$nodes" -le "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
+    return 0
+  fi
+  placement_rank_allowed "$conf" "$rank" "$placement" || return 1
   nodes=$(profile_nodes_for_conf "$conf") || return 1
   if [ "$nodes" -eq 1 ]; then
     container_single_node_identity_is_proven "$metadata" "$placement"
@@ -1581,7 +1606,21 @@ container_all_refuse_reason() {
     return
   fi
   if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
-    echo "unknown conf '${conf}' (no models/${conf}.conf)"
+    if [ "$rank" = single ]; then
+      container_single_node_identity_refuse_reason "$metadata" "$placement"
+      return
+    fi
+    nodes=$(container_world_size_field "$metadata")
+    if ! [[ "$nodes" =~ ^[2-9][0-9]*$ ]]; then
+      echo "retired conf '${conf}' with no usable world-size label"
+      return
+    fi
+    load_cluster_topology >/dev/null 2>&1 || true
+    if [ "$nodes" -gt "${CLUSTER_TOPOLOGY_COUNT:-0}" ]; then
+      echo "retired conf ${conf} spans ${nodes} ranks but only ${CLUSTER_TOPOLOGY_COUNT:-0} confirmed — confirm topology before cleanup"
+      return
+    fi
+    echo "ownership not proven for retired conf '${conf}'"
     return
   fi
   if ! nodes=$(profile_nodes_for_conf "$conf"); then

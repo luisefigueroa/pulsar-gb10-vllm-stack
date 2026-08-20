@@ -138,6 +138,61 @@ if [ "$TARGET" = "--all" ]; then
   esac
 fi
 
+if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
+  # Retired profile (e.g. removed by ADR 0006): the conf file is gone, but a
+  # container that proves ownership through its labels must stay stoppable.
+  # Geometry comes from the containers themselves; hot retention hooks need
+  # the serving profile and are unavailable here.
+  [ -z "$HOT_AFTER" ] \
+    || die "--pin-weights/--purge-hot need a current serving profile; retired confs stop plainly" 2
+  log "conf $TARGET has no models/${TARGET}.conf; stopping by proven container labels"
+  load_cluster_topology || die "confirmed topology is invalid"
+  retired_cluster_name=$(container_name_for "$TARGET" 2)
+  rc=0
+  retired_meta=$(container_ownership_inspect_local "$retired_cluster_name") || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    [ -z "$NODE_SELECTOR" ] || die "--node is only valid for one-node services" 2
+    retired_world=$(container_world_size_field "$retired_meta")
+    [[ "$retired_world" =~ ^[2-9][0-9]*$ ]] \
+      || die "retired conf $TARGET: cluster container has no usable world-size label"
+    rc=0
+    remove_stack_owned_cluster "$TARGET" "$retired_cluster_name" "$retired_world" || rc=$?
+    case "$rc" in
+      0) log "done"; exit 0 ;;
+      2) die "refused to stop $retired_cluster_name: ownership not proven on every rank" ;;
+      *) die "failed while removing $retired_cluster_name ranks (rc=$rc)" ;;
+    esac
+  elif [ "$rc" -ne 3 ]; then
+    die "cannot inspect $retired_cluster_name locally"
+  fi
+  if [ -z "$NODE_SELECTOR" ]; then
+    rc=0
+    placement_index=$(discover_single_node_index_for_conf "$TARGET") || rc=$?
+    case "$rc" in
+      0)
+        NODE_SELECTOR="${CLUSTER_NODE_IDS[$placement_index]:-}"
+        [ -n "$NODE_SELECTOR" ] \
+          || NODE_SELECTOR=$(single_node_key_for_index "$placement_index")
+        ;;
+      3)
+        log "no stack-managed service found for retired conf=$TARGET"
+        exit 0
+        ;;
+      2) die "refused to stop $TARGET: placement or ownership is ambiguous" ;;
+      *) die "cannot safely discover $TARGET placement across confirmed nodes" ;;
+    esac
+  fi
+  resolve_single_node_placement "$NODE_SELECTOR" \
+    || die "cannot resolve physical node placement '$NODE_SELECTOR'"
+  rc=0
+  remove_stack_owned_single_at_resolved_node "$TARGET" || rc=$?
+  case "$rc" in
+    0) exit 0 ;;
+    2) die "refused to stop $(container_name_for "$TARGET" 1) on $(single_node_display): ownership or node identity is not proven" ;;
+    *) die "failed to stop $(container_name_for "$TARGET" 1) on $(single_node_display)" ;;
+  esac
+fi
+
 load_conf "$TARGET"
 if [ "$NODES" -gt 1 ]; then
   load_cluster_topology >/dev/null || die "confirmed topology required"
