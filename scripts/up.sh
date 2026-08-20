@@ -143,7 +143,7 @@ set -e
 if [ "$img_rc" != 0 ]; then
   img_state=$(printf '%s' "$img_json" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null || echo unknown)
   case "$img_state" in
-    need-worker-ip|need-topology)
+    need-topology)
       die "confirmed topology has fewer ranks than this profile requires"
       ;;
     missing-on-worker|missing-on-rank)

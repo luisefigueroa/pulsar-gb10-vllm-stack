@@ -255,6 +255,7 @@ for ((rank = 1; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
 done
 ```
 
-`HEAD_IP`/`WORKER_IP` in `.env` remain a deprecated two-node compatibility
-path. They cannot describe per-rank HCAs or an N-node rail mesh, so new setups
-should confirm `.cluster-topology.json` instead.
+`HEAD_IP`/`WORKER_IP` in `.env` are not honored for topology. Multi-node
+launch, preflight, and cluster start require a confirmed
+`.cluster-topology.json`; without one they refuse and direct you to
+`scripts/detect-fabric.sh --write-topology`.

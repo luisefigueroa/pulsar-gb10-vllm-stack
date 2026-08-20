@@ -6,26 +6,15 @@
 # settings without a before/after number.
 #
 # A confirmed .cluster-topology.json supplies per-rank control IPs, SSH targets,
-# HCAs, and interfaces. HEAD_IP/WORKER_IP remain a two-node compatibility path.
+# HCAs, and interfaces. HEAD_IP/WORKER_IP environment variables never construct
+# multi-node topology; membership comes from the confirmed manifest only.
 
 _cluster_env_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$_cluster_env_dir/topology.sh"
 
 # ---- topology ---------------------------------------------------------------
-export HEAD_IP="${HEAD_IP:-}"
-export WORKER_IP="${WORKER_IP:-}"
 export MASTER_PORT="${MASTER_PORT:-29500}"
-
-# Compatibility call for legacy two-node callers.
-require_cluster_ips() {
-  require_cluster_nodes 2 || return 1
-  HEAD_IP="${CLUSTER_NODE_CONTROL_IPS[0]}"
-  WORKER_IP="${CLUSTER_NODE_SSH_HOSTS[1]}"
-  VLLM_HOST_IP_HEAD="$HEAD_IP"
-  VLLM_HOST_IP_WORKER="${CLUSTER_NODE_CONTROL_IPS[1]}"
-  export HEAD_IP WORKER_IP VLLM_HOST_IP_HEAD VLLM_HOST_IP_WORKER
-}
 
 # ---- NCCL: validated ship set ----------------------------------------------
 # Dual rail: 13.9 -> 20.5 GB/s large-message all-reduce (allreduce-dual-rail.log)
@@ -48,5 +37,4 @@ export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 # ---- vLLM on unified memory -------------------------------------------------
 # GB10 has no dedicated VRAM; CUDA, OS, and page cache share 121 GiB.
 # 0.70-0.85 gpu-memory-utilization is set per model in models/*.conf.
-export VLLM_HOST_IP_HEAD="${HEAD_IP}"
-export VLLM_HOST_IP_WORKER="${WORKER_IP}"
+# Per-rank VLLM_HOST_IP is set at launch from the confirmed manifest.

@@ -65,11 +65,7 @@ fi
 
 if [ "$NODES" -gt 1 ] && [ "$state" != head-docker-error ]; then
   if ! require_cluster_nodes "$NODES"; then
-    if [ "$NODES" = 2 ]; then
-      state=need-worker-ip
-    else
-      state=need-topology
-    fi
+    state=need-topology
   else
     for ((rank = 1; rank < NODES; rank++)); do
       host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
@@ -176,7 +172,7 @@ else
     log "$NAME image=$IMAGE state=$state ·${summary# }"
     case "$state" in
       ok) ;;
-      need-worker-ip|need-topology)
+      need-topology)
         warn "confirm at least $NODES nodes: scripts/detect-fabric.sh --write-topology"
         ;;
       head-docker-error|target-docker-error)

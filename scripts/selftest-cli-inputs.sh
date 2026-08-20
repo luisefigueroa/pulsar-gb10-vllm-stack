@@ -55,8 +55,10 @@ expect_failure 2 "invocation plan is not readable" "gate runner rejects missing 
 expect_failure 2 "measurement directory is not a safe" "gate runner rejects protected measurement dir" \
   "$REPO_DIR/validate/run-gates.sh" model --tag measdir --measurement-dir models/unsafe
 
-expect_failure 1 "invalid WORKER_IP" "cluster endpoints cannot become SSH options" \
-  bash -c 'HEAD_IP=10.0.0.1; WORKER_IP=-oProxyCommand=false; . "$1"; require_cluster_ips' \
+# Legacy HEAD_IP/WORKER_IP environment variables never admit multi-node
+# operations — including hostile values that could become SSH options.
+expect_failure 1 "do not confirm membership" "legacy env vars cannot admit multi-node topology" \
+  bash -c 'export HEAD_IP=10.0.0.1 WORKER_IP=-oProxyCommand=false; . "$1"; require_profile_topology 2 roce-full-mesh 2' \
   _ "$REPO_DIR/cluster/cluster-env.sh"
 
 # With no controlling terminal, Gum is disabled before a menu is started. The

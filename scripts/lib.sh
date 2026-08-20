@@ -636,13 +636,6 @@ disk_free_gib() {
   df -BG "$path" 2>/dev/null | awk 'NR==2 {gsub(/G/,""); print $4}' || echo 0
 }
 
-# Free space on worker under the same path (HF_CACHE layout).
-disk_free_gib_remote() {
-  local path="${1:-$HF_CACHE}"
-  [ -n "${WORKER_IP:-}" ] || { echo 0; return; }
-  ssh_worker "df -BG $(printf '%q' "$path") 2>/dev/null | awk 'NR==2 {gsub(/G/,\"\"); print \$4}'" 2>/dev/null || echo 0
-}
-
 parse_kv_cache_bytes() {
   local i=0
   while [ $i -lt ${#ENGINE_ARGS[@]} ]; do
@@ -893,7 +886,6 @@ PULSAR_TOPOLOGY_SSH_CONFIGURED=0
 # the existing OpenSSH trust path; enrolled schema 2 pins aliases to exact
 # control endpoints and keys for every shared SSH caller.
 _pulsar_configure_topology_ssh() {
-  [ "${CLUSTER_TOPOLOGY_SOURCE:-}" = manifest ] || return 0
   [ "${CLUSTER_TOPOLOGY_SSH_TRUSTED:-0}" = 1 ] || return 0
   [ "$PULSAR_TOPOLOGY_SSH_CONFIGURED" = 0 ] || return 0
   PULSAR_SSH_OPTS+=(
@@ -925,17 +917,6 @@ ssh_node() {
   local host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
   "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$@"
 }
-
-ssh_worker() {
-  # Compatibility wrapper: explicit legacy WORKER_IP remains a bounded SSH
-  # endpoint when no confirmed manifest exists.
-  if [ ! -f "$CLUSTER_TOPOLOGY_FILE" ] && [ -n "${WORKER_IP:-}" ]; then
-    "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$WORKER_IP" "$@"
-  else
-    ssh_node 1 "$@"
-  fi
-}
-
 
 # Resolve a physical target for a one-node profile. The selector is intentionally
 # stable across topology reordering: callers should pass a topology node_id (the
@@ -1592,6 +1573,12 @@ container_all_candidate_is_safe() {
   nodes=$(profile_nodes_for_conf "$conf") || return 1
   if [ "$nodes" -eq 1 ]; then
     container_single_node_identity_is_proven "$metadata" "$placement"
+  else
+    # A multi-node rank may only be removed when every rank of its profile is
+    # a confirmed, probeable member; otherwise --all could strand live remote
+    # ranks (e.g. clusters launched before topology confirmation).
+    load_cluster_topology || return 1
+    [ "$nodes" -le "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
   fi
 }
 
@@ -1655,6 +1642,13 @@ container_all_refuse_reason() {
       && ! container_single_node_identity_is_proven "$metadata" "$placement"; then
     container_single_node_identity_refuse_reason "$metadata" "$placement"
     return
+  fi
+  if [ "$nodes" -gt 1 ]; then
+    load_cluster_topology >/dev/null 2>&1 || true
+    if [ "$nodes" -gt "${CLUSTER_TOPOLOGY_COUNT:-0}" ]; then
+      echo "conf ${conf} spans ${nodes} ranks but only ${CLUSTER_TOPOLOGY_COUNT:-0} confirmed — confirm topology before cleanup"
+      return
+    fi
   fi
   echo "ownership not proven"
 }

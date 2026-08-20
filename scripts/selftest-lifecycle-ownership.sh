@@ -309,6 +309,13 @@ export PULSAR_DOCKER="$SHIM_DIR/docker"
 export PULSAR_SSH="$SHIM_DIR/ssh"
 export PATH="$SHIM_DIR:$PATH"
 
+# Deterministic topology: standalone by default; cluster sections switch to a
+# confirmed two-node fixture manifest (legacy env vars no longer build one).
+export CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
+TOPOLOGY_FIXTURE="$STATE_DIR/topology.json"
+python3 "$REPO_DIR/scripts/testlib/topology_manifest_fixture.py" \
+  "$TOPOLOGY_FIXTURE" worker-host
+
 # shellcheck disable=SC1091
 . "$REPO_DIR/scripts/lib.sh"
 SCRIPT_NAME=selftest-lifecycle
@@ -441,8 +448,7 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
 assert_false "legacy exact-name container cannot earn loaded exemption" \
   profile_service_is_proven_running qwen3-1.7b
 
-HEAD_IP=head-host
-WORKER_IP=worker-host
+CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE"
 reload_cluster_topology
 load_conf qwen3-1.7b-2node
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
@@ -460,8 +466,11 @@ seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
 assert_true "complete managed cluster earns loaded exemption" \
   profile_service_is_proven_running qwen3-1.7b-2node
 
-# Restore the common single-node profile for subsequent cases.
+# Restore the common single-node profile and standalone topology for
+# subsequent cases.
 load_conf qwen3-1.7b
+CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
+reload_cluster_topology
 
 echo "=== parse_docker_run_container_id ==="
 valid_id=$(hex64 run-valid)
@@ -494,6 +503,10 @@ assert_eq "$?" "0" "rm log records id-based remove"
 # 2) Managed --all (only known conf + placement-valid)
 # ---------------------------------------------------------------------------
 echo "=== managed --all ==="
+# Multi-node ranks are only removable when their profile geometry is fully
+# confirmed, so this section runs under the two-node fixture manifest.
+CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE"
+reload_cluster_topology
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b","io.pulsar.gb10.rank":"single"}},
@@ -528,6 +541,10 @@ assert_true "unknown conf left intact" container_ownership_inspect_local "$ID_UN
 assert_true "invalid rank left intact" container_ownership_inspect_local "$ID_BAD_RANK"
 assert_true "rank 1 on head left intact" container_ownership_inspect_local "$ID_RANK1_HEAD"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "--all placement refuse: no rm"
+
+# Restore standalone topology for subsequent single-node sections.
+CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
+reload_cluster_topology
 
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-cluster-qwen3-1.7b-2node","labels":{
@@ -871,8 +888,6 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_DOWN")"
 (
-  export WORKER_IP=""
-  export HEAD_IP=""
   export PULSAR_DOCKER="$SHIM_DIR/docker"
   export PULSAR_SSH="$SHIM_DIR/ssh"
   export FAKE_DOCKER_STATE="$HEAD_STATE"
@@ -881,14 +896,13 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   export FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status"
   export FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status"
   export FAKE_SSH_STATUS=ok
-  # Isolate from repo .env WORKER_IP by unsetting after lib would load —
-  # down.sh sources lib which loads .env; override via env empty is insufficient
-  # when .env sets WORKER_IP. Force ssh shim safe and empty worker by exporting
-  # a marker: use env -i minimal path.
+  # Isolate from repo .env and any real confirmed manifest: use an env -i
+  # minimal path with an explicit standalone topology file.
   env -i \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     REPO_DIR="$REPO_DIR" \
+    CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
     PULSAR_DOCKER="$SHIM_DIR/docker" \
     PULSAR_SSH="$SHIM_DIR/ssh" \
     FAKE_DOCKER_STATE="$HEAD_STATE" \
@@ -911,6 +925,7 @@ seed_state "$WORKER_STATE" '[]'
   env -i \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
+    CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
     PULSAR_DOCKER="$SHIM_DIR/docker" \
     PULSAR_SSH="$SHIM_DIR/ssh" \
     FAKE_DOCKER_STATE="$HEAD_STATE" \
@@ -924,6 +939,39 @@ seed_state "$WORKER_STATE" '[]'
 assert_false "down --all removed managed" container_ownership_inspect_local "$ID_ALL1"
 assert_true "down --all left legacy" container_ownership_inspect_local "$ID_ALL_LEG"
 
+# A multi-node rank without a confirmed manifest (e.g. a cluster launched
+# before topology confirmation) must be refused by --all: removing rank 0
+# locally would strand live remote ranks nobody can probe.
+ID_ORPHAN=$(hex64 orphan-rank0)
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-qwen3-1.7b-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b-2node","io.pulsar.gb10.rank":"0"}}
+]))' "$ID_ORPHAN")"
+if (
+  env -i \
+    PATH="$SHIM_DIR:/usr/bin:/bin" \
+    HOME="$HOME" \
+    CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
+    PULSAR_DOCKER="$SHIM_DIR/docker" \
+    PULSAR_SSH="$SHIM_DIR/ssh" \
+    FAKE_DOCKER_STATE="$HEAD_STATE" \
+    FAKE_WORKER_STATE="$WORKER_STATE" \
+    FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+    FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+    FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
+    FAKE_SSH_STATUS=ok \
+    bash "$REPO_DIR/scripts/down.sh" --all
+) 2>/dev/null; then
+  echo "FAIL down --all should refuse a multi-node rank with no confirmed topology" >&2
+  fail=$((fail + 1))
+else
+  echo "OK   down --all refuses a multi-node rank with no confirmed topology"
+  pass=$((pass + 1))
+fi
+assert_true "unconfirmed cluster rank survives down --all" \
+  container_ownership_inspect_local "$ID_ORPHAN"
+seed_state "$HEAD_STATE" '[]'
+
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{}}
 ]))' "$ID_REFUSE")"
@@ -931,6 +979,7 @@ if (
   env -i \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
+    CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
     PULSAR_DOCKER="$SHIM_DIR/docker" \
     PULSAR_SSH="$SHIM_DIR/ssh" \
     FAKE_DOCKER_STATE="$HEAD_STATE" \
@@ -949,7 +998,8 @@ else
 fi
 assert_true "legacy survives refused down.sh" container_ownership_inspect_local "$ID_REFUSE"
 
-# down --all with WORKER_IP set but SSH down must fail without head rm
+# down --all with a confirmed two-node manifest but SSH down must fail
+# without head rm
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b","io.pulsar.gb10.rank":"single"}}
@@ -958,8 +1008,7 @@ if (
   env -i \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
-    WORKER_IP=worker-host \
-    HEAD_IP=head-host \
+    CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
     PULSAR_DOCKER="$SHIM_DIR/docker" \
     PULSAR_SSH="$SHIM_DIR/ssh" \
     FAKE_DOCKER_STATE="$HEAD_STATE" \
@@ -1082,8 +1131,7 @@ if (
   env -i \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
-    HEAD_IP=10.0.0.1 \
-    WORKER_IP=worker-host \
+    CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
     PULSAR_DOCKER="$SHIM_DIR/docker" \
     PULSAR_SSH="$SHIM_DIR/ssh" \
     FAKE_DOCKER_STATE="$HEAD_STATE" \
@@ -1107,8 +1155,7 @@ if (
   env -i \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
-    HEAD_IP=10.0.0.1 \
-    WORKER_IP=worker-host \
+    CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
     PULSAR_DOCKER="$SHIM_DIR/docker" \
     PULSAR_SSH="$SHIM_DIR/ssh" \
     FAKE_DOCKER_STATE="$HEAD_STATE" \

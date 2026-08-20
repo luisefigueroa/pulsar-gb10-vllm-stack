@@ -13,7 +13,6 @@ _topology_repo="$(cd "$_topology_dir/.." && pwd)"
 CLUSTER_TOPOLOGY_FILE="${CLUSTER_TOPOLOGY_FILE:-$_topology_repo/.cluster-topology.json}"
 CLUSTER_SSH_CONFIG_FILE="${CLUSTER_SSH_CONFIG_FILE:-$_topology_repo/.cluster-ssh-config}"
 CLUSTER_TOPOLOGY_LOADED=0
-CLUSTER_TOPOLOGY_SOURCE=""
 CLUSTER_TOPOLOGY_ID=""
 CLUSTER_TOPOLOGY_COUNT=0
 CLUSTER_TOPOLOGY_FULL_MESH=0
@@ -36,7 +35,6 @@ declare -ag CLUSTER_PROFILE_RDMA_IFS=()
 declare -Ag CLUSTER_PAIR_RAILS=()
 
 _cluster_topology_reset() {
-  CLUSTER_TOPOLOGY_SOURCE=""
   CLUSTER_TOPOLOGY_ID=""
   CLUSTER_TOPOLOGY_COUNT=0
   CLUSTER_TOPOLOGY_FULL_MESH=0
@@ -58,71 +56,13 @@ _cluster_topology_reset() {
   CLUSTER_PAIR_RAILS=()
 }
 
-_cluster_safe_endpoint() {
-  case "${1:-}" in
-    ""|-*|*[!A-Za-z0-9._:@%+-]*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
-_cluster_load_legacy_topology() {
-  local head="${HEAD_IP:-}" worker="${WORKER_IP:-}"
-  [ -n "$head" ] || return 1
-  _cluster_safe_endpoint "$head" || {
-    echo "topology: invalid HEAD_IP '$head'" >&2
-    return 1
-  }
-  if [ -n "$worker" ]; then
-    _cluster_safe_endpoint "$worker" || {
-      echo "topology: invalid WORKER_IP '$worker'" >&2
-      return 1
-    }
-  fi
-
-  local local_host
-  local_host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo localhost)
-  CLUSTER_TOPOLOGY_SOURCE=legacy-env
-  CLUSTER_TOPOLOGY_ID=legacy-env
-  CLUSTER_NODE_IDS=(legacy-head)
-  CLUSTER_NODE_HOSTNAMES=("$local_host")
-  CLUSTER_NODE_SSH_HOSTS=(local)
-  CLUSTER_NODE_CONTROL_IPS=("$head")
-  CLUSTER_NODE_CONTROL_IFS=("${NCCL_SOCKET_IFNAME:-}")
-  CLUSTER_NODE_HCAS=("${NCCL_IB_HCA:-}")
-  CLUSTER_NODE_RDMA_IFS=("${NCCL_SOCKET_IFNAME:-}")
-  CLUSTER_TOPOLOGY_COUNT=1
-  CLUSTER_TOPOLOGY_FULL_MESH=1
-  CLUSTER_TOPOLOGY_MIN_RAILS=0
-
-  if [ -n "$worker" ]; then
-    CLUSTER_NODE_IDS+=(legacy-worker)
-    CLUSTER_NODE_HOSTNAMES+=("$worker")
-    CLUSTER_NODE_SSH_HOSTS+=("$worker")
-    CLUSTER_NODE_CONTROL_IPS+=("$worker")
-    CLUSTER_NODE_CONTROL_IFS+=("${NCCL_SOCKET_IFNAME:-}")
-    CLUSTER_NODE_HCAS+=("${NCCL_IB_HCA:-}")
-    CLUSTER_NODE_RDMA_IFS+=("${NCCL_SOCKET_IFNAME:-}")
-    CLUSTER_TOPOLOGY_COUNT=2
-    local hca_count=0 hca_csv="${NCCL_IB_HCA:-}" part
-    IFS=, read -r -a _legacy_hcas <<<"$hca_csv"
-    for part in "${_legacy_hcas[@]}"; do
-      [ -n "$part" ] && hca_count=$((hca_count + 1))
-    done
-    CLUSTER_PAIR_RAILS["0:1"]="$hca_count"
-    CLUSTER_TOPOLOGY_MIN_RAILS="$hca_count"
-  fi
-  return 0
-}
-
 load_cluster_topology() {
   [ "$CLUSTER_TOPOLOGY_LOADED" = 0 ] || return 0
   _cluster_topology_reset
 
   if [ ! -f "$CLUSTER_TOPOLOGY_FILE" ]; then
-    if _cluster_load_legacy_topology; then
-      CLUSTER_TOPOLOGY_LOADED=1
-      return 0
-    fi
+    # No confirmed membership. Standalone single-node operation only;
+    # legacy HEAD_IP/WORKER_IP environment variables never construct topology.
     CLUSTER_TOPOLOGY_LOADED=1
     return 0
   fi
@@ -143,7 +83,6 @@ load_cluster_topology() {
         CLUSTER_TOPOLOGY_MIN_RAILS="$d"
         CLUSTER_TOPOLOGY_SCHEMA="${e:-1}"
         CLUSTER_TOPOLOGY_SSH_TRUSTED="${f:-0}"
-        CLUSTER_TOPOLOGY_SOURCE=manifest
         ;;
       NODE)
         CLUSTER_NODE_IDS["$a"]="$b"
@@ -178,12 +117,6 @@ load_cluster_topology() {
     fi
   fi
 
-  # Compatibility aliases for existing two-node scripts and user .env tooling.
-  HEAD_IP="${CLUSTER_NODE_CONTROL_IPS[0]:-${HEAD_IP:-}}"
-  if [ "$CLUSTER_TOPOLOGY_COUNT" -ge 2 ]; then
-    WORKER_IP="${CLUSTER_NODE_SSH_HOSTS[1]}"
-  fi
-  export HEAD_IP WORKER_IP
   CLUSTER_TOPOLOGY_LOADED=1
   if declare -F _pulsar_configure_topology_ssh >/dev/null 2>&1; then
     if ! _pulsar_configure_topology_ssh; then
@@ -195,8 +128,7 @@ load_cluster_topology() {
 
 require_topology_ssh_trust() {
   load_cluster_topology || return 1
-  if [ "$CLUSTER_TOPOLOGY_SOURCE" != manifest ] \
-      || [ "$CLUSTER_TOPOLOGY_SCHEMA" != 2 ] \
+  if [ "$CLUSTER_TOPOLOGY_SCHEMA" != 2 ] \
       || [ "$CLUSTER_TOPOLOGY_SSH_TRUSTED" != 1 ]; then
     echo "topology: SSH identity is not enrolled" >&2
     echo "  Run scripts/topology-ssh-trust.sh enroll before using SSH-over-RoCE." >&2
@@ -238,6 +170,10 @@ require_cluster_nodes() {
   load_cluster_topology || return 1
   if [ "$CLUSTER_TOPOLOGY_COUNT" -lt "$required" ]; then
     echo "topology: profile requires exactly $required active node(s), but only $CLUSTER_TOPOLOGY_COUNT confirmed." >&2
+    if [ "$required" -gt 1 ] && [ ! -f "$CLUSTER_TOPOLOGY_FILE" ]; then
+      echo "  No confirmed topology manifest exists at $CLUSTER_TOPOLOGY_FILE." >&2
+      echo "  HEAD_IP/WORKER_IP environment variables do not confirm membership." >&2
+    fi
     echo "  Run scripts/detect-fabric.sh --write-topology to discover and confirm cluster membership." >&2
     return 1
   fi
@@ -251,23 +187,16 @@ select_cluster_profile_fabric() {
   CLUSTER_PROFILE_NODE_COUNT=0
   CLUSTER_PROFILE_HCAS=()
   CLUSTER_PROFILE_RDMA_IFS=()
-  if [ "$CLUSTER_TOPOLOGY_SOURCE" = manifest ]; then
-    if ! fabric_rows=$(python3 "$_topology_repo/scripts/topology_manifest.py" \
-        profile-fabric "$CLUSTER_TOPOLOGY_FILE" "$required"); then
-      echo "topology: cannot resolve RDMA fabric for $required selected ranks" >&2
-      return 1
-    fi
-    while IFS=$'\t' read -r rank hcas rdma_ifs; do
-      [ -n "$rank" ] || continue
-      CLUSTER_PROFILE_HCAS["$rank"]="$hcas"
-      CLUSTER_PROFILE_RDMA_IFS["$rank"]="$rdma_ifs"
-    done <<<"$fabric_rows"
-  else
-    for ((rank = 0; rank < required; rank++)); do
-      CLUSTER_PROFILE_HCAS["$rank"]="${CLUSTER_NODE_HCAS[$rank]:-}"
-      CLUSTER_PROFILE_RDMA_IFS["$rank"]="${CLUSTER_NODE_RDMA_IFS[$rank]:-}"
-    done
+  if ! fabric_rows=$(python3 "$_topology_repo/scripts/topology_manifest.py" \
+      profile-fabric "$CLUSTER_TOPOLOGY_FILE" "$required"); then
+    echo "topology: cannot resolve RDMA fabric for $required selected ranks" >&2
+    return 1
   fi
+  while IFS=$'\t' read -r rank hcas rdma_ifs; do
+    [ -n "$rank" ] || continue
+    CLUSTER_PROFILE_HCAS["$rank"]="$hcas"
+    CLUSTER_PROFILE_RDMA_IFS["$rank"]="$rdma_ifs"
+  done <<<"$fabric_rows"
 
   if [ "${#CLUSTER_PROFILE_HCAS[@]}" -ne "$required" ]; then
     echo "topology: selected fabric row count does not match $required ranks" >&2

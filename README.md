@@ -494,7 +494,8 @@ no leaks, no thermal throttling anywhere).
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.
 The resulting `.cluster-topology.json` is gitignored; do not commit site
-addresses. `HEAD_IP` / `WORKER_IP` remain legacy two-node compatibility only.
+addresses. `HEAD_IP` / `WORKER_IP` environment variables are not honored for
+topology; multi-node operations require the confirmed manifest.
 
 ## License
 
