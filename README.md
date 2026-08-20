@@ -93,9 +93,10 @@ transfer remain distinct data planes even when they involve the same machines.
 
 **Run these on a DGX Spark (head node), not a laptop.**  
 Stack needs Docker + NVIDIA Container Toolkit on GB10 (aarch64).
-`scripts/pull-weights.sh` also needs `hf` or `huggingface-cli` on PATH
-before it will download (or restage) a Hugging Face repository. Full host
-checklist: [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
+`scripts/model-library.sh home add` also needs `hf` or `huggingface-cli`
+on PATH before it can download a Hugging Face repository into the model
+library. Full host checklist:
+[docs/PREREQUISITES.md](docs/PREREQUISITES.md).
 
 ### Single-node quick start — first token
 
@@ -106,14 +107,26 @@ docker pull vllm/vllm-openai:v0.26.0
 # Host sanity (GPU, docker, port, cache)
 scripts/doctor.sh
 
+# Confirm topology identity once — serving requires a confirmed manifest,
+# and a single machine is a valid one-node topology (ADR 0006).
+scripts/detect-fabric.sh --write-topology
+
 # List every serving profile with advisory release and legacy labels
 scripts/list-models.sh --serving
 
-# First serving model: download weights if needed, then serve
-# Requires hf or huggingface-cli on PATH (see PREREQUISITES.md)
-scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
+# First serving model: acquire one durable home, prepare exact runtime
+# views, then serve. Requires hf or huggingface-cli on PATH. An unsealed
+# profile uses the source-attested two-step: inspect a read-only plan,
+# then confirm the exact commit that plan reported.
+scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
+  --revision main --plan --json
+scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
+  --revision <exact-commit-from-plan> --yes
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
 ./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
 # equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
+# The wizard (./pulsar wizard) guides all of the above interactively.
 
 # Operator home (neutral workflow menu — no doctor/preflight until you pick)
 ./pulsar
@@ -177,7 +190,7 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"nemotron-3-nano","prompt":"2+2=","max_tokens":4,"temperature":0}'
 # conf id ≠ API id: nemotron-3-nano-30b-nvfp4 → served name nemotron-3-nano
-# qwen3-1.7b → qwen3-1.7b | laguna-s-2.1-nvfp4 → laguna-s-2.1
+# qwen3-1.7b → qwen3-1.7b
 ```
 
 ```bash
@@ -192,8 +205,9 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
 ./pulsar stop qwen3-1.7b --node <node-id>
 ```
 
-NFS catalog models (e.g. `laguna-s-2.1-nvfp4`) need `/mnt/Models/...` mounted;
-`pull-weights` will **not** fetch those — it only downloads Hugging Face ids.
+Every serving profile is an exact Hugging Face `model_id@commit`; the
+absolute-path catalog profiles were removed with the replicated path
+(ADR 0006).
 
 ### Confirmed cluster — validated two-node flagship
 
@@ -213,9 +227,14 @@ scripts/detect-fabric.sh --write-topology
 # Optional runtime/path/auth overrides only; topology is not stored in .env.
 cp .env.example .env
 
-# Pull/stage the qualified digest and weights to every node used by the profile.
+# Pull/stage the qualified digest to every node used by the profile, then
+# acquire one durable home and prepare sealed views on every serving rank.
 scripts/sync-image.sh deepseek-v4-flash --pull --yes
-scripts/pull-weights.sh deepseek-v4-flash --yes
+scripts/topology-ssh-trust.sh enroll && scripts/topology-ssh-trust.sh check
+scripts/model-library.sh home add deepseek-v4-flash --yes
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh prepare deepseek-v4-flash \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
 
 scripts/doctor.sh
 scripts/up.sh deepseek-v4-flash                  # exact NODES=2, DSpark k=5
@@ -337,7 +356,8 @@ promote a claim and is not exposed through `pulsar`.
 | `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |
 | `scripts/model-library.sh health [--json]` | Sanitized cached-catalog and rank-local hot metadata health |
 | `scripts/list-models.sh` | Conf catalog |
-| `scripts/check-weights.sh` / `pull-weights.sh` | Artifact completeness / stage every exact rank |
+| `scripts/check-weights.sh` | Prepared library views on every exact rank |
+| `scripts/model-library.sh` | Durable homes, acquisition, preparation, retention |
 | `./pulsar weight-fabric` | Leftover live-NFS show/unmount/teardown only (ADR 0005) |
 | `scripts/check-image.sh` / `sync-image.sh` | Image presence / stage every exact rank |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
@@ -416,7 +436,7 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
 | Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
 | **deepseek-v4-flash** (2-node TP=2, PR-41834; **0731, DSpark, 20 GB/rank KV → 652k**) | **27.15** base (68%) / **43–48** DSpark (**0731 benches**; no 20 GB tok/s re-run) | 104 @ c=8 (0731) | 0.935 (0731 battery; 20 GB gsm8k not re-run) | 3/3 @ **447K** (`results/needle-dsv4-20gb-447k.log`) | **150 min @ c=5, 3201 req, 0 err** (20 GB canonical) |
-| laguna-s-2.1-nvfp4 (1-node, NFS catalog) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K (ledger; no `results/` needle file) | 150 min, 1873 req, 0 err |
+| laguna-s-2.1-nvfp4 (historical; profile removed by ADR 0006) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K (ledger; no `results/` needle file) | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |
 | nemotron-3-nano-30b-nvfp4 | 61.9 (86%) | 399 @ c=16 | 0.830 | 3/3 @ 124K (ledger; no `results/` needle file) | 15 min clean |
 | qwen3.6-27b-fp8 (GDN hybrid, 1-node only) | 8.0 (94%) | 93 @ c=16 | 0.615 | 3/3 @ 121K (ledger; no `results/` needle file) | 20 min clean |
