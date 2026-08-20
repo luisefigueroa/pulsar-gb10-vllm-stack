@@ -148,9 +148,22 @@ if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
   log "conf $TARGET has no models/${TARGET}.conf; stopping by proven container labels"
   load_cluster_topology || die "confirmed topology is invalid"
   retired_cluster_name=$(container_name_for "$TARGET" 2)
-  rc=0
-  retired_meta=$(container_ownership_inspect_local "$retired_cluster_name") || rc=$?
-  if [ "$rc" -eq 0 ]; then
+  # Probe EVERY confirmed node for the cluster container: a partially torn
+  # down retired profile may have live remote ranks with no local rank 0.
+  retired_meta=""
+  retired_count="$CLUSTER_TOPOLOGY_COUNT"
+  [ "$retired_count" -gt 0 ] || retired_count=1
+  for ((retired_index = 0; retired_index < retired_count; retired_index++)); do
+    rc=0
+    probe_meta=$(container_ownership_inspect_on_node \
+      "$retired_index" "$retired_cluster_name") || rc=$?
+    case "$rc" in
+      3) continue ;;
+      0) retired_meta="$probe_meta" ;;
+      *) die "cannot inspect $retired_cluster_name on confirmed node $retired_index" ;;
+    esac
+  done
+  if [ -n "$retired_meta" ]; then
     [ -z "$NODE_SELECTOR" ] || die "--node is only valid for one-node services" 2
     retired_world=$(container_world_size_field "$retired_meta")
     [[ "$retired_world" =~ ^[2-9][0-9]*$ ]] \
@@ -162,8 +175,6 @@ if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
       2) die "refused to stop $retired_cluster_name: ownership not proven on every rank" ;;
       *) die "failed while removing $retired_cluster_name ranks (rc=$rc)" ;;
     esac
-  elif [ "$rc" -ne 3 ]; then
-    die "cannot inspect $retired_cluster_name locally"
   fi
   if [ -z "$NODE_SELECTOR" ]; then
     rc=0

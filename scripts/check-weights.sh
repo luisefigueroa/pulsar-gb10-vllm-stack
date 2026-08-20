@@ -64,6 +64,40 @@ print(json.dumps({
   exit 1
 fi
 instance=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+
+# Readiness is an all-rank claim: the local resolution above proves rank 0
+# only, so verify every remote serving rank's view before reporting ok.
+if [ "$NODES" -gt 1 ]; then
+  expected_validation_json=$(printf '%s' "$hot_info" | python3 -c \
+    'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
+  for ((verify_rank = 1; verify_rank < NODES; verify_rank++)); do
+    verify_command=$(shell_join_q python3 - verify-hot \
+      --instance-dir "$instance" \
+      --profile "$NAME" \
+      --topology-id "$CLUSTER_TOPOLOGY_ID" \
+      --expected-validation-json "$expected_validation_json" \
+      --serve-time-witness)
+    if ssh_node "$verify_rank" "$verify_command" \
+        <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null 2>&1; then
+      continue
+    fi
+    if [ "$JSON" = 1 ]; then
+      NAME_V="$NAME" NODES_V="$NODES" RANK_V="$verify_rank" python3 -c '
+import json, os
+print(json.dumps({
+    "state": "missing", "source": "library-hot", "ok": False,
+    "model": os.environ["NAME_V"], "nodes": int(os.environ["NODES_V"]),
+    "failed_rank": int(os.environ["RANK_V"]),
+}, indent=2, sort_keys=True))'
+    elif [ "${QUIET:-0}" = 1 ]; then
+      echo "FAIL  weights   rank $verify_rank view is not verified"
+    else
+      echo "model files are not verified on rank $verify_rank — run: scripts/model-library.sh prepare $NAME --yes" >&2
+    fi
+    exit 1
+  done
+fi
+
 if [ "$JSON" = 1 ]; then
   printf '%s\n' "$hot_info" | NAME_V="$NAME" NODES_V="$NODES" python3 -c '
 import json, os, sys

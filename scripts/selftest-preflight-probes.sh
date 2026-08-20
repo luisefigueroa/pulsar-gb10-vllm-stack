@@ -185,11 +185,17 @@ fixture_topology_id=$(python3 -c \
 python3 "$REPO_DIR/scripts/testlib/library_hot_fixture.py" \
   "$STATE_DIR/hot-info.json" --profile qwen3-1.7b-2node \
   --topology-id "$fixture_topology_id"
+: >"$STATE_DIR/ssh.log"
 weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
   FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
+  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
 assert_json_state "$weights_out" ok "ready library views report ok"
+grep -q 'verify-hot' "$STATE_DIR/ssh.log" \
+  || { echo "FAIL readiness must verify every remote rank" >&2; exit 1; }
+echo "OK   readiness verifies remote ranks before reporting ok"
+
 WEIGHTS_JSON="$weights_out" python3 - <<'PY2'
 import json
 import os
@@ -200,9 +206,29 @@ assert data["identity_status"] == "legacy-unsealed", data
 assert data["model"] == "qwen3-1.7b-2node", data
 assert data["nodes"] == 2, data
 PY2
+# A remote rank whose view cannot be verified is missing, not healthy.
+set +e
+weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
+  PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
+  FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
+  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" SSH_MODE=down \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
+weights_rc=$?
+set -e
+[ "$weights_rc" -ne 0 ]
+assert_json_state "$weights_out" missing \
+  "unverifiable remote rank view is missing"
+WEIGHTS_JSON="$weights_out" python3 - <<'PY2'
+import json
+import os
+
+data = json.loads(os.environ["WEIGHTS_JSON"])
+assert data["failed_rank"] == 1, data
+PY2
 weights_human=$(QUIET=1 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
   FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
+  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node)
 printf '%s\n' "$weights_human" | grep -q 'identity=legacy-unsealed'
 echo "OK   human and JSON weight projections agree"

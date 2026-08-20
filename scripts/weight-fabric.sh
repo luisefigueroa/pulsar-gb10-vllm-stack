@@ -23,14 +23,16 @@ only inspects and removes leftover site exports and mounts.
 
 Usage:
   scripts/weight-fabric.sh show <profile> [--json]
-  scripts/weight-fabric.sh unmount <profile> [--yes]
-  scripts/weight-fabric.sh teardown <profile> [--yes]
+  scripts/weight-fabric.sh unmount <profile> [--yes] [--interactive-sudo]
+  scripts/weight-fabric.sh teardown <profile> [--yes] [--interactive-sudo]
 
 Safety:
   • unmount refuses any client mount still used by a container.
   • teardown removes only this configuration's export and mount state;
     model files and the site config file are preserved.
-  • privileged steps use passwordless sudo (sudo -n) on each node.
+  • privileged steps use passwordless sudo (sudo -n) on each node;
+    --interactive-sudo prompts in the operator terminal instead and never
+    stores a password.
   • --yes is only for an already reviewed leftover-teardown runbook.
   • no command serves, copies, or remaps weights.
 EOF
@@ -187,13 +189,30 @@ node_exec() {
   fi
 }
 
+WF_SUDO_MODE=passwordless
+
 node_privileged() {
-  local rank="${1:?rank required}"
+  local rank="${1:?rank required}" endpoint command
   shift
-  local command
+  endpoint="${WF_RANK_EXEC_HOSTS[$rank]:?rank endpoint unresolved}"
+  if [ "$WF_SUDO_MODE" = interactive ]; then
+    # Attended sudo: authentication happens in the operator terminal;
+    # Pulsar never stores a password. Remote ranks need a TTY, so batch
+    # mode is explicitly overridden for this one invocation.
+    command="sudo $(shell_join_q "$@")"
+    if [ "$endpoint" = local ]; then
+      bash -c "$command" \
+        || die "rank $rank privileged step failed: $*"
+    else
+      "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -o BatchMode=no -tt \
+        -- "$endpoint" "$command" \
+        || die "rank $rank privileged step failed: $*"
+    fi
+    return 0
+  fi
   command="sudo -n $(shell_join_q "$@")"
   node_exec "$rank" "$command" \
-    || die "rank $rank privileged step failed (passwordless sudo required): $*"
+    || die "rank $rank privileged step failed (passwordless sudo required; retry with --interactive-sudo in a terminal): $*"
 }
 
 confirm_teardown() {
@@ -343,21 +362,26 @@ case "$command" in
     [ "${1:-}" = --json ] && json=1
     show_fabric "$profile" "$json"
     ;;
-  unmount)
+  unmount|teardown)
+    subcommand="$command"
     profile="${1:-}"
-    [ -n "$profile" ] || die "usage: $0 unmount <profile> [--yes]"
+    [ -n "$profile" ] \
+      || die "usage: $0 $subcommand <profile> [--yes] [--interactive-sudo]"
     shift
     yes=0
-    [ "${1:-}" = --yes ] && yes=1
-    unmount_clients "$profile" "$yes"
-    ;;
-  teardown)
-    profile="${1:-}"
-    [ -n "$profile" ] || die "usage: $0 teardown <profile> [--yes]"
-    shift
-    yes=0
-    [ "${1:-}" = --yes ] && yes=1
-    teardown_fabric "$profile" "$yes"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --yes) yes=1 ;;
+        --interactive-sudo) WF_SUDO_MODE=interactive ;;
+        *) die "unknown arg: $1" ;;
+      esac
+      shift
+    done
+    if [ "$subcommand" = unmount ]; then
+      unmount_clients "$profile" "$yes"
+    else
+      teardown_fabric "$profile" "$yes"
+    fi
     ;;
   help|-h|--help)
     usage

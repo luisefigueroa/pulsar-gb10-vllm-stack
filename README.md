@@ -126,7 +126,9 @@ scripts/model-library.sh catalog refresh
 scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
 ./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
 # equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
-# The wizard (./pulsar wizard) guides all of the above interactively.
+# The wizard (./pulsar wizard) guides topology confirmation, readiness, and
+# preparation for every profile, plus acquisition for sealed profiles; the
+# unsealed source-attested two-step above remains a manual CLI action.
 
 # Operator home (neutral workflow menu — no doctor/preflight until you pick)
 ./pulsar

@@ -585,6 +585,30 @@ assert_eq "$retired_rc" "0" "down.sh stops a retired single-node profile"
 assert_false "retired single-node container is removed" \
   container_ownership_inspect_local "$ID_RETIRED_SINGLE"
 
+# A retired cluster with only remote ranks left is still found and removed:
+# the named stop probes every confirmed node, never just the local one.
+ID_RETIRED_REMOTE=$(hex64 retired-remote-rank1)
+seed_state "$HEAD_STATE" '[]'
+seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-retired-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"retired-2node",
+    "io.pulsar.gb10.rank":"1","io.pulsar.gb10.world-size":"2"}}
+]))' "$ID_RETIRED_REMOTE")"
+: >"$STATE_DIR/rm.log"
+retired_rc=0
+env FAKE_DOCKER_STATE="$HEAD_STATE" FAKE_DOCKER_NODE=head \
+  FAKE_WORKER_STATE="$WORKER_STATE" \
+  FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+  FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+  FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
+  PULSAR_DOCKER="$SHIM_DIR/docker" PULSAR_SSH="$SHIM_DIR/ssh" \
+  CLUSTER_TOPOLOGY_FILE="$CLUSTER_TOPOLOGY_FILE" \
+  "$REPO_DIR/scripts/down.sh" retired-2node >/dev/null 2>&1 || retired_rc=$?
+assert_eq "$retired_rc" "0" "retired stop reaches remote-only cluster ranks"
+assert_false "remote retired rank is removed" \
+  container_ownership_inspect_remote "worker-host" "$ID_RETIRED_REMOTE"
+seed_state "$WORKER_STATE" '[]'
+
 # A retired named stop never accepts hot retention flags.
 retired_rc=0
 env FAKE_DOCKER_STATE="$HEAD_STATE" FAKE_DOCKER_NODE=head \
