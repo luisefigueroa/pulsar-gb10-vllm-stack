@@ -149,8 +149,14 @@ if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
   load_cluster_topology || die "confirmed topology is invalid"
   retired_cluster_name=$(container_name_for "$TARGET" 2)
   # Probe EVERY confirmed node for the cluster container: a partially torn
-  # down retired profile may have live remote ranks with no local rank 0.
-  retired_meta=""
+  # down retired profile may have live remote ranks with no local rank 0,
+  # and after a membership reconfirm a surviving rank may sit at any index.
+  # Ranks are therefore removed at the node where each was OBSERVED, and
+  # only when every confirmed node was observable (an unobserved node could
+  # host a live rank that removal would strand).
+  retired_found_indices=()
+  retired_found_ids=()
+  retired_unobservable=""
   retired_count="$CLUSTER_TOPOLOGY_COUNT"
   [ "$retired_count" -gt 0 ] || retired_count=1
   for ((retired_index = 0; retired_index < retired_count; retired_index++)); do
@@ -159,23 +165,42 @@ if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
       "$retired_index" "$retired_cluster_name") || rc=$?
     case "$rc" in
       3) continue ;;
-      0) retired_meta="$probe_meta" ;;
-      *) die "cannot inspect $retired_cluster_name on confirmed node $retired_index" ;;
+      0)
+        IFS=$'\t' read -r probe_id _ probe_managed probe_conf probe_rank \
+          < <(container_ownership_fields "$probe_meta")
+        container_managed_label_is_true "$probe_managed" \
+          || die "refused: $retired_cluster_name on node $retired_index is not stack-managed"
+        [ "$probe_conf" = "$TARGET" ] \
+          || die "refused: $retired_cluster_name on node $retired_index carries conf '$probe_conf'"
+        [[ "$probe_rank" =~ ^[0-9]+$ ]] \
+          || die "refused: $retired_cluster_name on node $retired_index has rank '$probe_rank'"
+        probe_world=$(container_world_size_field "$probe_meta")
+        [[ "$probe_world" =~ ^[2-9][0-9]*$ ]] && [ "$probe_rank" -lt "$probe_world" ] \
+          || die "refused: $retired_cluster_name on node $retired_index has no usable world-size label"
+        retired_found_indices+=("$retired_index")
+        retired_found_ids+=("$probe_id")
+        ;;
+      *) retired_unobservable+=" $retired_index" ;;
     esac
   done
-  if [ -n "$retired_meta" ]; then
+  if [ "${#retired_found_indices[@]}" -gt 0 ]; then
     [ -z "$NODE_SELECTOR" ] || die "--node is only valid for one-node services" 2
-    retired_world=$(container_world_size_field "$retired_meta")
-    [[ "$retired_world" =~ ^[2-9][0-9]*$ ]] \
-      || die "retired conf $TARGET: cluster container has no usable world-size label"
+    [ -z "$retired_unobservable" ] \
+      || die "confirmed node(s)$retired_unobservable are unobservable — not removing retired $TARGET ranks (an unobserved live rank could be stranded); restore those nodes or clean up manually"
     rc=0
-    remove_stack_owned_cluster "$TARGET" "$retired_cluster_name" "$retired_world" || rc=$?
+    for retired_index in "${!retired_found_indices[@]}"; do
+      remove_retired_cluster_rank_on_node \
+        "${retired_found_indices[$retired_index]}" \
+        "${retired_found_ids[$retired_index]}" "$TARGET" || rc=$?
+    done
     case "$rc" in
       0) log "done"; exit 0 ;;
-      2) die "refused to stop $retired_cluster_name: ownership not proven on every rank" ;;
+      2) die "refused to stop $retired_cluster_name: ownership changed during removal" ;;
       *) die "failed while removing $retired_cluster_name ranks (rc=$rc)" ;;
     esac
   fi
+  [ -z "$retired_unobservable" ] \
+    || die "confirmed node(s)$retired_unobservable are unobservable — cannot conclude retired $TARGET has no cluster ranks"
   if [ -z "$NODE_SELECTOR" ]; then
     rc=0
     placement_index=$(discover_single_node_index_for_conf "$TARGET") || rc=$?

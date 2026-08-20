@@ -322,8 +322,11 @@ if [ "$library_render_rc" -le 1 ] && [ -s "$library_rows" ]; then
     record "$library_level" "$library_id" "$library_message"
   done <"$library_rows"
 else
-  record warn model_library \
-    "model-library health is unavailable (running services are unaffected; new preparation is blocked until it returns)"
+  # The library is the only weight mechanism (ADR 0006): when its health
+  # cannot even be rendered, new preparation and serving readiness are
+  # blocked, so this is a doctor failure. Running services are unaffected.
+  record fail model_library \
+    "model-library health is unavailable — new preparation and launch readiness are blocked until it returns (running services are unaffected)"
 fi
 rm -f "$library_report" "$library_rows"
 

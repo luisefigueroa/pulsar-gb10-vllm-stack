@@ -1958,6 +1958,54 @@ remove_stack_owned_single_at_resolved_node() {
   fi
 }
 
+# Revalidate and remove one retired-profile cluster rank at the exact node
+# where it was observed. Retired confs have no topology-index geometry, so
+# each rank is removed where it actually lives, never by current index.
+# Exit: 0 removed; 2 ownership refusal; 1 operational error.
+remove_retired_cluster_rank_on_node() {
+  local index="${1:?node index required}" id="${2:?container id required}"
+  local conf="${3:?conf required}"
+  local meta rc=0 have_id have_name managed have_conf have_rank world host
+  meta=$(container_ownership_inspect_on_node "$index" "$id") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    warn "retired rank changed or became unobservable on node $index"
+    return 2
+  fi
+  IFS=$'\t' read -r have_id have_name managed have_conf have_rank \
+    < <(container_ownership_fields "$meta")
+  container_managed_label_is_true "$managed" || return 2
+  [ "$have_conf" = "$conf" ] || return 2
+  [[ "$have_rank" =~ ^[0-9]+$ ]] || return 2
+  world=$(container_world_size_field "$meta")
+  [[ "$world" =~ ^[2-9][0-9]*$ ]] && [ "$have_rank" -lt "$world" ] || return 2
+  if [ "$index" -eq 0 ]; then
+    if ! "$PULSAR_DOCKER" rm -f "$have_id" >/dev/null 2>&1; then
+      warn "docker rm -f failed for $have_name id=${have_id:0:12}"
+      return 1
+    fi
+    rc=0
+    container_ownership_inspect_local "$have_id" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 3 ]; then
+      warn "container id=${have_id:0:12} still present after rm on node $index"
+      return 1
+    fi
+  else
+    host="${CLUSTER_NODE_SSH_HOSTS[$index]}"
+    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
+        "docker rm -f $(printf '%q' "$have_id") >/dev/null"; then
+      warn "docker rm -f failed for $have_name on node $index"
+      return 1
+    fi
+    rc=0
+    container_ownership_inspect_remote "$host" "$have_id" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 3 ]; then
+      warn "container id=${have_id:0:12} still present after rm on node $index"
+      return 1
+    fi
+  fi
+  log "removed retired conf=$conf rank=$have_rank on confirmed node $index"
+}
+
 # Best-effort remove by immutable ID only (current-launch cleanup). Never by name.
 # Only accepts a validated 64-hex id — never arbitrary docker run stdout.
 remove_container_id_local() {
