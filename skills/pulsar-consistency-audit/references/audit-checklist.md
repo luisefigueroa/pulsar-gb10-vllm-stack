@@ -71,13 +71,15 @@ node/topology IDs, filesystem identities, witness IDs, or repair IDs.
 
 Verify consistency across doctrine, code, UI, tests, operations, and evidence:
 
-- replicated weights remain the guided default;
-- catalog preparation is explicitly experimental where required;
+- the model library is the only weight-distribution mechanism (ADR 0006); no
+  mode-selection flags exist, and `--weight-source`/`--weight-mode` fail
+  closed with remediation;
+- a confirmed topology manifest (one-node is valid) is a serving prerequisite;
 - operator language says “prepare model for serving”; `activate` remains only a
   compatibility command/internal term;
 - no silent transport, storage, geometry, or cache fallback occurs;
-- live NFS/RDMA serving (`--weight-source fabric`, `live-remote-readonly`) is
-  rejected (ADR 0005) and is not offered as a serving alternative;
+- live NFS/RDMA serving (`live-remote-readonly`) is rejected (ADR 0005) and is
+  not offered as a serving alternative;
 - one durable home exists per exact revision by default;
 - the home rank uses its durable-home view, never a second hot copy;
 - only non-home ranks receive sealed-hot copies;

@@ -36,22 +36,20 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Model library<br/>two-rank GA · other scopes experimental"] -. explicit opt-in .-> artifacts
+  library["Model library<br/>durable homes · sealed hot views"] --> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
-
-  classDef optin stroke-dasharray: 5 5;
-  class library optin;
 ```
 
-Solid arrows show the promoted control and evidence flow. Dashed arrows are
-explicit non-default weight paths. The reviewed two-rank `library-hot` path is
-GA; remote one-rank and legacy-unsealed uses remain experimental. Live
-NFSv4.2/RDMA under vLLM (`--weight-source fabric`) is rejected as a serving
-runtime source (ADR 0005): a crashed rank cannot cold-start without the owner
-export. Launch fails closed; leftover unmount/teardown only. None is a silent
-fallback or wizard default. Control SSH, inference NCCL/RoCE, and weight
+The model library is the only weight-distribution mechanism
+([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)):
+one durable home per exact revision, sealed hot views on non-home ranks, and
+local files on every rank before vLLM starts. There is no mode-selection
+axis; `--weight-source`/`--weight-mode` fail closed. Live NFSv4.2/RDMA under
+vLLM remains rejected as a serving runtime source (ADR 0005): a crashed rank
+cannot cold-start without the owner export; leftover site mounts get
+unmount/teardown only. Control SSH, inference NCCL/RoCE, and weight
 transfer remain distinct data planes even when they involve the same machines.
 
 ## What sets this stack apart
@@ -134,15 +132,13 @@ scripts/pull-weights.sh nemotron-3-nano-30b-nvfp4
 **Operator home (`./pulsar`):** workflow menu — Current system status (default),
 Serve or switch a model, Stop a serving model, Models & storage, Maintenance,
 Diagnostics, Exit. Models & storage browses cached exact identity,
-durable-home/runtime placement, and findings. It labels reviewed two-rank
-`library-hot` as GA and explicit; one-rank and legacy-unsealed use remain
-experimental. Browsing and health rechecks are read-only. A separate,
-confirmation-gated refresh can rescan confirmed ranks and update only the
-cached catalog; it never runs automatically. A second confirmed action can
-prepare a serving profile with reviewed identity using eight-stream
-SSH-over-RoCE and no fallback. It verifies and budgets rank-local views but does
-not start serving, qualify the model, change its release status, or change the
-replicated guided default. Retention, cleanup, repair, and durable-home removal
+durable-home/runtime placement, and findings. Browsing and health rechecks
+are read-only. A separate, confirmation-gated refresh can rescan confirmed
+ranks and update only the cached catalog; it never runs automatically. A
+second confirmed action can prepare a serving profile with reviewed identity
+using eight-stream SSH-over-RoCE and no fallback. It verifies and budgets
+rank-local views but does not start serving, qualify the model, or change
+its release status. Retention, cleanup, repair, and durable-home removal
 remain separate direct-CLI workflows.
 Home is read-only by default; it does not run doctor/inventory until you choose.
 Quick status is a focused overview (inventory + `/v1/models` advertisement only —
@@ -258,38 +254,30 @@ Serving is status-independent, while concrete identity, recipe, topology,
 capacity, security, and lifecycle checks still fail closed. No schema object or selftest
 establishes physical DGX behavior.
 
-**Additional storage paths:** replicated local Hugging Face caches remain the
-default. Live NFSv4.2/RDMA under vLLM (`--weight-source fabric`) is rejected
-as a serving path (ADR 0005): a crashed rank cannot cold-start without the
-owner export. Launch fails closed with no remap. A distinct
-`library-hot` candidate keeps one durable home,
-uses a symlink view on that rank, and transfers sealed hot copies only to other
-ranks. Its control plane can now enforce reviewed exact commit/manifest seals,
-create a rank-local witness after full verification, use a metadata fast path
-for unchanged launch, and visibly rehash on drift before launching the exact
-snapshot. The diagnostic `qwen3-1.7b` profile carries the first reviewed lab
-seal and validation bundle; its sealed `library-hot` preparation and launch
-reported `identity=match`. The flagship `deepseek-v4-flash` profile carries
-the second issued identity; its post-issuance physical enforcement and
-one-home lifecycle gates passed in the catalog and serving-integration scopes.
-The exact DeepSeek Model Serving Release failed strict same-boot determinism, so
-it cannot be called `Validated`; that result does not invalidate the
-distribution subsystem. The reviewed two-rank `library-hot` path completed its
-separate GA closure on 2026-08-16: exact home symlink behavior, 30-minute
-serving, restart, forced launch failure with persisted exact recovery, identity
-re-verification, owned cleanup, and one-home closeout passed. The 30-minute run
-completed 587 requests with no errors and retained a 1.14 GiB memory-shrink
-warning for review. Remote one-rank placement and legacy-unsealed use remain
-experimental. `library-hot` remains explicit and non-default. Sealed replicated
-caches now enforce the
-reviewed commit/manifest with full verification, a rank-local witness, and
-exact-snapshot read-only launch; legacy-unsealed replicated paths remain
-unbound, and live-mount serving is retired. See
-[ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md),
-[docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md), and
-[docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). For an existing
-eligible primary home, reviewed multi-rank preparation is topology-bound
-SSH-over-RoCE with eight streams and no fallback. Enroll and
+**Weight storage:** the model library is the only mechanism
+([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)).
+It keeps one durable home per exact revision, uses a symlink view on the
+home rank, and transfers sealed hot copies only to other ranks. Its control
+plane enforces reviewed exact commit/manifest seals where a profile carries
+one, creates a rank-local witness after full verification, uses a metadata
+fast path for unchanged launch, and visibly rehashes on drift before
+launching the exact snapshot. Profiles without a reviewed seal launch with
+`identity=legacy-unsealed` after full verification. The diagnostic
+`qwen3-1.7b` profile carries the first reviewed lab seal and validation
+bundle; the flagship `deepseek-v4-flash` profile carries the second and
+passed its post-issuance physical enforcement, one-home lifecycle, and
+2026-08-16 two-rank GA closure gates (587 requests, zero errors, 30 minutes;
+a 1.14 GiB memory-shrink warning is retained for review). The exact DeepSeek
+Model Serving Release failed strict same-boot determinism, so it cannot be
+called `Validated`; that result does not invalidate the distribution
+subsystem. One-rank library serving is supported by decision with its
+physical serving-integration evidence still pending (ADR 0006 records the
+accepted risk). Live NFS/RDMA serving is retired
+([ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md); history in
+[docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md)); the canonical architecture
+is [docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). For an
+existing eligible primary home, reviewed multi-rank preparation is
+topology-bound SSH-over-RoCE with eight streams and no fallback. Enroll and
 check SSH trust first, then use the exact preparation command:
 
 ```bash
@@ -301,10 +289,9 @@ scripts/model-library.sh prepare <multi-rank-sealed-profile> \
 ```
 
 Catalog refresh inventories existing homes; it does not download a model or
-create the required durable home. The replicated quick start above therefore
-remains the guided fresh-cluster workflow. An operator deliberately using the
-distributed library can create exactly one durable home, then explicitly
-register and prepare it. A sealed profile uses its reviewed identity:
+create the required durable home. Acquisition is `home add`: it creates
+exactly one durable home, which is then explicitly registered and prepared.
+A sealed profile uses its reviewed identity:
 
 ```bash
 scripts/model-library.sh home add <sealed-profile> --yes

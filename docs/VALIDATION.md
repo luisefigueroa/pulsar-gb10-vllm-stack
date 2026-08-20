@@ -9,6 +9,22 @@ Raw artifacts: `results/`.
 
 Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
 
+**Policy transition (2026-08-19):**
+[ADR 0006](./decisions/0006-model-library-only-weight-distribution.md) makes
+the model library the only weight-distribution mechanism. Replicated
+per-node caches and the retired live-NFS workflow are removed from the
+control plane; the `--weight-source`/`--weight-mode` axis fails closed; the
+absolute-path catalog profiles (`laguna-s-2.1-nvfp4`, `laguna-s-2.1-2node`,
+`inkling-small-nvfp4`) are removed because a durable home requires an exact
+Hugging Face `model_id@commit`; and a confirmed topology manifest (one-node
+is valid) becomes a serving prerequisite. Every library scope — two-rank
+sealed, one-rank, legacy-unsealed — is supported by decision. The one-rank
+physical serving-integration evidence remains PENDING and is recorded in
+ADR 0006 as an accepted risk with follow-up capture. Historical replicated
+and weight-fabric rows below remain valid history; they are superseded as
+policy, not invalidated as evidence. No Model Serving Release status
+changes.
+
 **Policy transition (2026-08-14):**
 [ADR 0004](./decisions/0004-model-serving-release-validation.md) defines a
 **Model Serving Release** as the immutable exact-model + serving-recipe +
