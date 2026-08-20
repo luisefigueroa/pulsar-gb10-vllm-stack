@@ -1,0 +1,39 @@
+{
+  "artifact_identity": {
+    "manifest_id": "aa533a36211b063f7fe310ba65c41d9c7fdc6b5f7571ba1dc69c926f47175d79",
+    "model_id": "Qwen/Qwen3.8-27B-FP8",
+    "outcome": "pass",
+    "snapshot_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+  },
+  "candidate_id": "5770dddae56b72d48b14b1e81faaf02b0cda12f3076085118cca0913eb57bdc2",
+  "contract_frozen_before_testing": {
+    "contract_id": "2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597",
+    "outcome": "pass"
+  },
+  "evidence_privacy": {
+    "outcome": "pass",
+    "publishable_paths": [
+      "results/model-onboarding/qwen3.8-27b-fp8/bench.json",
+      "results/model-onboarding/qwen3.8-27b-fp8/compare.json"
+    ]
+  },
+  "kind": "pulsar-model-serving-provenance-security-review-evidence",
+  "notes": [
+    "The release remains Testing incomplete because required stability, accuracy, serving-integration, and physical-geometry observations are absent.",
+    "This review does not promote the profile, recommend a default, authorize serving, or claim that the missing physical criteria passed."
+  ],
+  "release_id": "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
+  "review_reference": "repository-review:qwen3.8-27b-fp8-onboarding-20260819",
+  "reviewed_at": "2026-08-19T23:52:02Z",
+  "reviewer": "luisefigueroa",
+  "runtime_identity": {
+    "image_digest": "sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52",
+    "model_access_contract": "local-verified-readonly",
+    "outcome": "pass"
+  },
+  "schema_version": 1,
+  "security": {
+    "outcome": "pass",
+    "review_scope": "bound public model identity, digest-pinned runtime image, frozen serving recipe, closed command evidence, and publishable measurement artifacts"
+  }
+}

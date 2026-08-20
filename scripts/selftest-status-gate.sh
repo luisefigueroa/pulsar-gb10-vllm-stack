@@ -104,18 +104,29 @@ assert models
 for model in models:
     assert model["legacy_status"] == model["status"]
     release = model["model_serving_release"]
-    assert release == {
-        "release_id": None,
-        "state": "legacy-unbound",
-        "effective_status": None,
-        "effective_status_label": "No release binding",
-        "contract_id": None,
-        "decision_id": None,
-        "advisory": True,
-    }
+    if model["id"] == "qwen3.8-27b-fp8":
+        assert release == {
+            "release_id": "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
+            "state": "unique-reviewed-decision",
+            "effective_status": "testing-incomplete",
+            "effective_status_label": "Testing incomplete",
+            "contract_id": "2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597",
+            "decision_id": "b9c5821e1a7a916af64556c2e1728531132c1121e12c5e77d2cca8d28681c344",
+            "advisory": True,
+        }
+    else:
+        assert release == {
+            "release_id": None,
+            "state": "legacy-unbound",
+            "effective_status": None,
+            "effective_status_label": "No release binding",
+            "contract_id": None,
+            "decision_id": None,
+            "advisory": True,
+        }
 PY
 then
-  echo "OK   catalog separates neutral release projection from legacy status"
+  echo "OK   catalog separates reviewed release projection from legacy status"
   pass=$((pass + 1))
 else
   echo "FAIL catalog release projection contract" >&2
@@ -130,6 +141,7 @@ lines = os.environ["NARROW_CATALOG"].splitlines()
 assert lines
 assert max(map(len, lines)) <= 48
 assert any("Release" in line and "No release binding" in line for line in lines)
+assert any("Release" in line and "Testing incomplete" in line for line in lines)
 assert any("Legacy" in line for line in lines)
 PY
 then

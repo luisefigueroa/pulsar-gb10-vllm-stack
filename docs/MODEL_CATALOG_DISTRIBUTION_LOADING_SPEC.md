@@ -21,7 +21,7 @@ implementation gap rather than presented as a competing decision.
 
 | Field | Value |
 |---|---|
-| Snapshot date | 2026-08-17 |
+| Snapshot date | 2026-08-19 |
 | Scope | Current repository working tree |
 | Hardware target | One or more NVIDIA DGX Spark GB10 systems; validated serving profiles currently use one or two ranks |
 | Promoted storage path | Replicated local Hugging Face caches |
@@ -127,8 +127,9 @@ repository review or physical behavior occurred. Read-only trusted
 persistence and verification of stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
 persistence is implemented by `scripts/model-serving-release-capture.sh` and
-does not write that registry or launch a release. No current profile is bound
-and the tracked registry is empty, so current projections are neutral. The
+does not write that registry or launch a release. The `qwen3.8-27b-fp8`
+profile binds the first reviewed ADR 0004 lineage and projects
+`Testing incomplete`; other current profiles remain neutral. The
 supervised `pulsar-model-onboarding` skill is implemented as control-plane
 orchestration around those CLIs. It never issues a seal or validation
 decision, assigns status, binds a profile, writes the trusted registry,
@@ -150,8 +151,8 @@ Deterministic skill and journal tests make no physical DGX claim and create no
 release decision.
 Maintainer-only issuance staging can propose exact registry objects from a
 verified capture candidate plus explicit review input. A successful local
-command is not trusted until repository review and merge. The tracked
-registry remains empty and no current profile is bound.
+command is not trusted until repository review and merge. The Qwen3.8 lineage
+is the first reviewed registry publication and profile binding.
 
 A predecessor decision that itself has supersession links must supply
 complete `prior_decision_sources` with exact prior release, contract, bundle,
@@ -1325,7 +1326,8 @@ effective reviewed release decision, not separate per-scope statuses. The pure
 ADR 0004 criteria, evidence artifacts, and
 run records expose and validate `qualification_scope`, and the read-only
 registry verifies that structure for stored objects. An optional reviewed
-profile binding selects the exact release; current profiles are unbound.
+profile binding selects the exact release; `qwen3.8-27b-fp8` is bound and
+other current profiles remain unbound.
 Evidence in one scope remains valid while its measured inputs and contracts
 are unchanged; a failure elsewhere blocks a combined claim only when that
 claim requires both scopes.
@@ -1334,6 +1336,14 @@ The following is the implementation/evidence state as of the snapshot date.
 The Qwen 1.7B two-node `STATUS=tested` row is a historical runtime-profile
 claim; it neither machine-binds arbitrary Qwen snapshots to that evidence nor
 promotes any experimental storage path for general users.
+
+The Qwen3.8-27B-FP8 release is the first stored ADR 0004 lineage. Its reviewed
+decision is `Testing incomplete`: strict same-boot passed 30/30, and the
+32-request concurrency-1 benchmark passed the frozen absolute throughput and
+latency thresholds. Provenance/security review passed. Stability, accuracy,
+serving integration, and physical geometry remain unevaluated. The profile
+keeps legacy `STATUS=untested`; the binding does not authorize serving,
+recommend the profile, or promote experimental one-rank `library-hot`.
 
 Under the implemented ADR 0004 contracts, a decision does not manually
 choose favorable supporting runs. It automatically considers every applicable

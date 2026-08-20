@@ -24,7 +24,8 @@
   explicitly bound profiles; supervised `pulsar-model-onboarding` skill
   implemented as control-plane orchestration; maintainer-only issuance
   staging implemented as an untrusted local proposal whose trust event is
-  repository review and merge; tracked store remains empty and unbound;
+  repository review and merge; first reviewed Qwen3.8 lineage stored and bound
+  with advisory status `Testing incomplete`;
   status-independent serving policy implemented;
   source-attested Hugging Face v1 planning, separately confirmed acquisition,
   immutable receipts, offline home verification, exact prepare binding, and
@@ -391,8 +392,9 @@ change. Existing `STATUS=tested*`,
 `--validated`, reviewed seals, and legacy-unsealed behavior retain their
 separate legacy meanings and recommendation order; none grants or denies
 serving. No existing profile is automatically relabeled `Validated`. The
-tracked ADR 0004 store currently contains no issued object and no profile is
-currently bound.
+tracked ADR 0004 store contains the Qwen3.8 lineage, and
+`qwen3.8-27b-fp8` is bound to its `Testing incomplete` decision. Other current
+profiles remain unbound.
 
 ### 5. Distribution is preparation provenance, not release status
 
@@ -630,7 +632,9 @@ no-reviewed-decision state, never inferred `Untested`; multiple contract
 lineages or unsuperseded heads are ambiguous and fail closed when one
 reviewed status is requested. Catalog and operator surfaces consume this
 verified inspection only for profiles explicitly bound to a release ID. The
-tracked store currently contains no issued object.
+tracked store contains the reviewed Qwen3.8 lineage; its missing stability,
+accuracy, serving-integration, and physical-geometry observations derive
+`Testing incomplete`, not `Validated`.
 
 Local ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model_serving_release_capture.py` and

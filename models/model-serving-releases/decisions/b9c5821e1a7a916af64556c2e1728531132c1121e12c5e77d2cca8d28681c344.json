@@ -1,0 +1,90 @@
+{
+  "contract_id": "2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597",
+  "criterion_results": [
+    {
+      "criterion_id": "accuracy-first-pass",
+      "disposition": "not-evaluated",
+      "excluded_run_records": [],
+      "included_run_record_ids": [],
+      "reason": "no-included-evidence"
+    },
+    {
+      "criterion_id": "latency-ttft",
+      "disposition": "pass",
+      "excluded_run_records": [],
+      "included_run_record_ids": [
+        "dbffa4de60dcdc6bfb3b20db71a2eeb71dfc361e8247d89aa943f3effba3d04b"
+      ],
+      "reason": "thresholds-and-contract-requirements-satisfied"
+    },
+    {
+      "criterion_id": "physical-geometry-dgx",
+      "disposition": "not-evaluated",
+      "excluded_run_records": [],
+      "included_run_record_ids": [],
+      "reason": "no-included-evidence"
+    },
+    {
+      "criterion_id": "provenance-security-review",
+      "disposition": "pass",
+      "excluded_run_records": [],
+      "included_run_record_ids": [],
+      "reason": "review-passed"
+    },
+    {
+      "criterion_id": "serving-integration-smoke",
+      "disposition": "not-evaluated",
+      "excluded_run_records": [],
+      "included_run_record_ids": [],
+      "reason": "no-included-evidence"
+    },
+    {
+      "criterion_id": "stability-first-pass",
+      "disposition": "not-evaluated",
+      "excluded_run_records": [],
+      "included_run_record_ids": [],
+      "reason": "no-included-evidence"
+    },
+    {
+      "criterion_id": "strict-same-boot-captures",
+      "disposition": "pass",
+      "excluded_run_records": [],
+      "included_run_record_ids": [
+        "13aaf4685c5bc8c94bf9081b9520eb8a123cfae35243b4cce3f9fdfad97d3e1f"
+      ],
+      "reason": "thresholds-and-contract-requirements-satisfied"
+    },
+    {
+      "criterion_id": "throughput-serving",
+      "disposition": "pass",
+      "excluded_run_records": [],
+      "included_run_record_ids": [
+        "dbffa4de60dcdc6bfb3b20db71a2eeb71dfc361e8247d89aa943f3effba3d04b"
+      ],
+      "reason": "thresholds-and-contract-requirements-satisfied"
+    }
+  ],
+  "decision_id": "b9c5821e1a7a916af64556c2e1728531132c1121e12c5e77d2cca8d28681c344",
+  "evidence_bundle_id": "87014a02c02620852f80df4c5b96ac3cfc3536946a0c6c9bd871768e1fd24801",
+  "kind": "pulsar-validation-decision",
+  "provenance_security_review": {
+    "artifact_identity": "pass",
+    "contract_frozen_before_testing": "pass",
+    "evidence_artifact_ids": [
+      "e56f3fd8dcf3b5445f99103430155b190d427b29156f11afadb49b1400ac0874"
+    ],
+    "evidence_privacy": "pass",
+    "runtime_identity": "pass",
+    "security": "pass"
+  },
+  "release_id": "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
+  "review": {
+    "authority": "repository-maintainer-review",
+    "review_reference": "repository-review:qwen3.8-27b-fp8-onboarding-20260819",
+    "reviewed_at": "2026-08-19T23:52:02Z",
+    "reviewer": "luisefigueroa"
+  },
+  "schema_version": 1,
+  "status": "testing-incomplete",
+  "supersedes_decision_ids": []
+}

@@ -137,3 +137,11 @@ private current-home attachment. `home verify` performs the required later
 offline full rehash only when that attachment still matches the live home.
 Sealed `home add` remains compatible. Deterministic tests do not prove physical
 Hub or DGX behavior and none of the trust exclusions above changed.
+
+## Interpretation note — 2026-08-19
+
+The first reviewed ADR 0004 lineage is now stored and bound to
+`qwen3.8-27b-fp8`. Its advisory decision is `Testing incomplete`. This does
+not create an ADR 0001 expected seal, change legacy `STATUS`, authorize
+serving, or promote experimental one-rank `library-hot`; the expected-versus-
+observed content boundary in this decision remains unchanged.

@@ -19,11 +19,12 @@ recommendation label. It is advisory, not a serving gate, and is not the
 release-descriptor, frozen-contract, immutable run-record, evidence-bundle, and
 reviewed-decision schema version 1 contracts are implemented. Read-only
 persistence and verification of those objects is implemented under
-`models/model-serving-releases/` and is currently empty. Local ADR 0004
+`models/model-serving-releases/`; it contains the reviewed Qwen3.8 lineage.
+Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
 unreviewed. Advisory catalog/operator projection is implemented for an
-explicitly bound release; current profiles are unbound and the tracked store
-is empty. Maintainer-only issuance staging can propose registry objects; a
+explicitly bound release; `qwen3.8-27b-fp8` binds the first reviewed lineage
+and other current profiles remain unbound. Maintainer-only issuance staging can propose registry objects; a
 successful local command is not trusted until repository review and merge.
 Serving permission is status-independent. The corrected schemas remain
 version 1 because no ADR 0004 object was issued or persisted before the

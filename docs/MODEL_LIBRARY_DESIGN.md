@@ -166,8 +166,9 @@ Closed validator-measurement documents for `compare-captures` and
 caller context into the existing attempt-only specs. Neither surface issues a
 status, decision, or serving permission, and ordinary `validate/run-gates.sh`
 remains a human path that does not require a release plan.
-No profile currently binds a release and the tracked store is empty, so the
-current projection is neutral. Review-metadata shape checks cannot prove that
+`qwen3.8-27b-fp8` binds the first reviewed ADR 0004 lineage and projects the
+advisory status `Testing incomplete`; other profiles remain neutral.
+Review-metadata shape checks cannot prove that
 repository review or physical qualification occurred. The supervised
 `pulsar-model-onboarding` skill is implemented as control-plane orchestration
 around those CLIs. It collaborates at material decisions and never issues a
@@ -194,13 +195,13 @@ ranks. It does not cover a remote target or asymmetric credentials and makes no
 serving or Model Serving Release claim. Maintainer-only issuance
 staging can propose exact registry objects from a verified capture candidate
 plus explicit review input; a successful local command is not trusted until
-repository review and merge, and the tracked store remains empty. Existing schema-1 bundles and `STATUS=tested*`
+repository review and merge. The Qwen3.8 lineage is the first reviewed
+publication. Existing schema-1 bundles and `STATUS=tested*`
 labels remain separate legacy contracts and retain recommendation order; no
 current profile is automatically `Validated`. Serving permission is
 status-independent. These corrected
 ADR 0004 objects remain schema version 1 because none was issued or persisted
-before the correction. The tracked ADR 0004 store currently contains no issued
-object. Existing legacy schema-1 seals/bundles and raw evidence are not
+before the correction. Existing legacy schema-1 seals/bundles and raw evidence are not
 rewritten.
 
 ---
@@ -373,7 +374,8 @@ gate. The full status vocabulary and object model are defined by
 and contract schemas are implemented, while current `STATUS=tested*` and
 schema-1 bundle behavior remain separate legacy status inputs. Advisory
 release projection consumes only a verified tracked decision for an explicitly
-bound profile; current profiles are unbound.
+bound profile; `qwen3.8-27b-fp8` is bound and other current profiles are
+unbound.
 Catalog recording and serving have no minimum validation status: the release
 remains visible with its actual label. Recommendation/default projection is
 separate, while operational admission checks concrete runnability rather than
@@ -1159,10 +1161,10 @@ experimental. The guided and fresh-cluster default remains replicated copies.
   deterministic orchestration is implemented and the production two-node
   DeepSeek wizard path has passed physically, while existing one-node evidence
   does not exercise this new remote interactive placement
-- Trusted publication of a Model Serving Release still requires repository
-  review and merge. The maintainer issuance workflow can now stage an
-  untrusted proposal from a verified capture candidate plus explicit review
-  input; the tracked store remains empty and no current profile is bound.
+- Trusted publication of each Model Serving Release requires repository review
+  and merge. The maintainer issuance workflow can stage an untrusted proposal
+  from a verified capture candidate plus explicit review input. The Qwen3.8
+  lineage is the first reviewed publication and profile binding.
   Release, frozen-contract, immutable run-record, new bundle, and
   reviewed-decision schema version 1 remain the pure contracts; read-only
   persistence and verification remain under `models/model-serving-releases/`;
@@ -1261,3 +1263,4 @@ experimental. The guided and fresh-cluster default remains replicated copies.
 | 2026-08-17 | The bounded Nemotron Nano source-attested Gate 14 physically passed on a three-rank topology with a one-node rank-0 target: legacy-home refusal/removal, exact public source resolution, two complete 19,362,748,480-byte acquisitions, immutable receipt plus current-home attachment, independent offline rehash, exact prepare/reuse without download, active-view removal blocker, controlled missing-attachment refusal, guarded detach/removal, receipt preservation, reacquisition, and final healthy one-home/no-hot state. Remote target execution, asymmetric credentials, an actual external new-inode restore, serving integration, model qualification, status, and promotion were not run or claimed. |
 | 2026-08-18 | Guarded `home check` / `home remove --yes` can inspect and retire a recognized incomplete or refs-only Hugging Face hub occupancy that blocks source-attested `home add`. The plan states the retire-path-absent action, public model identity, bound commit when live `refs/main` names one, rank role, eligibility, and delete/retain scope. Last occupancy still needs `--allow-last-home`. `home check` is read-only; no `--yes` means no mutation; catalog refresh never auto-deletes. Complete homes, multi-revision trees, attached homes, and unbound `@unknown` rows stay on the previous fail-closed contract. Deterministic tests only; no physical Hub/DGX removal was run. |
 | 2026-08-19 | **ADR 0005 accepted:** reject live NFS/RDMA under vLLM (`--weight-source fabric`, `live-remote-readonly`) as a serving runtime source. Rank-local restart cannot cold-start without the owner export. Keep NCCL/RoCE, topology discovery, and ADR 0003 `ssh-roce` prepare. Launch fails closed with no remap. One-shot `nfs-rdma` prepare remains a separate experiment. Historical `results/weight-fabric/` evidence is superseded and not rewritten. |
+| 2026-08-19 | Issued and bound the first ADR 0004 Model Serving Release lineage for `qwen3.8-27b-fp8`. Exact same-boot, absolute throughput, absolute latency, and reviewed provenance/security passed; stability, accuracy, serving integration, and physical geometry remain unevaluated, so the advisory decision is `Testing incomplete`. Legacy `STATUS=untested`, recommendation/default policy, serving permission, expected-seal state, and experimental one-rank `library-hot` maturity remain unchanged. |

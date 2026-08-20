@@ -1,0 +1,153 @@
+{
+  "attempt": {
+    "attempt_id": "attempt-benchmark-serving",
+    "attempted_criterion_ids": [
+      "latency-ttft",
+      "throughput-serving"
+    ],
+    "completion": "completed",
+    "ended_at": "2026-08-19T23:02:51Z",
+    "phase": "model-qualification",
+    "qualification_scope": "model-qualification",
+    "started_at": "2026-08-19T22:46:29Z"
+  },
+  "commands": [
+    {
+      "arguments": [
+        {
+          "kind": "operation",
+          "value": "benchmark-serving"
+        },
+        {
+          "criterion_id": "latency-ttft",
+          "kind": "criterion-reference"
+        },
+        {
+          "criterion_id": "throughput-serving",
+          "kind": "criterion-reference"
+        }
+      ],
+      "environment": [],
+      "program": "validate/bench_serve.py",
+      "version": "sha256:673e494b1ad1f4ef5fab4fca6d592846d9720ce3579ee48e17ac283133052961",
+      "working_directory": "repository-root"
+    }
+  ],
+  "contract_id": "2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597",
+  "criterion_observations": [
+    {
+      "benchmark_protocol_id": "6027752a2e6846431cb8d46331e0918262a0095fd40c8000c1f3fd02031344e0",
+      "completion": "complete",
+      "contract_requirements": {
+        "context": null,
+        "soak": null
+      },
+      "criterion_id": "latency-ttft",
+      "evidence_artifact_ids": [
+        "6537414788333f39f80704ae4008849bd2ac8a70870445572bd0a614c6705e6f"
+      ],
+      "metrics": [
+        {
+          "metric": "ttft_p95",
+          "unit": "milliseconds",
+          "value": "449.527272"
+        }
+      ],
+      "reason": "completed",
+      "sample_size": 32
+    },
+    {
+      "benchmark_protocol_id": "1edf6416d9b731fc92464116b26c6b3b7d6481fd19e46f246d8de12d8d2391fe",
+      "completion": "complete",
+      "contract_requirements": {
+        "context": null,
+        "soak": null
+      },
+      "criterion_id": "throughput-serving",
+      "evidence_artifact_ids": [
+        "6537414788333f39f80704ae4008849bd2ac8a70870445572bd0a614c6705e6f"
+      ],
+      "metrics": [
+        {
+          "metric": "output_tokens_per_second",
+          "unit": "tokens-per-second",
+          "value": "8.376791"
+        }
+      ],
+      "reason": "completed",
+      "sample_size": 32
+    }
+  ],
+  "evidence_artifact_ids": [
+    "6537414788333f39f80704ae4008849bd2ac8a70870445572bd0a614c6705e6f"
+  ],
+  "kind": "pulsar-validation-run-record",
+  "observed_environment": {
+    "cluster": {
+      "accelerator_count": 1,
+      "interconnect_class": "local",
+      "node_count": 1,
+      "pipeline_parallel_size": 1,
+      "rails_per_pair": 0,
+      "tensor_parallel_size": 1,
+      "topology_class": "single"
+    },
+    "image_digest": "sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52",
+    "launch_id": "6dff309699b653e3dad0ea51dd10bf6eff2e5263f63b05399a216e50029f7e15",
+    "ranks": [
+      {
+        "accelerator_count": 1,
+        "architecture": "aarch64",
+        "container_runtime": {
+          "capabilities": [
+            "ipc-host",
+            "nvidia-gpu"
+          ],
+          "family": "docker",
+          "version": "29.2.1"
+        },
+        "driver_abi": {
+          "family": "nvidia-open-kernel-module",
+          "version": "580.173.02"
+        },
+        "engine_version": "0.26.0",
+        "hardware_class": "nvidia-dgx-spark-gb10",
+        "kernel": {
+          "features": [],
+          "version": "6.17.0-1029-nvidia"
+        },
+        "rank": 0,
+        "unified_memory_gib": "121.6895599365234375"
+      }
+    ],
+    "server_boot_id": "123185b5671d4812d45086784da7584693f6e64c92204224e3caf18518a5d757",
+    "supported_hardware_geometry_id": "3743044a7267584e888a598cc3e1f9f87d78dd621726b1c5454e253ba21f2ca1"
+  },
+  "preparation_provenance": {
+    "elapsed_seconds": "4",
+    "origin": "managed-home",
+    "qualification_barrier": "passed",
+    "runtime_sources": [
+      {
+        "rank": 0,
+        "retention": "durable",
+        "source": "durable-home"
+      }
+    ],
+    "subsystems": [
+      {
+        "maturity": "experimental",
+        "name": "pulsar-model-library",
+        "version": "source-attested-v1"
+      }
+    ],
+    "transfer": "ssh-control",
+    "verification": {
+      "model_artifact_set_id": "72fe498e274facf9f30ef84151c3b5f51c513444b99da6c2935093959dcf36ed",
+      "status": "passed"
+    }
+  },
+  "release_id": "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
+  "run_record_id": "dbffa4de60dcdc6bfb3b20db71a2eeb71dfc361e8247d89aa943f3effba3d04b",
+  "schema_version": 1
+}

@@ -1,0 +1,28 @@
+{
+  "benchmark-serving": {
+    "explicit_request_count": 32,
+    "input_tokens": 512,
+    "levels": [
+      {
+        "aggregate_tps": "8.376791",
+        "completion": "complete",
+        "concurrency": 1,
+        "decode_tps_p50": "8.468257",
+        "measured_request_count": 32,
+        "reason": "completed",
+        "requested_request_count": 32,
+        "ttft_p50_ms": "446.137079",
+        "ttft_p95_ms": "449.527272",
+        "wall_s": "977.940133"
+      }
+    ],
+    "output_tokens": 256,
+    "prompt_style": "synthetic"
+  },
+  "completion": "complete",
+  "kind": "pulsar-validator-measurement",
+  "operation": "benchmark-serving",
+  "program": "validate/bench_serve.py",
+  "reason": "completed",
+  "schema_version": 1
+}
