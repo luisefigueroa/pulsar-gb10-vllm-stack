@@ -1967,9 +1967,13 @@ remove_retired_cluster_rank_on_node() {
   local conf="${3:?conf required}"
   local meta rc=0 have_id have_name managed have_conf have_rank world host
   meta=$(container_ownership_inspect_on_node "$index" "$id") || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    warn "retired rank changed or became unobservable on node $index"
+  if [ "$rc" -eq 3 ]; then
+    warn "retired rank disappeared during removal on node $index (race)"
     return 2
+  fi
+  if [ "$rc" -ne 0 ]; then
+    warn "node $index became unobservable during removal"
+    return 1
   fi
   IFS=$'\t' read -r have_id have_name managed have_conf have_rank \
     < <(container_ownership_fields "$meta")

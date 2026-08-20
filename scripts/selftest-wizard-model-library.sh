@@ -234,6 +234,37 @@ for name, value in (("one-profiles.json", one_profiles), ("one-health.json", one
         handle.write("\n")
 PY
 
+printf '%s\n' '{"home":{"rank":1,"node_id":"node-one-identity"}}' \
+  >"$STATE/reports/resolve.json"
+python3 - "$STATE/reports" <<'PY'
+import json
+import pathlib
+import sys
+
+reports = pathlib.Path(sys.argv[1])
+unsealed_one = {"models": [{
+    "id": "qwen3.6-27b-fp8", "status": "tested", "nodes": 1,
+    "source": "hf", "purpose": "serving", "served_name": "qwen3.6-27b-fp8",
+    "spec": "none", "spec_default_enabled": False,
+    "reviewed_identity": False, "reviewed_model_id": None,
+    "reviewed_revision": None, "reviewed_manifest": None,
+}]}
+unsealed_two = {"models": [{
+    "id": "qwen3-1.7b-2node", "status": "tested", "nodes": 2,
+    "source": "hf", "purpose": "serving", "served_name": "qwen3-1.7b-2node",
+    "spec": "none", "spec_default_enabled": False,
+    "reviewed_identity": False, "reviewed_model_id": None,
+    "reviewed_revision": None, "reviewed_manifest": None,
+}]}
+for name, value in (
+    ("unsealed-one-profiles.json", unsealed_one),
+    ("unsealed-two-profiles.json", unsealed_two),
+):
+    with open(reports / name, "w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+PY
+
 CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf deepseek-v4-flash; loaded_launch_contract_id' _ "$REPO_DIR")
 python3 "$WIZARD_FIXTURE_TOOL" seed-running \
   --inventory "$STATE/inventory.json.running" \
@@ -261,6 +292,9 @@ if [ "${PREPARE_RC:-0}" -ne 0 ]; then
   exit "$PREPARE_RC"
 fi
 case "${1:-}" in
+  resolve)
+    cat "${RESOLVE_RESULT:?}"
+    ;;
   prepare)
     cp "$PREPARE_RESULT" "$HEALTH_REPORT"
     ;;
@@ -280,7 +314,18 @@ cat >"$STATE/bin/weights" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$WEIGHTS_LOG"
-printf '{"schema_version":1,"state":"ready","ok":true}\n'
+rc=0
+if [ -n "${WEIGHTS_RC_SEQ:-}" ] && [ -s "$WEIGHTS_RC_SEQ" ]; then
+  rc=$(head -1 "$WEIGHTS_RC_SEQ")
+  tail -n +2 "$WEIGHTS_RC_SEQ" >"$WEIGHTS_RC_SEQ.tmp" || true
+  mv "$WEIGHTS_RC_SEQ.tmp" "$WEIGHTS_RC_SEQ"
+fi
+if [ "$rc" -eq 0 ]; then
+  printf '{"schema_version":1,"state":"ready","ok":true}\n'
+else
+  printf '{"schema_version":1,"state":"missing","ok":false}\n'
+fi
+exit "$rc"
 SH
 
 cat >"$STATE/bin/up" <<'SH'
@@ -372,6 +417,8 @@ run_wizard() {
     HEALTH_RC="$health_rc" \
     HEALTH_LOG="$STATE/logs/health.log" \
     PREPARE_RESULT="$STATE/reports/healthy.json" \
+    RESOLVE_RESULT="${RESOLVE_RESULT_FILE:-$STATE/reports/resolve.json}" \
+    WEIGHTS_RC_SEQ="${WEIGHTS_RC_SEQ_FILE:-}" \
     PREPARE_RC="$prepare_rc" \
     PREPARE_LOG="$STATE/logs/prepare.log" \
     WEIGHTS_LOG="$STATE/logs/weights.log" \
@@ -473,5 +520,38 @@ assert_contains "$STATE/logs/weights.log" \
 assert_contains "$STATE/logs/up.log" \
   '^qwen3-1.7b --node node-one-identity --yes$' \
   "one-node catalog launch targets its durable home"
+
+echo "=== unsealed one-node serving routes to its durable home ==="
+run_wizard one-health.json 0 0 $'1\n1\n1\ny\n' \
+  "$STATE/inventory.json" "$STATE/reports/unsealed-one-profiles.json"
+[ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
+assert_contains "$STATE/logs/output.log" \
+  'selected the durable-home node for one-rank library serving: fixture-one' \
+  "unsealed one-node placement moves to the catalog home rank"
+assert_contains "$STATE/logs/weights.log" \
+  '^qwen3.6-27b-fp8 --node node-one-identity --json$' \
+  "unsealed readiness check targets the durable home"
+assert_contains "$STATE/logs/up.log" \
+  '^qwen3.6-27b-fp8 --node node-one-identity --yes$' \
+  "unsealed one-node launch targets the durable home"
+grep -qv '^resolve ' "$STATE/logs/prepare.log" \
+  && { echo "FAIL ready unsealed views must not prepare or mutate" >&2; exit 1; } \
+  || echo "OK   ready unsealed views need no preparation"
+grep -q '^resolve qwen3.6-27b-fp8 --json$' "$STATE/logs/prepare.log" \
+  && echo "OK   unsealed placement consults the cached catalog" \
+  || { echo "FAIL unsealed placement consults the cached catalog" >&2; exit 1; }
+
+echo "=== unsealed multi-rank preparation keeps ssh-roce ==="
+printf '1\n0\n' >"$STATE/weights-rc-seq"
+WEIGHTS_RC_SEQ_FILE="$STATE/weights-rc-seq" \
+  run_wizard one-health.json 0 0 $'1\ny\ny\n' \
+  "$STATE/inventory.json" "$STATE/reports/unsealed-two-profiles.json"
+unset WEIGHTS_RC_SEQ_FILE
+[ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
+assert_contains "$STATE/logs/prepare.log" \
+  '^prepare qwen3-1.7b-2node --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
+  "unsealed multi-rank preparation uses eight-stream ssh-roce"
+assert_contains "$STATE/logs/up.log" '^qwen3-1.7b-2node --yes$' \
+  "unsealed multi-rank launch carries no mode flag"
 
 echo "wizard model-library selftest PASS"

@@ -418,19 +418,49 @@ confirm_library_serving_sealed() {
 # prepared views directly and offer explicit preparation. Acquisition for an
 # unsealed profile is the separate source-attested two-step CLI flow.
 confirm_library_serving_unsealed() {
-  local scope_label prepare_rc=0
-  local -a node_args=()
+  local scope_label prepare_rc=0 home_json home_rank choice
+  local -a node_args=() transport_args=()
   scope_label=$(library_scope_label)
   render_human_section "MODEL FILES" \
     "Mechanism" "model library · $scope_label legacy-unsealed profile" \
     "Identity" "full verification without a reviewed seal" \
     "Fallback" "none; readiness must pass its own checks"
+  if [ "$NODES" -eq 1 ]; then
+    # One-node serving must use the durable-home rank: consult the cached
+    # catalog and offer the placement switch, exactly like the sealed path.
+    home_json=$(cmd_model_library_prepare resolve "$NAME" --json 2>/dev/null) \
+      || home_json=""
+    home_rank=$(printf '%s' "$home_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["home"]["rank"])' 2>/dev/null) \
+      || home_rank=""
+    if [[ "$home_rank" =~ ^[0-9]+$ ]] && [ "$home_rank" != "$SINGLE_NODE_INDEX" ]; then
+      choice=$(choose "One-node serving must use the durable-home node — what next?" \
+        "Use the durable-home node (recommended)" \
+        "Choose another model" \
+        "Exit")
+      case "$choice" in
+        Use*)
+          resolve_single_node_placement "$home_rank" \
+            || die "the catalog durable-home node is no longer a valid confirmed placement"
+          adopt_resolved_single_node_placement
+          log "selected the durable-home node for one-rank library serving: $PLACEMENT_HOSTNAME"
+          ;;
+        Choose*) return 2 ;;
+        *) exit 0 ;;
+      esac
+    fi
+  fi
   if cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null 2>&1; then
     log "library runtime views are ready ($scope_label; no fallback)"
     return 0
   fi
   if [ "$NODES" -eq 1 ]; then
     node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
+  else
+    # Multi-rank preparation keeps the promoted topology-bound eight-stream
+    # SSH-over-RoCE transport; the management network is never a silent
+    # fallback data plane.
+    transport_args=(--transport ssh-roce --copy-streams 8)
   fi
   if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
     log "model preparation declined; no model files were changed"
@@ -440,7 +470,7 @@ confirm_library_serving_unsealed() {
   log "preparing exact $scope_label runtime views; serving is not started yet…"
   set +e
   cmd_model_library_prepare prepare "$NAME" \
-    --backend copy "${node_args[@]}" --yes
+    --backend copy "${transport_args[@]}" "${node_args[@]}" --yes
   prepare_rc=$?
   set -e
   if [ "$prepare_rc" -ne 0 ]; then

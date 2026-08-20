@@ -189,14 +189,16 @@ if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
       || die "confirmed node(s)$retired_unobservable are unobservable — not removing retired $TARGET ranks (an unobserved live rank could be stranded); restore those nodes or clean up manually"
     rc=0
     for retired_index in "${!retired_found_indices[@]}"; do
+      # Stop at the FIRST failure: continuing past an error or a race could
+      # strand a live rank behind a node that just became unobservable.
       remove_retired_cluster_rank_on_node \
         "${retired_found_indices[$retired_index]}" \
-        "${retired_found_ids[$retired_index]}" "$TARGET" || rc=$?
+        "${retired_found_ids[$retired_index]}" "$TARGET" || { rc=$?; break; }
     done
     case "$rc" in
       0) log "done"; exit 0 ;;
-      2) die "refused to stop $retired_cluster_name: ownership changed during removal" ;;
-      *) die "failed while removing $retired_cluster_name ranks (rc=$rc)" ;;
+      2) die "refused: $retired_cluster_name ownership changed during removal; re-run after inspecting ./pulsar inventory" ;;
+      *) die "failed while removing $retired_cluster_name ranks (rc=$rc); re-run after restoring node observability" ;;
     esac
   fi
   [ -z "$retired_unobservable" ] \
