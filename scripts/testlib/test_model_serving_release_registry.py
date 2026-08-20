@@ -466,9 +466,25 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
         ):
             self._load()
 
-    def test_tracked_empty_store_verifies_from_repo(self) -> None:
+    def test_tracked_store_verifies_from_repo(self) -> None:
         graph = registry.load_registry(REPO_ROOT)
-        self.assertEqual(sum(graph.counts().values()), 0)
+        self.assertEqual(
+            graph.counts(),
+            {
+                "descriptors": 1,
+                "contracts": 1,
+                "run_records": 2,
+                "evidence_bundles": 1,
+                "decisions": 1,
+            },
+        )
+        inspected = registry.inspect_release(
+            graph,
+            "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
+        )
+        self.assertEqual(
+            inspected["inspection"]["effective_status"], "testing-incomplete"
+        )
         result = subprocess.run(
             [str(CLI), "verify", "--json"],
             cwd=str(REPO_ROOT),
@@ -479,7 +495,7 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["counts"]["decisions"], 0)
+        self.assertEqual(payload["counts"]["decisions"], 1)
         self.assertEqual(
             payload["registry_root"], registry.DEFAULT_REGISTRY_RELATIVE
         )

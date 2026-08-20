@@ -47,16 +47,18 @@ authorize serving, or launch a release. Validation status is advisory.
 - Machine-readable command output uses `schema_version: 1` and reports only
   inspection results; it carries no serving-permission field.
 
-This store currently contains no issued release, contract, run, bundle, or
-decision, and no current profile binds a release ID. Do not add a `Validated`
-fixture here. Local ADR 0004
+The store contains the reviewed Qwen3.8-27B-FP8 release lineage bound by
+`models/qwen3.8-27b-fp8.conf`. Its advisory decision is
+`Testing incomplete`; it is not a `Validated` fixture, a serving permission,
+or a recommendation. Local ADR 0004
 evidence-capture candidate persistence writes only under gitignored
 `experiments/model-serving-release-captures/` (or an explicit safe external
 directory) and must never write this registry. The maintainer issuance
 workflow can stage an untrusted proposal into these namespaces; repository
 review and merge remain the trust event. That workflow is documented in
 [MODEL_SERVING_RELEASE_ISSUANCE.md](../../docs/MODEL_SERVING_RELEASE_ISSUANCE.md)
-and this implementation introduced no production object. Legacy schema-1
+and each proposed lineage remains untrusted until repository review and merge.
+Legacy schema-1
 seals and combined bundles remain under `models/seals/` and
 `models/validation-bundles/` and are not reused for ADR 0004 objects.
 

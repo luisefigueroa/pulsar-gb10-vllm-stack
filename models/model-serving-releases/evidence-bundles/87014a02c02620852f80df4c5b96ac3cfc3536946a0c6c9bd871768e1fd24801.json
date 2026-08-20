@@ -1,0 +1,105 @@
+{
+  "bundle_id": "87014a02c02620852f80df4c5b96ac3cfc3536946a0c6c9bd871768e1fd24801",
+  "contract_id": "2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597",
+  "criterion_coverage": [
+    {
+      "criterion_id": "accuracy-first-pass",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "latency-ttft",
+      "run_record_ids": [
+        "dbffa4de60dcdc6bfb3b20db71a2eeb71dfc361e8247d89aa943f3effba3d04b"
+      ]
+    },
+    {
+      "criterion_id": "physical-geometry-dgx",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "provenance-security-review",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "serving-integration-smoke",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "stability-first-pass",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "strict-same-boot-captures",
+      "run_record_ids": [
+        "13aaf4685c5bc8c94bf9081b9520eb8a123cfae35243b4cce3f9fdfad97d3e1f"
+      ]
+    },
+    {
+      "criterion_id": "throughput-serving",
+      "run_record_ids": [
+        "dbffa4de60dcdc6bfb3b20db71a2eeb71dfc361e8247d89aa943f3effba3d04b"
+      ]
+    }
+  ],
+  "evidence_artifacts": [
+    {
+      "artifact_id": "6537414788333f39f80704ae4008849bd2ac8a70870445572bd0a614c6705e6f",
+      "content": {
+        "media_type": "application/json",
+        "sha256": "8d1dcebd6d57d5bc81dac3edb80d75249fb2f40b49bdb3f9ef0dd808306520d0"
+      },
+      "kind": "pulsar-validation-evidence-artifact",
+      "location": {
+        "kind": "repository-relative",
+        "value": "results/model-onboarding/qwen3.8-27b-fp8/bench.json"
+      },
+      "privacy_review": "passed",
+      "qualification_scope": "model-qualification",
+      "schema_version": 1,
+      "visibility": "publishable"
+    },
+    {
+      "artifact_id": "d8b6dc718eebca2beb75a6bff0dec485b716f5a9ad848c135782aa74432031bb",
+      "content": {
+        "media_type": "application/json",
+        "sha256": "b7cf8f335c3b8516e56ec6dcdb5cbefa0f40b4d6e43566c827f3656927402d20"
+      },
+      "kind": "pulsar-validation-evidence-artifact",
+      "location": {
+        "kind": "repository-relative",
+        "value": "results/model-onboarding/qwen3.8-27b-fp8/compare.json"
+      },
+      "privacy_review": "passed",
+      "qualification_scope": "model-qualification",
+      "schema_version": 1,
+      "visibility": "publishable"
+    },
+    {
+      "artifact_id": "e56f3fd8dcf3b5445f99103430155b190d427b29156f11afadb49b1400ac0874",
+      "content": {
+        "media_type": "application/json",
+        "sha256": "142cec95949a444ec6b6d361a3687a555504ef017db135acbfffb533a2d83d4f"
+      },
+      "kind": "pulsar-validation-evidence-artifact",
+      "location": {
+        "kind": "repository-relative",
+        "value": "results/model-onboarding/qwen3.8-27b-fp8/provenance-security-review.json"
+      },
+      "privacy_review": "passed",
+      "qualification_scope": "release-promotion",
+      "schema_version": 1,
+      "visibility": "publishable"
+    }
+  ],
+  "kind": "pulsar-model-serving-validation-bundle",
+  "qualification_started": true,
+  "release_id": "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
+  "review_evidence_artifact_ids": [
+    "e56f3fd8dcf3b5445f99103430155b190d427b29156f11afadb49b1400ac0874"
+  ],
+  "run_record_ids": [
+    "13aaf4685c5bc8c94bf9081b9520eb8a123cfae35243b4cce3f9fdfad97d3e1f",
+    "dbffa4de60dcdc6bfb3b20db71a2eeb71dfc361e8247d89aa943f3effba3d04b"
+  ],
+  "schema_version": 1
+}

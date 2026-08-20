@@ -160,8 +160,9 @@ under `models/model-serving-releases/` and
 `scripts/model-serving-release-registry.sh`. That CLI does not capture
 evidence, issue a decision, or launch a release. Optional reviewed
 `MODEL_SERVING_RELEASE_ID` binding and advisory catalog/operator projection
-are implemented; the registry remains empty and current profiles remain
-unbound, so projection is currently neutral. Local ADR 0004 evidence-capture
+are implemented; `qwen3.8-27b-fp8` binds the first reviewed lineage and
+projects `Testing incomplete`, while other current profiles remain neutral.
+Local ADR 0004 evidence-capture
 candidate persistence is documented in
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) and
 is a separate unreviewed workflow. A locally constructed decision

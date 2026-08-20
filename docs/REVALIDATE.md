@@ -66,7 +66,8 @@ measurements and attempt-only spec composition are implemented for strict
 same-boot and absolute throughput/latency; they do not issue status or prove
 physical behavior. Advisory catalog/operator
 projection is implemented for a profile explicitly bound to a release ID;
-current profiles are unbound and the tracked store is empty. The supervised
+`qwen3.8-27b-fp8` binds the first reviewed lineage and projects
+`Testing incomplete`; other current profiles remain unbound. The supervised
 `pulsar-model-onboarding` skill is implemented as control-plane orchestration
 around those CLIs. It never issues a seal or validation decision, assigns
 status, binds a profile, writes the trusted registry, promotes a path, or
@@ -97,8 +98,9 @@ objects remain schema version 1 because none was issued or persisted before
 the correction; older schema-1 seals/bundles are separate legacy formats and
 remain byte-for-byte untouched.
 Locally generated release-plan candidates made before the source-neutral
-schema correction are disposable and must be rebuilt. The tracked ADR 0004
-registry remains empty, so the correction stays at schema version 1.
+schema correction are disposable and must be rebuilt. The correction remains
+schema version 1 because no ADR 0004 object had been issued before it; the
+registry now contains the later Qwen3.8 lineage.
 
 ## Qualification scope and change impact
 

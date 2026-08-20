@@ -54,8 +54,9 @@ missing binding displays `No release binding`; absence of a reviewed decision
 is not inferred as `Untested`, and ambiguity, registry errors, or a selected
 runtime-access recipe mismatch remain visible without blocking launch.
 
-Current profiles have no such binding and the tracked registry is empty, so
-their release projection is neutral. `STATUS=tested*` remains a separate
+`qwen3.8-27b-fp8` binds the first reviewed ADR 0004 lineage and projects the
+advisory status `Testing incomplete`; other current profiles remain neutral.
+`STATUS=tested*` remains a separate
 legacy evidence/recommendation label; it still determines recommendation
 order. `--validated` is a deprecated alias for the `--legacy-tested` profile
 filter. Neither status field grants or denies serving. Existing reviewed

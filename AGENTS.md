@@ -421,7 +421,9 @@ infrastructure unless that authority is explicitly part of the approved plan.
   or bundle `Validated`. The corrected ADR 0004 objects remain schema
   version 1 because none was issued or persisted before the correction;
   existing legacy schema-1 seals/bundles and raw evidence remain untouched.
-  The tracked ADR 0004 registry currently stores no issued object.
+  The tracked ADR 0004 registry contains the reviewed Qwen3.8 lineage bound by
+  `qwen3.8-27b-fp8`; its advisory status is `Testing incomplete`, not
+  `Validated`. Other current profiles remain unbound.
 - `STATUS`, ADR 0004 decisions, recommendations/defaults, and
   `docs/VALIDATION.md` claims change only with reproducible evidence. The wizard
   still shows other fitting profiles with accurate labels and caveats. Preserve
@@ -513,8 +515,9 @@ this work; the skill is procedural and does not outrank these sources.
   verification, exact preparation/reuse, guarded cleanup, and reacquisition.
   Remote target execution and asymmetric per-rank Hugging Face credentials
   remain physically untested. The artifact makes no serving-integration,
-  model-qualification, status, or promotion claim. No current profile is
-  bound and the tracked store is empty, so current projections are neutral.
+  model-qualification, status, or promotion claim. `qwen3.8-27b-fp8` binds the
+  first reviewed ADR 0004 lineage and projects `Testing incomplete`; other
+  current profiles remain neutral.
   Expected-seal identity and validation status are independent contracts: a
   future non-tested profile may carry a reviewed seal, and a matching seal does
   not promote its release status.

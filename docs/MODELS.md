@@ -1,4 +1,4 @@
-# Model support matrix — current legacy tested profiles (2026-08-15)
+# Model support matrix — current legacy and ADR 0004 profiles (2026-08-19)
 
 This table reports the implementation's existing `STATUS=tested*`, reviewed
 seal, and `legacy-unsealed` contracts. It does **not** assign the Model Serving
@@ -11,13 +11,14 @@ after every frozen criterion and review requirement passes. Changing any one
 component creates a new release. Pure version-1 schema validation and
 read-only verification of stored ADR 0004 objects exist. Catalog, wizard, and
 start output can project a reviewed decision only when a profile explicitly
-binds its exact release through `MODEL_SERVING_RELEASE_ID`. No current profile
-is bound and the tracked store is empty, so current rows display the neutral
-`No release binding` state. Local evidence-capture candidate persistence is
-unreviewed and does not change this table. Maintainer-only issuance staging
-can propose registry objects, but a local command is not trusted until
-repository review and merge; serving permission is status-independent and no
-current row is silently relabeled.
+binds its exact release through `MODEL_SERVING_RELEASE_ID`. The
+`qwen3.8-27b-fp8` profile binds the first ADR 0004 lineage and projects the
+reviewed advisory decision `Testing incomplete`; other current profiles remain
+unbound. Local evidence-capture candidate persistence is unreviewed and does
+not change this table. Maintainer-only issuance staging can propose registry
+objects, but a local command is not trusted until repository review and merge;
+serving permission is status-independent and no current row is silently
+relabeled.
 
 Budget arithmetic: 121 GiB unified per node; with `--gpu-memory-utilization`
 0.80-0.85 and OS overhead, plan on **~100-105 GiB usable per node** for
@@ -41,6 +42,7 @@ any status in the table or the replicated guided default.
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
 |---|---|---|---|---|---|---|---|
 | `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 4 GB (~3.8 GiB sealed) | 1 | 32K | — | **tested diagnostic canary; lab-sealed exact identity** — hidden from serving wizard |
+| `qwen3.8-27b-fp8` | Qwen/Qwen3.8-27B-FP8 | FP8 | 29 GB | 1 | 131,072 configured; context not evaluated | — | legacy **`STATUS=untested`**; ADR 0004 **Testing incomplete** — strict same-boot and absolute performance passed; stability, accuracy, serving integration, and physical geometry remain unevaluated; not recommended |
 | `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 4 GB | 2 / TP=2 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
 | `qwen3.6-27b-fp8-2node` | 27B split TP=2 cross-node | FP8 | 29 GB | 2 / TP=2 | — | — | **DO NOT USE** — GDN hybrids hang cross-node (VALIDATION.md) |
 | `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 (hybrid: 16 full-attn + 48 GDN layers) | FP8 block | 29 GB | 1 | 131,072 (needle 3/3 @121K; ledger only — no `results/` artifact) | ngram **FORBIDDEN** (corrupts) | **tested** |
@@ -79,6 +81,15 @@ before creating their distinct rank-local serve witnesses. Unchanged launch
 uses the applicable metadata fast path, while drift rehashes. Those mechanisms
 preserve an established identity but cannot turn legacy rows into lab-sealed
 claims.
+
+The Qwen3.8 row is the first profile bound to the ADR 0004 registry. Release
+`8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7`
+binds exact commit `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`, complete
+manifest `aa533a36211b063f7fe310ba65c41d9c7fdc6b5f7571ba1dc69c926f47175d79`,
+the digest-pinned image, one-node recipe, and GB10 geometry. Its reviewed
+decision remains `Testing incomplete`; it does not create an expected seal,
+change legacy `STATUS`, promote one-rank `library-hot`, or recommend the
+profile.
 
 Maintainers can now assemble deterministic unreviewed candidates with
 `scripts/model-release.sh`, but candidate generation alone does not change any

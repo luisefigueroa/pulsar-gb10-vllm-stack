@@ -42,8 +42,9 @@ for strict same-boot and absolute throughput/latency. Those control-plane
 documents are not a ledger pass and do not issue status. Advisory
 catalog/operator projection is implemented for profiles
 explicitly bound by `MODEL_SERVING_RELEASE_ID`; no binding and no reviewed
-decision are neutral, not inferred as `Untested`. Current profiles are unbound
-and the tracked registry is empty. The supervised `pulsar-model-onboarding`
+decision are neutral, not inferred as `Untested`. The
+`qwen3.8-27b-fp8` profile binds the first reviewed ADR 0004 lineage and other
+current profiles remain unbound. The supervised `pulsar-model-onboarding`
 skill is implemented as control-plane orchestration only; it does not issue
 status or prove physical behavior. Deterministic skill and journal tests make
 no physical DGX claim and create no release decision. For an absent brand-new
@@ -80,8 +81,8 @@ deployment-only forms, while trusted capture and publication privacy review
 remain required.
 
 These pre-issuance corrections remain schema version 1 because no ADR 0004
-object was issued or persisted. The tracked registry can verify stored
-objects but currently contains none. Existing legacy schema-1 seals/bundles
+object was issued or persisted before the correction. The tracked registry
+now verifies the Qwen3.8 lineage described below. Existing legacy schema-1 seals/bundles
 and all raw or historical evidence remain untouched. Reviewer and
 `review_reference` use a closed privacy-safe grammar; that shape check cannot
 prove review occurred.
@@ -91,6 +92,22 @@ reviewed decision, neutral unbound profiles, unavailable registry data, a
 runtime-access recipe mismatch, launch independence, JSON separation from
 legacy `STATUS`, and 48-column human output. These checks do not issue a
 decision or demonstrate physical model behavior.
+
+### Qwen3.8-27B-FP8 Model Serving Release (2026-08-19)
+
+Release `8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7`
+has reviewed advisory status **Testing incomplete** under contract
+`2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597`.
+The exact same-boot comparison passed 30/30 records. The 32-request,
+concurrency-1 benchmark passed the frozen absolute thresholds at 8.376791
+output tokens/s and 449.527272 ms p95 TTFT. Provenance/security review passed.
+Stability, accuracy, serving integration, and physical geometry have no ADR
+0004 observations in the reviewed bundle, so the decision is not
+`Validated`. Context and soak were frozen as not applicable for this
+first-pass contract, and relative performance is N/A because no comparable
+predecessor was supplied. The profile keeps legacy `STATUS=untested`; the
+decision does not authorize serving or promote experimental one-rank
+`library-hot`.
 
 The source-neutral release-planning tests cover Hugging Face and
 content-addressed primary identity, complete-manifest binding, image and

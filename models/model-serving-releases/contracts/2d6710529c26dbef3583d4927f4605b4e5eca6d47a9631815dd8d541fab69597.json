@@ -1,0 +1,278 @@
+{
+  "contract_id": "2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597",
+  "kind": "pulsar-validation-contract",
+  "release_criteria": {
+    "context_requirement": {
+      "reason": "first-pass-incomplete-mapping",
+      "status": "not-applicable"
+    },
+    "criteria": [
+      {
+        "criterion_id": "accuracy-first-pass",
+        "dimension": "accuracy",
+        "protocol": {
+          "name": "exact-answer-evaluation",
+          "parameters": {},
+          "version": "1"
+        },
+        "qualification_scope": "model-qualification",
+        "sample_size": 1,
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "operator": "gte",
+            "unit": "ratio",
+            "value": "0"
+          }
+        ],
+        "workload": {
+          "name": "greedy-completion-smoke",
+          "parameters": {},
+          "version": "1"
+        }
+      },
+      {
+        "criterion_id": "latency-ttft",
+        "dimension": "latency",
+        "protocol": {
+          "name": "pulsar-bench-serve",
+          "parameters": {
+            "concurrency": 1
+          },
+          "version": "1"
+        },
+        "qualification_scope": "model-qualification",
+        "sample_size": 32,
+        "thresholds": [
+          {
+            "metric": "ttft_p95",
+            "operator": "lte",
+            "unit": "milliseconds",
+            "value": "30000"
+          }
+        ],
+        "workload": {
+          "name": "openai-completions-latency",
+          "parameters": {},
+          "version": "1"
+        }
+      },
+      {
+        "criterion_id": "physical-geometry-dgx",
+        "dimension": "physical-geometry",
+        "protocol": {
+          "name": "physical-dgx-qualification",
+          "parameters": {},
+          "version": "1"
+        },
+        "qualification_scope": "release-promotion",
+        "sample_size": 1,
+        "thresholds": [
+          {
+            "metric": "geometry_verdict",
+            "operator": "eq",
+            "unit": "verdict",
+            "value": "pass"
+          }
+        ],
+        "workload": {
+          "name": "declared-geometry-execution",
+          "parameters": {},
+          "version": "1"
+        }
+      },
+      {
+        "criterion_id": "provenance-security-review",
+        "dimension": "provenance-security",
+        "protocol": {
+          "name": "reviewed-provenance-security",
+          "parameters": {
+            "reviewed_issuance_required": true
+          },
+          "version": "1"
+        },
+        "qualification_scope": "release-promotion",
+        "sample_size": 1,
+        "thresholds": [
+          {
+            "metric": "review_verdict",
+            "operator": "eq",
+            "unit": "verdict",
+            "value": "pass"
+          }
+        ],
+        "workload": {
+          "name": "bound-release-inputs",
+          "parameters": {},
+          "version": "1"
+        }
+      },
+      {
+        "criterion_id": "serving-integration-smoke",
+        "dimension": "serving-integration",
+        "protocol": {
+          "name": "health-warmup-completion",
+          "parameters": {},
+          "version": "1"
+        },
+        "qualification_scope": "serving-integration",
+        "sample_size": 3,
+        "thresholds": [
+          {
+            "metric": "integration_verdict",
+            "operator": "eq",
+            "unit": "verdict",
+            "value": "pass"
+          }
+        ],
+        "workload": {
+          "name": "openai-compatible-smoke",
+          "parameters": {},
+          "version": "1"
+        }
+      },
+      {
+        "criterion_id": "stability-first-pass",
+        "dimension": "stability",
+        "protocol": {
+          "name": "error-count",
+          "parameters": {},
+          "version": "1"
+        },
+        "qualification_scope": "model-qualification",
+        "sample_size": 1,
+        "thresholds": [
+          {
+            "metric": "request_error_count",
+            "operator": "lte",
+            "unit": "count",
+            "value": "0"
+          }
+        ],
+        "workload": {
+          "name": "openai-completions-smoke",
+          "parameters": {},
+          "version": "1"
+        }
+      },
+      {
+        "criterion_id": "strict-same-boot-captures",
+        "dimension": "strict-same-boot",
+        "protocol": {
+          "name": "strict-same-boot",
+          "parameters": {
+            "comparison": "exact",
+            "fp_equivalent_satisfies": false
+          },
+          "version": "1"
+        },
+        "qualification_scope": "model-qualification",
+        "sample_size": 30,
+        "thresholds": [
+          {
+            "metric": "exact_match_rate",
+            "operator": "eq",
+            "unit": "ratio",
+            "value": "1"
+          }
+        ],
+        "workload": {
+          "name": "deterministic-capture",
+          "parameters": {},
+          "version": "1"
+        }
+      },
+      {
+        "criterion_id": "throughput-serving",
+        "dimension": "throughput",
+        "protocol": {
+          "name": "pulsar-bench-serve",
+          "parameters": {
+            "concurrency": 1
+          },
+          "version": "1"
+        },
+        "qualification_scope": "model-qualification",
+        "sample_size": 32,
+        "thresholds": [
+          {
+            "metric": "output_tokens_per_second",
+            "operator": "gte",
+            "unit": "tokens-per-second",
+            "value": "1"
+          }
+        ],
+        "workload": {
+          "name": "openai-completions-throughput",
+          "parameters": {},
+          "version": "1"
+        }
+      }
+    ],
+    "relative_performance": {
+      "reason": "no-comparable-predecessor",
+      "status": "not-applicable"
+    },
+    "soak_requirement": {
+      "reason": "first-pass-incomplete-mapping",
+      "status": "not-applicable"
+    }
+  },
+  "release_id": "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
+  "repository_invariants": {
+    "core_dimensions": [
+      "stability",
+      "accuracy",
+      "throughput",
+      "latency"
+    ],
+    "dimension_qualification_scopes": {
+      "accuracy": "model-qualification",
+      "latency": "model-qualification",
+      "physical-geometry": "release-promotion",
+      "provenance-security": "release-promotion",
+      "serving-integration": "serving-integration",
+      "stability": "model-qualification",
+      "strict-same-boot": "model-qualification",
+      "throughput": "model-qualification"
+    },
+    "evidence": {
+      "immutable_attempt_records": true,
+      "preserve_failed": true,
+      "preserve_inconclusive": true,
+      "preserve_interrupted": true
+    },
+    "fail_closed": {
+      "missing_required_evidence": true,
+      "prequalification_distribution_failure_status": "Untested"
+    },
+    "policy": "pulsar-model-serving-validation-v1",
+    "priority_order": [
+      "stability",
+      "accuracy",
+      "throughput",
+      "latency"
+    ],
+    "provenance_security_review": {
+      "required": true
+    },
+    "relative_performance": {
+      "identical_geometry_required": true,
+      "identical_protocol_required": true,
+      "only_when_comparable_predecessor": true,
+      "without_predecessor": "N/A"
+    },
+    "required_prerequisites": [
+      "strict-same-boot",
+      "provenance-security",
+      "serving-integration",
+      "physical-geometry"
+    ],
+    "strict_same_boot": {
+      "comparison": "exact",
+      "fp_equivalent_satisfies": false,
+      "required": true
+    }
+  },
+  "schema_version": 1
+}
