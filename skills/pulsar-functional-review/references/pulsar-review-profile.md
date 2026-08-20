@@ -18,7 +18,6 @@ Trace from a fresh supported checkout through prerequisite discovery, configurat
 
 Seed files:
 
-- `scripts/pull-weights.sh`
 - `scripts/model-library.sh`
 - `scripts/model_library.py`
 - `docs/MODELS.md`

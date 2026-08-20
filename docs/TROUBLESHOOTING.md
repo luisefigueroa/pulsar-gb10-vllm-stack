@@ -69,26 +69,21 @@ start a second model on the same port.
 `blobs/` (and a `trees/` dir from xet-era downloads) but **no `refs/main`**.
 With `HF_HUB_OFFLINE=1` (our default) huggingface_hub needs `refs/main` to
 resolve the revision and fails even though all weights are present.
-**Fix for replicated/offline Hugging Face loading:** restore `refs/main` to
-the intended exact revision. For a legacy profile, re-download with
-`scripts/pull-weights.sh <profile> --yes` or recover the known lab/upstream
-revision. **Do not select the first directory from `snapshots/`:** a cache can
-contain several commits and filesystem order is not identity.
+**Fix for offline Hugging Face loading:** restore `refs/main` to the
+intended exact revision, or re-acquire the durable home with
+`scripts/model-library.sh home add <profile> --revision <exact-commit> --yes`.
+**Do not select the first directory from `snapshots/`:** a cache can contain
+several commits and filesystem order is not identity.
 
 A sealed `library-hot` profile is different: catalog refresh discovers complete
 snapshot directories directly and selects `snapshot_revision` from the reviewed
 seal, so it does not require or trust `refs/main`. The exact sealed snapshot
 must still exist and match its manifest.
-`scripts/check-weights.sh` (used by wizard/up) still requires a non-empty
-config and weight file, no `.incomplete` marker, and no locally indexed
-missing/empty shard on every exact active rank. How it resolves the snapshot
-depends on the path:
-- **Legacy-unsealed replicated HF** needs `refs/main` to name a snapshot.
-  A missing ref is `partial`; restore the intended revision or rerun
-  `scripts/pull-weights.sh <model> --yes`.
-- **Sealed replicated** profiles resolve the reviewed commit directly and
-  ignore `refs/main`.
-- **`library-hot`** never consults `refs/main`.
+`scripts/check-weights.sh` (used by wizard/up) reports whether a prepared,
+identity-validated library view exists for the profile's confirmed topology
+(ADR 0006). Missing views are remediated with
+`scripts/model-library.sh prepare <profile> --yes`; launch never consults
+`refs/main` — only unsealed `home add` selection does, at acquisition time.
 
 ## Download completed but Pulsar cannot find the cache
 
@@ -97,22 +92,21 @@ depends on the path:
 **Cause:** `hf download --cache-dir` takes the exact Hub cache directory.
 Passing Pulsar's Hugging Face home (`$HF_CACHE`) writes
 `models--ORG--NAME` one level above Pulsar's canonical `hub/` directory.
-**Fix:** use `scripts/pull-weights.sh <profile> --yes`. It always downloads
-into `$HF_CACHE/hub`, safely adopts a top-level cache when the canonical
-destination is absent, stops on conflicting copies, and verifies every node
-before returning success. Use `PULSAR_VERBOSE=1` only when raw Hugging Face
-or rsync diagnostics are needed.
+**Fix:** use `scripts/model-library.sh home add <profile>` (ADR 0006). It
+stages into same-filesystem private staging under `$HF_CACHE`, fully
+verifies, and atomically publishes the durable home; conflicting copies fail
+closed.
 
 ## Another cluster node has no internet route
 
 **Hit:** the second node could reach this node and LAN NFS, but direct HF and
 registry downloads failed. This is common on isolated compute fabrics.
-**Fix:** use `scripts/pull-weights.sh <profile> --yes`; it downloads once on
-this node, then copies the complete hub tree (including `refs/main`) to every
-other node used by that exact profile. Use
+**Fix:** acquire the durable home once on a connected rank
+(`scripts/model-library.sh home add <profile>`), then
+`scripts/model-library.sh prepare <profile> --yes` transfers only non-home
+bytes to the other ranks over confirmed links. Use
 `scripts/sync-image.sh <profile> --pull --yes` for images; it streams missing
-images over the control LAN and repairs digest references when needed. NFS
-profiles instead require the same mounted path on every required node.
+images over the control LAN and repairs digest references when needed.
 
 ## `docker load` succeeds but the worker still misses a digest-pinned image
 

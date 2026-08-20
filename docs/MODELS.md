@@ -31,11 +31,12 @@ three-node profile currently has `STATUS=tested*`. Statements such as “3 nodes
 would fit” are weight arithmetic only, not correctness, stability, context, or
 performance validation.
 
-For reviewed profiles whose existing durable home is prepared through the
-explicit experimental model-library action, ADR 0003 fixes non-home transfer
-to topology-bound eight-stream SSH-over-RoCE with no fallback. This is a
+The model library is the only weight-distribution mechanism
+([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)).
+For reviewed multi-rank profiles, ADR 0003 fixes non-home transfer to
+topology-bound eight-stream SSH-over-RoCE with no fallback. This is a
 distribution policy, not a model-support or release claim; it does not change
-any status in the table or the replicated guided default.
+any status in the table.
 
 ## Exact profiles and recorded candidates
 
@@ -48,10 +49,10 @@ any status in the table or the replicated guided default.
 | `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 (hybrid: 16 full-attn + 48 GDN layers) | FP8 block | 29 GB | 1 | 131,072 (needle 3/3 @121K; ledger only — no `results/` artifact) | ngram **FORBIDDEN** (corrupts) | **tested** |
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 (needle 3/3 @124K; ledger only — no `results/` artifact) | MTP not offered | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP k=1 **opt-in +47%** (`--spec-decode`; triton draft) | **tested** — 16.2 tok/s c=1 base, 113 agg c=32, gsm8k 0.94 |
-| `laguna-s-2.1-nvfp4` | poolside/Laguna-S-2.1-NVFP4 (NFS catalog) | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K; ledger only — no `results/` artifact) | DFlash **marginal +13%** (off by default) | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
+| `laguna-s-2.1-nvfp4` — **profile removed by ADR 0006** (absolute-path catalog; measurements remain history) | poolside/Laguna-S-2.1-NVFP4 | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K; ledger only — no `results/` artifact) | DFlash **marginal +13%** (off by default) | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
 | `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **published, digest-pinned PR-41834 image** | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (client cap; **20 GB/rank KV → 652,465 tok, 1.30x @500K**; `max-num-seqs 5`; 20 GB needle 3/3 @447K in `results/needle-dsv4-20gb-447k.log`; prior soaked 10 GB→577k) | **DSpark default-on; k=5 checkpoint-fixed** (`--no-spec-decode` rollback; **0731 benches** 43–48 tok/s c=1 — no 20 GB throughput re-run) | **`STATUS=tested`** (20 GB soak in VALIDATION.md); **lab-sealed exact identity** — flagship; **2026-08-01 defaults retuned for few long agent sessions** (see conf header + DeepSeek notes) |
-| `inkling-small-nvfp4` | Thinkingmachines/Inkling-Small-NVFP4 (NFS catalog, added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 131,072 in conf (checkpoint 1M; needle-gate first) | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
-| `laguna-s-2.1-2node` | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — advisory measurement-only label; stock graphs hang without `--enforce-eager` (baked in conf). Prefer 1-node `laguna-s-2.1-nvfp4` |
+| `inkling-small-nvfp4` — **profile removed by ADR 0006** (absolute-path catalog; probe history remains) | Thinkingmachines/Inkling-Small-NVFP4 (added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 131,072 in conf (checkpoint 1M; needle-gate first) | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
+| `laguna-s-2.1-2node` — **profile removed by ADR 0006** | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — advisory measurement-only label; stock graphs hang without `--enforce-eager` (baked in conf). Prefer 1-node `laguna-s-2.1-nvfp4` |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
 | (candidate) | Qwen3.6-35B-A3B MXFP4/FP8 | MXFP4 | 21 GB | 1 | — | MTP head exists | not configured |
 | (candidate) | cyankiwi/GLM-4.7-Flash-AWQ-4bit (node1) | AWQ int4 | ~18 GB | 1 | 202,752 (prior lab profile) | — | not configured |
@@ -70,14 +71,14 @@ The flagship claim binds commit
 `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`,
 the digest-pinned PR-41834 image, normalized two-node profile, and reviewed
 evidence. Profiles without seals—including `qwen3-1.7b-2node`—remain
-`legacy-unsealed`. Replicated download/readiness/launch enforces the
-reviewed seal for profiles that have one; unsealed replicated profiles and all
-live-mount serving is retired (ADR 0005).
+`legacy-unsealed`. Library acquisition/readiness/launch enforces the
+reviewed seal for profiles that have one; live-mount serving is retired
+(ADR 0005) and the replicated path was removed (ADR 0006).
 `STATUS=tested*` must not be interpreted as validating arbitrary bytes under
 the same repository ID. Do not generate an expected seal from a user cache;
 recover the lab artifact used for the run or revalidate the exact content.
-`library-hot` preparation and sealed replicated acquisition both full-verify
-before creating their distinct rank-local serve witnesses. Unchanged launch
+Library preparation and sealed home acquisition both full-verify before
+creating their distinct rank-local serve witnesses. Unchanged launch
 uses the applicable metadata fast path, while drift rehashes. Those mechanisms
 preserve an established identity but cannot turn legacy rows into lab-sealed
 claims.
