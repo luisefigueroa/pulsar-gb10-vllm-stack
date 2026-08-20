@@ -302,52 +302,43 @@ def validate_transaction(value: Any) -> dict[str, Any]:
             fail("saved multi-node placement is not exact")
 
     weight = service.get("weight")
-    if not isinstance(weight, dict) or weight.get("source") not in {"replicated", "library-hot"}:
+    if not isinstance(weight, dict) or weight.get("source") != "library-hot":
+        if isinstance(weight, dict) and weight.get("source") == "replicated":
+            fail(
+                "saved transaction was captured under the removed replicated "
+                "mechanism (ADR 0006); resolve it manually"
+            )
         fail("saved weight source is unsupported")
-    source = weight["source"]
-    if source == "replicated":
-        require_revision(weight.get("revision"), "saved model revision", optional=True)
-        seal = require_digest(weight.get("model_seal_id"), "saved model seal", optional=True)
-        bundle = require_digest(
-            weight.get("validation_bundle_id"),
-            "saved validation bundle",
-            optional=True,
-        )
-        if (seal is None) != (bundle is None):
-            fail("saved replicated validation identity is incomplete")
-        if weight.get("original_retention") is not None or weight.get("runtime_views") != []:
-            fail("saved replicated runtime policy is invalid")
-    else:
-        require_revision(weight.get("revision"), "saved model revision")
-        for key, label in (
-            ("model_seal_id", "saved model seal"),
-            ("validation_bundle_id", "saved validation bundle"),
-            ("manifest_id", "saved manifest"),
-        ):
-            require_digest(weight.get(key), label)
-        require_content_id(weight.get("content_id"), "saved content identity")
-        if not isinstance(weight.get("home_node_id"), str) or not weight["home_node_id"]:
-            fail("saved durable-home identity is invalid")
-        if weight.get("original_retention") not in {"ephemeral", "pinned"}:
-            fail("saved runtime-view retention is invalid")
-        views = weight.get("runtime_views")
-        if not isinstance(views, list) or len(views) != nodes:
-            fail("saved runtime views are incomplete")
-        view_ranks = []
-        home_count = 0
-        for item in views:
-            if not isinstance(item, dict) or item.get("source") not in {
-                "durable-home",
-                "sealed-hot",
-            }:
-                fail("saved runtime view is invalid")
-            rank = item.get("rank")
-            if not isinstance(rank, int) or isinstance(rank, bool):
-                fail("saved runtime-view rank is invalid")
-            view_ranks.append(rank)
-            home_count += item["source"] == "durable-home"
-        if sorted(view_ranks) != sorted(normalized_ranks) or home_count != 1:
-            fail("saved runtime views do not match exact placement")
+    require_revision(weight.get("revision"), "saved model revision")
+    for key, label in (
+        ("model_seal_id", "saved model seal"),
+        ("validation_bundle_id", "saved validation bundle"),
+        ("manifest_id", "saved manifest"),
+    ):
+        require_digest(weight.get(key), label)
+    require_content_id(weight.get("content_id"), "saved content identity")
+    if not isinstance(weight.get("home_node_id"), str) or not weight["home_node_id"]:
+        fail("saved durable-home identity is invalid")
+    if weight.get("original_retention") not in {"ephemeral", "pinned"}:
+        fail("saved runtime-view retention is invalid")
+    views = weight.get("runtime_views")
+    if not isinstance(views, list) or len(views) != nodes:
+        fail("saved runtime views are incomplete")
+    view_ranks = []
+    home_count = 0
+    for item in views:
+        if not isinstance(item, dict) or item.get("source") not in {
+            "durable-home",
+            "sealed-hot",
+        }:
+            fail("saved runtime view is invalid")
+        rank = item.get("rank")
+        if not isinstance(rank, int) or isinstance(rank, bool):
+            fail("saved runtime-view rank is invalid")
+        view_ranks.append(rank)
+        home_count += item["source"] == "durable-home"
+    if sorted(view_ranks) != sorted(normalized_ranks) or home_count != 1:
+        fail("saved runtime views do not match exact placement")
 
     retention = value.get("temporary_retention")
     if not isinstance(retention, dict):
@@ -356,10 +347,7 @@ def validate_transaction(value: Any) -> dict[str, Any]:
     applied = retention.get("applied")
     if not isinstance(required, bool) or not isinstance(applied, bool):
         fail("temporary retention state is invalid")
-    expected_required = (
-        source == "library-hot"
-        and weight.get("original_retention") == "ephemeral"
-    )
+    expected_required = weight.get("original_retention") == "ephemeral"
     if required != expected_required:
         fail("temporary retention policy does not match the saved service")
     if value["phase"] == "captured" and applied:
@@ -418,16 +406,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         )
     placement = capture_placement(inventory, service)
     source = service.get("weight_source")
-    if source == "replicated":
-        weight = {
-            "source": "replicated",
-            "revision": service.get("model_revision"),
-            "model_seal_id": service.get("model_seal_id"),
-            "validation_bundle_id": service.get("validation_bundle_id"),
-            "original_retention": None,
-            "runtime_views": [],
-        }
-    elif source == "library-hot":
+    if source == "library-hot":
         if not args.library_health:
             fail("library-backed replacement requires current model-library health")
         weight = library_contract(
@@ -435,6 +414,11 @@ def cmd_capture(args: argparse.Namespace) -> int:
             profile=profile,
             service=service,
             placement=placement,
+        )
+    elif source == "replicated":
+        fail(
+            "running service predates the library-only decision (ADR 0006); "
+            "stop and restart it to migrate before automatic replacement"
         )
     else:
         fail("previous service weight source is missing, mixed, or unsupported")

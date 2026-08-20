@@ -29,7 +29,7 @@ CONTENT = "6" * 12
 MANIFEST = "7" * 64
 
 
-def inventory(*, source: str = "replicated") -> dict[str, object]:
+def inventory(*, source: str = "library-hot") -> dict[str, object]:
     common = {
         "io.pulsar.gb10.managed": "true",
         "io.pulsar.gb10.conf": PROFILE,
@@ -144,7 +144,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         path.write_text(json.dumps(value) + "\n", encoding="utf-8")
         return path
 
-    def capture(self, *, source: str = "replicated", report=None) -> pathlib.Path:
+    def capture(self, *, source: str = "library-hot", report=None) -> pathlib.Path:
         inv = self.write("inventory.json", inventory(source=source))
         report_path = self.write("health.json", report) if report is not None else None
         output = self.root / "transaction.json"
@@ -159,13 +159,13 @@ class ReplacementTransactionTests(unittest.TestCase):
             tx.cmd_capture(args)
         return output
 
-    def test_replicated_capture_binds_geometry_spec_and_source(self) -> None:
-        path = self.capture()
+    def test_capture_binds_geometry_spec_and_source(self) -> None:
+        path = self.capture(report=health())
         saved = tx.validate_transaction(tx.load_json(path))
         service = saved["previous_service"]
         self.assertEqual(service["launch_contract_id"], CONTRACT)
         self.assertEqual(service["spec_decode"], "on")
-        self.assertEqual(service["weight"]["source"], "replicated")
+        self.assertEqual(service["weight"]["source"], "library-hot")
         self.assertEqual(service["placement"]["mode"], "exact-topology")
         self.assertEqual(
             service["placement"]["ranks"],
@@ -173,6 +173,10 @@ class ReplacementTransactionTests(unittest.TestCase):
         )
         self.assertNotIn("hostname", path.read_text())
         self.assertNotIn("192.0.2", path.read_text())
+
+    def test_legacy_replicated_service_is_refused_with_migration_advice(self) -> None:
+        with self.assertRaisesRegex(tx.TransactionError, "library-only decision"):
+            self.capture(source="replicated")
 
     def test_old_service_without_contract_label_is_refused(self) -> None:
         inv_value = inventory()
@@ -200,7 +204,7 @@ class ReplacementTransactionTests(unittest.TestCase):
             self.capture(source="library-hot", report=bad)
 
     def test_phase_is_monotonic_and_file_is_exclusive(self) -> None:
-        path = self.capture()
+        path = self.capture(report=health())
         with contextlib.redirect_stdout(io.StringIO()):
             tx.cmd_phase(argparse.Namespace(path=str(path), to="retained"))
             tx.cmd_phase(argparse.Namespace(path=str(path), to="stopped"))
@@ -208,7 +212,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(tx.TransactionError, "invalid transaction phase"):
             tx.cmd_phase(argparse.Namespace(path=str(path), to="retained"))
         with self.assertRaisesRegex(tx.TransactionError, "already exists"):
-            self.capture()
+            self.capture(report=health())
 
     def test_rollback_rejects_profile_topology_and_retention_drift(self) -> None:
         path = self.capture(source="library-hot", report=health())
@@ -269,7 +273,7 @@ class ReplacementTransactionTests(unittest.TestCase):
             tx.cmd_verify_rollback(args)
 
     def test_recovery_distinguishes_previous_running_stopped_and_ambiguous(self) -> None:
-        path = self.capture()
+        path = self.capture(report=health())
         running_path = self.write("running.json", inventory())
         with contextlib.redirect_stdout(io.StringIO()) as stream:
             tx.cmd_recovery_state(argparse.Namespace(path=str(path), inventory=str(running_path)))

@@ -338,8 +338,8 @@ def preparation_check(
             continue
         if int(profile["nodes"]) == 1 and target_ranks[0] != primary.get("rank"):
             blockers.append(
-                "one-node distributed serving must use the durable-home node; "
-                "choose that node or use replicated copies"
+                "one-node serving must use the durable-home node; "
+                "choose that node"
             )
             continue
         candidate["target_ranks"] = target_ranks
@@ -554,7 +554,7 @@ def render_summary(report: dict[str, Any], width: int | None = None) -> None:
     state = str(report["state"])
     catalog = report["catalog"]
     term.emit("MODELS & STORAGE")
-    term.field("serving", "replicated local model copies · guided default")
+    term.field("serving", "model library · the only weight mechanism (ADR 0006)")
     term.field("catalog", f"{state.replace('-', ' ')} · read-only inventory")
     term.field("cached", _status_label(catalog.get("status")))
     if catalog.get("status") == "cached":
@@ -573,12 +573,12 @@ def render_summary(report: dict[str, Any], width: int | None = None) -> None:
     )
     if state == "not-configured":
         term.emit(
-            "No cached distributed catalog is configured. Replicated serving remains available."
+            "No cached distributed catalog is configured. Serving requires one; running services are unaffected."
         )
         term.emit("To create one later: scripts/model-library.sh catalog refresh")
     elif state == "unavailable":
         term.emit(
-            "Catalog state cannot be confirmed. Keep using the replicated path and review the findings before library maintenance."
+            "Catalog state cannot be confirmed. Running services are unaffected; review the findings before library maintenance."
         )
 
 
@@ -672,7 +672,7 @@ def render_detail(
             "Dependency: no complete durable home is currently available for this exact revision."
         )
     term.emit(
-        "Claim boundary: catalog identity and runtime views do not establish model qualification, assign a release status, or change the guided default."
+        "Claim boundary: catalog identity and runtime views do not establish model qualification or assign a release status."
     )
 
     check = preparation_check(report, profiles, index)
@@ -741,14 +741,14 @@ def render_findings(report: dict[str, Any], width: int | None = None) -> None:
 def render_about(width: int | None = None) -> None:
     term = TerminalWriter(width=width)
     term.emit("HOW MODEL STORAGE WORKS")
-    term.field("default", "replicated local model copies on every serving node")
+    term.field("mechanism", "the model library serves every profile (ADR 0006)")
     term.field("catalog", "one durable home per exact revision")
     term.field("prepared", "sealed hot copies only on non-home serving nodes")
     term.field("home node", "uses its durable model through a validated local view")
     term.field("pin", "retains non-home hot copies but still requires the durable home")
     term.blank()
     term.emit(
-        "The reviewed two-rank library-hot path is GA but remains explicit and non-default. One-rank and legacy-unsealed uses remain experimental. Browsing does not change serving policy or qualify a model."
+        "Every library scope (two-rank sealed, one-rank, legacy-unsealed) is supported (ADR 0006). Browsing does not change serving policy or qualify a model."
     )
 
 
@@ -773,7 +773,7 @@ def render_refresh(report: dict[str, Any], width: int | None = None) -> None:
         "It preserves explicit exact-revision primary selections. Incomplete rank or topology observation fails closed."
     )
     term.emit(
-        "It does not download, copy, prepare, start, pin, purge, repair, or delete model files. Replicated serving remains the guided default."
+        "It does not download, copy, prepare, start, pin, purge, repair, or delete model files."
     )
 
 
@@ -782,9 +782,9 @@ def prepare_choice_labels(check: dict[str, Any]) -> list[str]:
     for candidate in check.get("candidates") or []:
         verb = "Verify" if candidate.get("already_prepared") else "Prepare"
         scope = (
-            "two-rank GA serving"
+            "two-rank serving"
             if int(candidate.get("nodes") or 0) == 2
-            else "experimental one-rank serving"
+            else "one-rank serving"
         )
         labels.append(f"{verb} {candidate['profile']} for {scope}")
     return labels
@@ -810,9 +810,9 @@ def render_preparation(
     candidate = selected_preparation_candidate(check, candidate_index)
     term = TerminalWriter(width=width)
     heading = (
-        "PREPARE FOR TWO-RANK GA SERVING"
+        "PREPARE FOR TWO-RANK SERVING"
         if int(candidate.get("nodes") or 0) == 2
-        else "PREPARE FOR EXPERIMENTAL ONE-RANK SERVING"
+        else "PREPARE FOR ONE-RANK SERVING"
     )
     term.emit(heading)
     term.field("profile", candidate["profile"])
@@ -847,7 +847,7 @@ def render_preparation(
         "The preparation service will full-verify the durable home, check exact live capacity on every serving node, transfer only non-home bytes, and publish ready views only after every rank verifies."
     )
     term.emit(
-        "This does not start or qualify a model. The home remains required, and successful preparation does not change the guided default."
+        "This does not start or qualify a model. The durable home remains required."
     )
 
 
@@ -857,9 +857,9 @@ def render_serving_preparation(
     term = TerminalWriter(width=width)
     targets = check.get("target_ranks") or []
     heading = (
-        "DISTRIBUTED CATALOG · TWO-RANK GA · EXPLICIT"
+        "DISTRIBUTED CATALOG · TWO-RANK SERVING"
         if len(targets) == 2
-        else "DISTRIBUTED CATALOG · EXPERIMENTAL ONE-RANK"
+        else "DISTRIBUTED CATALOG · ONE-RANK SERVING"
     )
     term.emit(heading)
     term.field("profile", check.get("profile") or "unknown")
@@ -899,7 +899,7 @@ def render_serving_preparation(
             "The selected ranks already have exact, witnessed runtime views ready for launch."
         )
     term.emit(
-        "The durable home remains required. This explicit path is not a promoted default and does not establish model qualification."
+        "The durable home remains required. Readiness does not establish model qualification."
     )
 
 

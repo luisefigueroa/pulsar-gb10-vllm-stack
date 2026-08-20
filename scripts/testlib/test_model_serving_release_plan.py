@@ -269,8 +269,8 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             self.assertFalse(candidate_dir.exists())
             self.assertEqual(list(root.iterdir()), [])
 
-    def test_public_cli_builds_source_neutral_catalog_primary(self) -> None:
-        catalog_profile = "inkling-small-nvfp4"
+    def test_public_cli_builds_source_neutral_two_node_primary(self) -> None:
+        catalog_profile = "deepseek-v4-flash"
         catalog_image = (
             "ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack@sha256:"
             "260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2"
@@ -281,13 +281,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             envelope_path = root / "runtime-envelope.json"
             criteria_path = root / "criteria.json"
             candidate_dir = root / "candidate"
-            catalog_manifest = manifest(
-                model_id="Thinkingmachines/Inkling-Small-NVFP4"
-            )
-            catalog_manifest["snapshot_revision"] = "catalog-release-v1"
-            catalog_manifest["manifest_id"] = model_library.snapshot_manifest_id(
-                catalog_manifest
-            )
+            catalog_manifest = manifest(model_id="deepseek-ai/DeepSeek-V4-Flash-0731")
             write_json(manifest_path, catalog_manifest)
             write_json(
                 envelope_path,
@@ -311,10 +305,9 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             release_raw = (candidate_dir / "release.json").read_text()
             release = json.loads(release_raw)
             primary = release["model_artifact_set"]["artifacts"][0]
-            self.assertEqual(primary["kind"], "content-addressed-model")
+            self.assertEqual(primary["kind"], "huggingface-snapshot")
             self.assertEqual(
-                primary["artifact_id"],
-                "Thinkingmachines/Inkling-Small-NVFP4",
+                primary["model_id"], "deepseek-ai/DeepSeek-V4-Flash-0731"
             )
             self.assertNotIn("Official Models", release_raw)
             self.assertNotIn("/mnt/", release_raw)

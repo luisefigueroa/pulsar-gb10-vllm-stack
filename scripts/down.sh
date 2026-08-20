@@ -13,8 +13,9 @@
 #   --pin-weights   protect retained hot staging from purge; warm-home
 #                   preparation may still depend on its durable home symlink
 #   --purge-hot     delete hot staging, including an existing pin
-# A stopped library-hot service purges unpinned views by default. Replicated
-# services do not invoke model-library cleanup.
+# A stopped library-hot service purges unpinned views by default. Legacy
+# containers without a library-hot label (pre-ADR 0006 launches) stop
+# cleanly and never invoke model-library cleanup.
 set -euo pipefail
 SCRIPT_NAME=down
 # shellcheck disable=SC1091

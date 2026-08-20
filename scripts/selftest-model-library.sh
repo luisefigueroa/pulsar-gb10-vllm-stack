@@ -355,20 +355,24 @@ assert_true "retired fabric backend rejected" test "$fab_rc" -ne 0
 assert_true "retired nfs-rdma transport rejected" test "$nfs_rc" -ne 0
 assert_true "unknown backend rejected" test "$bad_rc" -ne 0
 
-# Launch wiring accepts library-hot flags (no docker)
-assert_true "up.sh help lists library-hot" \
-  grep -q library-hot "$REPO_DIR/scripts/up.sh"
-assert_true "start-cluster accepts library-hot" \
-  grep -q library-hot "$REPO_DIR/scripts/../cluster/start-cluster.sh"
+# Launch wiring is library-only (no docker)
+assert_true "up.sh has no weight-mode axis" \
+  bash -c "! grep -q 'WEIGHT_SOURCE=' '$REPO_DIR/scripts/up.sh'"
+assert_true "start-cluster labels launches library-hot" \
+  grep -q 'PULSAR_WEIGHT_SOURCE_LABEL}=library-hot' "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "cluster launch validates remote expected identity" \
   grep -q -- --expected-validation-json "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "cluster launch uses serve-time witness with full-verify fallback" \
   grep -q -- --serve-time-witness "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "preparation full-verifies and refreshes rank-local witnesses" \
   grep -q -- --refresh-witness "$REPO_DIR/scripts/model-library.sh"
+out=$(set +e; CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json" \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b 2>&1; true)
+assert_true "check-weights fails closed without confirmed topology" \
+  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -q 'confirmed topology manifest'"
 out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)
-assert_true "check-weights library-hot fails closed without hot" \
-  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|prepare|topology|hot'"
+assert_true "removed weight-mode flag fails closed" \
+  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -q 'ADR 0006'"
 assert_true "down.sh documents pin-weights" \
   grep -q pin-weights "$REPO_DIR/scripts/down.sh"
 assert_true "fabric transfer plane is fully removed" \

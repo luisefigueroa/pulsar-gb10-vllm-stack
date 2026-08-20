@@ -317,13 +317,13 @@ python3 "$REPO_DIR/scripts/model_library.py" render-health \
 if [ "$library_render_rc" -le 1 ] && [ -s "$library_rows" ]; then
   while IFS=$'\t' read -r library_level library_id library_message; do
     [ -n "$library_level" ] || continue
-    # Model-library findings are informational to replicated/default serving.
+    # Model-library findings are informational for already-running services.
     [ "$library_level" = ok ] || library_level=warn
     record "$library_level" "$library_id" "$library_message"
   done <"$library_rows"
 else
   record warn model_library \
-    "model-library health is unavailable (replicated weights remain available)"
+    "model-library health is unavailable (running services are unaffected; new preparation is blocked until it returns)"
 fi
 rm -f "$library_report" "$library_rows"
 

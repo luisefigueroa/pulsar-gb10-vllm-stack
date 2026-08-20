@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Read-only preflight for an exact configured multi-node profile.
-#   cluster/preflight.sh <model-name> [--weight-source replicated|library-hot]
+#   cluster/preflight.sh <model-name>
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,34 +19,15 @@ else
   TOPOLOGY_CLASS=roce-full-mesh
   MIN_RAILS_PER_PAIR=1
 fi
-WEIGHT_SOURCE=replicated
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --weight-source)
-      [ "$#" -ge 2 ] || {
-        echo "--weight-source requires replicated|library-hot" >&2
-        exit 2
-      }
-      WEIGHT_SOURCE="$2"
-      shift
-      ;;
-    --weight-mode)
-      [ "$#" -ge 2 ] || {
-        echo "--weight-mode requires library-hot (or replicated)" >&2
-        exit 2
-      }
-      WEIGHT_SOURCE="$2"
-      shift
+    --weight-source|--weight-mode)
+      refuse_removed_weight_mode_flag
       ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
 done
-case "$WEIGHT_SOURCE" in
-  replicated|library-hot) ;;
-  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
-  *) echo "--weight-source must be replicated or library-hot" >&2; exit 2 ;;
-esac
 [ "$EXPECTED_NODES" -gt 1 ] || {
   echo "[preflight] profile must require more than one node" >&2
   exit 1
@@ -174,19 +155,10 @@ if [ -n "$PROFILE" ]; then
       && ok "rank $rank: image $IMAGE" \
       || bad "rank $rank: image $IMAGE not present"
   done
-  if [ "$WEIGHT_SOURCE" = library-hot ]; then
-    if "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" \
-        --weight-source library-hot >/dev/null; then
-      ok "library-hot: ready hot staging for $PROFILE"
-    else
-      bad "library-hot not ready — run: scripts/model-library.sh prepare $PROFILE --yes"
-    fi
+  if "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" >/dev/null; then
+    ok "model files: ready library staging for $PROFILE"
   else
-    if "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" --weight-source replicated >/dev/null; then
-      ok "replicated weights: every selected rank is launch-ready"
-    else
-      bad "replicated weights are not launch-ready — run: scripts/pull-weights.sh $PROFILE --yes"
-    fi
+    bad "model files are not prepared — run: scripts/model-library.sh prepare $PROFILE --yes"
   fi
 fi
 

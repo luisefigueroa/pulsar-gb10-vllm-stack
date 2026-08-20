@@ -61,14 +61,14 @@ grep -Fq 'syncs local main' "$skill" \
 grep -Fq 'new feature branch' "$skill" \
   || fail "skill must create a new feature branch after merge"
 
-grep -Fq 'must not be represented as an exact' "$skill" \
-  || fail "skill must refuse unsealed replicated qualification"
+grep -Fq 'as an exact ADR 0004 qualification attempt' "$skill" \
+  || fail "skill must refuse unsealed qualification claims"
 grep -Fq 'ADR 0004 qualification attempt' "$skill" \
   || fail "skill must name the refused qualification claim"
 grep -Fq 'refs/main' "$skill" \
   || fail "skill must name the mutable refs/main unsealed path"
-grep -Fq 'writable HF home' "$skill" \
-  || fail "skill must name the writable HF home on the unsealed path"
+grep -Fq 'legacy-unsealed' "$skill" \
+  || fail "skill must name the honest legacy-unsealed identity label"
 
 grep -Fq 'no silent fallback' "$skill" \
   || fail "skill must forbid silent fallback"
@@ -88,9 +88,9 @@ if grep -Fq -- 'local-verified-readonly|live-remote-readonly' "$skill" "$phases"
 then
   fail "onboarding must not offer live-remote-readonly as a contract choice"
 fi
-if grep -Eq -- 'up\.sh.*--weight-source fabric' "$skill" "$phases"
+if grep -Fq -- '--weight-source' "$skill" "$phases"
 then
-  fail "onboarding must not launch with --weight-source fabric"
+  fail "onboarding must not use the removed weight-mode axis (ADR 0006)"
 fi
 grep -Fq 'scripts/model-library.sh home add <profile> --revision <selector> --plan --json' "$skill" \
   || fail "skill must compose the read-only source-attested acquisition plan"

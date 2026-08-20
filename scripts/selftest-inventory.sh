@@ -172,6 +172,38 @@ assert_eq "$(py_get "$out" 'd["services"][0]["weight_source"]')" "replicated" "h
 assert_eq "$(py_get "$out" 'd["services"][0]["launch_contract_id"]')" "$(printf 'd%.0s' {1..64})" "healthy: launch contract aggregated"
 assert_eq "$(py_get "$out" 'd["services"][0]["spec_decode"]')" "off" "healthy: spec state aggregated"
 
+# Library launches carry owner/config provenance; legacy replicated labels
+# never require them (ADR 0006).
+body_library=$(BODY="$body" python3 - <<PY
+import json
+import os
+
+snap = json.loads(os.environ["BODY"])
+for container in snap["containers"]:
+    labels = container["labels"]
+    labels["io.pulsar.gb10.weight-source"] = "library-hot"
+    labels["io.pulsar.gb10.weight-owner"] = "node-fixture-home"
+    labels["io.pulsar.gb10.weight-config"] = "c" * 12
+print(json.dumps(snap))
+PY
+)
+out=$(run_fixture "library-2rank" "$body_library")
+assert_eq "$(py_get "$out" 'd["services"][0]["weight_source"]')" "library-hot" "library: weight source aggregated"
+assert_eq "$(py_get "$out" 'd["services"][0]["safe_to_stop"]')" "True" "library: uniform provenance is safe"
+
+body_library_broken=$(BODY="$body_library" python3 - <<PY
+import json
+import os
+
+snap = json.loads(os.environ["BODY"])
+del snap["containers"][1]["labels"]["io.pulsar.gb10.weight-owner"]
+print(json.dumps(snap))
+PY
+)
+out=$(run_fixture "library-2rank-missing-owner" "$body_library_broken")
+assert_eq "$(py_get "$out" '"weight provenance labels are missing or inconsistent" in (d["services"][0].get("reasons") or [])')" "True" "library: provenance reason surfaced"
+assert_eq "$(py_get "$out" 'd["services"][0].get("weight_owner_node_id")')" "None" "library: inconsistent owner is not reported"
+
 body_mixed_contract=$(BODY="$body" python3 - <<PY
 import json
 import os

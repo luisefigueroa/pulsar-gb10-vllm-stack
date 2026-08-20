@@ -43,8 +43,8 @@ check "" 0
 # conf files on disk
 for pair in \
   "qwen3.6-27b-fp8-2node:0" \
-  "laguna-s-2.1-2node:0" \
-  "inkling-small-nvfp4:0" \
+  "qwen3.8-27b-fp8:0" \
+  "nemotron-3-nano-30b-nvfp4:1" \
   "deepseek-v4-flash:1" \
   "qwen3-1.7b:1"
 do

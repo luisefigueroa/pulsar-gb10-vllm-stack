@@ -855,22 +855,14 @@ print_shell_command_redacted() {
 PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
 PULSAR_SSH="${PULSAR_SSH:-ssh}"
 
-# ADR 0005: live NFS/RDMA under vLLM is not a serving runtime source.
-LIVE_NFS_SERVING_RETIRED_MESSAGE='live NFS/RDMA serving (--weight-source fabric) is retired (ADR 0005). A crashed rank cannot cold-start from a live mount. Use --weight-source library-hot or --weight-source replicated. This is not a remap to replicated. One-shot nfs-rdma prepare (--backend fabric) remains a separate experiment.'
-LIVE_NFS_SERVING_WORKFLOW_RETIRED_MESSAGE='live NFS/RDMA serving workflow is retired (ADR 0005). Use --weight-source library-hot or --weight-source replicated. Leftover site mounts: show, unmount, or teardown only (confirmation-gated). One-shot nfs-rdma prepare (--backend fabric) remains a separate experiment.'
+# ADR 0006: the model library is the only weight-distribution mechanism.
+WEIGHT_MODE_FLAG_REMOVED_MESSAGE='--weight-source/--weight-mode were removed (ADR 0006): the model library is the only weight mechanism, so there is no mode to select. Drop the flag. Leftover live-NFS site mounts (ADR 0005): ./pulsar weight-fabric show/unmount/teardown.'
 
-refuse_retired_live_nfs_serving_weight_source() {
-  local source="${1:-}"
-  [ "$source" = fabric ] || return 0
-  die "$LIVE_NFS_SERVING_RETIRED_MESSAGE" 2
-}
-
-refuse_retired_live_nfs_serving_workflow() {
-  die "$LIVE_NFS_SERVING_WORKFLOW_RETIRED_MESSAGE" 2
+refuse_removed_weight_mode_flag() {
+  die "$WEIGHT_MODE_FLAG_REMOVED_MESSAGE" 2
 }
 PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
-PULSAR_REPLICATED_WITNESS_ROOT="${PULSAR_REPLICATED_WITNESS_ROOT:-$HF_CACHE/.pulsar/replicated-witnesses}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"
 PULSAR_SSH_OPTS=(
   -o BatchMode=yes
@@ -1081,15 +1073,17 @@ PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
-# Load the controller-reviewed plan for a sealed profile. Unsealed profiles do
-# not call this path and retain the structural replicated-cache behavior.
-# Sets REPLICATED_PLAN_B64, REPLICATED_REVISION, REPLICATED_MODEL_SEAL_ID,
-# REPLICATED_VALIDATION_BUNDLE_ID, REPLICATED_MANIFEST_ID, and container path.
+# Load the reviewed exact-identity plan for a sealed profile (used by
+# model-library home acquisition). Sets REPLICATED_PLAN_B64,
+# REPLICATED_REVISION, REPLICATED_MODEL_SEAL_ID,
+# REPLICATED_VALIDATION_BUNDLE_ID, and REPLICATED_MANIFEST_ID. The name is
+# historical: the plan binds the exact commit/manifest/seal identity and is
+# independent of any distribution mode (ADR 0006).
 load_replicated_identity_plan() {
   local profile="${1:?profile required}" envelope plan
   local -a plan_args
   [ -n "${EXPECTED_MODEL_SEAL:-}" ] ||
-    die "$profile: replicated identity plan requires EXPECTED_MODEL_SEAL"
+    die "$profile: reviewed identity plan requires EXPECTED_MODEL_SEAL"
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   plan_args=(
     replicated-plan
@@ -1097,61 +1091,21 @@ load_replicated_identity_plan() {
     --profile "$profile"
   )
   envelope=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${plan_args[@]}" --transport-envelope) ||
-    die "$profile: cannot build reviewed replicated identity plan"
+    die "$profile: cannot build reviewed exact-identity plan"
   plan=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["plan"]))') ||
-    die "$profile: cannot read reviewed replicated identity plan"
+    die "$profile: cannot read reviewed exact-identity plan"
   REPLICATED_PLAN_B64=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.load(sys.stdin)["encoded_plan"])') ||
-    die "$profile: cannot read encoded replicated identity plan"
+    die "$profile: cannot read encoded exact-identity plan"
   REPLICATED_REVISION=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_revision"])')
   REPLICATED_MODEL_SEAL_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["seal_id"])')
   REPLICATED_VALIDATION_BUNDLE_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["validation_bundle_id"])')
   REPLICATED_MANIFEST_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"]["manifest_id"])')
-  REPLICATED_HUB_PATH=$(hf_hub_path)
-  REPLICATED_WITNESS_PATH="$PULSAR_REPLICATED_WITNESS_ROOT/$profile/$REPLICATED_MODEL_SEAL_ID.json"
-  REPLICATED_CONTAINER_MODEL_PATH="/root/.cache/huggingface/hub/$(hf_hub_dirname "$MODEL")/snapshots/$REPLICATED_REVISION"
   if [ -z "$REPLICATED_PLAN_B64" ] ||
       [ -z "$REPLICATED_REVISION" ] ||
       [ -z "$REPLICATED_MODEL_SEAL_ID" ] ||
       [ -z "$REPLICATED_VALIDATION_BUNDLE_ID" ] ||
       [ -z "$REPLICATED_MANIFEST_ID" ]; then
-    die "$profile: reviewed replicated identity plan is incomplete"
-  fi
-}
-
-verify_replicated_identity_local() {
-  local mode="${1:-serve}" output
-  local -a args=(
-    verify-replicated
-    --plan-b64 "$REPLICATED_PLAN_B64"
-    --hub-path "$REPLICATED_HUB_PATH"
-    --witness-path "$REPLICATED_WITNESS_PATH"
-    --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
-  )
-  [ "$mode" = serve ] && args+=(--serve-time-witness)
-  output=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${args[@]}") || return 1
-  printf '%s\n' "$output"
-}
-
-verify_replicated_identity_remote() {
-  local host="${1:?host required}" mode="${2:-serve}" command
-  local -a args=(
-    python3 - verify-replicated
-    --plan-b64 "$REPLICATED_PLAN_B64"
-    --hub-path "$REPLICATED_HUB_PATH"
-    --witness-path "$REPLICATED_WITNESS_PATH"
-    --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
-  )
-  [ "$mode" = serve ] && args+=(--serve-time-witness)
-  command=$(shell_join_q "${args[@]}")
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$command" <"$PULSAR_MODEL_LIBRARY_PY"
-}
-
-verify_replicated_identity_selected_node() {
-  local mode="${1:-serve}"
-  if [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
-    verify_replicated_identity_remote "$SINGLE_NODE_SSH_HOST" "$mode"
-  else
-    verify_replicated_identity_local "$mode"
+    die "$profile: reviewed exact-identity plan is incomplete"
   fi
 }
 
@@ -1417,9 +1371,10 @@ print("\t".join([cid, name, managed, conf, rank]))
 ' "$PULSAR_MANAGED_LABEL" "$PULSAR_CONF_LABEL" "$PULSAR_RANK_LABEL"
 }
 
-# Return the declared model-weight source from ownership metadata. Historical
-# managed containers without the label are the replicated compatibility path;
-# malformed JSON is an observation failure.
+# Return the declared model-weight source from ownership metadata. The value
+# is provenance, not a mode: every managed launch since ADR 0006 writes
+# library-hot, and containers labeled replicated (or unlabeled, predating the
+# label) are legacy observations. Malformed JSON is an observation failure.
 container_weight_source_field() {
   local metadata="${1:?}"
   printf '%s' "$metadata" | python3 -c '

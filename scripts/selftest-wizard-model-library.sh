@@ -386,23 +386,24 @@ run_wizard() {
   set -e
 }
 
-echo "=== replicated remains the guided default ==="
-run_wizard healthy.json 0 0 $'2\n1\n\ny\n'
+echo "=== ready library views launch without preparation ==="
+run_wizard healthy.json 0 0 $'2\n\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'Tested—criteria not met' \
   "wizard exposes a non-recommended serving profile with its advisory status"
-assert_empty "$STATE/logs/health.log" "replicated choice does not inspect catalog health"
-assert_empty "$STATE/logs/prepare.log" "replicated choice does not prepare catalog views"
+assert_contains "$STATE/logs/health.log" '.' \
+  "library flow always inspects catalog health"
+assert_empty "$STATE/logs/prepare.log" "ready views need no preparation"
 assert_contains "$STATE/logs/weights.log" '^deepseek-v4-flash --json$' \
-  "replicated preflight does not carry the library-hot source"
+  "weight preflight carries no mode flag"
 assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
-  "replicated launch remains unchanged"
+  "launch carries no mode flag"
 
-echo "=== explicit two-rank GA preparation and launch ==="
-run_wizard unprepared.json 0 0 $'2\n2\ny\n\ny\n'
+echo "=== two-rank preparation and launch ==="
+run_wizard unprepared.json 0 0 $'2\ny\n\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
-assert_contains "$STATE/logs/output.log" 'DISTRIBUTED CATALOG.*TWO-RANK GA.*EXPLICIT' \
-  "wizard labels the bounded two-rank GA scope"
+assert_contains "$STATE/logs/output.log" 'DISTRIBUTED CATALOG.*TWO-RANK SERVING' \
+  "wizard labels the two-rank scope"
 assert_contains "$STATE/logs/output.log" 'durable home remains required' \
   "wizard discloses the durable-home dependency"
 assert_contains "$STATE/logs/output.log" '^durable home[[:space:]]+node 2' \
@@ -410,22 +411,19 @@ assert_contains "$STATE/logs/output.log" '^durable home[[:space:]]+node 2' \
 assert_contains "$STATE/logs/prepare.log" \
   '^prepare deepseek-v4-flash --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
   "wizard delegates the accepted eight-stream RoCE preparation policy"
-assert_contains "$STATE/logs/weights.log" \
-  '^deepseek-v4-flash --weight-source library-hot --json$' \
-  "weight preflight receives the explicit two-rank GA source"
-assert_contains "$STATE/logs/up.log" \
-  '^deepseek-v4-flash --weight-source library-hot --yes$' \
-  "launch receives library-hot only after separate confirmation"
+assert_contains "$STATE/logs/weights.log" '^deepseek-v4-flash --json$' \
+  "weight preflight carries no mode flag after preparation"
+assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
+  "launch happens only after separate confirmation"
 
-echo "=== blocked catalog can return to replicated explicitly ==="
-run_wizard attention.json 1 0 $'2\n2\n1\n\ny\n'
+echo "=== blocked catalog is leave-only and never launches ==="
+run_wizard attention.json 1 0 $'2\n2\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_empty "$STATE/logs/prepare.log" "blocked catalog does not attempt preparation"
-assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
-  "operator explicitly returns to replicated weights"
+assert_empty "$STATE/logs/up.log" "blocked catalog never launches"
 
 echo "=== failed preparation never launches ==="
-run_wizard unprepared.json 0 7 $'2\n2\ny\n3\n'
+run_wizard unprepared.json 0 7 $'2\ny\n2\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'preparation failed' \
   "preparation failure is visible"
@@ -433,27 +431,26 @@ assert_empty "$STATE/logs/up.log" "preparation failure cannot launch"
 
 echo "=== confirmed two-rank GA restart retains prepared views ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.running"
-run_wizard healthy-active.json 0 0 $'2\n2\n1\n\ny\n' \
+run_wizard healthy-active.json 0 0 $'2\n1\n\ny\n' \
   "$STATE/inventory.json.running"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/down.log" \
   '^deepseek-v4-flash --pin-weights$' \
   "same-source restart pins prepared views before stop"
-assert_contains "$STATE/logs/up.log" \
-  '^deepseek-v4-flash --weight-source library-hot --yes$' \
-  "restart preserves the explicit two-rank GA source"
+assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
+  "restart launches through the library with no mode flag"
 
 echo "=== failed replacement restores exact catalog contract ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.rollback"
-run_wizard healthy-active.json 0 0 $'2\n2\n1\n\ny\n1\ny\n' \
+run_wizard healthy-active.json 0 0 $'2\n1\n\ny\n1\ny\n' \
   "$STATE/inventory.json.rollback" "$STATE/reports/profiles.json" 1
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" \
   'Restore previous exact service|planning exact rollback' \
   "launch failure offers the captured service contract"
 assert_contains "$STATE/logs/up.log" \
-  '^deepseek-v4-flash --weight-source library-hot --spec-decode --yes$' \
-  "rollback preserves catalog source and speculative-decode state"
+  '^deepseek-v4-flash --spec-decode --yes$' \
+  "rollback preserves the speculative-decode state"
 assert_contains "$STATE/logs/prepare.log" '^pin deepseek-v4-flash$' \
   "ephemeral catalog views are pinned before stop"
 assert_contains "$STATE/logs/prepare.log" '^unpin deepseek-v4-flash$' \
@@ -462,19 +459,19 @@ assert_contains "$STATE/logs/prepare.log" '^unpin deepseek-v4-flash$' \
   || { echo "FAIL confirmed rollback left transaction state" >&2; exit 1; }
 
 echo "=== one-node catalog serving explicitly moves to durable home ==="
-run_wizard one-health.json 0 0 $'1\n1\n2\n1\ny\n' \
+run_wizard one-health.json 0 0 $'1\n1\n1\ny\n' \
   "$STATE/inventory.json" "$STATE/reports/one-profiles.json"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" \
-  'selected durable-home node for experimental one-rank catalog serving: fixture-one' \
+  'selected the durable-home node for one-rank library serving: fixture-one' \
   "wizard makes the home-node placement change visible"
 assert_empty "$STATE/logs/prepare.log" \
   "ready one-node durable-home view needs no materialization"
 assert_contains "$STATE/logs/weights.log" \
-  '^qwen3-1.7b --node node-one-identity --weight-source library-hot --json$' \
+  '^qwen3-1.7b --node node-one-identity --json$' \
   "one-node weight preflight targets its durable home"
 assert_contains "$STATE/logs/up.log" \
-  '^qwen3-1.7b --node node-one-identity --weight-source library-hot --yes$' \
+  '^qwen3-1.7b --node node-one-identity --yes$' \
   "one-node catalog launch targets its durable home"
 
 echo "wizard model-library selftest PASS"

@@ -42,7 +42,7 @@ workflow can explicitly prepare a reviewed model through the experimental
 distributed path. It does not start a model or run pin, purge, repair, or
 durable-home operations.
 
-The promoted serving default remains replicated local model copies.
+The model library is the only weight-distribution mechanism (ADR 0006).
 EOF
 }
 

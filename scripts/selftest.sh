@@ -39,9 +39,6 @@ run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"
 run "API auth and secret redaction" "$REPO_DIR/scripts/selftest-api-auth.sh"
 run "validation verdicts" "$REPO_DIR/scripts/selftest-validation.sh"
 run "fail-closed probes" "$REPO_DIR/scripts/selftest-preflight-probes.sh"
-run "weight staging + cache layout" "$REPO_DIR/scripts/selftest-pull-weights.sh"
-run "replicated model identity integration" \
-  "$REPO_DIR/scripts/selftest-replicated-identity.sh"
 run "model library remote-home contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_remote_home.py"
 run "model library parallel-copy contracts" \
@@ -52,8 +49,6 @@ run "model library integrity contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_integrity.py"
 run "model library serve-witness contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_witness.py"
-run "replicated model exact-identity contracts" \
-  python3 "$REPO_DIR/scripts/testlib/test_replicated_model_identity.py"
 run "model library expected-seal and validation-bundle contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_expected_seal.py"
 run "model release identity and candidate contracts" \

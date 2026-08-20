@@ -130,7 +130,6 @@ SENSITIVE_ENV_MARKERS = {
 COMMAND_PROGRAM_OPERATIONS = {
     "bench/membw.py": {"measure-memory-bandwidth"},
     "scripts/model-library.sh": {"prepare-model-for-serving"},
-    "scripts/pull-weights.sh": {"acquire-replicated-model"},
     "validate/analyze_trace.py": {"analyze-trace"},
     "validate/bench_serve.py": {"benchmark-serving"},
     "validate/compare_captures.py": {"compare-captures"},

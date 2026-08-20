@@ -135,114 +135,76 @@ set -e
 assert_json_state "$image_out" worker-unreachable \
   "image check reports worker SSH failure"
 
-# A config file alone is not a complete model cache. Require actual non-empty
-# weights and reject interrupted-download markers.
-snapshot="$STATE_DIR/hf/hub/models--Qwen--Qwen3.6-27B-FP8/snapshots/test"
-mkdir -p "$snapshot/inference"
-# A nested component config must never replace the model root config.
-printf '{}\n' >"$snapshot/inference/config.json"
-printf '{}\n' >"$snapshot/config.json"
+# The weight-mode axis is removed (ADR 0006): any use fails closed with an
+# actionable retirement message before other work.
 set +e
-weights_out=$(HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json)
-weights_rc=$?
+flag_out=$("$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b \
+  --weight-source library-hot 2>&1)
+flag_rc=$?
 set -e
-[ "$weights_rc" -ne 0 ]
-assert_json_state "$weights_out" partial \
-  "config-only cache is partial"
-
-printf 'weight-data\n' >"$STATE_DIR/weight-blob"
-ln -s "$STATE_DIR/weight-blob" "$snapshot/model.safetensors"
-mkdir -p "$STATE_DIR/hf/hub/models--Qwen--Qwen3.6-27B-FP8/refs"
-printf 'test' >"$STATE_DIR/hf/hub/models--Qwen--Qwen3.6-27B-FP8/refs/main"
-HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json >/dev/null
-echo "OK   Hugging Face weight symlinks are accepted"
-
-weights_human=$(COLUMNS=48 HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8)
-printf '%s\n' "$weights_human" | grep -q '^MODEL FILES READY$'
-printf '%s\n' "$weights_human" | grep -q 'this node.*ready'
-if printf '%s\n' "$weights_human" | grep -Eq 'r0=|rank 0|path='; then
-  echo "direct weight output leaked implementation jargon" >&2
-  exit 1
-fi
-RENDERED_OUTPUT="$weights_human" python3 -c '
-import os
-assert all(len(line) <= 48 for line in os.environ["RENDERED_OUTPUT"].splitlines())
-'
-echo "OK   direct weight diagnostics are readable at narrow width"
-
-printf '{"weight_map":{"layer":"missing-shard.safetensors"}}\n' \
-  >"$snapshot/model.safetensors.index.json"
+[ "$flag_rc" -eq 2 ]
+printf '%s' "$flag_out" | grep -q 'ADR 0006'
 set +e
-weights_out=$(HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json)
-weights_rc=$?
+flag_out=$("$REPO_DIR/scripts/up.sh" qwen3-1.7b --dry-run \
+  --weight-source replicated 2>&1)
+flag_rc=$?
 set -e
-[ "$weights_rc" -ne 0 ]
-assert_json_state "$weights_out" partial \
-  "index referencing a missing shard is partial"
-rm -f "$snapshot/model.safetensors.index.json"
+[ "$flag_rc" -eq 2 ]
+printf '%s' "$flag_out" | grep -q 'ADR 0006'
+echo "OK   removed weight-mode flags fail closed with remediation"
 
-grep -Fq 'python3 -c $qpython' "$REPO_DIR/scripts/check-weights.sh"
-echo "OK   remote weight verification checks every indexed shard"
-
-: >"$snapshot/download.incomplete"
+# Serving requires a confirmed topology manifest, even on one machine, and
+# refuses before any SSH probe.
+: >"$STATE_DIR/ssh.log"
 set +e
-weights_out=$(HF_CACHE="$STATE_DIR/hf" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.6-27b-fp8 --json)
-weights_rc=$?
-set -e
-[ "$weights_rc" -ne 0 ]
-assert_json_state "$weights_out" partial \
-  "interrupted download marker is partial"
-rm -f "$snapshot/download.incomplete"
-
-# A nonexistent remote hub is missing, not partial. Preserve the local state
-# when more than one required node is incomplete.
-qwen_snapshot="$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/snapshots/test"
-mkdir -p "$qwen_snapshot" "$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs"
-printf '{}\n' >"$qwen_snapshot/config.json"
-printf 'weight-data\n' >"$qwen_snapshot/model.safetensors"
-printf 'test' >"$STATE_DIR/hf/hub/models--Qwen--Qwen3-1.7B/refs/main"
-set +e
-weights_out=$(HF_CACHE="$STATE_DIR/hf" \
+weights_out=$(CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  SSH_MODE=weights-missing CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --json 2>&1)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
-assert_json_state "$weights_out" missing-on-worker \
-  "absent remote Hugging Face cache is missing"
-WEIGHTS_JSON="$weights_out" python3 - <<'PY'
-import json
-import os
+printf '%s' "$weights_out" | grep -q 'confirmed topology manifest'
+[ ! -s "$STATE_DIR/ssh.log" ]
+echo "OK   weights check requires a confirmed topology manifest"
 
-data = json.loads(os.environ["WEIGHTS_JSON"])
-assert [(item["rank"], item["state"]) for item in data["ranks"]] == [
-    (0, "ok"),
-    (1, "missing"),
-]
-PY
-
+# Unprepared library views are missing, not healthy.
 set +e
-weights_out=$(HF_CACHE="$STATE_DIR/empty-hf" \
-  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  SSH_MODE=weights-missing CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
+weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
+  PULSAR_HOT_ROOT="$STATE_DIR/empty-hot" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
 assert_json_state "$weights_out" missing \
-  "local missing state is not overwritten by remote missing state"
-WEIGHTS_JSON="$weights_out" python3 - <<'PY'
+  "unprepared library views are missing"
+
+# Ready library views report a single self-describing JSON contract.
+fixture_topology_id=$(python3 -c \
+  'import json,sys; print(json.load(open(sys.argv[1]))["topology_id"])' \
+  "$TOPOLOGY_FIXTURE")
+python3 "$REPO_DIR/scripts/testlib/library_hot_fixture.py" \
+  "$STATE_DIR/hot-info.json" --profile qwen3-1.7b-2node \
+  --topology-id "$fixture_topology_id"
+weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
+  PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
+  FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node --json)
+assert_json_state "$weights_out" ok "ready library views report ok"
+WEIGHTS_JSON="$weights_out" python3 - <<'PY2'
 import json
 import os
 
 data = json.loads(os.environ["WEIGHTS_JSON"])
-assert all(item["state"] == "missing" for item in data["ranks"]), data
-PY
+assert data["source"] == "library-hot", data
+assert data["identity_status"] == "legacy-unsealed", data
+assert data["model"] == "qwen3-1.7b-2node", data
+assert data["nodes"] == 2, data
+PY2
+weights_human=$(QUIET=1 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
+  PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
+  FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node)
+printf '%s\n' "$weights_human" | grep -q 'identity=legacy-unsealed'
+echo "OK   human and JSON weight projections agree"
 
 echo "fail-closed probe selftest OK"
