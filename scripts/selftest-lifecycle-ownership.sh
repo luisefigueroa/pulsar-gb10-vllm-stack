@@ -503,6 +503,10 @@ assert_eq "$?" "0" "rm log records id-based remove"
 # 2) Managed --all (only known conf + placement-valid)
 # ---------------------------------------------------------------------------
 echo "=== managed --all ==="
+# Multi-node ranks are only removable when their profile geometry is fully
+# confirmed, so this section runs under the two-node fixture manifest.
+CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE"
+reload_cluster_topology
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b","io.pulsar.gb10.rank":"single"}},
@@ -537,6 +541,10 @@ assert_true "unknown conf left intact" container_ownership_inspect_local "$ID_UN
 assert_true "invalid rank left intact" container_ownership_inspect_local "$ID_BAD_RANK"
 assert_true "rank 1 on head left intact" container_ownership_inspect_local "$ID_RANK1_HEAD"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "--all placement refuse: no rm"
+
+# Restore standalone topology for subsequent single-node sections.
+CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
+reload_cluster_topology
 
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-cluster-qwen3-1.7b-2node","labels":{
@@ -930,6 +938,39 @@ seed_state "$WORKER_STATE" '[]'
 )
 assert_false "down --all removed managed" container_ownership_inspect_local "$ID_ALL1"
 assert_true "down --all left legacy" container_ownership_inspect_local "$ID_ALL_LEG"
+
+# A multi-node rank without a confirmed manifest (e.g. a cluster launched
+# before topology confirmation) must be refused by --all: removing rank 0
+# locally would strand live remote ranks nobody can probe.
+ID_ORPHAN=$(hex64 orphan-rank0)
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-qwen3-1.7b-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b-2node","io.pulsar.gb10.rank":"0"}}
+]))' "$ID_ORPHAN")"
+if (
+  env -i \
+    PATH="$SHIM_DIR:/usr/bin:/bin" \
+    HOME="$HOME" \
+    CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
+    PULSAR_DOCKER="$SHIM_DIR/docker" \
+    PULSAR_SSH="$SHIM_DIR/ssh" \
+    FAKE_DOCKER_STATE="$HEAD_STATE" \
+    FAKE_WORKER_STATE="$WORKER_STATE" \
+    FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+    FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+    FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
+    FAKE_SSH_STATUS=ok \
+    bash "$REPO_DIR/scripts/down.sh" --all
+) 2>/dev/null; then
+  echo "FAIL down --all should refuse a multi-node rank with no confirmed topology" >&2
+  fail=$((fail + 1))
+else
+  echo "OK   down --all refuses a multi-node rank with no confirmed topology"
+  pass=$((pass + 1))
+fi
+assert_true "unconfirmed cluster rank survives down --all" \
+  container_ownership_inspect_local "$ID_ORPHAN"
+seed_state "$HEAD_STATE" '[]'
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{}}

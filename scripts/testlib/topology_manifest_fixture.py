@@ -35,8 +35,8 @@ def build(worker_ssh_host: str) -> dict[str, object]:
             "control": {"interface": "admin0", "ip": "192.0.2.10"},
             "gpu": "NVIDIA GB10",
             "rdma": [
-                {"hca": "a0x", "netdev": "data0x", "cidrs": ["10.10.1.1/24"]},
-                {"hca": "a0y", "netdev": "data0y", "cidrs": ["10.10.2.1/24"]},
+                {"hca": "a0x", "netdev": "data0x", "cidrs": ["198.51.100.1/24"]},
+                {"hca": "a0y", "netdev": "data0y", "cidrs": ["203.0.113.1/24"]},
             ],
         },
         {
@@ -47,8 +47,8 @@ def build(worker_ssh_host: str) -> dict[str, object]:
             "control": {"interface": "admin1", "ip": "192.0.2.11"},
             "gpu": "NVIDIA GB10",
             "rdma": [
-                {"hca": "b0x", "netdev": "peer0x", "cidrs": ["10.10.1.2/24"]},
-                {"hca": "b0y", "netdev": "peer0y", "cidrs": ["10.10.2.2/24"]},
+                {"hca": "b0x", "netdev": "peer0x", "cidrs": ["198.51.100.2/24"]},
+                {"hca": "b0y", "netdev": "peer0y", "cidrs": ["203.0.113.2/24"]},
             ],
         },
     ]
@@ -57,14 +57,14 @@ def build(worker_ssh_host: str) -> dict[str, object]:
             "ranks": [0, 1],
             "rails": [
                 {
-                    "network": "10.10.1.0/24",
-                    "a": endpoint("a0x", "data0x", "10.10.1.1"),
-                    "b": endpoint("b0x", "peer0x", "10.10.1.2"),
+                    "network": "198.51.100.0/24",
+                    "a": endpoint("a0x", "data0x", "198.51.100.1"),
+                    "b": endpoint("b0x", "peer0x", "198.51.100.2"),
                 },
                 {
-                    "network": "10.10.2.0/24",
-                    "a": endpoint("a0y", "data0y", "10.10.2.1"),
-                    "b": endpoint("b0y", "peer0y", "10.10.2.2"),
+                    "network": "203.0.113.0/24",
+                    "a": endpoint("a0y", "data0y", "203.0.113.1"),
+                    "b": endpoint("b0y", "peer0y", "203.0.113.2"),
                 },
             ],
         },

@@ -13,7 +13,6 @@ _topology_repo="$(cd "$_topology_dir/.." && pwd)"
 CLUSTER_TOPOLOGY_FILE="${CLUSTER_TOPOLOGY_FILE:-$_topology_repo/.cluster-topology.json}"
 CLUSTER_SSH_CONFIG_FILE="${CLUSTER_SSH_CONFIG_FILE:-$_topology_repo/.cluster-ssh-config}"
 CLUSTER_TOPOLOGY_LOADED=0
-CLUSTER_TOPOLOGY_SOURCE=""
 CLUSTER_TOPOLOGY_ID=""
 CLUSTER_TOPOLOGY_COUNT=0
 CLUSTER_TOPOLOGY_FULL_MESH=0
@@ -36,7 +35,6 @@ declare -ag CLUSTER_PROFILE_RDMA_IFS=()
 declare -Ag CLUSTER_PAIR_RAILS=()
 
 _cluster_topology_reset() {
-  CLUSTER_TOPOLOGY_SOURCE=""
   CLUSTER_TOPOLOGY_ID=""
   CLUSTER_TOPOLOGY_COUNT=0
   CLUSTER_TOPOLOGY_FULL_MESH=0
@@ -85,7 +83,6 @@ load_cluster_topology() {
         CLUSTER_TOPOLOGY_MIN_RAILS="$d"
         CLUSTER_TOPOLOGY_SCHEMA="${e:-1}"
         CLUSTER_TOPOLOGY_SSH_TRUSTED="${f:-0}"
-        CLUSTER_TOPOLOGY_SOURCE=manifest
         ;;
       NODE)
         CLUSTER_NODE_IDS["$a"]="$b"
@@ -120,12 +117,6 @@ load_cluster_topology() {
     fi
   fi
 
-  # Compatibility aliases for existing two-node scripts and user .env tooling.
-  HEAD_IP="${CLUSTER_NODE_CONTROL_IPS[0]:-${HEAD_IP:-}}"
-  if [ "$CLUSTER_TOPOLOGY_COUNT" -ge 2 ]; then
-    WORKER_IP="${CLUSTER_NODE_SSH_HOSTS[1]}"
-  fi
-  export HEAD_IP WORKER_IP
   CLUSTER_TOPOLOGY_LOADED=1
   if declare -F _pulsar_configure_topology_ssh >/dev/null 2>&1; then
     if ! _pulsar_configure_topology_ssh; then
@@ -137,8 +128,7 @@ load_cluster_topology() {
 
 require_topology_ssh_trust() {
   load_cluster_topology || return 1
-  if [ "$CLUSTER_TOPOLOGY_SOURCE" != manifest ] \
-      || [ "$CLUSTER_TOPOLOGY_SCHEMA" != 2 ] \
+  if [ "$CLUSTER_TOPOLOGY_SCHEMA" != 2 ] \
       || [ "$CLUSTER_TOPOLOGY_SSH_TRUSTED" != 1 ]; then
     echo "topology: SSH identity is not enrolled" >&2
     echo "  Run scripts/topology-ssh-trust.sh enroll before using SSH-over-RoCE." >&2
@@ -180,12 +170,11 @@ require_cluster_nodes() {
   load_cluster_topology || return 1
   if [ "$CLUSTER_TOPOLOGY_COUNT" -lt "$required" ]; then
     echo "topology: profile requires exactly $required active node(s), but only $CLUSTER_TOPOLOGY_COUNT confirmed." >&2
-    if [ "$required" -gt 1 ] && [ "$CLUSTER_TOPOLOGY_SOURCE" != manifest ]; then
+    if [ "$required" -gt 1 ] && [ ! -f "$CLUSTER_TOPOLOGY_FILE" ]; then
       echo "  No confirmed topology manifest exists at $CLUSTER_TOPOLOGY_FILE." >&2
       echo "  HEAD_IP/WORKER_IP environment variables do not confirm membership." >&2
     fi
-    echo "  Run scripts/detect-fabric.sh --write-topology to discover and confirm cluster membership," >&2
-    echo "  then scripts/topology-ssh-trust.sh enroll to enroll SSH identities." >&2
+    echo "  Run scripts/detect-fabric.sh --write-topology to discover and confirm cluster membership." >&2
     return 1
   fi
 }
@@ -198,10 +187,6 @@ select_cluster_profile_fabric() {
   CLUSTER_PROFILE_NODE_COUNT=0
   CLUSTER_PROFILE_HCAS=()
   CLUSTER_PROFILE_RDMA_IFS=()
-  if [ "$CLUSTER_TOPOLOGY_SOURCE" != manifest ]; then
-    echo "topology: profile fabric selection requires a confirmed topology manifest" >&2
-    return 1
-  fi
   if ! fabric_rows=$(python3 "$_topology_repo/scripts/topology_manifest.py" \
       profile-fabric "$CLUSTER_TOPOLOGY_FILE" "$required"); then
     echo "topology: cannot resolve RDMA fabric for $required selected ranks" >&2
@@ -234,11 +219,6 @@ require_profile_topology() {
   require_cluster_nodes "$required" || return 1
   [ "$required" -gt 1 ] || return 0
 
-  if [ "$CLUSTER_TOPOLOGY_SOURCE" != manifest ]; then
-    echo "topology: multi-node profiles require a confirmed topology manifest" >&2
-    echo "  Run scripts/detect-fabric.sh --write-topology to discover and confirm cluster membership." >&2
-    return 1
-  fi
   case "$topology_class" in
     roce-full-mesh) ;;
     *)

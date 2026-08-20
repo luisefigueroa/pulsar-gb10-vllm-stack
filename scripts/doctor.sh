@@ -332,9 +332,9 @@ result=pass
 [ "$FAIL" = 1 ] && result=fail
 
 if [ "$JSON" = 1 ]; then
-  python3 - "$result" "$FAIL" "$WARN" "$arch" "$avail" "$port" "${WORKER_IP:-}" "${CHECKS[@]}" <<'PY'
+  python3 - "$result" "$FAIL" "$WARN" "$arch" "$avail" "$port" "${CLUSTER_TOPOLOGY_COUNT:-0}" "${CHECKS[@]}" <<'PY'
 import json, sys
-result, fail, warn, arch, avail, port, worker = sys.argv[1:8]
+result, fail, warn, arch, avail, port, confirmed = sys.argv[1:8]
 checks = []
 for item in sys.argv[8:]:
     level, cid, msg = item.split("|", 2)
@@ -346,7 +346,7 @@ print(json.dumps({
     "arch": arch,
     "mem_available_gib": float(avail) if avail not in ("", "n/a") else None,
     "port": int(port) if str(port).isdigit() else port,
-    "worker_ip_set": bool(worker),
+    "worker_confirmed": int(confirmed) >= 2,
     "checks": checks,
 }, indent=2))
 PY

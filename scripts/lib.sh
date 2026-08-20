@@ -886,7 +886,6 @@ PULSAR_TOPOLOGY_SSH_CONFIGURED=0
 # the existing OpenSSH trust path; enrolled schema 2 pins aliases to exact
 # control endpoints and keys for every shared SSH caller.
 _pulsar_configure_topology_ssh() {
-  [ "${CLUSTER_TOPOLOGY_SOURCE:-}" = manifest ] || return 0
   [ "${CLUSTER_TOPOLOGY_SSH_TRUSTED:-0}" = 1 ] || return 0
   [ "$PULSAR_TOPOLOGY_SSH_CONFIGURED" = 0 ] || return 0
   PULSAR_SSH_OPTS+=(
@@ -1574,6 +1573,12 @@ container_all_candidate_is_safe() {
   nodes=$(profile_nodes_for_conf "$conf") || return 1
   if [ "$nodes" -eq 1 ]; then
     container_single_node_identity_is_proven "$metadata" "$placement"
+  else
+    # A multi-node rank may only be removed when every rank of its profile is
+    # a confirmed, probeable member; otherwise --all could strand live remote
+    # ranks (e.g. clusters launched before topology confirmation).
+    load_cluster_topology || return 1
+    [ "$nodes" -le "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
   fi
 }
 
@@ -1637,6 +1642,13 @@ container_all_refuse_reason() {
       && ! container_single_node_identity_is_proven "$metadata" "$placement"; then
     container_single_node_identity_refuse_reason "$metadata" "$placement"
     return
+  fi
+  if [ "$nodes" -gt 1 ]; then
+    load_cluster_topology >/dev/null 2>&1 || true
+    if [ "$nodes" -gt "${CLUSTER_TOPOLOGY_COUNT:-0}" ]; then
+      echo "conf ${conf} spans ${nodes} ranks but only ${CLUSTER_TOPOLOGY_COUNT:-0} confirmed — confirm topology before cleanup"
+      return
+    fi
   fi
   echo "ownership not proven"
 }
