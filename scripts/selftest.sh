@@ -42,9 +42,6 @@ run "fail-closed probes" "$REPO_DIR/scripts/selftest-preflight-probes.sh"
 run "weight staging + cache layout" "$REPO_DIR/scripts/selftest-pull-weights.sh"
 run "replicated model identity integration" \
   "$REPO_DIR/scripts/selftest-replicated-identity.sh"
-run "weight fabric schema-2 contracts" \
-  python3 "$REPO_DIR/scripts/testlib/test_weight_fabric_schema2.py"
-run "single-copy weight fabric" "$REPO_DIR/scripts/selftest-weight-fabric.sh"
 run "model library remote-home contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_remote_home.py"
 run "model library parallel-copy contracts" \

@@ -18,12 +18,9 @@ class ActivateTransportContracts(unittest.TestCase):
         cases = (
             (None, None, ("copy", "ssh-control")),
             ("copy", None, ("copy", "ssh-control")),
-            ("fabric", None, ("fabric", "nfs-rdma")),
             (None, "ssh-control", ("copy", "ssh-control")),
             (None, "ssh-roce", ("copy", "ssh-roce")),
-            (None, "nfs-rdma", ("fabric", "nfs-rdma")),
             ("copy", "ssh-roce", ("copy", "ssh-roce")),
-            ("fabric", "nfs-rdma", ("fabric", "nfs-rdma")),
         )
         for backend, transport, expected in cases:
             with self.subTest(backend=backend, transport=transport):
@@ -35,16 +32,17 @@ class ActivateTransportContracts(unittest.TestCase):
                     expected,
                 )
 
-    def test_transport_backend_conflicts_fail_closed(self) -> None:
+    def test_retired_fabric_modes_fail_closed(self) -> None:
         for backend, transport in (
-            ("fabric", "ssh-control"),
+            ("fabric", None),
             ("fabric", "ssh-roce"),
+            (None, "nfs-rdma"),
             ("copy", "nfs-rdma"),
         ):
             with self.subTest(backend=backend, transport=transport):
                 with self.assertRaisesRegex(
                     model_library.ModelLibraryError,
-                    "requires backend",
+                    "not supported",
                 ):
                     model_library.resolve_activate_transport(
                         backend,

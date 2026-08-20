@@ -329,7 +329,7 @@ record_startup_metric() {
     && metric_args+=(--owner-node-id "$WEIGHT_OWNER_ID")
   [ -n "${PULSAR_STARTUP_TAG:-}" ] \
     && metric_args+=(--tag "$PULSAR_STARTUP_TAG")
-  "$REPO_DIR/scripts/weight_fabric.py" "${metric_args[@]}"
+  "$REPO_DIR/scripts/startup_metric.py" "${metric_args[@]}"
 }
 
 # Best-effort teardown by immutable IDs created by this invocation only.

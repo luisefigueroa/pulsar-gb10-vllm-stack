@@ -113,15 +113,10 @@ STATUS_TESTED = re.compile(r"^tested")
 DEFAULT_HOT_ROOT = "/var/tmp/pulsar-hot"
 DEFAULT_HOT_RESERVE_BYTES = 64 * 1024**3
 DEFAULT_HOT_RESERVE_PERCENT = 5
-DEFAULT_FABRIC_PORT = 20049
 DEFAULT_FABRIC_RAIL_INDEX = 0
-TRANSFER_MOUNT_OPTIONS = (
-    "ro,vers=4.2,proto=rdma,port=20049,hard,timeo=600,retrans=2"
-)
 ACTIVATE_TRANSPORT_BACKENDS = {
     "ssh-control": "copy",
     "ssh-roce": "copy",
-    "nfs-rdma": "fabric",
 }
 # Site cold archive category dirs (org/name trees under each).
 COLD_CATEGORY_DIRS = ("Official Models", "Community Models")
@@ -3057,24 +3052,14 @@ def resolve_activate_transport(
     """Resolve the compatibility backend and explicit transfer transport."""
     backend = backend or ""
     transport = transport or ""
-    if backend and backend not in {"copy", "fabric"}:
-        fail(f"prepare: backend {backend!r} not supported (use copy or fabric)")
+    if backend and backend != "copy":
+        fail(f"prepare: backend {backend!r} not supported (use copy)")
     if transport:
-        expected_backend = ACTIVATE_TRANSPORT_BACKENDS.get(transport)
-        if expected_backend is None:
+        if transport not in ACTIVATE_TRANSPORT_BACKENDS:
             choices = ", ".join(ACTIVATE_TRANSPORT_BACKENDS)
             fail(f"prepare: transport {transport!r} not supported (use {choices})")
-        if backend and backend != expected_backend:
-            fail(
-                f"prepare: transport {transport} requires backend "
-                f"{expected_backend}, not {backend}"
-            )
-        return expected_backend, transport
-    resolved_backend = backend or "copy"
-    resolved_transport = (
-        "nfs-rdma" if resolved_backend == "fabric" else "ssh-control"
-    )
-    return resolved_backend, resolved_transport
+        return "copy", transport
+    return "copy", "ssh-control"
 
 
 def validate_hot_validation(
@@ -4571,9 +4556,9 @@ def render_hot_budget_plan(plan: dict[str, Any]) -> None:
 
 
 def load_topology_for_plan(topology_file: str | pathlib.Path | None) -> dict[str, Any]:
-    """Load confirmed topology for fabric rail selection."""
+    """Load the confirmed topology for RoCE rail selection."""
     if not topology_file:
-        fail("fabric preparation requires --topology-file (confirmed cluster topology)")
+        fail("preparation requires --topology-file (confirmed cluster topology)")
     path = pathlib.Path(topology_file)
     if not path.is_file():
         fail(f"topology file missing: {path}")
@@ -4595,97 +4580,40 @@ def load_topology_for_plan(topology_file: str | pathlib.Path | None) -> dict[str
         fail(f"topology: {exc}")
 
 
+def link_between(
+    topology: dict[str, Any], first: int, second: int
+) -> dict[str, Any]:
+    wanted = [min(first, second), max(first, second)]
+    for link in topology["links"]:
+        if link["ranks"] == wanted:
+            return link
+    fail(f"topology: no fabric link for ranks {first}/{second}")
+
+
 def selected_rail_between(
     topology: dict[str, Any],
     home_rank: int,
     client_rank: int,
     rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
-    try:
-        try:
-            from scripts.weight_fabric import selected_rail
-        except ModuleNotFoundError:
-            from weight_fabric import selected_rail
-    except Exception as exc:
-        fail(f"cannot import rail selection: {exc}")
-    try:
-        return selected_rail(topology, home_rank, client_rank, rail_index)
-    except Exception as exc:
-        fail(f"rail selection ranks {home_rank}/{client_rank}: {exc}")
-
-
-def transfer_mount_path(
-    hot_root: str | pathlib.Path,
-    profile: str,
-    topology_id: str,
-    content_id: str,
-) -> pathlib.Path:
-    """Ephemeral NFS mount point — not the final hot hub path."""
-    topo12 = (topology_id or "notopology")[:12]
-    return (
-        pathlib.Path(hot_root)
-        / ".transfer"
-        / f"{profile}-{topo12}"
-        / content_id
+    link = link_between(topology, home_rank, client_rank)
+    rails = sorted(
+        link["rails"],
+        key=lambda item: (
+            item["network"],
+            item["a"]["ip"],
+            item["b"]["ip"],
+        ),
     )
-
-
-def build_fabric_transfer(
-    *,
-    topology: dict[str, Any],
-    home: dict[str, Any],
-    hub_path: str,
-    profile: str,
-    topology_id: str,
-    content_id: str,
-    target_ranks: list[int],
-    hot_root: str,
-    port: int = DEFAULT_FABRIC_PORT,
-    rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
-) -> dict[str, Any]:
-    """Build ephemeral NFS/RDMA transfer plan from catalog home to clients."""
-    home_rank = int(home["rank"])
-    export_path = str(pathlib.Path(hub_path))
-    mount_base = transfer_mount_path(hot_root, profile, topology_id, content_id)
-    clients: list[dict[str, Any]] = []
-    for rank in target_ranks:
-        if rank == home_rank:
-            continue
-        server, client, network = selected_rail_between(
-            topology, home_rank, rank, rail_index
+    if rail_index >= len(rails):
+        fail(
+            f"topology: ranks {home_rank}/{client_rank} expose "
+            f"{len(rails)} rails, not index {rail_index}"
         )
-        clients.append(
-            {
-                "rank": rank,
-                "server_ip": server["ip"],
-                "server_hca": server.get("hca") or "",
-                "server_netdev": server.get("netdev") or "",
-                "client_ip": client["ip"],
-                "client_hca": client.get("hca") or "",
-                "client_netdev": client.get("netdev") or "",
-                "network": network,
-                "mount_path": str(mount_base / f"rank-{rank}"),
-                "mount_options": TRANSFER_MOUNT_OPTIONS,
-            }
-        )
-    export_file = f"/etc/exports.d/pulsar-library-activate-{profile}.exports"
-    return {
-        "kind": "nfs-rdma",
-        "port": port,
-        "rail_index": rail_index,
-        "export_path": export_path,
-        "export_file": export_file,
-        "export_scope": "model-repository",
-        "home_rank": home_rank,
-        "home_node_id": home["node_id"],
-        "mount_options": TRANSFER_MOUNT_OPTIONS,
-        "clients": clients,
-        # Per-rank source after transfer plane is up
-        "sources": {
-            str(home_rank): export_path,
-            **{str(c["rank"]): c["mount_path"] for c in clients},
-        },
-    }
+    rail = rails[rail_index]
+    home_side = "a" if home_rank < client_rank else "b"
+    client_side = "b" if home_rank < client_rank else "a"
+    return rail[home_side], rail[client_side], rail["network"]
 
 
 def plan_activate(
@@ -4701,13 +4629,11 @@ def plan_activate(
     nodes: int | None = None,
     target_rank: int | None = None,
     topology_file: str | None = None,
-    rail_index: int = DEFAULT_FABRIC_RAIL_INDEX,
-    fabric_port: int = DEFAULT_FABRIC_PORT,
     home_inventory: dict[str, Any] | None = None,
     require_exact_revision: str | None = None,
     expected_integrity_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return a model-preparation plan JSON for bash to execute (copy/fabric + stamp)."""
+    """Return a model-preparation plan JSON for bash to execute (copy + stamp)."""
     backend, transport = resolve_activate_transport(backend, transport)
     catalog = load_catalog(catalog_path)
     if catalog.get("topology_id") and topology_id and catalog["topology_id"] != topology_id:
@@ -4845,44 +4771,6 @@ def plan_activate(
     transfer = None
     action = "copy"
     hub_source = hub_path
-    if backend == "fabric":
-        # Single-rank / home-only: no NFS needed — local read on home.
-        needs_transfer = any(r != int(home["rank"]) for r in target_ranks)
-        if needs_transfer:
-            topology = load_topology_for_plan(topology_file)
-            if topology.get("topology_id") and topology["topology_id"] != topology_id:
-                fail(
-                    "fabric preparation: live topology_id does not match plan topology_id"
-                )
-            transfer = build_fabric_transfer(
-                topology=topology,
-                home=home,
-                hub_path=hub_path,
-                profile=profile,
-                topology_id=topology_id,
-                content_id=cid,
-                target_ranks=target_ranks,
-                hot_root=hot_root,
-                port=fabric_port,
-                rail_index=rail_index,
-            )
-            action = "fabric-copy"
-            # hub_source for home remains durable path; clients use mount after apply
-            hub_source = hub_path
-        else:
-            # Degenerate fabric on single node: local copy, still stamp backend=fabric
-            action = "copy"
-            transfer = {
-                "kind": "local-only",
-                "port": fabric_port,
-                "rail_index": rail_index,
-                "export_path": hub_path,
-                "clients": [],
-                "home_rank": int(home["rank"]),
-                "home_node_id": home["node_id"],
-                "sources": {str(home["rank"]): hub_path},
-                "note": "single-rank fabric preparation uses local home path (no NFS)",
-            }
 
     return {
         "action": action,
@@ -9311,8 +9199,6 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
         nodes=args.nodes,
         target_rank=args.target_rank,
         topology_file=args.topology_file or None,
-        rail_index=args.rail_index,
-        fabric_port=args.fabric_port,
         home_inventory=home_inventory,
         require_exact_revision=getattr(args, "require_exact_revision", None) or None,
         expected_integrity_manifest=expected_manifest,
@@ -9573,65 +9459,6 @@ def cmd_partition_blobs(args: argparse.Namespace) -> int:
     return 0
 
 
-def compare_activate_bench(
-    *,
-    profile: str,
-    topology_id: str,
-    model_id: str,
-    bytes_logical: int,
-    copy_seconds: float,
-    fabric_seconds: float,
-    tag: str,
-    nodes: int,
-    copy_phases: dict[str, Any] | None = None,
-    fabric_phases: dict[str, Any] | None = None,
-    notes: str | None = None,
-) -> dict[str, Any]:
-    """Compare copy vs fabric wall times. Fabric wins only if strictly faster."""
-    if copy_seconds < 0 or fabric_seconds < 0:
-        fail("bench times must be non-negative")
-    if copy_seconds == 0:
-        # Avoid div-by-zero; treat as inconclusive rather than fabric win
-        ratio = None
-        verdict = "inconclusive"
-        reason = "copy_seconds is zero; cannot compute speedup"
-    else:
-        ratio = fabric_seconds / copy_seconds
-        if fabric_seconds < copy_seconds:
-            verdict = "fabric_faster"
-            reason = "fabric wall time is strictly less than copy"
-        elif fabric_seconds == copy_seconds:
-            verdict = "tie"
-            reason = "fabric and copy wall times are equal"
-        else:
-            verdict = "copy_faster"
-            reason = "fabric wall time is not less than copy"
-    report: dict[str, Any] = {
-        "schema_version": 1,
-        "kind": "model-library-activate-bench",
-        "tag": tag,
-        "profile": profile,
-        "model_id": model_id,
-        "topology_id": topology_id,
-        "nodes": nodes,
-        "bytes_logical": bytes_logical,
-        "copy_seconds": copy_seconds,
-        "fabric_seconds": fabric_seconds,
-        "fabric_over_copy_ratio": ratio,
-        "verdict": verdict,
-        "reason": reason,
-        "fabric_claims_fast_path": verdict == "fabric_faster",
-        "recorded_at": utc_now(),
-    }
-    if copy_phases:
-        report["copy_phases"] = copy_phases
-    if fabric_phases:
-        report["fabric_phases"] = fabric_phases
-    if notes:
-        report["notes"] = notes
-    return report
-
-
 def build_ssh_roce_map(
     topology: dict[str, Any],
     *,
@@ -9641,8 +9468,8 @@ def build_ssh_roce_map(
 ) -> dict[str, Any]:
     """Map ranks → control SSH host and RoCE IP for experimental SSH-over-RoCE copy.
 
-    Uses the same selected_rail() as fabric NFS. Does not change the product preparation policy;
-    defaults — experiment-only addressing for rsync -e ssh over fabric IPs.
+    Selects the confirmed RoCE rail between each pair of ranks for rsync -e ssh
+    addressing over the fabric IPs.
     """
     nodes = topology.get("nodes") or []
     by_rank: dict[int, dict[str, Any]] = {}
@@ -9910,47 +9737,6 @@ def cmd_compare_ssh_roce_bench(args: argparse.Namespace) -> int:
     if args.output:
         atomic_write_json(args.output, report, mode=0o644)
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0
-
-
-def cmd_compare_bench(args: argparse.Namespace) -> int:
-    copy_phases = None
-    fabric_phases = None
-    if getattr(args, "copy_phases_json", None):
-        try:
-            copy_phases = json.loads(args.copy_phases_json)
-        except json.JSONDecodeError as exc:
-            fail(f"copy-phases-json: {exc}")
-    if getattr(args, "fabric_phases_json", None):
-        try:
-            fabric_phases = json.loads(args.fabric_phases_json)
-        except json.JSONDecodeError as exc:
-            fail(f"fabric-phases-json: {exc}")
-    report = compare_activate_bench(
-        profile=args.profile,
-        topology_id=args.topology_id,
-        model_id=args.model_id,
-        bytes_logical=args.bytes_logical,
-        copy_seconds=args.copy_seconds,
-        fabric_seconds=args.fabric_seconds,
-        tag=args.tag,
-        nodes=args.nodes,
-        copy_phases=copy_phases if isinstance(copy_phases, dict) else None,
-        fabric_phases=fabric_phases if isinstance(fabric_phases, dict) else None,
-        notes=getattr(args, "notes", None) or None,
-    )
-    if args.output:
-        atomic_write_json(args.output, report, mode=0o644)
-    if args.json or args.output:
-        print(json.dumps(report, indent=2, sort_keys=True))
-    else:
-        print(f"profile   {report['profile']}")
-        print(f"copy_s    {report['copy_seconds']}")
-        print(f"fabric_s  {report['fabric_seconds']}")
-        print(f"verdict   {report['verdict']}")
-        print(f"fast_path {report['fabric_claims_fast_path']}")
-        if args.output:
-            print(f"wrote     {args.output}", file=sys.stderr)
     return 0
 
 
@@ -10476,19 +10262,19 @@ def build_parser() -> argparse.ArgumentParser:
     primary_clear.set_defaults(func=cmd_catalog_primary)
 
     plan = sub.add_parser(
-        "plan-activate", help="Plan copy/fabric preparation into hot staging"
+        "plan-activate", help="Plan copy preparation into hot staging"
     )
     plan.add_argument("--catalog", required=True)
     plan.add_argument("--profile", required=True)
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
     plan.add_argument("--models-dir", required=True)
-    plan.add_argument("--backend", default="", choices=("copy", "fabric"))
+    plan.add_argument("--backend", default="", choices=("copy",))
     plan.add_argument(
         "--transport",
         default="",
         choices=tuple(ACTIVATE_TRANSPORT_BACKENDS),
-        help="Transfer path: ssh-control, ssh-roce, or nfs-rdma",
+        help="Transfer path: ssh-control or ssh-roce",
     )
     plan.add_argument("--nodes", type=int, default=1)
     plan.add_argument(
@@ -10501,10 +10287,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument(
         "--topology-file",
         default="",
-        help="Confirmed topology JSON (required for multi-rank fabric)",
+        help="Confirmed cluster topology JSON",
     )
-    plan.add_argument("--rail-index", type=int, default=DEFAULT_FABRIC_RAIL_INDEX)
-    plan.add_argument("--fabric-port", type=int, default=DEFAULT_FABRIC_PORT)
     plan.add_argument(
         "--home-inventory-json",
         default="",
@@ -10697,25 +10481,6 @@ def build_parser() -> argparse.ArgumentParser:
     csrb.add_argument("--notes", default="")
     csrb.add_argument("--output", default="")
     csrb.set_defaults(func=cmd_compare_ssh_roce_bench)
-
-    bench = sub.add_parser(
-        "compare-bench",
-        help="Compare copy vs fabric preparation wall times (B gate)",
-    )
-    bench.add_argument("--profile", required=True)
-    bench.add_argument("--topology-id", required=True)
-    bench.add_argument("--model-id", required=True)
-    bench.add_argument("--bytes-logical", type=int, required=True)
-    bench.add_argument("--copy-seconds", type=float, required=True)
-    bench.add_argument("--fabric-seconds", type=float, required=True)
-    bench.add_argument("--tag", required=True)
-    bench.add_argument("--nodes", type=int, required=True)
-    bench.add_argument("--copy-phases-json", default="")
-    bench.add_argument("--fabric-phases-json", default="")
-    bench.add_argument("--notes", default="")
-    bench.add_argument("--output", default="")
-    bench.add_argument("--json", action="store_true")
-    bench.set_defaults(func=cmd_compare_bench)
 
     return parser
 

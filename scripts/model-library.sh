@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Federated model library: warm catalog + optional cold + hot staging.
-# Does not change replicated defaults or experimental live fabric launch.
+# The model library is the only weight-distribution mechanism (ADR 0006).
 set -euo pipefail
 SCRIPT_NAME=model-library
 # shellcheck disable=SC1091
@@ -57,17 +57,14 @@ Usage:
   scripts/model-library.sh cold stage-only <profile>
       [--allow-unvalidated] [--yes] [--nodes N]
   scripts/model-library.sh prepare <profile>
-      [--transport ssh-control|ssh-roce|nfs-rdma] [--backend copy|fabric]
+      [--transport ssh-control|ssh-roce]
       [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
       [--copy-streams N] [--node RANK|NODE_ID]
-  scripts/model-library.sh bench-prepare <profile> [--tag TAG] [--yes]
-      [--interactive-sudo] [--output PATH] [--nodes N]
   scripts/model-library.sh probe-ssh-roce <profile> [--nodes N] [--rail-index N]
   scripts/model-library.sh bench-ssh-roce <profile> [--tag TAG] [--yes]
       [--output PATH] [--nodes N] [--rail-index N]
       [--order control-first|roce-first]
       [--copy-streams N]
-  scripts/model-library.sh release-transfer <profile> [--yes] [--interactive-sudo]
   scripts/model-library.sh pin <profile> [--node RANK|NODE_ID]
   scripts/model-library.sh unpin <profile> [--node RANK|NODE_ID]
   scripts/model-library.sh purge-hot <profile> [--node RANK|NODE_ID]
@@ -135,11 +132,7 @@ Notes:
     use remain experimental.
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails closed.
-  • prepare --backend fabric uses ephemeral NFSv4.2/RDMA over confirmed RoCE
-    to fill hot, then releases mounts/export. No silent fallback to copy.
-  • bench-prepare runs copy then fabric (purge between), writes a JSON report;
-    fabric_claims_fast_path only if fabric wall time is strictly less than copy.
-    Benchmark/probe commands are explicit experiments and permit legacy-unsealed
+  • Benchmark/probe commands are explicit experiments and permit legacy-unsealed
     profiles, but a configured expected-seal mismatch still fails closed.
   • probe-ssh-roce / bench-ssh-roce: experimental control SSH vs SSH-over-RoCE
     A/B (no product default change). Requires topology schema-2 SSH enrollment
@@ -157,11 +150,11 @@ Notes:
     space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
     PULSAR_HOT_RESERVE_BYTES explicitly overrides the reserve. No auto-eviction
     or capacity fallback occurs.
-  • Does not change the wizard's replicated default. Live NFS serving
-    (--weight-source fabric) is retired (ADR 0005).
-  • Compatibility: activate and bench-activate remain supported aliases for
-    prepare and bench-prepare. Model preparation does not start a serving
-    container or establish model qualification.
+  • Live NFS serving is retired (ADR 0005); the one-shot nfs-rdma prepare
+    experiment is retired with it (ADR 0006).
+  • Compatibility: activate remains a supported alias for prepare. Model
+    preparation does not start a serving container or establish model
+    qualification.
 EOF
 }
 
@@ -2553,7 +2546,7 @@ verify_hot_on_rank() {
   ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null
 }
 
-# --- privileged helpers (mirror weight-fabric patterns; never store passwords) ---
+# --- privileged helpers (never store passwords) ---
 
 library_node_exec() {
   local rank="${1:?}"
@@ -2677,169 +2670,6 @@ phase_record() {
   fi
 }
 
-fabric_release_transfer() {
-  local plan_json="${1:?}" home_rank export_file nfs_file rank mount_path export_path
-  home_rank=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["home_rank"])')
-  export_file=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("export_file") or "")')
-  nfs_file=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; t=json.load(sys.stdin)["transfer"]; print(t.get("nfs_file") or "")')
-  export_path=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("export_path") or "")')
-
-  # Unmount clients first (best-effort).
-  while IFS=$'\t' read -r rank mount_path; do
-    [ -n "$rank" ] || continue
-    if [ "$rank" = 0 ]; then
-      if findmnt -rn -M "$mount_path" >/dev/null 2>&1; then
-        library_node_privileged 0 umount "$mount_path" 2>/dev/null || true
-      fi
-    else
-      if library_node_exec "$rank" "findmnt -rn -M $(printf '%q' "$mount_path")" >/dev/null 2>&1; then
-        library_node_privileged "$rank" umount "$mount_path" 2>/dev/null || true
-      fi
-    fi
-  done < <(printf '%s' "$plan_json" | python3 -c '
-import json,sys
-t=json.load(sys.stdin).get("transfer") or {}
-for c in t.get("clients") or []:
-    print("%s\t%s" % (c["rank"], c["mount_path"]))
-')
-
-  if [ -n "$export_file" ]; then
-    if [ -z "$nfs_file" ]; then
-      nfs_file="/etc/nfs.conf.d/$(basename "$export_file" .exports).conf"
-    fi
-    library_node_privileged "$home_rank" rm -f "$export_file" "$nfs_file" 2>/dev/null || true
-    library_node_privileged "$home_rank" exportfs -ra 2>/dev/null || true
-    # Do not stop nfs-server globally — other exports may exist.
-  fi
-  log "released fabric transfer plane"
-}
-
-fabric_apply_transfer() {
-  local plan_json="${1:?}" yes="${2:-0}"
-  local home_rank export_path export_file nfs_file port mount_options
-  local export_line nfs_conf uid_gid uid gid client_line rank mount_path server_ip
-
-  home_rank=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["home_rank"])')
-  export_path=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["export_path"])')
-  export_file=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["export_file"])')
-  port=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("port") or 20049)')
-  mount_options=$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"].get("mount_options") or "")')
-  nfs_file="/etc/nfs.conf.d/$(basename "$export_file" .exports).conf"
-
-  # Prerequisites
-  library_node_exec "$home_rank" "command -v exportfs >/dev/null 2>&1" \
-    || die "home rank $home_rank: nfs-kernel-server/exportfs missing (see weight-fabric setup-prerequisites)"
-  while IFS=$'\t' read -r rank _rest; do
-    [ -n "$rank" ] || continue
-    library_node_exec "$rank" "command -v mount.nfs >/dev/null 2>&1 || command -v mount.nfs4 >/dev/null 2>&1" \
-      || die "rank $rank: NFS client tools missing"
-  done < <(printf '%s' "$plan_json" | python3 -c '
-import json,sys
-for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
-    print(c["rank"], "x", sep="\t")
-')
-
-  library_confirm "$yes" \
-    "Prepare model files using an ephemeral NFS/RDMA export from home rank $home_rank?"
-
-  # Owner identity for root_squash mapping
-  if [ "$home_rank" = 0 ]; then
-    uid_gid=$(stat -c '%u:%g' "$export_path" 2>/dev/null) \
-      || die "cannot stat export path $export_path"
-  else
-    uid_gid=$(library_node_exec "$home_rank" "stat -c '%u:%g' $(printf '%q' "$export_path")") \
-      || die "cannot stat export path on home rank $home_rank"
-  fi
-  uid=${uid_gid%%:*}
-  gid=${uid_gid##*:}
-
-  export_line="\"$export_path\""
-  while IFS=$'\t' read -r rank server_ip client_ip mount_path; do
-    [ -n "$rank" ] || continue
-    export_line+=" ${client_ip}(ro,sync,insecure,root_squash,all_squash,anonuid=${uid},anongid=${gid},no_subtree_check)"
-  done < <(printf '%s' "$plan_json" | python3 -c '
-import json,sys
-for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
-    print("%s\t%s\t%s\t%s" % (c["rank"], c["server_ip"], c["client_ip"], c["mount_path"]))
-')
-  export_line+=$'\n'
-  nfs_conf=$'[nfsd]\n'
-  nfs_conf+="rdma = ${port}"$'\n'
-
-  local portlist_re export_b64 nfs_b64 owner_script client_script
-  portlist_re="(rdma[[:space:]]+${port}|${port}[[:space:]]+rdma|rdma.*${port}|${port}.*rdma)"
-
-  log "installing ephemeral export on home rank $home_rank (batched)"
-  export_b64=$(printf '%s' "$export_line" | base64 -w 0)
-  nfs_b64=$(printf '%s' "$nfs_conf" | base64 -w 0)
-  owner_script=$'set -euo pipefail\n'
-  owner_script+="printf '%s' $(printf '%q' "$export_b64") | base64 -d | install -D -m 0644 /dev/stdin $(printf '%q' "$export_file")"$'\n'
-  owner_script+="printf '%s' $(printf '%q' "$nfs_b64") | base64 -d | install -D -m 0644 /dev/stdin $(printf '%q' "$nfs_file")"$'\n'
-  owner_script+=$'modprobe svcrdma 2>/dev/null || true\n'
-  owner_script+=$'exportfs -ra\n'
-  owner_script+="if ! { test -r /proc/fs/nfsd/portlist && grep -Eq $(printf '%q' "$portlist_re") /proc/fs/nfsd/portlist; }; then"$'\n'
-  owner_script+=$'  systemctl enable --now nfs-server\n'
-  owner_script+=$'  systemctl restart nfs-server\n'
-  owner_script+=$'fi\n'
-  owner_script+="for i in \$(seq 1 30); do test -r /proc/fs/nfsd/portlist && grep -Eq $(printf '%q' "$portlist_re") /proc/fs/nfsd/portlist && exit 0; sleep 1; done"$'\n'
-  owner_script+="echo 'NFS/RDMA port ${port} not in /proc/fs/nfsd/portlist after export' >&2; exit 1"$'\n'
-  library_node_root_script "$home_rank" "$owner_script" \
-    || die "home rank $home_rank: fabric export setup failed (try --interactive-sudo)"
-
-  log "mounting RoCE clients (batched per rank)"
-  while IFS=$'\t' read -r rank server_ip client_ip mount_path; do
-    [ -n "$rank" ] || continue
-    log "  mount rank $rank  $server_ip:$export_path → $mount_path"
-    client_script=$'set -euo pipefail\n'
-    client_script+="mkdir -p $(printf '%q' "$mount_path")"$'\n'
-    client_script+="if findmnt -rn -M $(printf '%q' "$mount_path") >/dev/null 2>&1; then umount $(printf '%q' "$mount_path") || true; fi"$'\n'
-    client_script+="mount -t nfs4 -o $(printf '%q' "$mount_options") $(printf '%q' "${server_ip}:${export_path}") $(printf '%q' "$mount_path")"$'\n'
-    client_script+="findmnt -rn -M $(printf '%q' "$mount_path") -o OPTIONS | grep -q 'proto=rdma'"$'\n'
-    library_node_root_script "$rank" "$client_script" \
-      || die "rank $rank: NFS/RDMA mount failed (refusing TCP fallback)"
-  done < <(printf '%s' "$plan_json" | python3 -c '
-import json,sys
-for c in (json.load(sys.stdin).get("transfer") or {}).get("clients") or []:
-    print("%s\t%s\t%s\t%s" % (c["rank"], c["server_ip"], c["client_ip"], c["mount_path"]))
-')
-  log "fabric transfer plane armed"
-}
-
-cmd_release_transfer() {
-  local profile="" yes=0
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --yes|-y) yes=1 ;;
-      --interactive-sudo) LIBRARY_SUDO_MODE=interactive ;;
-      -h|--help) usage; return 0 ;;
-      *) [ -z "$profile" ] || die "unexpected arg: $1"; profile="$1" ;;
-    esac
-    shift
-  done
-  [ -n "$profile" ] || die "usage: release-transfer <profile> [--yes]"
-  require_py
-  load_conf "$profile"
-  load_cluster_topology >/dev/null || die "confirmed topology required"
-  ensure_catalog
-  local plan
-  # NODES is supplied by the sourced profile through load_conf above.
-  # shellcheck disable=SC2153
-  plan=$(library_plan_activate "$profile" \
-    --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
-    --hot-root "$HOT_ROOT" \
-    --backend fabric \
-    --nodes "$NODES")
-  local action
-  action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-  if [ "$action" != fabric-copy ]; then
-    log "no multi-rank fabric transfer plane for this profile (action=$action)"
-    return 0
-  fi
-  library_confirm "$yes" "Release ephemeral model-preparation NFS/RDMA mounts/export for $profile?"
-  fabric_release_transfer "$plan"
-}
-
 cmd_activate() {
   local profile="" backend=copy backend_explicit=0 transport=""
   local allow_unvalidated=0 yes=0 time_it=0 node_selector=""
@@ -2851,13 +2681,13 @@ cmd_activate() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --backend)
-        [ $# -ge 2 ] || die "--backend requires copy or fabric"
+        [ $# -ge 2 ] || die "--backend requires copy"
         backend="$2"
         backend_explicit=1
         shift
         ;;
       --transport)
-        [ $# -ge 2 ] || die "--transport requires ssh-control, ssh-roce, or nfs-rdma"
+        [ $# -ge 2 ] || die "--transport requires ssh-control or ssh-roce"
         transport="$2"
         shift
         ;;
@@ -2885,17 +2715,16 @@ cmd_activate() {
     shift
   done
   [ -n "$profile" ] \
-    || die "usage: prepare <profile> [--transport ssh-control|ssh-roce|nfs-rdma]"
+    || die "usage: prepare <profile> [--transport ssh-control|ssh-roce]"
   case "$backend" in
-    copy|fabric) ;;
-    *) die "prepare: --backend must be copy or fabric" ;;
+    copy) ;;
+    *) die "prepare: --backend must be copy" ;;
   esac
   if [ -n "$transport" ]; then
     case "$transport" in
       ssh-control) expected_backend=copy; requested_mode=control ;;
       ssh-roce) expected_backend=copy; requested_mode=roce ;;
-      nfs-rdma) expected_backend=fabric; requested_mode=control ;;
-      *) die "prepare: --transport must be ssh-control, ssh-roce, or nfs-rdma" ;;
+      *) die "prepare: --transport must be ssh-control or ssh-roce" ;;
     esac
     if [ "$backend_explicit" = 1 ] && [ "$backend" != "$expected_backend" ]; then
       die "prepare: --transport $transport conflicts with --backend $backend"
@@ -2903,17 +2732,12 @@ cmd_activate() {
     backend="$expected_backend"
     COPY_SSH_MODE="$requested_mode"
     export PULSAR_COPY_SSH_MODE="$COPY_SSH_MODE"
-  elif [ "$backend" = fabric ]; then
-    transport=nfs-rdma
   elif [ "$COPY_SSH_MODE" = roce ]; then
     transport=ssh-roce
   else
     transport=ssh-control
   fi
   validate_copy_stream_settings
-  if [ "$backend" != copy ] && [ "$COPY_STREAMS" -ne 1 ]; then
-    die "prepare: --copy-streams is only valid with an SSH transport"
-  fi
   require_py
   ensure_catalog
   load_conf "$profile"
@@ -2957,11 +2781,7 @@ cmd_activate() {
   hot_budget_plan_is_eligible "$budget_plan" \
     || die "prepare: hot admission is blocked; no bytes were changed"
 
-  if [ "$backend" = copy ]; then
-    log "preparing model files profile=$profile action=$action transport=$transport copy_streams=$COPY_STREAMS hot=$instance"
-  else
-    log "preparing model files profile=$profile action=$action transport=$transport hot=$instance"
-  fi
+  log "preparing model files profile=$profile action=$action transport=$transport copy_streams=$COPY_STREAMS hot=$instance"
 
   if [ "$action" = skip ]; then
     log "hot already ready — verifying ranks"
@@ -3002,27 +2822,14 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
   fi
 
   if [ "$yes" != 1 ]; then
-    if [ "$action" = fabric-copy ]; then
-      log "fabric plan ready (ephemeral NFS/RDMA transfer → hot)"
-      printf '%s\n' "$plan" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-t=d.get("transfer") or {}
-print("home_rank", t.get("home_rank"), "clients", len(t.get("clients") or []))
-for c in t.get("clients") or []:
-    print("  client rank", c["rank"], c["server_ip"], "->", c["client_ip"], c["mount_path"])
-print("re-run with --yes to execute (no silent fallback to copy)")
-'
-    else
-      log "will copy model to hot staging on ranks: ${target_ranks[*]}"
-      log "source rank=$home_rank → $hub_dest"
-      log "re-run with --yes to execute"
-    fi
+    log "will copy model to hot staging on ranks: ${target_ranks[*]}"
+    log "source rank=$home_rank → $hub_dest"
+    log "re-run with --yes to execute"
     return 0
   fi
 
   local -a touched=() pids=()
-  local transfer_armed=0 rank_jobs_grouped=0
+  local rank_jobs_grouped=0
   local t0 t1 pid child rank_fail=0
   # shellcheck disable=SC2317
   cleanup_partial() {
@@ -3064,9 +2871,6 @@ print("re-run with --yes to execute (no silent fallback to copy)")
     pids=()
     if [ "$rank_jobs_grouped" = 1 ]; then
       rank_jobs_grouped=0
-    fi
-    if [ "$transfer_armed" = 1 ]; then
-      fabric_release_transfer "$plan" 2>/dev/null || true
     fi
     for r in "${touched[@]:-}"; do
       if [ "$r" = 0 ]; then
@@ -3142,81 +2946,35 @@ print("re-run with --yes to execute (no silent fallback to copy)")
 
   [ "$time_it" = 1 ] && start_ts=$(date +%s)
 
-  if [ "$action" = fabric-copy ]; then
-    t0=$(date +%s)
-    fabric_apply_transfer "$plan" 1
-    transfer_armed=1
-    t1=$(date +%s)
-    phase_record "fabric_setup" "$((t1 - t0))"
+  # control-path copy — parallel ranks when N>1
+  t0=$(date +%s)
+  pids=()
+  for rank in "${target_ranks[@]}"; do
+    (
+      set -euo pipefail
+      log "copy → rank $rank"
+      rt0=$(date +%s)
+      copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"
+      write_stamp_on_rank "$rank" "$instance" "$verifying_stamp_json"
+      rt1=$(date +%s)
+      phase_record "transfer_rank_${rank}" "$((rt1 - rt0))"
+    ) &
+    pids+=("$!")
+    touched+=("$rank")
+  done
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+      rank_fail=1
+    fi
+  done
+  pids=()
+  set +m
+  rank_jobs_grouped=0
+  [ "$rank_fail" = 0 ] || die "copy materialize failed on one or more ranks"
+  t1=$(date +%s)
+  phase_record "transfer_all" "$((t1 - t0))"
 
-    # Parallel materialize + provisional seal; full verify follows.
-    t0=$(date +%s)
-    pids=()
-    for rank in "${target_ranks[@]}"; do
-      source=$(printf '%s' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["rank_sources"][sys.argv[1]])' "$rank")
-      (
-        set -euo pipefail
-        log "fabric materialize → rank $rank from $source"
-        rt0=$(date +%s)
-        materialize_runtime_view_on_rank \
-          "$rank" "$home_rank" "$source" "$hub_dest"
-        write_stamp_on_rank "$rank" "$instance" "$verifying_stamp_json"
-        rt1=$(date +%s)
-        phase_record "transfer_rank_${rank}" "$((rt1 - rt0))"
-      ) &
-      pids+=("$!")
-      touched+=("$rank")
-    done
-    for pid in "${pids[@]}"; do
-      if ! wait "$pid"; then
-        rank_fail=1
-      fi
-    done
-    pids=()
-    set +m
-    rank_jobs_grouped=0
-    [ "$rank_fail" = 0 ] || die "fabric materialize failed on one or more ranks"
-    t1=$(date +%s)
-    phase_record "transfer_all" "$((t1 - t0))"
-
-    verify_and_publish_hot
-
-    t0=$(date +%s)
-    fabric_release_transfer "$plan"
-    transfer_armed=0
-    t1=$(date +%s)
-    phase_record "fabric_release" "$((t1 - t0))"
-  else
-    # control-path copy — parallel ranks when N>1
-    t0=$(date +%s)
-    pids=()
-    for rank in "${target_ranks[@]}"; do
-      (
-        set -euo pipefail
-        log "copy → rank $rank"
-        rt0=$(date +%s)
-        copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"
-        write_stamp_on_rank "$rank" "$instance" "$verifying_stamp_json"
-        rt1=$(date +%s)
-        phase_record "transfer_rank_${rank}" "$((rt1 - rt0))"
-      ) &
-      pids+=("$!")
-      touched+=("$rank")
-    done
-    for pid in "${pids[@]}"; do
-      if ! wait "$pid"; then
-        rank_fail=1
-      fi
-    done
-    pids=()
-    set +m
-    rank_jobs_grouped=0
-    [ "$rank_fail" = 0 ] || die "copy materialize failed on one or more ranks"
-    t1=$(date +%s)
-    phase_record "transfer_all" "$((t1 - t0))"
-
-    verify_and_publish_hot
-  fi
+  verify_and_publish_hot
 
   trap - EXIT INT TERM
   if [ "$time_it" = 1 ]; then
@@ -3502,105 +3260,6 @@ if path.is_file():
             out[name] = sec
 print(json.dumps(out, sort_keys=True))
 PY
-}
-
-cmd_bench_activate() {
-  local profile="" tag="" yes=0 output="" nodes_override=""
-  local copy_s fabric_s model_id bytes_logical nodes topo_id
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --tag)
-        [ $# -ge 2 ] || die "--tag requires a value"
-        tag="$2"
-        shift
-        ;;
-      --output)
-        [ $# -ge 2 ] || die "--output requires a path"
-        output="$2"
-        shift
-        ;;
-      --nodes)
-        [ $# -ge 2 ] || die "--nodes requires a value"
-        nodes_override="$2"
-        shift
-        ;;
-      --yes|-y) yes=1 ;;
-      --interactive-sudo) LIBRARY_SUDO_MODE=interactive ;;
-      -h|--help) usage; return 0 ;;
-      *)
-        [ -z "$profile" ] || die "unexpected arg: $1"
-        profile="$1"
-        ;;
-    esac
-    shift
-  done
-  [ -n "$profile" ] || die "usage: bench-prepare <profile> [--tag TAG] [--yes] [--nodes N]"
-  [ "$yes" = 1 ] || die "bench-prepare is destructive to hot staging — re-run with --yes"
-  require_py
-  ensure_catalog
-  load_conf "$profile"
-  load_cluster_topology >/dev/null || die "confirmed topology required"
-  nodes="${nodes_override:-$NODES}"
-  if ! [[ "$nodes" =~ ^[0-9]+$ ]] || [ "$nodes" -lt 1 ]; then
-    die "bench-prepare: --nodes must be a positive integer"
-  fi
-  if [ "$nodes" -gt "$CLUSTER_TOPOLOGY_COUNT" ]; then
-    die "bench-prepare: --nodes $nodes exceeds topology count $CLUSTER_TOPOLOGY_COUNT"
-  fi
-  [ -n "$tag" ] || tag="activate-bench-$(date -u +%Y%m%dT%H%M%SZ)"
-  [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-${tag}.json"
-  mkdir -p "$(dirname "$output")"
-
-  local plan
-  plan=$(library_plan_activate "$profile" \
-    --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
-    --hot-root "$HOT_ROOT" \
-    --backend copy \
-    --nodes "$nodes") \
-    || die "bench-prepare: preparation plan failed (catalog primary or model identity?)"
-  model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
-  bytes_logical=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bytes_logical"])')
-  topo_id="$CLUSTER_TOPOLOGY_ID"
-  log "bench-prepare $profile tag=$tag"
-  local copy_phases_file fabric_phases_file copy_phases_json fabric_phases_json
-  copy_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-copy-phases.XXXXXX")
-  fabric_phases_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-bench-fabric-phases.XXXXXX")
-  # shellcheck disable=SC2064
-  trap "rm -f '$copy_phases_file' '$fabric_phases_file'" RETURN
-
-  log "running timed copy preparation…"
-  copy_s=$(timed_activate_backend "$profile" copy "$copy_phases_file")
-  log "copy wall_time_seconds=$copy_s"
-  copy_phases_json=$(phases_tsv_to_json "$copy_phases_file")
-
-  log "running timed fabric preparation…"
-  fabric_s=$(timed_activate_backend "$profile" fabric "$fabric_phases_file")
-  log "fabric wall_time_seconds=$fabric_s"
-  fabric_phases_json=$(phases_tsv_to_json "$fabric_phases_file")
-
-  python3 "$PY_TOOL" compare-bench \
-    --profile "$profile" \
-    --topology-id "$topo_id" \
-    --model-id "$model_id" \
-    --bytes-logical "$bytes_logical" \
-    --copy-seconds "$copy_s" \
-    --fabric-seconds "$fabric_s" \
-    --tag "$tag" \
-    --nodes "$nodes" \
-    --copy-phases-json "$copy_phases_json" \
-    --fabric-phases-json "$fabric_phases_json" \
-    --notes "home-rank prefers symlink/reflink; ranks materialize in parallel; fabric setup batched" \
-    --output "$output" \
-    --json
-
-  local verdict
-  verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["verdict"])' "$output")
-  if [ "$verdict" = fabric_faster ]; then
-    log "B-gate: fabric claims fast path (fabric < copy)"
-  else
-    log "B-gate: fabric does NOT claim fast path (verdict=$verdict); keep copy as the preparation baseline"
-  fi
 }
 
 # Probe: can we SSH to each rank's RoCE IP (BatchMode) and match expected hostname?
@@ -3934,10 +3593,8 @@ main() {
       esac
       ;;
     prepare|activate) cmd_activate "$@" ;;
-    bench-prepare|bench-activate) cmd_bench_activate "$@" ;;
     probe-ssh-roce) cmd_probe_ssh_roce "$@" ;;
     bench-ssh-roce) cmd_bench_ssh_roce "$@" ;;
-    release-transfer) cmd_release_transfer "$@" ;;
     pin) cmd_pin "$@" ;;
     unpin) cmd_unpin "$@" ;;
     purge-hot) cmd_purge_hot "$@" ;;

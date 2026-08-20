@@ -854,7 +854,6 @@ print_shell_command_redacted() {
 # Injectable docker/ssh for deterministic tests. Production leaves these default.
 PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
 PULSAR_SSH="${PULSAR_SSH:-ssh}"
-PULSAR_WEIGHT_FABRIC_TOOL="${PULSAR_WEIGHT_FABRIC_TOOL:-$REPO_DIR/scripts/weight-fabric.sh}"
 
 # ADR 0005: live NFS/RDMA under vLLM is not a serving runtime source.
 LIVE_NFS_SERVING_RETIRED_MESSAGE='live NFS/RDMA serving (--weight-source fabric) is retired (ADR 0005). A crashed rank cannot cold-start from a live mount. Use --weight-source library-hot or --weight-source replicated. This is not a remap to replicated. One-shot nfs-rdma prepare (--backend fabric) remains a separate experiment.'

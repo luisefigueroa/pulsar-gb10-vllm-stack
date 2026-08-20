@@ -14,7 +14,7 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import weight_fabric  # noqa: E402
+from scripts import startup_metric  # noqa: E402
 
 
 class ModelLibraryStartupMetricContracts(unittest.TestCase):
@@ -54,7 +54,7 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
     def invoke(self, **overrides: object) -> dict[str, object]:
         arguments = dict(self.arguments)
         arguments.update(overrides)
-        weight_fabric.command_startup_metric(argparse.Namespace(**arguments))
+        startup_metric.command_startup_metric(argparse.Namespace(**arguments))
         return json.loads(self.output.read_text(encoding="utf-8"))
 
     def test_metric_binds_sealed_content_transport_and_redacted_owner(self) -> None:
@@ -81,6 +81,19 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             "fixture-node-a", self.output.read_text(encoding="utf-8")
         )
 
+    def test_existing_evidence_is_never_overwritten(self) -> None:
+        self.invoke()
+        with self.assertRaisesRegex(
+            startup_metric.StartupMetricError, "new bounded path"
+        ):
+            self.invoke()
+
+    def test_only_library_hot_evidence_is_recordable(self) -> None:
+        with self.assertRaisesRegex(
+            startup_metric.StartupMetricError, "only library-hot"
+        ):
+            self.invoke(weight_source="replicated")
+
     def test_incomplete_or_mislabeled_hot_evidence_fails_closed(self) -> None:
         for overrides, message in (
             ({"content_digest": None}, "content digest"),
@@ -96,7 +109,7 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
                 if self.output.exists():
                     self.output.unlink()
                 with self.assertRaisesRegex(
-                    weight_fabric.WeightFabricError,
+                    startup_metric.StartupMetricError,
                     message,
                 ):
                     self.invoke(**overrides)

@@ -1,26 +1,29 @@
 # Weight fabric (superseded live NFS/RDMA serving)
 
-> **Superseded / not promoted.**
+> **Superseded / not promoted / implementation removed.**
 > [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) rejects live
-> NFSv4.2/RDMA under vLLM (`--weight-source fabric`, `live-remote-readonly`)
-> as a serving runtime source. Launch fails closed with no remap to
-> replicated. Historical measurements remain under
+> NFSv4.2/RDMA under vLLM (`live-remote-readonly`) as a serving runtime
+> source, and
+> [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)
+> removed the workflow implementation together with the whole
+> weight-mode-selection axis. Only `scripts/weight-fabric.sh
+> show|unmount|teardown` remains, for leftover site state. Historical
+> measurements remain under
 > [results/weight-fabric/](../results/weight-fabric/) and are not promotion
 > evidence. The offering stop is
 > [PR #83](https://github.com/luisefigueroa/pulsar-gb10-vllm-stack/pull/83).
 >
 > **Keep:** NCCL/RoCE inference, `detect-fabric.sh` topology, ADR 0003
-> `ssh-roce` prepare, `library-hot` / `local-verified-readonly`, replicated
-> guided default.
+> `ssh-roce` prepare, the model library / `local-verified-readonly`.
 >
-> **Separate follow-up:** one-shot `nfs-rdma` prepare (`--backend fabric`).
-> Shared NFS helpers stay until that decision.
+> The one-shot `nfs-rdma` prepare experiment was retired with the fabric
+> internals (ADR 0006).
 >
 > Do not call ssh-roce “fabric” or “RoCE mount.”
 
 The rest of this file is a historical description of the retired live-mount
-experiment. It does not authorize serving. Product serving is `library-hot`
-or replicated.
+experiment. It does not authorize serving. Product serving is the model
+library (ADR 0006).
 
 ## Leftover site teardown (confirmation-gated)
 
@@ -40,8 +43,8 @@ publishable notes.
    authoritative model tree.
 
 `--yes` is only for an already reviewed leftover-teardown runbook.
-`--interactive-sudo` keeps authentication in the operator terminal. Teardown
-does not remap to replicated or library-hot.
+Privileged steps use passwordless sudo on each node. Teardown never serves,
+copies, or remaps weights.
 
 ---
 

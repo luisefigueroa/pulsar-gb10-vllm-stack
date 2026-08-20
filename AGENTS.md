@@ -52,7 +52,7 @@ Write Bash for orchestration (`#!/usr/bin/env bash`, `set -euo pipefail`) and Py
 ### Hybrid Bash + Python (what goes where)
 
 This repo is intentionally hybrid. Match the existing pattern
-(`weight-fabric.sh` + `weight_fabric.py`, `lib.sh` + small Python helpers):
+(`model-library.sh` + `model_library.py`, `lib.sh` + small Python helpers):
 **Bash at the operator boundary, Python for data and algorithms.** Do not
 rewrite the control plane into one language, and do not introduce a third
 language for new features without an explicit decision.
