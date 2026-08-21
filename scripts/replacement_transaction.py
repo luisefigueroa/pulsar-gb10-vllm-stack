@@ -27,6 +27,8 @@ REVISION_RE = re.compile(r"^[0-9a-f]{40,64}$")
 SAFE_PROFILE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TRANSACTION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 PHASES = ("captured", "retained", "stopped")
+RECOVERED_DIRNAME = "recovered"
+ARCHIVE_STAMP_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 
 
 class TransactionError(RuntimeError):
@@ -306,7 +308,7 @@ def validate_transaction(value: Any) -> dict[str, Any]:
         if isinstance(weight, dict) and weight.get("source") == "replicated":
             fail(
                 "saved transaction was captured under the removed replicated "
-                "mechanism (ADR 0006); resolve it manually"
+                "mechanism (ADR 0006); exact rollback is impossible"
             )
         fail("saved weight source is unsupported")
     require_revision(weight.get("revision"), "saved model revision")
@@ -556,6 +558,202 @@ def cmd_verify_rollback(args: argparse.Namespace) -> int:
     return 0
 
 
+def classify_saved_transaction(value: Any) -> dict[str, Any]:
+    """Classify a saved record without treating incompatibility as a crash.
+
+    Current library-hot transactions validate normally. Pre-ADR 0006
+    replicated captures and other unreadable records are incompatible:
+    exact rollback is impossible, but the live file can be archived.
+    """
+    if not isinstance(value, dict):
+        return {
+            "compatible": False,
+            "reason": "unreadable",
+            "detail": "saved transaction is not a JSON object",
+            "profile": None,
+        }
+    profile = None
+    service = value.get("previous_service")
+    if isinstance(service, dict) and isinstance(service.get("profile"), str):
+        try:
+            profile = require_profile(service.get("profile"))
+        except TransactionError:
+            profile = None
+    try:
+        validated = validate_transaction(value)
+        return {
+            "compatible": True,
+            "reason": None,
+            "detail": None,
+            "profile": validated["previous_service"]["profile"],
+            "transaction": validated,
+        }
+    except TransactionError as exc:
+        weight = service.get("weight") if isinstance(service, dict) else None
+        source = weight.get("source") if isinstance(weight, dict) else None
+        if source == "replicated":
+            return {
+                "compatible": False,
+                "reason": "replicated",
+                "detail": (
+                    "saved transaction was captured under the removed "
+                    "replicated mechanism (ADR 0006); exact rollback is "
+                    "impossible"
+                ),
+                "profile": profile,
+            }
+        return {
+            "compatible": False,
+            "reason": "unsupported",
+            "detail": str(exc),
+            "profile": profile,
+        }
+
+
+def observe_named_service(inventory: dict[str, Any], profile: str | None) -> str:
+    if not profile:
+        return "unknown"
+    if inventory.get("schema_version") != 1:
+        return "ambiguous"
+    matches = [
+        item
+        for item in inventory.get("services") or []
+        if isinstance(item, dict) and item.get("conf") == profile
+    ]
+    running = [
+        item
+        for item in matches
+        if item.get("state") == "running"
+        or any(
+            isinstance(rank, dict) and rank.get("running") is True
+            for rank in item.get("ranks") or []
+        )
+    ]
+    complete_running = [
+        item
+        for item in running
+        if item.get("complete") is True
+        and item.get("ownership") == "managed"
+        and item.get("observability") == "complete"
+        and item.get("safe_to_stop") is True
+        and bool(item.get("ranks"))
+        and all(
+            isinstance(rank, dict) and rank.get("running") is True
+            for rank in item.get("ranks") or []
+        )
+    ]
+    if not matches:
+        return "stopped"
+    if len(running) == 1 and len(complete_running) == 1:
+        return "running"
+    return "ambiguous"
+
+
+def inspect_recovery(path: pathlib.Path, inventory: dict[str, Any]) -> dict[str, Any]:
+    resolved = pathlib.Path(path)
+    archive_cmd = (
+        f"python3 scripts/replacement_transaction.py archive "
+        f"--path {resolved} --yes"
+    )
+    try:
+        raw = load_json(resolved)
+    except TransactionError as exc:
+        return {
+            "state": "incompatible",
+            "reason": "unreadable",
+            "detail": str(exc),
+            "profile": None,
+            "service": "unknown",
+            "path": str(resolved),
+            "archive_command": archive_cmd,
+        }
+    classified = classify_saved_transaction(raw)
+    service_state = observe_named_service(inventory, classified.get("profile"))
+    if classified["compatible"]:
+        value = classified["transaction"]
+        running = [
+            item
+            for item in inventory.get("services") or []
+            if any(rank.get("running") is True for rank in item.get("ranks") or [])
+        ]
+        exact = [
+            item
+            for item in running
+            if service_matches_snapshot(inventory, item, value["previous_service"])
+        ]
+        if len(running) == 0 and value["phase"] == "stopped":
+            state = "stopped"
+        elif len(running) == 1 and len(exact) == 1:
+            state = "previous-running"
+        else:
+            state = "ambiguous"
+        return {
+            "state": state,
+            "reason": None,
+            "detail": None,
+            "profile": value["previous_service"]["profile"],
+            "service": service_state,
+            "path": str(resolved),
+            "archive_command": archive_cmd,
+        }
+    return {
+        "state": "incompatible",
+        "reason": classified["reason"],
+        "detail": classified["detail"],
+        "profile": classified.get("profile"),
+        "service": service_state,
+        "path": str(resolved),
+        "archive_command": archive_cmd,
+    }
+
+
+def archive_destination(path: pathlib.Path, *, stamp: str) -> pathlib.Path:
+    if ARCHIVE_STAMP_RE.fullmatch(stamp) is None:
+        fail("archive timestamp is invalid")
+    dest_dir = path.parent / RECOVERED_DIRNAME / stamp
+    return dest_dir / path.name
+
+
+def archive_transaction(path: pathlib.Path, *, yes: bool = False) -> dict[str, Any]:
+    if not yes:
+        fail("archive will move the live transaction; re-run with --yes")
+    live = pathlib.Path(path)
+    if not live.is_file() or live.is_symlink():
+        fail("live replacement transaction is missing")
+    try:
+        raw = live.read_bytes()
+    except OSError as exc:
+        fail(f"cannot read live replacement transaction: {exc}")
+    stamp = (
+        dt.datetime.now(dt.timezone.utc)
+        .replace(microsecond=0)
+        .strftime("%Y%m%dT%H%M%SZ")
+    )
+    dest = archive_destination(live, stamp=stamp)
+    dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        fail("archive destination already exists; retry")
+    try:
+        os.write(fd, raw)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        live.unlink()
+    except OSError as exc:
+        fail(
+            f"archived to {dest} but could not remove the live file: {exc}; "
+            "inspect both paths before retrying"
+        )
+    return {
+        "state": "archived",
+        "from": str(live),
+        "to": str(dest),
+    }
+
+
 def service_matches_snapshot(
     inventory: dict[str, Any], service: dict[str, Any], snapshot: dict[str, Any]
 ) -> bool:
@@ -599,26 +797,16 @@ def service_matches_snapshot(
 
 
 def cmd_recovery_state(args: argparse.Namespace) -> int:
-    value = validate_transaction(load_json(args.path))
     inventory = load_json(args.inventory)
-    running = [
-        item
-        for item in inventory.get("services") or []
-        if any(rank.get("running") is True for rank in item.get("ranks") or [])
-    ]
-    exact = [
-        item
-        for item in running
-        if service_matches_snapshot(inventory, item, value["previous_service"])
-    ]
-    if len(running) == 0 and value["phase"] == "stopped":
-        state = "stopped"
-    elif len(running) == 1 and len(exact) == 1:
-        state = "previous-running"
-    else:
-        state = "ambiguous"
-    print(json.dumps({"state": state, "profile": value["previous_service"]["profile"]}))
-    return 0 if state != "ambiguous" else 1
+    report = inspect_recovery(pathlib.Path(args.path), inventory)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["state"] != "ambiguous" else 1
+
+
+def cmd_archive(args: argparse.Namespace) -> int:
+    result = archive_transaction(pathlib.Path(args.path), yes=bool(args.yes))
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
 
 
 def cmd_complete(args: argparse.Namespace) -> int:
@@ -656,6 +844,14 @@ def build_parser() -> argparse.ArgumentParser:
     recover.add_argument("--path", required=True)
     recover.add_argument("--inventory", required=True)
     recover.set_defaults(func=cmd_recovery_state)
+    archive = sub.add_parser("archive")
+    archive.add_argument("--path", required=True)
+    archive.add_argument(
+        "--yes",
+        action="store_true",
+        help="move the live transaction into a timestamped recovered directory",
+    )
+    archive.set_defaults(func=cmd_archive)
     complete = sub.add_parser("complete")
     complete.add_argument("--path", required=True)
     complete.add_argument("--outcome", choices=("replacement", "rollback"), required=True)

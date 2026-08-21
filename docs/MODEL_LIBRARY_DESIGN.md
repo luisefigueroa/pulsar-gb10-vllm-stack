@@ -943,12 +943,18 @@ retention. Ephemeral catalog views are temporarily pinned before stop. A failed
 replacement may restore only that captured contract; it never reconstructs from
 current profile defaults or silently switches storage source or placement.
 Incomplete, multi-service, legacy-unlabeled, drifted, or unretainable state
-makes automatic replacement unavailable before stop.
+makes automatic replacement unavailable before stop. A leftover transaction
+captured under the removed replicated mechanism cannot be rolled back. Recovery
+inspects current inventory, states whether the saved profile is running,
+stopped, or ambiguous, and offers a confirmation-gated archive of the original
+file into a timestamped recovered directory. Exact library rollback is not
+invented from that record.
 
 The site-local transaction is short-lived recovery state, not a served-model
 registry or audit history. It remains across wizard exit or interruption and is
 removed after the replacement is running, or after the exact rollback is
-confirmed and temporary retention is restored. A successful replacement closes
+confirmed and temporary retention is restored. Incompatible leftovers are
+archived rather than left to fail every later wizard invocation. A successful replacement closes
 the rollback transaction even if old-view unpin/purge needs visible direct
 remediation. Pinning still does not copy or protect the durable home. Explicit `--purge-hot` may remove a pin, while
 durable-home deletion remains a separate direct-CLI workflow.
@@ -1291,3 +1297,4 @@ rather than promotion blockers.
 | 2026-08-19 | Issued and bound the first ADR 0004 Model Serving Release lineage for `qwen3.8-27b-fp8`. Exact same-boot, absolute throughput, absolute latency, and reviewed provenance/security passed; stability, accuracy, serving integration, and physical geometry remain unevaluated, so the advisory decision is `Testing incomplete`. Legacy `STATUS=untested`, recommendation/default policy, serving permission, expected-seal state, and experimental one-rank `library-hot` maturity remain unchanged. |
 | 2026-08-19 | **ADR 0006 accepted:** the model library is the only weight-distribution mechanism. The `--weight-source`/`--weight-mode` axis, the replicated per-node cache path, the fabric workflow internals, the one-shot `nfs-rdma` prepare experiment, and the absolute-path catalog profiles were removed; every library scope (two-rank sealed, one-rank, legacy-unsealed) is supported by decision; a confirmed topology manifest (one-node valid) is a serving prerequisite. Open gates are recorded as accepted risks: one-rank physical serving-integration evidence, source attestation as primary ingress (SIM-03), and durable-home failover. Historical evidence is preserved and marked superseded. |
 | 2026-08-20 | **ADR 0007 accepted:** ordinary stop retains unpinned prepared views. `--purge-hot` is explicit capacity recovery; `--pin-weights` remains protection from unforced purge; retain is not pin; `PULSAR_HOT_STOP_POLICY=retain|purge` may restore the previous named-profile default; `down.sh --all` never auto-purges; wizard replacement still pins then purges the previous view on a successful different-profile switch. No automatic eviction. Library-only distribution (ADR 0006) is unchanged. |
+| 2026-08-21 | Wizard recovery no longer wedges on a leftover pre-library replacement transaction. An unrestorable record is classified against current inventory, exact rollback is refused, and a confirmation-gated archive moves the original bytes into a timestamped recovered directory. Noninteractive remediation names the live path and `archive --yes` command. Deterministic coverage uses a frozen main-era replicated fixture. |

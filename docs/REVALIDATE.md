@@ -619,7 +619,8 @@ unpinned purge, and return to one durable home; see
 The new remote one-node wizard path still needs its own serving-integration
 repeat before that placement receives a physical claim. The short-lived exact
 replacement transaction has deterministic Python, inventory, legacy-migration,
-and catalog rollback coverage. Its physical two-rank repeat passed on
+pre-library leftover archive, and catalog rollback coverage. Its physical
+two-rank repeat passed on
 2026-08-16: a forced target launch failure left a persisted stopped transaction
 and pinned exact views; a new wizard process restored the captured contract,
 removed the transaction, and restored ephemeral retention. The same closure run

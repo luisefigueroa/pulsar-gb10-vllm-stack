@@ -427,12 +427,19 @@ After any stop, inventory + cold memory preflight run again (never assume
 reclaim). If the wizard exits or is interrupted, the next `./pulsar wizard`
 detects the unfinished transaction. It restores only when the saved contract is
 still exact; ambiguous live state is left untouched with remediation to inspect
-or explicitly stop the new service before retrying. A confirmed rollback keeps
-the record until temporary retention is restored. A successful replacement
-closes the rollback record; any failure to release or purge the previous hot
-view is reported with a direct model-library remediation command. The record is
-not permanent history. Credentials and container argv are never stored; the
-opaque launch digest records auth presence and supported runtime overrides.
+or explicitly stop the new service before retrying. A leftover record captured
+under the removed replicated mechanism cannot be restored. The wizard reports
+whether that previous profile is running, stopped, or ambiguous, then offers a
+confirmation-gated archive. The original file is moved into a timestamped
+`recovered/` directory next to the live transaction; exact rollback is not
+attempted. Noninteractive runs print the live path and
+`python3 scripts/replacement_transaction.py archive --path <file> --yes`.
+A confirmed rollback keeps the record until temporary retention is restored. A
+successful replacement closes the rollback record; any failure to release or
+purge the previous hot view is reported with a direct model-library remediation
+command. The record is not permanent history. Credentials and container argv are
+never stored; the opaque launch digest records auth presence and supported
+runtime overrides.
 
 ## Start / stop
 

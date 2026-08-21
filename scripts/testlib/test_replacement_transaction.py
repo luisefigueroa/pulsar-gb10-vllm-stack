@@ -15,6 +15,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+MAIN_REPLICATED_TX = (
+    pathlib.Path(__file__).resolve().parent
+    / "replacement-transaction-main-replicated-stopped.json"
+)
 
 import replacement_transaction as tx  # noqa: E402
 
@@ -315,6 +319,80 @@ class ReplacementTransactionTests(unittest.TestCase):
             )
         self.assertEqual(rc, 1)
         self.assertEqual(json.loads(stream.getvalue())["state"], "ambiguous")
+
+    def test_main_era_replicated_fixture_is_incompatible_and_archivable(self) -> None:
+        raw = MAIN_REPLICATED_TX.read_bytes()
+        path = self.root / "wizard.json"
+        path.write_bytes(raw)
+        saved = json.loads(raw.decode("utf-8"))
+        self.assertEqual(saved["schema_version"], 1)
+        self.assertEqual(saved["kind"], "pulsar-serving-replacement-transaction")
+        self.assertEqual(saved["phase"], "stopped")
+        self.assertEqual(saved["previous_service"]["weight"]["source"], "replicated")
+        self.assertEqual(saved["previous_service"]["weight"]["runtime_views"], [])
+        self.assertIsNone(saved["previous_service"]["weight"]["original_retention"])
+        with self.assertRaisesRegex(tx.TransactionError, "removed replicated"):
+            tx.validate_transaction(saved)
+
+        running = inventory(source="replicated")
+        running["topology_id"] = saved["previous_service"]["placement"]["topology_id"]
+        running["services"][0]["launch_contract_id"] = saved["previous_service"][
+            "launch_contract_id"
+        ]
+        inv_path = self.write("running.json", running)
+        with contextlib.redirect_stdout(io.StringIO()) as stream:
+            rc = tx.cmd_recovery_state(
+                argparse.Namespace(path=str(path), inventory=str(inv_path))
+            )
+        report = json.loads(stream.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["state"], "incompatible")
+        self.assertEqual(report["reason"], "replicated")
+        self.assertEqual(report["profile"], "deepseek-v4-flash")
+        self.assertEqual(report["service"], "running")
+        self.assertIn("archive --path", report["archive_command"])
+        self.assertIn("--yes", report["archive_command"])
+
+        stopped = inventory(source="replicated")
+        stopped["services"] = []
+        stopped_path = self.write("stopped.json", stopped)
+        with contextlib.redirect_stdout(io.StringIO()) as stream:
+            rc = tx.cmd_recovery_state(
+                argparse.Namespace(path=str(path), inventory=str(stopped_path))
+            )
+        report = json.loads(stream.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["state"], "incompatible")
+        self.assertEqual(report["service"], "stopped")
+
+        with self.assertRaisesRegex(tx.TransactionError, "re-run with --yes"):
+            tx.archive_transaction(path, yes=False)
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.read_bytes(), raw)
+
+        with contextlib.redirect_stdout(io.StringIO()) as stream:
+            rc = tx.cmd_archive(argparse.Namespace(path=str(path), yes=True))
+        result = json.loads(stream.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertEqual(result["state"], "archived")
+        self.assertFalse(path.exists())
+        archived = pathlib.Path(result["to"])
+        self.assertEqual(archived.read_bytes(), raw)
+        self.assertEqual(archived.parent.parent.name, "recovered")
+
+    def test_unreadable_saved_transaction_is_incompatible_not_a_wedge(self) -> None:
+        path = self.root / "wizard.json"
+        path.write_text("not-json\n", encoding="utf-8")
+        inv_path = self.write("empty.json", {"schema_version": 1, "services": []})
+        with contextlib.redirect_stdout(io.StringIO()) as stream:
+            rc = tx.cmd_recovery_state(
+                argparse.Namespace(path=str(path), inventory=str(inv_path))
+            )
+        report = json.loads(stream.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["state"], "incompatible")
+        self.assertEqual(report["reason"], "unreadable")
+        self.assertEqual(report["service"], "unknown")
 
 
 if __name__ == "__main__":

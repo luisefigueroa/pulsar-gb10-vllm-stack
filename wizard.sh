@@ -1602,20 +1602,73 @@ offer_restart_previous() {
   esac
 }
 
+recover_incompatible_transaction() {
+  local report="$1"
+  local reason profile service_state archive_cmd detail
+  reason=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "")')
+  profile=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("profile") or "")')
+  service_state=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("service") or "unknown")')
+  archive_cmd=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("archive_command") or "")')
+  detail=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("detail") or "")')
+  [ -n "$archive_cmd" ] || archive_cmd="python3 scripts/replacement_transaction.py archive --path $REPLACEMENT_TRANSACTION_FILE --yes"
+  warn "saved replacement transaction cannot be restored exactly"
+  [ -z "$detail" ] || log "$detail"
+  if [ "$reason" = replicated ]; then
+    log "this record predates the library-only decision (ADR 0006)"
+  fi
+  if [ -n "$profile" ]; then
+    log "saved profile $profile · inventory shows that service as $service_state"
+  else
+    log "saved profile could not be read · inventory was not used to identify a previous service"
+  fi
+  log "exact rollback is unavailable; archive the leftover transaction to continue"
+  log "live path: $REPLACEMENT_TRANSACTION_FILE"
+  log "noninteractive remediation: $archive_cmd"
+  if ! confirm "Archive leftover replacement transaction and continue?"; then
+    die "leftover transaction was left in place; rerun $archive_cmd after inspecting ./pulsar inventory"
+  fi
+  if ! cmd_replacement_transaction archive --path "$REPLACEMENT_TRANSACTION_FILE" --yes >/dev/null; then
+    die "could not archive the leftover transaction; live path $REPLACEMENT_TRANSACTION_FILE"
+  fi
+  log "leftover transaction archived; wizard can continue without exact rollback"
+  return 0
+}
+
 recover_replacement_transaction() {
   [ -f "$REPLACEMENT_TRANSACTION_FILE" ] || return 0
   local inventory inventory_file="$WIZARD_WORK_DIR/recovery-inventory.json"
-  local result state
+  local result state rc=0
   warn "an unfinished serving replacement transaction was found"
   collect_inventory_json_or_die inventory
   printf '%s\n' "$inventory" >"$inventory_file"
-  if ! result=$(cmd_replacement_transaction recovery-state \
-      --path "$REPLACEMENT_TRANSACTION_FILE" --inventory "$inventory_file"); then
-    warn "replacement recovery is ambiguous; no lifecycle action was taken"
-    log "remediation: inspect ./pulsar inventory"
-    die "resolve partial or newly running managed services directly, then rerun ./pulsar wizard"
+  result=$(cmd_replacement_transaction recovery-state \
+      --path "$REPLACEMENT_TRANSACTION_FILE" --inventory "$inventory_file") || rc=$?
+  if ! printf '%s' "$result" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; then
+    warn "replacement recovery did not return a usable report; no lifecycle action was taken"
+    log "live path: $REPLACEMENT_TRANSACTION_FILE"
+    log "noninteractive remediation: python3 scripts/replacement_transaction.py archive --path $REPLACEMENT_TRANSACTION_FILE --yes"
+    die "inspect ./pulsar inventory, then archive or resolve the leftover transaction"
   fi
   state=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+  case "$state" in
+    incompatible)
+      recover_incompatible_transaction "$result"
+      return 0
+      ;;
+    previous-running|stopped)
+      [ "$rc" -eq 0 ] || die "replacement recovery state is inconsistent"
+      ;;
+    ambiguous)
+      warn "replacement recovery is ambiguous; no lifecycle action was taken"
+      log "live path: $REPLACEMENT_TRANSACTION_FILE"
+      log "remediation: inspect ./pulsar inventory"
+      log "if exact rollback is impossible: python3 scripts/replacement_transaction.py archive --path $REPLACEMENT_TRANSACTION_FILE --yes"
+      die "resolve partial or newly running managed services directly, then rerun ./pulsar wizard"
+      ;;
+    *)
+      die "replacement recovery state is unsupported"
+      ;;
+  esac
   load_transaction_summary
   PREVIOUS_PROFILE="$TRANSACTION_PREVIOUS_PROFILE"
   case "$state" in
@@ -1627,15 +1680,14 @@ recover_replacement_transaction() {
       return 0
       ;;
     stopped)
-      local rc=0
-      offer_restart_previous || rc=$?
-      case "$rc" in
+      local restart_rc=0
+      offer_restart_previous || restart_rc=$?
+      case "$restart_rc" in
         0) return 10 ;;
         2) return 0 ;;
         *) die "replacement recovery selection failed" ;;
       esac
       ;;
-    *) die "replacement recovery state is unsupported" ;;
   esac
 }
 

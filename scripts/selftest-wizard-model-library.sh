@@ -386,7 +386,9 @@ run_wizard() {
   local profiles_report="${6:-$STATE/reports/profiles.json}"
   local fail_up_once="${7:-0}"
   cp "$STATE/reports/$initial_report" "$STATE/current-health.json"
-  rm -f "$STATE/replacement-transaction.json" "$STATE/up-fail-once"
+  [ "${KEEP_REPLACEMENT_TRANSACTION:-0}" = 1 ] \
+    || rm -f "$STATE/replacement-transaction.json"
+  rm -f "$STATE/up-fail-once"
   [ "$fail_up_once" != 1 ] || touch "$STATE/up-fail-once"
   : >"$STATE/logs/health.log"
   : >"$STATE/logs/prepare.log"
@@ -553,5 +555,31 @@ assert_contains "$STATE/logs/prepare.log" \
   "unsealed multi-rank preparation uses eight-stream ssh-roce"
 assert_contains "$STATE/logs/up.log" '^qwen3-1.7b-2node --yes$' \
   "unsealed multi-rank launch carries no mode flag"
+
+echo "=== leftover main-era replicated transaction can be archived ==="
+MAIN_TX="$REPO_DIR/scripts/testlib/replacement-transaction-main-replicated-stopped.json"
+cp "$MAIN_TX" "$STATE/replacement-transaction.json"
+KEEP_REPLACEMENT_TRANSACTION=1 run_wizard healthy.json 0 0 $'n\n'
+[ "$LAST_RC" -ne 0 ] || { echo "FAIL decline must leave leftover transaction" >&2; exit 1; }
+assert_contains "$STATE/logs/output.log" \
+  'exact rollback is impossible|predates the library-only decision' \
+  "wizard names the pre-library leftover as unrestorable"
+assert_contains "$STATE/logs/output.log" \
+  "archive --path $STATE/replacement-transaction.json --yes" \
+  "noninteractive remediation names the archive command"
+[ -f "$STATE/replacement-transaction.json" ] \
+  || { echo "FAIL declined archive removed the live transaction" >&2; exit 1; }
+
+cp "$MAIN_TX" "$STATE/replacement-transaction.json"
+KEEP_REPLACEMENT_TRANSACTION=1 run_wizard healthy.json 0 0 $'y\n2\n2\n'
+[ ! -e "$STATE/replacement-transaction.json" ] \
+  || { echo "FAIL confirmed archive left the live transaction" >&2; exit 1; }
+archived=$(find "$STATE/recovered" -name replacement-transaction.json -type f | head -n 1)
+[ -n "$archived" ] || { echo "FAIL archived copy is missing" >&2; exit 1; }
+cmp -s "$MAIN_TX" "$archived" \
+  || { echo "FAIL archived copy does not match the main-era fixture" >&2; exit 1; }
+assert_contains "$STATE/logs/output.log" \
+  'leftover transaction archived' \
+  "wizard continues after archiving the leftover transaction"
 
 echo "wizard model-library selftest PASS"
