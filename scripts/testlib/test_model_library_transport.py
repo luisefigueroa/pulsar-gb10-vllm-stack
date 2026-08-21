@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
+import tempfile
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -125,6 +127,150 @@ class ActivateTransportContracts(unittest.TestCase):
         self.assertEqual(
             stamp["integrity"]["manifest"]["manifest_id"],
             manifest["manifest_id"],
+        )
+
+
+class LibraryReadinessClassification(unittest.TestCase):
+    NEMOTRON = "nemotron-3-nano-30b-nvfp4"
+    QWEN = "qwen3-1.7b"
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = pathlib.Path(self.temporary.name)
+        self.catalog_path = self.root / "catalog.json"
+        self.topology_id = "a" * 64
+        self.models_dir = REPO_ROOT / "models"
+
+    def _write(self, catalog: dict[str, object]) -> None:
+        self.catalog_path.write_text(
+            json.dumps(catalog, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _classify(self, profile: str) -> dict[str, object]:
+        return model_library.classify_library_readiness(
+            profile=profile,
+            catalog_path=self.catalog_path,
+            topology_id=self.topology_id,
+            models_dir=self.models_dir,
+        )
+
+    def _home(self, profile_info: dict[str, object], *, rank: int) -> dict[str, object]:
+        model_id = str(profile_info["model_id"])
+        revision = "b" * 40
+        return {
+            "rank": rank,
+            "node_id": f"node-{rank}",
+            "hostname": f"fixture-{rank}",
+            "ssh_host": f"fixture-{rank}",
+            "cache_root": f"/cache/{rank}",
+            "hub_path": f"/cache/{rank}/hub/models--Example--Model",
+            "model_id": model_id,
+            "revision": revision,
+            "identity_key": f"{model_id}@{revision}",
+            "state": "complete",
+            "active": True,
+            "bytes": 1024,
+        }
+
+    def test_unsealed_missing_home_names_plan_then_yes(self) -> None:
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[],
+                profiles=[],
+            )
+        )
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "no-home")
+        self.assertIn("home add nemotron-3-nano-30b-nvfp4 --revision <selector> --plan", report["remediation"])
+        self.assertIn("--yes", report["remediation"])
+        self.assertNotEqual(
+            report["remediation"],
+            "scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --yes",
+        )
+
+    def test_sealed_missing_home_names_home_add_yes(self) -> None:
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[],
+                profiles=[],
+            )
+        )
+        report = self._classify(self.QWEN)
+        self.assertEqual(report["reason"], "no-home")
+        self.assertEqual(
+            report["remediation"],
+            "scripts/model-library.sh home add qwen3-1.7b --yes",
+        )
+        self.assertNotIn("--revision", report["remediation"])
+
+    def test_duplicate_homes_name_cleanup_recommend(self) -> None:
+        profile_info = model_library.parse_profile_conf_any(
+            self.models_dir / f"{self.NEMOTRON}.conf"
+        )
+        assert profile_info is not None
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[
+                    self._home(profile_info, rank=0),
+                    self._home(profile_info, rank=1),
+                ],
+                profiles=[profile_info],
+            )
+        )
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "duplicate-home")
+        self.assertEqual(
+            report["remediation"],
+            "scripts/model-library.sh cleanup-recommend",
+        )
+        self.assertNotIn("catalog refresh", report["remediation"])
+
+    def test_stale_primary_names_refresh_then_select(self) -> None:
+        profile_info = model_library.parse_profile_conf_any(
+            self.models_dir / f"{self.NEMOTRON}.conf"
+        )
+        assert profile_info is not None
+        home = self._home(profile_info, rank=1)
+        catalog = model_library.build_catalog(
+            topology_id=self.topology_id,
+            homes=[home],
+            profiles=[profile_info],
+            primary_selections=[
+                {
+                    "identity_key": str(home["identity_key"]),
+                    "node_id": "node-missing",
+                    "selected_at": "2026-08-12T00:00:00.000Z",
+                }
+            ],
+        )
+        self._write(catalog)
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "catalog-stale")
+        self.assertIn("catalog refresh", report["remediation"])
+        self.assertIn("catalog primary set nemotron-3-nano-30b-nvfp4 --node RANK", report["remediation"])
+
+    def test_ready_home_without_views_names_prepare(self) -> None:
+        profile_info = model_library.parse_profile_conf_any(
+            self.models_dir / f"{self.NEMOTRON}.conf"
+        )
+        assert profile_info is not None
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[self._home(profile_info, rank=0)],
+                profiles=[profile_info],
+            )
+        )
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "views-missing")
+        self.assertEqual(
+            report["remediation"],
+            "scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes",
         )
 
 

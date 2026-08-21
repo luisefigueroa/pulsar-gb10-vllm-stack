@@ -621,7 +621,10 @@ than inheriting the reviewed-profile recipe. The deprecated
 Catalog refresh inventories existing durable homes; it does not download model
 bytes or create a primary home. Preparation therefore requires an eligible
 exact home to exist already; `home add` is the acquisition path (the wizard
-guides it for sealed profiles). For sealed profiles:
+guides it for sealed profiles). `check-weights` / `up.sh` print the same
+commands: sealed `home add <profile> --yes`, the unsealed plan-then-`--yes`
+sequence, `cleanup-recommend` / `catalog primary set` when duplicate homes
+have no primary, or `prepare` when a home already exists. For sealed profiles:
 
 ```bash
 # Optional --node RANK|NODE_ID overrides most-free-space placement.

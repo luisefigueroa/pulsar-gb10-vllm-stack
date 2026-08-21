@@ -3076,6 +3076,14 @@ def resolve_activate_transport(
     return "copy", "ssh-control"
 
 
+def _profile_has_reviewed_seal(
+    models_dir: str | pathlib.Path,
+    profile: str,
+) -> bool:
+    parsed = parse_profile_conf_any(pathlib.Path(models_dir) / f"{profile}.conf")
+    return bool(parsed and parsed.get("expected_model_seal"))
+
+
 def classify_library_readiness(
     *,
     profile: str,
@@ -3085,8 +3093,16 @@ def classify_library_readiness(
 ) -> dict[str, Any]:
     """Classify why library views are not ready, without restaging."""
     refresh = "scripts/model-library.sh catalog refresh"
-    add_home = f"scripts/model-library.sh home add {profile} --yes"
     prepare = f"scripts/model-library.sh prepare {profile} --yes"
+    sealed_add = f"scripts/model-library.sh home add {profile} --yes"
+    unsealed_add = (
+        f"scripts/model-library.sh home add {profile} --revision <selector> --plan && "
+        f"scripts/model-library.sh home add {profile} --revision <exact-commit> --yes"
+    )
+    cleanup = "scripts/model-library.sh cleanup-recommend"
+    primary_set = (
+        f"scripts/model-library.sh catalog primary set {profile} --node RANK"
+    )
     catalog_file = pathlib.Path(catalog_path) if catalog_path else None
     if catalog_file is None or not catalog_file.is_file():
         return {
@@ -3119,15 +3135,28 @@ def classify_library_readiness(
     except ModelLibraryError as exc:
         text = str(exc)
         if "not found in warm catalog" in text or "no complete warm home" in text:
+            sealed = _profile_has_reviewed_seal(models_dir, profile)
             return {
                 "reason": "no-home",
-                "remediation": add_home,
+                "remediation": sealed_add if sealed else unsealed_add,
+                "detail": text,
+            }
+        if "duplicate complete homes without primary" in text:
+            return {
+                "reason": "duplicate-home",
+                "remediation": cleanup,
+                "detail": text,
+            }
+        if "no primary home selected" in text:
+            return {
+                "reason": "primary-unset",
+                "remediation": primary_set,
                 "detail": text,
             }
         if "stale" in text:
             return {
                 "reason": "catalog-stale",
-                "remediation": refresh,
+                "remediation": f"{refresh} && {primary_set}",
                 "detail": text,
             }
         return {
