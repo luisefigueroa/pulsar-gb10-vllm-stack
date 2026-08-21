@@ -166,7 +166,7 @@ if [ "$SKIP_W" != 1 ]; then
   fi
   set -e
   if [ "$w_rc" != 0 ]; then
-    die "model files are not prepared — run: scripts/model-library.sh prepare $NAME --yes"
+    die "model files are not ready — see the weights check above"
   fi
 else
   echo "SKIP  weights"

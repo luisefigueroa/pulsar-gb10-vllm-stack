@@ -3048,8 +3048,15 @@ def hot_witness_path(instance_dir: pathlib.Path) -> pathlib.Path:
 def resolve_activate_transport(
     backend: str | None,
     transport: str | None,
+    *,
+    nodes: int | None = None,
 ) -> tuple[str, str]:
-    """Resolve the compatibility backend and explicit transfer transport."""
+    """Resolve copy backend and transfer transport.
+
+    Multi-rank defaults to topology-bound ssh-roce (ADR 0003/0006). One-rank
+    has no non-home copy and uses ssh-control. An explicit transport always
+    wins, except ssh-roce on a one-rank profile which fails closed.
+    """
     backend = backend or ""
     transport = transport or ""
     if backend and backend != "copy":
@@ -3058,8 +3065,92 @@ def resolve_activate_transport(
         if transport not in ACTIVATE_TRANSPORT_BACKENDS:
             choices = ", ".join(ACTIVATE_TRANSPORT_BACKENDS)
             fail(f"prepare: transport {transport!r} not supported (use {choices})")
+        if nodes == 1 and transport == "ssh-roce":
+            fail(
+                "prepare: one-rank profiles have no non-home transfer; "
+                "use ssh-control"
+            )
         return "copy", transport
+    if nodes is not None and nodes > 1:
+        return "copy", "ssh-roce"
     return "copy", "ssh-control"
+
+
+def classify_library_readiness(
+    *,
+    profile: str,
+    catalog_path: str | pathlib.Path | None,
+    topology_id: str,
+    models_dir: str | pathlib.Path,
+) -> dict[str, Any]:
+    """Classify why library views are not ready, without restaging."""
+    refresh = "scripts/model-library.sh catalog refresh"
+    add_home = f"scripts/model-library.sh home add {profile} --yes"
+    prepare = f"scripts/model-library.sh prepare {profile} --yes"
+    catalog_file = pathlib.Path(catalog_path) if catalog_path else None
+    if catalog_file is None or not catalog_file.is_file():
+        return {
+            "reason": "catalog-missing",
+            "remediation": refresh,
+            "detail": "no distributed catalog is present",
+        }
+    try:
+        catalog = load_catalog(catalog_file)
+    except ModelLibraryError as exc:
+        return {
+            "reason": "catalog-missing",
+            "remediation": refresh,
+            "detail": str(exc),
+        }
+    catalog_topology = catalog.get("topology_id") or ""
+    if catalog_topology and topology_id and catalog_topology != topology_id:
+        return {
+            "reason": "catalog-stale",
+            "remediation": refresh,
+            "detail": "catalog topology does not match the confirmed topology",
+        }
+    try:
+        resolve_entry(
+            catalog,
+            profile=profile,
+            cold_root=None,
+            models_dir=models_dir,
+        )
+    except ModelLibraryError as exc:
+        text = str(exc)
+        if "not found in warm catalog" in text or "no complete warm home" in text:
+            return {
+                "reason": "no-home",
+                "remediation": add_home,
+                "detail": text,
+            }
+        if "stale" in text:
+            return {
+                "reason": "catalog-stale",
+                "remediation": refresh,
+                "detail": text,
+            }
+        return {
+            "reason": "catalog-unresolved",
+            "remediation": refresh,
+            "detail": text,
+        }
+    return {
+        "reason": "views-missing",
+        "remediation": prepare,
+        "detail": "durable home is present; prepared runtime views are not ready",
+    }
+
+
+def cmd_classify_library_readiness(args: argparse.Namespace) -> int:
+    report = classify_library_readiness(
+        profile=args.profile,
+        catalog_path=args.catalog,
+        topology_id=args.topology_id,
+        models_dir=args.models_dir,
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0
 
 
 def validate_hot_validation(
@@ -4425,7 +4516,9 @@ def plan_activate(
     expected_integrity_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a model-preparation plan JSON for bash to execute (copy + stamp)."""
-    backend, transport = resolve_activate_transport(backend, transport)
+    backend, transport = resolve_activate_transport(
+        backend, transport, nodes=nodes
+    )
     catalog = load_catalog(catalog_path)
     if catalog.get("topology_id") and topology_id and catalog["topology_id"] != topology_id:
         fail(
@@ -10068,6 +10161,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     plan.set_defaults(func=cmd_plan_activate)
+
+    classify = sub.add_parser(
+        "classify-library-readiness",
+        help="Classify why prepared views are missing without restaging",
+    )
+    classify.add_argument("--profile", required=True)
+    classify.add_argument("--catalog", default="")
+    classify.add_argument("--topology-id", default="")
+    classify.add_argument("--models-dir", required=True)
+    classify.set_defaults(func=cmd_classify_library_readiness)
 
     whs = sub.add_parser("write-hot-stamp", help="Write hot.json for an instance dir")
     whs.add_argument("--instance-dir", required=True)

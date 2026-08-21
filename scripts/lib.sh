@@ -1179,7 +1179,7 @@ resolve_library_hot_for_profile() {
     || die "library-hot requires confirmed topology (scripts/detect-fabric.sh --write-topology)"
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   info=$(library_hot_info_for_profile "$profile") \
-    || die "library-hot: model files are not prepared or valid on the selected rank for $profile — run preparation for that placement"
+    || die "library-hot: model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
   LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \

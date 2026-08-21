@@ -125,11 +125,11 @@ Notes:
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
-    (1..16). The low-level CLI default remains ssh-control with one stream
-    (ADR 0003 compatibility). Interactive reviewed multi-rank preparation is
-    fixed at ssh-roce / 8 streams with no fallback. Reviewed two-rank
-    library-hot is GA, explicit, and non-default; one-rank and legacy-unsealed
-    use remain experimental.
+    (1..16). Defaults follow profile geometry: one-rank uses ssh-control with
+    one stream (no bulk transfer); multi-rank uses ssh-roce with eight streams
+    and no fallback (ADR 0003/0006). Management-network bulk copy on a
+    multi-rank profile requires explicit --transport ssh-control. Every library
+    scope is supported.
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails closed.
   • Benchmark/probe commands are explicit experiments and permit legacy-unsealed
@@ -2677,6 +2677,13 @@ cmd_activate() {
   local instance hub_source hub_dest home_rank rank source
   local expected_backend requested_mode
   local start_ts end_ts elapsed
+  local copy_streams_explicit=0 ssh_mode_explicit=0
+  if [ -n "${PULSAR_COPY_STREAMS:-}" ]; then
+    copy_streams_explicit=1
+  fi
+  if [ -n "${PULSAR_COPY_SSH_MODE:-}" ]; then
+    ssh_mode_explicit=1
+  fi
   local -a target_ranks=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -2695,6 +2702,7 @@ cmd_activate() {
         [ $# -ge 2 ] || die "--copy-streams requires a value"
         COPY_STREAMS="$2"
         export PULSAR_COPY_STREAMS="$COPY_STREAMS"
+        copy_streams_explicit=1
         shift
         ;;
       --node)
@@ -2720,29 +2728,47 @@ cmd_activate() {
     copy) ;;
     *) die "prepare: --backend must be copy" ;;
   esac
-  if [ -n "$transport" ]; then
-    case "$transport" in
-      ssh-control) expected_backend=copy; requested_mode=control ;;
-      ssh-roce) expected_backend=copy; requested_mode=roce ;;
-      *) die "prepare: --transport must be ssh-control or ssh-roce" ;;
-    esac
-    if [ "$backend_explicit" = 1 ] && [ "$backend" != "$expected_backend" ]; then
-      die "prepare: --transport $transport conflicts with --backend $backend"
+  require_py
+  load_conf "$profile"
+  if [ -z "$transport" ]; then
+    if [ "$ssh_mode_explicit" = 1 ]; then
+      case "$COPY_SSH_MODE" in
+        roce) transport=ssh-roce ;;
+        control) transport=ssh-control ;;
+        *) die "PULSAR_COPY_SSH_MODE must be control or roce" ;;
+      esac
+    elif [ "$NODES" -gt 1 ]; then
+      transport=ssh-roce
+    else
+      transport=ssh-control
     fi
-    backend="$expected_backend"
-    COPY_SSH_MODE="$requested_mode"
-    export PULSAR_COPY_SSH_MODE="$COPY_SSH_MODE"
-  elif [ "$COPY_SSH_MODE" = roce ]; then
-    transport=ssh-roce
-  else
-    transport=ssh-control
+  fi
+  case "$transport" in
+    ssh-control) expected_backend=copy; requested_mode=control ;;
+    ssh-roce) expected_backend=copy; requested_mode=roce ;;
+    *) die "prepare: --transport must be ssh-control or ssh-roce" ;;
+  esac
+  if [ "$backend_explicit" = 1 ] && [ "$backend" != "$expected_backend" ]; then
+    die "prepare: --transport $transport conflicts with --backend $backend"
+  fi
+  backend="$expected_backend"
+  if [ "$NODES" -eq 1 ] && [ "$transport" = ssh-roce ]; then
+    die "prepare: one-rank profiles have no non-home transfer; use ssh-control"
+  fi
+  COPY_SSH_MODE="$requested_mode"
+  export PULSAR_COPY_SSH_MODE="$COPY_SSH_MODE"
+  if [ "$copy_streams_explicit" != 1 ]; then
+    if [ "$transport" = ssh-roce ]; then
+      COPY_STREAMS=8
+    else
+      COPY_STREAMS=1
+    fi
+    export PULSAR_COPY_STREAMS="$COPY_STREAMS"
   fi
   validate_copy_stream_settings
-  require_py
-  ensure_catalog
-  load_conf "$profile"
   load_cluster_topology >/dev/null \
     || die "confirmed topology required"
+  ensure_catalog
 
   local target_rank="" target_ranks_csv needs_bulk_transfer
   if [ "$NODES" -eq 1 ]; then

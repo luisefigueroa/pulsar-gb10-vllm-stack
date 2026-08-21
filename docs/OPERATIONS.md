@@ -29,7 +29,7 @@ Preferred operator entry point (scripts under `scripts/` remain canonical):
 |---|---|
 | `./pulsar` | Neutral **operator home** (workflow menu; no preflight on entry) |
 | `./pulsar wizard` | Serve/switch wizard (doctor + preflight; direct shortcut) |
-| `./pulsar models` | Browse cached models/runtime views; explicitly refresh or prepare reviewed models (experimental) |
+| `./pulsar models` | Browse cached models/runtime views; explicitly refresh or prepare reviewed models |
 | `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
 | `./pulsar start <model> [up args…]` | → `scripts/up.sh` |
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
@@ -150,8 +150,8 @@ Menu (default cursor: status):
 3. **Stop a serving model** — inventory-safe active managed only; library-hot
    services choose retain vs free, then confirm → `down.sh`
 4. **Models & storage** — cached identity, placement, runtime views, and findings
-   (browsing is read-only; refresh/preparation are explicit; reviewed two-rank
-   `library-hot` is GA, while one-rank and legacy-unsealed use are experimental)
+   (browsing is read-only; refresh/preparation are explicit; the model library
+   is the only weight mechanism)
 5. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
 6. **Diagnostics** — run doctor, detailed inventory (read-only)
 7. **Exit**
@@ -191,8 +191,8 @@ direct CLI workflows except for the two bounded actions described below.
 delegates to the atomic all-confirmed-rank catalog refresh and then obtains a
 new sanitized health report. It does not move model bytes.
 
-**Prepare for two-rank GA serving** or **Prepare for experimental one-rank
-serving** appears only for a serving profile that is associated with the exact
+**Prepare for two-rank serving** or **Prepare for one-rank serving**
+appears only for a serving profile that is associated with the exact
 catalog entry and carries a reviewed expected seal. Before confirmation the
 view shows the exact model revision and manifest,
 durable-home dependency, serving node count, approximate non-home storage, and
@@ -200,17 +200,13 @@ fixed transfer policy. Multi-node preparation uses SSH over the confirmed RoCE
 plane, eight streams, and no fallback. Confirmation delegates to:
 
 ```bash
-scripts/model-library.sh prepare <profile> \
-  --backend copy --transport ssh-roce --copy-streams 8 --yes
+scripts/model-library.sh prepare <profile> --yes
 ```
 
-A one-node profile instead targets its durable-home rank explicitly and has no
-bulk transfer:
-
-```bash
-scripts/model-library.sh prepare <profile> --node <home-rank-or-node-id> \
-  --backend copy --transport ssh-control --copy-streams 1 --yes
-```
+Multi-rank profiles default to SSH over the confirmed RoCE plane with eight
+streams. A one-node profile targets its durable-home rank and uses
+`ssh-control` with one stream (no bulk transfer). Management-network copy on a
+multi-rank profile requires explicit `--transport ssh-control`.
 
 The preparation service remains authoritative: it rechecks topology and
 primary placement, full-verifies the expected seal, performs exact all-rank
@@ -598,8 +594,7 @@ scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list --reviewed-identity
 # Reviewed multi-rank sealed profile: validation status is not an override.
-scripts/model-library.sh prepare <multi-rank-sealed-profile> \
-  --backend copy --transport ssh-roce --copy-streams 8 --yes
+scripts/model-library.sh prepare <multi-rank-sealed-profile> --yes
 scripts/up.sh <multi-rank-sealed-profile>
 # optional after stop:
 scripts/down.sh <multi-rank-sealed-profile>                 # retain unpinned non-home hot
@@ -1071,7 +1066,8 @@ scripts/model-library.sh prepare <profile> --transport ssh-roce \
   --backend copy --copy-streams 8 --yes
 ```
 
-`--copy-streams` accepts 1-16 and defaults to 1. Above eight streams, the
+`--copy-streams` accepts 1-16. Multi-rank `prepare` defaults to eight streams;
+one-rank defaults to one. Above eight streams, the
 connection stagger must be at least 100 ms (the default is 150 ms); the command
 fails closed otherwise. Parallel copy currently supports a local endpoint on
 one side of the transfer. A remote-home to remote-target relay fails explicitly

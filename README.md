@@ -305,9 +305,13 @@ check SSH trust first, then use the exact preparation command:
 scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare <multi-rank-sealed-profile> \
-  --backend copy --transport ssh-roce --copy-streams 8 --yes
+scripts/model-library.sh prepare <multi-rank-sealed-profile> --yes
 ```
+
+Multi-rank `prepare` defaults to topology-bound eight-stream SSH-over-RoCE.
+One-rank `prepare` uses `ssh-control` with one stream. Explicit
+`--transport ssh-control` is the diagnostic override for management-network
+bulk copy.
 
 Catalog refresh inventories existing homes; it does not download a model or
 create the required durable home. Acquisition is `home add`: it creates

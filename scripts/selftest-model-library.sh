@@ -556,6 +556,10 @@ assert_true "model-library.sh documents cold" \
 
 assert_true "prepare is the preferred CLI command" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'prepare <profile>'"
+assert_true "multi-rank prepare defaults to ssh-roce" \
+  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'multi-rank uses ssh-roce'"
+assert_true "prepare help does not call one-rank experimental" \
+  bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'one-rank and legacy-unsealed'"
 assert_true "activate remains a compatibility alias" \
   grep -q 'prepare|activate) cmd_activate' "$REPO_DIR/scripts/model-library.sh"
 assert_true "bench-ssh-roce documented in CLI" \

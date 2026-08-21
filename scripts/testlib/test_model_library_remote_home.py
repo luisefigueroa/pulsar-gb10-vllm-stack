@@ -113,8 +113,8 @@ class RemoteHomeActivationContracts(unittest.TestCase):
         plan = self.plan(self.inventory)
 
         self.assertEqual(plan["action"], "copy")
-        self.assertEqual(plan["transport"], "ssh-control")
-        self.assertEqual(plan["stamp"]["transport"], "ssh-control")
+        self.assertEqual(plan["transport"], "ssh-roce")
+        self.assertEqual(plan["stamp"]["transport"], "ssh-roce")
         self.assertEqual(plan["home"]["rank"], 1)
         self.assertEqual(plan["hub_source"], self.remote_hub)
         self.assertEqual(

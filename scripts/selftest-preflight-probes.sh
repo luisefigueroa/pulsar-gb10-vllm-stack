@@ -224,6 +224,7 @@ import os
 
 data = json.loads(os.environ["WEIGHTS_JSON"])
 assert data["failed_rank"] == 1, data
+assert data.get("reason") == "rank-unreachable", data
 PY2
 weights_human=$(QUIET=1 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \

@@ -48,19 +48,52 @@ fi
 load_cluster_topology >/dev/null 2>&1 && [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] \
   || die "serving requires a confirmed topology manifest (one machine is fine): run scripts/detect-fabric.sh --write-topology"
 
-if ! hot_info=$(library_hot_info_for_profile "$NAME"); then
+CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}/catalog.json}"
+
+emit_weights_gap() {
+  local reason="$1" remediation="$2" detail="${3:-}" failed_rank="${4:-}"
   if [ "$JSON" = 1 ]; then
-    NAME_V="$NAME" NODES_V="$NODES" python3 -c '
+    NAME_V="$NAME" NODES_V="$NODES" REASON_V="$reason" \
+      REMEDIATION_V="$remediation" DETAIL_V="$detail" RANK_V="$failed_rank" \
+      python3 -c '
 import json, os
-print(json.dumps({
+payload = {
     "state": "missing", "source": "library-hot", "ok": False,
     "model": os.environ["NAME_V"], "nodes": int(os.environ["NODES_V"]),
-}, indent=2, sort_keys=True))'
+    "reason": os.environ["REASON_V"],
+    "remediation": os.environ["REMEDIATION_V"],
+}
+detail = os.environ.get("DETAIL_V") or ""
+if detail:
+    payload["detail"] = detail
+rank = os.environ.get("RANK_V") or ""
+if rank:
+    payload["failed_rank"] = int(rank)
+print(json.dumps(payload, indent=2, sort_keys=True))
+'
   elif [ "${QUIET:-0}" = 1 ]; then
-    echo "FAIL  weights   model files are not prepared"
+    echo "FAIL  weights   $detail — run: $remediation"
   else
-    echo "model files are not prepared — run: scripts/model-library.sh prepare $NAME --yes" >&2
+    echo "$detail — run: $remediation" >&2
   fi
+}
+
+if ! hot_info=$(library_hot_info_for_profile "$NAME"); then
+  gap=$(python3 "$PULSAR_MODEL_LIBRARY_PY" classify-library-readiness \
+    --profile "$NAME" \
+    --catalog "$CATALOG_FILE" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --models-dir "$REPO_DIR/models") || gap=""
+  if [ -n "$gap" ]; then
+    reason=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "views-missing")')
+    remediation=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("remediation") or "")')
+    detail=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("detail") or "model files are not prepared")')
+  else
+    reason="views-missing"
+    remediation="scripts/model-library.sh prepare $NAME --yes"
+    detail="model files are not prepared"
+  fi
+  emit_weights_gap "$reason" "$remediation" "$detail"
   exit 1
 fi
 instance=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
@@ -77,22 +110,24 @@ if [ "$NODES" -gt 1 ]; then
       --topology-id "$CLUSTER_TOPOLOGY_ID" \
       --expected-validation-json "$expected_validation_json" \
       --serve-time-witness)
-    if ssh_node "$verify_rank" "$verify_command" \
-        <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null 2>&1; then
+    verify_rc=0
+    ssh_node "$verify_rank" "$verify_command" \
+        <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null 2>&1 || verify_rc=$?
+    if [ "$verify_rc" -eq 0 ]; then
       continue
     fi
-    if [ "$JSON" = 1 ]; then
-      NAME_V="$NAME" NODES_V="$NODES" RANK_V="$verify_rank" python3 -c '
-import json, os
-print(json.dumps({
-    "state": "missing", "source": "library-hot", "ok": False,
-    "model": os.environ["NAME_V"], "nodes": int(os.environ["NODES_V"]),
-    "failed_rank": int(os.environ["RANK_V"]),
-}, indent=2, sort_keys=True))'
-    elif [ "${QUIET:-0}" = 1 ]; then
-      echo "FAIL  weights   rank $verify_rank view is not verified"
+    if [ "$verify_rc" -eq 255 ]; then
+      emit_weights_gap \
+        "rank-unreachable" \
+        "./pulsar inventory" \
+        "rank $verify_rank is unreachable; restore SSH to that confirmed node, then re-check. Do not restage while the rank is unobservable" \
+        "$verify_rank"
     else
-      echo "model files are not verified on rank $verify_rank — run: scripts/model-library.sh prepare $NAME --yes" >&2
+      emit_weights_gap \
+        "identity-mismatch" \
+        "scripts/model-library.sh health" \
+        "rank $verify_rank runtime view failed verification; inspect health, then prepare $NAME --yes only if that view is missing or corrupt" \
+        "$verify_rank"
     fi
     exit 1
   done

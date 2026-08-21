@@ -16,21 +16,46 @@ from scripts import model_library  # noqa: E402
 class ActivateTransportContracts(unittest.TestCase):
     def test_backend_compatibility_mapping_is_deterministic(self) -> None:
         cases = (
-            (None, None, ("copy", "ssh-control")),
-            ("copy", None, ("copy", "ssh-control")),
-            (None, "ssh-control", ("copy", "ssh-control")),
-            (None, "ssh-roce", ("copy", "ssh-roce")),
-            ("copy", "ssh-roce", ("copy", "ssh-roce")),
+            (None, None, 1, ("copy", "ssh-control")),
+            ("copy", None, 1, ("copy", "ssh-control")),
+            (None, None, 2, ("copy", "ssh-roce")),
+            ("copy", None, 2, ("copy", "ssh-roce")),
+            (None, "ssh-control", 2, ("copy", "ssh-control")),
+            (None, "ssh-roce", 2, ("copy", "ssh-roce")),
+            ("copy", "ssh-roce", 2, ("copy", "ssh-roce")),
         )
-        for backend, transport, expected in cases:
-            with self.subTest(backend=backend, transport=transport):
+        for backend, transport, nodes, expected in cases:
+            with self.subTest(backend=backend, transport=transport, nodes=nodes):
                 self.assertEqual(
                     model_library.resolve_activate_transport(
                         backend,
                         transport,
+                        nodes=nodes,
                     ),
                     expected,
                 )
+
+    def test_one_rank_rejects_ssh_roce(self) -> None:
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "no non-home transfer",
+        ):
+            model_library.resolve_activate_transport(
+                "copy",
+                "ssh-roce",
+                nodes=1,
+            )
+
+    def test_missing_catalog_classifies_as_refresh_not_prepare(self) -> None:
+        report = model_library.classify_library_readiness(
+            profile="deepseek-v4-flash",
+            catalog_path=pathlib.Path("/no/such/catalog.json"),
+            topology_id="a" * 64,
+            models_dir=REPO_ROOT / "models",
+        )
+        self.assertEqual(report["reason"], "catalog-missing")
+        self.assertIn("catalog refresh", report["remediation"])
+        self.assertNotIn("prepare", report["remediation"])
 
     def test_retired_fabric_modes_fail_closed(self) -> None:
         for backend, transport in (
@@ -47,13 +72,14 @@ class ActivateTransportContracts(unittest.TestCase):
                     model_library.resolve_activate_transport(
                         backend,
                         transport,
+                        nodes=2,
                     )
 
         with self.assertRaisesRegex(
             model_library.ModelLibraryError,
             "not supported",
         ):
-            model_library.resolve_activate_transport(None, "automatic")
+            model_library.resolve_activate_transport(None, "automatic", nodes=2)
 
     def test_hot_stamp_records_transfer_provenance(self) -> None:
         manifest = {
