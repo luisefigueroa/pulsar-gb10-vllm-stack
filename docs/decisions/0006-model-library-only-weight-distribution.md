@@ -166,6 +166,109 @@ rather than defaulted.
   inventory as legacy provenance and stop cleanly without model-library
   cleanup; restarting them migrates them to the library.
 
+## SIM-02 surface classification — 2026-08-21
+
+This section completes the SIM-02 (SWI-746) record. It does not change the
+decision above. The ticket's original recommended target (replicated caches
+as the guided default, reviewed two-rank `library-hot` explicit and
+non-default, retire live NFS/RDMA from entrypoints) and the
+replicated-only maximum-simplification alternative were both rejected:
+replicated added a second verification stack and a mode axis with no
+capability the library lacks except serving without a confirmed topology,
+which contradicts membership-truth; replicated-only would have superseded
+ADR 0001's one-home architecture, ADR 0003, and the O(1) durable-copy
+objective.
+
+Implementation landed with this ADR in
+[PR #87](https://github.com/luisefigueroa/pulsar-gb10-vllm-stack/pull/87).
+No further implementation sub-issues are opened from SIM-02.
+
+### Supported
+
+Product behavior on operational entrypoints.
+
+| Surface | Role |
+|---|---|
+| Model library serving | Only weight-distribution mechanism: one durable home per exact revision, home-rank validated view, sealed-hot copies on non-home ranks. Every library scope is supported: two-rank sealed (physical GA, 2026-08-16), one-rank, and legacy-unsealed. |
+| `scripts/model-library.sh home add` | Only acquisition ingress, including `--source-attested` for brand-new unsealed Hugging Face homes. Whether source-attested remains a core feature is SIM-03, not this decision. |
+| Multi-rank prepare | Topology-bound eight-stream `ssh-roce` copy with no fallback (ADR 0003). |
+| One-rank prepare | Local durable-home view over `ssh-control`; no bulk transfer. |
+| Confirmed topology manifest | Serving prerequisite, including one-node (`scripts/detect-fabric.sh --write-topology`). |
+| NCCL/RoCE inference | Unrelated data plane; unchanged. |
+| Container label `io.pulsar.gb10.weight-source` | Provenance only; new launches use `library-hot`. |
+
+### Experimental
+
+Explicit, non-default, not a serving alternative.
+
+| Surface | Role |
+|---|---|
+| Multi-rank `--transport ssh-control` | Maintainer-directed diagnostic and comparison override (ADR 0003). Not an automatic fallback. |
+| Source-attested unsealed acquisition | Implemented catalog/artifact path; product-scope question is SIM-03. |
+
+Local-directory import is not a current mode. It is not serveable until a
+later ADR; it is not an experimental launch token.
+
+### Archived
+
+Retained as history. Not promotion, not a serving workflow.
+
+| Surface | Where |
+|---|---|
+| Live NFS/RDMA serving measurements | `results/weight-fabric/`; historical body of [WEIGHT_FABRIC.md](../WEIGHT_FABRIC.md) |
+| Replicated-cache serving measurements | Validation ledger historical rows; not rewritten |
+| Dated implementation snapshot | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](../MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) (supersession banner; body not rewritten) |
+| Exploration drafts | [docs/archive/WEIGHT_MATERIALIZE_DESIGN.md](../archive/WEIGHT_MATERIALIZE_DESIGN.md) |
+| Legacy containers labeled `replicated` or unlabeled | Inventory classifies and stops them; they never trigger hot purges |
+
+### Removed
+
+Deleted or fail-closed. Do not restore without a new ADR.
+
+| Path | Disposition |
+|---|---|
+| `--weight-source` / `--weight-mode` | Fail-closed (exit 2) in `serve.sh`, `scripts/up.sh`, `cluster/start-cluster.sh`, `cluster/preflight.sh`, `scripts/check-weights.sh` |
+| `scripts/pull-weights.sh` | Deleted |
+| Replicated per-rank scan and sealed-replicated witness stack | Deleted from `scripts/check-weights.sh` and related tests |
+| `scripts/weight_fabric.py` and live-NFS workflow internals | Deleted |
+| One-shot `nfs-rdma` prepare (`--backend fabric` / `--transport nfs-rdma`) | Fail-closed; not a remaining experiment |
+| `./pulsar weight-fabric` as a serving workflow | Removed; leftover helper only (next table) |
+| Absolute-path catalog profiles `laguna-s-2.1-nvfp4`, `laguna-s-2.1-2node`, `inkling-small-nvfp4` | Removed from `models/` |
+| `live-remote-readonly` as a new ADR 0004 access-contract choice | Rejected by ADR 0005 |
+
+Historical readers may still see `nfs-rdma` in `scripts/startup_metric.py`
+and `scripts/model_validation_evidence.py`. That is read-side acceptance of
+stamps and evidence recorded before retirement, not a live prepare path.
+
+### Leftover teardown helper (not a mode)
+
+| Path | Disposition |
+|---|---|
+| `scripts/weight-fabric.sh show\|unmount\|teardown` | Confirmation-gated leftover NFS export/mount cleanup only. Never serves, copies, or remaps. |
+| `./pulsar weight-fabric` | Same helper. |
+| Site-local `.weight-fabric/<profile>.json` | Gitignored leftover config; teardown reads it and does not invent hostnames, addresses, node IDs, or cache paths. |
+
+## Site leftover teardown window
+
+1. **Immediate (in force since 2026-08-19).** Serving, wizard, onboarding,
+   and prepare refuse live NFS/RDMA, replicated launch, and one-shot
+   `nfs-rdma`. There is no deprecation period and no silent remap.
+2. **Site-local leftover exports and mounts.** Teardown is operator-driven
+   on discovery: stop the profile, then confirmation-gated
+   `scripts/weight-fabric.sh show` → `unmount` → `teardown` as documented in
+   [WEIGHT_FABRIC.md](../WEIGHT_FABRIC.md). There is no automatic privileged
+   sweep and no silent expiry. Leftover mounts remain unusable for serving
+   until torn down. Operators should complete teardown on a site before the
+   next physical campaign there.
+3. **Helper retirement.** Keep `scripts/weight-fabric.sh
+   show|unmount|teardown` until a later breaking-compatibility change
+   (SIM-07) after the lab confirms no leftover `.weight-fabric/` configs.
+   Do not delete the helper while privileged leftover NFS state may still
+   exist.
+4. **Historical evidence.** Retain `results/weight-fabric/` and the
+   superseded WEIGHT_FABRIC.md body indefinitely. Mark superseded; never
+   rewrite measurements.
+
 ## Revisit triggers
 
 Revisit only with a new ADR if (a) a serving-scale model cannot be

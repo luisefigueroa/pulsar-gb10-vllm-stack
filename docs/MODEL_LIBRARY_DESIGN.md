@@ -47,7 +47,7 @@
 | Mechanism today | The model library, for every profile (ADR 0006): one exact durable home, exact home symlink, sealed-hot copies on non-home ranks, fixed eight-stream SSH-over-RoCE preparation for reviewed multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned views (ADR 0007) |
 | Supported today | Two-rank sealed (physical GA evidence, 2026-08-16); one-rank and legacy-unsealed (supported by ADR 0006 decision). Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
 | Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; unattested `home add` as the primary ingress (SIM-03 open); Hugging Face is the only current ingress format (local-directory import needs its own ADR); durable-home loss = service loss until a failover ADR; maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope; source-attested acquisition's remote target and asymmetric credentials remain pending |
-| Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails closed; historical `results/weight-fabric/` evidence is superseded and not promoted. |
+| Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails closed; leftover NFS mounts use confirmation-gated unmount/teardown only; historical `results/weight-fabric/` evidence is superseded and not promoted. ADR 0006 records the supported / experimental / archived / removed surface table and teardown window. |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
 optional reviewed `models/seals/*.json` trust root and binds a profile to
@@ -975,8 +975,10 @@ Pulsar's discovery boundary.
 |---|---|
 | Replicated `pull-weights` + local launch | **Removed** ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)); the library is the only mechanism and `home add` is the fresh-cluster ingress |
 | Live NFS/RDMA serving | **Rejected** as a serving runtime source (ADR 0005); implementation removed (ADR 0006). Historical evidence remains; not promoted. |
+| One-shot `nfs-rdma` prepare | **Removed** with the fabric internals (ADR 0006). Prepare is copy over `ssh-roce` (multi-rank) or `ssh-control` (one-rank). |
 | Site cold path confs | Optional cold tier; keep working |
-| Topology rails and NFS/RDMA helpers | Reused by fabric **preparation**; model-library schema-3 hot state carries full SHA-256 observed content plus optional expected-seal provenance, while live-fabric configuration identity remains separate |
+| Topology rails (`detect-fabric.sh`) | Cluster membership and RoCE identity; not a weight-distribution mode |
+| Leftover NFS unmount/teardown | Confirmation-gated `scripts/weight-fabric.sh show\|unmount\|teardown` only, for site-local leftover state. Not a serving or prepare workflow. ADR 0006 records the teardown window. |
 | Materialize-as-only-mechanism drafts | Superseded as the top-level story; prepare+hot+pin is the product frame |
 
 ---
@@ -1001,7 +1003,7 @@ Pulsar's discovery boundary.
 9. **Prepare is first-class and measured** — end-to-end start-to-healthy,
    integrity, and recovery matter more than peak transport bandwidth.
 10. **Transport is not product identity** — distinguish `ssh-control`,
-    `ssh-roce`, one-shot `nfs-rdma`, and live mount.
+    `ssh-roce`, retired one-shot `nfs-rdma`, and retired live mount.
 11. **No silent policy changes** — never change transport, runtime source,
     geometry, or replica count as a fallback.
 12. **Release status and content presence are distinct** — present bytes do not
@@ -1310,3 +1312,4 @@ rather than promotion blockers.
 | 2026-08-21 | Wizard replacement captures an exact rollback contract only for `library-hot` services whose identity is a reviewed `match`. A complete, safe-to-stop unsealed or unvalidated library-hot service (including first-run Nemotron) is switched with a guarded stop and no restore promise, instead of aborting capture while the previous service stays running. |
 | 2026-08-21 | `classify_library_readiness` (used by `check-weights` / `up.sh`) names the command that can repair the gap: sealed `home add --yes`, unsealed plan-then-`--yes`, `cleanup-recommend` / `catalog primary set` for duplicate or unset primaries, refresh-then-select for a stale primary, and `prepare` only when a durable home is already present. |
 | 2026-08-21 | One-node `check-weights --node` keeps the selected rank and probe cause. SSH-unreachable reports `rank-unreachable` (inventory, do not restage). A catalog home on a different rank reports `wrong-placement` instead of `prepare`. Verification failure on the selected home uses the same identity-mismatch remediation as a remote multi-rank view. |
+| 2026-08-21 | **SIM-02 closeout on ADR 0006:** recorded supported, experimental, archived, and removed storage/distribution surfaces plus the leftover-fabric teardown window. The original ticket target (keep replicated as guided default) remains rejected. No new implementation; PR #87 already removed the retired paths. |

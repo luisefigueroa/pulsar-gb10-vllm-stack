@@ -573,7 +573,9 @@ implementation was removed with the whole weight-mode axis
 ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)).
 `--weight-source`/`--weight-mode` fail closed everywhere. Leftover site
 mounts: confirmation-gated `scripts/weight-fabric.sh show|unmount|teardown`
-only. Historical notes: [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
+only; tear down on discovery and before the next physical campaign on that
+site (ADR 0006 teardown window). Historical notes:
+[WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 **The model library (federated catalog + local hot staging):** the only
 weight-distribution mechanism (ADR 0006); every scope — two-rank sealed,

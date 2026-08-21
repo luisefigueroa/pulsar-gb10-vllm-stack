@@ -49,6 +49,13 @@ or pass `--interactive-sudo`; the flag overrides the env. Invalid env values
 fail closed without running cleanup. Teardown never serves, copies, or remaps
 weights.
 
+**Window (ADR 0006):** serving and prepare already refuse this path. Tear
+down leftover exports and mounts on discovery, and before the next physical
+campaign on that site. There is no automatic privileged sweep. Keep this
+helper until a later breaking-compatibility change (SIM-07) after the lab
+confirms no leftover `.weight-fabric/` configs. Do not invent hostnames,
+addresses, node IDs, or cache paths in publishable notes.
+
 ---
 
 This historical design kept one authoritative model repository on a selected
