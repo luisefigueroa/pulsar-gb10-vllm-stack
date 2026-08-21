@@ -204,11 +204,21 @@ NEMOTRON_CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf nemotron-3-nano
 svc_managed() {
   # conf state complete safe [port]
   # complete/safe: True|False (Python)
+  # Nemotron is the production first-run unsealed library-hot profile.
+  # Qwen stays a leftover pre-library fixture so that migration menu is covered.
   local conf="$1" state="$2" complete="$3" safe="$4" port="${5:-8000}"
-  local contract_id
+  local contract_id weight_source identity_status
   case "$conf" in
-    qwen3-1.7b) contract_id="$QWEN_CONTRACT_ID" ;;
-    nemotron-3-nano-30b-nvfp4) contract_id="$NEMOTRON_CONTRACT_ID" ;;
+    qwen3-1.7b)
+      contract_id="$QWEN_CONTRACT_ID"
+      weight_source=replicated
+      identity_status=
+      ;;
+    nemotron-3-nano-30b-nvfp4)
+      contract_id="$NEMOTRON_CONTRACT_ID"
+      weight_source=library-hot
+      identity_status=legacy-unsealed
+      ;;
     *) echo "svc_managed: missing contract for $conf" >&2; return 1 ;;
   esac
   local running="True" stale="False"
@@ -216,6 +226,7 @@ svc_managed() {
   [ "$state" = "stopped" ] && running="False"
   python3 -c "
 import json
+identity = '''$identity_status''' or None
 print(json.dumps({
   'service_id': '$conf',
   'profile': '$conf',
@@ -231,13 +242,13 @@ print(json.dumps({
   'complete': $complete,
   'observability': 'complete' if $complete else 'partial',
   'api_port': $port,
-  'weight_source': 'replicated',
+  'weight_source': '$weight_source',
   'launch_contract_id': '$contract_id',
   'spec_decode': 'off',
   'model_revision': None,
   'model_seal_id': None,
   'validation_bundle_id': None,
-  'model_identity_status': None,
+  'model_identity_status': identity,
   'estimated_footprint_gib_per_rank': 12.0,
   'reasons': [],
   'ranks': [{
@@ -250,9 +261,10 @@ print(json.dumps({
       'io.pulsar.gb10.managed': 'true',
       'io.pulsar.gb10.conf': '$conf',
       'io.pulsar.gb10.rank': 'single',
-      'io.pulsar.gb10.weight-source': 'replicated',
+      'io.pulsar.gb10.weight-source': '$weight_source',
       'io.pulsar.gb10.launch-contract': '$contract_id',
       'io.pulsar.gb10.spec-decode': 'off',
+      **({'io.pulsar.gb10.model-identity-status': identity} if identity else {}),
     },
     'api_port': $port, 'mem_available_gib': 50.0, 'mem_status': 'ok', 'mem_source': 'fixture',
     'gpu_memory': {'measured_mib': 8000, 'status': 'ok', 'source': 'fixture'},
@@ -794,6 +806,13 @@ run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "replace managed exit 0"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "replace: stopped blocker"
 assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "replace: started target"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "without a reviewed identity match" \
+  "unsealed library-hot replace names missing exact rollback"
+assert_file_not_contains "$STATE/logs/down.log" "--pin-weights" \
+  "unsealed library-hot replace does not pin for rollback"
+assert_false "unsealed replace leaves no rollback transaction" \
+  bash -c "test -f '$STATE/replacement-transaction.json'"
 
 # ---------------------------------------------------------------------------
 # 5) Decline replace leaves service unchanged
@@ -955,7 +974,7 @@ assert_file_not_contains "$STATE/logs/wizard.combined" "docker rm|docker kill|ki
 # ---------------------------------------------------------------------------
 # 11b) Stop then still-fail → explicit Restart previous profile
 # ---------------------------------------------------------------------------
-echo "=== stop then still memory fail (no rollback for pre-library) ==="
+echo "=== stop then still memory fail (no rollback for unsealed library-hot) ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
@@ -971,11 +990,11 @@ assert_eq "$down_lines" "1" "still-fail: single down (no extra stops)"
 assert_false "still-fail: never up failed target" \
   bash -c "grep -q qwen3-1.7b '$STATE/logs/up.log' 2>/dev/null"
 assert_file_contains "$STATE/logs/wizard.combined" \
-  "exact rollback is unavailable" \
-  "pre-library stop warns that exact rollback is unavailable"
+  "without a reviewed identity match" \
+  "unsealed library-hot stop warns that exact rollback is unavailable"
 assert_file_not_contains "$STATE/logs/wizard.combined" \
   "Restore previous exact service" \
-  "no exact-restore offer exists for a pre-library service"
+  "no exact-restore offer exists for an unsealed library-hot service"
 assert_false "still-fail: no docker rm in wizard" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill' "$STATE/logs/wizard.combined"
 
 # --------------------------------------------------------------------------
@@ -1007,7 +1026,7 @@ assert_file_not_contains "$STATE/logs/up.log" "nemotron" "launch-fail exit: no r
 # ---------------------------------------------------------------------------
 # 12b) Launch failure → explicit Restart previous profile
 # ---------------------------------------------------------------------------
-echo "=== launch failure after replace (no rollback for pre-library) ==="
+echo "=== launch failure after replace (no rollback for unsealed library-hot) ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
@@ -1027,11 +1046,11 @@ down_lines=$(grep -c . "$STATE/logs/down.log" || true)
 assert_eq "$down_lines" "1" "launch-fail: single down only"
 assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail: attempted up target"
 assert_file_not_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" \
-  "launch-fail: no automatic restart of the pre-library service"
+  "launch-fail: no automatic restart of the unsealed library-hot service"
 assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail: reported failure"
 assert_file_contains "$STATE/logs/wizard.combined" \
-  "exact rollback is unavailable" \
-  "launch-fail: pre-library stop warned about rollback"
+  "without a reviewed identity match" \
+  "launch-fail: unsealed library-hot stop warned about rollback"
 assert_false "launch-fail: no docker mutation language" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill|kill -9' "$STATE/logs/wizard.combined"
 
 # --------------------------------------------------------------------------
@@ -1301,6 +1320,8 @@ echo "=== static safety checks ==="
 # down only via execute_pending_stops / cmd_down after final_confirm_start
 assert_true "wizard has execute_pending_stops" grep -q "execute_pending_stops" "$REPO_DIR/wizard.sh"
 assert_true "wizard defers stop until after final confirm helper" grep -q "final_confirm_start" "$REPO_DIR/wizard.sh"
+assert_true "unsealed library-hot stop warns that exact rollback is unavailable" \
+  grep -q "without a reviewed identity match" "$REPO_DIR/wizard.sh"
 # ensure cmd_down is only in execute_pending_stops
 downs=$(grep -n "cmd_down" "$REPO_DIR/wizard.sh" | grep -v '^#' || true)
 # Only definition and execute_pending_stops should call it

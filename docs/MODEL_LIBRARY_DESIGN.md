@@ -936,14 +936,18 @@ the explicit capacity-recovery action. Site policy
 for named-profile stops. Interactive home stop discloses the restage
 consequence before mutation. `down.sh --all` never auto-purges.
 A wizard replacement is a bounded transaction: immediately before stopping one
-complete observable service, Pulsar snapshots its effective launch contract,
-exact physical placement, weight policy, speculative-decode state, and, for
-`library-hot`, exact revision/seal/manifest, per-rank runtime sources, and
-retention. Ephemeral catalog views are temporarily pinned before stop. A failed
-replacement may restore only that captured contract; it never reconstructs from
-current profile defaults or silently switches storage source or placement.
-Incomplete, multi-service, legacy-unlabeled, drifted, or unretainable state
-makes automatic replacement unavailable before stop. A leftover transaction
+complete observable service whose library identity is a reviewed `match`,
+Pulsar snapshots its effective launch contract, exact physical placement,
+weight policy, speculative-decode state, and exact revision/seal/manifest,
+per-rank runtime sources, and retention. Ephemeral catalog views are
+temporarily pinned before stop. A failed replacement may restore only that
+captured contract; it never reconstructs from current profile defaults or
+silently switches storage source or placement. A complete, safe-to-stop
+`library-hot` service without that match (`legacy-unsealed` or `unvalidated`)
+is stopped without a capture, so exact rollback is unavailable — the same
+guard as a leftover pre-library launch. Incomplete, multi-service,
+legacy-unlabeled, drifted, or unretainable state makes automatic replacement
+unavailable before stop. A leftover transaction
 captured under the removed replicated mechanism cannot be rolled back. Recovery
 inspects current inventory, states whether the saved profile is running,
 stopped, or ambiguous, and offers a confirmation-gated archive of the original
@@ -1303,3 +1307,4 @@ rather than promotion blockers.
 | 2026-08-21 | Wizard library serving is one flow. Sealed vs unsealed is identity data on that path (catalog serving-check still requires a reviewed seal; unsealed observes prepared views). Shared helpers own one-node home placement and prepare confirmation. After a library-hot capture, replacement stop/rollback/unpin no longer branch on `weight.source`. |
 | 2026-08-21 | Home stop restage disclosure uses `load_conf` + `estimate_weights_gib` (`WEIGHTS_GIB`) instead of walking seal/bundle JSON. Startup evidence records are always library-hot / sealed-hot; `--weight-source`, `--configuration-id`, and `--cache-state` are no longer CLI flags. |
 | 2026-08-21 | Named stop and `--all` share one label-driven stoppability predicate (`container_all_candidate_is_safe`). A missing conf file no longer has a parallel probe loop; retired Laguna/Inkling containers still stop from proven labels. Unobservable nodes remain fail-closed. |
+| 2026-08-21 | Wizard replacement captures an exact rollback contract only for `library-hot` services whose identity is a reviewed `match`. A complete, safe-to-stop unsealed or unvalidated library-hot service (including first-run Nemotron) is switched with a guarded stop and no restore promise, instead of aborting capture while the previous service stays running. |

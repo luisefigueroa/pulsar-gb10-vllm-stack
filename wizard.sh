@@ -1412,28 +1412,36 @@ execute_pending_stops() {
     [ "${#PENDING_STOP[@]}" -eq 1 ] \
       || die "replacement mixes running and stale services; no service was stopped"
     conf="${running[0]}"
-    local running_source
-    running_source=$(INV_JSON="$inventory" PROFILE="$conf" python3 -c '
-import json, os
-inv = json.loads(os.environ["INV_JSON"])
-items = [s for s in inv.get("services", []) if s.get("conf") == os.environ["PROFILE"] and s.get("state") == "running"]
-print(items[0].get("weight_source") or "" if len(items) == 1 else "")
-')
-    if [ "$running_source" != library-hot ]; then
-      # Pre-library launch (ADR 0006): no captured contract can restore it
-      # exactly, so replacement is a plain stop with no rollback promise —
-      # and only of a complete, observably safe service.
-      local legacy_ok
-      legacy_ok=$(INV_JSON="$inventory" PROFILE="$conf" python3 -c '
+    local running_source identity_status stoppable
+    local -a svc_fields=()
+    mapfile -t svc_fields < <(INV_JSON="$inventory" PROFILE="$conf" python3 -c '
 import json, os
 inv = json.loads(os.environ["INV_JSON"])
 items = [s for s in inv.get("services", []) if s.get("conf") == os.environ["PROFILE"] and s.get("state") == "running"]
 item = items[0] if len(items) == 1 else {}
+print(item.get("weight_source") or "")
+print(item.get("model_identity_status") or "")
 print("1" if item.get("complete") is True and item.get("safe_to_stop") is True else "0")
 ')
-      [ "$legacy_ok" = 1 ] \
-        || die "the running pre-library service is incomplete or unobservable; no service was stopped"
-      warn "stopping a pre-library service; exact rollback is unavailable for it"
+    [ "${#svc_fields[@]}" -eq 3 ] || die "running service inventory is incomplete; no service was stopped"
+    running_source="${svc_fields[0]}"
+    identity_status="${svc_fields[1]}"
+    stoppable="${svc_fields[2]}"
+    # Exact rollback needs a reviewed identity match. Pre-library launches and
+    # library-hot services without that match (legacy-unsealed / unvalidated)
+    # stay switchable via a guarded stop, with no restore promise.
+    if [ "$running_source" != library-hot ] || [ "$identity_status" != match ]; then
+      [ "$stoppable" = 1 ] || {
+        if [ "$running_source" != library-hot ]; then
+          die "the running pre-library service is incomplete or unobservable; no service was stopped"
+        fi
+        die "the running library-hot service is incomplete or unobservable; no service was stopped"
+      }
+      if [ "$running_source" != library-hot ]; then
+        warn "stopping a pre-library service; exact rollback is unavailable for it"
+      else
+        warn "stopping a library-hot service without a reviewed identity match; exact rollback is unavailable for it"
+      fi
       down_args=()
       if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
         down_args=("${PLACEMENT_ARGS[@]}")

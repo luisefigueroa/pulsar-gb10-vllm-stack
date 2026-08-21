@@ -409,11 +409,14 @@ a short target summary (not raw JSON). Decision highlights:
 
 **Stops are always deferred** until after the final start/replace confirmation.
 Immediately before stopping one running service, the wizard requires complete
-fresh inventory plus current launch-contract/spec labels. It records exact
-placement and weight policy in a short-lived site-local transaction. A
-`library-hot` service additionally requires matching health identity/runtime
-views; ephemeral views are pinned before stop. Multiple running stop targets,
-partial services, old unlabeled services, drift, or failed retention leave the
+fresh inventory plus current launch-contract/spec labels. A `library-hot`
+service whose identity is a reviewed `match` records exact placement and
+weight policy in a short-lived site-local transaction; ephemeral views are
+pinned before stop. A complete, safe-to-stop library-hot service without that
+match (`legacy-unsealed` or `unvalidated`, including first-run Nemotron) is
+stopped without a rollback transaction — exact restore is unavailable, as with
+a leftover pre-library launch. Multiple running stop targets, partial
+services, old unlabeled services, drift, or failed retention leave the
 service running and make automatic replacement unavailable. To adopt an older
 managed service, stop it explicitly after reviewing `./pulsar inventory`, then
 start it once with the current Pulsar release.
