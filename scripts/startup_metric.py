@@ -95,11 +95,6 @@ def command_startup_metric(args: argparse.Namespace) -> None:
     topology_id = clean_text(args.topology_id, "topology_id")
     if not re.fullmatch(r"[0-9a-f]{64}", topology_id):
         fail("startup metric: invalid topology identity")
-    if args.weight_source != "library-hot":
-        fail("startup metric: only library-hot evidence is recordable")
-    configuration_id = getattr(args, "configuration_id", None) or None
-    if configuration_id is not None:
-        fail("startup metric: library-hot content is not a fabric config")
     content_id = args.content_id or None
     content_digest = args.content_digest or None
     transport = args.transport or None
@@ -126,8 +121,6 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         fail("startup metric: invalid library-hot transport")
     if integrity_scheme != "sha256-snapshot-manifest-v1":
         fail("startup metric: invalid library-hot integrity scheme")
-    if args.cache_state != "sealed-hot":
-        fail("startup metric: library-hot cache state must be sealed-hot")
     if model_revision is None or not re.fullmatch(
         r"[A-Za-z0-9._-]+", model_revision
     ):
@@ -158,7 +151,7 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         "kind": "container-launch-to-first-health",
         "profile": profile_name(args.profile),
         "model": clean_text(args.model, "model"),
-        "weight_source": args.weight_source,
+        "weight_source": "library-hot",
         "nodes": bounded_int(args.nodes, "nodes", 2, 255),
         "topology_id": topology_id,
         "configuration_id": None,
@@ -171,11 +164,9 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         "model_seal_id": model_seal_id,
         "validation_bundle_id": validation_bundle_id,
         "runtime_model_path": runtime_model_path,
-        "owner_node_fingerprint": (
-            fingerprint(owner_node_id) if owner_node_id else None
-        ),
+        "owner_node_fingerprint": fingerprint(owner_node_id),
         "tag": tag,
-        "cache_state": args.cache_state,
+        "cache_state": "sealed-hot",
         "started_at": clean_text(args.started_at, "started_at"),
         "first_healthy_at": clean_text(
             args.first_healthy_at, "first_healthy_at"
@@ -197,14 +188,8 @@ def build_parser() -> argparse.ArgumentParser:
     startup_metric.add_argument("--output", required=True)
     startup_metric.add_argument("--profile", required=True)
     startup_metric.add_argument("--model", required=True)
-    startup_metric.add_argument(
-        "--weight-source",
-        choices=("library-hot",),
-        required=True,
-    )
     startup_metric.add_argument("--nodes", type=int, required=True)
     startup_metric.add_argument("--topology-id", required=True)
-    startup_metric.add_argument("--configuration-id")
     startup_metric.add_argument("--owner-node-id")
     startup_metric.add_argument("--content-id")
     startup_metric.add_argument("--content-digest")
@@ -222,11 +207,6 @@ def build_parser() -> argparse.ArgumentParser:
     startup_metric.add_argument("--validation-bundle-id")
     startup_metric.add_argument("--runtime-model-path")
     startup_metric.add_argument("--tag")
-    startup_metric.add_argument(
-        "--cache-state",
-        choices=("cold", "warm", "sealed-hot", "unspecified"),
-        default="unspecified",
-    )
     startup_metric.add_argument("--started-at", required=True)
     startup_metric.add_argument("--first-healthy-at", required=True)
     startup_metric.add_argument(

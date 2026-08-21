@@ -246,24 +246,21 @@ workflow_status() {
 }
 
 # Prints "skip" or "one-rank" or "restage" or "restage <GiB>".
-# Disk size never comes from inventory estimated_footprint_gib_per_rank.
+# Disk size is the profile WEIGHTS_GIB (via load_conf + estimate_weights_gib),
+# never inventory estimated_footprint_gib_per_rank (that is GPU/unified memory).
 library_hot_stop_kind() {
   local conf="$1" services_json="$2"
-  CONF="$conf" SERVICES_JSON="$services_json" REPO_DIR="$REPO_DIR" \
-    HOME_STOP_HOT_GIB="${HOME_STOP_HOT_GIB:-}" python3 - <<'PY'
-import json, os, pathlib, re
-
-def _skip() -> None:
-    print("skip")
-    raise SystemExit(0)
+  local meta source nodes override gib
+  meta=$(CONF="$conf" SERVICES_JSON="$services_json" python3 -c '
+import json, os
 
 try:
-    conf = os.environ.get("CONF") or ""
     services = json.loads(os.environ.get("SERVICES_JSON") or "[]")
-    if not isinstance(services, list):
-        _skip()
 except Exception:
-    _skip()
+    raise SystemExit(0)
+if not isinstance(services, list):
+    raise SystemExit(0)
+conf = os.environ.get("CONF") or ""
 item = next(
     (
         service
@@ -272,64 +269,37 @@ item = next(
     ),
     {},
 )
-if item.get("weight_source") != "library-hot":
-    print("skip")
-    raise SystemExit(0)
-
+source = item.get("weight_source") or ""
 try:
-    expected_nodes = int(item.get("expected_nodes") or 1)
+    nodes = int(item.get("expected_nodes") or 1)
 except (TypeError, ValueError):
-    expected_nodes = 1
-if expected_nodes < 2:
-    print("one-rank")
-    raise SystemExit(0)
-
-override = (os.environ.get("HOME_STOP_HOT_GIB") or "").strip()
-if override:
-    print(f"restage {override}")
-    raise SystemExit(0)
-
-gib = ""
-repo = pathlib.Path(os.environ.get("REPO_DIR") or ".")
-conf_path = repo / "models" / f"{conf}.conf"
-try:
-    text = conf_path.read_text(encoding="utf-8")
-except OSError:
-    text = ""
-match = re.search(r'(?m)^EXPECTED_MODEL_SEAL="([^"]+)"', text)
-seal_rel = match.group(1) if match else ""
-seal_path = repo / "models" / seal_rel if seal_rel else None
-try:
-    seal = json.loads(seal_path.read_text(encoding="utf-8")) if seal_path else {}
-except (OSError, json.JSONDecodeError, TypeError):
-    seal = {}
-bundle_id = ""
-if isinstance(seal, dict):
-    provenance = seal.get("provenance") or {}
-    if isinstance(provenance, dict):
-        bundle_id = provenance.get("validation_bundle_id") or ""
-bundle_path = (
-    repo / "models" / "validation-bundles" / f"{bundle_id}.json" if bundle_id else None
-)
-try:
-    bundle = json.loads(bundle_path.read_text(encoding="utf-8")) if bundle_path else {}
-except (OSError, json.JSONDecodeError, TypeError):
-    bundle = {}
-memory = {}
-if isinstance(bundle, dict):
-    contract = bundle.get("profile_contract") or {}
-    if isinstance(contract, dict):
-        maybe_memory = contract.get("memory_policy") or {}
-        if isinstance(maybe_memory, dict):
-            memory = maybe_memory
-raw = memory.get("weights_gib")
-if raw is not None and str(raw).strip() != "":
-    gib = str(raw).strip()
-if gib:
-    print(f"restage {gib}")
-else:
-    print("restage")
-PY
+    nodes = 1
+print(f"{source}\t{nodes}")
+') || true
+  [ -n "$meta" ] || { printf 'skip\n'; return 0; }
+  source="${meta%%$'\t'*}"
+  nodes="${meta#*$'\t'}"
+  [ "$source" = library-hot ] || { printf 'skip\n'; return 0; }
+  if ! [[ "$nodes" =~ ^[0-9]+$ ]] || [ "$nodes" -lt 2 ]; then
+    printf 'one-rank\n'
+    return 0
+  fi
+  override="${HOME_STOP_HOT_GIB:-}"
+  if [ -n "$override" ]; then
+    printf 'restage %s\n' "$override"
+    return 0
+  fi
+  # Subshell so load_conf does not clobber the home session. Only the conf
+  # WEIGHTS_GIB is a restage disclosure; do not guess from local cache size.
+  if gib=$(
+    load_conf "$conf" >/dev/null
+    [ -n "${WEIGHTS_GIB:-}" ]
+    estimate_weights_gib
+  ) 2>/dev/null; then
+    printf 'restage %s\n' "$gib"
+  else
+    printf 'restage\n'
+  fi
 }
 
 workflow_stop() {

@@ -749,10 +749,9 @@ assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" \
 assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
   "idle rank 2 preserves exact-service eligibility"
 
-# library-hot stop discloses restage cost; retain is explicit
+# library-hot stop discloses restage cost from the profile WEIGHTS_GIB
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
-export HOME_STOP_HOT_GIB=167
 run_home $'3\n1\n1\ny\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "free ~167 GiB now" \
   "stop discloses restage bytes for library-hot"
@@ -762,15 +761,12 @@ assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash --retain-weights"
   "home retain choice passes --retain-weights"
 assert_file_not_contains "$STATE/logs/down.log" "estimated_footprint" \
   "stop disclosure does not pass GPU footprint as disk"
-unset HOME_STOP_HOT_GIB
 
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
-export HOME_STOP_HOT_GIB=167
 run_home $'3\n1\n2\ny\n7\n'
 assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash --purge-hot" \
   "home free choice passes --purge-hot"
-unset HOME_STOP_HOT_GIB
 
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
@@ -1025,6 +1021,10 @@ echo "=== static safety ==="
 assert_false "home has no docker rm" grep -qE 'docker[[:space:]]+rm' "$REPO_DIR/scripts/home.sh"
 assert_false "home has no kill -9" grep -qE 'kill[[:space:]]+-9' "$REPO_DIR/scripts/home.sh"
 assert_true "home stops only via cmd_down/down.sh" grep -q 'cmd_down' "$REPO_DIR/scripts/home.sh"
+assert_true "stop restage GiB uses estimate_weights_gib" \
+  grep -q estimate_weights_gib "$REPO_DIR/scripts/home.sh"
+assert_false "stop restage GiB does not walk expected seals" \
+  grep -q EXPECTED_MODEL_SEAL "$REPO_DIR/scripts/home.sh"
 assert_true "quick-status never curls completions" bash -c \
   "! grep -E 'curl.*completions|/v1/completions[\"'\'']' '$REPO_DIR/scripts/quick-status.sh' | grep -v never | grep -q ."
 assert_true "quick-status only probes /v1/models" grep -q '/v1/models' "$REPO_DIR/scripts/quick-status.sh"

@@ -690,7 +690,7 @@ dir_size_gib() {
 }
 
 estimate_weights_gib() {
-  # Disk footprint for pull-weights (full HF/NFS tree).
+  # Disk footprint for the loaded profile (WEIGHTS_GIB, else local tree size).
   if [ -n "${WEIGHTS_GIB}" ]; then
     echo "$WEIGHTS_GIB"
     return
