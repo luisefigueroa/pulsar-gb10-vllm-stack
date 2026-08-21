@@ -352,4 +352,13 @@ fi
 
 "$LIBRARY" --help | grep -q 'home add <profile>'
 "$LIBRARY" --help | grep -q 'home verify'
+python3 - "$REPO_DIR/scripts/model-library.sh" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+body = text[text.index("cmd_home_verify()") : text.index("cmd_home_check()")]
+seal_inspect = body[body.index("EXPECTED_MODEL_SEAL") :]
+assert "--allow-empty-files" in seal_inspect.split("die \"home verify: could not inspect the durable home\"", 1)[0]
+PY
 echo "model-library source-attested CLI scenarios: PASS"

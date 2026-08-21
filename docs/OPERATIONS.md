@@ -668,7 +668,9 @@ attachment succeed. Acquisition does
 not refresh, prepare, launch, or grant reviewed authority. `home verify` is
 offline and rehashes the complete tree against the attached receipt before
 later reuse. A matching tree without that live-directory attachment is
-treated as unknown.
+treated as unknown and still requires a reviewed expected manifest; that
+recovery path hashes attested empty snapshot files the same way receipt-backed
+verify does.
 
 `home add` inspects every confirmed rank and refuses existing repository paths,
 unobservable nodes, insufficient capacity, missing target-side Hugging Face

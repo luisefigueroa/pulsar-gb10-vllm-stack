@@ -121,7 +121,8 @@ Notes:
     a seal or status.
   • home verify rehashes a receipt-created home against the receipt bound to
     that exact live directory. An unknown, restored, or replaced tree still
-    needs a reviewed expected manifest. Verification assigns no status.
+    needs a reviewed expected manifest. Both verifiers hash attested empty
+    snapshot files. Verification assigns no status.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -2091,7 +2092,8 @@ cmd_home_verify() (
         --rank "$home_rank" \
         --node-id "$node_id" \
         --model-id "$model_id" \
-        --revision "$revision") \
+        --revision "$revision" \
+        --allow-empty-files) \
         || die "home verify: could not inspect the durable home"
       python3 -c '
 import json, sys
