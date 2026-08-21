@@ -32,7 +32,8 @@ Safety:
     model files and the site config file are preserved.
   • privileged steps use passwordless sudo (sudo -n) on each node;
     --interactive-sudo prompts in the operator terminal instead and never
-    stores a password.
+    stores a password. WEIGHT_FABRIC_SUDO_MODE=passwordless|interactive
+    sets the default; the flag overrides it.
   • --yes is only for an already reviewed leftover-teardown runbook.
   • no command serves, copies, or remaps weights.
 EOF
@@ -189,7 +190,11 @@ node_exec() {
   fi
 }
 
-WF_SUDO_MODE=passwordless
+WF_SUDO_MODE="${WEIGHT_FABRIC_SUDO_MODE:-passwordless}"
+case "$WF_SUDO_MODE" in
+  passwordless|interactive) ;;
+  *) die "WEIGHT_FABRIC_SUDO_MODE must be passwordless or interactive" ;;
+esac
 
 node_privileged() {
   local rank="${1:?rank required}" endpoint command

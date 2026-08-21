@@ -113,6 +113,11 @@ run_view() {
   set -e
 }
 
+"$VIEW" --help | grep -q 'The model library is the only weight-distribution mechanism'
+! "$VIEW" --help | grep -qi experimental
+grep -Fq 'Prepare $profile through the model library?' "$VIEW"
+echo "OK   model-storage help is library-only and not experimental"
+
 python3 -m unittest scripts.testlib.test_model_storage
 
 plain_index=$(printf '2\n' | env GUM=0 REPO_DIR="$REPO_DIR" bash -c '
@@ -170,6 +175,8 @@ assert_contains "$STATE/prepare-decline.out" '167 GiB on each non-home' \
   "preparation preview estimates non-home storage"
 assert_contains "$STATE/prepare-decline.out" 'does not start or qualify a model' \
   "preparation preview preserves the launch boundary"
+assert_not_contains "$STATE/prepare-decline.out" 'experimental' \
+  "preparation preview does not call the library experimental"
 echo "OK   declined confirmation leaves model files unchanged"
 
 run_view unprepared.json 0 $'1\n1\ny\n6\n' "$STATE/prepare-success.out" 0 "" 0 \

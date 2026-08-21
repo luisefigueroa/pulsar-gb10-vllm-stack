@@ -36,6 +36,8 @@ run "Grok review skill isolation" \
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 run "terminal formatting" "$REPO_DIR/scripts/selftest-terminal-format.sh"
 run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"
+run "leftover weight-fabric sudo mode" \
+  "$REPO_DIR/scripts/selftest-weight-fabric.sh"
 run "API auth and secret redaction" "$REPO_DIR/scripts/selftest-api-auth.sh"
 run "validation verdicts" "$REPO_DIR/scripts/selftest-validation.sh"
 run "fail-closed probes" "$REPO_DIR/scripts/selftest-preflight-probes.sh"
@@ -167,6 +169,11 @@ run "API base covers one- and multi-node launches" bash -c '
 run "wizard uses serving-only model catalog" bash -c '
   grep -qE "list-models\.sh\" --serving --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
 '
+run "recipes do not launch removed absolute-path profiles" bash -c '
+  ! grep -E "pulsar start (laguna|inkling)" "'"$REPO_DIR"'/docs/RECIPES.md"
+  grep -Fq "./pulsar start nemotron-3-nano-30b-nvfp4" "'"$REPO_DIR"'/docs/RECIPES.md"
+  grep -Fq "Removed absolute-path profiles (not runnable)" "'"$REPO_DIR"'/docs/RECIPES.md"
+'
 run "guided CLI uses plain node language" bash -c '
   grep -Fq "doctor_ready_line \"no blocking issues found\"" "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "tput setaf 2" "'"$REPO_DIR"'/scripts/doctor.sh"
@@ -174,6 +181,9 @@ run "guided CLI uses plain node language" bash -c '
   grep -Fq "detect-fabric.sh\" --json" "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "GB10 systems discovered, but cluster membership is not confirmed." "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "Next: run ./pulsar wizard and confirm cluster discovery" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "no confirmed topology manifest" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "detect-fabric.sh --write-topology" "'"$REPO_DIR"'/scripts/doctor.sh"
+  ! grep -Fq "single-node models remain available" "'"$REPO_DIR"'/scripts/doctor.sh"
   ! grep -Fq "Path A essentials" "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "cluster node" "'"$REPO_DIR"'/wizard.sh"
   ! grep -Fq "Remote rank unreachable" "'"$REPO_DIR"'/wizard.sh"

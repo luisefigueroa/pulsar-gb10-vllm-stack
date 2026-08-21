@@ -3,8 +3,8 @@
 #   scripts/model-storage.sh       (also: ./pulsar models)
 #
 # Consumes the stable model-library health schema. Browsing is read-only;
-# catalog refresh is a separate, explicit, confirmation-gated action. This
-# model preparation is a separate, explicit experimental action. This workflow
+# catalog refresh is a separate, explicit, confirmation-gated action.
+# Model preparation is a separate, explicit action. This workflow
 # never starts a model or runs retention, repair, or deletion mutations.
 # Test hooks:
 #   MODEL_STORAGE_HEALTH_JSON=path
@@ -38,9 +38,9 @@ usage: scripts/model-storage.sh
 Browse the cached distributed model catalog and rank-local runtime views.
 Browsing and health rechecks are read-only. An explicit, confirmation-gated
 action can rescan confirmed ranks and update only the cached catalog. This
-workflow can explicitly prepare a reviewed model through the experimental
-distributed path. It does not start a model or run pin, purge, repair, or
-durable-home operations.
+workflow can explicitly prepare a reviewed model through the model library.
+It does not start a model or run pin, purge, repair, or durable-home
+operations.
 
 The model library is the only weight-distribution mechanism (ADR 0006).
 EOF
@@ -158,13 +158,13 @@ collect_profiles() {
   profiles_rc=$?
   set -e
   if [ "$profiles_rc" -ne 0 ]; then
-    warn "serving-profile catalog is unavailable — experimental preparation is disabled"
+    warn "serving-profile catalog is unavailable — preparation is disabled"
     printf '{"models":[]}\n' >"$profiles_file"
     return 0
   fi
   if ! python3 "$RENDERER" --report-file "$report_file" \
       --profiles-file "$profiles_file" validate 2>>"$profiles_error_file"; then
-    warn "serving-profile catalog is invalid — experimental preparation is disabled"
+    warn "serving-profile catalog is invalid — preparation is disabled"
     if [ "${PULSAR_VERBOSE:-0}" = 1 ] && [ -s "$profiles_error_file" ]; then
       sed 's/^/[model-storage] profiles: /' "$profiles_error_file" >&2
     fi
@@ -219,12 +219,12 @@ prepare_model() {
   render prepare-preview --index "$model_index" \
     --candidate-index "$candidate_index"
   echo
-  if ! confirm "Prepare $profile through the experimental distributed catalog?" no; then
+  if ! confirm "Prepare $profile through the model library?" no; then
     log "model preparation cancelled; no model files were changed"
     return 0
   fi
 
-  log "starting experimental model preparation; this does not start serving…"
+  log "starting model preparation; this does not start serving…"
   set +e
   cmd_prepare_model "$profile" "$transport" "$streams" "$target_rank"
   prepare_rc=$?

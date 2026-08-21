@@ -57,9 +57,9 @@ already picks — but grep the log to confirm on every image bump):
   `CONTAINER_ENV`). **Model-conf owned, not a global default.**
   - `nemotron-3-nano` / `nemotron-3-super`: set to `1` (matches the
     validated confs that earned their STATUS rows).
-  - `laguna-s-2.1-nvfp4`: intentionally **unset** (removed pending a
-    dedicated determinism A/B; do not cargo-cult it back without that
-    gate).
+  - `laguna-s-2.1-nvfp4`: profile removed by ADR 0006 (absolute-path
+    catalog). Historical conf left this unset; do not cargo-cult it onto
+    remaining NVFP4 models without a dedicated determinism A/B.
   - Not a correctness fix for the CUTLASS-vs-Marlin MoE bug — that is
     `--moe-backend marlin`. Atomic-add is an implementation detail of
     the Marlin path; treat it as conf-local unless you remeasure.

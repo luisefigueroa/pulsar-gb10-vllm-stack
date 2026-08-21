@@ -69,8 +69,14 @@ rather than defaulted.
    state, per ADR 0005.
 5. **Non-HF absolute-path profiles are removed from the catalog**
    (`laguna-s-2.1-nvfp4`, `laguna-s-2.1-2node`, `inkling-small-nvfp4`).
-   A durable home requires an exact Hugging Face `model_id@commit`; a local
-   directory import is a possible future ADR, not a launch token.
+   **Current product limit:** serving ingress is an exact Hugging Face
+   repository revision (`model_id@commit`), including source-attested
+   `home add` of that shape. Privately quantized or directory checkpoints
+   are not serveable until a later import ADR. The model library remains
+   the only mechanism; Hugging Face is the only current ingress format,
+   not a permanent law of the architecture. A local-directory import that
+   still computes a complete immutable manifest, assigns a content ID, and
+   uses the same hot-view/witness path is future work, not a launch token.
 6. **A confirmed topology manifest is a serving prerequisite, including on
    one machine.** The library binds durable homes, hot views, and content
    ids to confirmed topology identity, and topology identity is never
@@ -151,7 +157,8 @@ rather than defaulted.
 - Operators on a fresh machine run `detect-fabric.sh --write-topology`
   once, then `home add` (or the wizard, which guides both) before first
   serve. Weights are still local files at serve time; cold-start locality
-  is unchanged.
+  is unchanged. Custom or directory checkpoints cannot be served until an
+  import ADR exists.
 - Historical evidence is preserved and marked superseded, never rewritten:
   replicated rows in the validation ledger remain as history, and
   `results/weight-fabric/` remains untouched apart from supersession notes.

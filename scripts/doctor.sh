@@ -231,10 +231,10 @@ PY
     [ "$fabric_nodes" = 1 ] || fabric_system_word=systems
     record ok fabric "GB10 cluster network check passed · $fabric_nodes GB10 $fabric_system_word discovered"
   else
-    record warn fabric "cluster discovery returned unreadable results (single-node models remain available)"
+    record warn fabric "cluster discovery returned unreadable results"
   fi
 else
-  record warn fabric "cluster network could not be verified (single-node models remain available)"
+  record warn fabric "cluster network could not be verified"
 fi
 rm -f "$_fab_log"
 trap - RETURN
@@ -300,7 +300,7 @@ elif [[ "$fabric_nodes" =~ ^[1-9][0-9]*$ ]] && [ "$fabric_nodes" -gt 1 ]; then
   topology_message+="Next: run ./pulsar wizard and confirm cluster discovery to enable multi-node models."
   record warn topology "$topology_message"
 else
-  record ok topology "no cluster membership confirmed · single-node models remain available"
+  record warn topology "no confirmed topology manifest · serving requires scripts/detect-fabric.sh --write-topology (one machine is fine)"
 fi
 
 [ "$JSON" = 1 ] || echo "[doctor] model library"

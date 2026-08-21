@@ -217,19 +217,18 @@ attempt. It provides no validation-status override, transport picker, fallback,
 or automatic launch. Success means the artifacts are prepared, not that a model
 was started, qualified, assigned a release status, or made the guided default.
 
-### Serving-wizard storage choice
+### Serving-wizard library path
 
-`./pulsar wizard` keeps **Replicated local copies (recommended)** as its first
-storage choice — the library serves every profile (ADR 0006). For a reviewed
-(sealed) profile the wizard reads current catalog health, displays exact
-revision/manifest and durable-home dependency, and either proves the selected
-views ready, offers a guided one-time `home add` acquisition when no durable
-home exists, or offers the bounded preparation above. An unsealed profile
-checks its prepared views directly and offers explicit preparation; its
-acquisition is the separate source-attested two-step CLI flow. Nothing
-refreshes the catalog automatically and there is no fallback path. After
-preparation the wizard requires exact ready views before the normal weight
-preflight. Starting remains a separate final confirmation.
+`./pulsar wizard` has no storage-mode choice. The model library serves every
+profile (ADR 0006). For a reviewed (sealed) profile the wizard reads current
+catalog health, displays exact revision/manifest and durable-home dependency,
+and either proves the selected views ready, offers a guided one-time `home add`
+acquisition when no durable home exists, or offers the bounded preparation
+above. An unsealed profile checks its prepared views directly and offers
+explicit preparation; its acquisition is the separate source-attested two-step
+CLI flow. Nothing refreshes the catalog automatically and there is no fallback
+path. After preparation the wizard requires exact ready views before the
+normal weight preflight. Starting remains a separate final confirmation.
 
 For one-node catalog serving, select the durable-home node; Pulsar refuses a
 non-home rank rather than creating a second hot copy. Preparation uses
@@ -958,8 +957,8 @@ after full observed-content verification without a validation-status override.
 Catalog
 refresh enumerates complete `snapshots/<revision>` directories directly. A
 sealed profile therefore finds its reviewed commit even when `refs/main` is
-absent or has moved; only the legacy-unsealed experimental selection consults
-an unambiguous `refs/main`.
+absent or has moved; only a legacy-unsealed selection consults an
+unambiguous `refs/main`.
 
 Sealed home acquisition downloads the exact commit and full-verifies every
 copy before publication; profiles without a seal launch with
@@ -1026,9 +1025,9 @@ durable-home symlink/view with no second full write; non-home ranks
 materialize in parallel. Wall-clock is often limited by materialization, not
 raw RoCE line rate.
 
-**SSH-over-RoCE policy for experimental preparation:** the same copy-based
-preparation (rsync + SSH) targets topology **RoCE IPs** so bulk TCP rides the
-fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
+**SSH-over-RoCE policy for reviewed multi-rank preparation:** the same
+copy-based preparation (rsync + SSH) targets topology **RoCE IPs** so bulk
+TCP rides the fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
 `sshd` reachable on fabric IPs, and routes via the confirmed RoCE netdev. The
 transport IP is never a separate trust identity: strict checking always uses
 the saved alias and enrolled key. The interactive reviewed-profile action is
