@@ -11,6 +11,7 @@
 #   HOME_INVENTORY_CMD
 #   HOME_DOWN_CMD / HOME_DOCTOR_CMD / HOME_STATUS_CMD
 #   HOME_INVENTORY_JSON / HOME_INVENTORY_CMD  (for stop/maintenance lists)
+#   HOME_STOP_HOT_GIB  (optional proven non-home restage GiB for stop disclosure)
 #   QUICK_STATUS_* forwarded when invoking quick-status
 set -euo pipefail
 SCRIPT_NAME=home
@@ -244,6 +245,63 @@ workflow_status() {
   done
 }
 
+# Prints "skip" or "one-rank" or "restage" or "restage <GiB>".
+# Disk size is the profile WEIGHTS_GIB (via load_conf + estimate_weights_gib),
+# never inventory estimated_footprint_gib_per_rank (that is GPU/unified memory).
+library_hot_stop_kind() {
+  local conf="$1" services_json="$2"
+  local meta source nodes override gib
+  meta=$(CONF="$conf" SERVICES_JSON="$services_json" python3 -c '
+import json, os
+
+try:
+    services = json.loads(os.environ.get("SERVICES_JSON") or "[]")
+except Exception:
+    raise SystemExit(0)
+if not isinstance(services, list):
+    raise SystemExit(0)
+conf = os.environ.get("CONF") or ""
+item = next(
+    (
+        service
+        for service in services
+        if (service.get("conf") or service.get("service_id")) == conf
+    ),
+    {},
+)
+source = item.get("weight_source") or ""
+try:
+    nodes = int(item.get("expected_nodes") or 1)
+except (TypeError, ValueError):
+    nodes = 1
+print(f"{source}\t{nodes}")
+') || true
+  [ -n "$meta" ] || { printf 'skip\n'; return 0; }
+  source="${meta%%$'\t'*}"
+  nodes="${meta#*$'\t'}"
+  [ "$source" = library-hot ] || { printf 'skip\n'; return 0; }
+  if ! [[ "$nodes" =~ ^[0-9]+$ ]] || [ "$nodes" -lt 2 ]; then
+    printf 'one-rank\n'
+    return 0
+  fi
+  override="${HOME_STOP_HOT_GIB:-}"
+  if [ -n "$override" ]; then
+    printf 'restage %s\n' "$override"
+    return 0
+  fi
+  # Subshell so load_conf does not clobber the home session. Only the conf
+  # WEIGHTS_GIB is a restage disclosure; do not guess from local cache size.
+  if gib=$(
+    load_conf "$conf" >/dev/null
+    [ -n "${WEIGHTS_GIB:-}" ]
+    estimate_weights_gib
+  ) 2>/dev/null; then
+    printf 'restage %s\n' "$gib"
+  else
+    printf 'restage\n'
+  fi
+}
+
 workflow_stop() {
   local inv services_json
   log "listing inventory-safe active managed services (read-only)…"
@@ -303,12 +361,49 @@ PY
   [ -n "$conf" ] || { log "no selection"; return 0; }
 
   log "selected conf=$conf — down.sh will revalidate ownership and immutable IDs"
+  local -a down_args=()
+  local kind keep_label free_label restage_gib=""
+  kind=$(library_hot_stop_kind "$conf" "$services_json")
+  case "$kind" in
+    skip|"")
+      ;;
+    one-rank)
+      keep_label="Keep prepared views · next start can reuse the local runtime view · durable home still required"
+      free_label="Free prepared views · next start recreates the runtime view from the durable home"
+      ;;
+    restage)
+      keep_label="Keep prepared views · next start can reuse the verified local copy · durable home still required"
+      free_label="Free prepared views · next start restages from the durable home"
+      ;;
+    restage\ *)
+      restage_gib="${kind#restage }"
+      keep_label="Keep prepared views · next start can reuse ~${restage_gib} GiB locally · durable home still required"
+      free_label="Free prepared views · free ~${restage_gib} GiB now · next start requires a full restage"
+      ;;
+    *)
+      keep_label="Keep prepared views · next start can reuse the verified local copy · durable home still required"
+      free_label="Free prepared views · next start restages from the durable home"
+      ;;
+  esac
+  if [ -n "${keep_label:-}" ]; then
+    if ! pick=$(choose "Prepared views after stop · durable home still required" \
+        "$keep_label" "$free_label" "Back"); then
+      log "cancelled; no containers changed"
+      return 0
+    fi
+    case "$pick" in
+      Back|"") log "back; no containers changed"; return 0 ;;
+      Keep\ prepared\ views*) down_args+=(--retain-weights) ;;
+      Free\ prepared\ views*) down_args+=(--purge-hot) ;;
+      *) log "no selection"; return 0 ;;
+    esac
+  fi
   if ! confirm "Stop stack-managed service conf=$conf?"; then
     log "declined; no containers changed"
     return 0
   fi
   log "stopping conf=$conf via scripts/down.sh…"
-  if ! cmd_down "$conf"; then
+  if ! cmd_down "$conf" "${down_args[@]}"; then
     warn "stop failed for $conf — inspect with ./pulsar inventory"
     return 0
   fi

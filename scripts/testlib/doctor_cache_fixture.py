@@ -35,7 +35,7 @@ MODELS_NFS="${MODELS_NFS:?fixture MODELS_NFS required}"
 HARD_FLOOR_AVAILABLE_GIB=4
 PULSAR_SSH=/bin/false
 PULSAR_SSH_OPTS=()
-CLUSTER_TOPOLOGY_COUNT=1
+CLUSTER_TOPOLOGY_COUNT="${PULSAR_TEST_TOPOLOGY_COUNT:-1}"
 CLUSTER_TOPOLOGY_SSH_TRUSTED=0
 print_hanging() { printf '%s%s\n' "$1" "$2"; }
 api_auth_curl_args() { local -n args_ref="$1"; args_ref=(); }

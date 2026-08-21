@@ -2,6 +2,18 @@
 
 **Descriptive implementation snapshot — not the architectural authority**
 
+> **Superseded snapshot (ADR 0006, 2026-08-19; ADR 0007, 2026-08-20).** After
+> this snapshot was taken,
+> [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)
+> removed the replicated path, the fabric internals, the weight-mode
+> selection axis, and the absolute-path catalog profiles; the model library
+> is now the only weight-distribution mechanism.
+> [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)
+> then changed ordinary stop of a `library-hot` service to retain unpinned
+> prepared views (`--purge-hot` remains explicit capacity recovery). The body
+> below remains the dated historical snapshot and is intentionally not
+> rewritten.
+
 Accepted model-library architecture lives in
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
@@ -1783,7 +1795,7 @@ and topology.
 
 These points combine current evidence with the accepted architecture:
 
-1. Keep replicated local HF caches as the guided default.
+1. Keep replicated local HF caches as the guided default. *(Superseded by ADR 0006: the replicated path was removed.)*
 2. Live NFS/RDMA serving is rejected (ADR 0005). Launch fails closed. Do not
    present it as an advanced serving alternative.
 3. Accept the measured 8-stream SSH-over-RoCE preparation and sealed local-hot

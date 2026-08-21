@@ -123,8 +123,12 @@ was experimental at that stage. Deterministic scenarios prove that replicated re
 blocked catalog health cannot fall through silently, optional preparation uses
 the fixed eight-stream SSH-over-RoCE policy, fresh exact readiness is required,
 and launch remains separately confirmed. One-node catalog serving is bound to
-the durable-home rank; ordinary stop purges unpinned views while explicit pin
-retains them without adding home-loss resilience. The production wizard then
+the durable-home rank; ordinary stop then purged unpinned views while explicit
+pin retained them without adding home-loss resilience. That purge-on-stop
+default was later superseded by
+[ADR 0007](../../docs/decisions/0007-ordinary-stop-retains-unpinned-hot-views.md);
+this artifact remains historical serving-integration evidence of the older
+stop policy. The production wizard then
 passed a physical two-node DeepSeek serving-integration gate from a clean
 one-home/no-hot state: explicit experimental selection, separately confirmed
 preparation and launch, fresh exact readiness, eight-stream SSH-over-RoCE,

@@ -214,7 +214,24 @@ CLUSTER_TOPOLOGY_FILE="$tmpdir/topology.json" bash -c '
   ! require_cluster_nodes 4 >/dev/null 2>&1
 '
 
+# Launch resolution requires ready library views (ADR 0006); shim them.
+fixture_topology_id=$(python3 -c \
+  'import json,sys; print(json.load(open(sys.argv[1]))["topology_id"])' \
+  "$tmpdir/topology.json")
+python3 "$REPO_DIR/scripts/testlib/library_hot_fixture.py" \
+  "$tmpdir/hot-info.json" --profile qwen3-1.7b-2node \
+  --topology-id "$fixture_topology_id"
+verify_ssh_shim="$tmpdir/verify-ssh-shim"
+cat >"$verify_ssh_shim" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+exit 0
+SH
+chmod +x "$verify_ssh_shim"
 dry_output=$(CLUSTER_TOPOLOGY_FILE="$tmpdir/topology.json" \
+  PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
+  FAKE_HOT_INFO_FILE="$tmpdir/hot-info.json" \
+  PULSAR_SSH="$verify_ssh_shim" \
   "$REPO_DIR/cluster/start-cluster.sh" qwen3-1.7b-2node \
     --dry-run --skip-preflight --skip-warmup)
 printf '%s\n' "$dry_output" | grep -q -- '--nnodes 2'

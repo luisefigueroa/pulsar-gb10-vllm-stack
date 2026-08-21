@@ -647,7 +647,6 @@ class HomeRemovalContracts(HomeRemovalFixture, unittest.TestCase):
             "scripts/up.sh",
             "serve.sh",
             "cluster/start-cluster.sh",
-            "scripts/pull-weights.sh",
             "scripts/weight-fabric.sh",
         ):
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")

@@ -231,10 +231,10 @@ PY
     [ "$fabric_nodes" = 1 ] || fabric_system_word=systems
     record ok fabric "GB10 cluster network check passed · $fabric_nodes GB10 $fabric_system_word discovered"
   else
-    record warn fabric "cluster discovery returned unreadable results (single-node models remain available)"
+    record warn fabric "cluster discovery returned unreadable results"
   fi
 else
-  record warn fabric "cluster network could not be verified (single-node models remain available)"
+  record warn fabric "cluster network could not be verified"
 fi
 rm -f "$_fab_log"
 trap - RETURN
@@ -294,13 +294,16 @@ elif [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
       record fail "rank_${rank}_ssh" "$node_label · key-based SSH failed at $host"
     fi
   done
+elif [ "$CLUSTER_TOPOLOGY_COUNT" -eq 1 ]; then
+  # A confirmed one-node manifest is valid serving membership (ADR 0006).
+  record ok topology "confirmed topology · 1 node"
 elif [[ "$fabric_nodes" =~ ^[1-9][0-9]*$ ]] && [ "$fabric_nodes" -gt 1 ]; then
   topology_message="$fabric_nodes GB10 systems discovered, but cluster membership is not confirmed."
   topology_message+=$'\n'
   topology_message+="Next: run ./pulsar wizard and confirm cluster discovery to enable multi-node models."
   record warn topology "$topology_message"
 else
-  record ok topology "no cluster membership confirmed · single-node models remain available"
+  record warn topology "no confirmed topology manifest · serving requires scripts/detect-fabric.sh --write-topology (one machine is fine)"
 fi
 
 [ "$JSON" = 1 ] || echo "[doctor] model library"
@@ -317,13 +320,16 @@ python3 "$REPO_DIR/scripts/model_library.py" render-health \
 if [ "$library_render_rc" -le 1 ] && [ -s "$library_rows" ]; then
   while IFS=$'\t' read -r library_level library_id library_message; do
     [ -n "$library_level" ] || continue
-    # Model-library findings are informational to replicated/default serving.
+    # Model-library findings are informational for already-running services.
     [ "$library_level" = ok ] || library_level=warn
     record "$library_level" "$library_id" "$library_message"
   done <"$library_rows"
 else
-  record warn model_library \
-    "model-library health is unavailable (replicated weights remain available)"
+  # The library is the only weight mechanism (ADR 0006): when its health
+  # cannot even be rendered, new preparation and serving readiness are
+  # blocked, so this is a doctor failure. Running services are unaffected.
+  record fail model_library \
+    "model-library health is unavailable — new preparation and launch readiness are blocked until it returns (running services are unaffected)"
 fi
 rm -f "$library_report" "$library_rows"
 

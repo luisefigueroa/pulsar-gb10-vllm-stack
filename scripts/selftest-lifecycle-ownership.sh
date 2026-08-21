@@ -536,11 +536,138 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b-2node","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_UNKNOWN" "$ID_BAD_RANK" "$ID_RANK1_HEAD")"
 : >"$STATE_DIR/rm.log"
-assert_rc 2 "--all refuses unknown conf / bad ranks on head" remove_all_stack_managed_local
-assert_true "unknown conf left intact" container_ownership_inspect_local "$ID_UNKNOWN"
+assert_rc 2 "--all refuses bad ranks on head" remove_all_stack_managed_local
+assert_false "retired-conf single with proven identity is removed (ADR 0006)" \
+  container_ownership_inspect_local "$ID_UNKNOWN"
 assert_true "invalid rank left intact" container_ownership_inspect_local "$ID_BAD_RANK"
 assert_true "rank 1 on head left intact" container_ownership_inspect_local "$ID_RANK1_HEAD"
-assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "--all placement refuse: no rm"
+assert_eq "$(grep -c '^rm head ' "$STATE_DIR/rm.log" || true)" "1" \
+  "--all removed only the proven retired-conf container"
+
+# ---------------------------------------------------------------------------
+# 2c) Retired profiles stay stoppable through labels (ADR 0006)
+# ---------------------------------------------------------------------------
+echo "=== retired profile cleanup ==="
+ID_RETIRED_R0=$(hex64 retired-rank0)
+ID_RETIRED_NOWS=$(hex64 retired-no-world-size)
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-retired-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"retired-2node",
+    "io.pulsar.gb10.rank":"0","io.pulsar.gb10.world-size":"2"}},
+  {"id":sys.argv[2],"name":"vllm-cluster-retired-unsized","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"retired-unsized",
+    "io.pulsar.gb10.rank":"0"}}
+]))' "$ID_RETIRED_R0" "$ID_RETIRED_NOWS")"
+: >"$STATE_DIR/rm.log"
+assert_rc 2 "--all removes sized retired rank, refuses unsized" \
+  remove_all_stack_managed_local
+assert_false "retired 2-rank with world-size label is removed" \
+  container_ownership_inspect_local "$ID_RETIRED_R0"
+assert_true "retired rank without world-size label left intact" \
+  container_ownership_inspect_local "$ID_RETIRED_NOWS"
+
+# down.sh stops a retired single-node profile by proven labels alone.
+ID_RETIRED_SINGLE=$(hex64 retired-single)
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-retired-profile","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"retired-profile",
+    "io.pulsar.gb10.rank":"single"}}
+]))' "$ID_RETIRED_SINGLE")"
+: >"$STATE_DIR/rm.log"
+retired_rc=0
+env FAKE_DOCKER_STATE="$HEAD_STATE" FAKE_DOCKER_NODE=head \
+  FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+  FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+  PULSAR_DOCKER="$SHIM_DIR/docker" PULSAR_SSH="$SHIM_DIR/ssh" \
+  CLUSTER_TOPOLOGY_FILE="$CLUSTER_TOPOLOGY_FILE" \
+  "$REPO_DIR/scripts/down.sh" retired-profile >/dev/null 2>&1 || retired_rc=$?
+assert_eq "$retired_rc" "0" "down.sh stops a retired single-node profile"
+assert_false "retired single-node container is removed" \
+  container_ownership_inspect_local "$ID_RETIRED_SINGLE"
+
+# A retired cluster with only remote ranks left is still found and removed:
+# the named stop probes every confirmed node, never just the local one.
+ID_RETIRED_REMOTE=$(hex64 retired-remote-rank1)
+seed_state "$HEAD_STATE" '[]'
+seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-retired-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"retired-2node",
+    "io.pulsar.gb10.rank":"1","io.pulsar.gb10.world-size":"2"}}
+]))' "$ID_RETIRED_REMOTE")"
+: >"$STATE_DIR/rm.log"
+retired_rc=0
+env FAKE_DOCKER_STATE="$HEAD_STATE" FAKE_DOCKER_NODE=head \
+  FAKE_WORKER_STATE="$WORKER_STATE" \
+  FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+  FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+  FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
+  PULSAR_DOCKER="$SHIM_DIR/docker" PULSAR_SSH="$SHIM_DIR/ssh" \
+  CLUSTER_TOPOLOGY_FILE="$CLUSTER_TOPOLOGY_FILE" \
+  "$REPO_DIR/scripts/down.sh" retired-2node >/dev/null 2>&1 || retired_rc=$?
+assert_eq "$retired_rc" "0" "retired stop reaches remote-only cluster ranks"
+assert_false "remote retired rank is removed" \
+  container_ownership_inspect_remote "worker-host" "$ID_RETIRED_REMOTE"
+seed_state "$WORKER_STATE" '[]'
+
+# A surviving rank that moved to a different topology index after a
+# membership reconfirm is removed where it is OBSERVED, not by index math.
+ID_RETIRED_MOVED=$(hex64 retired-moved-rank1)
+seed_state "$WORKER_STATE" '[]'
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-retired-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"retired-2node",
+    "io.pulsar.gb10.rank":"1","io.pulsar.gb10.world-size":"2"}}
+]))' "$ID_RETIRED_MOVED")"
+: >"$STATE_DIR/rm.log"
+retired_rc=0
+env FAKE_DOCKER_STATE="$HEAD_STATE" FAKE_DOCKER_NODE=head \
+  FAKE_WORKER_STATE="$WORKER_STATE" \
+  FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+  FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+  FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
+  PULSAR_DOCKER="$SHIM_DIR/docker" PULSAR_SSH="$SHIM_DIR/ssh" \
+  CLUSTER_TOPOLOGY_FILE="$CLUSTER_TOPOLOGY_FILE" \
+  "$REPO_DIR/scripts/down.sh" retired-2node >/dev/null 2>&1 || retired_rc=$?
+assert_eq "$retired_rc" "0" "retired stop removes a rank at its observed node"
+assert_false "moved retired rank is removed where observed" \
+  container_ownership_inspect_local "$ID_RETIRED_MOVED"
+
+# An unobservable confirmed node blocks retired removal: an unobserved live
+# rank could be stranded.
+ID_RETIRED_BLOCKED=$(hex64 retired-blocked-rank0)
+seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
+  {"id":sys.argv[1],"name":"vllm-cluster-retired-2node","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"retired-2node",
+    "io.pulsar.gb10.rank":"0","io.pulsar.gb10.world-size":"2"}}
+]))' "$ID_RETIRED_BLOCKED")"
+echo down >"$STATE_DIR/worker.docker_status"
+retired_rc=0
+retired_out=$(env FAKE_DOCKER_STATE="$HEAD_STATE" FAKE_DOCKER_NODE=head \
+  FAKE_WORKER_STATE="$WORKER_STATE" \
+  FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+  FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+  FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
+  PULSAR_DOCKER="$SHIM_DIR/docker" PULSAR_SSH="$SHIM_DIR/ssh" \
+  CLUSTER_TOPOLOGY_FILE="$CLUSTER_TOPOLOGY_FILE" \
+  "$REPO_DIR/scripts/down.sh" retired-2node 2>&1) || retired_rc=$?
+echo ok >"$STATE_DIR/worker.docker_status"
+assert_eq "$retired_rc" "1" "unobservable node blocks retired removal"
+printf '%s' "$retired_out" | grep -q 'unobservable' \
+  && echo "OK   unobservable refusal names the blocked observation" \
+  || { echo "FAIL unobservable refusal names the blocked observation" >&2; fail=$((fail + 1)); }
+assert_true "retired rank left intact behind unobservable node" \
+  container_ownership_inspect_local "$ID_RETIRED_BLOCKED"
+seed_state "$HEAD_STATE" '[]'
+
+# A retired named stop never accepts hot retention flags.
+retired_rc=0
+env FAKE_DOCKER_STATE="$HEAD_STATE" FAKE_DOCKER_NODE=head \
+  FAKE_DOCKER_RM_LOG="$STATE_DIR/rm.log" \
+  FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
+  PULSAR_DOCKER="$SHIM_DIR/docker" PULSAR_SSH="$SHIM_DIR/ssh" \
+  CLUSTER_TOPOLOGY_FILE="$CLUSTER_TOPOLOGY_FILE" \
+  "$REPO_DIR/scripts/down.sh" retired-profile --pin-weights >/dev/null 2>&1 || retired_rc=$?
+assert_eq "$retired_rc" "2" "retired stop refuses hot retention flags"
 
 # Restore standalone topology for subsequent single-node sections.
 CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
@@ -1075,7 +1202,7 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-qwen3-1.7b","labels":{
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3-1.7b","io.pulsar.gb10.rank":"single"}},
   {"id":sys.argv[2],"name":"vllm-unknown","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"not-a-real-conf","io.pulsar.gb10.rank":"single"}}
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"not-a-real-conf","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_OP" "$ID_REF")"
 cat >"$SHIM_DIR/docker-rmfail-once" <<'SHIM'
 #!/usr/bin/env bash
@@ -1096,7 +1223,7 @@ export PULSAR_DOCKER_INNER="$SHIM_DIR/docker"
 export ID_OP_FAIL="$ID_OP"
 export PULSAR_DOCKER="$SHIM_DIR/docker-rmfail-once"
 assert_rc 1 "mixed: operational error sticky over later refusal" remove_all_stack_managed_local
-assert_true "mixed: refused unknown conf left intact" container_ownership_inspect_local "$ID_REF"
+assert_true "mixed: refused retired rank without world size left intact" container_ownership_inspect_local "$ID_REF"
 export PULSAR_DOCKER="$SHIM_DIR/docker"
 unset ID_OP_FAIL
 

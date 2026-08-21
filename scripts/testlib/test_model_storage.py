@@ -152,8 +152,8 @@ class ModelStorageContracts(unittest.TestCase):
         output = capture(model_storage.render_summary, healthy_report(), width=48)
         prose = normalized(output)
         self.assertIn("MODELS & STORAGE", output)
-        self.assertIn("replicated local model copies", prose)
-        self.assertIn("guided default", prose)
+        self.assertIn("model library", prose)
+        self.assertIn("only weight mechanism", prose)
         self.assertIn("read-only inventory", prose)
         self.assertIn("does not automatically refresh", prose)
         self.assertIn("start a model", prose)
@@ -253,7 +253,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("Next: scripts/model-library.sh", prose)
         self.assertIn("catalog refresh", prose)
 
-    def test_not_configured_preserves_replicated_availability(self) -> None:
+    def test_not_configured_keeps_running_services_unaffected(self) -> None:
         report = {
             "schema_version": 1,
             "kind": "pulsar-model-library-health",
@@ -270,7 +270,7 @@ class ModelStorageContracts(unittest.TestCase):
         output = capture(model_storage.render_summary, report, width=48)
         prose = normalized(output)
         self.assertIn("No cached distributed catalog", prose)
-        self.assertIn("Replicated serving remains available", prose)
+        self.assertIn("running services are unaffected", prose)
         self.assertIn("catalog refresh", prose)
 
     def test_about_states_storage_invariants(self) -> None:
@@ -279,8 +279,8 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("one durable home", prose)
         self.assertIn("only on non-home", prose)
         self.assertIn("still requires the durable home", prose)
-        self.assertIn("two-rank library-hot path is GA", prose)
-        self.assertIn("One-rank and legacy-unsealed uses remain experimental", prose)
+        self.assertIn("Every library scope", prose)
+        self.assertIn("supported (ADR 0006)", prose)
 
     def test_refresh_preview_is_explicit_bounded_and_width_aware(self) -> None:
         output = capture(
@@ -293,7 +293,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("preserves explicit exact-revision primary selections", prose)
         self.assertIn("fails closed", prose)
         self.assertIn("does not download, copy, prepare, start", prose)
-        self.assertIn("guided default", prose)
+        self.assertIn("delete model files", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
     def test_preparation_check_allows_only_current_reviewed_serving_profile(self) -> None:
@@ -350,13 +350,13 @@ class ModelStorageContracts(unittest.TestCase):
             width=48,
         )
         prose = normalized(output)
-        self.assertIn("PREPARE FOR TWO-RANK GA SERVING", output)
+        self.assertIn("PREPARE FOR TWO-RANK SERVING", output)
         self.assertIn("SSH over confirmed RoCE · 8 streams", prose)
         self.assertIn("fallback none", prose)
         self.assertIn("167 GiB on each non-home", prose)
         self.assertIn("full-verify the durable home", prose)
         self.assertIn("does not start or qualify a model", prose)
-        self.assertIn("does not change the guided default", prose)
+        self.assertIn("durable home remains required", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 
     def test_serving_check_requires_exact_ready_views(self) -> None:
@@ -398,7 +398,7 @@ class ModelStorageContracts(unittest.TestCase):
         preview = capture(
             model_storage.render_serving_preparation, ready, width=48
         )
-        self.assertIn("DISTRIBUTED CATALOG · EXPERIMENTAL ONE-RANK", preview)
+        self.assertIn("DISTRIBUTED CATALOG · ONE-RANK SERVING", preview)
 
         blocked = model_storage.serving_preparation_check(
             report, profiles, "one-node-sealed", target_rank=0
@@ -407,16 +407,15 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertEqual(blocked["home_rank"], 1)
         self.assertIn("durable-home node", " ".join(blocked["blockers"]))
 
-    def test_serving_preview_preserves_two_rank_ga_claim_boundary(self) -> None:
+    def test_serving_preview_preserves_claim_boundary(self) -> None:
         check = model_storage.serving_preparation_check(
             healthy_report(), serving_profiles(), "deepseek-v4-flash"
         )
         output = capture(model_storage.render_serving_preparation, check, width=48)
         prose = normalized(output)
-        self.assertIn("DISTRIBUTED CATALOG · TWO-RANK GA · EXPLICIT", output)
+        self.assertIn("DISTRIBUTED CATALOG · TWO-RANK SERVING", output)
         self.assertIn("exact, witnessed runtime views", prose)
         self.assertIn("durable home remains required", prose)
-        self.assertIn("not a promoted default", prose)
         self.assertIn("does not establish model qualification", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
 

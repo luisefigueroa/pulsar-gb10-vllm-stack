@@ -15,7 +15,6 @@
 #   WIZARD_SKIP_WEIGHTS=1          skip weight presence
 #   WIZARD_SKIP_IMAGE=1            skip image presence
 #   WIZARD_SKIP_FABRIC_PROMPT=1    skip topology discovery prompt
-#   WIZARD_SKIP_STORAGE_PROMPT=1   force replicated policy in legacy UI tests
 #   WIZARD_TOPOLOGY_NODES=N         test-only confirmed capacity override
 #   WIZARD_INVENTORY_JSON=path     fixed inventory JSON (or cmd below)
 #   WIZARD_INVENTORY_CMD=path      executable receiving no args → inventory JSON
@@ -25,7 +24,7 @@
 #   WIZARD_API_HEALTHY=0|1         force API-healthy probe for selected profile
 #   WIZARD_LIST_MODELS_JSON=path   fixed list-models --serving --json
 #   WIZARD_CHECK_WEIGHTS_CMD=path  executable: <model> --json
-#   WIZARD_PULL_WEIGHTS_CMD=path   executable: <model> --yes
+#   WIZARD_SKIP_LIBRARY_CHECK=1    tests only: assume library views are ready
 #   WIZARD_MODEL_LIBRARY_HEALTH_CMD=path  executable: --json
 #   WIZARD_MODEL_LIBRARY_PREPARE_CMD=path executable: prepare <model> ...
 #   WIZARD_UP_CMD / WIZARD_DOWN_CMD / WIZARD_STATUS_CMD / WIZARD_DOCTOR_CMD
@@ -91,14 +90,6 @@ cmd_check_weights() {
     "$WIZARD_CHECK_WEIGHTS_CMD" "$@"
   else
     "$REPO_DIR/scripts/check-weights.sh" "$@"
-  fi
-}
-
-cmd_pull_weights() {
-  if [ -n "${WIZARD_PULL_WEIGHTS_CMD:-}" ]; then
-    "$WIZARD_PULL_WEIGHTS_CMD" "$@"
-  else
-    "$REPO_DIR/scripts/pull-weights.sh" "$@"
   fi
 }
 
@@ -227,21 +218,13 @@ adopt_resolved_single_node_placement() {
   PLACEMENT_ARGS=(--node "$PLACEMENT_SELECTOR")
 }
 
-WEIGHT_SOURCE=replicated
-WEIGHT_ARGS=()
 LIBRARY_CHECK_JSON=""
 
-reset_weight_source() {
-  WEIGHT_SOURCE=replicated
-  WEIGHT_ARGS=()
-  LIBRARY_CHECK_JSON=""
-}
-
-library_hot_scope_label() {
+library_scope_label() {
   if [ "$NODES" -eq 2 ]; then
-    printf '%s\n' "two-rank GA · explicit"
+    printf '%s\n' "two-rank"
   else
-    printf '%s\n' "experimental one-rank · outside two-rank GA"
+    printf '%s\n' "one-rank"
   fi
 }
 
@@ -284,128 +267,202 @@ render_library_serving_check() {
     serving-preview --profile "$NAME" "${target_args[@]}"
 }
 
-choose_replicated_or_leave() {
+choose_leave() {
   local pick
-  pick=$(choose "Distributed catalog is not being used — what next?" \
-    "Use replicated local copies (recommended)" \
+  pick=$(choose "Model files are not ready for $NAME — what next?" \
     "Choose another model" \
     "Exit")
   case "$pick" in
-    Use*) reset_weight_source; return 0 ;;
     Choose*) return 2 ;;
     *) exit 0 ;;
   esac
 }
 
-select_weight_source() {
-  reset_weight_source
-  [ "$(model_source_kind)" = hf ] || return 0
-  if [ "${WIZARD_SKIP_STORAGE_PROMPT:-0}" = 1 ]; then
-    return 0
-  fi
-  if [ -z "${EXPECTED_MODEL_SEAL:-}" ] || [ "$standalone_capacity" = 1 ]; then
-    render_human_section "WEIGHT STORAGE" \
-      "Mode" "replicated local copies · guided default" \
-      "Catalog" "unavailable for this profile or standalone placement"
-    return 0
-  fi
-
-  local choice state transport streams target_rank home_rank prepare_rc=0
-  local scope_label choice_label
-  local -a node_args=()
-  scope_label=$(library_hot_scope_label)
-  choice_label="Distributed catalog ($scope_label)"
-  render_human_section "WEIGHT STORAGE" \
-    "Default" "replicated local copies on every serving node" \
-    "Optional" "distributed catalog · $scope_label" \
-    "Fallback" "none; the selected policy must pass its own checks"
-  choice=$(choose "Choose model storage for $NAME" \
-    "Replicated local copies (recommended)" \
-    "$choice_label" \
-    "Choose another model")
+# One-node serving must use the durable-home rank. No-op when the current
+# placement already is that rank or home_rank is unknown.
+offer_one_node_home_placement() {
+  local home_rank="${1:-}"
+  local choice
+  [ "$NODES" -eq 1 ] || return 0
+  [[ "$home_rank" =~ ^[0-9]+$ ]] || return 0
+  [ "$home_rank" != "$SINGLE_NODE_INDEX" ] || return 0
+  choice=$(choose "One-node serving must use the durable-home node — what next?" \
+    "Use the durable-home node (recommended)" \
+    "Choose another model" \
+    "Exit")
   case "$choice" in
-    Replicated*) return 0 ;;
+    Use*)
+      resolve_single_node_placement "$home_rank" \
+        || die "the catalog durable-home node is no longer a valid confirmed placement"
+      adopt_resolved_single_node_placement
+      log "selected the durable-home node for one-rank library serving: $PLACEMENT_HOSTNAME"
+      return 0
+      ;;
     Choose*) return 2 ;;
+    *) exit 0 ;;
   esac
+}
 
-  if ! collect_library_serving_check; then
-    warn "distributed catalog readiness could not be established"
-    choose_replicated_or_leave
+# Sealed profile without a durable home: guided one-time acquisition.
+offer_library_home_add() {
+  local -a node_args=()
+  if [ "$NODES" -eq 1 ]; then
+    node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
+  fi
+  if ! confirm "No durable home exists for $NAME. Download it into the model library now?" no; then
+    log "library acquisition declined; no model files were changed"
+    return 1
+  fi
+  log "acquiring one durable home (full verification before publication)…"
+  cmd_model_library_prepare home add "$NAME" "${node_args[@]}" --yes \
+    || { warn "library acquisition failed; no model was started"; return 1; }
+  cmd_model_library_prepare catalog refresh \
+    || { warn "catalog refresh failed after acquisition"; return 1; }
+  return 0
+}
+
+# Confirm then prepare. Exit 0 on success. Exit 2 if the operator leaves.
+# Any other nonzero is a preparation failure; the caller warns and leaves.
+confirm_library_prepare() {
+  local scope_label prepare_rc=0
+  scope_label=$(library_scope_label)
+  if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
+    log "model preparation declined; no model files were changed"
+    choose_leave
     return $?
   fi
+  log "preparing exact $scope_label runtime views; serving is not started yet…"
+  set +e
+  cmd_model_library_prepare prepare "$NAME" --backend copy "$@" --yes
+  prepare_rc=$?
+  set -e
+  return "$prepare_rc"
+}
+
+refresh_library_serving_check() {
+  collect_library_serving_check \
+    || die "catalog readiness became unavailable after $1"
   echo
   render_library_serving_check
-  state=$(json_field "$LIBRARY_CHECK_JSON" state)
-  if [ "$state" = blocked ]; then
-    home_rank=$(json_field "$LIBRARY_CHECK_JSON" home_rank)
-    if [ "$NODES" -eq 1 ] && [[ "$home_rank" =~ ^[0-9]+$ ]] \
-        && [ "$home_rank" != "$SINGLE_NODE_INDEX" ]; then
-      choice=$(choose "Catalog serving must use the durable-home node — what next?" \
-        "Use the durable-home node for this experimental one-rank service" \
-        "Use replicated local copies on the selected node (recommended)" \
-        "Choose another model" \
-        "Exit")
-      case "$choice" in
-        Use\ the\ durable-home*)
-          resolve_single_node_placement "$home_rank" \
-            || die "the catalog durable-home node is no longer a valid confirmed placement"
-          adopt_resolved_single_node_placement
-          log "selected durable-home node for experimental one-rank catalog serving: $PLACEMENT_HOSTNAME"
-          collect_library_serving_check \
-            || die "catalog readiness became unavailable after changing placement"
-          echo
-          render_library_serving_check
-          state=$(json_field "$LIBRARY_CHECK_JSON" state)
-          ;;
-        Use\ replicated*) reset_weight_source; return 0 ;;
-        Choose*) return 2 ;;
-        *) exit 0 ;;
-      esac
-    fi
+}
+
+# The model library is the only weight mechanism (ADR 0006). Establish exact
+# ready runtime views (durable home + prepared hot) for every selected rank,
+# or return 2 (choose another model) / exit without changing model files.
+# Sealed vs unsealed is identity data: the catalog serving-check requires a
+# reviewed seal, so unsealed profiles observe prepared views directly.
+# Unsealed acquisition remains the source-attested CLI, not wizard home add.
+confirm_library_serving() {
+  local state transport streams home_rank home_json placement_index
+  local scope_label identity_label prepare_rc=0
+  local -a node_args=() transport_args=()
+  LIBRARY_CHECK_JSON=""
+  [ "$(model_source_kind)" = hf ] \
+    || die "non-HF model profiles are not servable (ADR 0006)"
+  if [ "${WIZARD_SKIP_LIBRARY_CHECK:-0}" = 1 ]; then
+    log "skipping library readiness (WIZARD_SKIP_LIBRARY_CHECK=1)"
+    return 0
   fi
-  if [ "$state" = blocked ]; then
-    choose_replicated_or_leave
-    return $?
+  scope_label=$(library_scope_label)
+  if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
+    identity_label="reviewed exact seal"
+  else
+    identity_label="legacy-unsealed · full verification without a reviewed seal"
   fi
-  if [ "$state" = needs-preparation ]; then
-    if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
-      log "distributed catalog preparation declined; no model files were changed"
-      choose_replicated_or_leave
-      return $?
-    fi
-    transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)
-    streams=$(json_field "$LIBRARY_CHECK_JSON" copy_streams)
-    target_rank=""
-    if [ "$NODES" -eq 1 ]; then
-      target_rank="$PLACEMENT_SELECTOR"
-      [ -n "$target_rank" ] || target_rank="$SINGLE_NODE_INDEX"
-      node_args=(--node "$target_rank")
-    fi
-    log "preparing exact $scope_label runtime views; serving is not started yet…"
-    set +e
-    cmd_model_library_prepare prepare "$NAME" \
-      --backend copy --transport "$transport" --copy-streams "$streams" \
-      "${node_args[@]}" --yes
-    prepare_rc=$?
-    set -e
-    if [ "$prepare_rc" -ne 0 ]; then
-      warn "model preparation failed (status $prepare_rc); serving was not started"
-      choose_replicated_or_leave
-      return $?
-    fi
+  render_human_section "MODEL FILES" \
+    "Mechanism" "model library · $scope_label" \
+    "Identity" "$identity_label" \
+    "Fallback" "none; readiness must pass its own checks"
+
+  if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
     if ! collect_library_serving_check; then
-      die "preparation returned success, but current catalog readiness is unavailable; model was not started"
+      warn "distributed catalog readiness could not be established"
+      choose_leave
+      return $?
     fi
+    echo
+    render_library_serving_check
     state=$(json_field "$LIBRARY_CHECK_JSON" state)
-    if [ "$state" != ready ]; then
-      echo
-      render_library_serving_check
-      die "preparation did not publish exact ready views on every selected rank; model was not started"
+    if [ "$state" = blocked ]; then
+      placement_index="${SINGLE_NODE_INDEX-}"
+      offer_one_node_home_placement \
+        "$(json_field "$LIBRARY_CHECK_JSON" home_rank)" || return $?
+      if [ "${SINGLE_NODE_INDEX-}" != "$placement_index" ]; then
+        refresh_library_serving_check "changing placement"
+        state=$(json_field "$LIBRARY_CHECK_JSON" state)
+      fi
     fi
+    if [ "$state" = blocked ] \
+        && printf '%s' "$LIBRARY_CHECK_JSON" \
+          | grep -q "no current primary durable home"; then
+      if offer_library_home_add; then
+        refresh_library_serving_check "acquisition"
+        state=$(json_field "$LIBRARY_CHECK_JSON" state)
+      fi
+    fi
+    if [ "$state" = blocked ]; then
+      choose_leave
+      return $?
+    fi
+    if [ "$state" = needs-preparation ]; then
+      transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)
+      streams=$(json_field "$LIBRARY_CHECK_JSON" copy_streams)
+      if [ "$NODES" -eq 1 ]; then
+        node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
+      fi
+      confirm_library_prepare --transport "$transport" --copy-streams "$streams" \
+        "${node_args[@]}" || {
+        prepare_rc=$?
+        [ "$prepare_rc" -eq 2 ] && return 2
+        warn "model preparation failed (status $prepare_rc); serving was not started"
+        choose_leave
+        return $?
+      }
+      if ! collect_library_serving_check; then
+        die "preparation returned success, but current catalog readiness is unavailable; model was not started"
+      fi
+      state=$(json_field "$LIBRARY_CHECK_JSON" state)
+      if [ "$state" != ready ]; then
+        echo
+        render_library_serving_check
+        die "preparation did not publish exact ready views on every selected rank; model was not started"
+      fi
+    fi
+    log "library runtime views are ready ($scope_label; no fallback)"
+    return 0
   fi
-  WEIGHT_SOURCE=library-hot
-  WEIGHT_ARGS=(--weight-source library-hot)
-  log "selected distributed catalog storage ($scope_label; no fallback)"
+
+  if [ "$NODES" -eq 1 ]; then
+    home_json=$(cmd_model_library_prepare resolve "$NAME" --json 2>/dev/null) \
+      || home_json=""
+    home_rank=$(printf '%s' "$home_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["home"]["rank"])' 2>/dev/null) \
+      || home_rank=""
+    offer_one_node_home_placement "$home_rank" || return $?
+  fi
+  if cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null 2>&1; then
+    log "library runtime views are ready ($scope_label; no fallback)"
+    return 0
+  fi
+  if [ "$NODES" -eq 1 ]; then
+    node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
+  else
+    transport_args=(--transport ssh-roce --copy-streams 8)
+  fi
+  confirm_library_prepare "${transport_args[@]}" "${node_args[@]}" || {
+    prepare_rc=$?
+    [ "$prepare_rc" -eq 2 ] && return 2
+    warn "model preparation failed (status $prepare_rc); serving was not started"
+    warn "if no durable home exists yet, acquire one first:"
+    warn "  scripts/model-library.sh home add $NAME --revision <selector> --plan --json"
+    warn "  scripts/model-library.sh home add $NAME --revision <exact-commit> --yes"
+    choose_leave
+    return $?
+  }
+  if ! cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null 2>&1; then
+    die "preparation did not publish exact ready views on every selected rank; model was not started"
+  fi
+  log "library runtime views are ready ($scope_label; no fallback)"
   return 0
 }
 
@@ -635,49 +692,6 @@ PY
   log "node-id: $PLACEMENT_NODE_ID"
 }
 
-
-render_weight_status() {
-  local json="$1" hostnames
-  hostnames=$(printf '%s\n' "${CLUSTER_NODE_HOSTNAMES[@]:-}")
-  WEIGHTS_JSON="$json" NODE_HOSTNAMES="$hostnames" python3 - <<'PY'
-import json
-import os
-import socket
-
-from scripts.terminal_format import TerminalWriter
-
-data = json.loads(os.environ.get("WEIGHTS_JSON") or "{}")
-hostnames = os.environ.get("NODE_HOSTNAMES", "").splitlines()
-friendly = {
-    "ok": "ready",
-    "missing": "missing",
-    "partial": "incomplete",
-    "unreachable": "unreachable",
-    "unconfigured": "not confirmed",
-    "nfs-unmounted": "NFS not mounted",
-}
-
-term = TerminalWriter()
-term.emit("MODEL FILES REQUIRED")
-term.field("Model", data.get("model") or "?")
-for index, item in enumerate(data.get("ranks") or []):
-    rank = int(item.get("rank") or 0)
-    hostname = item.get("hostname")
-    if not hostname and rank < len(hostnames) and hostnames[rank]:
-        hostname = hostnames[rank]
-    elif not hostname and rank == 0:
-        hostname = socket.gethostname().split(".", 1)[0]
-    elif not hostname:
-        hostname = f"cluster node {rank + 1}"
-    if rank == 0 and not item.get("remote"):
-        hostname += " (this node)"
-    state = str(item.get("state") or "unknown")
-    term.field(
-        "Status" if index == 0 else "",
-        f"{hostname} · {friendly.get(state, state)}",
-    )
-PY
-}
 
 render_model_selection() {
   local rank label node
@@ -1000,7 +1014,6 @@ analyze_inventory() {
   local out
   out=$(
     INV_JSON="$inv" NAME="$NAME" PORT="$PORT" NODES="$NODES" \
-      WEIGHT_SOURCE="$WEIGHT_SOURCE" \
       TARGET_NODE_KEY="$PLACEMENT_NODE_KEY" SERVED_NAME="$SERVED_NAME" \
       python3 - <<'PY'
 import json
@@ -1008,7 +1021,7 @@ import os
 
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 name = os.environ["NAME"]
-selected_weight_source = os.environ.get("WEIGHT_SOURCE") or "replicated"
+selected_weight_source = "library-hot"
 port = int(os.environ.get("PORT") or 8000)
 target_count = int(os.environ.get("NODES") or 1)
 selected_node = os.environ.get("TARGET_NODE_KEY") or "head"
@@ -1290,9 +1303,9 @@ prompt_spec_decode() {
 final_confirm_start() {
   local msg
   if [ "${#PENDING_STOP[@]}" -gt 0 ]; then
-    msg="Stop ${PENDING_STOP[*]}, recheck, then start $NAME on $PLACEMENT_HOSTNAME with $WEIGHT_SOURCE weights?"
+    msg="Stop ${PENDING_STOP[*]}, recheck, then start $NAME on $PLACEMENT_HOSTNAME with library weights?"
   else
-    msg="Start $NAME on $PLACEMENT_HOSTNAME with $WEIGHT_SOURCE weights?"
+    msg="Start $NAME on $PLACEMENT_HOSTNAME with library weights?"
   fi
   confirm "$msg"
 }
@@ -1346,23 +1359,12 @@ capture_running_service_transaction() {
   local conf="${1:?profile required}" inventory="$2"
   local inventory_file="$WIZARD_WORK_DIR/replacement-inventory.json"
   local health_file="$WIZARD_WORK_DIR/replacement-health.json"
-  local contract_id source
+  local contract_id
   printf '%s\n' "$inventory" >"$inventory_file"
   contract_id=$(launch_contract_id_for_profile "$conf")
-  source=$(INV_FILE="$inventory_file" PROFILE="$conf" python3 -c '
-import json, os
-with open(os.environ["INV_FILE"], encoding="utf-8") as f:
-    inv = json.load(f)
-items = [s for s in inv.get("services", []) if s.get("conf") == os.environ["PROFILE"] and s.get("state") == "running"]
-print(items[0].get("weight_source") or "" if len(items) == 1 else "")
-')
-  local -a health_args=()
-  if [ "$source" = library-hot ]; then
-    collect_transaction_health "$health_file"
-    health_args=(--library-health "$health_file")
-  fi
+  collect_transaction_health "$health_file"
   if ! cmd_replacement_transaction capture \
-      --inventory "$inventory_file" "${health_args[@]}" \
+      --inventory "$inventory_file" --library-health "$health_file" \
       --profile "$conf" --launch-contract-id "$contract_id" \
       --output "$REPLACEMENT_TRANSACTION_FILE" >/dev/null; then
     die "the running service contract cannot be captured exactly; it remains running. Restart it once with current Pulsar labels or use direct lifecycle commands after reviewing ./pulsar inventory"
@@ -1410,13 +1412,51 @@ execute_pending_stops() {
     [ "${#PENDING_STOP[@]}" -eq 1 ] \
       || die "replacement mixes running and stale services; no service was stopped"
     conf="${running[0]}"
+    local running_source identity_status stoppable
+    local -a svc_fields=()
+    mapfile -t svc_fields < <(INV_JSON="$inventory" PROFILE="$conf" python3 -c '
+import json, os
+inv = json.loads(os.environ["INV_JSON"])
+items = [s for s in inv.get("services", []) if s.get("conf") == os.environ["PROFILE"] and s.get("state") == "running"]
+item = items[0] if len(items) == 1 else {}
+print(item.get("weight_source") or "")
+print(item.get("model_identity_status") or "")
+print("1" if item.get("complete") is True and item.get("safe_to_stop") is True else "0")
+')
+    [ "${#svc_fields[@]}" -eq 3 ] || die "running service inventory is incomplete; no service was stopped"
+    running_source="${svc_fields[0]}"
+    identity_status="${svc_fields[1]}"
+    stoppable="${svc_fields[2]}"
+    # Exact rollback needs a reviewed identity match. Pre-library launches and
+    # library-hot services without that match (legacy-unsealed / unvalidated)
+    # stay switchable via a guarded stop, with no restore promise.
+    if [ "$running_source" != library-hot ] || [ "$identity_status" != match ]; then
+      [ "$stoppable" = 1 ] || {
+        if [ "$running_source" != library-hot ]; then
+          die "the running pre-library service is incomplete or unobservable; no service was stopped"
+        fi
+        die "the running library-hot service is incomplete or unobservable; no service was stopped"
+      }
+      if [ "$running_source" != library-hot ]; then
+        warn "stopping a pre-library service; exact rollback is unavailable for it"
+      else
+        warn "stopping a library-hot service without a reviewed identity match; exact rollback is unavailable for it"
+      fi
+      down_args=()
+      if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
+        down_args=("${PLACEMENT_ARGS[@]}")
+      fi
+      log "stopping stack-managed conf=$conf…"
+      cmd_down "$conf" "${down_args[@]}" \
+        || die "stop failed for $conf; inspect with ./pulsar inventory"
+      STOPPED_CONFS+=("$conf")
+      PENDING_STOP=()
+      return 0
+    fi
     capture_running_service_transaction "$conf" "$inventory"
     log "stopping stack-managed conf=$conf from its captured placement…"
-    down_args=("${TRANSACTION_NODE_ARGS[@]}")
-    if [ "$TRANSACTION_SOURCE" = library-hot ]; then
-      down_args+=(--pin-weights)
-      log "prepared views remain retained until replacement or exact rollback succeeds"
-    fi
+    down_args=("${TRANSACTION_NODE_ARGS[@]}" --pin-weights)
+    log "prepared views remain retained until replacement or exact rollback succeeds"
     if ! cmd_down "$conf" "${down_args[@]}"; then
       die "stop failed for $conf; transaction and any temporary pin were retained for recovery"
     fi
@@ -1441,28 +1481,21 @@ execute_pending_stops() {
 prepare_exact_rollback() {
   local health_file="$WIZARD_WORK_DIR/rollback-health.json" contract_id inventory
   local inventory_file="$WIZARD_WORK_DIR/rollback-inventory.json"
-  local -a health_args=()
   load_transaction_summary
+  [ "$TRANSACTION_SOURCE" = library-hot ] \
+    || die "saved transaction is not a library-hot contract; archive it instead of rollback"
   NAME="$TRANSACTION_PREVIOUS_PROFILE"
   load_conf "$NAME"
   contract_id=$(loaded_launch_contract_id)
   collect_inventory_json_or_die inventory
   printf '%s\n' "$inventory" >"$inventory_file"
-  if [ "$TRANSACTION_SOURCE" = library-hot ]; then
-    collect_transaction_health "$health_file"
-    health_args=(--library-health "$health_file")
-  fi
+  collect_transaction_health "$health_file"
   cmd_replacement_transaction verify-rollback \
     --path "$REPLACEMENT_TRANSACTION_FILE" \
     --launch-contract-id "$contract_id" --inventory "$inventory_file" \
-    "${health_args[@]}" >/dev/null \
+    --library-health "$health_file" >/dev/null \
     || die "the captured service contract cannot be restored exactly; transaction and retained views were preserved"
 
-  reset_weight_source
-  if [ "$TRANSACTION_SOURCE" = library-hot ]; then
-    WEIGHT_SOURCE=library-hot
-    WEIGHT_ARGS=(--weight-source library-hot)
-  fi
   case "$TRANSACTION_SPEC_DECODE" in
     on) SPEC_ARGS=(--spec-decode) ;;
     off) SPEC_ARGS=(--no-spec-decode) ;;
@@ -1492,7 +1525,7 @@ finalize_replacement_transaction() {
   load_transaction_summary
   transaction_node_args
   [ -z "$TRANSACTION_NODE_ID" ] || node_hint=" --node $TRANSACTION_NODE_ID"
-  if [ "$TRANSACTION_SOURCE" = library-hot ] && [ "$TRANSACTION_TEMP_PIN" = 1 ]; then
+  if [ "$TRANSACTION_TEMP_PIN" = 1 ]; then
     log "restoring unpinned retention policy for the previous service…"
     if ! cmd_model_library_prepare unpin "$TRANSACTION_PREVIOUS_PROFILE" \
         "${TRANSACTION_NODE_ARGS[@]}"; then
@@ -1500,8 +1533,7 @@ finalize_replacement_transaction() {
       warn "remediation: scripts/model-library.sh unpin $TRANSACTION_PREVIOUS_PROFILE$node_hint"
       cleanup_rc=1
     elif [ "$outcome" = replacement ] \
-        && { [ "$NAME" != "$TRANSACTION_PREVIOUS_PROFILE" ] \
-          || [ "$WEIGHT_SOURCE" != library-hot ]; }; then
+        && [ "$NAME" != "$TRANSACTION_PREVIOUS_PROFILE" ]; then
       if ! cmd_model_library_prepare purge-hot "$TRANSACTION_PREVIOUS_PROFILE" \
           "${TRANSACTION_NODE_ARGS[@]}" --yes; then
         warn "the previous unpinned hot view could not be purged"
@@ -1540,20 +1572,73 @@ offer_restart_previous() {
   esac
 }
 
+recover_incompatible_transaction() {
+  local report="$1"
+  local reason profile service_state archive_cmd detail
+  reason=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "")')
+  profile=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("profile") or "")')
+  service_state=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("service") or "unknown")')
+  archive_cmd=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("archive_command") or "")')
+  detail=$(printf '%s' "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("detail") or "")')
+  [ -n "$archive_cmd" ] || archive_cmd="python3 scripts/replacement_transaction.py archive --path $REPLACEMENT_TRANSACTION_FILE --yes"
+  warn "saved replacement transaction cannot be restored exactly"
+  [ -z "$detail" ] || log "$detail"
+  if [ "$reason" = replicated ]; then
+    log "this record predates the library-only decision (ADR 0006)"
+  fi
+  if [ -n "$profile" ]; then
+    log "saved profile $profile · inventory shows that service as $service_state"
+  else
+    log "saved profile could not be read · inventory was not used to identify a previous service"
+  fi
+  log "exact rollback is unavailable; archive the leftover transaction to continue"
+  log "live path: $REPLACEMENT_TRANSACTION_FILE"
+  log "noninteractive remediation: $archive_cmd"
+  if ! confirm "Archive leftover replacement transaction and continue?"; then
+    die "leftover transaction was left in place; rerun $archive_cmd after inspecting ./pulsar inventory"
+  fi
+  if ! cmd_replacement_transaction archive --path "$REPLACEMENT_TRANSACTION_FILE" --yes >/dev/null; then
+    die "could not archive the leftover transaction; live path $REPLACEMENT_TRANSACTION_FILE"
+  fi
+  log "leftover transaction archived; wizard can continue without exact rollback"
+  return 0
+}
+
 recover_replacement_transaction() {
   [ -f "$REPLACEMENT_TRANSACTION_FILE" ] || return 0
   local inventory inventory_file="$WIZARD_WORK_DIR/recovery-inventory.json"
-  local result state
+  local result state rc=0
   warn "an unfinished serving replacement transaction was found"
   collect_inventory_json_or_die inventory
   printf '%s\n' "$inventory" >"$inventory_file"
-  if ! result=$(cmd_replacement_transaction recovery-state \
-      --path "$REPLACEMENT_TRANSACTION_FILE" --inventory "$inventory_file"); then
-    warn "replacement recovery is ambiguous; no lifecycle action was taken"
-    log "remediation: inspect ./pulsar inventory"
-    die "resolve partial or newly running managed services directly, then rerun ./pulsar wizard"
+  result=$(cmd_replacement_transaction recovery-state \
+      --path "$REPLACEMENT_TRANSACTION_FILE" --inventory "$inventory_file") || rc=$?
+  if ! printf '%s' "$result" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; then
+    warn "replacement recovery did not return a usable report; no lifecycle action was taken"
+    log "live path: $REPLACEMENT_TRANSACTION_FILE"
+    log "noninteractive remediation: python3 scripts/replacement_transaction.py archive --path $REPLACEMENT_TRANSACTION_FILE --yes"
+    die "inspect ./pulsar inventory, then archive or resolve the leftover transaction"
   fi
   state=$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+  case "$state" in
+    incompatible)
+      recover_incompatible_transaction "$result"
+      return 0
+      ;;
+    previous-running|stopped)
+      [ "$rc" -eq 0 ] || die "replacement recovery state is inconsistent"
+      ;;
+    ambiguous)
+      warn "replacement recovery is ambiguous; no lifecycle action was taken"
+      log "live path: $REPLACEMENT_TRANSACTION_FILE"
+      log "remediation: inspect ./pulsar inventory"
+      log "if exact rollback is impossible: python3 scripts/replacement_transaction.py archive --path $REPLACEMENT_TRANSACTION_FILE --yes"
+      die "resolve partial or newly running managed services directly, then rerun ./pulsar wizard"
+      ;;
+    *)
+      die "replacement recovery state is unsupported"
+      ;;
+  esac
   load_transaction_summary
   PREVIOUS_PROFILE="$TRANSACTION_PREVIOUS_PROFILE"
   case "$state" in
@@ -1565,15 +1650,14 @@ recover_replacement_transaction() {
       return 0
       ;;
     stopped)
-      local rc=0
-      offer_restart_previous || rc=$?
-      case "$rc" in
+      local restart_rc=0
+      offer_restart_previous || restart_rc=$?
+      case "$restart_rc" in
         0) return 10 ;;
         2) return 0 ;;
         *) die "replacement recovery selection failed" ;;
       esac
       ;;
-    *) die "replacement recovery state is unsupported" ;;
   esac
 }
 
@@ -1712,9 +1796,9 @@ plan_selected_model() {
     # ----- same profile running (complete managed) -----
     if [ "$same_running" = "True" ]; then
       if [ "$same_weight_source_matches" != "True" ]; then
-        log "selected profile is running with weights=$same_weight_source, not $WEIGHT_SOURCE"
-        pick=$(choose "Same model uses another storage policy — what next?" \
-          "Restart with $WEIGHT_SOURCE weights (stop after final confirm)" \
+        log "running service predates the library-only decision (weights=$same_weight_source)"
+        pick=$(choose "Same model runs a pre-library launch — what next?" \
+          "Restart with library weights (stop after final confirm)" \
           "Keep current service and exit" \
           "Show status" \
           "Choose another model")
@@ -1754,7 +1838,7 @@ plan_selected_model() {
           if [ "$prc" = 2 ]; then return 2; fi
           if [ "$prc" = 10 ]; then return 10; fi
           if [ "$prc" != 0 ]; then exit 1; fi
-          if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
+          if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
             warn "launch failed after restart of $NAME"
             local rc=0
             offer_restart_previous || rc=$?
@@ -2002,7 +2086,7 @@ plan_selected_model() {
     if [ "$prc" != 0 ]; then exit 1; fi
 
     log "launching $NAME…"
-    if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
+    if ! cmd_up "$NAME" "${PLACEMENT_ARGS[@]}" "${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}" "${ACCEPT[@]+"${ACCEPT[@]}"}" --yes; then
       warn "launch failed for $NAME"
       if [ -n "${PREVIOUS_PROFILE:-}" ] && [ -f "$REPLACEMENT_TRANSACTION_FILE" ]; then
         local rc=0
@@ -2047,33 +2131,35 @@ else
 fi
 
 reload_cluster_topology || die "confirmed topology is invalid"
-if [ "${WIZARD_SKIP_FABRIC_PROMPT:-0}" != 1 ] \
+if [ "$CLUSTER_TOPOLOGY_COUNT" -eq 0 ]; then
+  # Serving requires a confirmed topology manifest (ADR 0006): the model
+  # library binds durable homes and hot views to confirmed topology identity,
+  # and topology identity is never synthesized.
+  log "no confirmed topology manifest exists; serving requires one (one machine is fine)"
+  if [ "${WIZARD_SKIP_FABRIC_PROMPT:-0}" = 1 ] \
+      || ! confirm "Discover and confirm topology membership now? (required before serving)"; then
+    die "serving requires a confirmed topology manifest: run scripts/detect-fabric.sh --write-topology"
+  fi
+  "$REPO_DIR/scripts/detect-fabric.sh" --write-topology
+  reload_cluster_topology || die "newly written topology failed validation"
+  [ "$CLUSTER_TOPOLOGY_COUNT" -ge 1 ] \
+    || die "topology confirmation did not record any node; rerun scripts/detect-fabric.sh --write-topology"
+elif [ "${WIZARD_SKIP_FABRIC_PROMPT:-0}" != 1 ] \
     && [ "$CLUSTER_TOPOLOGY_COUNT" -le 1 ]; then
-  if confirm "Discover and confirm GB10 cluster membership? (single-node remains available if skipped)"; then
+  if confirm "Discover and confirm additional GB10 cluster membership? (one confirmed node remains available if skipped)"; then
     "$REPO_DIR/scripts/detect-fabric.sh" --write-topology
     reload_cluster_topology || die "newly written topology failed validation"
   fi
 fi
-standalone_capacity=0
 if [ -n "${WIZARD_TOPOLOGY_NODES:-}" ]; then
   topology_capacity="$WIZARD_TOPOLOGY_NODES"
-elif [ "$CLUSTER_TOPOLOGY_COUNT" -eq 0 ]; then
-  # No manifest is a supported standalone state. Do not synthesize confirmed
-  # topology identity merely to make the local one-node path available.
-  topology_capacity=1
-  standalone_capacity=1
 else
   topology_capacity="$CLUSTER_TOPOLOGY_COUNT"
 fi
 [[ "$topology_capacity" =~ ^[1-9][0-9]*$ ]] \
   || die "invalid confirmed topology capacity '$topology_capacity'"
-if [ "$standalone_capacity" = 1 ]; then
-  topology_context="standalone local node"
-  log "1 standalone local node available · no cluster membership confirmed"
-else
-  topology_context="${topology_capacity} confirmed nodes available"
-  log "$topology_capacity confirmed nodes available · all fitting serving profiles shown"
-fi
+topology_context="${topology_capacity} confirmed nodes available"
+log "$topology_capacity confirmed nodes available · all fitting serving profiles shown"
 
 recovery_rc=0
 recover_replacement_transaction || recovery_rc=$?
@@ -2141,9 +2227,6 @@ for model in models:
 "
   )
   if [ "${#choices[@]}" -eq 0 ]; then
-    if [ "$standalone_capacity" = 1 ]; then
-      die "no single-node serving profile is available for standalone local use"
-    fi
     die "no serving profile fits the $topology_capacity confirmed node(s)"
   fi
 
@@ -2161,7 +2244,7 @@ for model in models:
   render_model_selection
 
   source_rc=0
-  select_weight_source || source_rc=$?
+  confirm_library_serving || source_rc=$?
   if [ "$source_rc" = 2 ]; then
     log "choose another model — returning to selection"
     continue
@@ -2170,46 +2253,10 @@ for model in models:
 
   if [ "${WIZARD_SKIP_WEIGHTS:-0}" != 1 ]; then
     log "checking weights…"
-    weights_json=""
-    weights_rc=0
-    weights_json=$(cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" \
-      "${WEIGHT_ARGS[@]}" --json) || weights_rc=$?
-    if [ "$weights_rc" != 0 ]; then
-      if ! probe_json_has_state "$weights_json"; then
-        die "weight preflight returned invalid data — no download or launch attempted"
-      fi
-      weights_state=$(json_field "$weights_json" state)
-      render_weight_status "$weights_json"
-      case "$weights_state" in
-        worker-unreachable|rank-unreachable|unreachable)
-          die "one or more cluster nodes required by this model are unreachable — cannot verify weights"
-          ;;
-      esac
-      if [ "$WEIGHT_SOURCE" = library-hot ]; then
-        die "distributed catalog views are not ready on the selected ranks; no replicated fallback was attempted"
-      fi
-      kind=$(model_source_kind)
-      if [ "$kind" = hf ]; then
-        if [ -z "${WIZARD_PULL_WEIGHTS_CMD:-}" ] \
-            && ! command -v hf >/dev/null 2>&1 \
-            && ! command -v huggingface-cli >/dev/null 2>&1; then
-          die "weights are missing, but no Hugging Face downloader is installed. Install the 'hf' CLI, then rerun ./pulsar (see docs/PREREQUISITES.md)."
-        fi
-        weights_scope=""
-        [ "$NODES" -gt 1 ] && weights_scope=" and copy it to every other node used by this model"
-        [ "$PLACEMENT_REMOTE" = 1 ] && weights_scope=" and copy it to $PLACEMENT_HOSTNAME"
-        if confirm "Weights missing or incomplete. Download HF model now${weights_scope}?"; then
-          log "preparing model files…"
-          if ! cmd_pull_weights "$NAME" "${PLACEMENT_ARGS[@]}" --yes; then
-            # pull-weights owns the human-facing failure summary.
-            exit 1
-          fi
-        else
-          die "cannot start without weights"
-        fi
-      else
-        die "NFS weights missing — mount $MODELS_NFS and ensure $MODEL exists (no auto-download)"
-      fi
+    if ! cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null; then
+      # Readiness was established moments earlier; a failure here is genuine
+      # inconsistency, never a download prompt.
+      die "library runtime views are not ready on the selected ranks; no fallback was attempted"
     fi
   fi
 

@@ -1,26 +1,29 @@
 # Weight fabric (superseded live NFS/RDMA serving)
 
-> **Superseded / not promoted.**
+> **Superseded / not promoted / implementation removed.**
 > [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) rejects live
-> NFSv4.2/RDMA under vLLM (`--weight-source fabric`, `live-remote-readonly`)
-> as a serving runtime source. Launch fails closed with no remap to
-> replicated. Historical measurements remain under
+> NFSv4.2/RDMA under vLLM (`live-remote-readonly`) as a serving runtime
+> source, and
+> [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)
+> removed the workflow implementation together with the whole
+> weight-mode-selection axis. Only `scripts/weight-fabric.sh
+> show|unmount|teardown` remains, for leftover site state. Historical
+> measurements remain under
 > [results/weight-fabric/](../results/weight-fabric/) and are not promotion
 > evidence. The offering stop is
 > [PR #83](https://github.com/luisefigueroa/pulsar-gb10-vllm-stack/pull/83).
 >
 > **Keep:** NCCL/RoCE inference, `detect-fabric.sh` topology, ADR 0003
-> `ssh-roce` prepare, `library-hot` / `local-verified-readonly`, replicated
-> guided default.
+> `ssh-roce` prepare, the model library / `local-verified-readonly`.
 >
-> **Separate follow-up:** one-shot `nfs-rdma` prepare (`--backend fabric`).
-> Shared NFS helpers stay until that decision.
+> The one-shot `nfs-rdma` prepare experiment was retired with the fabric
+> internals (ADR 0006).
 >
 > Do not call ssh-roce “fabric” or “RoCE mount.”
 
 The rest of this file is a historical description of the retired live-mount
-experiment. It does not authorize serving. Product serving is `library-hot`
-or replicated.
+experiment. It does not authorize serving. Product serving is the model
+library (ADR 0006).
 
 ## Leftover site teardown (confirmation-gated)
 
@@ -40,8 +43,11 @@ publishable notes.
    authoritative model tree.
 
 `--yes` is only for an already reviewed leftover-teardown runbook.
-`--interactive-sudo` keeps authentication in the operator terminal. Teardown
-does not remap to replicated or library-hot.
+Privileged steps use passwordless sudo (`sudo -n`) on each node by default.
+Set `WEIGHT_FABRIC_SUDO_MODE=interactive` for an attended terminal session,
+or pass `--interactive-sudo`; the flag overrides the env. Invalid env values
+fail closed without running cleanup. Teardown never serves, copies, or remaps
+weights.
 
 ---
 
@@ -56,8 +62,8 @@ Do not conflate it with model-library one-shot `nfs-rdma` transfer followed by
 release, or with `ssh-roce` (rsync over SSH/TCP pinned to a confirmed RoCE
 endpoint). Those are separate transfer/runtime combinations governed by
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md). ADR 0003 fixes
-eight-stream `ssh-roce` only for the explicitly selected reviewed-profile
-preparation action.
+eight-stream `ssh-roce` for reviewed multi-rank preparation; ADR 0006 made
+that the only multi-rank prepare path.
 ADR 0004 treats that transfer as run provenance when it converges on the same
 verified local runtime-access contract and separates `library-hot` subsystem
 GA from Model Serving Release status.
@@ -134,7 +140,7 @@ bytes rather than assuming one network read per checkpoint byte.
 | Application-level streaming/sharding | Deferred. It would modify or wrap vLLM/PyTorch loading and must reproduce SafeTensors indexing, failure recovery, and per-format correctness. |
 | Third-party streamed loaders | Deferred until their GB10/aarch64 dependencies, cache semantics, licensing, and vLLM image integration are validated. vLLM's supported loader surface is described in its [load configuration](https://docs.vllm.ai/en/stable/api/vllm/config/load/). |
 | GPUDirect Storage | Not the baseline. NVIDIA documents DGX Spark GDS as compatibility mode, and the current vLLM/SafeTensors path does not invoke cuFile. Do not load `nvidia-fs` merely for this feature. See the [DGX Spark hardware guide](https://docs.nvidia.com/dgx/dgx-spark/hardware.html) and [GDS release notes](https://docs.nvidia.com/gpudirect-storage/release-notes/index.html). |
-| Federated library + prepare + rank-local views | **Reviewed two-rank GA; explicit and non-default. Remote one-rank and legacy-unsealed use remain experimental.** The model-library path scans federated durable homes, keeps the home rank on a reviewed exact-content symlink/view, and materializes sealed hot only on non-home ranks. For explicit reviewed multi-rank preparation, [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md) fixes `ssh-roce` with eight streams and no fallback. The [2026-08-16 closure artifact](../results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json) records sustained serving, restart, failed-launch recovery, identity, and cleanup. [ADR 0004](./decisions/0004-model-serving-release-validation.md) keeps subsystem maturity separate from release qualification. This path is operationally distinct from the retired long-lived live mount described here. See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md), [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md), [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md), and [OPERATIONS.md](./OPERATIONS.md). Historical exploration: [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md). This document is the superseded live NFS/RDMA serving record, not a serving runbook. |
+| Federated library + prepare + rank-local views | **The only weight-distribution mechanism (ADR 0006).** Every library scope is supported. Multi-rank prepare defaults to topology-bound eight-stream `ssh-roce` with no fallback ([ADR 0003](./decisions/0003-explicit-model-preparation-transport.md)). See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) and [OPERATIONS.md](./OPERATIONS.md). This document is the superseded live NFS/RDMA serving record plus leftover teardown, not a serving runbook. |
 
 The vLLM distributed-filesystem guidance also expects every node to see a
 shared model path; this design supplies that path while keeping inference
@@ -228,18 +234,18 @@ scripts/weight-fabric.sh show qwen3-1.7b-2node --json
 
 ## Launch and lifecycle (retired)
 
-`--weight-source fabric` is refused (ADR 0005). Historical launch examples
-are not a serving alternative. Use `library-hot` or replicated:
+`--weight-source` is refused (ADR 0006). Historical launch examples
+are not a serving alternative. Serve through the model library:
 
 ```bash
-scripts/up.sh qwen3-1.7b-2node --weight-source library-hot
+./pulsar start qwen3-1.7b-2node
 scripts/inventory.sh
 scripts/status.sh qwen3-1.7b-2node
 scripts/down.sh qwen3-1.7b-2node
 ```
 
-The wizard keeps replicated weights as the recommended default and never
-selects live NFS. Leftover mounts use the teardown section above.
+The wizard has no storage-mode choice and never selects live NFS. Leftover
+mounts use the teardown section above.
 
 Stop the tracked service before storage teardown:
 
@@ -255,23 +261,26 @@ scripts/weight-fabric.sh teardown qwen3-1.7b-2node \
 removes only this configuration's export and mount state; it preserves the
 authoritative model and site-local config.
 
-## Explicit replicated fallback
+## Historical replicated fallback (removed)
 
-Replicated weights remain the default and require no fabric config at launch:
+`scripts/pull-weights.sh` and `--weight-source replicated` were removed by
+ADR 0006. The following commands are historical and fail closed:
 
 ```bash
+# historical; refused
 scripts/pull-weights.sh qwen3-1.7b-2node \
   --weight-source replicated --yes
 scripts/up.sh qwen3-1.7b-2node --weight-source replicated
 ```
 
-No failure automatically executes those commands. This avoids an unnoticed
+No failure automatically executed those commands. That avoided an unnoticed
 full-catalog copy after an owner or link failure.
 
-If replicated copies were created for the comparison benchmark, stop all
-Pulsar services and remove only this config's validated client model roots:
+If replicated copies were created for the comparison benchmark, the
+historical cleanup was:
 
 ```bash
+# historical; removed with the fabric workflow internals (ADR 0006)
 scripts/weight-fabric.sh purge-replicas qwen3-1.7b-2node
 ```
 
@@ -357,8 +366,9 @@ scripts/weight-fabric.sh drop-caches qwen3-1.7b-2node \
 # scripts/up.sh qwen3-1.7b-2node --weight-source fabric --skip-warmup
 ```
 
-Repeat with `--weight-source replicated` and a different result path. Startup
-files report `time_to_first_healthy_seconds`; the benchmark reports storage
+The historical A/B also launched with `--weight-source replicated` to a
+different result path; that flag is now refused (ADR 0006). Startup files
+report `time_to_first_healthy_seconds`; the benchmark reports storage
 throughput/CPU/memory separately so warmup or smoke-completion time is not
 misclassified as weight I/O.
 

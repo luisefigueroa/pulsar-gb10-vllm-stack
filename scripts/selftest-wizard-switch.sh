@@ -204,11 +204,21 @@ NEMOTRON_CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf nemotron-3-nano
 svc_managed() {
   # conf state complete safe [port]
   # complete/safe: True|False (Python)
+  # Nemotron is the production first-run unsealed library-hot profile.
+  # Qwen stays a leftover pre-library fixture so that migration menu is covered.
   local conf="$1" state="$2" complete="$3" safe="$4" port="${5:-8000}"
-  local contract_id
+  local contract_id weight_source identity_status
   case "$conf" in
-    qwen3-1.7b) contract_id="$QWEN_CONTRACT_ID" ;;
-    nemotron-3-nano-30b-nvfp4) contract_id="$NEMOTRON_CONTRACT_ID" ;;
+    qwen3-1.7b)
+      contract_id="$QWEN_CONTRACT_ID"
+      weight_source=replicated
+      identity_status=
+      ;;
+    nemotron-3-nano-30b-nvfp4)
+      contract_id="$NEMOTRON_CONTRACT_ID"
+      weight_source=library-hot
+      identity_status=legacy-unsealed
+      ;;
     *) echo "svc_managed: missing contract for $conf" >&2; return 1 ;;
   esac
   local running="True" stale="False"
@@ -216,6 +226,7 @@ svc_managed() {
   [ "$state" = "stopped" ] && running="False"
   python3 -c "
 import json
+identity = '''$identity_status''' or None
 print(json.dumps({
   'service_id': '$conf',
   'profile': '$conf',
@@ -231,13 +242,13 @@ print(json.dumps({
   'complete': $complete,
   'observability': 'complete' if $complete else 'partial',
   'api_port': $port,
-  'weight_source': 'replicated',
+  'weight_source': '$weight_source',
   'launch_contract_id': '$contract_id',
   'spec_decode': 'off',
   'model_revision': None,
   'model_seal_id': None,
   'validation_bundle_id': None,
-  'model_identity_status': None,
+  'model_identity_status': identity,
   'estimated_footprint_gib_per_rank': 12.0,
   'reasons': [],
   'ranks': [{
@@ -250,9 +261,10 @@ print(json.dumps({
       'io.pulsar.gb10.managed': 'true',
       'io.pulsar.gb10.conf': '$conf',
       'io.pulsar.gb10.rank': 'single',
-      'io.pulsar.gb10.weight-source': 'replicated',
+      'io.pulsar.gb10.weight-source': '$weight_source',
       'io.pulsar.gb10.launch-contract': '$contract_id',
       'io.pulsar.gb10.spec-decode': 'off',
+      **({'io.pulsar.gb10.model-identity-status': identity} if identity else {}),
     },
     'api_port': $port, 'mem_available_gib': 50.0, 'mem_status': 'ok', 'mem_source': 'fixture',
     'gpu_memory': {'measured_mib': 8000, 'status': 'ok', 'source': 'fixture'},
@@ -528,7 +540,7 @@ wizard_env() {
   export WIZARD_SKIP_WEIGHTS="${TEST_SKIP_WEIGHTS:-1}"
   export WIZARD_SKIP_IMAGE=1
   export WIZARD_SKIP_FABRIC_PROMPT="${TEST_SKIP_FABRIC_PROMPT:-1}"
-  export WIZARD_SKIP_STORAGE_PROMPT=1
+  export WIZARD_SKIP_LIBRARY_CHECK=1
   if [ "${TEST_USE_LOADED_TOPOLOGY_CAPACITY:-0}" = 1 ]; then
     unset WIZARD_TOPOLOGY_NODES
   else
@@ -544,7 +556,6 @@ wizard_env() {
   export WIZARD_CHECK_MEMORY_CMD="$SHIM/mem-cmd"
   export WIZARD_REPLACEMENT_TRANSACTION_FILE="$STATE/replacement-transaction.json"
   export WIZARD_CHECK_WEIGHTS_CMD="$SHIM/weights-cmd"
-  export WIZARD_PULL_WEIGHTS_CMD="$SHIM/pull-weights-cmd"
   export WIZARD_DOWN_CMD="$SHIM/down-cmd"
   export WIZARD_UP_CMD="$SHIM/up-cmd"
   export WIZARD_STATUS_CMD="$SHIM/status-cmd"
@@ -656,20 +667,16 @@ mem_pass "$STATE/mem_current" qwen3-1.7b
 export TEST_SKIP_FABRIC_PROMPT=0
 export TEST_USE_LOADED_TOPOLOGY_CAPACITY=1
 export TEST_CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json"
-# Decline discovery, choose qwen from the filtered one-node list, decline start.
-run_wizard $'n\n2\nn\n'
-assert_eq "$LAST_RC" "0" "declined discovery continues in standalone mode"
+# Serving requires a confirmed topology manifest (ADR 0006); declining the
+# discovery prompt fails closed with the exact remediation command.
+run_wizard $'n\n'
+assert_eq "$LAST_RC" "1" "declined discovery fails closed without a manifest"
 assert_file_contains "$STATE/logs/wizard.combined" \
-  "1 standalone local node available · no cluster membership confirmed" \
-  "standalone capacity is explicit and not called confirmed"
-assert_file_contains "$STATE/logs/wizard.err" \
-  "Choose a model · status labels are advisory · standalone local node" \
-  "standalone model chooser exposes advisory status policy"
-assert_file_contains "$STATE/logs/wizard.err" \
-  "qwen3-1\\.7b[[:space:]]+1 node" \
-  "one-node profiles remain available"
-assert_file_not_contains "$STATE/logs/wizard.err" "deepseek-v4-flash" \
-  "multi-node profiles are excluded without confirmed membership"
+  "serving requires a confirmed topology manifest" \
+  "missing manifest names the serving prerequisite"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "detect-fabric.sh --write-topology" \
+  "missing manifest names the exact remediation"
 assert_file_not_contains "$STATE/logs/wizard.combined" \
   "invalid confirmed topology capacity '0'" \
   "missing topology no longer becomes invalid zero capacity"
@@ -700,34 +707,26 @@ assert_false "invalid topology stops nothing" \
 # ---------------------------------------------------------------------------
 # 3) Missing-weight staging failure is explicit and non-mutating
 # ---------------------------------------------------------------------------
-echo "=== weight staging failure feedback ==="
+echo "=== weight readiness failure feedback ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
 cat >"$STATE/weights.json" <<'JSON'
 {
   "model": "qwen3-1.7b",
   "state": "missing",
-  "ranks": [{"rank": 0, "state": "missing", "ok": false}]
+  "source": "library-hot",
+  "ok": false
 }
 JSON
 echo 1 >"$STATE/weights.rc"
-echo 1 >"$STATE/pull-weights.rc"
 export TEST_SKIP_WEIGHTS=0
-run_wizard $'3\ny\n'
-assert_eq "$LAST_RC" "1" "weight staging failure exits nonzero"
-assert_file_contains "$STATE/logs/wizard.out" "^MODEL FILES REQUIRED$" \
-  "missing weights use a semantic section"
-assert_file_contains "$STATE/logs/wizard.out" "this node.*missing" \
-  "missing weights identify this node"
-assert_file_contains "$STATE/logs/pull-weights.log" "qwen3-1.7b" \
-  "confirmed weight staging invokes helper"
-assert_file_contains "$STATE/logs/wizard.combined" "^MODEL FILE PREPARATION FAILED$" \
-  "weight staging failure retains the helper's semantic summary"
-assert_file_contains "$STATE/logs/wizard.combined" "Model was not started" \
-  "weight staging failure states the outcome"
-assert_file_not_contains "$STATE/logs/wizard.combined" "weight download/copy failed" \
-  "wizard does not add a duplicate generic failure"
+run_wizard $'3\n'
+assert_eq "$LAST_RC" "1" "weight readiness failure exits nonzero"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "library runtime views are not ready" \
+  "weight readiness failure names the library contract"
 assert_false "weight failure: no launch" bash -c "test -s '$STATE/logs/up.log'"
+assert_false "weight failure: no stop" bash -c "test -s '$STATE/logs/down.log'"
 
 # ---------------------------------------------------------------------------
 # 4) Same healthy keep — no mutation
@@ -737,12 +736,15 @@ reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
 mem_pass "$STATE/mem_current" qwen3-1.7b
 export WIZARD_API_HEALTHY=1
-# model=3, keep=1
-run_wizard $'3\n1\n'
+# model=3; the running service is a pre-library launch, so the migration
+# menu interposes: keep=2
+run_wizard $'3\n2\n'
 assert_eq "$LAST_RC" "0" "same-healthy keep exit 0"
 assert_false "keep: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "keep: no up" bash -c "test -s '$STATE/logs/up.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "keeping qwen3-1.7b running" "keep message"
+assert_file_contains "$STATE/logs/wizard.combined" "pre-library launch" \
+  "legacy running service is named a pre-library launch"
 assert_file_contains "$STATE/logs/wizard.out" "^MODEL SELECTED$" \
   "wizard model selection uses a semantic section"
 assert_file_not_contains "$STATE/logs/wizard.out" "sha256:" "default model selection hides image digest"
@@ -771,7 +773,7 @@ mem_pass "$STATE/mem_current" qwen3-1.7b
 mem_pass "$STATE/mem_after_stop" qwen3-1.7b
 export WIZARD_API_HEALTHY=1
 # Abort path: model, restart, final n → no mutation
-run_wizard $'3\n2\nn\n'
+run_wizard $'3\n1\nn\n'
 assert_eq "$LAST_RC" "0" "restart decline final confirm exit 0"
 assert_false "restart aborted: no down before/without confirm" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/wizard.combined" "aborted; no containers changed" "restart aborted message"
@@ -782,7 +784,7 @@ seed_inv "$STATE/inv_after_stop" 100 ""
 mem_pass "$STATE/mem_current" qwen3-1.7b
 mem_pass "$STATE/mem_after_stop" qwen3-1.7b
 export WIZARD_API_HEALTHY=1
-run_wizard $'3\n2\ny\n'
+run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "restart confirmed exit 0"
 assert_file_contains "$STATE/logs/down.log" "qwen3-1.7b" "restart: down called"
 assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "restart: up called"
@@ -804,6 +806,13 @@ run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "replace managed exit 0"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "replace: stopped blocker"
 assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "replace: started target"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "without a reviewed identity match" \
+  "unsealed library-hot replace names missing exact rollback"
+assert_file_not_contains "$STATE/logs/down.log" "--pin-weights" \
+  "unsealed library-hot replace does not pin for rollback"
+assert_false "unsealed replace leaves no rollback transaction" \
+  bash -c "test -f '$STATE/replacement-transaction.json'"
 
 # ---------------------------------------------------------------------------
 # 5) Decline replace leaves service unchanged
@@ -965,30 +974,30 @@ assert_file_not_contains "$STATE/logs/wizard.combined" "docker rm|docker kill|ki
 # ---------------------------------------------------------------------------
 # 11b) Stop then still-fail → explicit Restart previous profile
 # ---------------------------------------------------------------------------
-echo "=== stop then still memory fail (restart previous) ==="
+echo "=== stop then still memory fail (no rollback for unsealed library-hot) ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
 set_mem_model qwen3-1.7b fail
 set_mem_model nemotron-3-nano-30b-nvfp4 pass
 export WIZARD_API_HEALTHY=0
-# model=3 (qwen), stop=1, final y, restart previous=1, final y (start nano)
-run_wizard $'3\n1\ny\n1\ny\n'
-assert_eq "$LAST_RC" "0" "still-fail restart-previous exit 0"
-assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "still-fail restart: stopped blocker once"
-# exactly one down line
+# model=3 (qwen), stop=1, final y; still-fail exits nonzero (no restore menu)
+run_wizard $'3\n1\ny\n'
+assert_eq "$LAST_RC" "1" "still-fail without exact rollback exits nonzero"
+assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "still-fail: stopped blocker once"
 down_lines=$(grep -c . "$STATE/logs/down.log" || true)
-assert_eq "$down_lines" "1" "still-fail restart: single down (no extra stops)"
-assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" "still-fail restart: up previous conf"
-assert_file_not_contains "$STATE/logs/up.log" "qwen3-1.7b" "still-fail restart: never up failed target"
-assert_file_contains "$STATE/logs/wizard.combined" "Restore previous exact service|previous exact service contract" "still-fail restart: exact rollback messaging"
-assert_file_contains "$STATE/logs/wizard.combined" "planning exact rollback of previous service" "still-fail restart: planned not auto"
-assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4 --no-spec-decode --yes" "still-fail restart: captured spec state is explicit"
-assert_false "still-fail restart: no docker rm in wizard" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill' "$STATE/logs/wizard.combined"
+assert_eq "$down_lines" "1" "still-fail: single down (no extra stops)"
+assert_false "still-fail: never up failed target" \
+  bash -c "grep -q qwen3-1.7b '$STATE/logs/up.log' 2>/dev/null"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "without a reviewed identity match" \
+  "unsealed library-hot stop warns that exact rollback is unavailable"
+assert_file_not_contains "$STATE/logs/wizard.combined" \
+  "Restore previous exact service" \
+  "no exact-restore offer exists for an unsealed library-hot service"
+assert_false "still-fail: no docker rm in wizard" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill' "$STATE/logs/wizard.combined"
 
-# ---------------------------------------------------------------------------
-# 12) Launch failure → Exit stopped
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 echo "=== launch failure after replace (exit stopped) ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
@@ -1017,7 +1026,7 @@ assert_file_not_contains "$STATE/logs/up.log" "nemotron" "launch-fail exit: no r
 # ---------------------------------------------------------------------------
 # 12b) Launch failure → explicit Restart previous profile
 # ---------------------------------------------------------------------------
-echo "=== launch failure after replace (restart previous) ==="
+echo "=== launch failure after replace (no rollback for unsealed library-hot) ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
@@ -1025,31 +1034,26 @@ mem_fail "$STATE/mem_current" qwen3-1.7b
 mem_pass "$STATE/mem_after_stop" qwen3-1.7b
 export MEM_CURRENT_RC=1
 export MEM_AFTER_STOP_RC=0
-# After restart-previous, plan nano with empty inv: need pass for nano
-set_mem_model nemotron-3-nano-30b-nvfp4 pass
-# qwen keeps using global current/after (not per-model) so first up can fail after stop
 export WIZARD_API_HEALTHY=0
+rm -rf "$STATE/mem_by_model"
+mkdir -p "$STATE/mem_by_model"
 touch "$STATE/up_fail_once"
-# model=3, stop=1, final y, restart previous=1, final y for nano
-run_wizard $'3\n1\ny\n1\ny\n'
-assert_eq "$LAST_RC" "0" "launch-fail restart-previous exit 0"
-assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "launch-fail restart: stopped previous once"
+# model=3, stop=1, final y; launch fails and no restore menu exists
+run_wizard $'3\n1\ny\n'
+assert_eq "$LAST_RC" "1" "launch failure without exact rollback exits nonzero"
+assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "launch-fail: stopped previous once"
 down_lines=$(grep -c . "$STATE/logs/down.log" || true)
-assert_eq "$down_lines" "1" "launch-fail restart: single down only"
-assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail restart: first up was target"
-assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" "launch-fail restart: second up previous conf"
-# Ensure order: qwen first, then nano
-up_order=$(tr '\n' ' ' <"$STATE/logs/up.log")
-assert_true "launch-fail restart: up order target then previous" bash -c \
-  "printf '%s' \"\$0\" | grep -q 'qwen3-1.7b.*nemotron-3-nano-30b-nvfp4'" "$up_order"
-assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail restart: reported failure"
-assert_file_contains "$STATE/logs/wizard.combined" "planning exact rollback of previous service" "launch-fail restart: exact selection path"
-assert_file_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4 --no-spec-decode --yes" "launch-fail restart: captured spec state is explicit"
-assert_false "launch-fail restart: no docker mutation language" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill|kill -9' "$STATE/logs/wizard.combined"
+assert_eq "$down_lines" "1" "launch-fail: single down only"
+assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail: attempted up target"
+assert_file_not_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" \
+  "launch-fail: no automatic restart of the unsealed library-hot service"
+assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail: reported failure"
+assert_file_contains "$STATE/logs/wizard.combined" \
+  "without a reviewed identity match" \
+  "launch-fail: unsealed library-hot stop warned about rollback"
+assert_false "launch-fail: no docker mutation language" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill|kill -9' "$STATE/logs/wizard.combined"
 
-# ---------------------------------------------------------------------------
-# 13) Choose-another loop (no re-doctor)
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 echo "=== choose another model loop ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3-1.7b running True True)"
@@ -1316,11 +1320,13 @@ echo "=== static safety checks ==="
 # down only via execute_pending_stops / cmd_down after final_confirm_start
 assert_true "wizard has execute_pending_stops" grep -q "execute_pending_stops" "$REPO_DIR/wizard.sh"
 assert_true "wizard defers stop until after final confirm helper" grep -q "final_confirm_start" "$REPO_DIR/wizard.sh"
+assert_true "unsealed library-hot stop warns that exact rollback is unavailable" \
+  grep -q "without a reviewed identity match" "$REPO_DIR/wizard.sh"
 # ensure cmd_down is only in execute_pending_stops
 downs=$(grep -n "cmd_down" "$REPO_DIR/wizard.sh" | grep -v '^#' || true)
 # Only definition and execute_pending_stops should call it
 count=$(printf '%s\n' "$downs" | grep -c "cmd_down" || true)
-assert_true "cmd_down references limited" bash -c "[ \"$count\" -le 3 ]"
+assert_true "cmd_down references limited" bash -c "[ \"$count\" -le 4 ]"
 
 # No kill/rm docker in wizard
 assert_false "wizard has no docker rm" grep -qE "docker[[:space:]]+rm" "$REPO_DIR/wizard.sh"

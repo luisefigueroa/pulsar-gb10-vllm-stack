@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
+import tempfile
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -16,46 +18,70 @@ from scripts import model_library  # noqa: E402
 class ActivateTransportContracts(unittest.TestCase):
     def test_backend_compatibility_mapping_is_deterministic(self) -> None:
         cases = (
-            (None, None, ("copy", "ssh-control")),
-            ("copy", None, ("copy", "ssh-control")),
-            ("fabric", None, ("fabric", "nfs-rdma")),
-            (None, "ssh-control", ("copy", "ssh-control")),
-            (None, "ssh-roce", ("copy", "ssh-roce")),
-            (None, "nfs-rdma", ("fabric", "nfs-rdma")),
-            ("copy", "ssh-roce", ("copy", "ssh-roce")),
-            ("fabric", "nfs-rdma", ("fabric", "nfs-rdma")),
+            (None, None, 1, ("copy", "ssh-control")),
+            ("copy", None, 1, ("copy", "ssh-control")),
+            (None, None, 2, ("copy", "ssh-roce")),
+            ("copy", None, 2, ("copy", "ssh-roce")),
+            (None, "ssh-control", 2, ("copy", "ssh-control")),
+            (None, "ssh-roce", 2, ("copy", "ssh-roce")),
+            ("copy", "ssh-roce", 2, ("copy", "ssh-roce")),
         )
-        for backend, transport, expected in cases:
-            with self.subTest(backend=backend, transport=transport):
+        for backend, transport, nodes, expected in cases:
+            with self.subTest(backend=backend, transport=transport, nodes=nodes):
                 self.assertEqual(
                     model_library.resolve_activate_transport(
                         backend,
                         transport,
+                        nodes=nodes,
                     ),
                     expected,
                 )
 
-    def test_transport_backend_conflicts_fail_closed(self) -> None:
+    def test_one_rank_rejects_ssh_roce(self) -> None:
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "no non-home transfer",
+        ):
+            model_library.resolve_activate_transport(
+                "copy",
+                "ssh-roce",
+                nodes=1,
+            )
+
+    def test_missing_catalog_classifies_as_refresh_not_prepare(self) -> None:
+        report = model_library.classify_library_readiness(
+            profile="deepseek-v4-flash",
+            catalog_path=pathlib.Path("/no/such/catalog.json"),
+            topology_id="a" * 64,
+            models_dir=REPO_ROOT / "models",
+        )
+        self.assertEqual(report["reason"], "catalog-missing")
+        self.assertIn("catalog refresh", report["remediation"])
+        self.assertNotIn("prepare", report["remediation"])
+
+    def test_retired_fabric_modes_fail_closed(self) -> None:
         for backend, transport in (
-            ("fabric", "ssh-control"),
+            ("fabric", None),
             ("fabric", "ssh-roce"),
+            (None, "nfs-rdma"),
             ("copy", "nfs-rdma"),
         ):
             with self.subTest(backend=backend, transport=transport):
                 with self.assertRaisesRegex(
                     model_library.ModelLibraryError,
-                    "requires backend",
+                    "not supported",
                 ):
                     model_library.resolve_activate_transport(
                         backend,
                         transport,
+                        nodes=2,
                     )
 
         with self.assertRaisesRegex(
             model_library.ModelLibraryError,
             "not supported",
         ):
-            model_library.resolve_activate_transport(None, "automatic")
+            model_library.resolve_activate_transport(None, "automatic", nodes=2)
 
     def test_hot_stamp_records_transfer_provenance(self) -> None:
         manifest = {
@@ -102,6 +128,167 @@ class ActivateTransportContracts(unittest.TestCase):
             stamp["integrity"]["manifest"]["manifest_id"],
             manifest["manifest_id"],
         )
+
+
+class LibraryReadinessClassification(unittest.TestCase):
+    NEMOTRON = "nemotron-3-nano-30b-nvfp4"
+    QWEN = "qwen3-1.7b"
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = pathlib.Path(self.temporary.name)
+        self.catalog_path = self.root / "catalog.json"
+        self.topology_id = "a" * 64
+        self.models_dir = REPO_ROOT / "models"
+
+    def _write(self, catalog: dict[str, object]) -> None:
+        self.catalog_path.write_text(
+            json.dumps(catalog, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _classify(
+        self,
+        profile: str,
+        *,
+        selected_rank: int | None = None,
+        selected_node_id: str | None = None,
+    ) -> dict[str, object]:
+        return model_library.classify_library_readiness(
+            profile=profile,
+            catalog_path=self.catalog_path,
+            topology_id=self.topology_id,
+            models_dir=self.models_dir,
+            selected_rank=selected_rank,
+            selected_node_id=selected_node_id,
+        )
+
+    def _home(self, profile_info: dict[str, object], *, rank: int) -> dict[str, object]:
+        model_id = str(profile_info["model_id"])
+        revision = "b" * 40
+        return {
+            "rank": rank,
+            "node_id": f"node-{rank}",
+            "hostname": f"fixture-{rank}",
+            "ssh_host": f"fixture-{rank}",
+            "cache_root": f"/cache/{rank}",
+            "hub_path": f"/cache/{rank}/hub/models--Example--Model",
+            "model_id": model_id,
+            "revision": revision,
+            "identity_key": f"{model_id}@{revision}",
+            "state": "complete",
+            "active": True,
+            "bytes": 1024,
+        }
+
+    def test_unsealed_missing_home_names_plan_then_yes(self) -> None:
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[],
+                profiles=[],
+            )
+        )
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "no-home")
+        self.assertIn("home add nemotron-3-nano-30b-nvfp4 --revision <selector> --plan", report["remediation"])
+        self.assertIn("--yes", report["remediation"])
+        self.assertNotEqual(
+            report["remediation"],
+            "scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --yes",
+        )
+
+    def test_sealed_missing_home_names_home_add_yes(self) -> None:
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[],
+                profiles=[],
+            )
+        )
+        report = self._classify(self.QWEN)
+        self.assertEqual(report["reason"], "no-home")
+        self.assertEqual(
+            report["remediation"],
+            "scripts/model-library.sh home add qwen3-1.7b --yes",
+        )
+        self.assertNotIn("--revision", report["remediation"])
+
+    def test_duplicate_homes_name_cleanup_recommend(self) -> None:
+        profile_info = model_library.parse_profile_conf_any(
+            self.models_dir / f"{self.NEMOTRON}.conf"
+        )
+        assert profile_info is not None
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[
+                    self._home(profile_info, rank=0),
+                    self._home(profile_info, rank=1),
+                ],
+                profiles=[profile_info],
+            )
+        )
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "duplicate-home")
+        self.assertEqual(
+            report["remediation"],
+            "scripts/model-library.sh cleanup-recommend",
+        )
+        self.assertNotIn("catalog refresh", report["remediation"])
+
+    def test_stale_primary_names_refresh_then_select(self) -> None:
+        profile_info = model_library.parse_profile_conf_any(
+            self.models_dir / f"{self.NEMOTRON}.conf"
+        )
+        assert profile_info is not None
+        home = self._home(profile_info, rank=1)
+        catalog = model_library.build_catalog(
+            topology_id=self.topology_id,
+            homes=[home],
+            profiles=[profile_info],
+            primary_selections=[
+                {
+                    "identity_key": str(home["identity_key"]),
+                    "node_id": "node-missing",
+                    "selected_at": "2026-08-12T00:00:00.000Z",
+                }
+            ],
+        )
+        self._write(catalog)
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "catalog-stale")
+        self.assertIn("catalog refresh", report["remediation"])
+        self.assertIn("catalog primary set nemotron-3-nano-30b-nvfp4 --node RANK", report["remediation"])
+
+    def test_ready_home_without_views_names_prepare(self) -> None:
+        profile_info = model_library.parse_profile_conf_any(
+            self.models_dir / f"{self.NEMOTRON}.conf"
+        )
+        assert profile_info is not None
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[self._home(profile_info, rank=0)],
+                profiles=[profile_info],
+            )
+        )
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "views-missing")
+        self.assertEqual(
+            report["remediation"],
+            "scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes",
+        )
+        home_ok = self._classify(self.NEMOTRON, selected_rank=0, selected_node_id="node-0")
+        self.assertEqual(home_ok["reason"], "views-missing")
+        misplaced = self._classify(
+            self.NEMOTRON, selected_rank=1, selected_node_id="node-1"
+        )
+        self.assertEqual(misplaced["reason"], "wrong-placement")
+        self.assertIn("--node node-0", misplaced["remediation"])
+        self.assertNotIn("prepare", misplaced["remediation"])
+        self.assertIn("Do not prepare onto a non-home rank", misplaced["detail"])
 
 
 class SshRoceRouteContracts(unittest.TestCase):

@@ -34,6 +34,8 @@ expect_failure 2 "invalid --port" "serve rejects out-of-range port" \
   "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --port 70000
 expect_failure 1 "invalid model id" "config loader rejects path traversal" \
   "$REPO_DIR/serve.sh" ../outside --dry-run
+expect_failure 2 "ADR 0006" "serve rejects the removed weight-mode axis" \
+  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --weight-source library-hot
 
 grep -q '\[ "$DRY" != 1 \].*PULL_IMG' "$REPO_DIR/scripts/up.sh"
 echo "OK   up dry-run cannot enter image pull/sync branches"

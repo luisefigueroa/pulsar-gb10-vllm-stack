@@ -320,7 +320,9 @@ python3 "$PY" build \
   --primary "Qwen/Qwen3-1.7B=node-b" \
   --output "$STATE/catalog-fabric.json" >/dev/null 2>&1
 
-fplan=$(python3 "$PY" plan-activate \
+# Retired fabric preparation fails closed (ADR 0006).
+set +e
+python3 "$PY" plan-activate \
   --catalog "$STATE/catalog-fabric.json" \
   --profile qwen3-1.7b-2node \
   --topology-id "$TOPO_ID" \
@@ -328,17 +330,18 @@ fplan=$(python3 "$PY" plan-activate \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
   --backend fabric \
-  --nodes 2)
-faction=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-assert_eq "fabric multi-rank plan action" "$faction" "fabric-copy"
-fclients=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["transfer"]["clients"]))')
-assert_eq "fabric plan one NFS client" "$fclients" "1"
-fproto=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print("proto=rdma" in json.load(sys.stdin)["transfer"]["mount_options"])')
-assert_eq "fabric plan mount is rdma" "$fproto" "True"
-fbackend=$(printf '%s' "$fplan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"]["backend"])')
-assert_eq "fabric stamp backend" "$fbackend" "fabric"
-
-set +e
+  --nodes 2 >/dev/null 2>"$STATE/plan-fabric.err"
+fab_rc=$?
+python3 "$PY" plan-activate \
+  --catalog "$STATE/catalog-fabric.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id "$TOPO_ID" \
+  --topology-file "$STATE/topology.json" \
+  --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --transport nfs-rdma \
+  --nodes 2 >/dev/null 2>"$STATE/plan-nfs-rdma.err"
+nfs_rc=$?
 python3 "$PY" plan-activate \
   --catalog "$STATE/catalog2.json" \
   --profile qwen3-1.7b-2node \
@@ -348,49 +351,32 @@ python3 "$PY" plan-activate \
   --backend nfs >/dev/null 2>&1
 bad_rc=$?
 set -e
+assert_true "retired fabric backend rejected" test "$fab_rc" -ne 0
+assert_true "retired nfs-rdma transport rejected" test "$nfs_rc" -ne 0
 assert_true "unknown backend rejected" test "$bad_rc" -ne 0
 
-python3 "$PY" build \
-  --topology-id topo-test-001 \
-  --models-dir "$STATE/models" \
-  --homes-json "$STATE/homes.json" \
-  --primary "Qwen/Qwen3-1.7B=node-a" \
-  --output "$STATE/catalog-home0.json" >/dev/null 2>&1
-splan=$(python3 "$PY" plan-activate \
-  --catalog "$STATE/catalog-home0.json" \
-  --profile qwen3-1.7b-2node \
-  --topology-id topo-test-001 \
-  --hot-root "$HOT" \
-  --models-dir "$STATE/models" \
-  --backend fabric \
-  --nodes 1)
-saction=$(printf '%s' "$splan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-assert_eq "single-rank fabric is local copy action" "$saction" "copy"
-skind=$(printf '%s' "$splan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["transfer"]["kind"])')
-assert_eq "single-rank fabric transfer local-only" "$skind" "local-only"
-
-# Launch wiring accepts library-hot flags (no docker)
-assert_true "up.sh help lists library-hot" \
-  grep -q library-hot "$REPO_DIR/scripts/up.sh"
-assert_true "start-cluster accepts library-hot" \
-  grep -q library-hot "$REPO_DIR/scripts/../cluster/start-cluster.sh"
+# Launch wiring is library-only (no docker)
+assert_true "up.sh has no weight-mode axis" \
+  bash -c "! grep -q 'WEIGHT_SOURCE=' '$REPO_DIR/scripts/up.sh'"
+assert_true "start-cluster labels launches library-hot" \
+  grep -q 'PULSAR_WEIGHT_SOURCE_LABEL}=library-hot' "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "cluster launch validates remote expected identity" \
   grep -q -- --expected-validation-json "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "cluster launch uses serve-time witness with full-verify fallback" \
   grep -q -- --serve-time-witness "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "preparation full-verifies and refreshes rank-local witnesses" \
   grep -q -- --refresh-witness "$REPO_DIR/scripts/model-library.sh"
+out=$(set +e; CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json" \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b 2>&1; true)
+assert_true "check-weights fails closed without confirmed topology" \
+  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -q 'confirmed topology manifest'"
 out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)
-assert_true "check-weights library-hot fails closed without hot" \
-  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -Eq 'library-hot|prepare|topology|hot'"
+assert_true "removed weight-mode flag fails closed" \
+  bash -c "printf '%s\n' $(printf '%q' "$out") | grep -q 'ADR 0006'"
 assert_true "down.sh documents pin-weights" \
   grep -q pin-weights "$REPO_DIR/scripts/down.sh"
-assert_true "prepare implements fabric transfer plane" \
-  grep -q fabric_apply_transfer "$REPO_DIR/scripts/model-library.sh"
-assert_true "release-transfer command exists" \
-  grep -q release-transfer "$REPO_DIR/scripts/model-library.sh"
-assert_true "no silent fabric-to-copy fallback on yes" \
-  bash -c "! grep -q 'auto.*copy\\|fallback to copy' '$REPO_DIR/scripts/model-library.sh' || grep -q 'no silent fallback' '$REPO_DIR/scripts/model-library.sh'"
+assert_true "fabric transfer plane is fully removed" \
+  bash -c "! grep -q fabric_apply_transfer '$REPO_DIR/scripts/model-library.sh'"
 
 # --- optional cold storage tier ---
 COLD="$STATE/cold"
@@ -568,45 +554,14 @@ assert_eq "plan-activate refuses cold-only model" "$ac_rc" "1"
 assert_true "model-library.sh documents cold" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold'"
 
-# --- B-gate compare-bench (no hardware) ---
-python3 "$PY" compare-bench \
-  --profile qwen3-1.7b-2node \
-  --topology-id topo-test-001 \
-  --model-id Qwen/Qwen3-1.7B \
-  --bytes-logical 1000 \
-  --copy-seconds 10 \
-  --fabric-seconds 7 \
-  --tag unit-fabric-win \
-  --nodes 2 \
-  --output "$STATE/bench-win.json" --json >/dev/null
-v=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-win.json"'"))["verdict"])')
-assert_eq "bench fabric_faster when fabric < copy" "$v" "fabric_faster"
-fp=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-win.json"'"))["fabric_claims_fast_path"])')
-assert_eq "fabric_claims_fast_path true" "$fp" "True"
-
-python3 "$PY" compare-bench \
-  --profile qwen3-1.7b-2node \
-  --topology-id topo-test-001 \
-  --model-id Qwen/Qwen3-1.7B \
-  --bytes-logical 1000 \
-  --copy-seconds 8 \
-  --fabric-seconds 12 \
-  --tag unit-copy-win \
-  --nodes 2 \
-  --json >"$STATE/bench-lose.json"
-v=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-lose.json"'"))["verdict"])')
-assert_eq "bench copy_faster when fabric > copy" "$v" "copy_faster"
-fp=$(python3 -c 'import json; print(json.load(open("'"$STATE/bench-lose.json"'"))["fabric_claims_fast_path"])')
-assert_eq "fabric_claims_fast_path false" "$fp" "False"
-
 assert_true "prepare is the preferred CLI command" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'prepare <profile>'"
+assert_true "multi-rank prepare defaults to ssh-roce" \
+  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'multi-rank uses ssh-roce'"
+assert_true "prepare help does not call one-rank experimental" \
+  bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'one-rank and legacy-unsealed'"
 assert_true "activate remains a compatibility alias" \
   grep -q 'prepare|activate) cmd_activate' "$REPO_DIR/scripts/model-library.sh"
-assert_true "bench-activate remains a compatibility alias" \
-  grep -q 'bench-prepare|bench-activate) cmd_bench_activate' "$REPO_DIR/scripts/model-library.sh"
-assert_true "bench-prepare documented in CLI" \
-  grep -q bench-prepare "$REPO_DIR/scripts/model-library.sh"
 assert_true "bench-ssh-roce documented in CLI" \
   grep -q bench-ssh-roce "$REPO_DIR/scripts/model-library.sh"
 assert_true "probe-ssh-roce documented in CLI" \
@@ -712,7 +667,7 @@ else
   not_ok "tree_bytes skips symlink targets double-count"
 fi
 
-assert_true "fabric setup batches root script" \
+assert_true "privileged node steps batch one root script" \
   grep -q library_node_root_script "$REPO_DIR/scripts/model-library.sh"
 assert_true "parallel copy uses size-balanced blob planner" \
   grep -q partition_hub_blobs_on_rank "$REPO_DIR/scripts/model-library.sh"
@@ -720,8 +675,8 @@ assert_true "parallel relay geometry fails closed" \
   grep -q 'does not support remote-home to remote-target relay' "$REPO_DIR/scripts/model-library.sh"
 assert_true "home materialize requires exact symlink" \
   grep -q durable-home-symlink "$REPO_DIR/scripts/model-library-materialize.sh"
-assert_true "fabric materialize uses explicit home-rank selection" \
-  grep -q '"$rank" "$home_rank" "$source" "$hub_dest"' \
+assert_true "copy materialize uses explicit home-rank selection" \
+  grep -q 'copy_hub_to_rank "$rank" "$hub_source" "$hub_dest" "$home_rank"' \
     "$REPO_DIR/scripts/model-library.sh"
 assert_true "prepare materializes ranks in parallel" \
   grep -q 'pids+=("$!")' "$REPO_DIR/scripts/model-library.sh"

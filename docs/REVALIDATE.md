@@ -28,12 +28,12 @@ user-observed cache contents. Recover the exact lab artifact used for the
 historical run or revalidate the intended revision, then follow
 [models/seals/README.md](../models/seals/README.md) in the evidence pull
 request. A future mirror may distribute the bytes, but hosting location is not
-validation identity. The rank-local serve witness is implemented for
-`library-hot` and sealed replicated caches: preparation/acquisition creates it
-only after full verification, while unchanged launch uses metadata and drift
-visibly rehashes before refresh. Sealed replicated download pins the exact
-commit and every materialized rank is verified. Legacy-unsealed replicated
-profiles remain unbound, and live-mount serving is retired (ADR 0005).
+validation identity. The rank-local serve witness is implemented for library preparation and
+sealed home acquisition: each creates it only after full verification, while
+unchanged launch uses metadata and drift visibly rehashes before refresh.
+Sealed acquisition pins the exact commit and every copy is verified. Unsealed
+profiles serve as `legacy-unsealed`, and live-mount serving is retired
+(ADR 0005).
 The standalone bundle verifier is implemented. Maintainer-only
 `scripts/model-release.sh` can hash an exact commit and assemble/verify
 deterministic unreviewed candidates; trusted publication remains a deliberate
@@ -301,14 +301,15 @@ uses ranks 0 and 1 only; extra ranks do not change this validation claim.
 
 ## 2. Single-node models (~1 h, mostly load time)
 
-For each of `laguna-s-2.1-nvfp4`, `nemotron-3-nano-30b-nvfp4`,
-`nemotron-3-super-120b-nvfp4`, `qwen3.6-27b-fp8`:
+For each of `nemotron-3-nano-30b-nvfp4`, `nemotron-3-super-120b-nvfp4`,
+`qwen3.6-27b-fp8` (the Laguna profile was removed by ADR 0006; its historical
+gates stay in the ledger):
 
 ```bash
 ./serve.sh <name> -d && <wait healthy>
 validate/run-gates.sh <served-name> \
     --baseline results/<prior-capture-runA>.json \
-    --needle-tokens <its validated ctx: 250000 laguna / 125000 nano+qwen / 0 super> \
+    --needle-tokens <its validated ctx: 125000 nano+qwen / 0 super> \
     --tag <bump-tag>
 ./pulsar stop <name>
 ```
@@ -376,10 +377,7 @@ python3 validate/needle.py --model deepseek-v4-flash --context-tokens 450000 --d
 
 ```bash
 python3 validate/soak.py --model deepseek-v4-flash --minutes 150 --concurrency 5 \
-    --out results/soak-dsv4-<tag>.json        # then teardown, then:
-./serve.sh laguna-s-2.1-nvfp4 -d
-python3 validate/soak.py --model laguna-s-2.1 --minutes 150 --concurrency 4 \
-    --out results/soak-laguna-<tag>.json
+    --out results/soak-dsv4-<tag>.json
 ```
 Gate: process must print `PASS soak` and exit **0** (default: any request
 error fails; `completed>0`). MemAvailable shrink &gt;5% is a **WARN** finding
@@ -415,10 +413,10 @@ No three-node serving profile is promoted by the current ledger.
 
 ## 7. Experimental catalog storage (conditional)
 
-Live NFS/RDMA serving (`--weight-source fabric`) is retired (ADR 0005) and
-must not be used as a revalidation subject. Do not inherit **serving
-integration or model qualification** from the replicated-cache path for
-`library-hot`. Generic catalog evidence may be reused only when its measured
+Live NFS/RDMA serving is retired (ADR 0005) and must not be used as a
+revalidation subject; the replicated path was removed (ADR 0006). Do not
+inherit **serving integration or model qualification** across mechanisms.
+Generic catalog evidence may be reused only when its measured
 identity, placement, transfer, and lifecycle contracts are unchanged. Follow
 `MODEL_LIBRARY_DESIGN.md` and
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
@@ -430,7 +428,7 @@ copy policy to topology-bound `ssh-roce` with eight streams and no fallback.
 Catalog refresh is not model acquisition; establish and verify the exact
 durable home separately before running preparation.
 
-1. two-node replicated-local and fabric cold I/O/startup A/B;
+1. (historical) two-node replicated-local and fabric cold I/O/startup A/B;
 2. three-node concurrent loading and interface-counter proof;
 3. deterministic/correctness/long-context gates on the healthy fabric service;
 4. interrupted load, link loss, NFS restart, owner reboot, restart loop, and
@@ -505,15 +503,12 @@ durable home separately before running preparation.
       Pure UI delegation may reuse matching physical service evidence.
 12. serving-wizard catalog delegation when source selection, placement,
     readiness, restart, or stop-retention behavior changes:
-    - replicated weights remain the first/default choice and never invoke
-      catalog health, preparation, or hot cleanup;
-    - the experimental choice discloses exact revision/manifest,
-      durable-home dependency, selected ranks, transfer policy, and no fallback;
-    - stale or invalid health blocks the catalog path but may offer replicated
-      only as a separate operator choice;
+    - the library flow discloses exact revision/manifest, durable-home
+      dependency, selected ranks, transfer policy, and no fallback;
+    - stale or invalid health blocks preparation and launch — there is no
+      fallback storage choice (ADR 0006);
     - successful preparation is followed by fresh health and exact all-rank
-      readiness before `--weight-source library-hot` reaches weight preflight
-      or launch;
+      readiness before weight preflight or launch;
     - preparation and launch retain separate confirmations, and failed or
       incomplete preparation cannot launch;
     - one-node catalog preparation and launch use the durable-home rank; a
@@ -525,8 +520,9 @@ durable home separately before running preparation.
       fails before mutation;
     - failed launch and interrupted-wizard recovery restore only the saved source,
       placement, and spec state, and remove transaction state only after success;
-    - confirmed same-source restart pins before stop, ordinary stop purges only
-      unpinned views, and explicit pin remains durable-home dependent; and
+    - confirmed same-source restart pins before stop, ordinary stop retains
+      unpinned views, explicit `--purge-hot` restages on the next start, and
+      explicit pin remains durable-home dependent; and
     - repeat physical serving integration when the selected placement or
       runtime-resolution algorithm changes. Existing evidence may be reused
       only for the exact placement and contract it measured.
@@ -622,8 +618,9 @@ unpinned purge, and return to one durable home; see
 `results/model-library/deepseek-v4-flash-serving-wizard-gate-20260813.json`.
 The new remote one-node wizard path still needs its own serving-integration
 repeat before that placement receives a physical claim. The short-lived exact
-replacement transaction has deterministic Python, inventory, replicated-switch,
-and catalog rollback coverage. Its physical two-rank repeat passed on
+replacement transaction has deterministic Python, inventory, legacy-migration,
+pre-library leftover archive, and catalog rollback coverage. Its physical
+two-rank repeat passed on
 2026-08-16: a forced target launch failure left a persisted stopped transaction
 and pinned exact views; a new wizard process restored the captured contract,
 removed the transaction, and restored ephemeral retention. The same closure run
@@ -631,10 +628,11 @@ also passed exact home-symlink behavior, 30-minute serving with zero request
 errors, restart, identity re-verification, owned cleanup, and one-home closeout.
 The 1.14 GiB memory-shrink warning remains recorded. See
 `results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
-This makes the reviewed two-rank subsystem GA and records bounded
+This made the reviewed two-rank subsystem GA and records bounded
 model-qualification evidence for the soak and stability observations. It does
-not satisfy the release-specific soak criterion, confer `Validated`, or change
-the guided default. Remote one-rank and legacy-unsealed use remain experimental.
+not satisfy the release-specific soak criterion or confer `Validated`.
+ADR 0006 later promoted every library scope to supported by decision; the
+one-rank physical serving-integration repeat remains a recorded follow-up.
 
 Record a sanitized admission artifact without hostnames, node IDs, topology
 IDs, IPs, interface names, or absolute paths. `budget --json` is site-local
@@ -649,9 +647,9 @@ Repeat it when admission arithmetic, hot-root accounting, selected-rank
 barriers, or hot locking changes.
 
 Catalog and integration gates may be recorded as accepted in their own scopes.
-The path remains ineligible for guided/default release promotion if any required
-artifact is absent, even when the same model/profile/image is already `tested`
-with replicated weights.
+A scope remains ineligible for release promotion if any required artifact is
+absent, even when the same model/profile/image is already `tested` from
+historical replicated evidence.
 
 ## 8. Close out
 

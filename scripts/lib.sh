@@ -690,7 +690,7 @@ dir_size_gib() {
 }
 
 estimate_weights_gib() {
-  # Disk footprint for pull-weights (full HF/NFS tree).
+  # Disk footprint for the loaded profile (WEIGHTS_GIB, else local tree size).
   if [ -n "${WEIGHTS_GIB}" ]; then
     echo "$WEIGHTS_GIB"
     return
@@ -854,24 +854,15 @@ print_shell_command_redacted() {
 # Injectable docker/ssh for deterministic tests. Production leaves these default.
 PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
 PULSAR_SSH="${PULSAR_SSH:-ssh}"
-PULSAR_WEIGHT_FABRIC_TOOL="${PULSAR_WEIGHT_FABRIC_TOOL:-$REPO_DIR/scripts/weight-fabric.sh}"
 
-# ADR 0005: live NFS/RDMA under vLLM is not a serving runtime source.
-LIVE_NFS_SERVING_RETIRED_MESSAGE='live NFS/RDMA serving (--weight-source fabric) is retired (ADR 0005). A crashed rank cannot cold-start from a live mount. Use --weight-source library-hot or --weight-source replicated. This is not a remap to replicated. One-shot nfs-rdma prepare (--backend fabric) remains a separate experiment.'
-LIVE_NFS_SERVING_WORKFLOW_RETIRED_MESSAGE='live NFS/RDMA serving workflow is retired (ADR 0005). Use --weight-source library-hot or --weight-source replicated. Leftover site mounts: show, unmount, or teardown only (confirmation-gated). One-shot nfs-rdma prepare (--backend fabric) remains a separate experiment.'
+# ADR 0006: the model library is the only weight-distribution mechanism.
+WEIGHT_MODE_FLAG_REMOVED_MESSAGE='--weight-source/--weight-mode were removed (ADR 0006): the model library is the only weight mechanism, so there is no mode to select. Drop the flag. Leftover live-NFS site mounts (ADR 0005): ./pulsar weight-fabric show/unmount/teardown.'
 
-refuse_retired_live_nfs_serving_weight_source() {
-  local source="${1:-}"
-  [ "$source" = fabric ] || return 0
-  die "$LIVE_NFS_SERVING_RETIRED_MESSAGE" 2
-}
-
-refuse_retired_live_nfs_serving_workflow() {
-  die "$LIVE_NFS_SERVING_WORKFLOW_RETIRED_MESSAGE" 2
+refuse_removed_weight_mode_flag() {
+  die "$WEIGHT_MODE_FLAG_REMOVED_MESSAGE" 2
 }
 PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
-PULSAR_REPLICATED_WITNESS_ROOT="${PULSAR_REPLICATED_WITNESS_ROOT:-$HF_CACHE/.pulsar/replicated-witnesses}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"
 PULSAR_SSH_OPTS=(
   -o BatchMode=yes
@@ -1082,15 +1073,17 @@ PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
-# Load the controller-reviewed plan for a sealed profile. Unsealed profiles do
-# not call this path and retain the structural replicated-cache behavior.
-# Sets REPLICATED_PLAN_B64, REPLICATED_REVISION, REPLICATED_MODEL_SEAL_ID,
-# REPLICATED_VALIDATION_BUNDLE_ID, REPLICATED_MANIFEST_ID, and container path.
+# Load the reviewed exact-identity plan for a sealed profile (used by
+# model-library home acquisition). Sets REPLICATED_PLAN_B64,
+# REPLICATED_REVISION, REPLICATED_MODEL_SEAL_ID,
+# REPLICATED_VALIDATION_BUNDLE_ID, and REPLICATED_MANIFEST_ID. The name is
+# historical: the plan binds the exact commit/manifest/seal identity and is
+# independent of any distribution mode (ADR 0006).
 load_replicated_identity_plan() {
   local profile="${1:?profile required}" envelope plan
   local -a plan_args
   [ -n "${EXPECTED_MODEL_SEAL:-}" ] ||
-    die "$profile: replicated identity plan requires EXPECTED_MODEL_SEAL"
+    die "$profile: reviewed identity plan requires EXPECTED_MODEL_SEAL"
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   plan_args=(
     replicated-plan
@@ -1098,75 +1091,31 @@ load_replicated_identity_plan() {
     --profile "$profile"
   )
   envelope=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${plan_args[@]}" --transport-envelope) ||
-    die "$profile: cannot build reviewed replicated identity plan"
+    die "$profile: cannot build reviewed exact-identity plan"
   plan=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["plan"]))') ||
-    die "$profile: cannot read reviewed replicated identity plan"
+    die "$profile: cannot read reviewed exact-identity plan"
   REPLICATED_PLAN_B64=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.load(sys.stdin)["encoded_plan"])') ||
-    die "$profile: cannot read encoded replicated identity plan"
+    die "$profile: cannot read encoded exact-identity plan"
   REPLICATED_REVISION=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_revision"])')
   REPLICATED_MODEL_SEAL_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["seal_id"])')
   REPLICATED_VALIDATION_BUNDLE_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["validation_bundle_id"])')
   REPLICATED_MANIFEST_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"]["manifest_id"])')
-  REPLICATED_HUB_PATH=$(hf_hub_path)
-  REPLICATED_WITNESS_PATH="$PULSAR_REPLICATED_WITNESS_ROOT/$profile/$REPLICATED_MODEL_SEAL_ID.json"
-  REPLICATED_CONTAINER_MODEL_PATH="/root/.cache/huggingface/hub/$(hf_hub_dirname "$MODEL")/snapshots/$REPLICATED_REVISION"
   if [ -z "$REPLICATED_PLAN_B64" ] ||
       [ -z "$REPLICATED_REVISION" ] ||
       [ -z "$REPLICATED_MODEL_SEAL_ID" ] ||
       [ -z "$REPLICATED_VALIDATION_BUNDLE_ID" ] ||
       [ -z "$REPLICATED_MANIFEST_ID" ]; then
-    die "$profile: reviewed replicated identity plan is incomplete"
+    die "$profile: reviewed exact-identity plan is incomplete"
   fi
 }
 
-verify_replicated_identity_local() {
-  local mode="${1:-serve}" output
-  local -a args=(
-    verify-replicated
-    --plan-b64 "$REPLICATED_PLAN_B64"
-    --hub-path "$REPLICATED_HUB_PATH"
-    --witness-path "$REPLICATED_WITNESS_PATH"
-    --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
-  )
-  [ "$mode" = serve ] && args+=(--serve-time-witness)
-  output=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${args[@]}") || return 1
-  printf '%s\n' "$output"
-}
-
-verify_replicated_identity_remote() {
-  local host="${1:?host required}" mode="${2:-serve}" command
-  local -a args=(
-    python3 - verify-replicated
-    --plan-b64 "$REPLICATED_PLAN_B64"
-    --hub-path "$REPLICATED_HUB_PATH"
-    --witness-path "$REPLICATED_WITNESS_PATH"
-    --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
-  )
-  [ "$mode" = serve ] && args+=(--serve-time-witness)
-  command=$(shell_join_q "${args[@]}")
-  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" "$command" <"$PULSAR_MODEL_LIBRARY_PY"
-}
-
-verify_replicated_identity_selected_node() {
-  local mode="${1:-serve}"
-  if [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
-    verify_replicated_identity_remote "$SINGLE_NODE_SSH_HOST" "$mode"
-  else
-    verify_replicated_identity_local "$mode"
-  fi
-}
-
-# Resolve a ready hot-staging instance for library-hot launch.
-# Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
-# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
-# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
-# LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
-# LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
-# LIBRARY_HOT_VALIDATION_JSON, and pinned state.
-# Requires load_conf + load_cluster_topology (or single-node topology id).
+# Print find-hot JSON for the selected rank. Return 0 on success, 255 when
+# that rank is SSH-unreachable, 2 when a found view fails verification, and
+# 1 when no ready instance is present. Requires load_conf plus confirmed
+# topology (or a resolved one-node topology id).
 library_hot_info_for_profile() {
   local profile="${1:?profile required}" topology_id info stamp_json instance
-  local expected_validation_json command rank
+  local expected_validation_json command rank rc
   topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] || return 1
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || return 1
@@ -1177,8 +1126,9 @@ library_hot_info_for_profile() {
       --profile "$profile" \
       --topology-id "$topology_id" \
       --hot-root "$PULSAR_HOT_ROOT")
-    info=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") \
-      || return 1
+    rc=0
+    info=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
     stamp_json=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
       || return 1
@@ -1198,8 +1148,12 @@ library_hot_info_for_profile() {
       --topology-id "$topology_id" \
       --expected-validation-json "$expected_validation_json" \
       --serve-time-witness)
-    ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null \
-      || return 1
+    rc=0
+    ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      [ "$rc" -eq 255 ] && return 255
+      return 2
+    fi
   else
     info=$(python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
       --profile "$profile" \
@@ -1214,11 +1168,18 @@ library_hot_info_for_profile() {
       --profile "$profile" \
       --topology-id "$topology_id" \
       --models-dir "$REPO_DIR/models" \
-      --serve-time-witness >/dev/null || return 1
+      --serve-time-witness >/dev/null || return 2
   fi
   printf '%s\n' "$info"
 }
 
+# Resolve a ready hot-staging instance for library-hot launch.
+# Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
+# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
+# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
+# LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
+# LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
+# LIBRARY_HOT_VALIDATION_JSON, and pinned state.
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
   local topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
@@ -1226,7 +1187,7 @@ resolve_library_hot_for_profile() {
     || die "library-hot requires confirmed topology (scripts/detect-fabric.sh --write-topology)"
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   info=$(library_hot_info_for_profile "$profile") \
-    || die "library-hot: model files are not prepared or valid on the selected rank for $profile — run preparation for that placement"
+    || die "library-hot: model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
   LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \
@@ -1418,9 +1379,20 @@ print("\t".join([cid, name, managed, conf, rank]))
 ' "$PULSAR_MANAGED_LABEL" "$PULSAR_CONF_LABEL" "$PULSAR_RANK_LABEL"
 }
 
-# Return the declared model-weight source from ownership metadata. Historical
-# managed containers without the label are the replicated compatibility path;
-# malformed JSON is an observation failure.
+# Declared world size from ownership metadata (multi-node launches only).
+container_world_size_field() {
+  local metadata="${1:?}"
+  printf '%s' "$metadata" | python3 -c '
+import json, sys
+labels = json.load(sys.stdin).get("labels") or {}
+print(str(labels.get(sys.argv[1], "") or ""))
+' "$PULSAR_WORLD_SIZE_LABEL"
+}
+
+# Return the declared model-weight source from ownership metadata. The value
+# is provenance, not a mode: every managed launch since ADR 0006 writes
+# library-hot, and containers labeled replicated (or unlabeled, predating the
+# label) are legacy observations. Malformed JSON is an observation failure.
 container_weight_source_field() {
   local metadata="${1:?}"
   printf '%s' "$metadata" | python3 -c '
@@ -1558,7 +1530,9 @@ container_ownership_is_proven() {
   return 0
 }
 
-# --all candidate: managed=true, conf in models/*.conf, rank valid for placement.
+# True when a managed container may be stopped. Labels prove ownership.
+# A live conf file is extra geometry when present; a missing conf still
+# stops from labels (world-size / single-node identity).
 container_all_candidate_is_safe() {
   local metadata="${1:?}" placement="${2:?}"
   local id name managed conf rank
@@ -1567,9 +1541,24 @@ container_all_candidate_is_safe() {
   container_managed_label_is_true "$managed" || return 1
   [ -n "$conf" ] || return 1
   [ -n "$rank" ] || return 1
-  [ -f "$REPO_DIR/models/${conf}.conf" ] || return 1
-  placement_rank_allowed "$conf" "$rank" "$placement" || return 1
   local nodes
+  if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
+    # Retired profile (e.g. removed by ADR 0006): the conf file is gone, but
+    # ownership is still proven by labels, so the container must remain
+    # stoppable. Geometry comes from the container's own labels.
+    if [ "$rank" = single ]; then
+      placement_index_for_role "$placement" >/dev/null || return 1
+      container_single_node_identity_is_proven "$metadata" "$placement"
+      return
+    fi
+    nodes=$(container_world_size_field "$metadata")
+    [[ "$nodes" =~ ^[2-9][0-9]*$ ]] || return 1
+    [[ "$rank" =~ ^[0-9]+$ ]] && [ "$rank" -lt "$nodes" ] || return 1
+    load_cluster_topology || return 1
+    [ "$nodes" -le "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
+    return 0
+  fi
+  placement_rank_allowed "$conf" "$rank" "$placement" || return 1
   nodes=$(profile_nodes_for_conf "$conf") || return 1
   if [ "$nodes" -eq 1 ]; then
     container_single_node_identity_is_proven "$metadata" "$placement"
@@ -1627,7 +1616,21 @@ container_all_refuse_reason() {
     return
   fi
   if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
-    echo "unknown conf '${conf}' (no models/${conf}.conf)"
+    if [ "$rank" = single ]; then
+      container_single_node_identity_refuse_reason "$metadata" "$placement"
+      return
+    fi
+    nodes=$(container_world_size_field "$metadata")
+    if ! [[ "$nodes" =~ ^[2-9][0-9]*$ ]]; then
+      echo "retired conf '${conf}' with no usable world-size label"
+      return
+    fi
+    load_cluster_topology >/dev/null 2>&1 || true
+    if [ "$nodes" -gt "${CLUSTER_TOPOLOGY_COUNT:-0}" ]; then
+      echo "retired conf ${conf} spans ${nodes} ranks but only ${CLUSTER_TOPOLOGY_COUNT:-0} confirmed — confirm topology before cleanup"
+      return
+    fi
+    echo "ownership not proven for retired conf '${conf}'"
     return
   fi
   if ! nodes=$(profile_nodes_for_conf "$conf"); then
@@ -2026,6 +2029,150 @@ list_managed_container_ids_remote() {
       return 1
       ;;
   esac
+}
+
+list_managed_container_ids_on_node() {
+  local index="${1:?node index required}"
+  if [ "$index" -eq 0 ]; then
+    list_managed_container_ids_local
+    return
+  fi
+  load_cluster_topology || return 1
+  [ "$index" -lt "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
+  list_managed_container_ids_remote "${CLUSTER_NODE_SSH_HOSTS[$index]}"
+}
+
+# Revalidate then remove one managed id on the node where it was observed.
+# Uses the same stoppability predicate as --all.
+# Exit: 0 removed or already gone; 2 refused; 1 operational error.
+remove_safe_managed_id_on_node() {
+  local index="${1:?node index required}" id="${2:?container id required}"
+  local placement meta probe=0 reason conf rank short host
+  placement=$(single_node_key_for_index "$index") || return 1
+  meta=$(container_ownership_inspect_on_node "$index" "$id") || probe=$?
+  if [ "$probe" -eq 3 ]; then
+    log "container id=${id:0:12} already gone on node $index"
+    return 0
+  fi
+  if [ "$probe" -ne 0 ]; then
+    warn "confirmed node $index is unobservable during revalidation"
+    return 1
+  fi
+  IFS=$'\t' read -r _ _ _ conf rank < <(container_ownership_fields "$meta")
+  if ! container_all_candidate_is_safe "$meta" "$placement"; then
+    reason=$(container_all_refuse_reason "$meta" "$placement")
+    warn "refusing id=${id:0:12} on node $index: $reason"
+    return 2
+  fi
+  short="${id:0:12}"
+  log "removing stack-managed id=$short conf=$conf rank=$rank on node $index"
+  if [ "$index" -eq 0 ]; then
+    if ! "$PULSAR_DOCKER" rm -f "$id" >/dev/null; then
+      warn "docker rm -f failed for id=$short"
+      return 1
+    fi
+    if ! container_id_absent_local "$id"; then
+      warn "container id=$short still present or unverifiable after docker rm -f"
+      return 1
+    fi
+    return 0
+  fi
+  host="${CLUSTER_NODE_SSH_HOSTS[$index]}"
+  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
+      "docker rm -f $(printf '%q' "$id") >/dev/null"; then
+    warn "docker rm -f failed for id=$short on node $index"
+    return 1
+  fi
+  if ! container_id_absent_remote "$host" "$id"; then
+    warn "container id=$short still present or unverifiable on node $index after docker rm -f"
+    return 1
+  fi
+  return 0
+}
+
+# Named stop by proven labels. Conf file is extra geometry when present.
+# Every confirmed Docker endpoint is probed before mutation. An unobservable
+# node blocks removal (a live rank could be stranded).
+# Exit: 0 stopped or absent; 2 refused; 1 unobservable/operational.
+stop_named_service_by_labels() {
+  local conf="${1:?conf required}" node_selector="${2:-}"
+  local count index ids id meta probe=0 placement reason rank have_conf
+  local -a found_indices=() found_ids=() found_ranks=()
+  local filtered_indices=() filtered_ids=() i
+  load_cluster_topology || return 1
+  count="$CLUSTER_TOPOLOGY_COUNT"
+  [ "$count" -gt 0 ] || count=1
+
+  for ((index = 0; index < count; index++)); do
+    if ! list_managed_container_ids_on_node "$index" >/dev/null; then
+      warn "confirmed node $index is unobservable — not removing conf=$conf (an unobserved live rank could be stranded)"
+      return 1
+    fi
+  done
+
+  for ((index = 0; index < count; index++)); do
+    placement=$(single_node_key_for_index "$index") || return 1
+    ids=$(list_managed_container_ids_on_node "$index") || {
+      warn "confirmed node $index is unobservable — not removing conf=$conf"
+      return 1
+    }
+    for id in $ids; do
+      [ -n "$id" ] || continue
+      probe=0
+      meta=$(container_ownership_inspect_on_node "$index" "$id") || probe=$?
+      if [ "$probe" -eq 3 ]; then
+        continue
+      fi
+      if [ "$probe" -ne 0 ]; then
+        warn "confirmed node $index is unobservable — not removing conf=$conf"
+        return 1
+      fi
+      IFS=$'\t' read -r _ _ _ have_conf rank < <(container_ownership_fields "$meta")
+      [ "$have_conf" = "$conf" ] || continue
+      if ! container_all_candidate_is_safe "$meta" "$placement"; then
+        reason=$(container_all_refuse_reason "$meta" "$placement")
+        warn "refusing conf=$conf id=${id:0:12} on node $index: $reason"
+        return 2
+      fi
+      found_indices+=("$index")
+      found_ids+=("$id")
+      found_ranks+=("$rank")
+    done
+  done
+
+  if [ -n "$node_selector" ]; then
+    if [ "${#found_ranks[@]}" -gt 0 ]; then
+      for rank in "${found_ranks[@]}"; do
+        if [[ "$rank" =~ ^[0-9]+$ ]]; then
+          warn "--node is only valid for one-node services"
+          return 2
+        fi
+      done
+    fi
+    resolve_single_node_placement "$node_selector" || return 1
+    if [ "${#found_indices[@]}" -gt 0 ]; then
+      for i in "${!found_indices[@]}"; do
+        if [ "${found_indices[$i]}" = "$SINGLE_NODE_INDEX" ]; then
+          filtered_indices+=("${found_indices[$i]}")
+          filtered_ids+=("${found_ids[$i]}")
+        fi
+      done
+    fi
+    found_indices=("${filtered_indices[@]+"${filtered_indices[@]}"}")
+    found_ids=("${filtered_ids[@]+"${filtered_ids[@]}"}")
+  fi
+
+  if [ "${#found_ids[@]}" -eq 0 ]; then
+    log "no stack-managed service found for conf=$conf"
+    return 0
+  fi
+
+  for i in "${!found_ids[@]}"; do
+    remove_safe_managed_id_on_node "${found_indices[$i]}" "${found_ids[$i]}" \
+      || return
+  done
+  log "done"
+  return 0
 }
 
 # Remove local --all candidates that are safe for head placement.

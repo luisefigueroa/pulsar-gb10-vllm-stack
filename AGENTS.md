@@ -20,22 +20,20 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Model library<br/>two-rank GA · other scopes experimental"] -. explicit opt-in .-> artifacts
+  library["Model library<br/>durable homes · sealed hot views"] --> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
-
-  classDef optin stroke-dasharray: 5 5;
-  class library optin;
 ```
 
-Solid arrows show the promoted control and evidence flow. Dashed arrows are
-explicit non-default weight paths. The reviewed two-rank `library-hot` path is
-GA; remote one-rank and legacy-unsealed uses remain experimental. Live
-NFSv4.2/RDMA under vLLM (`--weight-source fabric`) is rejected as a serving
-runtime source (ADR 0005): a crashed rank cannot cold-start without the owner
-export. Launch fails closed; leftover unmount/teardown only. None is a silent
-fallback or wizard default. Control SSH, inference NCCL/RoCE, and weight
+The model library is the only weight-distribution mechanism
+([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)):
+one durable home per exact revision, sealed hot views on non-home ranks, and
+local files on every rank before vLLM starts. There is no mode-selection
+axis; `--weight-source`/`--weight-mode` fail closed. Live NFSv4.2/RDMA under
+vLLM remains rejected as a serving runtime source (ADR 0005): a crashed rank
+cannot cold-start without the owner export; leftover site mounts get
+unmount/teardown only. Control SSH, inference NCCL/RoCE, and weight
 transfer remain distinct data planes even when they involve the same machines.
 
 ## Build, Test, and Development Commands
@@ -54,7 +52,7 @@ Write Bash for orchestration (`#!/usr/bin/env bash`, `set -euo pipefail`) and Py
 ### Hybrid Bash + Python (what goes where)
 
 This repo is intentionally hybrid. Match the existing pattern
-(`weight-fabric.sh` + `weight_fabric.py`, `lib.sh` + small Python helpers):
+(`model-library.sh` + `model_library.py`, `lib.sh` + small Python helpers):
 **Bash at the operator boundary, Python for data and algorithms.** Do not
 rewrite the control plane into one language, and do not introduce a third
 language for new features without an explicit decision.
@@ -310,7 +308,7 @@ infrastructure unless that authority is explicitly part of the approved plan.
 ### Fail closed; no silent policy changes
 
 - Partial weights, wrong transport, digest mismatch, stale topology, or incomplete preparation/start must **not** report healthy serving.
-- Do **not** silently fall back (e.g. fabric → full N-replica pull, RoCE NFS → TCP/control-LAN NFS, confirmed rail → “any route”). If an alternate path exists, it is an **explicit** operator choice and must be visible in CLI, labels, and docs.
+- Do **not** silently fall back (e.g. missing durable home → ad-hoc download, ssh-roce rail → control-LAN copy, confirmed rail → “any route”). If an alternate path exists, it is an **explicit** operator choice and must be visible in CLI, labels, and docs.
 - Do **not** invent serving geometries (TP/PP/node counts) from “we discovered N machines.” Exact profile contracts and operational gates decide what can run; extra confirmed nodes stay idle capacity.
 - The wizard exposes all serving profiles that fit confirmed capacity, with status and material caveats visible. Recommendation and default ordering prefer evidence-backed behavior. Experimental subsystems remain explicit choices and are never silent fallbacks.
 
@@ -318,7 +316,7 @@ infrastructure unless that authority is explicitly part of the approved plan.
 
 - Treat confirmed topology (`.cluster-topology.json`) as membership truth—not mDNS names alone.
 - Management SSH must use the **confirmed control endpoint** (saved alias for identity/host keys is fine; transport host must not wander onto a RoCE data rail). Reuse shared resolvers; do not reimplement per script.
-- Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library preparation / experimental fabric). Do not overload one path without saying so.
+- Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library preparation). Do not overload one path without saying so.
 - Site-local state (`.cluster-topology.json`, `.weight-fabric/`, `.model-library/`, hot roots) is gitignored; never commit hostnames, IPs, or node IDs into publishable docs/results without redaction/audit patterns already used for fabric artifacts.
 - In static hardware and measurement documentation, identify physical systems as
   `Node A`, `Node B`, and so on. Use generic rank labels such as `rank 0` and
@@ -330,7 +328,7 @@ infrastructure unless that authority is explicitly part of the approved plan.
 ### Lifecycle ownership
 
 - Launchers own cleanup for containers **they** create (including signal traps on interrupt). Prefer immutable launch IDs and ownership-safe stop (`down.sh` / stack labels)—never broad `docker rm` of unrelated workloads.
-- Destructive ops (purge hot, purge replicas, teardown exports, overwrite configs) are confirmation-gated; refuse when a managed service is still using the resource.
+- Destructive ops (purge hot, purge replicas, teardown exports, overwrite configs) are confirmation-gated; refuse when a managed service is still using the resource. Ordinary stop of a `library-hot` service retains unpinned prepared views ([ADR 0007](docs/decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)); `--purge-hot` is the explicit capacity-recovery action.
 - Privileged changes require usable sudo policy; support attended `--interactive-sudo` where the project already does. **Never** read, log, transport, or store the operator password, and do not weaken sudoers to automate.
 - All-or-nothing multi-rank steps (prepare, cluster start): on failure, roll back partial ranks or leave an explicit incomplete state that launch refuses—not a half-ready service.
 
@@ -562,21 +560,22 @@ this work; the skill is procedural and does not outrank these sources.
 - Warm-home pinning retains non-home hot copies but still requires the durable
   home. Home-loss resilience and extra durable replicas are separate, explicit
   policies on distinct failure domains.
-- For an explicitly chosen reviewed multi-rank model preparation, use
-  topology-bound `ssh-roce` copy with eight streams and no automatic fallback,
-  as recorded in ADR 0003. The reviewed two-rank `library-hot` path is GA but
-  remains explicit and non-default. Remote one-rank and legacy-unsealed uses
-  remain experimental. This transport policy does not create a missing durable
-  home or change the replicated guided default.
-- Live NFSv4.2/RDMA under vLLM (`--weight-source fabric`,
-  `live-remote-readonly`) is rejected as a serving or onboarding alternative
+- For multi-rank model preparation, use topology-bound `ssh-roce` copy with
+  eight streams and no automatic fallback, as recorded in ADR 0003. The model
+  library is the only weight-distribution mechanism
+  ([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md));
+  every scope (two-rank sealed, one-rank, legacy-unsealed) is supported, a
+  confirmed topology manifest (one-node is valid) is a serving prerequisite,
+  and this transport policy does not create a missing durable home.
+- Live NFSv4.2/RDMA under vLLM (`live-remote-readonly`) is rejected as a
+  serving or onboarding alternative
   ([ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md)). A crashed
   rank cannot cold-start without the owner export, NFS/RDMA stack, and exact
-  route. Replicated and `library-hot` already present local files. Launch
-  fails closed with no remap. Leftover site mounts use confirmation-gated
-  unmount/teardown only. This does not retire `ssh-roce` copy, NCCL/RoCE
-  inference, or topology discovery (`detect-fabric.sh`). One-shot `nfs-rdma`
-  prepare remains a separate experiment.
+  route. Library serving already presents local files. Launch fails closed
+  with no remap. Leftover site mounts use confirmation-gated unmount/teardown
+  only. This does not retire `ssh-roce` copy, NCCL/RoCE inference, or
+  topology discovery (`detect-fabric.sh`). The one-shot `nfs-rdma` prepare
+  experiment is retired with the fabric internals (ADR 0006).
 - Distribution transport is run provenance, not Model Serving Release
   identity. Qualification starts only after exact content and the intended
   runtime-access contract verify on every serving rank. A failure before that
@@ -590,7 +589,7 @@ this work; the skill is procedural and does not outrank these sources.
 - Prefer atomic writes for site-local JSON/state (write temp + rename).
 - Idempotent setup where practical; incomplete rollback must be explicit and recoverable (`teardown` / purge / prepare again).
 - Human CLI output remains a product surface (see Command-Line Experience); keep `--json` stable for automation.
-- Scope PRs tightly: one concern per change; do not mix experimental fabric promotion with unrelated refactors.
+- Scope PRs tightly: one concern per change; do not mix distribution-policy changes with unrelated refactors.
 
 ## Commit & Pull Request Guidelines
 

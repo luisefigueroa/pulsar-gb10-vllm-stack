@@ -120,14 +120,14 @@ does not replace the independent acquisition proof.
 
 ## 6. Distribution choice
 
-Confirm `library-hot` → `local-verified-readonly`. Do not offer live NFS/RDMA
-serving (`--weight-source fabric`, `live-remote-readonly`).
+Confirm `library-hot` → `local-verified-readonly`.
+Do not offer live NFS/RDMA serving (`live-remote-readonly`; ADR 0005).
+The model library is the only weight mechanism (ADR 0006).
 
 Record the source and transport. No silent fallback. No automatic
-fallback. The default unsealed replicated path follows mutable
-`refs/main`, mounts the writable HF home, and passes the repository ID; it
-may be served with that honest label but is not an exact ADR 0004
-qualification attempt.
+fallback. An unsealed profile serves as `legacy-unsealed` after full
+verification; that honest label is not an exact ADR 0004 qualification
+attempt.
 
 ## 7. Release plan
 
@@ -154,7 +154,7 @@ The runtime envelope and geometry checks are structural, not physical proof.
 3. If that barrier fails, qualification did not start. Do not record a
    model-criterion failure.
 4. Obtain a separate launch confirmation.
-5. `scripts/up.sh <profile> --weight-source library-hot`.
+5. `scripts/up.sh <profile>`.
 
 ## 9. Identities and measurements
 

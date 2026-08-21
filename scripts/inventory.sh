@@ -1090,7 +1090,7 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
         reasons.append("one or more ranks lack weight source")
     if len(weight_sources) > 1:
         reasons.append("ranks disagree on weight source")
-    if weight_source in {"fabric", "library-hot"} and (
+    if weight_source == "library-hot" and (
         weight_owner_missing
         or weight_config_missing
         or len(weight_owners) != 1
@@ -1458,11 +1458,7 @@ def print_service(s):
     field("status", f"{own} · {complete} · {safe}")
     field("nodes", f"{nodes_e} required · {observed_count}/{expected_count} observed")
     weight_source = s.get("weight_source")
-    if weight_source == "fabric":
-        owner = str(s.get("weight_owner_node_id") or "?")[:12]
-        config = str(s.get("weight_configuration_id") or "?")[:12]
-        field("weights", f"single-copy NFS/RDMA · owner {owner} · config {config}")
-    elif weight_source:
+    if weight_source:
         field("weights", weight_source)
     elif verbose:
         field("weights", "unlabeled legacy runtime")

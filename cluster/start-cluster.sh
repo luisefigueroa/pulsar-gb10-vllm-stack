@@ -3,7 +3,6 @@
 # then local rank 0 with the API. Every active rank is one GB10.
 #
 #   cluster/start-cluster.sh <model-name> [--spec-decode|--no-spec-decode]
-#                            [--weight-source replicated|library-hot]
 #                            [--skip-preflight] [--skip-warmup] [--dry-run]
 #
 # Backend: vLLM native --nnodes/--node-rank with the mp executor over RoCE.
@@ -20,7 +19,6 @@ SPEC_MODE=auto
 SKIP_PREFLIGHT=0
 SKIP_WARMUP=0
 DRY_RUN=0
-WEIGHT_SOURCE=replicated
 while [ $# -gt 0 ]; do
   case "$1" in
     --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
@@ -29,15 +27,8 @@ while [ $# -gt 0 ]; do
     --skip-warmup) SKIP_WARMUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --force) : ;; # Backward-compatible no-op: status labels are advisory.
-    --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
-      WEIGHT_SOURCE="$2"
-      shift
-      ;;
-    --weight-mode)
-      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated)" 2
-      WEIGHT_SOURCE="$2"
-      shift
+    --weight-source|--weight-mode)
+      refuse_removed_weight_mode_flag
       ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -46,14 +37,9 @@ done
 
 acquire_model_library_lifecycle_lock shared
 load_conf "$MODEL_NAME"
-case "$WEIGHT_SOURCE" in
-  replicated|library-hot) ;;
-  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
-  *) die "--weight-source must be replicated or library-hot" 2 ;;
-esac
-if [ "$WEIGHT_SOURCE" = library-hot ]; then
-  acquire_model_library_hot_lock shared
-fi
+acquire_model_library_hot_lock shared
+[ "$(model_source_kind)" = hf ] \
+  || die "non-HF model profiles are not servable (ADR 0006)"
 resolve_spec_decode "$SPEC_MODE"
 LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
 SPEC_DECODE_STATE=$([ "$SPEC_DECODE_ENABLED" = 1 ] && printf on || printf off)
@@ -65,72 +51,36 @@ fi
 require_profile_topology "$NODES" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
   || exit 1
 
-declare -a WEIGHT_CACHE_ROOTS=()
-declare -a WEIGHT_REPOSITORY_PATHS=()
 model_cache_name=$(hf_hub_dirname "$MODEL")
-for ((rank = 0; rank < NODES; rank++)); do
-  WEIGHT_CACHE_ROOTS["$rank"]="$HF_CACHE"
-  WEIGHT_REPOSITORY_PATHS["$rank"]="$HF_CACHE/hub/$model_cache_name"
-done
-WEIGHT_OWNER_ID=""
-WEIGHT_CONFIG_ID=""
-runtime_model="$MODEL"
-SEALED_REPLICATED=0
 LIBRARY_HOT_HUB_PATH=""
 LIBRARY_HOT_CONTENT_DIGEST=""
 LIBRARY_HOT_TRANSPORT=""
 LIBRARY_HOT_INTEGRITY_SCHEME=""
-if [ "$WEIGHT_SOURCE" = replicated ] && [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-  load_replicated_identity_plan "$MODEL_NAME"
-  for ((rank = 0; rank < NODES; rank++)); do
-    echo "[cluster] serve witness + fail-closed identity verify: rank $rank"
-    if [ "$rank" = 0 ]; then
-      verify_replicated_identity_local serve >/dev/null ||
-        die "replicated: rank $rank failed exact identity verification"
-    else
-      verify_replicated_identity_remote "${CLUSTER_NODE_SSH_HOSTS[$rank]}" serve >/dev/null ||
-        die "replicated: rank $rank failed exact identity verification"
-    fi
-  done
-  runtime_model="$REPLICATED_CONTAINER_MODEL_PATH"
-  SEALED_REPLICATED=1
-elif [ "$WEIGHT_SOURCE" = library-hot ]; then
-  resolve_library_hot_for_profile "$MODEL_NAME"
-  model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
-  WEIGHT_OWNER_ID="${LIBRARY_HOT_HOME_NODE_ID}"
-  WEIGHT_CONFIG_ID="${LIBRARY_HOT_CONTENT_ID}"
-  runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
-  for ((rank = 1; rank < NODES; rank++)); do
-    library_verify_command=$(shell_join_q \
-      python3 - verify-hot \
-      --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
-      --profile "$MODEL_NAME" \
-      --topology-id "$CLUSTER_TOPOLOGY_ID" \
-      --expected-validation-json "$LIBRARY_HOT_VALIDATION_JSON" \
-      --workers "${PULSAR_INTEGRITY_WORKERS:-8}" \
-      --serve-time-witness)
-    echo "[cluster] serve witness + fail-closed identity verify: rank $rank"
-    ssh_node "$rank" "$library_verify_command" \
-      <"$REPO_DIR/scripts/model_library.py" >/dev/null \
-      || die "library-hot: rank $rank failed exact identity verification"
-  done
-fi
+resolve_library_hot_for_profile "$MODEL_NAME"
+model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
+WEIGHT_OWNER_ID="${LIBRARY_HOT_HOME_NODE_ID}"
+WEIGHT_CONFIG_ID="${LIBRARY_HOT_CONTENT_ID}"
+runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
+for ((rank = 1; rank < NODES; rank++)); do
+  library_verify_command=$(shell_join_q \
+    python3 - verify-hot \
+    --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
+    --profile "$MODEL_NAME" \
+    --topology-id "$CLUSTER_TOPOLOGY_ID" \
+    --expected-validation-json "$LIBRARY_HOT_VALIDATION_JSON" \
+    --workers "${PULSAR_INTEGRITY_WORKERS:-8}" \
+    --serve-time-witness)
+  echo "[cluster] serve witness + fail-closed identity verify: rank $rank"
+  ssh_node "$rank" "$library_verify_command" \
+    <"$REPO_DIR/scripts/model_library.py" >/dev/null \
+    || die "library: rank $rank failed exact identity verification"
+done
 
 echo "[cluster] exact profile: $MODEL_NAME · $NODES ranks · topology ${CLUSTER_TOPOLOGY_ID:0:12}"
-case "$WEIGHT_SOURCE" in
-  library-hot) echo "[cluster] weights: library-hot · local hot staging · home=${WEIGHT_OWNER_ID:0:12} · identity=$LIBRARY_HOT_IDENTITY_STATUS · revision=${LIBRARY_HOT_REVISION:0:12}" ;;
-  replicated)
-    if [ "$SEALED_REPLICATED" = 1 ]; then
-      echo "[cluster] weights: replicated · identity=match · revision=${REPLICATED_REVISION:0:12}"
-    else
-      echo "[cluster] weights: replicated · identity=legacy-unsealed"
-    fi
-    ;;
-  *) echo "[cluster] weights: $WEIGHT_SOURCE" ;;
-esac
+echo "[cluster] weights: model library · local hot staging · home=${WEIGHT_OWNER_ID:0:12} · identity=$LIBRARY_HOT_IDENTITY_STATUS · revision=${LIBRARY_HOT_REVISION:0:12}"
 echo "[cluster] spec-decode=$([ "$SPEC_DECODE_ENABLED" = 1 ] && echo ON || echo off) ($SPEC_DECODE_SOURCE)"
 if [ "$SKIP_PREFLIGHT" = 0 ]; then
-  cluster/preflight.sh "$MODEL_NAME" --weight-source "$WEIGHT_SOURCE" || {
+  cluster/preflight.sh "$MODEL_NAME" || {
     echo "[cluster] preflight FAILED — not starting. (--skip-preflight to override at your own risk)" >&2
     exit 1
   }
@@ -149,16 +99,8 @@ build_docker_cmd() {
   local control_if="${CLUSTER_NODE_CONTROL_IFS[$role_rank]}"
   local hcas="${CLUSTER_PROFILE_HCAS[$role_rank]}"
   local node_id="${CLUSTER_NODE_IDS[$role_rank]}"
-  local weight_cache="${WEIGHT_CACHE_ROOTS[$role_rank]}"
-  local weight_volume="${weight_cache}:/root/.cache/huggingface"
-  local model_cache_target
-  if [ "$SEALED_REPLICATED" = 1 ]; then
-    model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
-    weight_volume="${WEIGHT_REPOSITORY_PATHS[$role_rank]}:${model_cache_target}:ro"
-  elif [ "$WEIGHT_SOURCE" = library-hot ]; then
-    model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
-    weight_volume="${LIBRARY_HOT_HUB_PATH}:${model_cache_target}:ro"
-  fi
+  local model_cache_target="/root/.cache/huggingface/hub/$model_cache_name"
+  local weight_volume="${LIBRARY_HOT_HUB_PATH}:${model_cache_target}:ro"
   [ -n "$role_ip" ] || die "rank $role_rank has no control IP"
   [ -n "$control_if" ] || die "rank $role_rank has no control interface"
   [ -n "$hcas" ] || die "rank $role_rank has no active RDMA HCA"
@@ -195,27 +137,17 @@ build_docker_cmd() {
     -e "NCCL_IB_DISABLE=0"
     -e "NCCL_DEBUG=${NCCL_DEBUG}"
   )
-  cmd+=(--label "${PULSAR_WEIGHT_SOURCE_LABEL}=${WEIGHT_SOURCE}")
-  if [ "$WEIGHT_SOURCE" = library-hot ]; then
+  cmd+=(
+    --label "${PULSAR_WEIGHT_SOURCE_LABEL}=library-hot"
+    --label "${PULSAR_WEIGHT_OWNER_LABEL}=${WEIGHT_OWNER_ID}"
+    --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${WEIGHT_CONFIG_ID}"
+    --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
+    --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
+  )
+  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
     cmd+=(
-      --label "${PULSAR_WEIGHT_OWNER_LABEL}=${WEIGHT_OWNER_ID}"
-      --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${WEIGHT_CONFIG_ID}"
-      --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
-      --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
-    )
-    if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-      cmd+=(
-        --label "${PULSAR_MODEL_SEAL_LABEL}=${LIBRARY_HOT_MODEL_SEAL_ID}"
-        --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
-      )
-    fi
-  fi
-  if [ "$SEALED_REPLICATED" = 1 ]; then
-    cmd+=(
-      --label "${PULSAR_MODEL_REVISION_LABEL}=${REPLICATED_REVISION}"
-      --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=match"
-      --label "${PULSAR_MODEL_SEAL_LABEL}=${REPLICATED_MODEL_SEAL_ID}"
-      --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${REPLICATED_VALIDATION_BUNDLE_ID}"
+      --label "${PULSAR_MODEL_SEAL_LABEL}=${LIBRARY_HOT_MODEL_SEAL_ID}"
+      --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
     )
   fi
   local env_item
@@ -298,38 +230,32 @@ record_startup_metric() {
     --output "$destination"
     --profile "$MODEL_NAME"
     --model "$MODEL"
-    --weight-source "$WEIGHT_SOURCE"
     --nodes "$NODES"
     --topology-id "$CLUSTER_TOPOLOGY_ID"
-    --cache-state "${PULSAR_STARTUP_CACHE_STATE:-unspecified}"
     --started-at "$started_at"
     --first-healthy-at "$healthy_at"
     --elapsed-seconds "$elapsed"
   )
-  case "$WEIGHT_SOURCE" in
-    library-hot)
-      metric_args+=(
-        --content-id "$WEIGHT_CONFIG_ID"
-        --content-digest "$LIBRARY_HOT_CONTENT_DIGEST"
-        --transport "$LIBRARY_HOT_TRANSPORT"
-        --integrity-scheme "$LIBRARY_HOT_INTEGRITY_SCHEME"
-        --model-revision "$LIBRARY_HOT_REVISION"
-        --identity-status "$LIBRARY_HOT_IDENTITY_STATUS"
-        --runtime-model-path "$LIBRARY_HOT_CONTAINER_MODEL_PATH"
-      )
-      if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-        metric_args+=(
-          --model-seal-id "$LIBRARY_HOT_MODEL_SEAL_ID"
-          --validation-bundle-id "$LIBRARY_HOT_VALIDATION_BUNDLE_ID"
-        )
-      fi
-      ;;
-  esac
+  metric_args+=(
+    --content-id "$WEIGHT_CONFIG_ID"
+    --content-digest "$LIBRARY_HOT_CONTENT_DIGEST"
+    --transport "$LIBRARY_HOT_TRANSPORT"
+    --integrity-scheme "$LIBRARY_HOT_INTEGRITY_SCHEME"
+    --model-revision "$LIBRARY_HOT_REVISION"
+    --identity-status "$LIBRARY_HOT_IDENTITY_STATUS"
+    --runtime-model-path "$LIBRARY_HOT_CONTAINER_MODEL_PATH"
+  )
+  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
+    metric_args+=(
+      --model-seal-id "$LIBRARY_HOT_MODEL_SEAL_ID"
+      --validation-bundle-id "$LIBRARY_HOT_VALIDATION_BUNDLE_ID"
+    )
+  fi
   [ -n "$WEIGHT_OWNER_ID" ] \
     && metric_args+=(--owner-node-id "$WEIGHT_OWNER_ID")
   [ -n "${PULSAR_STARTUP_TAG:-}" ] \
     && metric_args+=(--tag "$PULSAR_STARTUP_TAG")
-  "$REPO_DIR/scripts/weight_fabric.py" "${metric_args[@]}"
+  "$REPO_DIR/scripts/startup_metric.py" "${metric_args[@]}"
 }
 
 # Best-effort teardown by immutable IDs created by this invocation only.

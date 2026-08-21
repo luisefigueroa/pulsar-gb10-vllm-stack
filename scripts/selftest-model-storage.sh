@@ -113,6 +113,11 @@ run_view() {
   set -e
 }
 
+"$VIEW" --help | grep -q 'The model library is the only weight-distribution mechanism'
+! "$VIEW" --help | grep -qi experimental
+grep -Fq 'Prepare $profile through the model library?' "$VIEW"
+echo "OK   model-storage help is library-only and not experimental"
+
 python3 -m unittest scripts.testlib.test_model_storage
 
 plain_index=$(printf '2\n' | env GUM=0 REPO_DIR="$REPO_DIR" bash -c '
@@ -145,7 +150,7 @@ echo "OK   Gum chooser returns the selected duplicate-label index"
 
 run_view healthy.json 0 $'1\n2\n6\n' "$STATE/healthy.out"
 [ "$VIEW_RC" -eq 0 ]
-assert_contains "$STATE/healthy.out" 'guided default'   "guided replicated default remains visible"
+assert_contains "$STATE/healthy.out" 'only weight mechanism'   "library-only mechanism remains visible"
 assert_contains "$STATE/healthy.out" 'read-only inventory'   "catalog view is visibly read-only"
 assert_contains "$STATE/healthy.out" 'MODEL STORAGE DETAIL'   "exact-model detail is reachable"
 assert_contains "$STATE/healthy.out" 'durable home|durable-home'   "durable-home dependency is visible"
@@ -160,7 +165,7 @@ echo "OK   ordinary browsing never prepares model files"
 run_view unprepared.json 0 $'1\n1\nn\n6\n' "$STATE/prepare-decline.out"
 [ "$VIEW_RC" -eq 0 ]
 [ ! -s "$PREPARE_LOG" ]
-assert_contains "$STATE/prepare-decline.out" 'PREPARE FOR TWO-RANK GA SERVING' \
+assert_contains "$STATE/prepare-decline.out" 'PREPARE FOR TWO-RANK SERVING' \
   "preparation shows the bounded two-rank GA scope before confirmation"
 assert_contains "$STATE/prepare-decline.out" 'SSH over confirmed RoCE.*8 streams' \
   "preparation preview exposes the fixed transfer policy"
@@ -170,6 +175,8 @@ assert_contains "$STATE/prepare-decline.out" '167 GiB on each non-home' \
   "preparation preview estimates non-home storage"
 assert_contains "$STATE/prepare-decline.out" 'does not start or qualify a model' \
   "preparation preview preserves the launch boundary"
+assert_not_contains "$STATE/prepare-decline.out" 'experimental' \
+  "preparation preview does not call the library experimental"
 echo "OK   declined confirmation leaves model files unchanged"
 
 run_view unprepared.json 0 $'1\n1\ny\n6\n' "$STATE/prepare-success.out" 0 "" 0 \
@@ -226,11 +233,11 @@ assert_not_contains "$STATE/collision.out" '^model[[:space:]]+example/first-mode
 
 run_view not-configured.json 0 $'5\n' "$STATE/absent.out"
 [ "$VIEW_RC" -eq 0 ]
-assert_contains "$STATE/absent.out" 'Replicated serving remains'   "catalog absence does not block replicated serving"
+assert_contains "$STATE/absent.out" 'Serving requires one'   "catalog absence stays bounded to new serving"
 
 run_view unavailable.json 1 $'1\n1\n5\n' "$STATE/unavailable.out"
 [ "$VIEW_RC" -eq 0 ]
-assert_contains "$STATE/unavailable.out" 'Keep using the replicated path'   "unavailable catalog fails toward the guided path"
+assert_contains "$STATE/unavailable.out" 'Running services are unaffected'   "unavailable catalog stays bounded to library maintenance"
 assert_contains "$STATE/unavailable.out" 'observation unavailable'   "unavailable observation is explained"
 
 run_view healthy.json 0 $'5\n6\n' "$STATE/recheck.out"
@@ -358,7 +365,7 @@ printf '4\n6\n7\n' | env \
   HOME_WIZARD_CMD=/bin/false \
   "$REPO_DIR/scripts/home.sh" >"$STATE/home.out" 2>&1
 assert_contains "$STATE/home.out" 'Models & storage'   "operator home exposes the model-storage subsystem"
-assert_contains "$STATE/home.out" 'guided default'   "home route preserves serving-policy context"
+assert_contains "$STATE/home.out" 'only weight mechanism'   "home route preserves serving-policy context"
 assert_not_contains "$LOG" 'refresh|prepare|start|pin|purge|remove'   "ordinary browsing invokes no lifecycle mutation"
 [ ! -s "$PREPARE_LOG" ]
 

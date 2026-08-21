@@ -8,7 +8,7 @@
 #   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
 #   ./pulsar status [model] [--node ID] → scripts/status.sh (optional completion)
 #   ./pulsar doctor [--json] → scripts/doctor.sh
-#   ./pulsar weight-fabric … → leftover live-NFS teardown only (ADR 0005)
+#   ./pulsar weight-fabric … → leftover live-NFS teardown only (ADR 0005/0006)
 #   ./pulsar help
 #
 # Existing scripts under scripts/ remain the canonical implementations;
@@ -51,10 +51,10 @@ Notes:
     inventory, or model preflight until you pick a workflow.
   • ./pulsar wizard is the direct serve/switch shortcut (existing guided flow).
   • ./pulsar models opens cached health without scanning. Catalog refresh and
-    preparation are separate confirmed actions. The reviewed two-rank
-    library-hot path is GA, explicit, and non-default; one-rank and
-    legacy-unsealed uses remain experimental. Reviewed multi-rank preparation
-    uses 8-stream SSH-over-RoCE with no fallback and never starts serving.
+    preparation are separate confirmed actions. The model library is the only
+    weight mechanism (ADR 0006). Multi-rank prepare defaults to 8-stream
+    SSH-over-RoCE with no fallback; one-rank prepare uses local ssh-control.
+    Preparation never starts serving.
   • Prefer "./pulsar wizard" — not "./ wizard.sh" (space after ./ runs
     directory ./ → "Is a directory"). ./wizard.sh still works directly.
   • Home “Current system status” is a quick read-only overview (API model
@@ -62,8 +62,8 @@ Notes:
   • stop only removes containers that prove stack ownership
     (io.pulsar.gb10.managed=true + consistent profile/node-placement labels).
   • live NFS/RDMA serving is retired (ADR 0005). weight-fabric remains only
-    for leftover show/unmount/teardown. Normal starts use replicated or
-    library-hot.
+    for leftover show/unmount/teardown. The model library is the only weight
+    mechanism (ADR 0006).
   • UI: GUM=0 / NO_COLOR / PULSAR_COLOR=never / TERM=dumb → plain menus
     (Gum not used). Color-enabled Gum always uses blue palette overrides;
     PULSAR_ACCENT overrides the accent (default 12).

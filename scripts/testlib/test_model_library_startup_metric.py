@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import pathlib
 import sys
@@ -14,7 +16,7 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import weight_fabric  # noqa: E402
+from scripts import startup_metric  # noqa: E402
 
 
 class ModelLibraryStartupMetricContracts(unittest.TestCase):
@@ -26,10 +28,8 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             "output": str(self.output),
             "profile": "fixture-2node",
             "model": "Org/Fixture",
-            "weight_source": "library-hot",
             "nodes": 2,
             "topology_id": "a" * 64,
-            "configuration_id": None,
             "owner_node_id": "fixture-node-a",
             "content_id": "b" * 12,
             "content_digest": "c" * 64,
@@ -45,7 +45,6 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
                 + "d" * 40
             ),
             "tag": "schema2-roce8",
-            "cache_state": "sealed-hot",
             "started_at": "2026-08-10T00:00:00.000Z",
             "first_healthy_at": "2026-08-10T00:05:00.000Z",
             "elapsed_seconds": 300.0,
@@ -54,7 +53,7 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
     def invoke(self, **overrides: object) -> dict[str, object]:
         arguments = dict(self.arguments)
         arguments.update(overrides)
-        weight_fabric.command_startup_metric(argparse.Namespace(**arguments))
+        startup_metric.command_startup_metric(argparse.Namespace(**arguments))
         return json.loads(self.output.read_text(encoding="utf-8"))
 
     def test_metric_binds_sealed_content_transport_and_redacted_owner(self) -> None:
@@ -81,13 +80,45 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             "fixture-node-a", self.output.read_text(encoding="utf-8")
         )
 
+    def test_existing_evidence_is_never_overwritten(self) -> None:
+        self.invoke()
+        with self.assertRaisesRegex(
+            startup_metric.StartupMetricError, "new bounded path"
+        ):
+            self.invoke()
+
+    def test_cli_rejects_retired_mode_flags(self) -> None:
+        parser = startup_metric.build_parser()
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(
+                [
+                    "startup-metric",
+                    "--output",
+                    str(self.output),
+                    "--profile",
+                    "fixture-2node",
+                    "--model",
+                    "Org/Fixture",
+                    "--weight-source",
+                    "library-hot",
+                    "--nodes",
+                    "2",
+                    "--topology-id",
+                    "a" * 64,
+                    "--started-at",
+                    "2026-08-10T00:00:00.000Z",
+                    "--first-healthy-at",
+                    "2026-08-10T00:05:00.000Z",
+                    "--elapsed-seconds",
+                    "1",
+                ]
+            )
+
     def test_incomplete_or_mislabeled_hot_evidence_fails_closed(self) -> None:
         for overrides, message in (
             ({"content_digest": None}, "content digest"),
             ({"content_id": "short"}, "content identity"),
             ({"transport": None}, "transport"),
-            ({"cache_state": "warm"}, "must be sealed-hot"),
-            ({"configuration_id": "d" * 64}, "not a fabric config"),
             ({"model_revision": None}, "model revision"),
             ({"model_seal_id": None}, "model seal"),
             ({"runtime_model_path": "Org/Fixture"}, "exact revision"),
@@ -96,7 +127,7 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
                 if self.output.exists():
                     self.output.unlink()
                 with self.assertRaisesRegex(
-                    weight_fabric.WeightFabricError,
+                    startup_metric.StartupMetricError,
                     message,
                 ):
                     self.invoke(**overrides)

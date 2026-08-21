@@ -29,15 +29,14 @@ template is [references/handoff-template.md](references/handoff-template.md).
   failures still fail closed.
 - Do not silently select another node, transport, storage policy, copy,
   runtime source, geometry, or validation criterion.
-- Do not offer live NFS/RDMA serving (`--weight-source fabric`,
-  `live-remote-readonly`) as a qualifying runtime-access path. A crashed
-  rank cannot cold-start without the owner export. Retirement of that
-  runtime source is a separate ADR.
+- Do not offer live NFS/RDMA serving (`live-remote-readonly`) as a
+  qualifying runtime-access path (ADR 0005). A crashed rank cannot
+  cold-start without the owner export.
 - Do not mutate `refs/main` to manufacture identity.
 - Do not use `validate/run-gates.sh` as the ADR attempt wrapper.
 - Do not invent a missing validator measurement or share one enclosing
   timestamp across compare and benchmark.
-- Do not represent the default unsealed replicated path as an exact ADR 0004 qualification attempt.
+- Do not represent an unsealed (`identity_status=legacy-unsealed`) launch as an exact ADR 0004 qualification attempt.
 - Distribution transport is run provenance, not release identity. A failure
   before exact all-rank verification leaves qualification unstarted.
 - The journal is orchestration recovery state, not a sixth ADR object and
@@ -192,18 +191,19 @@ For ADR qualification of a brand-new unsealed model, confirm
 `library-hot` as `local-verified-readonly` after the exact rank-local
 verified views exist.
 
-Do not offer live NFS/RDMA (`--weight-source fabric`,
-`live-remote-readonly`) as a serving or onboarding alternative. A crashed
-rank cannot cold-start without the owner's export, NFS/RDMA stack, and
-exact route. Replicated and `library-hot` already present local files.
+Do not offer live NFS/RDMA (`live-remote-readonly`) as a serving or
+onboarding alternative (ADR 0005). A crashed rank cannot cold-start without
+the owner's export, NFS/RDMA stack, and exact route. Library serving
+already presents local files on every rank.
 
 Name the chosen distribution/source and transport. There is no silent fallback
 and no automatic fallback.
 
-The current default unsealed replicated path follows mutable `refs/main`,
-mounts the writable HF home, and passes the repository ID. It may still be
-served with its honest label, but it must not be represented as an exact
-ADR 0004 qualification attempt. Do not add a product-code fix for that gap.
+An unsealed profile serves with `identity_status=legacy-unsealed` after
+full verification; an unattested `home add` acquisition follows mutable
+`refs/main` at selection time. Both may be served with their honest labels,
+but neither is an exact ADR 0004 qualification attempt on its own. Do not
+add a product-code fix for that gap.
 
 ### 7. Build and verify the release plan
 
@@ -234,10 +234,10 @@ Do not duplicate its transfer, retention, or cleanup logic.
 Verify the exact all-rank runtime-access barrier before qualification. A
 failure here is failed preparation: qualification did not start. Then
 require a separate **launch** confirmation and invoke the normal launcher
-with the matching explicit weight source:
+(the model library is the only weight mechanism — ADR 0006):
 
 ```text
-scripts/up.sh <profile> --weight-source library-hot
+scripts/up.sh <profile>
 ```
 
 ### 9. Same-boot identities

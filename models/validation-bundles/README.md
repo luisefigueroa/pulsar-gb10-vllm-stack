@@ -32,8 +32,8 @@ profile and the flagship `deepseek-v4-flash` profile:
 
 Profiles without a reviewed bundle, including `qwen3-1.7b-2node`, remain
 `legacy-unsealed`. Do not manufacture a bundle from a user's cache to change
-that status. Issued bundles are enforced by `library-hot` and sealed
-replicated caches; live-mount serving is retired (ADR 0005).
+that status. Issued bundles are enforced by library preparation/launch and sealed home
+acquisition (ADR 0006); live-mount serving is retired (ADR 0005).
 
 ## Identity and binding
 

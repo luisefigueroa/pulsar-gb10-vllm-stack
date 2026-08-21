@@ -3,8 +3,6 @@
 #   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode] [--force]
 #                 [--skip-preflight]
 #                 [--skip-weights-check] [--accept-memory-warn] [--pull-image]
-#                 [--weight-source replicated|library-hot]
-#                 [--weight-mode library-hot]  (alias for --weight-source library-hot)
 #                 [--node NODE_ID] [--dry-run] [--yes] [--verbose]
 set -euo pipefail
 SCRIPT_NAME=up
@@ -16,7 +14,7 @@ NAME="${1:-}"
 shift
 
 SPEC_MODE=auto SKIP_PF=0 SKIP_W=0 ACCEPT_MEM=0 PULL_IMG=0
-DRY=0 YES=0 VERBOSE=0 NODE_SELECTOR="" WEIGHT_SOURCE=replicated
+DRY=0 YES=0 VERBOSE=0 NODE_SELECTOR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
@@ -26,15 +24,8 @@ while [ $# -gt 0 ]; do
     --skip-weights-check) SKIP_W=1 ;;
     --accept-memory-warn) ACCEPT_MEM=1 ;;
     --pull-image) PULL_IMG=1 ;;
-    --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
-      WEIGHT_SOURCE="$2"
-      shift
-      ;;
-    --weight-mode)
-      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot (or replicated)" 2
-      WEIGHT_SOURCE="$2"
-      shift
+    --weight-source|--weight-mode)
+      refuse_removed_weight_mode_flag
       ;;
     --node)
       [ "$#" -ge 2 ] || die "--node requires a topology node id or hostname" 2
@@ -53,8 +44,6 @@ usage: scripts/up.sh <model-name> [options]
   --dry-run              run checks only (no launch)
   --verbose              full check logs (default is one-line gates)
   --node NODE_ID          place a one-node profile on this confirmed physical node
-  --weight-source MODE    replicated (default) or library-hot
-  --weight-mode MODE      alias for --weight-source (library-hot recommended name)
   --accept-memory-warn   allow start on memory WARN
   --pull-image / --yes   attempt image pull/sync when missing
   --force                deprecated no-op; status labels never block serving
@@ -70,15 +59,7 @@ done
 
 acquire_model_library_lifecycle_lock shared
 load_conf "$NAME"
-case "$WEIGHT_SOURCE" in
-  replicated|library-hot) ;;
-  fabric) refuse_retired_live_nfs_serving_weight_source fabric ;;
-  *) die "--weight-source must be replicated or library-hot" 2 ;;
-esac
-if [ "$WEIGHT_SOURCE" = library-hot ]; then
-  acquire_model_library_hot_lock shared
-fi
-WEIGHT_ARGS=(--weight-source "$WEIGHT_SOURCE")
+acquire_model_library_hot_lock shared
 PLACEMENT_ARGS=()
 SERVICE_API_BASE="http://127.0.0.1:$PORT"
 if [ "$NODES" -eq 1 ]; then
@@ -99,10 +80,7 @@ echo "┌─ up  $NAME"
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT"
 echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (advisory)"
 echo "│  legacy-status=$STATUS (advisory)"
-case "$WEIGHT_SOURCE" in
-  library-hot) echo "│  weights=library-hot (experimental · local hot staging)" ;;
-  *) echo "│  weights=$WEIGHT_SOURCE" ;;
-esac
+echo "│  weights=model library (hot staging)"
 if [ "$NODES" -eq 1 ]; then
   echo "│  placement=$(single_node_display)  node-id=${SINGLE_NODE_ID:-standalone}"
 fi
@@ -180,33 +158,15 @@ fi
 if [ "$SKIP_W" != 1 ]; then
   set +e
   if [ "$VERBOSE" = 1 ]; then
-    "$REPO_DIR/scripts/check-weights.sh" "$NAME" \
-      "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}"
+    "$REPO_DIR/scripts/check-weights.sh" "$NAME" "${PLACEMENT_ARGS[@]}"
     w_rc=$?
   else
-    QUIET=1 "$REPO_DIR/scripts/check-weights.sh" "$NAME" \
-      "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}"
+    QUIET=1 "$REPO_DIR/scripts/check-weights.sh" "$NAME" "${PLACEMENT_ARGS[@]}"
     w_rc=$?
   fi
   set -e
   if [ "$w_rc" != 0 ]; then
-    w_json=$("$REPO_DIR/scripts/check-weights.sh" "$NAME" \
-      "${PLACEMENT_ARGS[@]}" "${WEIGHT_ARGS[@]}" --json 2>/dev/null || true)
-    w_state=$(printf '%s' "$w_json" | python3 -c \
-      'import sys,json; print(json.load(sys.stdin).get("state",""))' 2>/dev/null || echo unknown)
-    if [ "$w_state" = worker-unreachable ] || [ "$w_state" = rank-unreachable ] \
-        || [ "$w_state" = unreachable ]; then
-      die "one or more required ranks are unreachable — cannot verify weights"
-    fi
-    if [ "$WEIGHT_SOURCE" = library-hot ]; then
-      die "library-hot model files are not prepared (state=$w_state) — run: scripts/model-library.sh prepare $NAME --yes"
-    fi
-    kind=$(model_source_kind)
-    if [ "$kind" = hf ]; then
-      die "weights missing — scripts/pull-weights.sh $NAME ${PLACEMENT_ARGS[*]}"
-    else
-      die "NFS weights missing — mount catalog at $MODEL"
-    fi
+    die "model files are not ready — see the weights check above"
   fi
 else
   echo "SKIP  weights"
@@ -250,13 +210,13 @@ if [ "$NODES" -gt 1 ]; then
       echo "│  running cluster preflight…"
       if [ "$VERBOSE" = 1 ]; then
         "$REPO_DIR/cluster/preflight.sh" "$NAME" \
-          "${WEIGHT_ARGS[@]}" || die "cluster preflight failed"
+          || die "cluster preflight failed"
       else
         _pf_log=$(mktemp "${TMPDIR:-/tmp}/pulsar-preflight.XXXXXX")
         # shellcheck disable=SC2064
         trap 'rm -f "${_pf_log:-}"' RETURN
         if "$REPO_DIR/cluster/preflight.sh" "$NAME" \
-            "${WEIGHT_ARGS[@]}" >"$_pf_log" 2>&1; then
+            >"$_pf_log" 2>&1; then
           echo "PASS  preflight cluster OK"
           rm -f "$_pf_log"
         else
@@ -283,8 +243,6 @@ if [ "$NODES" -gt 1 ]; then
   # up.sh already ran (or explicitly skipped) this preflight. Always suppress
   # start-cluster.sh's duplicate run while preserving the caller's decision.
   launch_flags+=(--skip-preflight)
-  [ "$WEIGHT_SOURCE" = replicated ] \
-    || launch_flags+=(--weight-source "$WEIGHT_SOURCE")
 fi
 
 echo "└─"
@@ -309,13 +267,9 @@ if [ "$NODES" -gt 1 ]; then
     ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
 else
   log "starting single-node…"
-  single_weight=()
-  [ "$WEIGHT_SOURCE" = replicated ] \
-    || single_weight=(--weight-source "$WEIGHT_SOURCE")
   "$REPO_DIR/serve.sh" "$NAME" -d \
     "${PLACEMENT_ARGS[@]}" \
-    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}" \
-    ${single_weight[@]+"${single_weight[@]}"}
+    ${spec_flag[@]+"${spec_flag[@]}"} "${launch_flags[@]}"
   api_auth_args=()
   api_auth_curl_args api_auth_args
   cname=$(container_name_for "$NAME" 1)

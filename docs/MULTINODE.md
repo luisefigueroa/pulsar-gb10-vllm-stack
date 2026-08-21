@@ -135,24 +135,20 @@ SSH identity, and model tensors stay on verified RoCE because the launcher
 forces the IB transport. Preflight rechecks every selected pair and rail on
 every launch, along with each control IP/interface binding.
 
-Live NFS/RDMA under vLLM (`--weight-source fabric`) is retired as a serving
-runtime source ([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)).
-That does not change NCCL selection, topology discovery, or ADR 0003
-`ssh-roce` prepare. Replicated local caches remain the default. The wizard
-never selects live NFS. Historical notes: `WEIGHT_FABRIC.md`.
+Live NFS/RDMA under vLLM is retired as a serving runtime source
+([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)). That does not
+change NCCL selection, topology discovery, or ADR 0003 `ssh-roce` prepare.
+Historical notes: `WEIGHT_FABRIC.md`.
 
-A distinct experimental path is federated catalog serving (`library-hot`):
+The model library is the only weight-distribution mechanism
+([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)):
 one durable home, a symlink/view on that rank, and sealed-hot copies only on
-non-home ranks. It is not a live NFS/RDMA mount. The wizard may offer it as a
-labeled second choice for a reviewed sealed profile; it never selects it
-automatically and never falls back to or from fabric or replicated copies.
+non-home ranks. It is not a live NFS/RDMA mount and there is no fallback.
 Typical CLI: enroll SSH trust, `scripts/model-library.sh home add` if no home
 exists, `catalog refresh`,
 `prepare --backend copy --transport ssh-roce --copy-streams 8`, then
-`scripts/up.sh <profile> --weight-source library-hot`. See
-[OPERATIONS.md](./OPERATIONS.md) and
+`scripts/up.sh <profile>`. See [OPERATIONS.md](./OPERATIONS.md) and
 [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
-This does not promote the path.
 
 ## Launcher: native `--nnodes`, not Ray
 
@@ -226,8 +222,9 @@ cluster/start-cluster.sh deepseek-v4-flash
 cluster/stop-cluster.sh deepseek-v4-flash
 ```
 
-Live NFS/RDMA serving is retired (ADR 0005). `scripts/up.sh <profile>
---weight-source fabric` fails closed. Leftover mounts:
+Live NFS/RDMA serving is retired (ADR 0005), and the whole weight-mode axis
+was removed (ADR 0006): `--weight-source`/`--weight-mode` fail closed.
+Leftover mounts:
 
 ```bash
 scripts/weight-fabric.sh show <profile>
@@ -235,8 +232,8 @@ scripts/weight-fabric.sh unmount <profile>
 scripts/weight-fabric.sh teardown <profile>
 ```
 
-The experimental catalog/`library-hot` path is separate; the wizard may offer
-it only as an explicit labeled choice.
+The model library is separate from live NFS and serves every profile
+(ADR 0006).
 
 Always tear down a multi-node service before relaunching. A surviving remote
 rank can retain rendezvous state or RDMA resources and make the next launch

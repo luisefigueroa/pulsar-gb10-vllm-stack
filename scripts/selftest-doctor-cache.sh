@@ -27,18 +27,23 @@ run_json() {
   }
 }
 
-assert_cache_row() {
-  local report="$1" level="$2" text="$3"
-  python3 - "$report" "$level" "$text" <<'PY'
+assert_check_row() {
+  local report="$1" id="$2" level="$3" text="$4"
+  python3 - "$report" "$id" "$level" "$text" <<'PY'
 import json
 import sys
 
 report = json.load(open(sys.argv[1], encoding="utf-8"))
-rows = [row for row in report["checks"] if row["id"] == "hf_cache"]
+rows = [row for row in report["checks"] if row["id"] == sys.argv[2]]
 assert len(rows) == 1, rows
-assert rows[0]["level"] == sys.argv[2], rows[0]
-assert sys.argv[3] in rows[0]["message"], rows[0]
+assert rows[0]["level"] == sys.argv[3], rows[0]
+assert sys.argv[4] in rows[0]["message"], rows[0]
 PY
+}
+
+assert_cache_row() {
+  local report="$1" level="$2" text="$3"
+  assert_check_row "$report" hf_cache "$level" "$text"
 }
 
 missing="$STATE/missing-parent/cache"
@@ -85,7 +90,25 @@ ready="$STATE/ready"
 mkdir "$ready"
 run_json "$ready" "$STATE/ready.json" 0
 assert_cache_row "$STATE/ready.json" ok "GiB free"
+assert_check_row "$STATE/ready.json" topology ok "confirmed topology · 1 node"
 [ -d "$ready" ]
+
+missing_topology_rc=0
+env "${BASE_ENV[@]}" PULSAR_TEST_TOPOLOGY_COUNT=0 HF_CACHE="$ready" \
+  "$DOCTOR" --json >"$STATE/missing-topology.json" \
+  || missing_topology_rc=$?
+[ "$missing_topology_rc" -eq 0 ]
+python3 - "$STATE/missing-topology.json" <<'PY'
+import json
+import sys
+
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+rows = [row for row in report["checks"] if row["id"] == "topology"]
+assert len(rows) == 1, rows
+assert rows[0]["level"] == "warn", rows[0]
+assert "no confirmed topology manifest" in rows[0]["message"], rows[0]
+assert report["result"] == "pass_with_warnings", report
+PY
 
 wrong_type="$STATE/cache-file"
 printf 'preserve\n' >"$wrong_type"

@@ -126,17 +126,15 @@ Minimum to serve one model on the box where you run the script:
      the managed `hf` because it resolves the complete upstream Git/LFS
      inventory through that Python environment. It accepts no token argument.
    - Hugging Face cache under `$HF_CACHE/hub/models--ORG--NAME`
-     (default `HF_CACHE=$HOME/.cache/huggingface`), **or**
-   - Use `scripts/pull-weights.sh <profile> --yes` for downloads. It passes
-     `$HF_CACHE/hub` as the CLI cache directory and copies the verified model
-     to every other node used by the profile. If an older Pulsar run placed the
-     same repository directly under `$HF_CACHE`, the helper adopts it safely.
-   - Local / NFS path referenced by the conf (e.g. Laguna under
-     `/mnt/Models/...`)
-   - If you rsync HF caches for replicated/offline Hugging Face loading,
-     ensure `refs/main` names the intended commit or load fails with
-     `LocalEntryNotFoundError`. Sealed `library-hot` does not trust that ref,
-     but it does require the exact commit directory from its reviewed seal (see
+     (default `HF_CACHE=$HOME/.cache/huggingface`); the model library keeps
+     each durable home inside this layout
+   - Use `scripts/model-library.sh home add <profile>` for downloads
+     ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md));
+     it fully verifies the staged copy before atomic publication
+   - If you rsync HF caches for offline Hugging Face loading, ensure
+     `refs/main` names the intended commit or unsealed selection fails with
+     `LocalEntryNotFoundError`. A sealed profile does not trust that ref, but
+     it does require the exact commit directory from its reviewed seal (see
      [TROUBLESHOOTING.md](./TROUBLESHOOTING.md))
 4. **Paths mounted into the container**
    - `HF_CACHE` → `/root/.cache/huggingface`
@@ -150,11 +148,11 @@ Minimum to serve one model on the box where you run the script:
 ```bash
 cp .env.example .env   # optional for single-node path overrides
 ./serve.sh --list
-./serve.sh laguna-s-2.1-nvfp4 -d    # detach; API on :8000
-# Preferred equivalent: ./pulsar start laguna-s-2.1-nvfp4
+./serve.sh nemotron-3-nano-30b-nvfp4 -d    # detach; API on :8000
+# Preferred equivalent: ./pulsar start nemotron-3-nano-30b-nvfp4
 # Lab network only — do not expose :8000 without auth (SECURITY.md)
 curl -fsS http://127.0.0.1:8000/v1/models
-./pulsar stop laguna-s-2.1-nvfp4
+./pulsar stop nemotron-3-nano-30b-nvfp4
 # Do not docker rm -f by name; home/wizard/down.sh only stop labeled,
 # ownership-proven containers.
 ```
@@ -237,7 +235,7 @@ traffic is kept on verified RoCE instead of silently falling back to that LAN.
 | Key-based SSH from this node | Required to every other active cluster node |
 | Docker + NVIDIA support | Required independently on every node used by the profile |
 | Same image | `scripts/sync-image.sh <profile> --pull --yes` stages every required node |
-| Complete weights | `scripts/pull-weights.sh <profile> --yes` downloads here and copies to every other node used by the profile; NFS profiles must be mounted everywhere |
+| Complete weights | `scripts/model-library.sh home add` + `prepare` publish exact verified views on every node used by the profile (ADR 0006) |
 | Retired live NFS serving | Not a serving path (ADR 0005). Leftover site mounts use confirmation-gated `scripts/weight-fabric.sh show\|unmount\|teardown` only. Follow `WEIGHT_FABRIC.md`. |
 | No stale managed container | A leftover container can retain rendezvous/RDMA state; stop the exact profile before relaunch |
 
@@ -279,13 +277,8 @@ creates the path when the selected workflow requires it.
 ### Weight acquisition (common cases)
 
 ```bash
-# Downloads once on this node, then copies and verifies every required node.
-scripts/pull-weights.sh deepseek-v4-flash --yes
-
-# Optional: expose raw Hugging Face and rsync diagnostics.
-PULSAR_VERBOSE=1 scripts/pull-weights.sh deepseek-v4-flash --yes
-
-# Explicit experimental distributed library: one reviewed durable home only.
+# The model library is the only acquisition path (ADR 0006).
+# Sealed profile: one reviewed durable home.
 scripts/model-library.sh home add <sealed-profile> --yes
 scripts/model-library.sh catalog refresh
 
@@ -310,10 +303,10 @@ publication. Sealed acquisition uses the reviewed expected manifest.
 Source-attested acquisition verifies the complete upstream inventory and
 every file, writes an immutable receipt, and requires receipt-backed offline
 verification for reuse. It creates no seal, validation decision, or physical
-claim. The replicated flow remains the guided default.
+claim.
 
-NFS-catalog models (e.g. Laguna) expect the path already present under
-`MODELS_NFS` as referenced in the conf.
+After acquisition, `scripts/model-library.sh prepare <profile> --yes`
+publishes the exact runtime views the launch checks require.
 
 ---
 
@@ -369,7 +362,7 @@ not permission to serve an unmeasured geometry.
 | [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
 | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Superseded live NFS/RDMA serving notes and leftover teardown (ADR 0005) |
 | [decisions/0005-reject-live-nfs-rdma-serving.md](./decisions/0005-reject-live-nfs-rdma-serving.md) | Reject live-mount as a serving runtime source; keep ssh-roce / NCCL / topology |
-| [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, preparation/hot/pin policy; reviewed two-rank `library-hot` GA is explicit and non-default, while other scopes remain experimental |
+| [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, preparation/hot/pin policy; the model library is the only weight mechanism (ADR 0006) |
 | [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: reviewed exact-content home symlink, non-home hot only, expected seal and serve-time witness |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |
 | [decisions/0003-explicit-model-preparation-transport.md](./decisions/0003-explicit-model-preparation-transport.md) | Accepted rationale: explicit reviewed-profile preparation uses topology-bound eight-stream SSH-over-RoCE with no fallback |

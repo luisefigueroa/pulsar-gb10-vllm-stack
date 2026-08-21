@@ -278,10 +278,10 @@ The reviewed evidence is indexed in
 candidate reproduced byte-for-byte before publication, the trusted bundle
 verifier returned `match`, and a post-issuance physical `library-hot`
 preparation/launch used those exact identities. This narrowly establishes the
-one-node diagnostic claim. It does not seal `qwen3-1.7b-2node`, promote the
-model-library path, or content-bind legacy-unsealed replicated launches.
-Live-mount serving is retired (ADR 0005). The sealed replicated path now
-enforces this issued identity.
+one-node diagnostic claim. It does not seal `qwen3-1.7b-2node` or content-bind
+legacy-unsealed launches. Live-mount serving is retired (ADR 0005); the model
+library is the only weight mechanism (ADR 0006), and sealed acquisition and
+launch enforce this issued identity.
 
 The flagship `deepseek-v4-flash` profile is the second issued claim. Its
 reviewed trust roots are:

@@ -105,7 +105,13 @@ class DownHotPolicyTests(unittest.TestCase):
         )
         self.library_log.write_text("", encoding="utf-8")
 
-    def _run(self, *args: str, library_rc: int = 0) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        *args: str,
+        library_rc: int = 0,
+        extra_env: dict[str, str] | None = None,
+        target: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env.update({
             "PULSAR_DOCKER": str(self.bin / "docker"),
@@ -115,8 +121,12 @@ class DownHotPolicyTests(unittest.TestCase):
             "FAKE_LIBRARY_RC": str(library_rc),
             "CLUSTER_TOPOLOGY_FILE": str(self.root / "absent-topology.json"),
         })
+        env.pop("PULSAR_HOT_STOP_POLICY", None)
+        if extra_env:
+            env.update(extra_env)
+        argv = [str(DOWN), target if target is not None else PROFILE, *args]
         return subprocess.run(
-            [str(DOWN), PROFILE, *args],
+            argv,
             cwd=REPO_ROOT,
             env=env,
             check=False,
@@ -127,15 +137,23 @@ class DownHotPolicyTests(unittest.TestCase):
     def _library_args(self) -> str:
         return self.library_log.read_text(encoding="utf-8").strip()
 
-    def test_library_hot_stop_purges_unpinned_views_by_default(self) -> None:
+    def _container_count(self) -> int:
+        return len(json.loads(self.state.read_text(encoding="utf-8")))
+
+    def test_library_hot_stop_retains_unpinned_views_by_default(self) -> None:
         self._seed("library-hot")
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self._library_args(),
-            f"purge-hot {PROFILE} --node head --yes",
-        )
-        self.assertNotIn("--force-unpin", self._library_args())
+        self.assertEqual(self._library_args(), "")
+        self.assertIn("will be retained after stop", result.stdout)
+        self.assertEqual(self._container_count(), 0)
+
+    def test_explicit_retain_does_not_call_the_library(self) -> None:
+        self._seed("library-hot")
+        result = self._run("--retain-weights")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._library_args(), "")
+        self.assertIn("retaining unpinned library-hot staging", result.stdout)
 
     def test_explicit_pin_retains_selected_placement(self) -> None:
         self._seed("library-hot")
@@ -158,12 +176,55 @@ class DownHotPolicyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self._library_args(), "")
 
-    def test_pinned_default_cleanup_warns_but_stop_remains_complete(self) -> None:
+    def test_site_policy_purge_removes_unpinned_views(self) -> None:
         self._seed("library-hot")
-        result = self._run(library_rc=7)
+        result = self._run(extra_env={"PULSAR_HOT_STOP_POLICY": "purge"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self._library_args(),
+            f"purge-hot {PROFILE} --node head --yes",
+        )
+        self.assertNotIn("--force-unpin", self._library_args())
+
+    def test_retain_flag_overrides_site_policy_purge(self) -> None:
+        self._seed("library-hot")
+        result = self._run(
+            "--retain-weights",
+            extra_env={"PULSAR_HOT_STOP_POLICY": "purge"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._library_args(), "")
+
+    def test_invalid_site_policy_fails_closed_before_stop(self) -> None:
+        self._seed("library-hot")
+        result = self._run(extra_env={"PULSAR_HOT_STOP_POLICY": "evict"})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("PULSAR_HOT_STOP_POLICY must be retain or purge", result.stderr)
+        self.assertEqual(self._library_args(), "")
+        self.assertEqual(self._container_count(), 1)
+
+    def test_empty_site_policy_fails_closed(self) -> None:
+        self._seed("library-hot")
+        result = self._run(extra_env={"PULSAR_HOT_STOP_POLICY": ""})
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self._container_count(), 1)
+
+    def test_site_policy_purge_warns_when_library_refuses(self) -> None:
+        self._seed("library-hot")
+        result = self._run(
+            library_rc=7,
+            extra_env={"PULSAR_HOT_STOP_POLICY": "purge"},
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("hot staging was retained", result.stderr)
         self.assertNotIn("--force-unpin", self._library_args())
+
+    def test_retention_flags_are_mutually_exclusive(self) -> None:
+        self._seed("library-hot")
+        result = self._run("--retain-weights", "--purge-hot")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self._container_count(), 1)
+        self.assertEqual(self._library_args(), "")
 
 
 if __name__ == "__main__":

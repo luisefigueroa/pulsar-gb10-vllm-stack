@@ -15,9 +15,9 @@ Shared doctrine baked into every recipe:
   does NOT expose RDMA devices), per-rank interfaces from the confirmed
   topology, and the measured shared NCCL policy
 - speculative decode follows validated profile policy: **DSpark is default-on**
-  for the flagship and `--no-spec-decode` is its rollback; Super MTP and
-  Laguna DFlash remain opt-in via `--spec-decode`; **never** use ngram on GDN
-  hybrids. Only profiles with validated `SPEC_DECODE_ARGS` may enable it.
+  for the flagship and `--no-spec-decode` is its rollback; Super MTP remains
+  opt-in via `--spec-decode`; **never** use ngram on GDN hybrids. Only
+  profiles with validated `SPEC_DECODE_ARGS` may enable it.
 - CUDA graphs ON except where noted
 
 ## Flagship: DeepSeek-V4-Flash-0731, 2-node TP=2 — long-session agents @ 500K
@@ -82,22 +82,20 @@ KV, **1.30x** max concurrency at 500K; post-boot warmup ok; MemAvailable
 below 27.5 GB/rank (known OOM). Prior soaked ref: 10 GB → 577,640 tokens,
 needle 3/3 @447K (VALIDATION.md).
 
-## Primary single-node: Laguna-S-2.1-NVFP4 — 19.5 tok/s c=1, full 256K ctx
+## Primary single-node: Nemotron-3-Nano-30B-A3B-NVFP4 — 61.9 tok/s c=1, 399 agg @ c=16
 
-Preferred: `./pulsar start laguna-s-2.1-nvfp4` (or `./serve.sh laguna-s-2.1-nvfp4 -d`).
-Stop with `./pulsar stop laguna-s-2.1-nvfp4`. Engine args on
-`vllm/vllm-openai:v0.26.0` (NFS catalog path):
+Preferred: `./pulsar start nemotron-3-nano-30b-nvfp4`. Stop with
+`./pulsar stop nemotron-3-nano-30b-nvfp4`. Engine args on
+`vllm/vllm-openai:v0.26.0` (Hugging Face id):
 ```
---model '/mnt/Models/Official Models/poolside/Laguna-S-2.1-NVFP4'
---served-model-name laguna-s-2.1 --gpu-memory-utilization 0.80
---max-model-len 262144 --max-num-seqs 4
+--model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+--served-model-name nemotron-3-nano --gpu-memory-utilization 0.80
+--max-model-len 131072 --max-num-seqs 16
 --moe-backend marlin
 ```
-
-Load-bearing: `--moe-backend marlin` (NVFP4 MoE via CUTLASS is silently
-WRONG on sm_121). NFS cold load ~10 min. DFlash is **marginal** under
-corrected metering (+13% c=1) — conf keeps it off by default; opt-in only
-with a fresh A/B if you care. lm-eval needs `tokenized_requests=False`.
+Env: `VLLM_MARLIN_USE_ATOMIC_ADD=1` in the Nano conf. Fastest current
+single-node serving profile; ledger records needle 3/3 @124K (no `results/`
+needle artifact).
 
 ## Nemotron-3-Super-120B-A12B-NVFP4 — 16.2 tok/s c=1, 113 agg @ c=32
 
@@ -110,22 +108,11 @@ Preferred: `./pulsar start nemotron-3-super-120b-nvfp4`. Engine args on
 --kv-cache-dtype fp8            # ckpt has no k/v scales (factor 1.0) — noted
 --moe-backend marlin
 ```
-Env: `VLLM_MARLIN_USE_ATOMIC_ADD=1` is set in the Super conf (not global;
-Laguna leaves it unset). MTP k=1 needs `"moe_backend":"triton"` inside
+Env: `VLLM_MARLIN_USE_ATOMIC_ADD=1` is set in the Super conf (not global).
+MTP k=1 needs `"moe_backend":"triton"` inside
 `--speculative-config` (global marlin breaks the unquantized MTP head).
 Under corrected metering: **+47% c=1** — opt in with
 `./serve.sh nemotron-3-super-120b-nvfp4 --spec-decode`.
-
-## Nemotron-3-Nano-30B-A3B-NVFP4 — 61.9 tok/s c=1, 399 agg @ c=16
-
-```
---model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
---served-model-name nemotron-3-nano --gpu-memory-utilization 0.80
---max-model-len 131072 --max-num-seqs 16
---moe-backend marlin
-```
-Env: `VLLM_MARLIN_USE_ATOMIC_ADD=1` in the Nano conf. Fastest model on the
-box; ledger records needle 3/3 @124K (no `results/` needle artifact).
 
 ## Qwen3.6-27B-FP8 — 8.0 tok/s c=1 (94% of roofline)
 
@@ -150,8 +137,8 @@ unsupported.
 - **Bit-exact reproducibility run** (standard-attention models only): add
   `-e VLLM_BATCH_INVARIANT=1` → greedy outputs identical across nodes AND
   boots (30/30 verified). Not for production throughput paths.
-- **Cross-node TP=2 of a 1-node model on the official image** (measurement
-  only): `laguna-s-2.1-2node` is **STATUS=do-not-use** (advisory; no status
-  override is required).
-  Conf bakes `--enforce-eager` (stock graphs hang by request ~2 without it).
-  Prefer 1-node `laguna-s-2.1-nvfp4` for real serving.
+- **Removed absolute-path profiles (not runnable):** `laguna-s-2.1-nvfp4`,
+  `laguna-s-2.1-2node`, and `inkling-small-nvfp4` were deleted by ADR 0006.
+  They had no exact Hugging Face `model_id@commit` home. Historical numbers
+  remain in [MODELS.md](./MODELS.md) and [VALIDATION.md](./VALIDATION.md).
+  Do not `./pulsar start` them.

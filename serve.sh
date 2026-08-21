@@ -3,7 +3,6 @@
 #
 #   ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-decode]
 #              [--dry-run] [--port N] [--node NODE_ID] [--force]
-#              [--weight-source replicated|library-hot]
 #   ./serve.sh --list
 #
 # <model-name> is a file in models/ without the .conf suffix.
@@ -37,7 +36,6 @@ MODEL_NAME="${1:?usage: ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-de
 shift
 
 DETACH="" SPEC_MODE=auto DRY_RUN=0 PORT_OVERRIDE="" NODE_SELECTOR=""
-WEIGHT_SOURCE=replicated
 while [ $# -gt 0 ]; do
   case "$1" in
     -d) DETACH="-d" ;;
@@ -45,15 +43,8 @@ while [ $# -gt 0 ]; do
     --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --dry-run) DRY_RUN=1 ;;
     --force) : ;; # Backward-compatible no-op: status labels are advisory.
-    --weight-source)
-      [ "$#" -ge 2 ] || die "--weight-source requires replicated|library-hot" 2
-      WEIGHT_SOURCE="$2"
-      shift
-      ;;
-    --weight-mode)
-      [ "$#" -ge 2 ] || die "--weight-mode requires library-hot or replicated" 2
-      WEIGHT_SOURCE="$2"
-      shift
+    --weight-source|--weight-mode)
+      refuse_removed_weight_mode_flag
       ;;
     --node)
       [ "$#" -ge 2 ] || die "--node requires a topology node id or hostname" 2
@@ -72,14 +63,7 @@ done
 
 acquire_model_library_lifecycle_lock shared
 load_conf "$MODEL_NAME"
-case "$WEIGHT_SOURCE" in
-  replicated|library-hot) ;;
-  fabric) die "serve.sh does not support fabric; use multi-node start-cluster" 2 ;;
-  *) die "--weight-source must be replicated or library-hot" 2 ;;
-esac
-if [ "$WEIGHT_SOURCE" = library-hot ]; then
-  acquire_model_library_hot_lock shared
-fi
+acquire_model_library_hot_lock shared
 if [ -n "$PORT_OVERRIDE" ]; then
   case "$PORT_OVERRIDE" in
     *[!0-9]*|"") die "invalid --port '$PORT_OVERRIDE' (expected 1-65535)" 2 ;;
@@ -101,33 +85,21 @@ fi
 resolve_single_node_placement "$NODE_SELECTOR" \
   || die "cannot resolve physical node placement '$NODE_SELECTOR'"
 
-weight_volume="${HF_CACHE}:/root/.cache/huggingface"
-runtime_model="$MODEL"
-SEALED_REPLICATED=0
+[ "$(model_source_kind)" = hf ] \
+  || die "non-HF model profiles are not servable (ADR 0006)"
 LIBRARY_HOT_HOME_NODE_ID=""
 LIBRARY_HOT_CONTENT_ID=""
-if [ "$WEIGHT_SOURCE" = replicated ] && [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-  load_replicated_identity_plan "$MODEL_NAME"
-  verify_replicated_identity_selected_node serve >/dev/null ||
-    die "replicated: selected node failed exact identity verification"
-  replicated_container_hub="/root/.cache/huggingface/hub/$(hf_hub_dirname "$MODEL")"
-  weight_volume="${REPLICATED_HUB_PATH}:${replicated_container_hub}:ro"
-  runtime_model="$REPLICATED_CONTAINER_MODEL_PATH"
-  SEALED_REPLICATED=1
-  echo "replicated identity=match revision=${REPLICATED_REVISION:0:12} model_path=$runtime_model"
-elif [ "$WEIGHT_SOURCE" = library-hot ]; then
-  # Prefer topology from placement when available
-  if [ -z "${CLUSTER_TOPOLOGY_ID:-}" ] && [ -n "${SINGLE_NODE_TOPOLOGY_ID:-}" ]; then
-    CLUSTER_TOPOLOGY_ID="$SINGLE_NODE_TOPOLOGY_ID"
-  fi
-  load_cluster_topology >/dev/null 2>&1 \
-    || die "library-hot requires confirmed topology"
-  resolve_library_hot_for_profile "$MODEL_NAME"
-  model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
-  weight_volume="${LIBRARY_HOT_HUB_PATH}:/root/.cache/huggingface/hub/${model_cache_name}:ro"
-  runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
-  echo "library-hot identity=$LIBRARY_HOT_IDENTITY_STATUS revision=${LIBRARY_HOT_REVISION:0:12} model_path=$runtime_model"
+# Prefer topology from placement when available
+if [ -z "${CLUSTER_TOPOLOGY_ID:-}" ] && [ -n "${SINGLE_NODE_TOPOLOGY_ID:-}" ]; then
+  CLUSTER_TOPOLOGY_ID="$SINGLE_NODE_TOPOLOGY_ID"
 fi
+load_cluster_topology >/dev/null 2>&1 && [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] \
+  || die "serving requires a confirmed topology manifest (one machine is fine): run scripts/detect-fabric.sh --write-topology"
+resolve_library_hot_for_profile "$MODEL_NAME"
+model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
+weight_volume="${LIBRARY_HOT_HUB_PATH}:/root/.cache/huggingface/hub/${model_cache_name}:ro"
+runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
+echo "library identity=$LIBRARY_HOT_IDENTITY_STATUS revision=${LIBRARY_HOT_REVISION:0:12} model_path=$runtime_model"
 
 CONTAINER=$(container_name_for "$MODEL_NAME" 1)
 
@@ -135,7 +107,7 @@ CMD=(docker run --name "$CONTAINER" ${DETACH:+$DETACH}
   --label "${PULSAR_MANAGED_LABEL}=true"
   --label "${PULSAR_CONF_LABEL}=${MODEL_NAME}"
   --label "${PULSAR_RANK_LABEL}=single"
-  --label "${PULSAR_WEIGHT_SOURCE_LABEL}=${WEIGHT_SOURCE}"
+  --label "${PULSAR_WEIGHT_SOURCE_LABEL}=library-hot"
   --label "${PULSAR_LAUNCH_CONTRACT_LABEL}=${LAUNCH_CONTRACT_ID}"
   --label "${PULSAR_SPEC_DECODE_LABEL}=${SPEC_DECODE_STATE}"
   --gpus all
@@ -152,26 +124,16 @@ CMD=(docker run --name "$CONTAINER" ${DETACH:+$DETACH}
   --health-start-period "${HEALTH_START_PERIOD:-900s}"
   --restart "${RESTART_POLICY:-no}"
 )
-if [ "$WEIGHT_SOURCE" = library-hot ]; then
+CMD+=(
+  --label "${PULSAR_WEIGHT_OWNER_LABEL}=${LIBRARY_HOT_HOME_NODE_ID}"
+  --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${LIBRARY_HOT_CONTENT_ID}"
+  --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
+  --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
+)
+if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
   CMD+=(
-    --label "${PULSAR_WEIGHT_OWNER_LABEL}=${LIBRARY_HOT_HOME_NODE_ID}"
-    --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${LIBRARY_HOT_CONTENT_ID}"
-    --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
-    --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
-  )
-  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-    CMD+=(
-      --label "${PULSAR_MODEL_SEAL_LABEL}=${LIBRARY_HOT_MODEL_SEAL_ID}"
-      --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
-    )
-  fi
-fi
-if [ "$SEALED_REPLICATED" = 1 ]; then
-  CMD+=(
-    --label "${PULSAR_MODEL_REVISION_LABEL}=${REPLICATED_REVISION}"
-    --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=match"
-    --label "${PULSAR_MODEL_SEAL_LABEL}=${REPLICATED_MODEL_SEAL_ID}"
-    --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${REPLICATED_VALIDATION_BUNDLE_ID}"
+    --label "${PULSAR_MODEL_SEAL_LABEL}=${LIBRARY_HOT_MODEL_SEAL_ID}"
+    --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
   )
 fi
 if [ -n "$SINGLE_NODE_TOPOLOGY_ID" ]; then
