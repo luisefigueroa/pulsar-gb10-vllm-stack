@@ -1522,7 +1522,9 @@ container_ownership_is_proven() {
   return 0
 }
 
-# --all candidate: managed=true, conf in models/*.conf, rank valid for placement.
+# True when a managed container may be stopped. Labels prove ownership.
+# A live conf file is extra geometry when present; a missing conf still
+# stops from labels (world-size / single-node identity).
 container_all_candidate_is_safe() {
   local metadata="${1:?}" placement="${2:?}"
   local id name managed conf rank
@@ -1958,58 +1960,6 @@ remove_stack_owned_single_at_resolved_node() {
   fi
 }
 
-# Revalidate and remove one retired-profile cluster rank at the exact node
-# where it was observed. Retired confs have no topology-index geometry, so
-# each rank is removed where it actually lives, never by current index.
-# Exit: 0 removed; 2 ownership refusal; 1 operational error.
-remove_retired_cluster_rank_on_node() {
-  local index="${1:?node index required}" id="${2:?container id required}"
-  local conf="${3:?conf required}"
-  local meta rc=0 have_id have_name managed have_conf have_rank world host
-  meta=$(container_ownership_inspect_on_node "$index" "$id") || rc=$?
-  if [ "$rc" -eq 3 ]; then
-    warn "retired rank disappeared during removal on node $index (race)"
-    return 2
-  fi
-  if [ "$rc" -ne 0 ]; then
-    warn "node $index became unobservable during removal"
-    return 1
-  fi
-  IFS=$'\t' read -r have_id have_name managed have_conf have_rank \
-    < <(container_ownership_fields "$meta")
-  container_managed_label_is_true "$managed" || return 2
-  [ "$have_conf" = "$conf" ] || return 2
-  [[ "$have_rank" =~ ^[0-9]+$ ]] || return 2
-  world=$(container_world_size_field "$meta")
-  [[ "$world" =~ ^[2-9][0-9]*$ ]] && [ "$have_rank" -lt "$world" ] || return 2
-  if [ "$index" -eq 0 ]; then
-    if ! "$PULSAR_DOCKER" rm -f "$have_id" >/dev/null 2>&1; then
-      warn "docker rm -f failed for $have_name id=${have_id:0:12}"
-      return 1
-    fi
-    rc=0
-    container_ownership_inspect_local "$have_id" >/dev/null 2>&1 || rc=$?
-    if [ "$rc" -ne 3 ]; then
-      warn "container id=${have_id:0:12} still present after rm on node $index"
-      return 1
-    fi
-  else
-    host="${CLUSTER_NODE_SSH_HOSTS[$index]}"
-    if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
-        "docker rm -f $(printf '%q' "$have_id") >/dev/null"; then
-      warn "docker rm -f failed for $have_name on node $index"
-      return 1
-    fi
-    rc=0
-    container_ownership_inspect_remote "$host" "$have_id" >/dev/null 2>&1 || rc=$?
-    if [ "$rc" -ne 3 ]; then
-      warn "container id=${have_id:0:12} still present after rm on node $index"
-      return 1
-    fi
-  fi
-  log "removed retired conf=$conf rank=$have_rank on confirmed node $index"
-}
-
 # Best-effort remove by immutable ID only (current-launch cleanup). Never by name.
 # Only accepts a validated 64-hex id — never arbitrary docker run stdout.
 remove_container_id_local() {
@@ -2071,6 +2021,150 @@ list_managed_container_ids_remote() {
       return 1
       ;;
   esac
+}
+
+list_managed_container_ids_on_node() {
+  local index="${1:?node index required}"
+  if [ "$index" -eq 0 ]; then
+    list_managed_container_ids_local
+    return
+  fi
+  load_cluster_topology || return 1
+  [ "$index" -lt "$CLUSTER_TOPOLOGY_COUNT" ] || return 1
+  list_managed_container_ids_remote "${CLUSTER_NODE_SSH_HOSTS[$index]}"
+}
+
+# Revalidate then remove one managed id on the node where it was observed.
+# Uses the same stoppability predicate as --all.
+# Exit: 0 removed or already gone; 2 refused; 1 operational error.
+remove_safe_managed_id_on_node() {
+  local index="${1:?node index required}" id="${2:?container id required}"
+  local placement meta probe=0 reason conf rank short host
+  placement=$(single_node_key_for_index "$index") || return 1
+  meta=$(container_ownership_inspect_on_node "$index" "$id") || probe=$?
+  if [ "$probe" -eq 3 ]; then
+    log "container id=${id:0:12} already gone on node $index"
+    return 0
+  fi
+  if [ "$probe" -ne 0 ]; then
+    warn "confirmed node $index is unobservable during revalidation"
+    return 1
+  fi
+  IFS=$'\t' read -r _ _ _ conf rank < <(container_ownership_fields "$meta")
+  if ! container_all_candidate_is_safe "$meta" "$placement"; then
+    reason=$(container_all_refuse_reason "$meta" "$placement")
+    warn "refusing id=${id:0:12} on node $index: $reason"
+    return 2
+  fi
+  short="${id:0:12}"
+  log "removing stack-managed id=$short conf=$conf rank=$rank on node $index"
+  if [ "$index" -eq 0 ]; then
+    if ! "$PULSAR_DOCKER" rm -f "$id" >/dev/null; then
+      warn "docker rm -f failed for id=$short"
+      return 1
+    fi
+    if ! container_id_absent_local "$id"; then
+      warn "container id=$short still present or unverifiable after docker rm -f"
+      return 1
+    fi
+    return 0
+  fi
+  host="${CLUSTER_NODE_SSH_HOSTS[$index]}"
+  if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
+      "docker rm -f $(printf '%q' "$id") >/dev/null"; then
+    warn "docker rm -f failed for id=$short on node $index"
+    return 1
+  fi
+  if ! container_id_absent_remote "$host" "$id"; then
+    warn "container id=$short still present or unverifiable on node $index after docker rm -f"
+    return 1
+  fi
+  return 0
+}
+
+# Named stop by proven labels. Conf file is extra geometry when present.
+# Every confirmed Docker endpoint is probed before mutation. An unobservable
+# node blocks removal (a live rank could be stranded).
+# Exit: 0 stopped or absent; 2 refused; 1 unobservable/operational.
+stop_named_service_by_labels() {
+  local conf="${1:?conf required}" node_selector="${2:-}"
+  local count index ids id meta probe=0 placement reason rank have_conf
+  local -a found_indices=() found_ids=() found_ranks=()
+  local filtered_indices=() filtered_ids=() i
+  load_cluster_topology || return 1
+  count="$CLUSTER_TOPOLOGY_COUNT"
+  [ "$count" -gt 0 ] || count=1
+
+  for ((index = 0; index < count; index++)); do
+    if ! list_managed_container_ids_on_node "$index" >/dev/null; then
+      warn "confirmed node $index is unobservable — not removing conf=$conf (an unobserved live rank could be stranded)"
+      return 1
+    fi
+  done
+
+  for ((index = 0; index < count; index++)); do
+    placement=$(single_node_key_for_index "$index") || return 1
+    ids=$(list_managed_container_ids_on_node "$index") || {
+      warn "confirmed node $index is unobservable — not removing conf=$conf"
+      return 1
+    }
+    for id in $ids; do
+      [ -n "$id" ] || continue
+      probe=0
+      meta=$(container_ownership_inspect_on_node "$index" "$id") || probe=$?
+      if [ "$probe" -eq 3 ]; then
+        continue
+      fi
+      if [ "$probe" -ne 0 ]; then
+        warn "confirmed node $index is unobservable — not removing conf=$conf"
+        return 1
+      fi
+      IFS=$'\t' read -r _ _ _ have_conf rank < <(container_ownership_fields "$meta")
+      [ "$have_conf" = "$conf" ] || continue
+      if ! container_all_candidate_is_safe "$meta" "$placement"; then
+        reason=$(container_all_refuse_reason "$meta" "$placement")
+        warn "refusing conf=$conf id=${id:0:12} on node $index: $reason"
+        return 2
+      fi
+      found_indices+=("$index")
+      found_ids+=("$id")
+      found_ranks+=("$rank")
+    done
+  done
+
+  if [ -n "$node_selector" ]; then
+    if [ "${#found_ranks[@]}" -gt 0 ]; then
+      for rank in "${found_ranks[@]}"; do
+        if [[ "$rank" =~ ^[0-9]+$ ]]; then
+          warn "--node is only valid for one-node services"
+          return 2
+        fi
+      done
+    fi
+    resolve_single_node_placement "$node_selector" || return 1
+    if [ "${#found_indices[@]}" -gt 0 ]; then
+      for i in "${!found_indices[@]}"; do
+        if [ "${found_indices[$i]}" = "$SINGLE_NODE_INDEX" ]; then
+          filtered_indices+=("${found_indices[$i]}")
+          filtered_ids+=("${found_ids[$i]}")
+        fi
+      done
+    fi
+    found_indices=("${filtered_indices[@]+"${filtered_indices[@]}"}")
+    found_ids=("${filtered_ids[@]+"${filtered_ids[@]}"}")
+  fi
+
+  if [ "${#found_ids[@]}" -eq 0 ]; then
+    log "no stack-managed service found for conf=$conf"
+    return 0
+  fi
+
+  for i in "${!found_ids[@]}"; do
+    remove_safe_managed_id_on_node "${found_indices[$i]}" "${found_ids[$i]}" \
+      || return
+  done
+  log "done"
+  return 0
 }
 
 # Remove local --all candidates that are safe for head placement.

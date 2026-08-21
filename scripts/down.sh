@@ -6,8 +6,9 @@
 # Only removes containers that prove stack ownership via
 # io.pulsar.gb10.managed=true and consistent conf/rank labels. Unlabeled
 # legacy or unknown containers are reported and refused, never removed.
-# --all means all label-managed Pulsar containers with a known conf and
-# placement-valid rank, not every vllm-* name.
+# --all means all label-managed Pulsar containers that pass the shared
+# stoppability predicate, not every vllm-* name. A live conf file is extra
+# geometry when present; a missing conf still stops from labels.
 #
 # After a successful profile stop, library-hot retention hooks:
 #   --retain-weights  leave unpinned prepared views in place (product default)
@@ -173,95 +174,18 @@ if [ "$TARGET" = "--all" ]; then
 fi
 
 if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
-  # Retired profile (e.g. removed by ADR 0006): the conf file is gone, but a
-  # container that proves ownership through its labels must stay stoppable.
-  # Geometry comes from the containers themselves; hot retention hooks need
-  # the serving profile and are unavailable here.
+  # Conf file is extra geometry. A retired profile (ADR 0006) still stops
+  # through the same label predicate as --all. Hot hooks need a serving
+  # profile and are unavailable here.
   [ -z "$HOT_AFTER" ] \
     || die "--retain-weights/--pin-weights/--purge-hot need a current serving profile; retired confs stop plainly" 2
   log "conf $TARGET has no models/${TARGET}.conf; stopping by proven container labels"
-  load_cluster_topology || die "confirmed topology is invalid"
-  retired_cluster_name=$(container_name_for "$TARGET" 2)
-  # Probe EVERY confirmed node for the cluster container: a partially torn
-  # down retired profile may have live remote ranks with no local rank 0,
-  # and after a membership reconfirm a surviving rank may sit at any index.
-  # Ranks are therefore removed at the node where each was OBSERVED, and
-  # only when every confirmed node was observable (an unobserved node could
-  # host a live rank that removal would strand).
-  retired_found_indices=()
-  retired_found_ids=()
-  retired_unobservable=""
-  retired_count="$CLUSTER_TOPOLOGY_COUNT"
-  [ "$retired_count" -gt 0 ] || retired_count=1
-  for ((retired_index = 0; retired_index < retired_count; retired_index++)); do
-    rc=0
-    probe_meta=$(container_ownership_inspect_on_node \
-      "$retired_index" "$retired_cluster_name") || rc=$?
-    case "$rc" in
-      3) continue ;;
-      0)
-        IFS=$'\t' read -r probe_id _ probe_managed probe_conf probe_rank \
-          < <(container_ownership_fields "$probe_meta")
-        container_managed_label_is_true "$probe_managed" \
-          || die "refused: $retired_cluster_name on node $retired_index is not stack-managed"
-        [ "$probe_conf" = "$TARGET" ] \
-          || die "refused: $retired_cluster_name on node $retired_index carries conf '$probe_conf'"
-        [[ "$probe_rank" =~ ^[0-9]+$ ]] \
-          || die "refused: $retired_cluster_name on node $retired_index has rank '$probe_rank'"
-        probe_world=$(container_world_size_field "$probe_meta")
-        [[ "$probe_world" =~ ^[2-9][0-9]*$ ]] && [ "$probe_rank" -lt "$probe_world" ] \
-          || die "refused: $retired_cluster_name on node $retired_index has no usable world-size label"
-        retired_found_indices+=("$retired_index")
-        retired_found_ids+=("$probe_id")
-        ;;
-      *) retired_unobservable+=" $retired_index" ;;
-    esac
-  done
-  if [ "${#retired_found_indices[@]}" -gt 0 ]; then
-    [ -z "$NODE_SELECTOR" ] || die "--node is only valid for one-node services" 2
-    [ -z "$retired_unobservable" ] \
-      || die "confirmed node(s)$retired_unobservable are unobservable — not removing retired $TARGET ranks (an unobserved live rank could be stranded); restore those nodes or clean up manually"
-    rc=0
-    for retired_index in "${!retired_found_indices[@]}"; do
-      # Stop at the FIRST failure: continuing past an error or a race could
-      # strand a live rank behind a node that just became unobservable.
-      remove_retired_cluster_rank_on_node \
-        "${retired_found_indices[$retired_index]}" \
-        "${retired_found_ids[$retired_index]}" "$TARGET" || { rc=$?; break; }
-    done
-    case "$rc" in
-      0) log "done"; exit 0 ;;
-      2) die "refused: $retired_cluster_name ownership changed during removal; re-run after inspecting ./pulsar inventory" ;;
-      *) die "failed while removing $retired_cluster_name ranks (rc=$rc); re-run after restoring node observability" ;;
-    esac
-  fi
-  [ -z "$retired_unobservable" ] \
-    || die "confirmed node(s)$retired_unobservable are unobservable — cannot conclude retired $TARGET has no cluster ranks"
-  if [ -z "$NODE_SELECTOR" ]; then
-    rc=0
-    placement_index=$(discover_single_node_index_for_conf "$TARGET") || rc=$?
-    case "$rc" in
-      0)
-        NODE_SELECTOR="${CLUSTER_NODE_IDS[$placement_index]:-}"
-        [ -n "$NODE_SELECTOR" ] \
-          || NODE_SELECTOR=$(single_node_key_for_index "$placement_index")
-        ;;
-      3)
-        log "no stack-managed service found for retired conf=$TARGET"
-        exit 0
-        ;;
-      2) die "refused to stop $TARGET: placement or ownership is ambiguous" ;;
-      *) die "cannot safely discover $TARGET placement across confirmed nodes" ;;
-    esac
-  fi
-  resolve_single_node_placement "$NODE_SELECTOR" \
-    || die "cannot resolve physical node placement '$NODE_SELECTOR'"
   rc=0
-  remove_stack_owned_single_at_resolved_node "$TARGET" || rc=$?
+  stop_named_service_by_labels "$TARGET" "$NODE_SELECTOR" || rc=$?
   case "$rc" in
     0) exit 0 ;;
-    2) die "refused to stop $(container_name_for "$TARGET" 1) on $(single_node_display): ownership or node identity is not proven" ;;
-    *) die "failed to stop $(container_name_for "$TARGET" 1) on $(single_node_display)" ;;
+    2) die "refused to stop $TARGET: ownership is not proven" ;;
+    *) die "cannot safely stop $TARGET: a confirmed node is unobservable" ;;
   esac
 fi
 
