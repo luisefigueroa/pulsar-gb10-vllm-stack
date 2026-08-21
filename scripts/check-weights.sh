@@ -78,12 +78,43 @@ print(json.dumps(payload, indent=2, sort_keys=True))
   fi
 }
 
-if ! hot_info=$(library_hot_info_for_profile "$NAME"); then
+hot_rc=0
+hot_info=$(library_hot_info_for_profile "$NAME") || hot_rc=$?
+if [ "$hot_rc" -ne 0 ]; then
+  one_node_rank=""
+  if [ "$NODES" -eq 1 ]; then
+    one_node_rank="$SINGLE_NODE_INDEX"
+  fi
+  if [ "$NODES" -eq 1 ] && [ "$hot_rc" -eq 255 ]; then
+    emit_weights_gap \
+      "rank-unreachable" \
+      "./pulsar inventory" \
+      "rank $SINGLE_NODE_INDEX is unreachable; restore SSH to that confirmed node, then re-check. Do not restage while the rank is unobservable" \
+      "$SINGLE_NODE_INDEX"
+    exit 1
+  fi
+  if [ "$NODES" -eq 1 ] && [ "$hot_rc" -eq 2 ]; then
+    emit_weights_gap \
+      "identity-mismatch" \
+      "scripts/model-library.sh health" \
+      "rank $SINGLE_NODE_INDEX runtime view failed verification; inspect health, then prepare $NAME --yes only if that view is missing or corrupt" \
+      "$SINGLE_NODE_INDEX"
+    exit 1
+  fi
+  classify_args=(
+    --profile "$NAME"
+    --catalog "$CATALOG_FILE"
+    --topology-id "$CLUSTER_TOPOLOGY_ID"
+    --models-dir "$REPO_DIR/models"
+  )
+  if [ "$NODES" -eq 1 ]; then
+    classify_args+=(--selected-rank "$SINGLE_NODE_INDEX")
+    if [ -n "${SINGLE_NODE_ID:-}" ]; then
+      classify_args+=(--selected-node-id "$SINGLE_NODE_ID")
+    fi
+  fi
   gap=$(python3 "$PULSAR_MODEL_LIBRARY_PY" classify-library-readiness \
-    --profile "$NAME" \
-    --catalog "$CATALOG_FILE" \
-    --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --models-dir "$REPO_DIR/models") || gap=""
+    "${classify_args[@]}") || gap=""
   if [ -n "$gap" ]; then
     reason=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "views-missing")')
     remediation=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("remediation") or "")')
@@ -93,7 +124,7 @@ if ! hot_info=$(library_hot_info_for_profile "$NAME"); then
     remediation="scripts/model-library.sh prepare $NAME --yes"
     detail="model files are not prepared"
   fi
-  emit_weights_gap "$reason" "$remediation" "$detail"
+  emit_weights_gap "$reason" "$remediation" "$detail" "$one_node_rank"
   exit 1
 fi
 instance=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')

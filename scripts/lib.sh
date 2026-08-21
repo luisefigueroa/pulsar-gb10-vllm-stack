@@ -1109,17 +1109,13 @@ load_replicated_identity_plan() {
   fi
 }
 
-# Resolve a ready hot-staging instance for library-hot launch.
-# Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
-# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
-# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
-# LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
-# LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
-# LIBRARY_HOT_VALIDATION_JSON, and pinned state.
-# Requires load_conf + load_cluster_topology (or single-node topology id).
+# Print find-hot JSON for the selected rank. Return 0 on success, 255 when
+# that rank is SSH-unreachable, 2 when a found view fails verification, and
+# 1 when no ready instance is present. Requires load_conf plus confirmed
+# topology (or a resolved one-node topology id).
 library_hot_info_for_profile() {
   local profile="${1:?profile required}" topology_id info stamp_json instance
-  local expected_validation_json command rank
+  local expected_validation_json command rank rc
   topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] || return 1
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || return 1
@@ -1130,8 +1126,9 @@ library_hot_info_for_profile() {
       --profile "$profile" \
       --topology-id "$topology_id" \
       --hot-root "$PULSAR_HOT_ROOT")
-    info=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") \
-      || return 1
+    rc=0
+    info=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
     stamp_json=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
       || return 1
@@ -1151,8 +1148,12 @@ library_hot_info_for_profile() {
       --topology-id "$topology_id" \
       --expected-validation-json "$expected_validation_json" \
       --serve-time-witness)
-    ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null \
-      || return 1
+    rc=0
+    ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      [ "$rc" -eq 255 ] && return 255
+      return 2
+    fi
   else
     info=$(python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
       --profile "$profile" \
@@ -1167,11 +1168,18 @@ library_hot_info_for_profile() {
       --profile "$profile" \
       --topology-id "$topology_id" \
       --models-dir "$REPO_DIR/models" \
-      --serve-time-witness >/dev/null || return 1
+      --serve-time-witness >/dev/null || return 2
   fi
   printf '%s\n' "$info"
 }
 
+# Resolve a ready hot-staging instance for library-hot launch.
+# Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
+# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
+# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
+# LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
+# LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
+# LIBRARY_HOT_VALIDATION_JSON, and pinned state.
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
   local topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"

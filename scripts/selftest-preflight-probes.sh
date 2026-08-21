@@ -234,4 +234,27 @@ weights_human=$(QUIET=1 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
 printf '%s\n' "$weights_human" | grep -q 'identity=legacy-unsealed'
 echo "OK   human and JSON weight projections agree"
 
+# One-node --node on an unreachable confirmed rank is not a prepare gap.
+: >"$STATE_DIR/ssh.log"
+set +e
+weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
+  PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" SSH_MODE=down \
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --node fixture-node-1 --json)
+weights_rc=$?
+set -e
+[ "$weights_rc" -ne 0 ]
+assert_json_state "$weights_out" missing \
+  "one-node unreachable placement is missing"
+WEIGHTS_JSON="$weights_out" python3 - <<'PY2'
+import json
+import os
+
+data = json.loads(os.environ["WEIGHTS_JSON"])
+assert data.get("reason") == "rank-unreachable", data
+assert data.get("failed_rank") == 1, data
+assert "prepare" not in (data.get("remediation") or ""), data
+assert "inventory" in (data.get("remediation") or ""), data
+PY2
+echo "OK   one-node --node unreachable rank does not suggest prepare"
+
 echo "fail-closed probe selftest OK"

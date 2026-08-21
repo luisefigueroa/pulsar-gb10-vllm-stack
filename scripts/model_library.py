@@ -3090,6 +3090,8 @@ def classify_library_readiness(
     catalog_path: str | pathlib.Path | None,
     topology_id: str,
     models_dir: str | pathlib.Path,
+    selected_rank: int | None = None,
+    selected_node_id: str | None = None,
 ) -> dict[str, Any]:
     """Classify why library views are not ready, without restaging."""
     refresh = "scripts/model-library.sh catalog refresh"
@@ -3126,7 +3128,7 @@ def classify_library_readiness(
             "detail": "catalog topology does not match the confirmed topology",
         }
     try:
-        resolve_entry(
+        resolved = resolve_entry(
             catalog,
             profile=profile,
             cold_root=None,
@@ -3164,6 +3166,34 @@ def classify_library_readiness(
             "remediation": refresh,
             "detail": text,
         }
+    home = resolved.get("home") or {}
+    home_rank = home.get("rank")
+    home_node_id = home.get("node_id") or ""
+    selected_node = (selected_node_id or "").strip()
+    placement_mismatch = False
+    if (
+        selected_rank is not None
+        and isinstance(home_rank, int)
+        and not isinstance(home_rank, bool)
+        and selected_rank != home_rank
+    ):
+        placement_mismatch = True
+    elif selected_node and home_node_id and selected_node != home_node_id:
+        placement_mismatch = True
+    if placement_mismatch:
+        target = home_node_id or (
+            str(home_rank) if home_rank is not None else "HOME"
+        )
+        return {
+            "reason": "wrong-placement",
+            "remediation": f"scripts/check-weights.sh {profile} --node {target}",
+            "detail": (
+                "one-node serving must use the durable-home node "
+                f"(rank {home_rank}, {home_node_id or 'unknown'}); "
+                f"selected rank {selected_rank} is not that home. "
+                "Do not prepare onto a non-home rank"
+            ),
+        }
     return {
         "reason": "views-missing",
         "remediation": prepare,
@@ -3177,6 +3207,8 @@ def cmd_classify_library_readiness(args: argparse.Namespace) -> int:
         catalog_path=args.catalog,
         topology_id=args.topology_id,
         models_dir=args.models_dir,
+        selected_rank=args.selected_rank,
+        selected_node_id=args.selected_node_id or None,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
@@ -10199,6 +10231,8 @@ def build_parser() -> argparse.ArgumentParser:
     classify.add_argument("--catalog", default="")
     classify.add_argument("--topology-id", default="")
     classify.add_argument("--models-dir", required=True)
+    classify.add_argument("--selected-rank", type=int, default=None)
+    classify.add_argument("--selected-node-id", default="")
     classify.set_defaults(func=cmd_classify_library_readiness)
 
     whs = sub.add_parser("write-hot-stamp", help="Write hot.json for an instance dir")

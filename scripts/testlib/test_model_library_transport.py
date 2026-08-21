@@ -148,12 +148,20 @@ class LibraryReadinessClassification(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _classify(self, profile: str) -> dict[str, object]:
+    def _classify(
+        self,
+        profile: str,
+        *,
+        selected_rank: int | None = None,
+        selected_node_id: str | None = None,
+    ) -> dict[str, object]:
         return model_library.classify_library_readiness(
             profile=profile,
             catalog_path=self.catalog_path,
             topology_id=self.topology_id,
             models_dir=self.models_dir,
+            selected_rank=selected_rank,
+            selected_node_id=selected_node_id,
         )
 
     def _home(self, profile_info: dict[str, object], *, rank: int) -> dict[str, object]:
@@ -272,6 +280,15 @@ class LibraryReadinessClassification(unittest.TestCase):
             report["remediation"],
             "scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes",
         )
+        home_ok = self._classify(self.NEMOTRON, selected_rank=0, selected_node_id="node-0")
+        self.assertEqual(home_ok["reason"], "views-missing")
+        misplaced = self._classify(
+            self.NEMOTRON, selected_rank=1, selected_node_id="node-1"
+        )
+        self.assertEqual(misplaced["reason"], "wrong-placement")
+        self.assertIn("--node node-0", misplaced["remediation"])
+        self.assertNotIn("prepare", misplaced["remediation"])
+        self.assertIn("Do not prepare onto a non-home rank", misplaced["detail"])
 
 
 class SshRoceRouteContracts(unittest.TestCase):

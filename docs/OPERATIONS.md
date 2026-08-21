@@ -624,7 +624,10 @@ exact home to exist already; `home add` is the acquisition path (the wizard
 guides it for sealed profiles). `check-weights` / `up.sh` print the same
 commands: sealed `home add <profile> --yes`, the unsealed plan-then-`--yes`
 sequence, `cleanup-recommend` / `catalog primary set` when duplicate homes
-have no primary, or `prepare` when a home already exists. For sealed profiles:
+have no primary, or `prepare` when a home already exists. For a one-node
+`--node` placement, an unreachable rank tells the operator to restore SSH
+(not restage), and a non-home rank names the durable-home node instead of
+`prepare`. For sealed profiles:
 
 ```bash
 # Optional --node RANK|NODE_ID overrides most-free-space placement.
