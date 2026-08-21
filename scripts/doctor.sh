@@ -294,6 +294,9 @@ elif [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
       record fail "rank_${rank}_ssh" "$node_label · key-based SSH failed at $host"
     fi
   done
+elif [ "$CLUSTER_TOPOLOGY_COUNT" -eq 1 ]; then
+  # A confirmed one-node manifest is valid serving membership (ADR 0006).
+  record ok topology "confirmed topology · 1 node"
 elif [[ "$fabric_nodes" =~ ^[1-9][0-9]*$ ]] && [ "$fabric_nodes" -gt 1 ]; then
   topology_message="$fabric_nodes GB10 systems discovered, but cluster membership is not confirmed."
   topology_message+=$'\n'
