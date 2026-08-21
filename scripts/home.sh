@@ -11,6 +11,7 @@
 #   HOME_INVENTORY_CMD
 #   HOME_DOWN_CMD / HOME_DOCTOR_CMD / HOME_STATUS_CMD
 #   HOME_INVENTORY_JSON / HOME_INVENTORY_CMD  (for stop/maintenance lists)
+#   HOME_STOP_HOT_GIB  (optional proven non-home restage GiB for stop disclosure)
 #   QUICK_STATUS_* forwarded when invoking quick-status
 set -euo pipefail
 SCRIPT_NAME=home
@@ -244,6 +245,93 @@ workflow_status() {
   done
 }
 
+# Prints "skip" or "one-rank" or "restage" or "restage <GiB>".
+# Disk size never comes from inventory estimated_footprint_gib_per_rank.
+library_hot_stop_kind() {
+  local conf="$1" services_json="$2"
+  CONF="$conf" SERVICES_JSON="$services_json" REPO_DIR="$REPO_DIR" \
+    HOME_STOP_HOT_GIB="${HOME_STOP_HOT_GIB:-}" python3 - <<'PY'
+import json, os, pathlib, re
+
+def _skip() -> None:
+    print("skip")
+    raise SystemExit(0)
+
+try:
+    conf = os.environ.get("CONF") or ""
+    services = json.loads(os.environ.get("SERVICES_JSON") or "[]")
+    if not isinstance(services, list):
+        _skip()
+except Exception:
+    _skip()
+item = next(
+    (
+        service
+        for service in services
+        if (service.get("conf") or service.get("service_id")) == conf
+    ),
+    {},
+)
+if item.get("weight_source") != "library-hot":
+    print("skip")
+    raise SystemExit(0)
+
+try:
+    expected_nodes = int(item.get("expected_nodes") or 1)
+except (TypeError, ValueError):
+    expected_nodes = 1
+if expected_nodes < 2:
+    print("one-rank")
+    raise SystemExit(0)
+
+override = (os.environ.get("HOME_STOP_HOT_GIB") or "").strip()
+if override:
+    print(f"restage {override}")
+    raise SystemExit(0)
+
+gib = ""
+repo = pathlib.Path(os.environ.get("REPO_DIR") or ".")
+conf_path = repo / "models" / f"{conf}.conf"
+try:
+    text = conf_path.read_text(encoding="utf-8")
+except OSError:
+    text = ""
+match = re.search(r'(?m)^EXPECTED_MODEL_SEAL="([^"]+)"', text)
+seal_rel = match.group(1) if match else ""
+seal_path = repo / "models" / seal_rel if seal_rel else None
+try:
+    seal = json.loads(seal_path.read_text(encoding="utf-8")) if seal_path else {}
+except (OSError, json.JSONDecodeError, TypeError):
+    seal = {}
+bundle_id = ""
+if isinstance(seal, dict):
+    provenance = seal.get("provenance") or {}
+    if isinstance(provenance, dict):
+        bundle_id = provenance.get("validation_bundle_id") or ""
+bundle_path = (
+    repo / "models" / "validation-bundles" / f"{bundle_id}.json" if bundle_id else None
+)
+try:
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8")) if bundle_path else {}
+except (OSError, json.JSONDecodeError, TypeError):
+    bundle = {}
+memory = {}
+if isinstance(bundle, dict):
+    contract = bundle.get("profile_contract") or {}
+    if isinstance(contract, dict):
+        maybe_memory = contract.get("memory_policy") or {}
+        if isinstance(maybe_memory, dict):
+            memory = maybe_memory
+raw = memory.get("weights_gib")
+if raw is not None and str(raw).strip() != "":
+    gib = str(raw).strip()
+if gib:
+    print(f"restage {gib}")
+else:
+    print("restage")
+PY
+}
+
 workflow_stop() {
   local inv services_json
   log "listing inventory-safe active managed services (read-only)…"
@@ -303,12 +391,49 @@ PY
   [ -n "$conf" ] || { log "no selection"; return 0; }
 
   log "selected conf=$conf — down.sh will revalidate ownership and immutable IDs"
+  local -a down_args=()
+  local kind keep_label free_label restage_gib=""
+  kind=$(library_hot_stop_kind "$conf" "$services_json")
+  case "$kind" in
+    skip|"")
+      ;;
+    one-rank)
+      keep_label="Keep prepared views · next start can reuse the local runtime view · durable home still required"
+      free_label="Free prepared views · next start recreates the runtime view from the durable home"
+      ;;
+    restage)
+      keep_label="Keep prepared views · next start can reuse the verified local copy · durable home still required"
+      free_label="Free prepared views · next start restages from the durable home"
+      ;;
+    restage\ *)
+      restage_gib="${kind#restage }"
+      keep_label="Keep prepared views · next start can reuse ~${restage_gib} GiB locally · durable home still required"
+      free_label="Free prepared views · free ~${restage_gib} GiB now · next start requires a full restage"
+      ;;
+    *)
+      keep_label="Keep prepared views · next start can reuse the verified local copy · durable home still required"
+      free_label="Free prepared views · next start restages from the durable home"
+      ;;
+  esac
+  if [ -n "${keep_label:-}" ]; then
+    if ! pick=$(choose "Prepared views after stop · durable home still required" \
+        "$keep_label" "$free_label" "Back"); then
+      log "cancelled; no containers changed"
+      return 0
+    fi
+    case "$pick" in
+      Back|"") log "back; no containers changed"; return 0 ;;
+      Keep\ prepared\ views*) down_args+=(--retain-weights) ;;
+      Free\ prepared\ views*) down_args+=(--purge-hot) ;;
+      *) log "no selection"; return 0 ;;
+    esac
+  fi
   if ! confirm "Stop stack-managed service conf=$conf?"; then
     log "declined; no containers changed"
     return 0
   fi
   log "stopping conf=$conf via scripts/down.sh…"
-  if ! cmd_down "$conf"; then
+  if ! cmd_down "$conf" "${down_args[@]}"; then
     warn "stop failed for $conf — inspect with ./pulsar inventory"
     return 0
   fi

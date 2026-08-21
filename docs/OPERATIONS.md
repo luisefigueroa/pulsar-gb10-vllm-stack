@@ -147,7 +147,8 @@ Menu (default cursor: status):
 
 1. **Current system status** — `scripts/quick-status.sh` (read-only)
 2. **Serve or switch a model** — enters `wizard.sh` (its doctor/preflight)
-3. **Stop a serving model** — inventory-safe active managed only; confirm → `down.sh`
+3. **Stop a serving model** — inventory-safe active managed only; library-hot
+   services choose retain vs free, then confirm → `down.sh`
 4. **Models & storage** — cached identity, placement, runtime views, and findings
    (browsing is read-only; refresh/preparation are explicit; reviewed two-rank
    `library-hot` is GA, while one-rank and legacy-unsealed use are experimental)
@@ -258,13 +259,20 @@ and proven complete ownership. Unknown, legacy, mismatch, incomplete/unproven,
 foreign GPU, and any remote-unobservable multi-node services are excluded. After
 selection, final confirmation is required; only `scripts/down.sh <conf>` runs
 (revalidates labels/IDs). Decline → no mutation. When the stopped service's
-labels prove `weight-source=library-hot`, ordinary stop purges unpinned prepared
-views. `--pin-weights` explicitly retains them and is used for a confirmed
-same-profile restart; the durable home is still required. `--purge-hot`
-explicitly removes pinned state as well. Legacy containers launched before
-ADR 0006 (label `weight-source=replicated`, or unlabeled) stop cleanly and
-never invoke model-library cleanup; restarting them migrates them to the
-library.
+labels prove `weight-source=library-hot`, ordinary stop retains unpinned prepared
+views ([ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)).
+The durable home is still required. Interactive stop offers retain (default)
+versus free, and states the restage consequence when a non-home byte count can
+be proven — for example “Free 167 GiB now; next start requires a full restage.”
+`--retain-weights` keeps unpinned views even when site policy is `purge`.
+`--pin-weights` protects retained views from a later unforced purge and is used
+for a confirmed same-profile restart. `--purge-hot` is the explicit
+capacity-recovery action and may remove a pin. Site
+`PULSAR_HOT_STOP_POLICY=retain|purge` selects the named-profile CLI default;
+unset means retain; invalid values fail closed. `down.sh --all` never
+auto-purges. Legacy containers launched before ADR 0006 (label
+`weight-source=replicated`, or unlabeled) stop cleanly and never invoke
+model-library cleanup; restarting them migrates them to the library.
 
 Maintenance “Clean stale stack-managed containers” lists only **stale** +
 `safe_to_stop` managed entries, explains they are nonblocking, requires
@@ -587,7 +595,8 @@ scripts/model-library.sh prepare <multi-rank-sealed-profile> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
 scripts/up.sh <multi-rank-sealed-profile>
 # optional after stop:
-scripts/down.sh <multi-rank-sealed-profile> --pin-weights  # retain non-home hot
+scripts/down.sh <multi-rank-sealed-profile>                 # retain unpinned non-home hot
+scripts/down.sh <multi-rank-sealed-profile> --pin-weights  # protect from later unforced purge
 scripts/down.sh <multi-rank-sealed-profile> --purge-hot    # free hot disk budget
 ```
 
@@ -896,6 +905,9 @@ and refuse before writes when any observation is missing or blocked.
 `0` for controlled tests). These are policy overrides, not retry suggestions.
 Pulsar never auto-evicts, silently relaxes capacity, or changes transport; purge
 an unpinned hot instance or free disk, run `budget` again, and retry.
+Ordinary stop retains unpinned prepared views; `PULSAR_HOT_STOP_POLICY=purge`
+restores named-profile purge-on-stop for storage-first labs. Budget-based
+eviction is not implemented.
 
 **Current identity behavior:** any profile may reference a reviewed seal
 under `models/seals/` with `EXPECTED_MODEL_SEAL="seals/<file>.json"`.

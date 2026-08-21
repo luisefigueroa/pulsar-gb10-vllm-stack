@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stop serving containers for a conf, or all stack-managed containers.
 #   scripts/down.sh <model-name|--all> [--node NODE_ID]
-#                   [--pin-weights|--purge-hot]
+#                   [--retain-weights|--pin-weights|--purge-hot]
 #
 # Only removes containers that prove stack ownership via
 # io.pulsar.gb10.managed=true and consistent conf/rank labels. Unlabeled
@@ -10,23 +10,27 @@
 # placement-valid rank, not every vllm-* name.
 #
 # After a successful profile stop, library-hot retention hooks:
-#   --pin-weights   protect retained hot staging from purge; warm-home
-#                   preparation may still depend on its durable home symlink
-#   --purge-hot     delete hot staging, including an existing pin
-# A stopped library-hot service purges unpinned views by default. Legacy
-# containers without a library-hot label (pre-ADR 0006 launches) stop
-# cleanly and never invoke model-library cleanup.
+#   --retain-weights  leave unpinned prepared views in place (product default)
+#   --pin-weights     protect retained hot staging from unforced purge; warm-home
+#                     preparation may still depend on its durable home symlink
+#   --purge-hot       delete hot staging, including an existing pin
+# Ordinary stop of a library-hot service retains unpinned views (ADR 0007).
+# PULSAR_HOT_STOP_POLICY=retain|purge may select the named-profile default;
+# flags override it. --all never auto-purges. Legacy containers without a
+# library-hot label (pre-ADR 0006 launches) stop cleanly and never invoke
+# model-library cleanup.
 set -euo pipefail
 SCRIPT_NAME=down
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 TARGET="${1:-}"
-[ -n "$TARGET" ] || die "usage: $0 <model-name|--all> [--node NODE_ID] [--pin-weights|--purge-hot]"
+[ -n "$TARGET" ] || die "usage: $0 <model-name|--all> [--node NODE_ID] [--retain-weights|--pin-weights|--purge-hot]"
 shift || true
 NODE_SELECTOR=""
 HOT_AFTER=""
 MODEL_LIBRARY_CMD="${PULSAR_MODEL_LIBRARY_CMD:-$REPO_DIR/scripts/model-library.sh}"
+HOT_FLAG_ERR="use only one of --retain-weights, --pin-weights, or --purge-hot"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --node)
@@ -34,18 +38,33 @@ while [ "$#" -gt 0 ]; do
       NODE_SELECTOR="$2"
       shift
       ;;
+    --retain-weights)
+      [ -z "$HOT_AFTER" ] || die "$HOT_FLAG_ERR" 2
+      HOT_AFTER=retain
+      ;;
     --pin-weights)
-      [ -z "$HOT_AFTER" ] || die "use only one of --pin-weights or --purge-hot" 2
+      [ -z "$HOT_AFTER" ] || die "$HOT_FLAG_ERR" 2
       HOT_AFTER=pin
       ;;
     --purge-hot)
-      [ -z "$HOT_AFTER" ] || die "use only one of --pin-weights or --purge-hot" 2
+      [ -z "$HOT_AFTER" ] || die "$HOT_FLAG_ERR" 2
       HOT_AFTER=purge-explicit
       ;;
     *) die "unknown arg: $1" 2 ;;
   esac
   shift
 done
+
+validate_hot_stop_policy() {
+  if [ "${PULSAR_HOT_STOP_POLICY+x}" != x ]; then
+    return 0
+  fi
+  case "${PULSAR_HOT_STOP_POLICY}" in
+    retain|purge) return 0 ;;
+    *) die "PULSAR_HOT_STOP_POLICY must be retain or purge" 2 ;;
+  esac
+}
+validate_hot_stop_policy
 
 library_hot_after_stop() {
   local profile="${1:?}"
@@ -55,6 +74,9 @@ library_hot_after_stop() {
     node_args=(--node "$NODE_SELECTOR")
   fi
   case "$HOT_AFTER" in
+    retain)
+      log "retaining unpinned library-hot staging for $profile (next start can reuse verified views; durable home still required; --purge-hot frees disk)"
+      ;;
     pin)
       log "pinning library-hot staging for $profile"
       "$MODEL_LIBRARY_CMD" pin "$profile" "${node_args[@]}" || \
@@ -67,7 +89,7 @@ library_hot_after_stop() {
         warn "purge-hot failed (no hot instance?)"
       ;;
     purge-default)
-      log "purging unpinned library-hot staging for $profile (stop default)"
+      log "purging unpinned library-hot staging for $profile (site policy purge)"
       "$MODEL_LIBRARY_CMD" purge-hot "$profile" "${node_args[@]}" --yes || \
         warn "hot staging was retained (it may be pinned); inspect with ./pulsar models"
       ;;
@@ -109,21 +131,33 @@ observe_profile_weight_source() {
 }
 
 set_default_hot_policy() {
-  local profile="${1:?}" cname="${2:?}" source
+  local profile="${1:?}" cname="${2:?}" source policy
   [ -z "$HOT_AFTER" ] || return 0
   if ! source=$(observe_profile_weight_source "$profile" "$cname"); then
     warn "could not prove the service weight policy; hot storage will be left unchanged"
     return 0
   fi
   if [ "$source" = library-hot ]; then
-    HOT_AFTER=purge-default
-    log "library-hot service detected; unpinned prepared views will be purged after stop"
+    policy="${PULSAR_HOT_STOP_POLICY:-retain}"
+    case "$policy" in
+      retain)
+        HOT_AFTER=retain
+        log "library-hot service detected; unpinned prepared views will be retained after stop (next start can reuse them; durable home still required)"
+        ;;
+      purge)
+        HOT_AFTER=purge-default
+        log "library-hot service detected; site policy purge will remove unpinned prepared views after stop (next start restages from the durable home)"
+        ;;
+      *)
+        die "PULSAR_HOT_STOP_POLICY must be retain or purge" 2
+        ;;
+    esac
   fi
 }
 
 if [ "$TARGET" = "--all" ]; then
   [ -z "$NODE_SELECTOR" ] || die "--node cannot be combined with --all" 2
-  [ -z "$HOT_AFTER" ] || die "--pin-weights/--purge-hot cannot be combined with --all" 2
+  [ -z "$HOT_AFTER" ] || die "--retain-weights/--pin-weights/--purge-hot cannot be combined with --all" 2
   load_cluster_topology || die "confirmed topology is invalid"
   if [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
     exec "$REPO_DIR/cluster/stop-cluster.sh" --all
@@ -144,7 +178,7 @@ if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
   # Geometry comes from the containers themselves; hot retention hooks need
   # the serving profile and are unavailable here.
   [ -z "$HOT_AFTER" ] \
-    || die "--pin-weights/--purge-hot need a current serving profile; retired confs stop plainly" 2
+    || die "--retain-weights/--pin-weights/--purge-hot need a current serving profile; retired confs stop plainly" 2
   log "conf $TARGET has no models/${TARGET}.conf; stopping by proven container labels"
   load_cluster_topology || die "confirmed topology is invalid"
   retired_cluster_name=$(container_name_for "$TARGET" 2)

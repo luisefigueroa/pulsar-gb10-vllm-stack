@@ -10,6 +10,9 @@
   [ADR 0004](./0004-model-serving-release-validation.md), and
   [ADR 0005](./0005-reject-live-nfs-rdma-serving.md)
 - **Decides:** SIM-02 (supported model-storage and distribution surface)
+- **Amended by:**
+  [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md)
+  (ordinary-stop hot retention only; library-only mechanism unchanged)
 
 ## Context
 

@@ -76,6 +76,7 @@ mkdir -p "$SHIM" "$STATE/logs" "$STATE/inv" "$STATE/api"
 # ---------------------------------------------------------------------------
 svc_managed() {
   local conf="$1" state="$2" complete="$3" safe="$4" port="${5:-8000}"
+  local weight_source="${6:-}"
   local running="True" stale="False"
   [ "$state" = "stale" ] && running="False" && stale="True"
   [ "$state" = "stopped" ] && running="False"
@@ -96,6 +97,7 @@ print(json.dumps({
   'complete': $complete,
   'observability': 'complete' if $complete else 'partial',
   'api_port': $port,
+  'weight_source': '''$weight_source''' or None,
   'estimated_footprint_gib_per_rank': 12.0,
   'reasons': [],
   'ranks': [{
@@ -219,7 +221,7 @@ print(json.dumps({
 }
 
 svc_complete_2node() {
-  local conf="$1" safe="${2:-True}"
+  local conf="$1" safe="${2:-True}" weight_source="${3:-}"
   python3 -c "
 import json
 safe = '$safe' == 'True'
@@ -230,6 +232,7 @@ print(json.dumps({
   'container_name': 'vllm-cluster-$conf', 'state': 'running',
   'ownership': 'managed', 'safe_to_stop': safe, 'complete': True,
   'observability': 'complete', 'api_port': 8000,
+  'weight_source': '''$weight_source''' or None,
   'estimated_footprint_gib_per_rank': 100.0, 'reasons': [],
   'ranks': [
     {
@@ -745,6 +748,36 @@ assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" \
   "idle rank 2 does not hide exact 2-node stop"
 assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
   "idle rank 2 preserves exact-service eligibility"
+
+# library-hot stop discloses restage cost; retain is explicit
+reset_logs
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
+export HOME_STOP_HOT_GIB=167
+run_home $'3\n1\n1\ny\n7\n'
+assert_file_contains "$STATE/logs/home.combined" "free ~167 GiB now" \
+  "stop discloses restage bytes for library-hot"
+assert_file_contains "$STATE/logs/home.combined" "Keep prepared views" \
+  "stop offers retain as the first prepared-view choice"
+assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash --retain-weights" \
+  "home retain choice passes --retain-weights"
+assert_file_not_contains "$STATE/logs/down.log" "estimated_footprint" \
+  "stop disclosure does not pass GPU footprint as disk"
+unset HOME_STOP_HOT_GIB
+
+reset_logs
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
+export HOME_STOP_HOT_GIB=167
+run_home $'3\n1\n2\ny\n7\n'
+assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash --purge-hot" \
+  "home free choice passes --purge-hot"
+unset HOME_STOP_HOT_GIB
+
+reset_logs
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
+run_home $'3\n1\n1\nn\n7\n'
+assert_false "library-hot decline: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" \
+  "library-hot stop still requires final confirmation"
 
 # ---------------------------------------------------------------------------
 # 6) Stale maintenance

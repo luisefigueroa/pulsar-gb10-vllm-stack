@@ -7,6 +7,10 @@
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Amended by:**
   [ADR 0004](./0004-model-serving-release-validation.md)
+  and
+  [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md)
+  (ordinary stop retains unpinned sealed-hot working copies; pin remains
+  protection from unforced purge; home-loss is still service loss)
 
 ## Context
 

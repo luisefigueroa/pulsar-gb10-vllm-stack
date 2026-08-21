@@ -328,7 +328,7 @@ infrastructure unless that authority is explicitly part of the approved plan.
 ### Lifecycle ownership
 
 - Launchers own cleanup for containers **they** create (including signal traps on interrupt). Prefer immutable launch IDs and ownership-safe stop (`down.sh` / stack labels)—never broad `docker rm` of unrelated workloads.
-- Destructive ops (purge hot, purge replicas, teardown exports, overwrite configs) are confirmation-gated; refuse when a managed service is still using the resource.
+- Destructive ops (purge hot, purge replicas, teardown exports, overwrite configs) are confirmation-gated; refuse when a managed service is still using the resource. Ordinary stop of a `library-hot` service retains unpinned prepared views ([ADR 0007](docs/decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)); `--purge-hot` is the explicit capacity-recovery action.
 - Privileged changes require usable sudo policy; support attended `--interactive-sudo` where the project already does. **Never** read, log, transport, or store the operator password, and do not weaken sudoers to automate.
 - All-or-nothing multi-rank steps (prepare, cluster start): on failure, roll back partial ranks or leave an explicit incomplete state that launch refuses—not a half-ready service.
 

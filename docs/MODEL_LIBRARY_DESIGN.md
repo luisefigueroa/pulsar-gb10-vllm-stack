@@ -32,17 +32,19 @@
 > by [ADR 0004](./decisions/0004-model-serving-release-validation.md).
 > Live NFS/RDMA serving is rejected by
 > [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md).
+> Ordinary stop retains unpinned prepared views
+> ([ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)).
 
 | Field | Value |
 |---|---|
 | Authority | Accepted architecture; the model library is the only weight-distribution mechanism ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)); every scope (two-rank sealed, one-rank, legacy-unsealed) is supported |
-| Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles; ADR 0006 (2026-08-19) then removed the replicated and fabric paths and promoted every library scope to supported by decision, recording the open gates as accepted risks. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
-| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16; library-only distribution accepted 2026-08-19 (ADR 0006) |
+| Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles; ADR 0006 (2026-08-19) then removed the replicated and fabric paths and promoted every library scope to supported by decision, recording the open gates as accepted risks. ADR 0007 (2026-08-20) changed ordinary stop to retain unpinned prepared views. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
+| Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16; library-only distribution accepted 2026-08-19 (ADR 0006); ordinary-stop retention accepted 2026-08-20 (ADR 0007) |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md) |
 | Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
-| Mechanism today | The model library, for every profile (ADR 0006): one exact durable home, exact home symlink, sealed-hot copies on non-home ranks, fixed eight-stream SSH-over-RoCE preparation for reviewed multi-rank profiles, exact restart, persisted replacement recovery, and owned cleanup |
+| Mechanism today | The model library, for every profile (ADR 0006): one exact durable home, exact home symlink, sealed-hot copies on non-home ranks, fixed eight-stream SSH-over-RoCE preparation for reviewed multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned views (ADR 0007) |
 | Supported today | Two-rank sealed (physical GA evidence, 2026-08-16); one-rank and legacy-unsealed (supported by ADR 0006 decision) |
 | Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; unattested `home add` as the primary ingress (SIM-03 open); durable-home loss = service loss until a failover ADR; maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope; source-attested acquisition's remote target and asymmetric credentials remain pending |
 | Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails closed; historical `results/weight-fabric/` evidence is superseded and not promoted. |
@@ -602,7 +604,7 @@ resolve (warm → cold? → HF?)
     → release transfer plane
     → launch the exact revision from rank-local read-only views
     → serve (weights in unified memory)
-    → stop → purge non-home hot (default) or keep pin (opt-in)
+    → stop → retain unpinned non-home hot (default) or pin (protect) or purge-hot (explicit)
 ```
 
 ### 4.2 Temporary hot disk and storage accounting
@@ -613,9 +615,11 @@ window. Hot is a working set, not a second full library of every catalog model.
 For a warm-home service using `N` ranks:
 
 ```text
-idle durable storage = 1 × model_size
-active storage       = 1 durable home + (N - 1) sealed-hot working copies
-after unpinned stop  = 1 × model_size
+idle durable storage     = 1 × model_size
+active storage           = 1 durable home + (N - 1) sealed-hot working copies
+after ordinary stop      = 1 durable home + (N - 1) unpinned sealed-hot copies
+after explicit purge-hot = 1 × model_size
+after pin                = 1 durable home + (N - 1) pinned sealed-hot copies
 ```
 
 The home-rank symlink contributes no owned hot model bytes. Admission charges
@@ -628,8 +632,9 @@ managed content, still count toward that rank's current owned-hot total.
 
 | State | Non-home disk | Restart contract | Durable-home dependency |
 |---|---|---|---|
-| Unpinned stop | Purged | Prepare again before restart | Required as preparation source |
-| **Pinned warm-home** | Keep verified hot | No cold, transfer, or catalog refresh | **Still required** |
+| Ordinary stop (unpinned retain) | Keep verified hot, still reclaimable | Reuse ready witness when identity and files match | **Still required** |
+| Explicit `--purge-hot` | Purged | Prepare again before restart | Required as preparation source |
+| **Pinned warm-home** | Keep verified hot, protected from unforced purge | No cold, transfer, or catalog refresh | **Still required** |
 | **Pinned cold stage-only** | Keep every staged rank | May be self-contained | No warm home exists |
 | Running warm-home | Sealed hot on non-home ranks | N/A | **Required on its rank** |
 
@@ -663,7 +668,9 @@ The accepted warm-home claim is:
 
 - restart without cold storage, a transfer plane, or catalog refresh while the
   durable home and retained non-home hot copies remain valid;
-- unpinned restart prepares non-home ranks again from the durable home;
+- ordinary stop leaves unpinned sealed-hot copies in place for that reuse;
+- restart after explicit `--purge-hot` prepares non-home ranks again from the
+  durable home;
 - durable-home loss is service loss for this policy.
 
 Home-loss resilience requires an explicit durable replica on another failure
@@ -795,7 +802,8 @@ local durable-storage dependency, not a retained network transfer plane.
 | Launch after ready + release | Durable home on its rank; sealed hot on non-home ranks |
 | Running inference | Rank files may no longer be read once resident, but declared storage dependencies remain honest |
 | Warm-home restart with pin | Durable home plus pinned non-home hot; no transfer/catalog refresh |
-| Warm-home restart without pin | Durable home plus preparation again |
+| Warm-home restart with retained unpinned views | Durable home plus remaining sealed-hot; no transfer/catalog refresh while witness and files remain valid |
+| Warm-home restart after explicit purge | Durable home plus preparation again |
 | Cold stage-only restart with complete pin | Pinned staged trees; cold may be unavailable |
 | Restart after durable-home loss | Unsupported without an explicit durable replica/failover policy |
 
@@ -920,8 +928,13 @@ separate final confirmation. A one-node catalog service is placed on its
 durable-home rank and uses that local view; multi-node preparation uses the
 exact profile ranks and creates sealed-hot copies only on non-home ranks.
 
-On an ordinary stop, an observed `library-hot` service purges unpinned
-prepared views by default. `--pin-weights` is the explicit retention choice.
+On an ordinary stop, an observed `library-hot` service retains unpinned
+prepared views by default ([ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)).
+`--pin-weights` protects them from a later unforced purge. `--purge-hot` is
+the explicit capacity-recovery action. Site policy
+`PULSAR_HOT_STOP_POLICY=retain|purge` may restore the previous purge default
+for named-profile stops. Interactive home stop discloses the restage
+consequence before mutation. `down.sh --all` never auto-purges.
 A wizard replacement is a bounded transaction: immediately before stopping one
 complete observable service, Pulsar snapshots its effective launch contract,
 exact physical placement, weight policy, speculative-decode state, and, for
@@ -1196,6 +1209,7 @@ rather than promotion blockers.
   untouched
 - Durable-replica and failover policy on distinct failure domains
   **(ADR 0006 accepted risk — home loss is now product-wide service loss)**
+- Budget-based or last-N hot eviction; ADR 0007 keeps capacity recovery explicit
 - Rank-sharded checkpoints (`sharded_state`) as a later requirement-B lever
 - Dedicated storage-node topology for very large N
 
@@ -1276,3 +1290,4 @@ rather than promotion blockers.
 | 2026-08-19 | **ADR 0005 accepted:** reject live NFS/RDMA under vLLM (`--weight-source fabric`, `live-remote-readonly`) as a serving runtime source. Rank-local restart cannot cold-start without the owner export. Keep NCCL/RoCE, topology discovery, and ADR 0003 `ssh-roce` prepare. Launch fails closed with no remap. One-shot `nfs-rdma` prepare remains a separate experiment. Historical `results/weight-fabric/` evidence is superseded and not rewritten. |
 | 2026-08-19 | Issued and bound the first ADR 0004 Model Serving Release lineage for `qwen3.8-27b-fp8`. Exact same-boot, absolute throughput, absolute latency, and reviewed provenance/security passed; stability, accuracy, serving integration, and physical geometry remain unevaluated, so the advisory decision is `Testing incomplete`. Legacy `STATUS=untested`, recommendation/default policy, serving permission, expected-seal state, and experimental one-rank `library-hot` maturity remain unchanged. |
 | 2026-08-19 | **ADR 0006 accepted:** the model library is the only weight-distribution mechanism. The `--weight-source`/`--weight-mode` axis, the replicated per-node cache path, the fabric workflow internals, the one-shot `nfs-rdma` prepare experiment, and the absolute-path catalog profiles were removed; every library scope (two-rank sealed, one-rank, legacy-unsealed) is supported by decision; a confirmed topology manifest (one-node valid) is a serving prerequisite. Open gates are recorded as accepted risks: one-rank physical serving-integration evidence, source attestation as primary ingress (SIM-03), and durable-home failover. Historical evidence is preserved and marked superseded. |
+| 2026-08-20 | **ADR 0007 accepted:** ordinary stop retains unpinned prepared views. `--purge-hot` is explicit capacity recovery; `--pin-weights` remains protection from unforced purge; retain is not pin; `PULSAR_HOT_STOP_POLICY=retain|purge` may restore the previous named-profile default; `down.sh --all` never auto-purges; wizard replacement still pins then purges the previous view on a successful different-profile switch. No automatic eviction. Library-only distribution (ADR 0006) is unchanged. |

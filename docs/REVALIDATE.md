@@ -520,8 +520,9 @@ durable home separately before running preparation.
       fails before mutation;
     - failed launch and interrupted-wizard recovery restore only the saved source,
       placement, and spec state, and remove transaction state only after success;
-    - confirmed same-source restart pins before stop, ordinary stop purges only
-      unpinned views, and explicit pin remains durable-home dependent; and
+    - confirmed same-source restart pins before stop, ordinary stop retains
+      unpinned views, explicit `--purge-hot` restages on the next start, and
+      explicit pin remains durable-home dependent; and
     - repeat physical serving integration when the selected placement or
       runtime-resolution algorithm changes. Existing evidence may be reused
       only for the exact placement and contract it measured.
