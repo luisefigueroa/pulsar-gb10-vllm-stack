@@ -582,4 +582,9 @@ assert_contains "$STATE/logs/output.log" \
   'leftover transaction archived' \
   "wizard continues after archiving the leftover transaction"
 
+grep -q 'confirm_library_serving()' "$REPO_DIR/wizard.sh"
+! grep -q 'confirm_library_serving_sealed\|confirm_library_serving_unsealed' \
+  "$REPO_DIR/wizard.sh"
+echo "OK   wizard has one library-serving flow"
+
 echo "wizard model-library selftest PASS"

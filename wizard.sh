@@ -278,6 +278,31 @@ choose_leave() {
   esac
 }
 
+# One-node serving must use the durable-home rank. No-op when the current
+# placement already is that rank or home_rank is unknown.
+offer_one_node_home_placement() {
+  local home_rank="${1:-}"
+  local choice
+  [ "$NODES" -eq 1 ] || return 0
+  [[ "$home_rank" =~ ^[0-9]+$ ]] || return 0
+  [ "$home_rank" != "$SINGLE_NODE_INDEX" ] || return 0
+  choice=$(choose "One-node serving must use the durable-home node — what next?" \
+    "Use the durable-home node (recommended)" \
+    "Choose another model" \
+    "Exit")
+  case "$choice" in
+    Use*)
+      resolve_single_node_placement "$home_rank" \
+        || die "the catalog durable-home node is no longer a valid confirmed placement"
+      adopt_resolved_single_node_placement
+      log "selected the durable-home node for one-rank library serving: $PLACEMENT_HOSTNAME"
+      return 0
+      ;;
+    Choose*) return 2 ;;
+    *) exit 0 ;;
+  esac
+}
+
 # Sealed profile without a durable home: guided one-time acquisition.
 offer_library_home_add() {
   local -a node_args=()
@@ -296,10 +321,41 @@ offer_library_home_add() {
   return 0
 }
 
+# Confirm then prepare. Exit 0 on success. Exit 2 if the operator leaves.
+# Any other nonzero is a preparation failure; the caller warns and leaves.
+confirm_library_prepare() {
+  local scope_label prepare_rc=0
+  scope_label=$(library_scope_label)
+  if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
+    log "model preparation declined; no model files were changed"
+    choose_leave
+    return $?
+  fi
+  log "preparing exact $scope_label runtime views; serving is not started yet…"
+  set +e
+  cmd_model_library_prepare prepare "$NAME" --backend copy "$@" --yes
+  prepare_rc=$?
+  set -e
+  return "$prepare_rc"
+}
+
+refresh_library_serving_check() {
+  collect_library_serving_check \
+    || die "catalog readiness became unavailable after $1"
+  echo
+  render_library_serving_check
+}
+
 # The model library is the only weight mechanism (ADR 0006). Establish exact
 # ready runtime views (durable home + prepared hot) for every selected rank,
 # or return 2 (choose another model) / exit without changing model files.
+# Sealed vs unsealed is identity data: the catalog serving-check requires a
+# reviewed seal, so unsealed profiles observe prepared views directly.
+# Unsealed acquisition remains the source-attested CLI, not wizard home add.
 confirm_library_serving() {
+  local state transport streams home_rank home_json placement_index
+  local scope_label identity_label prepare_rc=0
+  local -a node_args=() transport_args=()
   LIBRARY_CHECK_JSON=""
   [ "$(model_source_kind)" = hf ] \
     || die "non-HF model profiles are not servable (ADR 0006)"
@@ -307,148 +363,82 @@ confirm_library_serving() {
     log "skipping library readiness (WIZARD_SKIP_LIBRARY_CHECK=1)"
     return 0
   fi
+  scope_label=$(library_scope_label)
   if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-    confirm_library_serving_sealed
+    identity_label="reviewed exact seal"
   else
-    confirm_library_serving_unsealed
+    identity_label="legacy-unsealed · full verification without a reviewed seal"
   fi
-}
-
-# Sealed profiles have a reviewed exact identity in the cached catalog: use
-# the read-only serving check for placement/readiness before any mutation.
-confirm_library_serving_sealed() {
-  local state transport streams target_rank home_rank prepare_rc=0
-  local scope_label acquisition_attempted=0
-  local -a node_args=()
-  scope_label=$(library_scope_label)
   render_human_section "MODEL FILES" \
-    "Mechanism" "model library · $scope_label reviewed profile" \
+    "Mechanism" "model library · $scope_label" \
+    "Identity" "$identity_label" \
     "Fallback" "none; readiness must pass its own checks"
-  if ! collect_library_serving_check; then
-    warn "distributed catalog readiness could not be established"
-    choose_leave
-    return $?
-  fi
-  echo
-  render_library_serving_check
-  state=$(json_field "$LIBRARY_CHECK_JSON" state)
-  if [ "$state" = blocked ]; then
-    home_rank=$(json_field "$LIBRARY_CHECK_JSON" home_rank)
-    if [ "$NODES" -eq 1 ] && [[ "$home_rank" =~ ^[0-9]+$ ]] \
-        && [ "$home_rank" != "$SINGLE_NODE_INDEX" ]; then
-      local choice
-      choice=$(choose "One-node serving must use the durable-home node — what next?" \
-        "Use the durable-home node (recommended)" \
-        "Choose another model" \
-        "Exit")
-      case "$choice" in
-        Use*)
-          resolve_single_node_placement "$home_rank" \
-            || die "the catalog durable-home node is no longer a valid confirmed placement"
-          adopt_resolved_single_node_placement
-          log "selected the durable-home node for one-rank library serving: $PLACEMENT_HOSTNAME"
-          collect_library_serving_check \
-            || die "catalog readiness became unavailable after changing placement"
-          echo
-          render_library_serving_check
-          state=$(json_field "$LIBRARY_CHECK_JSON" state)
-          ;;
-        Choose*) return 2 ;;
-        *) exit 0 ;;
-      esac
-    fi
-  fi
-  if [ "$state" = blocked ] \
-      && printf '%s' "$LIBRARY_CHECK_JSON" \
-        | grep -q "no current primary durable home"; then
-    if offer_library_home_add; then
-      acquisition_attempted=1
-      collect_library_serving_check \
-        || die "catalog readiness became unavailable after acquisition"
-      echo
-      render_library_serving_check
-      state=$(json_field "$LIBRARY_CHECK_JSON" state)
-    fi
-  fi
-  if [ "$state" = blocked ]; then
-    choose_leave
-    return $?
-  fi
-  if [ "$state" = needs-preparation ]; then
-    if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
-      log "model preparation declined; no model files were changed"
-      choose_leave
-      return $?
-    fi
-    transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)
-    streams=$(json_field "$LIBRARY_CHECK_JSON" copy_streams)
-    target_rank=""
-    if [ "$NODES" -eq 1 ]; then
-      target_rank="$PLACEMENT_SELECTOR"
-      [ -n "$target_rank" ] || target_rank="$SINGLE_NODE_INDEX"
-      node_args=(--node "$target_rank")
-    fi
-    log "preparing exact $scope_label runtime views; serving is not started yet…"
-    set +e
-    cmd_model_library_prepare prepare "$NAME" \
-      --backend copy --transport "$transport" --copy-streams "$streams" \
-      "${node_args[@]}" --yes
-    prepare_rc=$?
-    set -e
-    if [ "$prepare_rc" -ne 0 ]; then
-      warn "model preparation failed (status $prepare_rc); serving was not started"
-      choose_leave
-      return $?
-    fi
+
+  if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
     if ! collect_library_serving_check; then
-      die "preparation returned success, but current catalog readiness is unavailable; model was not started"
+      warn "distributed catalog readiness could not be established"
+      choose_leave
+      return $?
     fi
+    echo
+    render_library_serving_check
     state=$(json_field "$LIBRARY_CHECK_JSON" state)
-    if [ "$state" != ready ]; then
-      echo
-      render_library_serving_check
-      die "preparation did not publish exact ready views on every selected rank; model was not started"
+    if [ "$state" = blocked ]; then
+      placement_index="${SINGLE_NODE_INDEX-}"
+      offer_one_node_home_placement \
+        "$(json_field "$LIBRARY_CHECK_JSON" home_rank)" || return $?
+      if [ "${SINGLE_NODE_INDEX-}" != "$placement_index" ]; then
+        refresh_library_serving_check "changing placement"
+        state=$(json_field "$LIBRARY_CHECK_JSON" state)
+      fi
     fi
+    if [ "$state" = blocked ] \
+        && printf '%s' "$LIBRARY_CHECK_JSON" \
+          | grep -q "no current primary durable home"; then
+      if offer_library_home_add; then
+        refresh_library_serving_check "acquisition"
+        state=$(json_field "$LIBRARY_CHECK_JSON" state)
+      fi
+    fi
+    if [ "$state" = blocked ]; then
+      choose_leave
+      return $?
+    fi
+    if [ "$state" = needs-preparation ]; then
+      transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)
+      streams=$(json_field "$LIBRARY_CHECK_JSON" copy_streams)
+      if [ "$NODES" -eq 1 ]; then
+        node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
+      fi
+      confirm_library_prepare --transport "$transport" --copy-streams "$streams" \
+        "${node_args[@]}" || {
+        prepare_rc=$?
+        [ "$prepare_rc" -eq 2 ] && return 2
+        warn "model preparation failed (status $prepare_rc); serving was not started"
+        choose_leave
+        return $?
+      }
+      if ! collect_library_serving_check; then
+        die "preparation returned success, but current catalog readiness is unavailable; model was not started"
+      fi
+      state=$(json_field "$LIBRARY_CHECK_JSON" state)
+      if [ "$state" != ready ]; then
+        echo
+        render_library_serving_check
+        die "preparation did not publish exact ready views on every selected rank; model was not started"
+      fi
+    fi
+    log "library runtime views are ready ($scope_label; no fallback)"
+    return 0
   fi
-  log "library runtime views are ready ($scope_label; no fallback)"
-  return 0
-}
 
-# Legacy-unsealed profiles have no reviewed catalog identity yet: check the
-# prepared views directly and offer explicit preparation. Acquisition for an
-# unsealed profile is the separate source-attested two-step CLI flow.
-confirm_library_serving_unsealed() {
-  local scope_label prepare_rc=0 home_json home_rank choice
-  local -a node_args=() transport_args=()
-  scope_label=$(library_scope_label)
-  render_human_section "MODEL FILES" \
-    "Mechanism" "model library · $scope_label legacy-unsealed profile" \
-    "Identity" "full verification without a reviewed seal" \
-    "Fallback" "none; readiness must pass its own checks"
   if [ "$NODES" -eq 1 ]; then
-    # One-node serving must use the durable-home rank: consult the cached
-    # catalog and offer the placement switch, exactly like the sealed path.
     home_json=$(cmd_model_library_prepare resolve "$NAME" --json 2>/dev/null) \
       || home_json=""
     home_rank=$(printf '%s' "$home_json" | python3 -c \
       'import json,sys; print(json.load(sys.stdin)["home"]["rank"])' 2>/dev/null) \
       || home_rank=""
-    if [[ "$home_rank" =~ ^[0-9]+$ ]] && [ "$home_rank" != "$SINGLE_NODE_INDEX" ]; then
-      choice=$(choose "One-node serving must use the durable-home node — what next?" \
-        "Use the durable-home node (recommended)" \
-        "Choose another model" \
-        "Exit")
-      case "$choice" in
-        Use*)
-          resolve_single_node_placement "$home_rank" \
-            || die "the catalog durable-home node is no longer a valid confirmed placement"
-          adopt_resolved_single_node_placement
-          log "selected the durable-home node for one-rank library serving: $PLACEMENT_HOSTNAME"
-          ;;
-        Choose*) return 2 ;;
-        *) exit 0 ;;
-      esac
-    fi
+    offer_one_node_home_placement "$home_rank" || return $?
   fi
   if cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null 2>&1; then
     log "library runtime views are ready ($scope_label; no fallback)"
@@ -457,30 +447,18 @@ confirm_library_serving_unsealed() {
   if [ "$NODES" -eq 1 ]; then
     node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
   else
-    # Multi-rank preparation keeps the promoted topology-bound eight-stream
-    # SSH-over-RoCE transport; the management network is never a silent
-    # fallback data plane.
     transport_args=(--transport ssh-roce --copy-streams 8)
   fi
-  if ! confirm "Prepare exact model views now, then continue to a separate start confirmation?" no; then
-    log "model preparation declined; no model files were changed"
-    choose_leave
-    return $?
-  fi
-  log "preparing exact $scope_label runtime views; serving is not started yet…"
-  set +e
-  cmd_model_library_prepare prepare "$NAME" \
-    --backend copy "${transport_args[@]}" "${node_args[@]}" --yes
-  prepare_rc=$?
-  set -e
-  if [ "$prepare_rc" -ne 0 ]; then
+  confirm_library_prepare "${transport_args[@]}" "${node_args[@]}" || {
+    prepare_rc=$?
+    [ "$prepare_rc" -eq 2 ] && return 2
     warn "model preparation failed (status $prepare_rc); serving was not started"
     warn "if no durable home exists yet, acquire one first:"
     warn "  scripts/model-library.sh home add $NAME --revision <selector> --plan --json"
     warn "  scripts/model-library.sh home add $NAME --revision <exact-commit> --yes"
     choose_leave
     return $?
-  fi
+  }
   if ! cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null 2>&1; then
     die "preparation did not publish exact ready views on every selected rank; model was not started"
   fi
@@ -1381,23 +1359,12 @@ capture_running_service_transaction() {
   local conf="${1:?profile required}" inventory="$2"
   local inventory_file="$WIZARD_WORK_DIR/replacement-inventory.json"
   local health_file="$WIZARD_WORK_DIR/replacement-health.json"
-  local contract_id source
+  local contract_id
   printf '%s\n' "$inventory" >"$inventory_file"
   contract_id=$(launch_contract_id_for_profile "$conf")
-  source=$(INV_FILE="$inventory_file" PROFILE="$conf" python3 -c '
-import json, os
-with open(os.environ["INV_FILE"], encoding="utf-8") as f:
-    inv = json.load(f)
-items = [s for s in inv.get("services", []) if s.get("conf") == os.environ["PROFILE"] and s.get("state") == "running"]
-print(items[0].get("weight_source") or "" if len(items) == 1 else "")
-')
-  local -a health_args=()
-  if [ "$source" = library-hot ]; then
-    collect_transaction_health "$health_file"
-    health_args=(--library-health "$health_file")
-  fi
+  collect_transaction_health "$health_file"
   if ! cmd_replacement_transaction capture \
-      --inventory "$inventory_file" "${health_args[@]}" \
+      --inventory "$inventory_file" --library-health "$health_file" \
       --profile "$conf" --launch-contract-id "$contract_id" \
       --output "$REPLACEMENT_TRANSACTION_FILE" >/dev/null; then
     die "the running service contract cannot be captured exactly; it remains running. Restart it once with current Pulsar labels or use direct lifecycle commands after reviewing ./pulsar inventory"
@@ -1480,11 +1447,8 @@ print("1" if item.get("complete") is True and item.get("safe_to_stop") is True e
     fi
     capture_running_service_transaction "$conf" "$inventory"
     log "stopping stack-managed conf=$conf from its captured placement…"
-    down_args=("${TRANSACTION_NODE_ARGS[@]}")
-    if [ "$TRANSACTION_SOURCE" = library-hot ]; then
-      down_args+=(--pin-weights)
-      log "prepared views remain retained until replacement or exact rollback succeeds"
-    fi
+    down_args=("${TRANSACTION_NODE_ARGS[@]}" --pin-weights)
+    log "prepared views remain retained until replacement or exact rollback succeeds"
     if ! cmd_down "$conf" "${down_args[@]}"; then
       die "stop failed for $conf; transaction and any temporary pin were retained for recovery"
     fi
@@ -1509,21 +1473,19 @@ print("1" if item.get("complete") is True and item.get("safe_to_stop") is True e
 prepare_exact_rollback() {
   local health_file="$WIZARD_WORK_DIR/rollback-health.json" contract_id inventory
   local inventory_file="$WIZARD_WORK_DIR/rollback-inventory.json"
-  local -a health_args=()
   load_transaction_summary
+  [ "$TRANSACTION_SOURCE" = library-hot ] \
+    || die "saved transaction is not a library-hot contract; archive it instead of rollback"
   NAME="$TRANSACTION_PREVIOUS_PROFILE"
   load_conf "$NAME"
   contract_id=$(loaded_launch_contract_id)
   collect_inventory_json_or_die inventory
   printf '%s\n' "$inventory" >"$inventory_file"
-  if [ "$TRANSACTION_SOURCE" = library-hot ]; then
-    collect_transaction_health "$health_file"
-    health_args=(--library-health "$health_file")
-  fi
+  collect_transaction_health "$health_file"
   cmd_replacement_transaction verify-rollback \
     --path "$REPLACEMENT_TRANSACTION_FILE" \
     --launch-contract-id "$contract_id" --inventory "$inventory_file" \
-    "${health_args[@]}" >/dev/null \
+    --library-health "$health_file" >/dev/null \
     || die "the captured service contract cannot be restored exactly; transaction and retained views were preserved"
 
   case "$TRANSACTION_SPEC_DECODE" in
@@ -1555,7 +1517,7 @@ finalize_replacement_transaction() {
   load_transaction_summary
   transaction_node_args
   [ -z "$TRANSACTION_NODE_ID" ] || node_hint=" --node $TRANSACTION_NODE_ID"
-  if [ "$TRANSACTION_SOURCE" = library-hot ] && [ "$TRANSACTION_TEMP_PIN" = 1 ]; then
+  if [ "$TRANSACTION_TEMP_PIN" = 1 ]; then
     log "restoring unpinned retention policy for the previous service…"
     if ! cmd_model_library_prepare unpin "$TRANSACTION_PREVIOUS_PROFILE" \
         "${TRANSACTION_NODE_ARGS[@]}"; then
