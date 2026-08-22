@@ -461,8 +461,9 @@ interpretation as settled without explicit approval and an updated ADR. See
 For catalog, download, prepare, launch, pin, purge, or model-validation work,
 read `docs/MODEL_LIBRARY_DESIGN.md` and the applicable record under
 `docs/decisions/` before changing behavior. Authority descends from this file,
-to the accepted design and decision records, to current implementation specs,
-operator runbooks, and finally validation ledgers/evidence. Current code or a
+to the accepted design and decision records, to operator runbooks and the
+code/schemas that own current behavior, and finally validation
+ledgers/evidence. Current code or a
 new result does not silently override an accepted architectural decision.
 Use `skills/change-pulsar-model-library/SKILL.md` as the repeatable workflow for
 this work; the skill is procedural and does not outrank these sources.
@@ -581,8 +582,8 @@ this work; the skill is procedural and does not outrank these sources.
   runtime-access contract verify on every serving rank. A failure before that
   barrier is failed preparation and leaves the release `Untested`.
 - Preserve historical evidence and mark it superseded rather than rewriting it.
-  A contract change must update the canonical design, implementation spec,
-  operations, validation ledger, and evidence index together.
+  A contract change must update the canonical design, operations, validation
+  ledger, and evidence index together.
 
 ### Operational hygiene
 

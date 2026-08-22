@@ -20,8 +20,9 @@ Work from the repository root. Before evaluating or changing behavior:
    `docs/decisions/`, especially ADR 0001 for home views and validation
    identity and [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md)
    for qualification scope and causal invalidation.
-4. Read `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md` when current code,
-   schemas, states, or implementation gaps matter.
+4. Read `docs/OPERATIONS.md` and `docs/MODELS.md` when current operator
+   behavior, the live profile catalog, or implementation gaps matter. Schema
+   owners live with the Python modules named in `AGENTS.md`.
 5. Read the affected runbooks, validation ledger, revalidation instructions,
    and evidence index when the request touches operations, claims, promotion,
    or results.
@@ -161,9 +162,9 @@ expanding the request into unrelated promotion or cleanup work.
 Update the relevant authority and support surfaces together:
 
 - architecture contract: `docs/MODEL_LIBRARY_DESIGN.md` and an ADR;
-- current behavior or schema: `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md`;
-- operator behavior or dependency: `docs/OPERATIONS.md` and, when applicable,
-  `docs/WEIGHT_FABRIC.md`;
+- current operator behavior or schema: `docs/OPERATIONS.md`, `docs/MODELS.md`,
+  and the Python module that owns the schema;
+- leftover fabric teardown: `docs/WEIGHT_FABRIC.md` when applicable;
 - tested claim, qualification scope, or invalidation rule: `docs/VALIDATION.md`, `docs/REVALIDATE.md`,
   and `docs/MODELS.md`;
 - durable evidence status: `results/model-library/README.md`; and

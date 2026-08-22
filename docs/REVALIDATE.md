@@ -82,8 +82,11 @@ exact live directory. Unknown, restored, replaced, or otherwise unbound homes
 still require full verification against a reviewed expected manifest
 independent of the observed tree; catalog state and a self-observed manifest
 alone are insufficient. Direct durable-cache download remains forbidden.
-Source-attested deterministic tests are control-plane evidence only; the
-physical gate below remains pending. Its journal is isolated
+Source-attested deterministic tests are control-plane evidence only. The
+Nemotron Nano Gate 14 artifact is a bounded physical catalog/artifact PASS
+for one-node rank-0 acquisition on a three-rank topology; remote target
+execution, asymmetric credentials, and an actual external new-inode restore
+remain physically pending. Its journal is isolated
 under `experiments/model-onboarding/workflows/`. Deterministic skill and journal
 tests make no physical DGX claim and create no release decision. Maintainer-only
 issuance staging can propose exact registry objects from a verified capture

@@ -29,6 +29,8 @@ run "Docker Compose remains an unsupported historical sketch" \
   "$REPO_DIR/scripts/selftest-compose-unsupported.sh"
 run "publishable documentation privacy" \
   "$REPO_DIR/scripts/selftest-docs-privacy.sh"
+run "active current-state documentation drift (AUD-03)" \
+  python3 "$REPO_DIR/scripts/testlib/test_docs_current_state.py"
 run "Grok sanitized review-tree contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_grok_review_tree.py"
 run "Grok review skill isolation" \

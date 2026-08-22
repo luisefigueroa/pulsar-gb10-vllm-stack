@@ -369,7 +369,6 @@ not permission to serve an unmeasured geometry.
 | [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; validation status is advisory; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence and advisory projection implemented and empty/unbound; local evidence-capture candidate persistence implemented and unreviewed; maintainer issuance staging implemented as an untrusted local proposal |
 | [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) | Maintainer-only ADR 0004 evidence-capture candidate persistence; no issuance and no runtime launch |
 | [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md) | Maintainer-only ADR 0004 issuance staging; local success is not repository review or serving authorization |
-| [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) | Descriptive current implementation, evidence boundaries, and known gaps |
 | [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Maintainer-only exact-manifest and unreviewed release-candidate workflow; no issuance authority |
 | [models/seals/README.md](../models/seals/README.md) | Reviewed expected-seal schema, lab issuance boundary, and current migration status |
 | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) | Archived exploration / option history only |
