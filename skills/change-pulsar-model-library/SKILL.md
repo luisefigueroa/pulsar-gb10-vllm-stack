@@ -1,6 +1,6 @@
 ---
 name: change-pulsar-model-library
-description: Guide reviews, experiments, designs, implementations, and documentation changes affecting Pulsar's model catalog, downloads, durable homes, preparation and transfer paths, rank-local runtime views, pin/purge lifecycle, validation identity, or model-library promotion. Use for changes to model-library scripts, library launch behavior, model distribution policy (the library is the only weight mechanism — ADR 0006), leftover weight-fabric teardown, seals and witnesses, storage or resilience claims, and their operations, validation, or evidence documents.
+description: Guide reviews, experiments, designs, implementations, and documentation changes affecting Pulsar's model catalog, downloads, durable homes, preparation and transfer paths, rank-local runtime views, pin/purge lifecycle, validation identity, or model-library promotion. Use for changes to model-library scripts, library launch behavior, model distribution policy (the library is the only weight mechanism — ADR 0006), seals and witnesses, storage or resilience claims, and their operations, validation, or evidence documents.
 ---
 
 # Change Pulsar Model Library

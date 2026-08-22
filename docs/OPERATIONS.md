@@ -40,7 +40,6 @@ remain maintainer tooling (`docs/MODEL_RELEASE.md`,
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
 | `./pulsar status [model] [--node ID]` | → `scripts/status.sh` (may submit a completion) |
 | `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
-| `./pulsar weight-fabric [args]` | Leftover live-NFS show/unmount/teardown only (ADR 0005) → `scripts/weight-fabric.sh` |
 | `./pulsar help` | Concise usage |
 
 ### Model Serving Release policy versus current commands
@@ -574,9 +573,9 @@ verified through an independent channel.
 ([ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md)); its workflow
 implementation was removed with the whole weight-mode axis
 ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)).
-`--weight-source`/`--weight-mode` fail closed everywhere. Leftover site
-mounts: confirmation-gated `scripts/weight-fabric.sh show|unmount|teardown`
-only. Historical notes: [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
+`--weight-source`/`--weight-mode` fail without fallback everywhere. The
+leftover teardown helper is removed (SIM-12). Historical notes:
+[WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
 ### Removed compatibility aliases (ADR 0008)
 
@@ -591,10 +590,9 @@ exits 2. They are not unknown-argument failures.
 | `model-library.sh catalog list --validated` | `--reviewed-identity`. Not ADR 0004 `Validated`. |
 | `model-library.sh activate` | `prepare` |
 
-`--force-unpin`, leftover `weight-fabric.sh show|unmount|teardown`, topology
-schema 1 as `detect-fabric` output, and hot schema-1/2 repair are not in this
-table. `HEAD_IP`/`WORKER_IP` never confirm membership and do not construct
-topology.
+`--force-unpin`, topology schema 1 as `detect-fabric` output, and hot
+schema-1/2 repair are not in this table. `HEAD_IP`/`WORKER_IP` never confirm
+membership and do not construct topology.
 
 N≥2 `check-image.sh` JSON emits `rank-unreachable` / `rank-docker-error` /
 `missing-on-rank` (or `missing-both`). One-node `missing-on-head` /

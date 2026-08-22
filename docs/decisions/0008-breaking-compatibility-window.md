@@ -44,12 +44,12 @@ public-contract parking lot without hiding those CLIs.
 | `model-library.sh --validated` | Remove in window | Deprecated alias for `--reviewed-identity`. |
 | `activate` | Remove in window | Public alias for `prepare`. |
 | Leftover pair-only lifecycle helpers | Remove in window | Inventory during implementation; replace with N-rank paths. |
-| `scripts/weight-fabric.sh show\|unmount\|teardown` | Retain until leftover state gone | ADR 0006 teardown window. Delete in this breaking release only after the lab confirms no `.weight-fabric/` configs. |
+| `scripts/weight-fabric.sh show\|unmount\|teardown` | Removed (SIM-12) | Lab confirmed leftover configs gone; helper deleted. |
 | Hot schema-1/2 legacy repair | Retain for one window, then remove | Migration-only; refuse once no site-local schema-1/2 hot state remains. |
 | `./pulsar` plus current `scripts/` / `cluster/` / `serve.sh` | Retain | ADR 0009: low-level CLIs stay. This ADR does not hide them. |
 
-Site leftover NFS exports/mounts stay confirmation-gated teardown, not a
-compat alias. No automatic privileged sweep.
+Site leftover NFS exports/mounts, if any still exist after SIM-12, are
+site-admin cleanup, not a Pulsar command. No automatic privileged sweep.
 
 ## Consequences
 
@@ -85,9 +85,10 @@ longer emitted. N=1 `head-*` / `target-*` / `missing-on-head` stay because
 pair-only names if they appear.
 
 Not in this slice: `--force-unpin`, inventory keys `head`/`worker`/`rank-N`,
-`worker_available_gib`, leftover `weight-fabric.sh show|unmount|teardown`,
-hot schema-1/2 repair, topology schema 1 as `detect-fabric` output, DSpark,
-SIM-12/13. Root Compose was removed later by ADR 0010 / SWI-730.
+`worker_available_gib`, leftover `weight-fabric.sh show|unmount|teardown`
+(removed later, SIM-12), hot schema-1/2 repair, topology schema 1 as
+`detect-fabric` output, DSpark, SIM-13. Root Compose was removed later by
+ADR 0010 / SWI-730.
 
 `HEAD_IP`/`WORKER_IP` remain refuse-only: they never confirm membership
 (AUD-01). There is no membership parser to delete.

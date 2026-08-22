@@ -6,9 +6,9 @@
 > source, and
 > [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)
 > removed the workflow implementation together with the whole
-> weight-mode-selection axis. Only `scripts/weight-fabric.sh
-> show|unmount|teardown` remains, for leftover site state. Historical
-> measurements remain under
+> weight-mode-selection axis. The leftover `show|unmount|teardown` helper
+> was removed after lab confirmation (SIM-12). Historical measurements
+> remain under
 > [results/weight-fabric/](../results/weight-fabric/) and are not promotion
 > evidence. The offering stop is
 > [PR #83](https://github.com/luisefigueroa/pulsar-gb10-vllm-stack/pull/83).
@@ -25,29 +25,13 @@ The rest of this file is a historical description of the retired live-mount
 experiment. It does not authorize serving. Product serving is the model
 library (ADR 0006).
 
-## Leftover site teardown (confirmation-gated)
+## Leftover site teardown (retired helper)
 
-Only for a site that still has a leftover live-mount export or client mount
-from the retired experiment. This is not a serving workflow. Use values
-already stored in the site-local `.weight-fabric/` config for that exact
-profile. Do not invent hostnames, addresses, node IDs, or cache paths in
-publishable notes.
-
-1. Stop any Pulsar-managed service for that profile (`scripts/down.sh` /
-   `./pulsar stop`) and confirm inventory is clear.
-2. `scripts/weight-fabric.sh show <profile>` — read leftover config only.
-3. `scripts/weight-fabric.sh unmount <profile>` — confirmation-gated;
-   refuses if a container still uses the mount.
-4. `scripts/weight-fabric.sh teardown <profile>` — confirmation-gated;
-   removes only this configuration's export and mount state; preserves the
-   authoritative model tree.
-
-`--yes` is only for an already reviewed leftover-teardown runbook.
-Privileged steps use passwordless sudo (`sudo -n`) on each node by default.
-Set `WEIGHT_FABRIC_SUDO_MODE=interactive` for an attended terminal session,
-or pass `--interactive-sudo`; the flag overrides the env. Invalid env values
-fail closed without running cleanup. Teardown never serves, copies, or remaps
-weights.
+The confirmation-gated `scripts/weight-fabric.sh show|unmount|teardown`
+helper is removed (SIM-12). Live NFS serving stays refused. Any remaining
+export/mount files on a host are site-admin NFS cleanup, not a Pulsar
+command. Do not invent hostnames, addresses, node IDs, or cache paths in
+publishable notes. The commands below are historical.
 
 ---
 

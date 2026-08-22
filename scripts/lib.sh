@@ -856,7 +856,7 @@ PULSAR_DOCKER="${PULSAR_DOCKER:-docker}"
 PULSAR_SSH="${PULSAR_SSH:-ssh}"
 
 # ADR 0006: the model library is the only weight-distribution mechanism.
-WEIGHT_MODE_FLAG_REMOVED_MESSAGE='--weight-source/--weight-mode were removed (ADR 0006): the model library is the only weight mechanism, so there is no mode to select. Drop the flag. Leftover live-NFS site mounts (ADR 0005): ./pulsar weight-fabric show/unmount/teardown.'
+WEIGHT_MODE_FLAG_REMOVED_MESSAGE='--weight-source/--weight-mode were removed (ADR 0006): the model library is the only weight mechanism, so there is no mode to select. Drop the flag. Live NFS serving is retired (ADR 0005).'
 
 refuse_removed_weight_mode_flag() {
   die "$WEIGHT_MODE_FLAG_REMOVED_MESSAGE" 2

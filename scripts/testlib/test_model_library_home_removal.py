@@ -647,7 +647,6 @@ class HomeRemovalContracts(HomeRemovalFixture, unittest.TestCase):
             "scripts/up.sh",
             "serve.sh",
             "cluster/start-cluster.sh",
-            "scripts/weight-fabric.sh",
         ):
             text = (REPO_ROOT / relative).read_text(encoding="utf-8")
             self.assertIn("acquire_model_library_lifecycle_lock shared", text)
