@@ -70,8 +70,6 @@ Usage:
   scripts/model-library.sh purge-hot <profile> [--node RANK|NODE_ID]
       [--yes] [--force-unpin]
   scripts/model-library.sh health [--json]
-  scripts/model-library.sh hot legacy check <repair-id> [--json]
-  scripts/model-library.sh hot legacy remove <repair-id> --yes [--force-unpin] [--json]
   scripts/model-library.sh budget [--json]
 
 Notes:
@@ -142,9 +140,8 @@ Notes:
     preparation currently keeps a home-rank symlink and still needs that home.
   • health is read-only: it uses the cached catalog, shallow metadata/witness
     observations, and managed-container labels without hashing model bytes.
-    Schema-1/2 hot instances are untrusted; removal requires a health-issued
-    repair ID, a fresh fail-closed check, and --yes. Pinned removal additionally
-    requires --force-unpin. Doctor never repairs automatically.
+    Schema-1/2 hot instances are untrusted and cannot launch. hot legacy
+    check|remove is removed (SIM-13). Doctor never repairs automatically.
   • prepare, cold stage-only, pin, and budget observe every selected rank.
     The default preserves max(64 GiB, 5% of filesystem capacity) as available
     space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
@@ -1211,120 +1208,6 @@ cmd_health() {
   rm -f "$report"
   trap - RETURN
   return "$rc"
-}
-
-jsonl_to_array() {
-  local source="${1:?}"
-  python3 -c '
-import json, sys
-values = []
-with open(sys.argv[1], encoding="utf-8") as handle:
-    for raw in handle:
-        if raw.strip():
-            values.append(json.loads(raw))
-print(json.dumps(values, separators=(",", ":")))
-' "$source"
-}
-
-build_legacy_hot_plan() {
-  local repair_id="${1:?}" force_unpin="${2:-0}" tmp rc=0
-  local -a args
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-legacy-hot.XXXXXX")
-  trap 'rm -rf "$tmp"' RETURN
-  collect_health_observations "$tmp" \
-    || die "legacy hot repair: confirmed topology is unavailable"
-  args=(
-    plan-legacy-hot-repair
-    --repair-id "$repair_id"
-    --topology-file "$CLUSTER_TOPOLOGY_FILE"
-    --observations-dir "$tmp"
-  )
-  [ "$force_unpin" = 0 ] || args+=(--force-unpin)
-  python3 "$PY_TOOL" "${args[@]}" || rc=$?
-  rm -rf "$tmp"
-  trap - RETURN
-  return "$rc"
-}
-
-execute_legacy_hot_plan_on_rank() {
-  local plan="${1:?}" rank node_id containers_file containers_json command
-  load_cluster_topology >/dev/null \
-    || die "legacy hot repair: confirmed topology is unavailable"
-  rank=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rank"])')
-  node_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')
-  [[ "$rank" =~ ^[0-9]+$ ]] \
-    && [ "$rank" -lt "$CLUSTER_TOPOLOGY_COUNT" ] \
-    || die "legacy hot repair: planned rank is outside confirmed topology"
-  [ "${CLUSTER_NODE_IDS[$rank]:-}" = "$node_id" ] \
-    || die "legacy hot repair: planned node differs from confirmed topology"
-  containers_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-legacy-containers.XXXXXX.jsonl")
-  collect_managed_container_metadata_on_rank \
-    "$rank" "$containers_file" "legacy hot repair" \
-    || die "legacy hot repair: managed containers became unobservable"
-  containers_json=$(jsonl_to_array "$containers_file")
-  rm -f "$containers_file"
-  if [ "$rank" = 0 ]; then
-    python3 "$PY_TOOL" execute-legacy-hot-repair \
-      --plan-json "$plan" --hot-root "$HOT_ROOT" \
-      --rank "$rank" --node-id "$node_id" \
-      --containers-json "$containers_json"
-    return
-  fi
-  command=$(shell_join_q python3 - execute-legacy-hot-repair \
-    --plan-json "$plan" --hot-root "$HOT_ROOT" \
-    --rank "$rank" --node-id "$node_id" \
-    --containers-json "$containers_json")
-  ssh_node "$rank" "$command" <"$PY_TOOL"
-}
-
-cmd_hot() {
-  local section="${1:-}" action="${2:-}" repair_id="${3:-}"
-  local json=0 yes=0 force_unpin=0 plan rc=0 result_file
-  [ "$section" = legacy ] || { usage; return 2; }
-  [ "$action" = check ] || [ "$action" = remove ] \
-    || { usage; return 2; }
-  [ -n "$repair_id" ] \
-    || die "hot legacy $action requires a repair ID from health"
-  shift 3
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --json) json=1 ;;
-      --yes) yes=1 ;;
-      --force-unpin) force_unpin=1 ;;
-      -h|--help) usage; return 0 ;;
-      *) die "unexpected arg: $1" ;;
-    esac
-    shift
-  done
-  if [ "$action" = check ]; then
-    [ "$yes" = 0 ] && [ "$force_unpin" = 0 ] \
-      || die "hot legacy check accepts only a repair ID and --json"
-  else
-    [ "$yes" = 1 ] || die "hot legacy remove requires --yes"
-  fi
-  plan=$(build_legacy_hot_plan "$repair_id" "$force_unpin") || rc=$?
-  if [ "$action" = check ] || [ "$rc" -ne 0 ]; then
-    if [ "$json" = 1 ]; then
-      python3 "$PY_TOOL" render-legacy-hot-repair \
-        --plan-json "$plan" --json || true
-    else
-      python3 "$PY_TOOL" render-legacy-hot-repair \
-        --plan-json "$plan" || true
-    fi
-    return "$rc"
-  fi
-  result_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-legacy-result.XXXXXX.json")
-  trap 'rm -f "$result_file"' RETURN
-  execute_legacy_hot_plan_on_rank "$plan" >"$result_file"
-  if [ "$json" = 1 ]; then
-    python3 "$PY_TOOL" render-legacy-hot-result \
-      --result-file "$result_file" --json
-  else
-    python3 "$PY_TOOL" render-legacy-hot-result \
-      --result-file "$result_file"
-  fi
-  rm -f "$result_file"
-  trap - RETURN
 }
 
 build_home_removal_plan() (
@@ -3628,7 +3511,7 @@ main() {
     unpin) cmd_unpin "$@" ;;
     purge-hot) cmd_purge_hot "$@" ;;
     health) cmd_health "$@" ;;
-    hot) cmd_hot "$@" ;;
+    hot) refuse_removed_hot_legacy_command ;;
     budget) cmd_budget "$@" ;;
     -h|--help|help) usage ;;
     *) usage; exit 2 ;;

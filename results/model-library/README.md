@@ -288,18 +288,14 @@ contention. The sanitized non-mutating flagship-sized physical artifact passed
 on 2026-08-11; raw `budget --json` output remains site-local because it contains
 node and path identity.
 
-Read-only catalog health and repair-ID-bound legacy-hot removal are implemented
-after the artifacts below. Deterministic Python and role-driven multi-rank
-shell contracts cover sanitized schema-1 output, duplicate/primary state,
-schema-1/2 recognition without trust promotion, schema-3 witness metadata,
-active/pinned/stale/ambiguous/symlink/malformed refusals, atomic retirement,
-incomplete-retirement retry, sibling preservation, and embedded-symlink
-no-follow deletion. The affected isolated three-node lifecycle repeat passed:
-all ranks were inventoried, stopped-container and pin blockers held, local and
-remote repairs succeeded, preserved untracked siblings remained visible as
-attention, and the exact disposable-home removal subset passed. No result below
-was rewritten, and no real legacy hot entry, durable cache, or DeepSeek
-duplicate was changed by this work.
+Read-only catalog health is implemented after the artifacts below. Public
+`hot legacy check|remove` is removed (SIM-13) after lab confirmation that no
+schema-1/2 hot instances remained. Deterministic Python and role-driven
+multi-rank shell contracts cover sanitized schema-1 output, duplicate/primary
+state, schema-1/2 recognition without trust promotion, and schema-3 witness
+metadata. The 2026-08-12 isolated three-node repair gate remains historical
+evidence and was not rewritten. No real durable cache or DeepSeek duplicate
+was changed by SIM-13.
 
 | Artifact | Gate / model identity | Status | Privacy review |
 |---|---|---|---|
@@ -308,7 +304,7 @@ duplicate was changed by this work.
 | [`deepseek-v4-flash-serving-wizard-gate-20260813.json`](./deepseek-v4-flash-serving-wizard-gate-20260813.json) | Production interactive serving-wizard and operator-home stop flow for the exact sealed DeepSeek GA profile: explicit experimental choice at that time, fixed preparation, exact readiness, read-only launch, warmup, completion, owned stop, purge, and one-home closeout | Current two-node serving-integration PASS; this earlier artifact did not alone establish the later GA closure. Remote one-node wizard placement and model qualification remain open. | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`deepseek-v4-flash-library-hot-determinism-20260812.json`](./deepseek-v4-flash-library-hot-determinism-20260812.json) | Exact sealed DeepSeek GA same-boot strict captures with profile-default DSpark plus forced no-spec diagnostic, standard benchmarks, and clean one-home closeout | Current strict determinism FAIL; no-spec improves but does not eliminate variance; `Validated` is blocked for this exact release while subsystem GA remains separate | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
 | [`deepseek-v4-flash-one-home-gate-20260812.json`](./deepseek-v4-flash-one-home-gate-20260812.json) | Real flagship duplicate reconciliation plus clean two-rank eight-stream SSH-over-RoCE preparation, exact identity/witness/read-only launch, warmup, completion, cleanup, and final one-home inventory | Current physical one-home PASS; this earlier artifact did not alone establish the later GA closure. Release qualification and guided/default selection remain separate. | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, witnesses, and filesystem identity omitted |
-| [`model-library-health-legacy-repair-gate-20260812.json`](./model-library-health-legacy-repair-gate-20260812.json) | Three-node read-only health, repair-ID-bound schema-1/2 removal, stopped-container/pinned blockers, no-follow/sibling preservation, and exact disposable-home removal; synthetic data only | Current health/legacy-repair physical PASS; no real cleanup, reconciliation, or storage-path promotion | Reviewed; site topology, paths, hosts, nodes, containers, repair IDs, and filesystem identity omitted |
+| [`model-library-health-legacy-repair-gate-20260812.json`](./model-library-health-legacy-repair-gate-20260812.json) | Three-node read-only health, repair-ID-bound schema-1/2 removal, stopped-container/pinned blockers, no-follow/sibling preservation, and exact disposable-home removal; synthetic data only | Historical health/legacy-repair physical PASS; public repair CLI removed (SIM-13); no real cleanup, reconciliation, or storage-path promotion | Reviewed; site topology, paths, hosts, nodes, containers, repair IDs, and filesystem identity omitted |
 | [`model-library-primary-selection-reconciliation-gate-20260812.json`](./model-library-primary-selection-reconciliation-gate-20260812.json) | Three-node persistent exact-revision selection and guarded non-primary reconciliation; disposable synthetic HF-layout repositories only | Current selected-primary targeting PASS; existing DeepSeek duplicate unchanged; not a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |
 | [`deepseek-v4-flash-release-validation-20260812.json`](./deepseek-v4-flash-release-validation-20260812.json) | Reviewed release summary for DeepSeek GA revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest `27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`, exact two-node profile, and digest-pinned PR-41834 image | Current second-identity issuance input PASS; paired physical enforcement artifact now passes; not a storage-path promotion or bit-identical-output claim | Reviewed; repository-relative evidence only; site identity omitted |
 | [`deepseek-v4-flash-sealed-enforcement-gate-20260812.json`](./deepseek-v4-flash-sealed-enforcement-gate-20260812.json) | Post-issuance two-node exact-seal preparation, full verification, durable-home/sealed-hot placement, read-only launch, identity labels, zero-byte witnesses, smoke, and cleanup | Current flagship sealed `library-hot` enforcement PASS with duplicate-durable-cache/temporary-primary condition disclosed; not steady-state storage proof or a promotion | Reviewed; site topology, paths, hosts, nodes, interfaces, containers, and filesystem identity omitted |

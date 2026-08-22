@@ -890,6 +890,12 @@ refuse_removed_catalog_validated_flag() {
 refuse_removed_activate_command() {
   die "$REMOVED_ACTIVATE_MESSAGE" 2
 }
+
+REMOVED_HOT_LEGACY_MESSAGE='hot legacy check|remove was removed (SIM-13): leftover schema-1/2 hot repair is finished. Schema-1/2 hot metadata still cannot launch. Health remains read-only.'
+
+refuse_removed_hot_legacy_command() {
+  die "$REMOVED_HOT_LEGACY_MESSAGE" 2
+}
 PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"

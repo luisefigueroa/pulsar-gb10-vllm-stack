@@ -589,9 +589,10 @@ exits 2. They are not unknown-argument failures.
 | `list-models.sh --validated` | `--legacy-tested` (historical `STATUS=tested*`). Not ADR 0004 `Validated`. |
 | `model-library.sh catalog list --validated` | `--reviewed-identity`. Not ADR 0004 `Validated`. |
 | `model-library.sh activate` | `prepare` |
+| `model-library.sh hot legacy check\|remove` | Removed (SIM-13). Schema-1/2 hot metadata still cannot launch. Health remains read-only. |
 
-`--force-unpin`, topology schema 1 as `detect-fabric` output, and hot
-schema-1/2 repair are not in this table. `HEAD_IP`/`WORKER_IP` never confirm
+`--force-unpin` on `purge-hot` and topology schema 1 as `detect-fabric`
+output are not in this table. `HEAD_IP`/`WORKER_IP` never confirm
 membership and do not construct topology.
 
 N≥2 `check-image.sh` JSON emits `rank-unreachable` / `rank-docker-error` /
@@ -807,10 +808,11 @@ scripts/model-library.sh health --json
 `healthy` and `not-configured` exit zero. `attention` and `unavailable` exit
 nonzero after printing a complete schema-1 report. The command never refreshes
 the catalog or witness, hashes model bytes, or repairs automatically. Public
-JSON exposes rank numbers and opaque repair IDs but no hosts, addresses, node
-or topology IDs, absolute paths, filesystem identity, or witness IDs. Doctor
-shows the same findings as warnings; running services are unaffected, but new
-preparation is blocked until they resolve.
+JSON exposes rank numbers but no hosts, addresses, node or topology IDs,
+absolute paths, filesystem identity, or witness IDs. Schema-1/2 hot metadata
+is reported as attention and cannot launch; there is no Pulsar repair command
+(SIM-13). Doctor shows the same findings as warnings; running services are
+unaffected, but new preparation is blocked until they resolve.
 
 The interactive **Models & storage** surface (`./pulsar models`) opens this
 cached report without scanning ranks. **Recheck catalog health** remains
@@ -826,25 +828,13 @@ default-no action. It is offered only for reviewed-seal serving profiles and
 delegates to the fixed eight-stream SSH-over-RoCE preparation command documented
 above for multi-rank profiles. The service revalidates exact identity, topology,
 capacity, and all-rank completion; there is no fallback. The action does not
-launch or qualify the model or assign a release status. Pin, purge, repair,
-and durable-home removal remain direct CLI operations.
+launch or qualify the model or assign a release status. Pin, purge, and
+durable-home removal remain direct CLI operations.
 
-Schema-1/2 hot metadata is obsolete and cannot launch. If health marks an
-instance repairable, inspect and remove only by its freshly issued ID:
-
-```bash
-scripts/model-library.sh hot legacy check <repair-id> --json
-scripts/model-library.sh hot legacy remove <repair-id> --yes
-# Pinned legacy state needs both explicit acknowledgements:
-scripts/model-library.sh hot legacy remove <repair-id> --yes --force-unpin
-```
-
-Check and removal re-observe all confirmed ranks and managed containers. A
-stale/ambiguous ID, current or malformed metadata, symlinked target, stopped or
-running managed reference, or unreachable Docker/SSH fails closed. Removal
-atomically retires one exact hot instance and does not follow embedded symlinks
-or touch sibling instances/durable homes. If retirement is incomplete, rerun
-health and use the rediscovered ID; never rename it over new content.
+Schema-1/2 hot metadata is obsolete and cannot launch. `hot legacy check|remove`
+is removed (SIM-13). Health still reports leftover schema-1/2 as attention.
+Any remaining leftover files under `PULSAR_HOT_ROOT` are site-admin cleanup,
+not a Pulsar command. Do not rename content over them.
 
 **Guarded durable-home removal:** inspect first; do not delete the cache path
 manually. Prefer an exact `model_id@revision` query in destructive workflows:
@@ -1005,9 +995,9 @@ cache. If witness fallback fails, prepare the profile again; do not hand-edit
 the witness.
 
 **Upgrade note:** catalog schema 1 and hot schemas 1/2 are intentionally not
-accepted for launch or trust. Health may recognize exact historical ownership
-metadata only so the separate guarded removal workflow can retire it safely.
-After upgrading, run `catalog refresh`, then
+accepted for launch or trust. Health may still recognize exact historical
+ownership metadata as untrusted leftover. There is no Pulsar repair command
+(SIM-13). After upgrading, run `catalog refresh`, then
 prepare each required profile again. Hot schema 3 instances created before witness
 support remain readable: the first `library-hot` readiness check visibly
 full-verifies and creates the missing rank-local witness. Current unsealed
