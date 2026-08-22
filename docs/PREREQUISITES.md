@@ -236,7 +236,7 @@ traffic is kept on verified RoCE instead of silently falling back to that LAN.
 | Docker + NVIDIA support | Required independently on every node used by the profile |
 | Same image | `scripts/sync-image.sh <profile> --pull --yes` stages every required node |
 | Complete weights | `scripts/model-library.sh home add` + `prepare` publish exact verified views on every node used by the profile (ADR 0006) |
-| Retired live NFS serving | Not a serving path (ADR 0005). Leftover site mounts use confirmation-gated `scripts/weight-fabric.sh show\|unmount\|teardown` only. Follow `WEIGHT_FABRIC.md`. |
+| Retired live NFS serving | Not a serving path (ADR 0005). The leftover teardown helper is removed (SIM-12). History: `WEIGHT_FABRIC.md`. |
 | No stale managed container | A leftover container can retain rendezvous/RDMA state; stop the exact profile before relaunch |
 
 ```bash
@@ -264,7 +264,7 @@ without a confirmed manifest. Confirm membership with `--write-topology`.
 | Path | Role |
 |------|------|
 | `$HOME/.cache/huggingface` | Default HF hub cache (mounted into containers) |
-| `.weight-fabric/` | Gitignored leftover live-mount configs; teardown only (ADR 0005) |
+| `.weight-fabric/` | Gitignored leftover dir if a site still has one; not an operator command (SIM-12) |
 | `/mnt/Models` | Optional NFS catalog (`Official Models/…`); required only for confs that point there |
 | Docker image store | Multi‑GB images on **each** node that will run a container |
 

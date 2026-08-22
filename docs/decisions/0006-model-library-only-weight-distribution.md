@@ -68,8 +68,9 @@ rather than defaulted.
    `scripts/model-library.sh home add [--source-attested]` only.
 4. **Fabric internals are deleted.** The retired live-NFS workflow code,
    its Python backend, and its tests are removed. `./pulsar weight-fabric`
-   survives only as `show` / `unmount` / `teardown` for leftover site-local
-   state, per ADR 0005.
+   survived only as `show` / `unmount` / `teardown` for leftover site-local
+   state, per ADR 0005, until SIM-12 removed that helper after lab
+   confirmation.
 5. **Non-HF absolute-path profiles are removed from the catalog**
    (`laguna-s-2.1-nvfp4`, `laguna-s-2.1-2node`, `inkling-small-nvfp4`).
    **Current product limit:** serving ingress is an exact Hugging Face

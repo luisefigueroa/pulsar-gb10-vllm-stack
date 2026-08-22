@@ -368,7 +368,6 @@ promote a claim and is not exposed through `pulsar`.
 | `scripts/list-models.sh` | Conf catalog |
 | `scripts/check-weights.sh` | Prepared library views on every exact rank |
 | `scripts/model-library.sh` | Durable homes, acquisition, preparation, retention |
-| `./pulsar weight-fabric` | Leftover live-NFS show/unmount/teardown only (ADR 0005) |
 | `scripts/check-image.sh` / `sync-image.sh` | Image presence / stage every exact rank |
 | `scripts/check-memory.sh` | MemAvailable vs weights+KV+OS buffer |
 | `scripts/detect-fabric.sh` | Discover, verify, and confirm N-node topology |

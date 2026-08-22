@@ -303,7 +303,7 @@ fixture site maps inside generic doubles.
   temp dirs, and exit-code checks. Stop growing selftests with large
   `python3 <<'PY' … write bash …` blobs that reinvent fixtures inline.
 - Keep new feature areas in **their own** selftest module (e.g. model-library
-  tests must not bolt onto `selftest-weight-fabric.sh`).
+  tests must not bolt onto an unrelated suite).
 - Soft budget: if a `selftest-*.sh` approaches ~500 lines or a change adds a
   large paste of mock logic, split scenarios or extract `scripts/testlib/`
   helpers in the same PR (or a prerequisite cleanup PR).
@@ -320,7 +320,7 @@ fixture site maps inside generic doubles.
 - [ ] When fixing fabric/counter tests, prefer extracting
   `scripts/testlib/` mocks over another copy-paste path
 
-When extending weight-fabric traffic proofs, use (or introduce) a single
+When extending traffic-proof tests, use (or introduce) a single
 parameterized counter mock (kind=`ib|netdev`, identity, role-driven deltas)
 rather than additional parallel SSH/local state machines.
 

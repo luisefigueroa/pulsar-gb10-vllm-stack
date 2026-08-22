@@ -224,17 +224,9 @@ cluster/stop-cluster.sh deepseek-v4-flash
 ```
 
 Live NFS/RDMA serving is retired (ADR 0005), and the whole weight-mode axis
-was removed (ADR 0006): `--weight-source`/`--weight-mode` fail closed.
-Leftover mounts:
-
-```bash
-scripts/weight-fabric.sh show <profile>
-scripts/weight-fabric.sh unmount <profile>
-scripts/weight-fabric.sh teardown <profile>
-```
-
-The model library is separate from live NFS and serves every profile
-(ADR 0006).
+was removed (ADR 0006): `--weight-source`/`--weight-mode` fail without
+fallback. The leftover teardown helper is removed (SIM-12). The model library
+is separate from live NFS and serves every profile (ADR 0006).
 
 Always tear down a multi-node service before relaunching. A surviving remote
 rank can retain rendezvous state or RDMA resources and make the next launch

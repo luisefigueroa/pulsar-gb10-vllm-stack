@@ -38,8 +38,6 @@ run "Grok review skill isolation" \
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 run "terminal formatting" "$REPO_DIR/scripts/selftest-terminal-format.sh"
 run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"
-run "leftover weight-fabric sudo mode" \
-  "$REPO_DIR/scripts/selftest-weight-fabric.sh"
 run "API auth and secret redaction" "$REPO_DIR/scripts/selftest-api-auth.sh"
 run "validation verdicts" "$REPO_DIR/scripts/selftest-validation.sh"
 run "fail-closed probes" "$REPO_DIR/scripts/selftest-preflight-probes.sh"
