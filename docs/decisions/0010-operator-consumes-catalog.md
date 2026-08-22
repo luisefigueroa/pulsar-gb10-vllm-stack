@@ -40,7 +40,8 @@ like a serving path.
    path (ADR 0009).
 
 Low-level `serve.sh` / `cluster/*` stay. The DSpark overlay under
-`patches/pr41834-dspark-opt/` is unchanged ([SWI-752](https://linear.app/swiftsource/issue/SWI-752)).
+`patches/pr41834-dspark-opt/` was later removed ([SWI-752](https://linear.app/swiftsource/issue/SWI-752));
+that is not the DeepSeek checkpoint DSpark serving path.
 
 ## Consequences
 

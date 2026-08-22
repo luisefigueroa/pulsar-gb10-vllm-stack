@@ -472,8 +472,10 @@ A DSpark round costs ~350 ms (~9.5 base decode steps) where draft+verify
 should cost ~1.5; the structural cost sits in the upstream verify/round
 machinery (rejection trim, MHC bookkeeping, or host-sync stalls), not in
 draft comms. Pinpointing it needs a torch/nsys profile of a single round —
-scoped as future work. The port is kept (correct, harmless, upstreamable);
-spec decode serving decisions follow the corrected doctrine (DSpark default-on), not this pre-fix A/B.
+scoped as future work. The overlay was later removed from the tree (SIM-10,
+2026-08-22); this A/B remains the evidence. Spec decode serving follows the
+corrected doctrine (DSpark default-on), not this pre-fix A/B. Git history
+retains `patches/pr41834-dspark-opt/`.
 
 Corrected hypothesis trail: "draft comms dominate" (from the 10 MB/round
 arithmetic) is now REFUTED by direct experiment — the arithmetic was right
@@ -502,9 +504,10 @@ Corrected A/Bs (fixed metering, natural prompts, temperature 0):
 | ngram on GDN hybrid | — | — | — | — | — | **FAIL stands** (output corruption is real, not a metering issue) |
 | DSV4 MTP k=2 | not re-run | (est ~41 by factor) | — | — | — | superseded by DSpark on the same model |
 
-The ported draft optimizations (patches/pr41834-dspark-opt) remain
-perf-neutral under the corrected meter too (39.9 vs 39.1 tok/s manual
-probes) — kept as documentation, not needed for the win.
+The ported draft optimizations (`patches/pr41834-dspark-opt`, later removed
+from the tree) remain perf-neutral under the corrected meter too (39.9 vs
+39.1 tok/s manual probes) — this ledger is the documentation; they were not
+needed for the win.
 
 ## Spec-enabled flagship soak (2026-07-31) — the default-on gate: PASS
 

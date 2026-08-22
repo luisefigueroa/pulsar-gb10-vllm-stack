@@ -485,8 +485,8 @@ no leaks, no thermal throttling anywhere).
 - **vllm #49026 / #46253** — the two stock-image blockers we reproduced.
 - **Bump trigger: v0.26.1-final with arm64 images** (rc0 tagged upstream).
   It bumps NCCL 2.28→2.30.7 — full REVALIDATE including fresh Step-0 NCCL
-  numbers. Note vllm #49731 (merged to main) makes
-  `patches/pr41834-dspark-opt/` redundant on the next flagship rebuild.
+  numbers. vllm #49731 (merged to main) absorbed the draft-head work that
+  the removed `patches/pr41834-dspark-opt/` A/B had ported.
 - Closed chapter: the fork's draft-path optimizations were ported and
   measured **perf-neutral** — the fork's apparent spec-decode advantage was
   our own metering bug, not missing code (VALIDATION retraction trail).
@@ -505,7 +505,6 @@ no leaks, no thermal throttling anywhere).
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
-| `patches/pr41834-dspark-opt/` | **DEPRECATED** DSpark draft-path A/B (perf-neutral; obsolete after vllm #49731). Not on default build path — see that dir’s README |
 | `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **MODEL_SERVING_RELEASE_CAPTURE** (ADR 0004 evidence-capture candidates), **decisions/** (accepted rationale, including ADR 0004's Model Serving Release policy), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
