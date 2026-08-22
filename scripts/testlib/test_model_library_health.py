@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Health inventory and guarded legacy-hot repair contracts."""
+"""Health inventory contracts, including untrusted schema-1/2 observation."""
 
 from __future__ import annotations
 
@@ -197,7 +197,8 @@ class ModelLibraryHealthContracts(unittest.TestCase):
                 self.assertEqual(item["metadata_status"], "legacy")
                 self.assertEqual(item["identity_status"], "unknown")
                 self.assertEqual(item["witness_status"], "not-applicable")
-                self.assertTrue(item["repairable"])
+                self.assertFalse(item["repairable"])
+                self.assertIsNone(item["repair_id"])
 
     def test_duplicate_and_stale_primary_are_structured_findings(self) -> None:
         self.write_scan({
@@ -265,6 +266,14 @@ class ModelLibraryHealthContracts(unittest.TestCase):
         ):
             self.assertNotIn(private, encoded)
         self.assertIn("repair_id", encoded)
+        self.assertFalse(report["hot_instances"][0]["repairable"])
+        self.assertIsNone(report["hot_instances"][0]["repair_id"])
+        self.assertIn("legacy-hot-metadata", {item["code"] for item in report["issues"]})
+        self.assertFalse(any(
+            (item.get("remediation") or {}).get("command")
+            for item in report["issues"]
+            if item.get("code") == "legacy-hot-metadata"
+        ))
         self.assertEqual(
             report["catalog"]["refreshed_at"],
             "2026-01-01T00:00:00.000Z",
@@ -336,115 +345,6 @@ class ModelLibraryHealthContracts(unittest.TestCase):
         self.assertFalse(malformed_stamp["repairable"])
         self.assertIsNone(malformed_stamp["repair_id"])
 
-    def test_guarded_repair_blocks_pin_and_active_reference(self) -> None:
-        self.write_legacy(pinned=True)
-        self.write_scan()
-        plan = model_library.build_legacy_repair_plan(
-            repair_id=self.scan()["instances"][0]["repair_id"],
-            topology_file=self.topology_path,
-            observations_dir=self.observations,
-        )
-        self.assertFalse(plan["eligible"])
-        self.assertIn("pinned", " ".join(plan["blockers"]))
-        self.write_scan()
-        (self.observations / "containers-0.jsonl").write_text(json.dumps({
-            "id": "container-id",
-            "name": "/managed",
-            "labels": {
-                "io.pulsar.gb10.managed": "true",
-                "io.pulsar.gb10.weight-source": "library-hot",
-                "io.pulsar.gb10.conf": "tiny-profile",
-            },
-        }) + "\n", encoding="utf-8")
-        plan = model_library.build_legacy_repair_plan(
-            repair_id=self.scan()["instances"][0]["repair_id"],
-            topology_file=self.topology_path,
-            observations_dir=self.observations,
-            force_unpin=True,
-        )
-        self.assertFalse(plan["eligible"])
-        self.assertIn("container", " ".join(plan["blockers"]))
-
-        (self.observations / "containers-0.jsonl").write_text(
-            "", encoding="utf-8"
-        )
-        scan = self.scan()
-        scan["status"] = "error"
-        scan["errors"] = [{
-            "path": str(self.hot_root),
-            "detail": "unobservable",
-        }]
-        self.write_scan(scan)
-        plan = model_library.build_legacy_repair_plan(
-            repair_id=self.scan()["instances"][0]["repair_id"],
-            topology_file=self.topology_path,
-            observations_dir=self.observations,
-            force_unpin=True,
-        )
-        self.assertIn("not completely observable", " ".join(plan["blockers"]))
-
-    def test_atomic_repair_preserves_sibling_and_embedded_symlink_target(self) -> None:
-        instance = self.write_legacy()
-        sibling = instance.parent / "sibling"
-        sibling.mkdir()
-        external = self.root / "external"
-        external.mkdir()
-        sentinel = external / "sentinel"
-        sentinel.write_text("keep", encoding="utf-8")
-        (instance / "external-link").symlink_to(external, target_is_directory=True)
-        self.write_scan()
-        repair_id = self.scan()["instances"][0]["repair_id"]
-        plan = model_library.build_legacy_repair_plan(
-            repair_id=repair_id,
-            topology_file=self.topology_path,
-            observations_dir=self.observations,
-        )
-        result = model_library.execute_legacy_repair_plan(
-            plan,
-            hot_root=self.hot_root,
-            rank=0,
-            node_id=self.node_id,
-            containers=[],
-        )
-        self.assertEqual(result["state"], "removed")
-        self.assertFalse(instance.exists())
-        self.assertTrue(sibling.is_dir())
-        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep")
-        with self.assertRaisesRegex(model_library.ModelLibraryError, "stale"):
-            model_library.execute_legacy_repair_plan(
-                plan,
-                hot_root=self.hot_root,
-                rank=0,
-                node_id=self.node_id,
-                containers=[],
-            )
-
-    def test_incomplete_retirement_is_rediscovered_and_retryable(self) -> None:
-        instance = self.write_legacy()
-        self.write_scan()
-        repair_id = self.scan()["instances"][0]["repair_id"]
-        plan = model_library.build_legacy_repair_plan(
-            repair_id=repair_id,
-            topology_file=self.topology_path,
-            observations_dir=self.observations,
-        )
-        retirement = instance.with_name(
-            f".{instance.name}.pulsar-removing-{plan['plan_id'][:12]}"
-        )
-        instance.rename(retirement)
-        rediscovered = self.scan()["instances"][0]
-        self.assertEqual(rediscovered["repair_id"], repair_id)
-        self.assertEqual(rediscovered["layout_state"], "retiring")
-        result = model_library.execute_legacy_repair_plan(
-            plan,
-            hot_root=self.hot_root,
-            rank=0,
-            node_id=self.node_id,
-            containers=[],
-        )
-        self.assertEqual(result["state"], "removed")
-        self.assertFalse(retirement.exists())
-
     def test_malformed_legacy_and_symlink_layouts_are_never_repairable(self) -> None:
         instance = self.write_legacy()
         stamp_path = instance / ".pulsar" / "hot.json"
@@ -475,22 +375,6 @@ class ModelLibraryHealthContracts(unittest.TestCase):
         instance_scan = self.scan()
         self.assertEqual(instance_scan["status"], "error")
         self.assertEqual(instance_scan["instances"], [])
-
-    def test_repair_refuses_schema_three_symlink_and_ambiguous_id(self) -> None:
-        instance = self.write_legacy()
-        repair_id = self.scan()["instances"][0]["repair_id"]
-        instance.rename(instance.with_name("wrong-layout"))
-        scan = self.scan()
-        self.assertFalse(scan["instances"][0]["repairable"])
-        with self.assertRaisesRegex(model_library.ModelLibraryError, "not safely"):
-            model_library._find_legacy_repair_target(
-                [{"scan": scan}], repair_id
-            )
-        duplicate = {"repair_id": repair_id, "metadata_schema": 1, "metadata_status": "legacy", "repairable": True}
-        with self.assertRaisesRegex(model_library.ModelLibraryError, "ambiguous"):
-            model_library._find_legacy_repair_target(
-                [{"scan": {"instances": [duplicate, duplicate]}}], repair_id
-            )
 
 
 if __name__ == "__main__":

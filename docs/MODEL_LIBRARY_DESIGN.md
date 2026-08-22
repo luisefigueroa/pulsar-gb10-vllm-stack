@@ -851,7 +851,7 @@ cannot discover an unmanaged process or container created outside Pulsar
 labels; such use remains an operator responsibility and must be stopped before
 removal.
 
-### 4.10 Read-only health and legacy-hot repair
+### 4.10 Read-only health
 
 `scripts/model-library.sh health` is the supported catalog-health service. It
 reads the cached catalog and gathers shallow, no-follow hot metadata plus
@@ -867,7 +867,7 @@ ranks are explicit findings.
 The public schema-1 report exposes rank numbers, profile aliases,
 model/revision identity, cached refresh time, expected manifest identity when
 reviewed, primary/duplicate classification, runtime source, retention, identity/witness status, active-reference state,
-opaque repair IDs, issue codes, and remediation. It omits hostnames, addresses,
+issue codes, and remediation. It omits hostnames, addresses,
 node/topology identity, absolute paths, filesystem identity, and witness IDs.
 `healthy` and `not-configured` exit zero; `attention` and `unavailable` still
 emit the complete report and exit nonzero.
@@ -876,15 +876,11 @@ Rank-based home and primary placement is meaningful only while
 mapping and require refresh when the confirmed topology has changed.
 
 Historical hot schemas 1 and 2 are ownership evidence only: they are never
-trusted, launchable, or migrated into schema 3. A health-issued repair ID may
-be passed to `hot legacy check`; `hot legacy remove ... --yes` repeats rank
-metadata and managed-container observation under the exclusive hot lock before
-mutation. It refuses current, malformed, untracked, symlinked, ambiguous,
-stale, active, or unobservable targets. Pinned state additionally requires
-`--force-unpin`. Eligible removal atomically retires one exact non-symlink
-instance and deletes it without following embedded symlinks; durable homes and
-sibling instances are outside its authority. An incomplete retirement remains
-discoverable and retryable.
+trusted, launchable, or migrated into schema 3. Health reports them as
+attention. The public `hot legacy check|remove` repair command is removed
+(SIM-13). Leftover files under `PULSAR_HOT_ROOT`, if any, are site-admin
+cleanup, not a Pulsar command. Durable homes and sibling instances remain
+outside health's authority.
 
 Doctor consumes the same report as warnings. These findings do not affect
 already-running services, while model-library preparation and destructive
@@ -912,7 +908,7 @@ identity requirement for this interactive acquisition/preparation path, not a
 validation-status allowlist. That service remains the
 authority for full verification, exact all-rank storage admission, topology and
 primary checks, rollback, and witness publication. The interaction never adds
-validation-status override, starts serving, or claims model qualification. Retention, repair, purge,
+validation-status override, starts serving, or claims model qualification. Retention, purge,
 and durable-home removal remain separate direct-CLI operations.
 
 The serving wizard is a distinct consumer of the same readiness contract.
@@ -1083,7 +1079,7 @@ Promotion now requires this identity/lifecycle evidence:
 [x] Serving ranks receive read-only exact-snapshot views in physical launch evidence
 [x] Hot purge and force-unpin no-follow behavior passes the physical gate
 [x] Read-only health inventories cached catalog, primary state, and every confirmed rank
-[x] Legacy schema-1/2 removal is repair-ID-bound, confirmation-gated, and no-follow
+[x] Leftover schema-1/2 is untrusted and cannot launch; public repair CLI is removed (SIM-13)
 [x] Warm-home pin/restart reports its durable-home dependency honestly
 [x] Exact all-rank admission charges durable-home as zero and sealed-hot by manifest bytes
 [x] Flagship-sized non-home admission preserves the default reserve on every selected rank
@@ -1144,6 +1140,8 @@ for preserved untracked content. The affected exact disposable-home removal
 subset also passed. No real hot entry, durable home, or DeepSeek duplicate was
 changed. See
 `results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
+SIM-13 later removed the public repair command after lab confirmation that no
+schema-1/2 hot instances remained; that artifact stays historical.
 Failed or incomplete evidence is not rewritten because an architectural
 blocker changed.
 
@@ -1323,3 +1321,4 @@ rather than promotion blockers.
 | 2026-08-22 | **ADR 0010 / SWI-730:** operator-facing Pulsar consumes the in-repo catalog for now. Recipe craft and onboarding stay maintainer tooling. Root `docker-compose.yml` is removed; it did not assist serving or recipe craft. DSpark overlay remains SIM-10. |
 | 2026-08-22 | **SIM-10:** removed `patches/pr41834-dspark-opt/`. Perf-neutral A/B stays in VALIDATION.md and git history. Flagship DeepSeek DSpark-in-checkpoint serving is unchanged. Compose was already removed by ADR 0010. |
 | 2026-08-22 | **SIM-12:** leftover `weight-fabric.sh show|unmount|teardown` and `./pulsar weight-fabric` removed after lab confirmation. Live NFS serving stays refused. Historical `results/weight-fabric/` and `WEIGHT_FABRIC.md` remain. |
+| 2026-08-22 | **SIM-13:** public `hot legacy check|remove` removed after lab confirmation that no schema-1/2 hot instances remained. Health still observes leftover schema-1/2 as untrusted and cannot launch. Historical `results/model-library/model-library-health-legacy-repair-gate-20260812.json` remains. `--force-unpin` on `purge-hot` is unchanged. |

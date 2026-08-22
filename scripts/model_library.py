@@ -90,8 +90,6 @@ HOT_BUDGET_PLAN_KIND = "pulsar-model-library-hot-budget-plan"
 HEALTH_SCHEMA_VERSION = 1
 HEALTH_KIND = "pulsar-model-library-health"
 HOT_HEALTH_SCAN_KIND = "pulsar-model-library-hot-health-scan"
-LEGACY_REPAIR_PLAN_KIND = "pulsar-model-library-legacy-hot-repair-plan"
-LEGACY_REPAIR_RESULT_KIND = "pulsar-model-library-legacy-hot-repair-result"
 LEGACY_HOT_SCHEMA_VERSIONS = {1, 2}
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 UTC_TIMESTAMP_RE = re.compile(
@@ -5072,18 +5070,6 @@ def _legacy_stamp_owner(stamp: Any) -> tuple[bool, str]:
     return True, "recognized legacy ownership metadata"
 
 
-def _legacy_repair_id(
-    *, rank: int, node_id: str, stamp: dict[str, Any], metadata: os.stat_result
-) -> str:
-    return canonical_json_digest({
-        "rank": rank,
-        "node_id": node_id,
-        "device": metadata.st_dev,
-        "inode": metadata.st_ino,
-        "stamp": stamp,
-    })
-
-
 def _legacy_layout_state(instance: pathlib.Path, stamp: dict[str, Any]) -> str:
     content_id = str(stamp.get("content_id") or "")
     if instance.name == content_id:
@@ -5318,10 +5304,6 @@ def scan_hot_health(
                     base["detail"] = detail
                     if valid_owner:
                         base["layout_state"] = _legacy_layout_state(instance, stamp)
-                        base["repair_id"] = _legacy_repair_id(
-                            rank=rank, node_id=node_id, stamp=stamp, metadata=instance_meta
-                        )
-                        base["repairable"] = base["layout_state"] in {"managed", "retiring"}
                     instances.append(base)
                     continue
                 if schema != HOT_SCHEMA_VERSION or not isinstance(stamp, dict):
@@ -5480,16 +5462,10 @@ def build_health_report(
             })
             metadata_status = raw.get("metadata_status")
             if metadata_status == "legacy":
-                command = (
-                    f"scripts/model-library.sh hot legacy check {repair_id}"
-                    if repair_id else None
-                )
                 issues.append(_health_issue(
                     "legacy-hot-metadata",
                     "schema-1/2 hot metadata is obsolete and never launchable",
                     rank=rank,
-                    repair_id=repair_id,
-                    command=command,
                 ))
             elif metadata_status != "current":
                 issues.append(_health_issue(
@@ -5600,150 +5576,6 @@ def build_health_report(
         "hot_instances": public_instances,
         "issues": issues,
     }
-
-def _find_legacy_repair_target(
-    observations: list[dict[str, Any]], repair_id: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    for observation in observations:
-        for item in observation["scan"].get("instances") or []:
-            if item.get("repair_id") == repair_id:
-                matches.append((observation, item))
-    if len(matches) != 1:
-        fail("legacy hot repair ID is stale, unknown, or ambiguous; run health again")
-    observation, item = matches[0]
-    if item.get("metadata_schema") not in LEGACY_HOT_SCHEMA_VERSIONS:
-        fail("legacy hot repair refuses current or unrecognized metadata")
-    if item.get("metadata_status") != "legacy" or not item.get("repairable"):
-        fail("legacy hot repair ownership or layout is not safely repairable")
-    return observation, item
-
-
-def build_legacy_repair_plan(
-    *,
-    repair_id: str,
-    topology_file: str | pathlib.Path,
-    observations_dir: str | pathlib.Path,
-    force_unpin: bool = False,
-) -> dict[str, Any]:
-    topology = load_topology_for_plan(topology_file)
-    observations = _load_health_observations(observations_dir, topology)
-    observation, item = _find_legacy_repair_target(observations, repair_id)
-    blockers: list[str] = []
-    if observation["scan"].get("status") != "ok":
-        blockers.append("rank hot layout is not completely observable")
-    if item.get("active_reference"):
-        blockers.append("a managed container references this legacy instance")
-    if item.get("retention") == "pinned" and not force_unpin:
-        blockers.append("legacy instance is pinned; explicit --force-unpin is required")
-    plan: dict[str, Any] = {
-        "schema_version": HEALTH_SCHEMA_VERSION,
-        "kind": LEGACY_REPAIR_PLAN_KIND,
-        "created_at": utc_now(),
-        "repair_id": repair_id,
-        "rank": observation["rank"],
-        "node_id": observation["node_id"],
-        "instance_dir": item["instance_dir"],
-        "metadata_schema": item["metadata_schema"],
-        "profile": item.get("profile"),
-        "model_id": item.get("model_id"),
-        "revision": item.get("revision"),
-        "retention": item.get("retention"),
-        "layout_state": item.get("layout_state"),
-        "force_unpin": bool(force_unpin),
-        "blockers": blockers,
-        "eligible": not blockers,
-    }
-    plan["plan_id"] = canonical_json_digest({
-        key: value for key, value in plan.items()
-        if key not in {"created_at", "plan_id"}
-    })
-    return plan
-
-
-def public_legacy_repair_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value for key, value in plan.items()
-        if key not in {"node_id", "instance_dir", "plan_id"}
-    }
-
-
-def execute_legacy_repair_plan(
-    plan: dict[str, Any],
-    *,
-    hot_root: str | pathlib.Path,
-    rank: int,
-    node_id: str,
-    containers: list[dict[str, Any]],
-) -> dict[str, Any]:
-    if plan.get("kind") != LEGACY_REPAIR_PLAN_KIND or plan.get("schema_version") != HEALTH_SCHEMA_VERSION:
-        fail("legacy hot repair plan contract is invalid")
-    expected_plan_id = canonical_json_digest({
-        key: value for key, value in plan.items()
-        if key not in {"created_at", "plan_id"}
-    })
-    if plan.get("plan_id") != expected_plan_id:
-        fail("legacy hot repair plan identity is invalid")
-    if plan.get("rank") != rank or plan.get("node_id") != node_id:
-        fail("legacy hot repair plan targets a different rank")
-    if not plan.get("eligible") or plan.get("blockers"):
-        fail("legacy hot repair plan is blocked")
-    fresh = scan_hot_health(hot_root, rank=rank, node_id=node_id)
-    for item in fresh.get("instances") or []:
-        item["active_reference"] = _managed_hot_reference(containers, item.get("profile"))
-    observation = {"rank": rank, "node_id": node_id, "scan": fresh, "containers": containers}
-    _, item = _find_legacy_repair_target([observation], str(plan["repair_id"]))
-    if item.get("active_reference"):
-        fail("legacy hot repair refused: a managed container now references the instance")
-    if item.get("retention") == "pinned" and not plan.get("force_unpin"):
-        fail("legacy hot repair refused: instance is pinned")
-    target = pathlib.Path(str(item["instance_dir"]))
-    root = pathlib.Path(hot_root).expanduser().absolute()
-    try:
-        target.relative_to(root)
-    except ValueError:
-        fail("legacy hot repair target escapes configured hot root")
-    target_kind, _ = _lstat_kind(target)
-    if target_kind != "directory" or target.parent.parent != root:
-        fail("legacy hot repair target is not an exact managed instance directory")
-    retirement = target
-    if item.get("layout_state") == "managed":
-        retirement = target.with_name(
-            f".{target.name}.pulsar-removing-{str(plan['plan_id'])[:12]}"
-        )
-        retirement_kind, _ = _lstat_kind(retirement)
-        if retirement_kind != "missing":
-            fail("legacy hot retirement target already exists")
-        os.replace(target, retirement)
-        directory_fd = os.open(str(retirement.parent), os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    try:
-        shutil.rmtree(retirement)
-    except OSError as exc:
-        fail(
-            "legacy hot retirement is incomplete; health can rediscover it for retry: "
-            f"{exc}"
-        )
-    directory_fd = os.open(str(retirement.parent), os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
-    return {
-        "schema_version": HEALTH_SCHEMA_VERSION,
-        "kind": LEGACY_REPAIR_RESULT_KIND,
-        "state": "removed",
-        "repair_id": plan["repair_id"],
-        "rank": rank,
-        "metadata_schema": plan["metadata_schema"],
-        "profile": plan.get("profile"),
-        "model_id": plan.get("model_id"),
-        "revision": plan.get("revision"),
-    }
-
 
 def _nearest_existing_path(path: pathlib.Path) -> pathlib.Path:
     candidate = path
@@ -8245,90 +8077,6 @@ def cmd_render_health(args: argparse.Namespace) -> int:
     return _health_exit(report)
 
 
-def cmd_plan_legacy_repair(args: argparse.Namespace) -> int:
-    plan = build_legacy_repair_plan(
-        repair_id=args.repair_id,
-        topology_file=args.topology_file,
-        observations_dir=args.observations_dir,
-        force_unpin=args.force_unpin,
-    )
-    print(json.dumps(plan, indent=2, sort_keys=True))
-    return 0 if plan.get("eligible") else 1
-
-
-def _load_legacy_plan(args: argparse.Namespace) -> dict[str, Any]:
-    if args.plan_file:
-        plan = load_json(args.plan_file)
-    elif args.plan_json:
-        try:
-            plan = json.loads(args.plan_json)
-        except json.JSONDecodeError as exc:
-            fail(f"legacy hot repair plan JSON: {exc}")
-    else:
-        fail("legacy hot repair plan is required")
-    if not isinstance(plan, dict):
-        fail("legacy hot repair plan must be an object")
-    return plan
-
-
-def cmd_render_legacy_repair(args: argparse.Namespace) -> int:
-    plan = _load_legacy_plan(args)
-    public = public_legacy_repair_plan(plan)
-    if args.json:
-        print(json.dumps(public, indent=2, sort_keys=True))
-    else:
-        if TerminalWriter is None:
-            fail("legacy repair rendering requires scripts/terminal_format.py")
-        term = TerminalWriter()
-        state = "ELIGIBLE" if plan.get("eligible") else "BLOCKED"
-        term.emit(f"legacy hot repair  {state}")
-        term.field("repair", str(plan.get("repair_id") or ""))
-        term.field("rank", plan.get("rank"))
-        term.field("schema", plan.get("metadata_schema"))
-        term.field("profile", str(plan.get("profile") or "unknown"))
-        for blocker in plan.get("blockers") or []:
-            term.emit(str(blocker), initial_indent="  ", subsequent_indent="    ")
-        if plan.get("eligible"):
-            term.blank()
-            term.emit("No bytes changed. Removal still requires --yes.")
-    return 0 if plan.get("eligible") else 1
-
-
-def cmd_execute_legacy_repair(args: argparse.Namespace) -> int:
-    try:
-        containers = json.loads(args.containers_json)
-    except json.JSONDecodeError as exc:
-        fail(f"legacy hot container observations: {exc}")
-    if not isinstance(containers, list) or any(not isinstance(item, dict) for item in containers):
-        fail("legacy hot container observations must be an array of objects")
-    result = execute_legacy_repair_plan(
-        _load_legacy_plan(args),
-        hot_root=args.hot_root or default_hot_root(),
-        rank=args.rank,
-        node_id=args.node_id,
-        containers=containers,
-    )
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
-
-
-def cmd_render_legacy_result(args: argparse.Namespace) -> int:
-    result = load_json(args.result_file)
-    if not isinstance(result, dict) or result.get("kind") != LEGACY_REPAIR_RESULT_KIND:
-        fail("legacy hot repair result is invalid")
-    if args.json:
-        print(json.dumps(result, indent=2, sort_keys=True))
-    else:
-        if TerminalWriter is None:
-            fail("legacy repair rendering requires scripts/terminal_format.py")
-        term = TerminalWriter()
-        term.emit("legacy hot repair  REMOVED")
-        term.field("repair", result["repair_id"])
-        term.field("rank", result["rank"])
-        term.field("schema", result["metadata_schema"])
-        term.field("profile", str(result.get("profile") or "unknown"))
-    return 0
-
 def cmd_resolve_home_removal_target(args: argparse.Namespace) -> int:
     target = select_home_removal_target(
         args.catalog,
@@ -9717,33 +9465,6 @@ def build_parser() -> argparse.ArgumentParser:
     health_render.add_argument("--json", action="store_true")
     health_render.add_argument("--doctor-rows", action="store_true")
     health_render.set_defaults(func=cmd_render_health)
-
-    legacy_plan = sub.add_parser("plan-legacy-hot-repair", help="Plan guarded legacy-hot removal")
-    legacy_plan.add_argument("--repair-id", required=True)
-    legacy_plan.add_argument("--topology-file", required=True)
-    legacy_plan.add_argument("--observations-dir", required=True)
-    legacy_plan.add_argument("--force-unpin", action="store_true")
-    legacy_plan.set_defaults(func=cmd_plan_legacy_repair)
-
-    legacy_render = sub.add_parser("render-legacy-hot-repair", help="Render legacy-hot repair plan")
-    legacy_render.add_argument("--plan-file", default="")
-    legacy_render.add_argument("--plan-json", default="")
-    legacy_render.add_argument("--json", action="store_true")
-    legacy_render.set_defaults(func=cmd_render_legacy_repair)
-
-    legacy_execute = sub.add_parser("execute-legacy-hot-repair", help="Execute eligible legacy-hot repair")
-    legacy_execute.add_argument("--plan-file", default="")
-    legacy_execute.add_argument("--plan-json", default="")
-    legacy_execute.add_argument("--hot-root", default="")
-    legacy_execute.add_argument("--rank", type=int, required=True)
-    legacy_execute.add_argument("--node-id", required=True)
-    legacy_execute.add_argument("--containers-json", required=True)
-    legacy_execute.set_defaults(func=cmd_execute_legacy_repair)
-
-    legacy_result = sub.add_parser("render-legacy-hot-result", help="Render legacy-hot repair result")
-    legacy_result.add_argument("--result-file", required=True)
-    legacy_result.add_argument("--json", action="store_true")
-    legacy_result.set_defaults(func=cmd_render_legacy_result)
 
     acquisition_inspect = sub.add_parser(
         "inspect-home-acquisition-target",

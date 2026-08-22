@@ -472,21 +472,15 @@ durable home separately before running preparation.
      `max(64 GiB, 5% filesystem capacity)` reserve on every selected rank;
    - an explicit undersized hard cap blocks before mutation; and
    - no automatic eviction, reserve relaxation, or transport fallback occurs.
-10. read-only health and legacy-hot repair on every confirmed physical rank:
-   - use only an isolated disposable hot root with tiny synthetic schema-1/2
-     instances; never target real `/var/tmp/pulsar-hot` or model caches;
-   - health reports every rank, cached-catalog/primary state, legacy metadata,
-     and Docker/SSH loss without hashing or mutation;
-   - stopped managed-container and pinned state block removal;
-   - removal requires a current health-issued ID plus `--yes`, and pinned state
-     additionally requires `--force-unpin`;
-   - stale ID, schema 3, malformed ownership, symlinked root/target, and
-     ambiguous/unobservable targets fail closed;
-   - atomic retirement preserves a sibling instance and an external sentinel
-     reached only through an embedded symlink;
-   - incomplete retirement is rediscovered and retryable; and
-   - the disposable legacy removal unblocks `home check`, followed by an exact
-     disposable-home removal repeat and sibling-preservation proof.
+10. read-only health on every confirmed physical rank:
+   - health reports every rank, cached-catalog/primary state, leftover
+     schema-1/2 as untrusted, and Docker/SSH loss without hashing or mutation;
+   - public `hot legacy check|remove` is removed (SIM-13); do not reintroduce
+     a Pulsar mutation path for leftover schema-1/2;
+   - leftover files under `PULSAR_HOT_ROOT`, if any, are site-admin cleanup;
+   - historical disposable-repair evidence remains
+     `results/model-library/model-library-health-legacy-repair-gate-20260812.json`
+     and is not a live operator command.
 11. interactive model-storage delegation when its eligibility or command
     contract changes:
     - browsing and health recheck remain mutation-free;
@@ -603,6 +597,8 @@ repair, stopped-container and pinned blockers, no-follow/sibling preservation,
 continued attention for preserved untracked content, and exact disposable-home
 removal. See
 `results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
+SIM-13 later removed the public repair command after lab confirmation that no
+schema-1/2 hot instances remained; that artifact stays historical.
 
 Gate 13 has deterministic Python and thin public-CLI coverage plus the physical
 Qwen acquisition artifact cited above. Gate 14 has deterministic Python,

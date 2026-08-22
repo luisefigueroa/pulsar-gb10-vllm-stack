@@ -45,11 +45,13 @@ public-contract parking lot without hiding those CLIs.
 | `activate` | Remove in window | Public alias for `prepare`. |
 | Leftover pair-only lifecycle helpers | Remove in window | Inventory during implementation; replace with N-rank paths. |
 | `scripts/weight-fabric.sh show\|unmount\|teardown` | Removed (SIM-12) | Lab confirmed leftover configs gone; helper deleted. |
-| Hot schema-1/2 legacy repair | Retain for one window, then remove | Migration-only; refuse once no site-local schema-1/2 hot state remains. |
+| Hot schema-1/2 legacy repair | Removed (SIM-13) | Lab confirmed no leftover schema-1/2 hot instances; public `hot legacy check\|remove` refuses. Health still observes leftover schema-1/2 as untrusted. |
 | `./pulsar` plus current `scripts/` / `cluster/` / `serve.sh` | Retain | ADR 0009: low-level CLIs stay. This ADR does not hide them. |
 
 Site leftover NFS exports/mounts, if any still exist after SIM-12, are
-site-admin cleanup, not a Pulsar command. No automatic privileged sweep.
+site-admin cleanup, not a Pulsar command. Leftover schema-1/2 hot files after
+SIM-13, if any, are the same: site-admin cleanup, not a Pulsar command. No
+automatic privileged sweep.
 
 ## Consequences
 
@@ -86,9 +88,24 @@ pair-only names if they appear.
 
 Not in this slice: `--force-unpin`, inventory keys `head`/`worker`/`rank-N`,
 `worker_available_gib`, leftover `weight-fabric.sh show|unmount|teardown`
-(removed later, SIM-12), hot schema-1/2 repair, topology schema 1 as
-`detect-fabric` output, DSpark, SIM-13. Root Compose was removed later by
-ADR 0010 / SWI-730.
+(removed later, SIM-12), hot schema-1/2 repair (removed later, SIM-13),
+topology schema 1 as `detect-fabric` output, DSpark. Root Compose was
+removed later by ADR 0010 / SWI-730.
 
 `HEAD_IP`/`WORKER_IP` remain refuse-only: they never confirm membership
 (AUD-01). There is no membership parser to delete.
+
+## Implementation (SIM-13, 2026-08-22)
+
+Lab confirmation: cached `health --json` on the confirmed topology reported
+`hot_instances: []`. Empty leftover group directories under the default hot
+root were removed with `rmdir`. No schema-1/2 `hot.json` remained. Durable
+homes were not deleted.
+
+Public `scripts/model-library.sh hot legacy check|remove` parses then exits 2.
+Health still classifies leftover schema-1/2 as `metadata_status=legacy` and
+attention; it does not advertise a repair command. Internal Python repair
+planners are deleted. `--force-unpin` on `purge-hot` is unchanged. Topology
+schema 1 remains enroll bootstrap only. Historical
+`results/model-library/model-library-health-legacy-repair-gate-20260812.json`
+is retained.

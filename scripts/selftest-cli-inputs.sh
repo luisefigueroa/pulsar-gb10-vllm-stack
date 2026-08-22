@@ -38,6 +38,10 @@ expect_failure 2 "ADR 0006" "serve rejects the removed weight-mode axis" \
   "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --weight-source library-hot
 expect_failure 2 "SIM-12" "pulsar refuses removed weight-fabric helper" \
   "$REPO_DIR/pulsar" weight-fabric show qwen3-1.7b-2node
+expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy repair" \
+  "$REPO_DIR/scripts/model-library.sh" hot legacy check unused --json
+expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy remove" \
+  "$REPO_DIR/scripts/model-library.sh" hot legacy remove unused --yes
 
 expect_failure 2 "ADR 0008" "serve refuses removed --force" \
   "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --force

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Thin public-CLI scenarios for model-library health and legacy-hot repair.
+# Thin public-CLI scenarios for model-library health. Public hot-legacy repair
+# is removed (SIM-13); leftover schema-1/2 is observed, not mutated.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,35 +35,34 @@ assert report["schema_version"] == 1
 assert report["state"] == "attention"
 legacy = [item for item in report["hot_instances"] if item["metadata_status"] == "legacy"]
 assert {item["rank"] for item in legacy} == {0, 1}
-assert all(item["repairable"] for item in legacy)
+assert all(item["repairable"] is False for item in legacy)
+assert all(item["repair_id"] is None for item in legacy)
+assert "legacy-hot-metadata" in {issue["code"] for issue in report["issues"]}
+assert not any(
+    (issue.get("remediation") or {}).get("command")
+    for issue in report["issues"]
+    if issue.get("code") == "legacy-hot-metadata"
+)
 encoded = json.dumps(report)
 assert sys.argv[2] not in encoded
 assert "fixture-owner-id" not in encoded
 assert "fixture-client-id" not in encoded
 PY
 
-repair_id=$(python3 -c '
-import json, sys
-doc = json.load(open(sys.argv[1], encoding="utf-8"))
-print(next(item["repair_id"] for item in doc["hot_instances"] if item["rank"] == 0))
-' "$STATE/health.json")
-remote_repair_id=$(python3 -c '
-import json, sys
-doc = json.load(open(sys.argv[1], encoding="utf-8"))
-print(next(item["repair_id"] for item in doc["hot_instances"] if item["rank"] == 1))
-' "$STATE/health.json")
-env "${BASE_ENV[@]}" "$LIBRARY" hot legacy check "$repair_id" --json \
-  >"$STATE/check.json"
-python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["eligible"]' \
-  "$STATE/check.json"
-
-if env "${BASE_ENV[@]}" "$LIBRARY" hot legacy remove "$repair_id" \
-    >"$STATE/no-confirm.out" 2>"$STATE/no-confirm.err"; then
-  echo "legacy removal unexpectedly succeeded without --yes" >&2
-  exit 1
-fi
+hot_rc=0
+env "${BASE_ENV[@]}" "$LIBRARY" hot legacy check unused --json \
+  >"$STATE/hot-check.out" 2>"$STATE/hot-check.err" || hot_rc=$?
+[ "$hot_rc" -eq 2 ]
+grep -q "SIM-13" "$STATE/hot-check.err"
 [ -d "$STATE/hot-owner/fixture-health-topology/content" ]
-grep -q -- '--yes' "$STATE/no-confirm.err"
+
+hot_remove_rc=0
+env "${BASE_ENV[@]}" "$LIBRARY" hot legacy remove unused --yes \
+  >"$STATE/hot-remove.out" 2>"$STATE/hot-remove.err" || hot_remove_rc=$?
+[ "$hot_remove_rc" -eq 2 ]
+grep -q "SIM-13" "$STATE/hot-remove.err"
+[ -d "$STATE/hot-owner/fixture-health-topology/content" ]
+[ -d "$STATE/hot-client/fixture-health-topology/content" ]
 
 COLUMNS=44 env "${BASE_ENV[@]}" "$LIBRARY" health \
   >"$STATE/narrow.out" 2>/dev/null || true
@@ -92,29 +92,6 @@ doc=json.load(open(sys.argv[1]))
 assert doc["state"] == "unavailable"
 assert doc["issues"]
 ' "$STATE/unavailable.json"
-
-env "${BASE_ENV[@]}" "$LIBRARY" hot legacy remove "$repair_id" --yes \
-  --json >"$STATE/removed.json"
-python3 -c '
-import json,sys
-doc=json.load(open(sys.argv[1]))
-assert doc["state"] == "removed"
-assert doc["rank"] == 0
-' "$STATE/removed.json"
-[ ! -e "$STATE/hot-owner/fixture-health-topology/content" ]
-[ -d "$STATE/hot-owner/fixture-health-topology/sibling" ]
-[ "$(cat "$STATE/external/sentinel")" = preserve ]
-
-env "${BASE_ENV[@]}" "$LIBRARY" hot legacy remove \
-  "$remote_repair_id" --yes --json >"$STATE/removed-remote.json"
-python3 -c '
-import json,sys
-doc=json.load(open(sys.argv[1]))
-assert doc["state"] == "removed"
-assert doc["rank"] == 1
-' "$STATE/removed-remote.json"
-[ ! -e "$STATE/hot-client/fixture-health-topology/content" ]
-[ -d "$STATE/hot-client/fixture-health-topology/sibling" ]
 
 route=$(PULSAR_DOCTOR_SCRIPT="$STATE/doctor" "$REPO_DIR/pulsar" doctor --json)
 [ "$route" = "doctor-routed:--json" ]
