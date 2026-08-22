@@ -30,7 +30,7 @@ The model library is the only weight-distribution mechanism
 ([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)):
 one durable home per exact revision, sealed hot views on non-home ranks, and
 local files on every rank before vLLM starts. There is no mode-selection
-axis; `--weight-source`/`--weight-mode` fail closed. Live NFSv4.2/RDMA under
+axis; `--weight-source`/`--weight-mode` fail without fallback. Live NFSv4.2/RDMA under
 vLLM remains rejected as a serving runtime source (ADR 0005): a crashed rank
 cannot cold-start without the owner export; leftover site mounts get
 unmount/teardown only. Control SSH, inference NCCL/RoCE, and weight
@@ -40,7 +40,7 @@ transfer remain distinct data planes even when they involve the same machines.
 
 - `scripts/selftest.sh` runs control-plane tests and Python syntax checks without requiring Docker.
 - `scripts/doctor.sh` verifies GPU, Docker, port, cache, and optional worker readiness on GB10 hardware.
-- `scripts/list-models.sh --serving` lists every serving-purpose profile and its advisory status. `--legacy-tested` filters the historical `STATUS=tested*` recommendation class; it does not mean ADR 0004 `Validated`. `--validated` is removed (ADR 0008) and fails closed with that replacement.
+- `scripts/list-models.sh --serving` lists every serving-purpose profile and its advisory status. `--legacy-tested` filters the historical `STATUS=tested*` recommendation class; it does not mean ADR 0004 `Validated`. `--validated` is removed (ADR 0008) and fails without fallback; use `--legacy-tested`.
 - `scripts/up.sh qwen3-1.7b --dry-run` exercises launch checks without starting a server.
 - `validate/run-gates.sh <served-name> --tag <label>` runs determinism captures, throughput benchmarks, and optional baseline/needle gates against an already-running server.
 - `docker build -t vllm-gb10:v0.26.0 .` builds the optional metadata overlay; see `docs/BUILD.md` before changing image pins.
@@ -60,7 +60,7 @@ language for new features without an explicit decision.
 | Prefer **Bash** | Prefer **Python 3** |
 |---|---|
 | Operator CLIs and entrypoints (`scripts/*.sh`, `cluster/*.sh`, wizard/home) | JSON schemas, catalogs, digests, budgets, identity keys, merge/label logic, launch-plan/probe contracts (`launch_plan.py`) |
-| `source lib.sh`, `load_conf`, topology load, flag parsing | Multi-step planning, validation, fail-closed policy decisions |
+| `source lib.sh`, `load_conf`, topology load, flag parsing | Multi-step planning, validation, policy decisions that fail without fallback |
 | SSH orchestration, `rsync`/`docker` argv assembly, sudo/interactive flows | Atomic read/write of site-local state files (catalog, stamps, audits) |
 | Thin wrappers that call Python and print human-oriented status | Machine-oriented `--json` structures and stable error codes/messages |
 | Lifecycle glue (`up` / `down` / preflight hooks) | Unit-testable pure logic and fixture generation under `scripts/testlib/` |
@@ -226,10 +226,12 @@ explaining them in straightforward language.
 - Preserve defined terms such as `Model Serving Release`, `Validated`,
   `library-hot`, and `rank`; do not replace them with approximate synonyms.
 - Prefer concrete wording such as "preparation fails if the model identity
-  cannot be verified" over shorthand such as "fails closed."
-- When `fail closed` is the relevant policy term, retain it where policy
-  precision matters and explain the behavior: the operation fails if the
-  required condition cannot be verified, and it does not use a fallback.
+  cannot be verified."
+- When the policy is refuse rather than guess, say **fail without fallback**:
+  the operation fails if the required condition cannot be verified, and it
+  does not skip the check, remap, or continue on a weaker path. Accepted ADRs
+  may still say `fail closed`; in new operator-facing text, use fail without
+  fallback and do not assume the reader knows that glossary.
 - Explain scope words such as "bounded," "reviewed," and "two-rank" when their
   practical limits may not be obvious.
 - Avoid dense noun phrases, unexplained abbreviations, and implementation terms
@@ -257,7 +259,7 @@ could mean either the feature or the tracking item.
 Deterministic tests use three tiers (SIM-09, 2026-08-22):
 
 - **quick** — syntax, core schemas, documentation privacy, and critical
-  identity/topology/ownership fail-closed checks.
+  identity/topology/ownership checks that fail without fallback.
 - **affected** — suites for the subsystems the change actually touches.
 - **full** — `scripts/selftest.sh`, required in CI and before publication.
 
@@ -306,7 +308,7 @@ fixture site maps inside generic doubles.
   large paste of mock logic, split scenarios or extract `scripts/testlib/`
   helpers in the same PR (or a prerequisite cleanup PR).
 - Production code may keep calling `cat`/SSH; the mock must not re-encode the
-  site map. Assert product contracts (thresholds, digests, fail-closed paths),
+  site map. Assert product contracts (thresholds, digests, paths that fail without fallback),
   not the mock’s internal host table.
 
 **Selftest PR checklist**
@@ -397,7 +399,7 @@ infrastructure unless that authority is explicitly part of the approved plan.
   operator surfaces must not hide or block a release solely because of status,
   including legacy `do-not-use`/`blocked` labels or no reviewed decision.
   Recommendation/default policy may prefer stronger evidence. Operational
-  admission still fails closed for concrete identity, integrity, recipe,
+  admission still fails without fallback for concrete identity, integrity, recipe,
   runtime/geometry, capacity, topology, security, lifecycle, or ownership
   failures.
 - Criterion scopes are fixed: stability, accuracy, throughput, latency, and
@@ -590,7 +592,7 @@ this work; the skill is procedural and does not outrank these sources.
   create a controller copy, refresh the catalog, prepare hot views, or launch.
   Guarded `home check` / `home remove --yes` may retire a recognized
   incomplete or refs-only Hugging Face hub occupancy that blocks
-  source-attested `home add`. That path is exact-repository-only, fail-closed,
+  source-attested `home add`. That path is exact-repository-only, fails without fallback,
   and confirmation-gated: `home check` is read-only, `--yes` is required to
   mutate, catalog refresh never auto-deletes, and complete-home removal is
   unchanged.
@@ -617,8 +619,8 @@ this work; the skill is procedural and does not outrank these sources.
   serving or onboarding alternative
   ([ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md)). A crashed
   rank cannot cold-start without the owner export, NFS/RDMA stack, and exact
-  route. Library serving already presents local files. Launch fails closed
-  with no remap. Leftover site mounts use confirmation-gated unmount/teardown
+  route. Library serving already presents local files. Launch fails without
+  fallback and does not remap. Leftover site mounts use confirmation-gated unmount/teardown
   only. This does not retire `ssh-roce` copy, NCCL/RoCE inference, or
   topology discovery (`detect-fabric.sh`). The one-shot `nfs-rdma` prepare
   experiment is retired with the fabric internals (ADR 0006).
@@ -662,7 +664,7 @@ If a mixed worktree cannot be separated safely, stop and ask. Do not publish
 known-incomplete or failing work as ready, and do not merge, force-push, or
 bypass review without explicit authorization.
 
-History favors concise imperative subjects, usually Conventional Commit style: `fix(memory): ...`, `feat(serve): ...`, or `docs(patches): ...`. Keep commits focused. Pull requests should explain affected models and hardware paths, link relevant issues, list commands run, and include result artifact paths. Highlight image/config changes and any behavior not validated on physical GB10 hardware. Call out fail-closed behavior, new fallbacks (there should be none silent), and whether hardware validation was run or is still required.
+History favors concise imperative subjects, usually Conventional Commit style: `fix(memory): ...`, `feat(serve): ...`, or `docs(patches): ...`. Keep commits focused. Pull requests should explain affected models and hardware paths, link relevant issues, list commands run, and include result artifact paths. Highlight image/config changes and any behavior not validated on physical GB10 hardware. Call out fail-without-fallback behavior, new fallbacks (there should be none silent), and whether hardware validation was run or is still required.
 
 ## Security & Configuration
 
