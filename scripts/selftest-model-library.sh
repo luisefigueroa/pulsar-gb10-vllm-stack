@@ -359,7 +359,7 @@ assert_true "unknown backend rejected" test "$bad_rc" -ne 0
 assert_true "up.sh has no weight-mode axis" \
   bash -c "! grep -q 'WEIGHT_SOURCE=' '$REPO_DIR/scripts/up.sh'"
 assert_true "start-cluster labels launches library-hot" \
-  grep -q 'PULSAR_WEIGHT_SOURCE_LABEL}=library-hot' "$REPO_DIR/cluster/start-cluster.sh"
+  bash -c "grep -q write_launch_plan_file '$REPO_DIR/cluster/start-cluster.sh' && grep -q 'LABEL_WEIGHT_SOURCE' '$REPO_DIR/scripts/launch_plan.py' && grep -q 'STORAGE_MECHANISM = \"library-hot\"' '$REPO_DIR/scripts/launch_plan.py'"
 assert_true "cluster launch validates remote expected identity" \
   grep -q -- --expected-validation-json "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "cluster launch uses serve-time witness with full-verify fallback" \

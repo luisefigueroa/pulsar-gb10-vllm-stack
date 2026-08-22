@@ -21,6 +21,8 @@ run() {
 run "status advisory policy" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
 run "N-node topology + exact profile subset" "$REPO_DIR/scripts/selftest-topology.sh"
+run "launch-plan and serving-probe contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_launch_plan.py"
 run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust.sh"
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
