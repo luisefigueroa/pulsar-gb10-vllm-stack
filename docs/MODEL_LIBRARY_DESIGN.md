@@ -1314,3 +1314,4 @@ rather than promotion blockers.
 | 2026-08-22 | **SIM-03:** keep source-attested unsealed Hugging Face `home add` as a core catalog/artifact feature. Plan → confirm → execute remains the brand-new unsealed path. Receipts stay. Not a seal and not a non-HF import. |
 | 2026-08-22 | **SIM-01:** keep ADR 0004's five separately persisted object roles. The Qwen3.8 reviewed lineage is the first real issuance; collapsing to one Release Assessment is rejected until a second issuance or a migration ADR. |
 | 2026-08-22 | **SIM-05:** model profiles remain executable shell-style `models/*.conf`. Declarative TOML is rejected; a partial format migration would be worse than today's dual Bash/Python readers. |
+| 2026-08-22 | **SIM-06:** wizard switching keeps exact rollback only for reviewed-match `library-hot` services. Unsealed switches stop without a restore promise. Explicit stop-then-start for every switch is rejected. |

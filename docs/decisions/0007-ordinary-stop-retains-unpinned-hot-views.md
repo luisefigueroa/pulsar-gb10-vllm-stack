@@ -80,6 +80,19 @@ Catalog/artifact retention and serving-integration restart. Existing 2026-08-16
 restart-with-views-present evidence remains applicable. This decision does not
 change a Model Serving Release tuple or require model qualification.
 
+## Interpretation note — 2026-08-22 (SIM-06)
+
+Wizard model switching keeps the current library-hot contract. Exact
+rollback is only for a running `library-hot` service whose identity is a
+reviewed `match`. Unsealed or unvalidated library-hot switches use a
+guarded stop with no restore promise. Leftover pre-library replacement
+records are archived, not rolled back. SIM-06 rejects requiring every
+switch to be an explicit stop then start, and rejects “rollback only for
+replicated” (that source was removed by ADR 0006). Ownership-safe stop,
+confirmation, identity checks, and no automatic restart loop remain
+mandatory. SIM-04 may later unify the engine without changing this
+operator contract.
+
 ## Revisit triggers
 
 Revisit with a new ADR if a site needs automatic last-N or budget-based
