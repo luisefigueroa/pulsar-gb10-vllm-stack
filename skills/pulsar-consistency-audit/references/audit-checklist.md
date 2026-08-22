@@ -73,8 +73,9 @@ Verify consistency across doctrine, code, UI, tests, operations, and evidence:
   mode-selection flags exist, and `--weight-source`/`--weight-mode` fail
   closed with remediation;
 - a confirmed topology manifest (one-node is valid) is a serving prerequisite;
-- operator language says “prepare model for serving”; `activate` remains only a
-  compatibility command/internal term;
+- operator language says “prepare model for serving”; public `activate` is
+  removed (ADR 0008) and fails closed with `prepare`; `activate` remains an
+  internal-schema term;
 - no silent transport, storage, geometry, or cache fallback occurs;
 - live NFS/RDMA serving (`live-remote-readonly`) is rejected (ADR 0005) and is
   not offered as a serving alternative;

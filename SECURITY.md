@@ -25,8 +25,9 @@ multi-tenant SaaS:
   confirmed rank. Membership is `.cluster-topology.json` from
   `scripts/detect-fabric.sh --write-topology`, not `.env`. Enroll control
   endpoints with `scripts/topology-ssh-trust.sh`. Keep host keys offline
-  from the git tree. `HEAD_IP` / `WORKER_IP` in `.env` are not honored for
-  topology; multi-node operations refuse without a confirmed manifest.
+  from the git tree. `HEAD_IP` / `WORKER_IP` in `.env` never confirm
+  membership and do not construct topology; multi-node operations refuse
+  without a confirmed manifest.
   Worker calls use BatchMode, bounded connection/liveness settings, and an
   SSH option terminator before the validated host value.
 - Never commit `.env`, tokens, or host-specific overlays. `.gitignore`

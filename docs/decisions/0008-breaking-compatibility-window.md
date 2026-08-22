@@ -60,3 +60,32 @@ compat alias. No automatic privileged sweep.
 Revisit if SWI-728 redefines the supported public surface, if leftover
 fabric/hot-repair state cannot be cleared in one window, or when discovery
 no longer needs topology schema 1 as enroll input.
+
+## Implementation (SIM-11, 2026-08-22)
+
+The window is executed for the public aliases classified **Remove in window**:
+
+- `--force` on `up.sh`, `serve.sh`, and `cluster/start-cluster.sh` parses then
+  exits 2. Status labels never block serving.
+- `--allow-unvalidated` on the model-library CLI and Python planners parses
+  then exits 2. Seals still fail closed.
+- `list-models.sh --validated` parses then exits 2; use `--legacy-tested`.
+- `model-library.sh catalog list --validated` and Python `--validated` parse
+  then exit 2; use `--reviewed-identity`.
+- Public `activate` parses then exits 2; use `prepare`. Internal planner
+  command `plan-activate` and schema term `activate` remain.
+
+N≥2 `check-image.sh` JSON emits `rank-unreachable` / `rank-docker-error` /
+`missing-on-rank` (or `missing-both`). Pair-only `worker-*` names are no
+longer emitted. N=1 `head-*` / `target-*` / `missing-on-head` stay because
+`up.sh` remediations differ (`missing-on-head` still `sync-image --pull`;
+`missing-on-rank` does not). `up.sh` and the wizard still accept the old
+pair-only names if they appear.
+
+Not in this slice: `--force-unpin`, inventory keys `head`/`worker`/`rank-N`,
+`worker_available_gib`, leftover `weight-fabric.sh show|unmount|teardown`,
+hot schema-1/2 repair, topology schema 1 as `detect-fabric` output, DSpark /
+Compose, SIM-12/13.
+
+`HEAD_IP`/`WORKER_IP` remain refuse-only: they never confirm membership
+(AUD-01). There is no membership parser to delete.

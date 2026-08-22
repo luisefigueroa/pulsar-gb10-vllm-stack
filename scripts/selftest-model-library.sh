@@ -155,14 +155,18 @@ assert_true "validation-bundle verify documented in CLI" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'validation-bundle verify'"
 reviewed_list=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
   "$REPO_DIR/scripts/model-library.sh" catalog list --reviewed-identity --json)
-validated_alias_list=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
-  "$REPO_DIR/scripts/model-library.sh" catalog list --validated --json)
 reviewed_count=$(printf '%s' "$reviewed_list" | \
   python3 -c 'import json,sys; print(len(json.load(sys.stdin)["models"]))')
 assert_eq "catalog list accepts reviewed-identity filter" \
   "$reviewed_count" "0"
-assert_eq "catalog list validated alias matches reviewed-identity filter" \
-  "$validated_alias_list" "$reviewed_list"
+set +e
+validated_alias_out=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
+  "$REPO_DIR/scripts/model-library.sh" catalog list --validated --json 2>&1)
+validated_alias_rc=$?
+set -e
+assert_eq "catalog list --validated fails closed" "$validated_alias_rc" "2"
+assert_true "catalog list --validated names --reviewed-identity" \
+  grep -q -- '--reviewed-identity' <<<"$validated_alias_out"
 bundle_sealed_state=$("$REPO_DIR/scripts/model-library.sh" \
   validation-bundle verify qwen3-1.7b --json |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
@@ -560,8 +564,13 @@ assert_true "multi-rank prepare defaults to ssh-roce" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'multi-rank uses ssh-roce'"
 assert_true "prepare help does not call one-rank experimental" \
   bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'one-rank and legacy-unsealed'"
-assert_true "activate remains a compatibility alias" \
-  grep -q 'prepare|activate) cmd_activate' "$REPO_DIR/scripts/model-library.sh"
+set +e
+activate_out=$("$REPO_DIR/scripts/model-library.sh" activate qwen3-1.7b 2>&1)
+activate_rc=$?
+set -e
+assert_eq "public activate fails closed" "$activate_rc" "2"
+assert_true "activate names prepare" \
+  grep -q 'use prepare' <<<"$activate_out"
 assert_true "bench-ssh-roce documented in CLI" \
   grep -q bench-ssh-roce "$REPO_DIR/scripts/model-library.sh"
 assert_true "probe-ssh-roce documented in CLI" \

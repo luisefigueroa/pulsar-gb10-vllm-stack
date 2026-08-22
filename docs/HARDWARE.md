@@ -111,9 +111,9 @@ control-network routing, firewall, and latency part of launch readiness.
 
 Documentation examples use
 [TEST-NET](https://datatracker.ietf.org/doc/html/rfc5737) ranges only. Never
-commit real site addresses. `HEAD_IP`/`WORKER_IP` environment variables are
-not honored for topology; multi-node operations require the confirmed
-manifest.
+commit real site addresses. `HEAD_IP`/`WORKER_IP` environment variables never
+confirm membership and do not construct topology; multi-node operations require
+the confirmed manifest.
 
 ## Storage
 

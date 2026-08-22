@@ -58,9 +58,10 @@ runtime-access recipe mismatch remain visible without blocking launch.
 advisory status `Testing incomplete`; other current profiles remain neutral.
 `STATUS=tested*` remains a separate
 legacy evidence/recommendation label; it still determines recommendation
-order. `--validated` is a deprecated alias for the `--legacy-tested` profile
-filter. Neither status field grants or denies serving. Existing reviewed
-seals/bundles are not automatically `Validated`.
+order. Filter that class with `--legacy-tested`. `--validated` is removed
+(ADR 0008) and fails closed with that replacement. Neither status field grants
+or denies serving. Existing reviewed seals/bundles are not automatically
+`Validated`.
 
 The current `./pulsar` commands do not capture or publish ADR 0004 objects or
 issue decisions. Local ADR 0004 release planning, attempt composition,
@@ -575,6 +576,29 @@ implementation was removed with the whole weight-mode axis
 mounts: confirmation-gated `scripts/weight-fabric.sh show|unmount|teardown`
 only. Historical notes: [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md).
 
+### Removed compatibility aliases (ADR 0008)
+
+These tokens still parse so the error names the replacement, then the command
+exits 2. They are not unknown-argument failures.
+
+| Removed | Replacement |
+|---|---|
+| `--force` on `up.sh`, `serve.sh`, `start-cluster.sh` | Drop the flag. Status labels never block serving. |
+| `--allow-unvalidated` | Drop the flag. Seals still fail closed. |
+| `list-models.sh --validated` | `--legacy-tested` (historical `STATUS=tested*`). Not ADR 0004 `Validated`. |
+| `model-library.sh catalog list --validated` | `--reviewed-identity`. Not ADR 0004 `Validated`. |
+| `model-library.sh activate` | `prepare` |
+
+`--force-unpin`, leftover `weight-fabric.sh show|unmount|teardown`, topology
+schema 1 as `detect-fabric` output, and hot schema-1/2 repair are not in this
+table. `HEAD_IP`/`WORKER_IP` never confirm membership and do not construct
+topology.
+
+N≥2 `check-image.sh` JSON emits `rank-unreachable` / `rank-docker-error` /
+`missing-on-rank` (or `missing-both`). One-node `missing-on-head` /
+`missing-on-target` still mean a different repair (`sync-image --pull`) than
+`missing-on-rank` (sync without `--pull`). Do not collapse those names.
+
 **The model library (federated catalog + local hot staging):** the only
 weight-distribution mechanism (ADR 0006); every scope — two-rank sealed,
 one-rank, legacy-unsealed — is supported. The fixed transport policy for
@@ -585,7 +609,7 @@ reviewed multi-rank preparation is recorded in
 model, creating rank-local runtime views from an **existing** durable home,
 transferring only non-home bytes, and verifying every rank. Preparation does
 not create the durable home, start a serving container, or qualify the model.
-The older `activate` command remains a backward-compatible alias.
+Public `activate` is removed (ADR 0008); use `prepare`.
 
 Typical reviewed multi-rank flow:
 
@@ -615,8 +639,8 @@ scripts/model-library.sh prepare <single-rank-sealed-profile> \
 Legacy-unsealed profiles are outside ADR 0003's fixed transport and stream
 policy. Their low-level preparation path needs no validation-status override;
 choose and record its transport and stream count as experiment inputs rather
-than inheriting the reviewed-profile recipe. The deprecated
-`--allow-unvalidated` flag remains an accepted no-op for compatibility.
+than inheriting the reviewed-profile recipe. `--allow-unvalidated` is removed
+(ADR 0008); drop the flag. It never bypassed a configured seal mismatch.
 
 Catalog refresh inventories existing durable homes; it does not download model
 bytes or create a primary home. Preparation therefore requires an eligible
@@ -939,8 +963,8 @@ Catalog schema 2 selects only its immutable commit. Preparation full-hashes ever
 rank, compares model/commit/manifest to the expected seal, writes hot schema 3
 with expected and observed provenance, and atomically creates that rank's
 `<instance>/.pulsar/witness.json` before ready is published. A configured
-mismatch always fails; validation status and the deprecated compatibility flag
-cannot bypass expected identity.
+mismatch always fails; validation status and the removed `--allow-unvalidated`
+flag cannot bypass expected identity.
 
 Launch rechecks the live profile/seal locally and the controller-provided
 validation identity remotely **before** using the witness. An unchanged witness

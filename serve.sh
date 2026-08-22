@@ -2,14 +2,13 @@
 # Serve a model from models/<name>.conf on this node.
 #
 #   ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-decode]
-#              [--dry-run] [--port N] [--node NODE_ID] [--force]
+#              [--dry-run] [--port N] [--node NODE_ID]
 #   ./serve.sh --list
 #
 # <model-name> is a file in models/ without the .conf suffix.
 # -d            detach (docker -d)
 # --spec-decode / --no-spec-decode override the model profile's default
 # --dry-run     print the docker command instead of running it
-# --force       deprecated no-op; retained for command compatibility
 #
 # Multi-node profiles (NODES>1): use cluster/start-cluster.sh.
 set -euo pipefail
@@ -32,7 +31,7 @@ if [ "${1:-}" = "--list" ]; then
   exit 0
 fi
 
-MODEL_NAME="${1:?usage: ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-decode] [--dry-run] [--port N] [--force] (see --list)}"
+MODEL_NAME="${1:?usage: ./serve.sh <model-name> [-d] [--spec-decode|--no-spec-decode] [--dry-run] [--port N] (see --list)}"
 shift
 
 DETACH="" SPEC_MODE=auto DRY_RUN=0 PORT_OVERRIDE="" NODE_SELECTOR=""
@@ -42,7 +41,7 @@ while [ $# -gt 0 ]; do
     --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
     --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
     --dry-run) DRY_RUN=1 ;;
-    --force) : ;; # Backward-compatible no-op: status labels are advisory.
+    --force) refuse_removed_force_flag ;;
     --weight-source|--weight-mode)
       refuse_removed_weight_mode_flag
       ;;

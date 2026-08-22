@@ -55,10 +55,10 @@ Usage:
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
       [--cache-root PATH] [--yes]
   scripts/model-library.sh cold stage-only <profile>
-      [--allow-unvalidated] [--yes] [--nodes N]
+      [--yes] [--nodes N]
   scripts/model-library.sh prepare <profile>
       [--transport ssh-control|ssh-roce]
-      [--allow-unvalidated] [--yes] [--interactive-sudo] [--time]
+      [--yes] [--interactive-sudo] [--time]
       [--copy-streams N] [--node RANK|NODE_ID]
   scripts/model-library.sh probe-ssh-roce <profile> [--nodes N] [--rail-index N]
   scripts/model-library.sh bench-ssh-roce <profile> [--tag TAG] [--yes]
@@ -83,13 +83,12 @@ Notes:
   • Catalog identity labels distinguish reviewed expected seals from
     legacy-unsealed STATUS claims; local bytes never create expected identity.
     catalog list --reviewed-identity shows present entries with reviewed
-    expected seals. --validated remains a compatibility alias for that identity
-    filter; it is not a Model Serving Release status filter.
+    expected seals. --validated is removed (ADR 0008); use --reviewed-identity.
     Sealed profiles also require a content-addressed validation bundle whose
     model, image, runtime, geometry, artifact, and evidence contract matches.
     Validation labels are advisory: prepare accepts fully verified unsealed
-    content without an override. --allow-unvalidated remains a deprecated no-op
-    for compatibility and never bypasses a configured seal mismatch.
+    content without an override. --allow-unvalidated is removed (ADR 0008);
+    drop the flag. It never bypassed a configured seal mismatch.
   • Duplicate complete homes refuse resolve until an exact-revision primary is
     chosen. The selection persists in the site catalog across refreshes; a
     missing selected home is stale and fails closed rather than auto-electing.
@@ -153,9 +152,8 @@ Notes:
     or capacity fallback occurs.
   • Live NFS serving is retired (ADR 0005); the one-shot nfs-rdma prepare
     experiment is retired with it (ADR 0006).
-  • Compatibility: activate remains a supported alias for prepare. Model
-    preparation does not start a serving container or establish model
-    qualification.
+  • activate is removed (ADR 0008): use prepare. Model preparation does
+    not start a serving container or establish model qualification.
 EOF
 }
 
@@ -635,7 +633,8 @@ cmd_catalog_list() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) args+=(--json) ;;
-      --reviewed-identity|--validated) args+=(--reviewed-identity) ;;
+      --reviewed-identity) args+=(--reviewed-identity) ;;
+      --validated) refuse_removed_catalog_validated_flag ;;
       -h|--help) usage; return 0 ;;
       *) die "unknown arg: $1" ;;
     esac
@@ -888,11 +887,11 @@ cmd_cold_adopt() {
 }
 
 cmd_cold_stage_only() {
-  local profile="" yes=0 allow_unval=0 nodes=1 root=""
+  local profile="" yes=0 nodes=1 root=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --yes|-y) yes=1 ;;
-      --allow-unvalidated) allow_unval=1 ;;
+      --allow-unvalidated) refuse_removed_allow_unvalidated_flag ;;
       --nodes)
         shift
         [ $# -gt 0 ] || die "--nodes needs a value"
@@ -911,7 +910,7 @@ cmd_cold_stage_only() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: cold stage-only <profile> [--yes] [--allow-unvalidated]"
+  [ -n "$profile" ] || die "usage: cold stage-only <profile> [--yes]"
   require_py
   load_cluster_topology >/dev/null \
     || die "confirmed topology required (scripts/detect-fabric.sh --write-topology)"
@@ -933,7 +932,7 @@ cmd_cold_stage_only() {
     # shellcheck disable=SC2207
     plan_args+=($(cold_root_args))
   fi
-  [ "$allow_unval" = 1 ] && plan_args+=(--allow-unvalidated)
+
 
   local plan action expected_validation_json rank budget_plan
   plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
@@ -2674,7 +2673,7 @@ phase_record() {
 
 cmd_activate() {
   local profile="" backend=copy backend_explicit=0 transport=""
-  local allow_unvalidated=0 yes=0 time_it=0 node_selector=""
+  local yes=0 time_it=0 node_selector=""
   local plan stamp_json verifying_stamp_json expected_validation_json budget_plan
   local instance hub_source hub_dest home_rank rank source
   local expected_backend requested_mode
@@ -2712,7 +2711,7 @@ cmd_activate() {
         node_selector="$2"
         shift
         ;;
-      --allow-unvalidated) allow_unvalidated=1 ;;
+      --allow-unvalidated) refuse_removed_allow_unvalidated_flag ;;
       --yes|-y) yes=1 ;;
       --interactive-sudo) LIBRARY_SUDO_MODE=interactive ;;
       --time) time_it=1 ;;
@@ -2790,7 +2789,6 @@ cmd_activate() {
     --nodes "$NODES"
   )
   [ -z "$target_rank" ] || plan_flags+=(--target-rank "$target_rank")
-  [ "$allow_unvalidated" = 1 ] && plan_flags+=(--allow-unvalidated)
 
   plan=$(library_plan_activate "$profile" "${plan_flags[@]}")
   action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
@@ -3540,6 +3538,8 @@ main() {
   [ $# -ge 1 ] || { usage; exit 2; }
   local cmd="$1"
   shift
+  # Refuse before locks so the old public alias does not wait on a hot lock.
+  [ "$cmd" = activate ] && refuse_removed_activate_command
   case "$cmd:${1:-}:${2:-}" in
     -h:*|--help:*|help:*) ;;
     home:*|catalog:refresh:*|catalog:primary:set|catalog:primary:clear)
@@ -3550,7 +3550,7 @@ main() {
       ;;
   esac
   case "$cmd" in
-    prepare|activate|pin|unpin|purge-hot)
+    prepare|pin|unpin|purge-hot)
       acquire_model_library_hot_lock exclusive
       ;;
     cold)
@@ -3620,7 +3620,8 @@ main() {
         *) usage; exit 2 ;;
       esac
       ;;
-    prepare|activate) cmd_activate "$@" ;;
+    prepare) cmd_activate "$@" ;;
+    activate) refuse_removed_activate_command ;;
     probe-ssh-roce) cmd_probe_ssh_roce "$@" ;;
     bench-ssh-roce) cmd_bench_ssh_roce "$@" ;;
     pin) cmd_pin "$@" ;;

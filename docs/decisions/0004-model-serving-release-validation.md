@@ -391,9 +391,10 @@ reviewed assertion about the full four-part tuple; this projection does not
 reconstruct that complete tuple from shell profile fields. Any tuple-changing
 profile edit must derive and bind the new release ID in the same reviewed
 change. Existing `STATUS=tested*`,
-`--validated`, reviewed seals, and legacy-unsealed behavior retain their
+reviewed seals, and legacy-unsealed behavior retain their
 separate legacy meanings and recommendation order; none grants or denies
-serving. No existing profile is automatically relabeled `Validated`. The
+serving. The `--validated` CLI alias is removed by
+[ADR 0008](./0008-breaking-compatibility-window.md). No existing profile is automatically relabeled `Validated`. The
 tracked ADR 0004 store contains the Qwen3.8 lineage, and
 `qwen3.8-27b-fp8` is bound to its `Testing incomplete` decision. Other current
 profiles remain unbound.

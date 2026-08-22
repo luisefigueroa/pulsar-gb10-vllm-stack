@@ -72,21 +72,13 @@ if [ "$NODES" -gt 1 ] && [ "$state" != head-docker-error ]; then
       if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" true \
           >/dev/null 2>&1; then
         rank_states[$rank]=unreachable
-        if [ "$rank" = 1 ] && [ "$NODES" = 2 ]; then
-          state=worker-unreachable
-        else
-          state=rank-unreachable
-        fi
+        state=rank-unreachable
         continue
       fi
       if ! "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
           "docker info >/dev/null 2>&1"; then
         rank_states[$rank]=docker-error
-        if [ "$rank" = 1 ] && [ "$NODES" = 2 ]; then
-          state=worker-docker-error
-        else
-          state=rank-docker-error
-        fi
+        state=rank-docker-error
         continue
       fi
       if "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
@@ -94,10 +86,7 @@ if [ "$NODES" -gt 1 ] && [ "$state" != head-docker-error ]; then
         rank_states[$rank]=ok
       else
         rank_states[$rank]=missing
-        if [ "$rank" = 1 ] && [ "$NODES" = 2 ] \
-            && [ "${rank_states[0]}" = ok ]; then
-          state=missing-on-worker
-        elif [ "${rank_states[0]}" = missing ]; then
+        if [ "${rank_states[0]}" = missing ]; then
           state=missing-both
         else
           state=missing-on-rank

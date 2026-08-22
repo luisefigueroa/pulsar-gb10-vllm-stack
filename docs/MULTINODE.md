@@ -13,9 +13,10 @@ profile. Finding three nodes therefore does not make the wizard invent TP=3,
 PP=3, or any other unmeasured launch.
 
 Legacy `STATUS=tested*` identifies the current recommendation class; use
-`scripts/list-models.sh --legacy-tested` to filter it. The deprecated
-`--validated` alias does not implement the `Validated` Model Serving Release
-status accepted in [ADR 0004](./decisions/0004-model-serving-release-validation.md).
+`scripts/list-models.sh --legacy-tested` to filter it. `--validated` is removed
+(ADR 0008) and fails closed with that replacement; it never implemented the
+`Validated` Model Serving Release status accepted in
+[ADR 0004](./decisions/0004-model-serving-release-validation.md).
 Status is advisory and never grants or denies serving.
 
 ## Two independent gates
@@ -34,9 +35,9 @@ choices first. Related profiles can carry family and variant labels, but
 each node-count variant must earn its own status.
 
 Non-tested, failed, blocked, and experimental labels are warnings rather than
-permission gates. The legacy `--force` option is a compatibility no-op. Exact
-geometry, topology, memory, image, weight integrity, lifecycle, and security
-checks are unchanged and still fail closed.
+permission gates. `--force` is removed (ADR 0008): status labels never block
+serving, so drop the flag. Exact geometry, topology, memory, image, weight
+integrity, lifecycle, and security checks are unchanged and still fail closed.
 
 ## Idle capacity and one-node placement
 
@@ -252,7 +253,7 @@ for ((rank = 1; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
 done
 ```
 
-`HEAD_IP`/`WORKER_IP` in `.env` are not honored for topology. Multi-node
-launch, preflight, and cluster start require a confirmed
+`HEAD_IP`/`WORKER_IP` in `.env` never confirm membership and do not construct
+topology. Multi-node launch, preflight, and cluster start require a confirmed
 `.cluster-topology.json`; without one they refuse and direct you to
 `scripts/detect-fabric.sh --write-topology`.

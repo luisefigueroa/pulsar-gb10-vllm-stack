@@ -40,7 +40,7 @@ transfer remain distinct data planes even when they involve the same machines.
 
 - `scripts/selftest.sh` runs control-plane tests and Python syntax checks without requiring Docker.
 - `scripts/doctor.sh` verifies GPU, Docker, port, cache, and optional worker readiness on GB10 hardware.
-- `scripts/list-models.sh --serving` lists every serving-purpose profile and its advisory status. `--legacy-tested` filters the historical `STATUS=tested*` recommendation class; `--validated` is a deprecated alias and does not mean ADR 0004 `Validated`.
+- `scripts/list-models.sh --serving` lists every serving-purpose profile and its advisory status. `--legacy-tested` filters the historical `STATUS=tested*` recommendation class; it does not mean ADR 0004 `Validated`. `--validated` is removed (ADR 0008) and fails closed with that replacement.
 - `scripts/up.sh qwen3-1.7b --dry-run` exercises launch checks without starting a server.
 - `validate/run-gates.sh <served-name> --tag <label>` runs determinism captures, throughput benchmarks, and optional baseline/needle gates against an already-running server.
 - `docker build -t vllm-gb10:v0.26.0 .` builds the optional metadata overlay; see `docs/BUILD.md` before changing image pins.
@@ -455,8 +455,9 @@ infrastructure unless that authority is explicitly part of the approved plan.
   order or serving permission. Absence of a profile binding or reviewed
   decision is neutral and is not inferred as `Untested`; multiple contract
   lineages or unsuperseded heads stay ambiguous. Current `STATUS=tested*`,
-  `--validated`, expected seals, and schema-1 bundles remain separate legacy
-  implementation contracts. Do not automatically relabel an existing profile
+  `list-models.sh --legacy-tested`, expected seals, and schema-1 bundles remain
+  separate legacy implementation contracts. `--validated` is removed (ADR 0008).
+  Do not automatically relabel an existing profile
   or bundle `Validated`. The corrected ADR 0004 objects remain schema
   version 1 because none was issued or persisted before the correction;
   existing legacy schema-1 seals/bundles and raw evidence remain untouched.
@@ -513,8 +514,9 @@ this work; the skill is procedural and does not outrank these sources.
 
 - Use **prepare model for serving** and **model preparation** in operator-facing
   language. Preparation resolves, distributes, and verifies model files but does
-  not start a container or establish model qualification. `activate` is a
-  backward-compatible command and internal-schema term, not the product label.
+  not start a container or establish model qualification. Public `activate` is
+  removed (ADR 0008); use `prepare`. `activate` remains an internal-schema
+  term, not the product label.
 
 - In the **current repository data**, each issued reviewed identity is attached
   to a legacy `STATUS=tested` profile and binds
