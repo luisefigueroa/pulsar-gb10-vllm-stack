@@ -265,6 +265,21 @@ class LaunchPlanContracts(unittest.TestCase):
         self.assertIn("-p", argv1)
         self.assertIn("--network", argv2_head)
 
+    def test_rank_spec_honors_models_nfs_override(self) -> None:
+        document = facts(nodes=2)
+        document["runtime"] = {
+            **plan.DEFAULT_RUNTIME,
+            "models_nfs": "/data/Models",
+        }
+        built = plan.build_launch_plan(document)
+        spec = plan.rank_container_spec(built, 0)
+        self.assertEqual(
+            spec["mounts"][1],
+            {"source": "/data/Models", "target": "/mnt/Models", "mode": "ro"},
+        )
+        argv = plan.rank_docker_argv(built, 0)
+        self.assertIn("/data/Models:/mnt/Models:ro", argv)
+
     def test_cli_build_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "facts.json"

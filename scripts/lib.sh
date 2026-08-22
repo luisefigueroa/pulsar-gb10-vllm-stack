@@ -1311,7 +1311,6 @@ write_launch_plan_file() {
         "${CLUSTER_NODE_CONTROL_IFS[${SINGLE_NODE_INDEX:-0}]:-lan0}" \
         "${CLUSTER_PROFILE_HCAS[${SINGLE_NODE_INDEX:-0}]:-}"
     else
-      : >"${TMPDIR:-/tmp}/pulsar-plan-ranks.$$"
       for ((rank = 0; rank < NODES; rank++)); do
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
           "$rank" \

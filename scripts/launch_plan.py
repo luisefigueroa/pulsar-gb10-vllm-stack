@@ -589,7 +589,11 @@ def rank_container_spec(plan: dict[str, Any], rank: int) -> dict[str, Any]:
             "target": f"/root/.cache/huggingface/hub/{hub_name}",
             "mode": "ro",
         },
-        {"source": "/mnt/Models", "target": "/mnt/Models", "mode": "ro"},
+        {
+            "source": plan["runtime"]["models_nfs"],
+            "target": "/mnt/Models",
+            "mode": "ro",
+        },
     ]
     if nodes == 1:
         network = {
@@ -696,7 +700,7 @@ def rank_docker_argv(
                 "-v",
                 f"{spec['mounts'][0]['source']}:{spec['mounts'][0]['target']}:ro",
                 "-v",
-                f"{runtime['models_nfs']}:/mnt/Models:ro",
+                f"{spec['mounts'][1]['source']}:{spec['mounts'][1]['target']}:ro",
                 "-e",
                 f"HF_TOKEN={os.environ.get('HF_TOKEN', '')}",
                 "-e",
@@ -750,7 +754,7 @@ def rank_docker_argv(
                 "-v",
                 f"{spec['mounts'][0]['source']}:{spec['mounts'][0]['target']}:ro",
                 "-v",
-                f"{runtime['models_nfs']}:/mnt/Models:ro",
+                f"{spec['mounts'][1]['source']}:{spec['mounts'][1]['target']}:ro",
                 "-e",
                 f"HF_HUB_OFFLINE={runtime['hf_hub_offline']}",
                 "-e",
