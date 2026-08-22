@@ -31,11 +31,11 @@ Trace: requested model or profile -> authentication/revision selection -> storag
 Seed files:
 
 - `serve.sh`
-- `docker-compose.yml`
+- `scripts/up.sh`
 - `docs/RECIPES.md`
 - model/profile definitions discovered in the repository
 
-Trace every supported recipe from documentation through argument parsing, profile resolution, environment generation, Compose interpolation, mounts, container command, service name, health/readiness signal, logs, stop/restart, and model switching.
+Trace every supported recipe from documentation through argument parsing, profile resolution, environment generation, mounts, container command, service name, health/readiness signal, logs, stop/restart, and model switching.
 
 ### Multi-node lifecycle
 

@@ -1,6 +1,6 @@
 # Focused Workflow Reviewer Prompt
 
-Review the assigned operator workflow packet in the authorized `pulsar-gb10-vllm-stack` repository snapshot. Treat the packet as a starting boundary for responsibility, not as permission to ignore dependencies: follow every source, caller, profile, Compose reference, generated file, and documentation link required to complete the workflow trace.
+Review the assigned operator workflow packet in the authorized `pulsar-gb10-vllm-stack` repository snapshot. Treat the packet as a starting boundary for responsibility, not as permission to ignore dependencies: follow every source, caller, profile, generated file, and documentation link required to complete the workflow trace.
 
 ## Constraints
 

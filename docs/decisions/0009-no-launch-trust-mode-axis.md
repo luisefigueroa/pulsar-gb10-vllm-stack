@@ -6,7 +6,8 @@
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0004](./0004-model-serving-release-validation.md),
-  [ADR 0008](./0008-breaking-compatibility-window.md)
+  [ADR 0008](./0008-breaking-compatibility-window.md),
+  [ADR 0010](./0010-operator-consumes-catalog.md)
 
 ## Context
 
@@ -34,11 +35,10 @@ and `STATUS=tested*`.
    `STATUS=tested*`, and ADR 0004 projection stay distinct.
 3. **Catalog delivery is not qualification.** A durable home, source-attested
    receipt, or catalog row does not make a Model Serving Release `Validated`.
-4. **Compose is not a trust mode.** Root `docker-compose.yml` is not an
-   operator-facing launch path and does not inherit profile labels. Its
-   remaining diagnostic role, move, or deletion is [SWI-730](https://linear.app/swiftsource/issue/SWI-730)
-   / [SWI-752](https://linear.app/swiftsource/issue/SWI-752), not a mode
-   contract.
+4. **Compose is not a trust mode.** Root `docker-compose.yml` was not an
+   operator-facing launch path and did not inherit profile labels.
+   [ADR 0010](./0010-operator-consumes-catalog.md) removes that file. A later
+   Compose experiment would still not be `./pulsar`.
 5. **Admission is unchanged.** Operational checks fail without fallback
    (identity, recipe, topology, capacity, security, ownership, lifecycle).
    Status still does not grant or deny serving.
@@ -56,10 +56,12 @@ binding after repository review and merge. It is not a launch-mode switch.
 - [SWI-729](https://linear.app/swiftsource/issue/SWI-729) (explicit unreviewed
   catalog mode UI) is not implemented. Unreviewed launches already exist as
   labeled profiles on the one operator path.
-- SWI-730 and SWI-752 are not blocked on a trust-mode contract.
+- Compose deletion is [ADR 0010](./0010-operator-consumes-catalog.md) /
+  [SWI-730](https://linear.app/swiftsource/issue/SWI-730). [SWI-752](https://linear.app/swiftsource/issue/SWI-752)
+  DSpark overlay remains separate.
 - Follow-on work must not add a `--trust-mode` (or equivalent) flag.
 
 ## Revisit triggers
 
-Revisit if a launch path has no profile labels (no `models/*.conf`), or if
-Compose is presented as equivalent to `./pulsar start`.
+Revisit if a launch path has no profile labels (no `models/*.conf`), or if a
+new Compose file is presented as equivalent to `./pulsar start`.

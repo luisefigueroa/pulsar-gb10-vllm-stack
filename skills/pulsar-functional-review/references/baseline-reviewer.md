@@ -16,7 +16,7 @@ Your purpose is to find source-supported failures in user-facing operator workfl
 
 1. Record the repository snapshot and dirty status supplied by the coordinator.
 2. Classify relevant claims as supported/current, experimental, proposed/roadmap, historical/superseded, or ambiguous.
-3. Read the current equivalents of `wizard.sh`, `serve.sh`, `docker-compose.yml`, `scripts/lib.sh`, `scripts/model-library.sh`, `scripts/model_library.py`, and the relevant `cluster/*.sh` entry points fully.
+3. Read the current equivalents of `wizard.sh`, `serve.sh`, `scripts/up.sh`, `scripts/lib.sh`, `scripts/model-library.sh`, `scripts/model_library.py`, and the relevant `cluster/*.sh` entry points fully.
 4. Map their sourced files, callers, configuration, generated state, mounts, service commands, health signals, failure paths, and cleanup/retry behavior.
 5. Trace all workflows in the supplied Pulsar review profile at a whole-stack level.
 6. Search for undocumented implemented features and for alternate implementations before claiming absence.

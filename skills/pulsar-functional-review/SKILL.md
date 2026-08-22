@@ -1,6 +1,6 @@
 ---
 name: pulsar-functional-review
-description: "Perform a static, evidence-based functional acceptance review of pulsar-gb10-vllm-stack. Trace documented operator workflows through shell entry points, Docker Compose, the model library, multi-node tooling, diagnostics, benchmarking, validation, and selftests; identify missing, unreachable, undocumented, or incoherent functionality without running the stack."
+description: "Perform a static, evidence-based functional acceptance review of pulsar-gb10-vllm-stack. Trace documented operator workflows through shell entry points, the model library, multi-node tooling, diagnostics, benchmarking, validation, and selftests; identify missing, unreachable, undocumented, or incoherent functionality without running the stack."
 ---
 
 # Pulsar Functional Review
@@ -43,7 +43,7 @@ Only `supported/current` claims create a direct product promise. An accepted des
 
 ## Repository-Specific Review Surface
 
-Use [references/pulsar-review-profile.md](references/pulsar-review-profile.md) as the seed workflow map. Seed paths are not a closed file list: follow every sourced file, caller, Compose reference, profile reference, generated-state dependency, and documentation link needed to complete a trace.
+Use [references/pulsar-review-profile.md](references/pulsar-review-profile.md) as the seed workflow map. Seed paths are not a closed file list: follow every sourced file, caller, profile reference, generated-state dependency, and documentation link needed to complete a trace.
 
 Before reporting a missing seed file, determine whether it was renamed or replaced. Before reporting missing functionality, search the authorized repository for plausible symbols, flags, commands, filenames, aliases, and successor implementations.
 
@@ -77,7 +77,7 @@ If delegation is unavailable, the coordinator performs the same baseline review 
 Create three to six packets based on repository size and worker capacity. Prefer these boundaries:
 
 1. onboarding and prerequisites + model acquisition
-2. serving, profiles, configuration, and Docker Compose
+2. serving, profiles, configuration, and launchers
 3. multi-node lifecycle and topology
 4. diagnostics, failure handling, and recovery
 5. benchmarking, revalidation, and selftests
@@ -100,7 +100,7 @@ Do not treat recurrence across agents as proof. Recurrence improves search confi
 1. Resolve the repository root and requested sub-scope, if any.
 2. Record commit, branch/detached state, dirty status, and review date.
 3. Resolve the output location outside the target repository unless the user explicitly requests otherwise.
-4. Inventory canonical operator docs, design/spec docs, decisions, entry points, sourced libraries, Compose files, profiles, cluster scripts, diagnostics, benchmarks, validation assets, and selftests.
+4. Inventory canonical operator docs, design/spec docs, decisions, entry points, sourced libraries, profiles, cluster scripts, diagnostics, benchmarks, validation assets, and selftests.
 5. Record missing or renamed seed paths without immediately treating them as findings.
 
 ### Phase 2 — Build the shared system map
@@ -109,7 +109,7 @@ Read the core entry points fully before judging workflows that depend on them. A
 
 - `wizard.sh`
 - `serve.sh`
-- `docker-compose.yml`
+- `scripts/up.sh`
 - `scripts/lib.sh`
 - `scripts/model-library.sh`
 - `scripts/model_library.py`
@@ -147,7 +147,7 @@ Trace every workflow in the Pulsar review profile from documentation to terminal
 Check cross-workflow handoffs explicitly. Examples include:
 
 - onboarding-created configuration consumed by model acquisition or serving
-- model-library output consumed by `serve.sh` and Compose mounts
+- model-library output consumed by `serve.sh` / `scripts/up.sh`
 - profile fields consumed consistently by shell and container layers
 - cluster preflight state consumed by start/health/teardown tooling
 - diagnostics matching the actual errors and state emitted by entry points
@@ -202,7 +202,7 @@ Use one primary type per final finding:
 - `unreachable` — implementation exists but no supported public path invokes it
 - `undocumented` — usable implementation exists but canonical operator docs do not expose it
 - `hidden-prerequisite` — implementation requires state, credentials, permissions, or manual setup not established by docs or tooling
-- `contract-mismatch` — docs, scripts, profiles, Compose, or generated state disagree on names, values, paths, or lifecycle
+- `contract-mismatch` — docs, scripts, profiles, or generated state disagree on names, values, paths, or lifecycle
 - `incomplete-recovery` — failure is detected but the shipped operator path does not restore a usable state
 - `non-reproducible-validation` — shipped material is insufficient to reproduce a stated validation result statically
 - `minor-drift` — low-impact ambiguity, stale wording, or discoverability issue

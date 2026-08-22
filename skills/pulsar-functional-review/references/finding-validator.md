@@ -13,7 +13,7 @@ Challenge the supplied candidate functional findings against the authorized curr
 1. Re-read every cited documentation and implementation location.
 2. Verify claim authority: supported/current vs experimental, proposed, historical, or ambiguous.
 3. Reconstruct the operator trace from the public documented entry point.
-4. Follow sourced files, callers, aliases, profile resolution, generated-state producers, Compose references, and fallback paths.
+4. Follow sourced files, callers, aliases, profile resolution, generated-state producers, and fallback paths.
 5. Search for counterevidence and replacement implementations.
 6. Verify the user-visible consequence and whether the path is actually reachable under documented supported conditions.
 7. For missing or unreachable claims, verify the negative-evidence bundle is adequate.

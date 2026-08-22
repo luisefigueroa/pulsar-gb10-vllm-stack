@@ -23,7 +23,12 @@ Wire that (not /health) into anything that pages or restarts. Also useful:
 
 ## Root dispatcher (`./pulsar`)
 
-Preferred operator entry point (scripts under `scripts/` remain canonical):
+Preferred operator entry point (scripts under `scripts/` remain canonical).
+For now, that surface **consumes** labeled profiles already in `models/`
+([ADR 0010](./decisions/0010-operator-consumes-catalog.md)). Drafting a new
+recipe, pinning an image, and recording unreviewed qualification evidence
+remain maintainer tooling (`docs/MODEL_RELEASE.md`,
+`skills/pulsar-model-onboarding/`), not `./pulsar` or the wizard.
 
 | Command | Action |
 |---|---|
@@ -452,11 +457,6 @@ runtime overrides.
   confirmed nodes and proceeds only when it proves one unique placement.
 - Single node low-level: `./serve.sh <name> -d`. Do **not** `docker rm -f` by
   name unless inventory proves ownership — prefer `./pulsar stop <name>`.
-  `docker-compose.yml` is an unsupported historical sketch, not an equivalent
-  operator path. It bypasses profile-contract/placement gates, exact
-  revision/seal identity, read-only runtime views, preflight, and Pulsar
-  ownership/launch/topology labels; home, wizard, and `down.sh` will not manage
-  it. Do not use it for lab serving.
 - Multi-node exact profile: `cluster/preflight.sh <name>` then
   `cluster/start-cluster.sh <name>`. **ALWAYS `cluster/stop-cluster.sh <name>`
   or `./pulsar stop <name>` before relaunch** — a surviving cluster node can

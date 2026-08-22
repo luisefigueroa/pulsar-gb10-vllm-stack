@@ -86,8 +86,8 @@ pair-only names if they appear.
 
 Not in this slice: `--force-unpin`, inventory keys `head`/`worker`/`rank-N`,
 `worker_available_gib`, leftover `weight-fabric.sh show|unmount|teardown`,
-hot schema-1/2 repair, topology schema 1 as `detect-fabric` output, DSpark /
-Compose, SIM-12/13.
+hot schema-1/2 repair, topology schema 1 as `detect-fabric` output, DSpark,
+SIM-12/13. Root Compose was removed later by ADR 0010 / SWI-730.
 
 `HEAD_IP`/`WORKER_IP` remain refuse-only: they never confirm membership
 (AUD-01). There is no membership parser to delete.
