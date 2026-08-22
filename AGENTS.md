@@ -71,7 +71,9 @@ language for new features without an explicit decision.
   complex JSON with `sed`/`awk` when a Python helper already exists or belongs.
 - Reuse topology and SSH identity rules from shared helpers; do not reimplement
   confirmed-endpoint selection in a one-off Python script.
-- Profile confs remain shell-style under `models/`; Bash may `load_conf` and
+- Profile confs remain shell-style under `models/` (SIM-05, 2026-08-22:
+  declarative TOML is rejected; parser unification may happen later without
+  a format change). Bash may `load_conf` and
   pass `MODEL` / `NODES` / `STATUS` into Python as args or a small JSON dump.
   `EXPECTED_MODEL_SEAL` is only a reviewed repository-relative reference under
   `models/seals/`; `scripts/model_identity.py` owns its strict schema and
