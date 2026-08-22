@@ -59,7 +59,7 @@ language for new features without an explicit decision.
 
 | Prefer **Bash** | Prefer **Python 3** |
 |---|---|
-| Operator CLIs and entrypoints (`scripts/*.sh`, `cluster/*.sh`, wizard/home) | JSON schemas, catalogs, digests, budgets, identity keys, merge/label logic |
+| Operator CLIs and entrypoints (`scripts/*.sh`, `cluster/*.sh`, wizard/home) | JSON schemas, catalogs, digests, budgets, identity keys, merge/label logic, launch-plan/probe contracts (`launch_plan.py`) |
 | `source lib.sh`, `load_conf`, topology load, flag parsing | Multi-step planning, validation, fail-closed policy decisions |
 | SSH orchestration, `rsync`/`docker` argv assembly, sudo/interactive flows | Atomic read/write of site-local state files (catalog, stamps, audits) |
 | Thin wrappers that call Python and print human-oriented status | Machine-oriented `--json` structures and stable error codes/messages |
@@ -69,6 +69,15 @@ language for new features without an explicit decision.
 
 - One module should own each schema (usually Python). Bash must not hand-edit
   complex JSON with `sed`/`awk` when a Python helper already exists or belongs.
+  `scripts/launch_plan.py` owns the versioned launch-plan, serving-probe, and
+  rank-spec contracts (SIM-04). `scripts/up.sh`, `serve.sh`, and
+  `cluster/start-cluster.sh` build the same plan from loaded profile plus
+  topology plus library-hot facts; N=1 and N>1 docker argv come from
+  `rank_docker_argv`. A plan describes an intended serve action; it is not a
+  permit. Mutable image, identity, topology, ownership, and health
+  prerequisites still require an immediate recheck before mutation.
+  `scripts/inventory.sh` is the only operator-facing ownership/state
+  classifier; launchers consume proven-ownership primitives from `lib.sh`.
 - Reuse topology and SSH identity rules from shared helpers; do not reimplement
   confirmed-endpoint selection in a one-off Python script.
 - Profile confs remain shell-style under `models/` (SIM-05, 2026-08-22:
@@ -227,6 +236,21 @@ explaining them in straightforward language.
   when a direct description communicates the same behavior.
 - Never simplify wording in a way that changes an agreed definition,
   validation requirement, authority boundary, or status meaning.
+
+### Name the object in status language
+
+When reporting a decision, always name what the verb applies to: the
+product path, the Linear issue, the PR, or the milestone. Do not use a
+bare verb (“keep”, “close”, “remove”, “done”) next to a ticket id if it
+could mean either the feature or the tracking item.
+
+- Say “SIM-03 keeps source-attested unsealed Hugging Face `home add`;
+  SWI-747 is already Done.”
+- Do not say “SIM-02/03: already implemented / keep.”
+- “Keep” means the product path stays. “Leave open” / “already Done”
+  is for Linear. Never use “keep” for ticket state.
+- If no new issue is filed, say why in one sentence: the path was
+  already deleted, or the decision was to retain the path.
 
 ## Testing Guidelines
 

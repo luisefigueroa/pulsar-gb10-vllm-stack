@@ -86,6 +86,7 @@ done < <(python3 "$REPO_DIR/scripts/topology_manifest.py" \
 echo "[preflight] per-node readiness"
 check_node() {
   local rank="$1" rdma gpu runtime avail_kb control_ip control_if command
+  local probe_file probe_json
   control_ip="${CLUSTER_NODE_CONTROL_IPS[$rank]}"
   control_if="${CLUSTER_NODE_CONTROL_IFS[$rank]}"
 
@@ -97,19 +98,24 @@ check_node() {
     bad "rank $rank: only ${rdma:-0} RDMA links ACTIVE"
   fi
 
-  gpu=$(node_exec "$rank" \
-    "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" \
-    2>/dev/null || true)
-  [ "$gpu" = "NVIDIA GB10" ] \
-    && ok "rank $rank: GPU $gpu" \
-    || bad "rank $rank: GPU '$gpu' (want NVIDIA GB10)"
-
-  runtime=$(node_exec "$rank" \
-    "docker info 2>/dev/null | grep -Ec 'nvidia|nvidia.com/gpu'" \
-    2>/dev/null || true)
-  [ "${runtime:-0}" -ge 1 ] \
-    && ok "rank $rank: Docker NVIDIA ready" \
-    || bad "rank $rank: Docker NVIDIA runtime/CDI missing"
+  probe_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-preflight-probe.XXXXXX")
+  if probe_node_json_for_rank "$rank" >"$probe_file" 2>/dev/null \
+      && probe_json=$(python3 "$REPO_DIR/scripts/launch_plan.py" \
+        probe-from-node "$probe_file" --rank "$rank"); then
+    gpu=$(printf '%s' "$probe_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin).get("gpu") or "")')
+    runtime=$(printf '%s' "$probe_json" | python3 -c \
+      'import json,sys; p=json.load(sys.stdin); print("1" if p.get("docker_nvidia") else "0")')
+    [ "$gpu" = "NVIDIA GB10" ] \
+      && ok "rank $rank: GPU $gpu" \
+      || bad "rank $rank: GPU '$gpu' (want NVIDIA GB10)"
+    [ "$runtime" = 1 ] \
+      && ok "rank $rank: Docker NVIDIA ready" \
+      || bad "rank $rank: Docker NVIDIA runtime/CDI missing"
+  else
+    bad "rank $rank: serving probe failed"
+  fi
+  rm -f "$probe_file"
 
   node_exec "$rank" "test -e /dev/infiniband/uverbs0" 2>/dev/null \
     && ok "rank $rank: /dev/infiniband present" \

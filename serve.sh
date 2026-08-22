@@ -96,69 +96,17 @@ fi
 load_cluster_topology >/dev/null 2>&1 && [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] \
   || die "serving requires a confirmed topology manifest (one machine is fine): run scripts/detect-fabric.sh --write-topology"
 resolve_library_hot_for_profile "$MODEL_NAME"
-model_cache_name=$(hf_hub_dirname "$LIBRARY_HOT_MODEL_ID")
-weight_volume="${LIBRARY_HOT_HUB_PATH}:/root/.cache/huggingface/hub/${model_cache_name}:ro"
 runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
 echo "library identity=$LIBRARY_HOT_IDENTITY_STATUS revision=${LIBRARY_HOT_REVISION:0:12} model_path=$runtime_model"
 
 CONTAINER=$(container_name_for "$MODEL_NAME" 1)
-
-CMD=(docker run --name "$CONTAINER" ${DETACH:+$DETACH}
-  --label "${PULSAR_MANAGED_LABEL}=true"
-  --label "${PULSAR_CONF_LABEL}=${MODEL_NAME}"
-  --label "${PULSAR_RANK_LABEL}=single"
-  --label "${PULSAR_WEIGHT_SOURCE_LABEL}=library-hot"
-  --label "${PULSAR_LAUNCH_CONTRACT_LABEL}=${LAUNCH_CONTRACT_ID}"
-  --label "${PULSAR_SPEC_DECODE_LABEL}=${SPEC_DECODE_STATE}"
-  --gpus all
-  --ipc=host
-  --ulimit memlock=-1 --ulimit stack=67108864
-  -p "${PORT}:${PORT}"
-  -v "$weight_volume"
-  -v "${MODELS_NFS}:/mnt/Models:ro"
-  -e "HF_TOKEN=${HF_TOKEN:-}"
-  -e "HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}"
-  -e "VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL:-INFO}"
-  --health-cmd "curl -fs http://localhost:${PORT}/health || exit 1"
-  --health-interval 30s --health-timeout 5s --health-retries 3
-  --health-start-period "${HEALTH_START_PERIOD:-900s}"
-  --restart "${RESTART_POLICY:-no}"
-)
-CMD+=(
-  --label "${PULSAR_WEIGHT_OWNER_LABEL}=${LIBRARY_HOT_HOME_NODE_ID}"
-  --label "${PULSAR_WEIGHT_CONFIG_LABEL}=${LIBRARY_HOT_CONTENT_ID}"
-  --label "${PULSAR_MODEL_REVISION_LABEL}=${LIBRARY_HOT_REVISION}"
-  --label "${PULSAR_MODEL_IDENTITY_STATUS_LABEL}=${LIBRARY_HOT_IDENTITY_STATUS}"
-)
-if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-  CMD+=(
-    --label "${PULSAR_MODEL_SEAL_LABEL}=${LIBRARY_HOT_MODEL_SEAL_ID}"
-    --label "${PULSAR_VALIDATION_BUNDLE_LABEL}=${LIBRARY_HOT_VALIDATION_BUNDLE_ID}"
-  )
-fi
-if [ -n "$SINGLE_NODE_TOPOLOGY_ID" ]; then
-  CMD+=(--label "${PULSAR_TOPOLOGY_LABEL}=${SINGLE_NODE_TOPOLOGY_ID}")
-fi
-if [ -n "$SINGLE_NODE_ID" ]; then
-  CMD+=(--label "${PULSAR_NODE_ID_LABEL}=${SINGLE_NODE_ID}")
-fi
-for e in ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}; do CMD+=(-e "$e"); done
-for e in ${EXTRA_ENV:-}; do CMD+=(-e "$e"); done
-
-CMD+=(
-  "$IMAGE"
-  --model "$runtime_model"
-  --served-model-name "$SERVED_NAME"
-  --host 0.0.0.0 --port "$PORT"
-  --gpu-memory-utilization "$GPU_MEM_UTIL"
-)
-CMD+=(${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"})
-[ "$SPEC_DECODE_ENABLED" = "1" ] && CMD+=("${SPEC_DECODE_ARGS[@]}")
-append_vllm_extra_args CMD
+PLAN_FILE=$(mktemp "${TMPDIR:-/tmp}/pulsar-launch-plan.XXXXXX")
+# shellcheck disable=SC2064
+trap 'rm -f "${PLAN_FILE:-}"' EXIT
+write_launch_plan_file "$PLAN_FILE" "$([ "$DRY_RUN" = 1 ] && echo dry-run || echo start)"
+CMD=()
+load_docker_argv_from_plan "$PLAN_FILE" 0 CMD "$([ -n "$DETACH" ] && echo 1 || echo 0)"
 _api_key="${VLLM_API_KEY:-${API_KEY:-}}"
-if [ -n "$_api_key" ]; then
-  CMD+=(--api-key "$_api_key")
-fi
 
 if [ "$DRY_RUN" = "1" ]; then
   if [ "$SINGLE_NODE_REMOTE" = 1 ]; then

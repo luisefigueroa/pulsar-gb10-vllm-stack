@@ -276,20 +276,24 @@ elif [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
     node_label=$(human_cluster_node "$rank")
     if "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" true 2>/dev/null; then
       record ok "rank_${rank}_ssh" "$node_label · SSH reachable at $host"
-      rank_gpu=$("$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
-        "nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1" \
-        2>/dev/null || true)
-      if [ "$rank_gpu" = "NVIDIA GB10" ]; then
-        record ok "rank_${rank}_gpu" "$node_label · GPU $rank_gpu"
+      rank_probe=$(mktemp "${TMPDIR:-/tmp}/pulsar-doctor-probe.XXXXXX")
+      if probe_node_json_for_rank "$rank" >"$rank_probe" 2>/dev/null; then
+        rank_gpu=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("gpu") or "")' "$rank_probe")
+        rank_nvidia=$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1])).get("docker_nvidia") else "0")' "$rank_probe")
+        if [ "$rank_gpu" = "NVIDIA GB10" ]; then
+          record ok "rank_${rank}_gpu" "$node_label · GPU $rank_gpu"
+        else
+          record fail "rank_${rank}_gpu" "$node_label · GPU '$rank_gpu' (want NVIDIA GB10)"
+        fi
+        if [ "$rank_nvidia" = 1 ]; then
+          record ok "rank_${rank}_docker_nvidia" "$node_label · Docker NVIDIA ready"
+        else
+          record fail "rank_${rank}_docker" "$node_label · Docker NVIDIA unavailable"
+        fi
       else
-        record fail "rank_${rank}_gpu" "$node_label · GPU '$rank_gpu' (want NVIDIA GB10)"
+        record fail "rank_${rank}_probe" "$node_label · serving probe failed"
       fi
-      if "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
-          "docker info 2>/dev/null | grep -Eq 'nvidia|nvidia.com/gpu'" 2>/dev/null; then
-        record ok "rank_${rank}_docker_nvidia" "$node_label · Docker NVIDIA ready"
-      else
-        record fail "rank_${rank}_docker" "$node_label · Docker NVIDIA unavailable"
-      fi
+      rm -f "$rank_probe"
     else
       record fail "rank_${rank}_ssh" "$node_label · key-based SSH failed at $host"
     fi

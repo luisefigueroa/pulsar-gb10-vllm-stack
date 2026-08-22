@@ -1235,6 +1235,213 @@ resolve_library_hot_for_profile() {
   fi
 }
 
+json_encode_strings() {
+  python3 -c 'import json,sys; print(json.dumps(sys.argv[3:], ensure_ascii=False))' _ -- "$@"
+}
+
+# Run probe-node.py on a confirmed rank. Rank 0 is local; other ranks receive
+# the probe over SSH stdin so the remote host does not need a repo checkout.
+probe_node_json_for_rank() {
+  local rank="${1:?rank required}"
+  local host
+  if [ "$rank" = 0 ]; then
+    python3 "$REPO_DIR/scripts/probe-node.py" --local --ssh-host local
+    return
+  fi
+  require_cluster_nodes "$((rank + 1))" \
+    || die "rank $rank is not present in the confirmed topology"
+  host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
+  "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
+    "python3 - --ssh-host $(printf '%q' "$host")" \
+    <"$REPO_DIR/scripts/probe-node.py"
+}
+
+# Load docker run argv from a validated launch plan into a caller array.
+# Secrets are applied from the current environment, not from the plan file.
+load_docker_argv_from_plan() {
+  local plan_file="${1:?plan file required}"
+  local rank="${2:?rank required}"
+  local dest="${3:?destination array name required}"
+  local detach="${4:-0}"
+  local json
+  local -a argv_flags=(docker-argv "$plan_file" --rank "$rank")
+  [ "$detach" = 1 ] && argv_flags+=(--detach)
+  json=$(python3 "$REPO_DIR/scripts/launch_plan.py" "${argv_flags[@]}") \
+    || die "launch-plan: docker argv failed for rank $rank"
+  local -n dest_ref="$dest"
+  dest_ref=()
+  while IFS= read -r line; do
+    dest_ref+=("$line")
+  done < <(printf '%s' "$json" | python3 -c \
+    'import json,sys; [print(x.replace("\n","\n")) for x in json.load(sys.stdin)]')
+  [ "${#dest_ref[@]}" -gt 0 ] || die "launch-plan: empty docker argv for rank $rank"
+}
+
+# Build a validated launch-plan JSON file from the currently loaded profile,
+# confirmed topology, and resolved library-hot instance. Not a permit.
+write_launch_plan_file() {
+  local dest="${1:?destination required}"
+  local action="${2:-start}"
+  local ranks_json engine_json container_json extra_json spec_json vllm_json
+  local contract
+  [ -n "${CONF_NAME:-}" ] || die "write_launch_plan_file requires load_conf"
+  [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] || die "write_launch_plan_file requires confirmed topology"
+  [ -n "${LIBRARY_HOT_HUB_PATH:-}" ] || die "write_launch_plan_file requires resolve_library_hot_for_profile"
+  contract="${LAUNCH_CONTRACT_ID:-}"
+  [ -n "$contract" ] || contract=$(loaded_launch_contract_id)
+  if [ "$NODES" -gt 1 ]; then
+    require_profile_topology "$NODES" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
+      || die "write_launch_plan_file: profile topology is not confirmed"
+  fi
+  ranks_json=$(
+    if [ "$NODES" -eq 1 ]; then
+      python3 -c 'import json,sys; print(json.dumps([{
+        "rank": 0,
+        "node_id": sys.argv[1],
+        "hostname": sys.argv[2],
+        "ssh_host": sys.argv[3],
+        "control_ip": sys.argv[4],
+        "control_if": sys.argv[5],
+        "hcas": sys.argv[6],
+      }]))' \
+        "${SINGLE_NODE_ID:-${SINGLE_NODE_HOSTNAME:-standalone}}" \
+        "${SINGLE_NODE_HOSTNAME:-localhost}" \
+        "${SINGLE_NODE_SSH_HOST:-local}" \
+        "${SINGLE_NODE_CONTROL_IP:-127.0.0.1}" \
+        "${CLUSTER_NODE_CONTROL_IFS[${SINGLE_NODE_INDEX:-0}]:-lan0}" \
+        "${CLUSTER_PROFILE_HCAS[${SINGLE_NODE_INDEX:-0}]:-}"
+    else
+      for ((rank = 0; rank < NODES; rank++)); do
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$rank" \
+          "${CLUSTER_NODE_IDS[$rank]}" \
+          "${CLUSTER_NODE_HOSTNAMES[$rank]}" \
+          "${CLUSTER_NODE_SSH_HOSTS[$rank]}" \
+          "${CLUSTER_NODE_CONTROL_IPS[$rank]}" \
+          "${CLUSTER_NODE_CONTROL_IFS[$rank]}" \
+          "${CLUSTER_PROFILE_HCAS[$rank]}"
+      done | python3 -c '
+import json,sys
+ranks=[]
+for line in sys.stdin:
+    rank, node_id, hostname, ssh_host, ip, iface, hcas = line.rstrip("\n").split("\t")
+    ranks.append({
+        "rank": int(rank),
+        "node_id": node_id,
+        "hostname": hostname,
+        "ssh_host": ssh_host,
+        "control_ip": ip,
+        "control_if": iface,
+        "hcas": hcas,
+    })
+print(json.dumps(ranks))
+'
+    fi
+  )
+  engine_json=$(json_encode_strings ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"})
+  container_json=$(json_encode_strings ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"})
+  extra_json=$(json_encode_strings ${EXTRA_ENV:+$EXTRA_ENV})
+  spec_json=$(json_encode_strings ${SPEC_DECODE_ARGS[@]+"${SPEC_DECODE_ARGS[@]}"})
+  vllm_json=$(
+    if [ -n "${VLLM_EXTRA_ARGS:-}" ]; then
+      VLLM_EXTRA_ARGS="$VLLM_EXTRA_ARGS" python3 -c \
+        'import json,os,shlex; print(json.dumps(shlex.split(os.environ["VLLM_EXTRA_ARGS"])))'
+    else
+      echo '[]'
+    fi
+  )
+  LAUNCH_CONTRACT_ID="$contract" \
+  PULSAR_PLAN_ACTION="$action" \
+  PULSAR_PLAN_RANKS_JSON="$ranks_json" \
+  PULSAR_PLAN_ENGINE_ARGS_JSON="$engine_json" \
+  PULSAR_PLAN_CONTAINER_ENV_JSON="$container_json" \
+  PULSAR_PLAN_EXTRA_ENV_JSON="$extra_json" \
+  PULSAR_PLAN_SPEC_ARGS_JSON="$spec_json" \
+  PULSAR_PLAN_VLLM_EXTRA_JSON="$vllm_json" \
+  CONF_NAME="$CONF_NAME" \
+  SERVED_NAME="$SERVED_NAME" \
+  MODEL="$MODEL" \
+  IMAGE="$IMAGE" \
+  NODES="$NODES" \
+  PORT="$PORT" \
+  GPU_MEM_UTIL="$GPU_MEM_UTIL" \
+  CLUSTER_TOPOLOGY_ID="$CLUSTER_TOPOLOGY_ID" \
+  SPEC_DECODE_ENABLED="${SPEC_DECODE_ENABLED:-0}" \
+  SPEC_DECODE_SOURCE="${SPEC_DECODE_SOURCE:-profile-default}" \
+  LIBRARY_HOT_IDENTITY_STATUS="$LIBRARY_HOT_IDENTITY_STATUS" \
+  LIBRARY_HOT_REVISION="$LIBRARY_HOT_REVISION" \
+  LIBRARY_HOT_HOME_NODE_ID="$LIBRARY_HOT_HOME_NODE_ID" \
+  LIBRARY_HOT_CONTENT_ID="$LIBRARY_HOT_CONTENT_ID" \
+  LIBRARY_HOT_HUB_PATH="$LIBRARY_HOT_HUB_PATH" \
+  LIBRARY_HOT_CONTAINER_MODEL_PATH="$LIBRARY_HOT_CONTAINER_MODEL_PATH" \
+  LIBRARY_HOT_TRANSPORT="$LIBRARY_HOT_TRANSPORT" \
+  LIBRARY_HOT_MODEL_SEAL_ID="${LIBRARY_HOT_MODEL_SEAL_ID:-}" \
+  LIBRARY_HOT_VALIDATION_BUNDLE_ID="${LIBRARY_HOT_VALIDATION_BUNDLE_ID:-}" \
+  REPO_DIR="$REPO_DIR" \
+  python3 - "$dest" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(os.environ["REPO_DIR"]) / "scripts"))
+import launch_plan as plan
+
+def load_list(name):
+    return json.loads(os.environ.get(name) or "[]")
+
+facts = {
+    "lifecycle_action": os.environ.get("PULSAR_PLAN_ACTION") or "start",
+    "profile": os.environ["CONF_NAME"],
+    "served_name": os.environ["SERVED_NAME"],
+    "model_id": os.environ["MODEL"],
+    "image": os.environ["IMAGE"],
+    "nodes": int(os.environ["NODES"]),
+    "port": int(os.environ["PORT"]),
+    "gpu_mem_util": float(os.environ["GPU_MEM_UTIL"]),
+    "topology_id": os.environ["CLUSTER_TOPOLOGY_ID"],
+    "launch_contract_id": os.environ["LAUNCH_CONTRACT_ID"],
+    "spec_decode": {
+        "enabled": os.environ.get("SPEC_DECODE_ENABLED") == "1",
+        "source": os.environ.get("SPEC_DECODE_SOURCE") or "profile-default",
+    },
+    "storage": {
+        "mechanism": "library-hot",
+        "identity_status": os.environ["LIBRARY_HOT_IDENTITY_STATUS"],
+        "revision": os.environ["LIBRARY_HOT_REVISION"],
+        "home_node_id": os.environ["LIBRARY_HOT_HOME_NODE_ID"],
+        "content_id": os.environ["LIBRARY_HOT_CONTENT_ID"],
+        "hub_path": os.environ["LIBRARY_HOT_HUB_PATH"],
+        "container_model_path": os.environ["LIBRARY_HOT_CONTAINER_MODEL_PATH"],
+        "transport": os.environ["LIBRARY_HOT_TRANSPORT"],
+    },
+    "ranks": json.loads(os.environ["PULSAR_PLAN_RANKS_JSON"]),
+    "runtime": {
+        "engine_args": load_list("PULSAR_PLAN_ENGINE_ARGS_JSON"),
+        "container_env": load_list("PULSAR_PLAN_CONTAINER_ENV_JSON"),
+        "extra_env": load_list("PULSAR_PLAN_EXTRA_ENV_JSON"),
+        "spec_decode_args": load_list("PULSAR_PLAN_SPEC_ARGS_JSON"),
+        "vllm_extra_args": load_list("PULSAR_PLAN_VLLM_EXTRA_JSON"),
+        "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE") or "1",
+        "vllm_logging_level": os.environ.get("VLLM_LOGGING_LEVEL") or "INFO",
+        "restart_policy": os.environ.get("RESTART_POLICY") or "no",
+        "health_start_period": os.environ.get("HEALTH_START_PERIOD") or "900s",
+        "nccl_ib_qps": os.environ.get("NCCL_IB_QPS_PER_CONNECTION") or "4",
+        "nccl_debug": os.environ.get("NCCL_DEBUG") or "WARN",
+        "master_port": int(os.environ.get("MASTER_PORT") or "29500"),
+        "models_nfs": os.environ.get("MODELS_NFS") or "/mnt/Models",
+    },
+    "memory": {"advisory": True, "result": os.environ.get("PULSAR_PLAN_MEMORY_RESULT") or "unchecked"},
+}
+if os.environ.get("LIBRARY_HOT_IDENTITY_STATUS") == "match":
+    facts["storage"]["model_seal_id"] = os.environ["LIBRARY_HOT_MODEL_SEAL_ID"]
+    facts["storage"]["validation_bundle_id"] = os.environ["LIBRARY_HOT_VALIDATION_BUNDLE_ID"]
+document = plan.build_launch_plan(facts)
+pathlib.Path(sys.argv[1]).write_text(plan.pretty_json(document), encoding="utf-8")
+PY
+}
+
+
 require_topology_rewrite_idle() {
   local manifest="${1:?topology manifest required}"
   local rows kind rank node_id hostname ssh_host control_ip control_if hcas rdma_ifs

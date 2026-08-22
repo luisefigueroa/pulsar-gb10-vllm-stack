@@ -247,12 +247,23 @@ fi
 
 echo "└─"
 
+LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
+resolve_library_hot_for_profile "$NAME"
+PLAN_FILE="${PULSAR_LAUNCH_PLAN_OUT:-$(mktemp "${TMPDIR:-/tmp}/pulsar-launch-plan.XXXXXX")}"
+if [ -z "${PULSAR_LAUNCH_PLAN_OUT:-}" ]; then
+  # shellcheck disable=SC2064
+  trap 'rm -f "${PLAN_FILE:-}"' EXIT
+fi
+write_launch_plan_file "$PLAN_FILE" "$([ "$DRY" = 1 ] && echo dry-run || echo start)"
+echo "PASS  plan      schema=1 ranks=$NODES classifier=inventory (not a permit)"
+
 if [ "$DRY" = 1 ]; then
   cat <<EOF
 
 DRY-RUN OK
   conf:     $NAME
   served:   $SERVED_NAME
+  plan:     $PLAN_FILE
   would:    $([ "$NODES" -gt 1 ] && echo "cluster/start-cluster.sh $NAME ${spec_flag[*]:-} ${launch_flags[*]:-}" || echo "serve.sh $NAME -d ${PLACEMENT_ARGS[*]:-} ${spec_flag[*]:-} ${launch_flags[*]:-}")
   live:     scripts/status.sh $NAME ${PLACEMENT_ARGS[*]:-}
   note:     no containers changed

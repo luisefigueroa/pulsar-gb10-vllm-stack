@@ -33,8 +33,9 @@ if container_metadata_matches_profile "$stopped" \
   exit 1
 fi
 
-grep -q -- '--label "${PULSAR_MANAGED_LABEL}=true"' "$REPO_DIR/serve.sh"
-grep -q -- '--label "${PULSAR_MANAGED_LABEL}=true"' "$REPO_DIR/cluster/start-cluster.sh"
+grep -q write_launch_plan_file "$REPO_DIR/serve.sh"
+grep -q write_launch_plan_file "$REPO_DIR/cluster/start-cluster.sh"
+grep -q 'io.pulsar.gb10.managed' "$REPO_DIR/scripts/launch_plan.py"
 
 # Wizard safety boundary (inventory contract — not a local ownership re-classifier):
 # consume inventory JSON / safe_to_stop; mutate only via down.sh (or test hook).
