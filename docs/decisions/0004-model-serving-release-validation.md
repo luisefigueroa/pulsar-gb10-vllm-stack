@@ -9,7 +9,9 @@
   and pre-existing homes still require a reviewed expected manifest.
   2026-08-19 — [ADR 0005](./0005-reject-live-nfs-rdma-serving.md) rejects
   `live-remote-readonly` for new qualifying plans; schema version 1 is
-  unchanged because the tracked registry is empty
+  unchanged because the tracked registry is empty.
+  2026-08-22 — SIM-01 keeps the five separately persisted object roles.
+  The registry now holds the reviewed Qwen3.8 lineage; it is no longer empty.
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
@@ -784,6 +786,22 @@ Schema and envelope checks can reject mismatched architecture, runtime, or
 geometry without running a model. They cannot show that the release behaves
 correctly or reliably on physical hardware, so physical evidence remains
 mandatory.
+
+### Collapse the five objects into one Release Assessment (SIM-01)
+
+A single content-addressed assessment document would drop cross-object
+deduplication and make failed-attempt retention easier to get wrong. The
+ticket assumed an empty unused registry. That is no longer true: the
+reviewed Qwen3.8-27B-FP8 lineage is stored and bound. SIM-01 (2026-08-22)
+keeps the five object roles. Revisit only after a second issuance, or with
+a new ADR if a collapse can migrate that lineage without hiding attempts.
+
+## Interpretation note — 2026-08-22 (SIM-01)
+
+Keep section 4 as written. Release descriptor, frozen Validation Contract,
+run records, evidence bundle, and reviewed decision remain separate
+immutable objects. The plan → attempt → capture → issue → registry
+workflow stays. No schema collapse and no implementation sub-issue.
 
 ## Consequences
 
