@@ -249,7 +249,9 @@ scripts/up.sh deepseek-v4-flash                  # exact NODES=2, DSpark k=5
 
 The wizard offers every exact serving profile that fits confirmed capacity,
 shows its status and profile notes, and orders legacy evidence-backed choices
-first. Validation status never blocks serving. No three-node profile is
+first. Validation status never blocks serving. There is no separate
+launch-trust-mode to choose
+([ADR 0009](docs/decisions/0009-no-launch-trust-mode-axis.md)). No three-node profile is
 promoted today. Smoke served name:
 `deepseek-v4-flash`; cold load can take ~10+ minutes.
 
