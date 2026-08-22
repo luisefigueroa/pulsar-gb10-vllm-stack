@@ -39,14 +39,12 @@ Trace these workflows through policy, code, UI, tests, and evidence:
 3. **Model discovery and selection:** tested/experimental filters, exact model
    and revision, seals/manifests, interactive identity, and similar/truncated
    labels.
-4. **Replicated serving:** selection, download/stage, preflight, launch, health,
-   status, stop, cleanup, and guided defaults.
-5. **Distributed catalog serving:** discovery/refresh, health, durable homes,
-   primary selection, preparation, runtime sources, transfer, launch, pin,
-   purge, legacy repair, and durable-home removal.
-6. **Validation and release:** exact identity and runtime inputs, serving
+4. **Library serving:** topology confirm, `home add`, catalog refresh, prepare,
+   launch, health, status, stop, pin/purge, and cleanup. There is no replicated
+   or live-NFS serving path.
+5. **Validation and release:** exact identity and runtime inputs, serving
    integration, model qualification, release/promotion, and invalidation rules.
-7. **Failure and recovery:** partial preparation/start, unreachable ranks, stale
+6. **Failure and recovery:** partial preparation/start, unreachable ranks, stale
    topology, drift/mismatch, missing home, budget exhaustion, active references,
    interrupted cleanup, and restart behavior.
 

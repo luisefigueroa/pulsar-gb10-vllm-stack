@@ -16,8 +16,8 @@
 >
 > Exploratory drafts and rejected-or-deferred option lists are archived under
 > [docs/archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md).
-> A descriptive snapshot of **current** code behavior lives in
-> [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md).
+> Current operator behavior and the live profile catalog are documented in
+> [OPERATIONS.md](./OPERATIONS.md) and [MODELS.md](./MODELS.md).
 > The maintainer-only, candidate-stage release workflow is documented in
 > [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 > The durable rationale for the home-view and validation-identity decision is
@@ -43,7 +43,7 @@
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
 | Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md) |
 | Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
-| Current-system peer review | [MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md](./MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md) |
+| Current operator/catalog state | [OPERATIONS.md](./OPERATIONS.md), [MODELS.md](./MODELS.md) |
 | Mechanism today | The model library, for every profile (ADR 0006): one exact durable home, exact home symlink, sealed-hot copies on non-home ranks, fixed eight-stream SSH-over-RoCE preparation for reviewed multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned views (ADR 0007) |
 | Supported today | Two-rank sealed (physical GA evidence, 2026-08-16); one-rank and legacy-unsealed (supported by ADR 0006 decision). Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
 | Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; unattested `home add` as the primary ingress (SIM-03 open); Hugging Face is the only current ingress format (local-directory import needs its own ADR); durable-home loss = service loss until a failover ADR; maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope; source-attested acquisition's remote target and asymmetric credentials remain pending |
@@ -1310,3 +1310,4 @@ rather than promotion blockers.
 | 2026-08-21 | Wizard replacement captures an exact rollback contract only for `library-hot` services whose identity is a reviewed `match`. A complete, safe-to-stop unsealed or unvalidated library-hot service (including first-run Nemotron) is switched with a guarded stop and no restore promise, instead of aborting capture while the previous service stays running. |
 | 2026-08-21 | `classify_library_readiness` (used by `check-weights` / `up.sh`) names the command that can repair the gap: sealed `home add --yes`, unsealed plan-then-`--yes`, `cleanup-recommend` / `catalog primary set` for duplicate or unset primaries, refresh-then-select for a stale primary, and `prepare` only when a durable home is already present. |
 | 2026-08-21 | One-node `check-weights --node` keeps the selected rank and probe cause. SSH-unreachable reports `rank-unreachable` (inventory, do not restage). A catalog home on a different rank reports `wrong-placement` instead of `prepare`. Verification failure on the selected home uses the same identity-mismatch remediation as a remote multi-rank view. |
+| 2026-08-22 | **AUD-03:** removed the stale `MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md` current-system snapshot instead of keeping inaccurate present-tense claims behind a history banner. Active catalog/state docs are OPERATIONS.md and MODELS.md. Git history retains the 2026-08-19 snapshot. |

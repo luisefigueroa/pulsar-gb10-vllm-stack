@@ -22,7 +22,7 @@ Seed files:
 - `scripts/model_library.py`
 - `docs/MODELS.md`
 - `docs/MODEL_LIBRARY_DESIGN.md`
-- `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md`
+- `docs/OPERATIONS.md`
 
 Trace: requested model or profile -> authentication/revision selection -> storage target -> download/import -> completeness/integrity state -> catalog visibility -> path consumed by serving -> retry/update/removal behavior.
 
@@ -75,7 +75,8 @@ Compare current supported claims in:
 
 - `README.md`
 - `docs/MODEL_LIBRARY_DESIGN.md`
-- `docs/MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md`
+- `docs/OPERATIONS.md`
+- `docs/MODELS.md`
 - `docs/decisions/`
 - current operations, recipes, and troubleshooting docs
 
