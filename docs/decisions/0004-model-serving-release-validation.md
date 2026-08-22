@@ -12,6 +12,8 @@
   unchanged because the tracked registry is empty.
   2026-08-22 — SIM-01 keeps the five separately persisted object roles.
   The registry now holds the reviewed Qwen3.8 lineage; it is no longer empty.
+  2026-08-22 — [ADR 0009](./0009-no-launch-trust-mode-axis.md) rejects a
+  separate launch-trust-mode axis; existing labels remain the trust contract.
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
@@ -36,8 +38,9 @@
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Related decisions:**
   [ADR 0001](./0001-model-library-home-view-and-validation-identity.md),
-  [ADR 0002](./0002-subsystem-qualification-boundaries.md), and
-  [ADR 0003](./0003-explicit-model-preparation-transport.md)
+  [ADR 0002](./0002-subsystem-qualification-boundaries.md),
+  [ADR 0003](./0003-explicit-model-preparation-transport.md), and
+  [ADR 0009](./0009-no-launch-trust-mode-axis.md)
 
 ## Context
 
@@ -232,7 +235,8 @@ grant nor deny permission to launch.
 
 Operator surfaces must expose every structurally valid serving profile that
 fits the selected hardware capacity, together with its status and material
-caveats. They may sort or recommend evidence-backed choices first, and a
+caveats. There is no separate launch-trust-mode selection
+([ADR 0009](./0009-no-launch-trust-mode-axis.md)). They may sort or recommend evidence-backed choices first, and a
 guided/default policy may prefer `Validated` releases, but recommendation and
 default selection are distinct from availability. They must not hide or block
 another release solely because of its validation status.

@@ -398,7 +398,10 @@ infrastructure unless that authority is explicitly part of the approved plan.
 - Validation status is advisory and never grants or denies serving. Catalog and
   operator surfaces must not hide or block a release solely because of status,
   including legacy `do-not-use`/`blocked` labels or no reviewed decision.
-  Recommendation/default policy may prefer stronger evidence. Operational
+  Recommendation/default policy may prefer stronger evidence. There is no
+  launch-trust-mode axis ([ADR 0009](docs/decisions/0009-no-launch-trust-mode-axis.md)):
+  existing labels are the trust contract; do not add a reviewed/unreviewed
+  start prompt or flag. Operational
   admission still fails without fallback for concrete identity, integrity, recipe,
   runtime/geometry, capacity, topology, security, lifecycle, or ownership
   failures.

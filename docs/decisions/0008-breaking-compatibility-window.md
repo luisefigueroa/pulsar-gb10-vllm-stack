@@ -6,7 +6,8 @@
 - **Related:**
   [ADR 0005](./0005-reject-live-nfs-rdma-serving.md),
   [ADR 0006](./0006-model-library-only-weight-distribution.md),
-  [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md)
+  [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md),
+  [ADR 0009](./0009-no-launch-trust-mode-axis.md)
 
 ## Context
 
@@ -25,8 +26,9 @@ Announce **one** breaking compatibility window, then delete the deprecated
 public aliases listed below. During the window, each removed flag keeps a
 stable error that names the replacement. Historical evidence is not
 deleted. `./pulsar` is the documented supported operator interface; the
-existing `scripts/*.sh` entrypoints remain the low-level CLIs until the
-SWI-728 public-contract work says otherwise.
+existing `scripts/*.sh` entrypoints remain the low-level CLIs.
+[ADR 0009](./0009-no-launch-trust-mode-axis.md) closed the SWI-728
+public-contract parking lot without hiding those CLIs.
 
 ### Classification
 
@@ -44,7 +46,7 @@ SWI-728 public-contract work says otherwise.
 | Leftover pair-only lifecycle helpers | Remove in window | Inventory during implementation; replace with N-rank paths. |
 | `scripts/weight-fabric.sh show\|unmount\|teardown` | Retain until leftover state gone | ADR 0006 teardown window. Delete in this breaking release only after the lab confirms no `.weight-fabric/` configs. |
 | Hot schema-1/2 legacy repair | Retain for one window, then remove | Migration-only; refuse once no site-local schema-1/2 hot state remains. |
-| `./pulsar` plus current `scripts/` / `cluster/` / `serve.sh` | Retain | Public contract is SWI-728. This ADR does not hide low-level CLIs yet. |
+| `./pulsar` plus current `scripts/` / `cluster/` / `serve.sh` | Retain | ADR 0009: low-level CLIs stay. This ADR does not hide them. |
 
 Site leftover NFS exports/mounts stay confirmation-gated teardown, not a
 compat alias. No automatic privileged sweep.
@@ -57,9 +59,9 @@ compat alias. No automatic privileged sweep.
 
 ## Revisit triggers
 
-Revisit if SWI-728 redefines the supported public surface, if leftover
-fabric/hot-repair state cannot be cleared in one window, or when discovery
-no longer needs topology schema 1 as enroll input.
+Revisit if leftover fabric/hot-repair state cannot be cleared in one window,
+or when discovery no longer needs topology schema 1 as enroll input. Hiding
+low-level CLIs is a later public-contract issue, not this window.
 
 ## Implementation (SIM-11, 2026-08-22)
 

@@ -61,7 +61,9 @@ legacy evidence/recommendation label; it still determines recommendation
 order. Filter that class with `--legacy-tested`. `--validated` is removed
 (ADR 0008) and fails closed with that replacement. Neither status field grants
 or denies serving. Existing reviewed seals/bundles are not automatically
-`Validated`.
+`Validated`. There is no separate launch-trust-mode to choose
+([ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md)): the labels
+already on the profile are the contract.
 
 The current `./pulsar` commands do not capture or publish ADR 0004 objects or
 issue decisions. Local ADR 0004 release planning, attempt composition,
