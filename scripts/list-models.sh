@@ -10,11 +10,7 @@ LEGACY_TESTED=0 JSON=0 SCOPE=all
 while [ $# -gt 0 ]; do
   case "$1" in
     --legacy-tested) LEGACY_TESTED=1 ;;
-    --validated)
-      # Backward-compatible alias. This filters legacy profile STATUS text; it
-      # does not assert an ADR 0004 Validated Model Serving Release.
-      LEGACY_TESTED=1
-      ;;
+    --validated) refuse_removed_list_validated_flag ;;
     --serving)
       [ "$SCOPE" = all ] || die "--serving and --diagnostic are mutually exclusive"
       SCOPE=serving
@@ -26,7 +22,6 @@ while [ $# -gt 0 ]; do
     --json) JSON=1 ;;
     -h|--help)
       echo "usage: $0 [--legacy-tested] [--serving|--diagnostic] [--json]"
-      echo "       --validated is a deprecated alias for --legacy-tested"
       exit 0
       ;;
     *) die "unknown arg: $1" ;;

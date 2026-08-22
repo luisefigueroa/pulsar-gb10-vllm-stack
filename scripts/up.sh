@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Orchestrate checks then launch serve.sh or start-cluster.sh.
-#   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode] [--force]
+#   scripts/up.sh <model-name> [--spec-decode|--no-spec-decode]
 #                 [--skip-preflight]
 #                 [--skip-weights-check] [--accept-memory-warn] [--pull-image]
 #                 [--node NODE_ID] [--dry-run] [--yes] [--verbose]
@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --spec-decode) set_spec_decode_mode SPEC_MODE on ;;
     --no-spec-decode) set_spec_decode_mode SPEC_MODE off ;;
-    --force) : ;; # Backward-compatible no-op: status labels are advisory.
+    --force) refuse_removed_force_flag ;;
     --skip-preflight) SKIP_PF=1 ;;
     --skip-weights-check) SKIP_W=1 ;;
     --accept-memory-warn) ACCEPT_MEM=1 ;;
@@ -46,7 +46,6 @@ usage: scripts/up.sh <model-name> [options]
   --node NODE_ID          place a one-node profile on this confirmed physical node
   --accept-memory-warn   allow start on memory WARN
   --pull-image / --yes   attempt image pull/sync when missing
-  --force                deprecated no-op; status labels never block serving
   --skip-preflight       skip cluster/preflight.sh
   --skip-weights-check   skip weight presence check
 EOF

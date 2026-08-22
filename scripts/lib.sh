@@ -861,6 +861,35 @@ WEIGHT_MODE_FLAG_REMOVED_MESSAGE='--weight-source/--weight-mode were removed (AD
 refuse_removed_weight_mode_flag() {
   die "$WEIGHT_MODE_FLAG_REMOVED_MESSAGE" 2
 }
+
+# ADR 0008 / SIM-11: deprecated public no-ops and aliases fail closed with a
+# named replacement. Parsers still recognize the token so operators do not
+# get a generic "unknown arg".
+REMOVED_FORCE_MESSAGE='--force was removed (ADR 0008): status labels never block serving. Drop the flag.'
+REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): seals still fail closed. Drop the flag.'
+REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --legacy-tested (historical STATUS=tested*). It does not mean ADR 0004 Validated.'
+REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --reviewed-identity. It does not mean ADR 0004 Validated.'
+REMOVED_ACTIVATE_MESSAGE='activate was removed (ADR 0008): use prepare.'
+
+refuse_removed_force_flag() {
+  die "$REMOVED_FORCE_MESSAGE" 2
+}
+
+refuse_removed_allow_unvalidated_flag() {
+  die "$REMOVED_ALLOW_UNVALIDATED_MESSAGE" 2
+}
+
+refuse_removed_list_validated_flag() {
+  die "$REMOVED_LIST_VALIDATED_MESSAGE" 2
+}
+
+refuse_removed_catalog_validated_flag() {
+  die "$REMOVED_CATALOG_VALIDATED_MESSAGE" 2
+}
+
+refuse_removed_activate_command() {
+  die "$REMOVED_ACTIVATE_MESSAGE" 2
+}
 PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"

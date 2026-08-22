@@ -65,8 +65,8 @@ profile carries the first issued seal/bundle and reaches `identity=match` on
 issued seal/bundle and passed its applicable two-node post-issuance physical
 enforcement gate. Profiles without a seal, including `qwen3-1.7b-2node`, remain
 `legacy-unsealed`; after full verification they may be prepared without a
-validation-status override. `--allow-unvalidated` is retained only as a
-deprecated compatibility no-op. Catalog refresh discovers complete snapshot commit
+validation-status override. `--allow-unvalidated` is removed (ADR 0008) and
+fails closed; it never bypassed a configured seal mismatch. Catalog refresh discovers complete snapshot commit
 directories independently of mutable `refs/main`; sealed inspection,
 manifest construction, verification, and launch all receive that selected
 commit explicitly. Guarded home removal now requires all confirmed nodes'
@@ -334,8 +334,8 @@ mount under vLLM is rejected as a serving runtime source
 - **Prepare / model preparation** is the user-facing operation that resolves the
   exact model, creates the required rank-local runtime views, transfers only
   non-home bytes, and verifies every rank. It does **not** start a serving
-  container or establish model qualification. `activate` remains a
-  backward-compatible CLI and internal-schema term only.
+  container or establish model qualification. Public `activate` is removed
+  (ADR 0008); use `prepare`. `activate` remains an internal-schema term only.
 
 Evidence, labels, and future schemas should record these axes independently.
 In particular, SSH/TCP over a RoCE interface is `ssh-roce`; it is not the live
@@ -536,8 +536,8 @@ security checks still fail closed when the requested run cannot proceed.
 commit and label it `expected-unverified`; preparation then computes the observed
 manifest and must reach `match`. `catalog list --reviewed-identity` includes
 only entries carrying a reviewed expected seal, never legacy
-repository-ID-only claims; `--validated` remains a deprecated compatibility
-alias and does not assign an ADR 0004 status. The one-node diagnostic
+repository-ID-only claims; `--validated` is removed (ADR 0008) and fails
+closed with `--reviewed-identity`. It does not assign an ADR 0004 status. The one-node diagnostic
 `qwen3-1.7b` profile is the first issued seal and
 `deepseek-v4-flash` is the second. Profiles without a seal remain
 legacy-unsealed.
@@ -1316,5 +1316,6 @@ rather than promotion blockers.
 | 2026-08-22 | **SIM-05:** model profiles remain executable shell-style `models/*.conf`. Declarative TOML is rejected; a partial format migration would be worse than today's dual Bash/Python readers. |
 | 2026-08-22 | **SIM-06:** wizard switching keeps exact rollback only for reviewed-match `library-hot` services. Unsealed switches stop without a restore promise. Explicit stop-then-start for every switch is rejected. |
 | 2026-08-22 | **SIM-07 / ADR 0008:** one announced breaking-compatibility window. Already-removed: `--weight-source`/`--weight-mode`, `bench-activate`. Topology schema 1 stays as bootstrap input only. `--validated` is classified per CLI. `activate` and status no-ops drop after the window. |
+| 2026-08-22 | **SIM-11:** executed ADR 0008 for public aliases. `--force`, `--allow-unvalidated`, `list-models.sh --validated`, catalog `--validated`, and public `activate` parse then exit 2 with a named replacement. N≥2 `check-image.sh` JSON emits `rank-*` / `missing-on-rank` (not pair-only `worker-*`). N=1 `head-*` / `target-*` / `missing-on-head` stay because `up.sh` remediations differ. `--force-unpin`, inventory keys, `plan-activate`, leftover fabric teardown, and hot schema-1/2 repair are unchanged. |
 | 2026-08-22 | **SIM-08:** documentation roles are ADR (decision), DESIGN (architecture), OPERATIONS (procedure), MODELS/conf (live catalog), VALIDATION/results (evidence). No generated tables in this change; no replacement implementation spec. |
 | 2026-08-22 | **SIM-09:** deterministic tests are quick / affected / full as the target. Until those entrypoints exist, local script/config work still runs `scripts/selftest.sh`. |

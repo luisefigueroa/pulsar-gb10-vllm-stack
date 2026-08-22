@@ -63,8 +63,8 @@ screened, but trusted capture and publication privacy review remain required.
 SSH, GPU, Docker, images, weights, memory, control bindings, or stale
 containers fail. Fix those before `start-cluster.sh`. There are no baked-in
 cluster addresses: every multi-node setup confirms a gitignored
-`.cluster-topology.json`; `HEAD_IP`/`WORKER_IP` environment variables are not
-honored for topology.
+`.cluster-topology.json`; `HEAD_IP`/`WORKER_IP` environment variables never
+confirm membership and do not construct topology.
 
 ---
 
@@ -253,9 +253,9 @@ and an explicit topology class/rail minimum. Extra discovered nodes stay idle.
 The wizard offers every exact serving profile that fits capacity, displays its
 status and caveats, and does not infer a larger geometry.
 
-`HEAD_IP`/`WORKER_IP` environment variables are not honored for topology:
-multi-node launch, preflight, and cluster start refuse without a confirmed
-manifest. Confirm membership with `--write-topology`.
+`HEAD_IP`/`WORKER_IP` environment variables never confirm membership and do
+not construct topology: multi-node launch, preflight, and cluster start refuse
+without a confirmed manifest. Confirm membership with `--write-topology`.
 
 ---
 

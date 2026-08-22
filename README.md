@@ -253,8 +253,9 @@ first. Validation status never blocks serving. No three-node profile is
 promoted today. Smoke served name:
 `deepseek-v4-flash`; cold load can take ~10+ minutes.
 
-`--legacy-tested` filters the historical `STATUS=tested*` recommendation class;
-`--validated` remains a deprecated alias for compatibility. Neither is a Model
+`--legacy-tested` filters the historical `STATUS=tested*` recommendation class.
+`--validated` was removed (ADR 0008); it fails closed and names `--legacy-tested`.
+That filter is not a Model
 Serving Release status filter under
 [ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and no
 existing profile is automatically relabeled `Validated`. A **Model Serving
@@ -508,8 +509,9 @@ no leaks, no thermal throttling anywhere).
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.
 The resulting `.cluster-topology.json` is gitignored; do not commit site
-addresses. `HEAD_IP` / `WORKER_IP` environment variables are not honored for
-topology; multi-node operations require the confirmed manifest.
+addresses. `HEAD_IP` / `WORKER_IP` environment variables never confirm
+membership and do not construct topology; multi-node operations require the
+confirmed manifest.
 
 ## License
 

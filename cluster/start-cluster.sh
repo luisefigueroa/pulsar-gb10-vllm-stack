@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
     --skip-preflight) SKIP_PREFLIGHT=1 ;;
     --skip-warmup) SKIP_WARMUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
-    --force) : ;; # Backward-compatible no-op: status labels are advisory.
+    --force) refuse_removed_force_flag ;;
     --weight-source|--weight-mode)
       refuse_removed_weight_mode_flag
       ;;

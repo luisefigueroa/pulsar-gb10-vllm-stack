@@ -1396,10 +1396,8 @@ def require_activation_identity(
     *,
     allow_unvalidated: bool,
 ) -> dict[str, Any]:
-    # allow_unvalidated is a backward-compatible CLI input. Validation status
-    # is descriptive, so exact observed content without a reviewed expectation
-    # does not need an authorization override. Configured expectation mismatches
-    # still fail in compare_profile_expected_identity above.
+    # Public --allow-unvalidated is refused (ADR 0008). This leftover keyword
+    # cannot bypass a configured seal mismatch; validation status is advisory.
     _ = allow_unvalidated
     validation = compare_profile_expected_identity(profile, manifest)
     return validation
@@ -8914,7 +8912,6 @@ def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
         absolute_path=args.path,
         catalog_path=args.catalog or None,
         models_dir=args.models_dir or None,
-        allow_unvalidated=args.allow_unvalidated,
         nodes=args.nodes,
     )
     if args.execute and plan.get("action") == "stage-only":
@@ -9127,7 +9124,6 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
         models_dir=args.models_dir,
         backend=args.backend or None,
         transport=args.transport or None,
-        allow_unvalidated=args.allow_unvalidated,
         nodes=args.nodes,
         target_rank=args.target_rank,
         topology_file=args.topology_file or None,
@@ -9672,6 +9668,33 @@ def cmd_compare_ssh_roce_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+REMOVED_ALLOW_UNVALIDATED_MESSAGE = (
+    "--allow-unvalidated was removed (ADR 0008): seals still fail closed. "
+    "Drop the flag."
+)
+REMOVED_CATALOG_VALIDATED_MESSAGE = (
+    "--validated was removed (ADR 0008): use --reviewed-identity. "
+    "It does not mean ADR 0004 Validated."
+)
+
+
+class _RefuseRemovedFlag(argparse.Action):
+    def __init__(self, option_strings, dest, message: str, **kwargs):
+        kwargs["nargs"] = 0
+        kwargs["default"] = False
+        super().__init__(option_strings, dest, **kwargs)
+        self.message = message
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        parser.exit(status=2, message=self.message + "\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pulsar federated model library")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -10037,13 +10060,16 @@ def build_parser() -> argparse.ArgumentParser:
     list_p.add_argument("--catalog", required=True)
     list_p.add_argument(
         "--reviewed-identity",
-        "--validated",
         dest="validated",
         action="store_true",
-        help=(
-            "show entries with a reviewed expected identity "
-            "(--validated is a compatibility alias)"
-        ),
+        help="show entries with a reviewed expected identity",
+    )
+    list_p.add_argument(
+        "--validated",
+        dest="_removed_validated",
+        action=_RefuseRemovedFlag,
+        message=REMOVED_CATALOG_VALIDATED_MESSAGE,
+        help=argparse.SUPPRESS,
     )
     list_p.add_argument("--json", action="store_true")
     list_p.set_defaults(func=cmd_list)
@@ -10132,7 +10158,13 @@ def build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--catalog", default="")
     stage.add_argument("--models-dir", default="")
     stage.add_argument("--nodes", type=int, default=1)
-    stage.add_argument("--allow-unvalidated", action="store_true")
+    stage.add_argument(
+        "--allow-unvalidated",
+        dest="_removed_allow_unvalidated",
+        action=_RefuseRemovedFlag,
+        message=REMOVED_ALLOW_UNVALIDATED_MESSAGE,
+        help=argparse.SUPPRESS,
+    )
     stage.add_argument(
         "--execute",
         action="store_true",
@@ -10200,7 +10232,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Exact serving rank for a one-node profile",
     )
-    plan.add_argument("--allow-unvalidated", action="store_true")
+    plan.add_argument(
+        "--allow-unvalidated",
+        dest="_removed_allow_unvalidated",
+        action=_RefuseRemovedFlag,
+        message=REMOVED_ALLOW_UNVALIDATED_MESSAGE,
+        help=argparse.SUPPRESS,
+    )
     plan.add_argument(
         "--topology-file",
         default="",

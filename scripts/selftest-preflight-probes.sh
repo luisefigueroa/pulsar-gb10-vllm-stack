@@ -132,8 +132,8 @@ image_out=$(DOCKER_MODE=ok PULSAR_DOCKER="$STATE_DIR/docker" \
 image_rc=$?
 set -e
 [ "$image_rc" -ne 0 ]
-assert_json_state "$image_out" worker-unreachable \
-  "image check reports worker SSH failure"
+assert_json_state "$image_out" rank-unreachable \
+  "image check reports rank SSH failure"
 
 # The weight-mode axis is removed (ADR 0006): any use fails closed with an
 # actionable retirement message before other work.

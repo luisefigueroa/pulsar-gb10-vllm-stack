@@ -37,6 +37,23 @@ expect_failure 1 "invalid model id" "config loader rejects path traversal" \
 expect_failure 2 "ADR 0006" "serve rejects the removed weight-mode axis" \
   "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --weight-source library-hot
 
+expect_failure 2 "ADR 0008" "serve refuses removed --force" \
+  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --force
+expect_failure 2 "Drop the flag" "up refuses removed --force" \
+  "$REPO_DIR/scripts/up.sh" qwen3-1.7b --dry-run --force
+expect_failure 2 "Drop the flag" "start-cluster refuses removed --force" \
+  "$REPO_DIR/cluster/start-cluster.sh" qwen3-1.7b --dry-run --force
+expect_failure 2 "use --legacy-tested" "list-models refuses removed --validated" \
+  "$REPO_DIR/scripts/list-models.sh" --validated
+expect_failure 2 "use --reviewed-identity" "catalog list refuses removed --validated" \
+  "$REPO_DIR/scripts/model-library.sh" catalog list --validated
+expect_failure 2 "use prepare" "model-library refuses removed activate" \
+  "$REPO_DIR/scripts/model-library.sh" activate qwen3-1.7b
+expect_failure 2 "Drop the flag" "python plan-activate refuses --allow-unvalidated" \
+  python3 "$REPO_DIR/scripts/model_library.py" plan-activate --allow-unvalidated
+expect_failure 2 "use --reviewed-identity" "python list refuses removed --validated" \
+  python3 "$REPO_DIR/scripts/model_library.py" list --catalog /dev/null --validated
+
 grep -q '\[ "$DRY" != 1 \].*PULL_IMG' "$REPO_DIR/scripts/up.sh"
 echo "OK   up dry-run cannot enter image pull/sync branches"
 

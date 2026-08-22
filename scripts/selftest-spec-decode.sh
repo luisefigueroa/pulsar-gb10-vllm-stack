@@ -69,7 +69,7 @@ if (
 fi
 
 # Keep the machine-readable model catalog explicit about the effective default.
-"$REPO_DIR/scripts/list-models.sh" --validated --json | python3 -c '
+"$REPO_DIR/scripts/list-models.sh" --legacy-tested --json | python3 -c '
 import json, sys
 models = {m["id"]: m for m in json.load(sys.stdin)["models"]}
 assert models["deepseek-v4-flash"]["spec"] == "recommended"
