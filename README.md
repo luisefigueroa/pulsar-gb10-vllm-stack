@@ -263,14 +263,15 @@ recipe, runtime/image identity, and supported hardware geometry; changing any
 component creates a new release. The repository now has pure version-1
 descriptor, contract, run-record, evidence-bundle, and reviewed-decision
 validators. Read-only persistence and verification of stored ADR 0004 objects
-is implemented under `models/model-serving-releases/` and is currently empty.
-Local ADR 0004 evidence-capture candidate persistence can record unreviewed
-run and bundle candidates without writing that registry or launching a model.
-Advisory catalog/operator status projection is implemented for an explicitly
-bound release; current profiles are unbound and therefore display a neutral
-release state. Maintainer-only issuance staging can propose registry objects;
-a successful local command is not trusted until repository review and merge,
-and the tracked store remains empty.
+is implemented under `models/model-serving-releases/`. That store holds the
+reviewed Qwen3.8-27B-FP8 lineage; its advisory decision is
+`Testing incomplete`. Local ADR 0004 evidence-capture candidate persistence
+can record unreviewed run and bundle candidates without writing that registry
+or launching a model. Advisory catalog/operator status projection is
+implemented for an explicitly bound release; `qwen3.8-27b-fp8` is bound, and
+other current profiles remain unbound and therefore display a neutral release
+state. Maintainer-only issuance staging can propose registry objects; a
+successful local command is not trusted until repository review and merge.
 Serving is status-independent, while concrete identity, recipe, topology,
 capacity, security, and lifecycle checks still fail closed. No schema object or selftest
 establishes physical DGX behavior.
@@ -494,7 +495,7 @@ no leaks, no thermal throttling anywhere).
 | `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
 | `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
 | `models/validation-bundles/` | legacy schema-1 combined model/runtime/image/geometry/evidence claims; not a Model Serving Release ID and unchanged by the pre-issuance ADR 0004 schema correction |
-| `models/model-serving-releases/` | tracked ADR 0004 release/contract/run/bundle/decision registry; currently empty and read-only through `scripts/model-serving-release-registry.sh` |
+| `models/model-serving-releases/` | tracked ADR 0004 release/contract/run/bundle/decision registry; holds the reviewed Qwen3.8 lineage (`Testing incomplete`); read-only through `scripts/model-serving-release-registry.sh` |
 | `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture candidate persistence; unreviewed, launches nothing, never writes the tracked registry |
 | `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |

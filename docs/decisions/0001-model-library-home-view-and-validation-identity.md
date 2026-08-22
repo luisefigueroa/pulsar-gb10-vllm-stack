@@ -149,3 +149,12 @@ The first reviewed ADR 0004 lineage is now stored and bound to
 not create an ADR 0001 expected seal, change legacy `STATUS`, authorize
 serving, or promote experimental one-rank `library-hot`; the expected-versus-
 observed content boundary in this decision remains unchanged.
+
+## Interpretation note — 2026-08-22 (SIM-03)
+
+Source-attested unsealed Hugging Face `home add` remains a core
+catalog/artifact ingress. SIM-03 does not weaken decision 4: a receipt
+and live-directory attachment are observed/source identity only. They
+cannot replace or create a lab-issued expected seal. Unknown, restored,
+or unbound homes still require a reviewed expected manifest independent
+of the observed tree.

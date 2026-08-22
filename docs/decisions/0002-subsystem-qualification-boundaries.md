@@ -71,10 +71,11 @@ release descriptor identifies the immutable Model Serving Release and the
 implemented frozen Validation Contract declares its gates. Implemented pure run
 records and evidence bundles bind observed evidence, and the implemented pure
 decision schema independently verifies an explicit reviewed status. Read-only
-persistence and verification of stored ADR 0004 objects is implemented and
-currently empty. Local evidence-capture candidate persistence is implemented
-and unreviewed. Advisory status projection is implemented for profiles
-explicitly bound to a release ID; trusted publication remains pending.
+persistence and verification of stored ADR 0004 objects is implemented.
+The 2026-08-19 Qwen3.8 lineage later filled that store (`Testing incomplete`);
+this sentence originally recorded an empty registry. Local evidence-capture
+candidate persistence is implemented and unreviewed. Advisory status
+projection is implemented for profiles explicitly bound to a release ID.
 Existing schema-1 bundles remain immutable
 legacy artifacts.
 Reusing generic catalog evidence does not carry an old bundle, release decision,

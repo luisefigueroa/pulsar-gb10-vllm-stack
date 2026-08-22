@@ -71,7 +71,9 @@ language for new features without an explicit decision.
   complex JSON with `sed`/`awk` when a Python helper already exists or belongs.
 - Reuse topology and SSH identity rules from shared helpers; do not reimplement
   confirmed-endpoint selection in a one-off Python script.
-- Profile confs remain shell-style under `models/`; Bash may `load_conf` and
+- Profile confs remain shell-style under `models/` (SIM-05, 2026-08-22:
+  declarative TOML is rejected; parser unification may happen later without
+  a format change). Bash may `load_conf` and
   pass `MODEL` / `NODES` / `STATUS` into Python as args or a small JSON dump.
   `EXPECTED_MODEL_SEAL` is only a reviewed repository-relative reference under
   `models/seals/`; `scripts/model_identity.py` owns its strict schema and
@@ -228,7 +230,22 @@ explaining them in straightforward language.
 
 ## Testing Guidelines
 
-Run `scripts/selftest.sh` for every script or config change. Changes affecting serving behavior must also follow `docs/REVALIDATE.md`; record reproducible outputs under `results/` and update `docs/VALIDATION.md`. There is no percentage coverage target: promotion depends on correctness, determinism, benchmark, long-context, and soak evidence appropriate to the change.
+Deterministic tests use three tiers (SIM-09, 2026-08-22):
+
+- **quick** — syntax, core schemas, documentation privacy, and critical
+  identity/topology/ownership fail-closed checks.
+- **affected** — suites for the subsystems the change actually touches.
+- **full** — `scripts/selftest.sh`, required in CI and before publication.
+
+Until separate **quick** and **affected** entrypoints exist, run
+`scripts/selftest.sh` for every script, config, or agent-guidance change.
+Do not skip **full**. The three-tier split is the target, not a current
+local shortcut. Changes affecting serving behavior
+must also follow `docs/REVALIDATE.md`; record reproducible outputs under
+`results/` and update `docs/VALIDATION.md`. There is no percentage coverage
+target: promotion depends on correctness, determinism, benchmark, long-context,
+and soak evidence appropriate to the change. The current `scripts/selftest.sh`
+entrypoint is the **full** suite.
 
 ### Selftest structure (avoid spaghetti mocks)
 
@@ -460,10 +477,12 @@ interpretation as settled without explicit approval and an updated ADR. See
 
 For catalog, download, prepare, launch, pin, purge, or model-validation work,
 read `docs/MODEL_LIBRARY_DESIGN.md` and the applicable record under
-`docs/decisions/` before changing behavior. Authority descends from this file,
-to the accepted design and decision records, to operator runbooks and the
-code/schemas that own current behavior, and finally validation
-ledgers/evidence. Current code or a
+`docs/decisions/` before changing behavior. Authority roles (SIM-08,
+2026-08-22): ADRs hold decisions; `MODEL_LIBRARY_DESIGN.md` holds target
+architecture; `OPERATIONS.md` holds operator procedures; `MODELS.md` plus
+`models/*.conf` hold the live catalog (drift-tested); `VALIDATION.md` and
+`results/` hold evidence. Do not reintroduce a hand-maintained
+implementation-spec snapshot. Current code or a
 new result does not silently override an accepted architectural decision.
 Use `skills/change-pulsar-model-library/SKILL.md` as the repeatable workflow for
 this work; the skill is procedural and does not outrank these sources.
@@ -483,8 +502,9 @@ this work; the skill is procedural and does not outrank these sources.
   descriptor owns the release ID, the implemented Validation Contract freezes
   its criteria, and the implemented evidence layer validates immutable run,
   bundle, and decision objects. Read-only trusted persistence can verify
-  those objects under `models/model-serving-releases/`; that store is
-  currently empty. Caller-supplied predecessor and decision registries remain
+  those objects under `models/model-serving-releases/`. That store holds the
+  reviewed Qwen3.8-27B-FP8 lineage (`Testing incomplete`); other current
+  profiles remain unbound. Caller-supplied predecessor and decision registries remain
   validation input, not trusted persistence. Local evidence-capture candidate
   persistence and source-neutral release-plan candidate persistence are
   implemented and remain unreviewed. Closed compare/benchmark measurements and
@@ -493,8 +513,7 @@ this work; the skill is procedural and does not outrank these sources.
   behavior. Read-only
   catalog/operator projection is implemented for an explicitly bound release;
   maintainer-only issuance staging can propose reviewed registry objects, but
-  a local command is not the trust event and this repository still stores no
-  issued object. The supervised
+  a local command is not the trust event. The supervised
   `pulsar-model-onboarding` skill is implemented as control-plane
   orchestration around those CLIs; it does not issue a decision, assign
   status, or bind a profile. It can plan and, after a separate confirmation,
@@ -582,8 +601,9 @@ this work; the skill is procedural and does not outrank these sources.
   runtime-access contract verify on every serving rank. A failure before that
   barrier is failed preparation and leaves the release `Untested`.
 - Preserve historical evidence and mark it superseded rather than rewriting it.
-  A contract change must update the canonical design, operations, validation
-  ledger, and evidence index together.
+  A contract change updates the authoritative source for that fact (ADR,
+  design, operations, catalog, or evidence) rather than five copied
+  current-state documents. Generated projections are later work.
 
 ### Operational hygiene
 

@@ -92,10 +92,10 @@ implemented separately in `scripts/model_serving_release.py`; run, bundle, and
 decision schema version 1 is implemented in
 `scripts/model_validation_evidence.py`. No trusted artifact here references
 those objects yet. Read-only persistence and verification of ADR 0004 objects
-is implemented separately under `models/model-serving-releases/` and is
-currently empty. Local evidence-capture candidate persistence is implemented
-and unreviewed. Issuance/publication and catalog/operator projection remain
-pending. Multiple immutable attempts, evidence sets, and
+is implemented separately under `models/model-serving-releases/` and holds
+the reviewed Qwen3.8 lineage (`Testing incomplete`). Local evidence-capture
+candidate persistence is implemented and unreviewed. Catalog/operator
+projection exists for that bound profile. Multiple immutable attempts, evidence sets, and
 reviewed decisions can already refer to one unchanged four-part release ID
 without rewriting these legacy files.
 

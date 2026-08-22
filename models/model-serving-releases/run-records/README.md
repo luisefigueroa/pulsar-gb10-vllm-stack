@@ -10,5 +10,5 @@ validation needs the evidence-artifact descriptors carried by a stored
 bundle that includes the run. Orphan run files without a covering bundle
 fail closed.
 
-This namespace is independently tracked and currently empty. Do not add a
-real run record here.
+This namespace holds the reviewed Qwen3.8 run records. Do not add a
+`Validated` fixture here.

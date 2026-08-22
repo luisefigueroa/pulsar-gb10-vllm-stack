@@ -5,10 +5,9 @@ regular non-symlink JSON document named `<release_id>.json` whose `kind`
 is `pulsar-model-serving-release` and whose `release_id` matches the
 filename.
 
-This namespace is independently tracked. An empty store is valid: a
-descriptor may exist here before any contract, run, bundle, or decision.
-Do not place a real or `Validated` fixture in this directory until a
-reviewed issuance change lands.
+This namespace holds the reviewed Qwen3.8 release descriptor. An empty
+store remains valid for a later issuance. Do not add a `Validated`
+fixture here.
 
 Inspect with `scripts/model-serving-release-registry.sh show-release`.
 Verification does not project catalog status or launch a release. Status is

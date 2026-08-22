@@ -241,9 +241,10 @@ These functions validate supplied JSON-compatible objects only.
 `predecessor_evidence_registry` and `decision_evidence_registry` are
 caller-supplied validation input, not the trusted store. Read-only
 verification of stored ADR 0004 objects is implemented under
-`models/model-serving-releases/` and is currently empty. Local capture
-candidates are unreviewed and do not replace those artifacts. Until
-issuance lands, continue retaining the existing raw/sanitized artifacts and
+`models/model-serving-releases/` and holds the reviewed Qwen3.8 lineage
+(`Testing incomplete`). Local capture
+candidates are unreviewed and do not replace those artifacts. Continue
+retaining the existing raw/sanitized artifacts and
 current schema-1 release materials described below. Do not create a
 `Validated` claim merely by calling a builder or copying a synthetic document.
 
