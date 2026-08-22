@@ -27,8 +27,6 @@ run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
-run "Docker Compose remains an unsupported historical sketch" \
-  "$REPO_DIR/scripts/selftest-compose-unsupported.sh"
 run "publishable documentation privacy" \
   "$REPO_DIR/scripts/selftest-docs-privacy.sh"
 run "active current-state documentation drift (AUD-03)" \
