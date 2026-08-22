@@ -237,14 +237,15 @@ Deterministic tests use three tiers (SIM-09, 2026-08-22):
 - **affected** — suites for the subsystems the change actually touches.
 - **full** — `scripts/selftest.sh`, required in CI and before publication.
 
-Local script or config work may run **quick + affected**. Do not skip **full**
-for CI, release, or publishable evidence. Changes affecting serving behavior
+Until separate **quick** and **affected** entrypoints exist, run
+`scripts/selftest.sh` for every script, config, or agent-guidance change.
+Do not skip **full**. The three-tier split is the target, not a current
+local shortcut. Changes affecting serving behavior
 must also follow `docs/REVALIDATE.md`; record reproducible outputs under
 `results/` and update `docs/VALIDATION.md`. There is no percentage coverage
 target: promotion depends on correctness, determinism, benchmark, long-context,
 and soak evidence appropriate to the change. The current `scripts/selftest.sh`
-entrypoint is the **full** suite until the tiers are split into separate
-commands.
+entrypoint is the **full** suite.
 
 ### Selftest structure (avoid spaghetti mocks)
 
@@ -501,8 +502,9 @@ this work; the skill is procedural and does not outrank these sources.
   descriptor owns the release ID, the implemented Validation Contract freezes
   its criteria, and the implemented evidence layer validates immutable run,
   bundle, and decision objects. Read-only trusted persistence can verify
-  those objects under `models/model-serving-releases/`; that store is
-  currently empty. Caller-supplied predecessor and decision registries remain
+  those objects under `models/model-serving-releases/`. That store holds the
+  reviewed Qwen3.8-27B-FP8 lineage (`Testing incomplete`); other current
+  profiles remain unbound. Caller-supplied predecessor and decision registries remain
   validation input, not trusted persistence. Local evidence-capture candidate
   persistence and source-neutral release-plan candidate persistence are
   implemented and remain unreviewed. Closed compare/benchmark measurements and
@@ -511,8 +513,7 @@ this work; the skill is procedural and does not outrank these sources.
   behavior. Read-only
   catalog/operator projection is implemented for an explicitly bound release;
   maintainer-only issuance staging can propose reviewed registry objects, but
-  a local command is not the trust event and this repository still stores no
-  issued object. The supervised
+  a local command is not the trust event. The supervised
   `pulsar-model-onboarding` skill is implemented as control-plane
   orchestration around those CLIs; it does not issue a decision, assign
   status, or bind a profile. It can plan and, after a separate confirmation,

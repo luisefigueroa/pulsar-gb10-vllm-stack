@@ -115,7 +115,8 @@ rather than defaulted.
   (2026-08-22) keeps source-attested unsealed `home add` as a core
   catalog/artifact feature. It is not a reviewed seal and not a non-HF
   import path. Remote-target, asymmetric-credentials, and restore gates
-  remain implementation follow-up.
+  remain physical validation follow-ups: the control plane exists; those
+  cases are not yet covered by physical evidence.
 - **Durable-home loss is service loss** for the affected model until it is
   re-acquired. ADR 0001 already records that home-loss resilience requires
   an explicit durable-replica/failover policy on a distinct failure domain;

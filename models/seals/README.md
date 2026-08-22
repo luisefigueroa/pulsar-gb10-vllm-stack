@@ -125,9 +125,10 @@ supersession schemas are also implemented separately. The corrected contracts
 remain schema version 1 because no ADR 0004 object was issued or persisted
 before the correction. This directory's older schema-1 seals and linked
 combined bundles are a different legacy format and remain byte-for-byte
-unchanged. None of the ADR 0004 objects is issued or referenced by the
-current seal path. Read-only persistence and verification of those objects
-is implemented under `models/model-serving-releases/` and is currently empty.
+unchanged. Schema-1 seals here do not reference ADR 0004 objects. Read-only
+persistence and verification of those objects is implemented under
+`models/model-serving-releases/` and holds the reviewed Qwen3.8 lineage
+(`Testing incomplete`).
 Local evidence-capture candidate persistence is implemented and unreviewed.
 Advisory projection exists for an explicit reviewed profile binding, and
 maintainer issuance staging can propose registry objects, but a local command
