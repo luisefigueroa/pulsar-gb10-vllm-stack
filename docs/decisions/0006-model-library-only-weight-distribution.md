@@ -9,7 +9,10 @@
   [ADR 0003](./0003-explicit-model-preparation-transport.md),
   [ADR 0004](./0004-model-serving-release-validation.md), and
   [ADR 0005](./0005-reject-live-nfs-rdma-serving.md)
-- **Decides:** SIM-02 (supported model-storage and distribution surface)
+- **Decides:** SIM-02 (supported model-storage and distribution surface).
+  SIM-03 keep (source-attested unsealed Hugging Face `home add`) is recorded
+  in the 2026-08-22 interpretation note; this ADR's library-only mechanism
+  is unchanged.
 - **Amended by:**
   [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md)
   (ordinary-stop hot retention only; library-only mechanism unchanged)
@@ -107,10 +110,12 @@ rather than defaulted.
   one-rank is a decision, not evidence. Follow-up: capture a physical
   one-rank library serve run into `results/model-library/` and the
   validation ledger.
-- **Unattested `home add` becomes the primary ingress.** With
-  `pull-weights.sh` gone, every model enters through the library; the
-  source-attestation question (SIM-03) is therefore more urgent and remains
-  open as its own decision.
+- **Unattested `home add` is the unsealed Hugging Face ingress.** With
+  `pull-weights.sh` gone, every model enters through the library. SIM-03
+  (2026-08-22) keeps source-attested unsealed `home add` as a core
+  catalog/artifact feature. It is not a reviewed seal and not a non-HF
+  import path. Remote-target, asymmetric-credentials, and restore gates
+  remain implementation follow-up.
 - **Durable-home loss is service loss** for the affected model until it is
   re-acquired. ADR 0001 already records that home-loss resilience requires
   an explicit durable-replica/failover policy on a distinct failure domain;
@@ -165,6 +170,25 @@ rather than defaulted.
 - Pre-existing containers launched under replicated remain visible in
   inventory as legacy provenance and stop cleanly without model-library
   cleanup; restarting them migrates them to the library.
+
+## Interpretation note — 2026-08-22 (SIM-03)
+
+Source-attested unsealed `home add` remains a core catalog/artifact
+feature for an absent brand-new Hugging Face `model_id@commit`. The
+operator path is read-only `--plan`, separate confirmation, `--yes`
+execution on the planned rank and exact commit, catalog refresh, and
+receipt-backed `home verify`. That path creates observed/source identity
+only. It does not create a reviewed seal, status, serving permission, or
+a Model Serving Release. It is not local-directory or non-HF import
+(still a later ADR). Existing receipts and live-directory attachments
+stay valid; there is no migration. Remote target execution, asymmetric
+credentials, and an actual external restore remain physically pending
+and are not reasons to remove the feature.
+
+Rejected SIM-03 alternatives: requiring a reviewed expected seal before
+any download (would invert seal-vs-acquisition order with no remaining
+unsealed ingress), and deleting source-attested in favor of replicated
+`pull-weights` (that path was already removed by this ADR).
 
 ## Revisit triggers
 
