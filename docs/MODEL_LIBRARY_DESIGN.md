@@ -1316,3 +1316,5 @@ rather than promotion blockers.
 | 2026-08-22 | **SIM-05:** model profiles remain executable shell-style `models/*.conf`. Declarative TOML is rejected; a partial format migration would be worse than today's dual Bash/Python readers. |
 | 2026-08-22 | **SIM-06:** wizard switching keeps exact rollback only for reviewed-match `library-hot` services. Unsealed switches stop without a restore promise. Explicit stop-then-start for every switch is rejected. |
 | 2026-08-22 | **SIM-07 / ADR 0008:** one announced breaking-compatibility window. Already-removed flags stay fail-closed; no-op aliases and `activate` drop after that window; leftover fabric teardown and schema-1/2 hot repair stay until site state is gone. |
+| 2026-08-22 | **SIM-08:** documentation roles are ADR (decision), DESIGN (architecture), OPERATIONS (procedure), MODELS/conf (live catalog), VALIDATION/results (evidence). No generated tables in this change; no replacement implementation spec. |
+| 2026-08-22 | **SIM-09:** deterministic tests are quick / affected / full. `scripts/selftest.sh` remains the full suite until separate entrypoints exist. CI and publication still require full. |

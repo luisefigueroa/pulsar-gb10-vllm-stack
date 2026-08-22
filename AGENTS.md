@@ -230,7 +230,21 @@ explaining them in straightforward language.
 
 ## Testing Guidelines
 
-Run `scripts/selftest.sh` for every script or config change. Changes affecting serving behavior must also follow `docs/REVALIDATE.md`; record reproducible outputs under `results/` and update `docs/VALIDATION.md`. There is no percentage coverage target: promotion depends on correctness, determinism, benchmark, long-context, and soak evidence appropriate to the change.
+Deterministic tests use three tiers (SIM-09, 2026-08-22):
+
+- **quick** — syntax, core schemas, documentation privacy, and critical
+  identity/topology/ownership fail-closed checks.
+- **affected** — suites for the subsystems the change actually touches.
+- **full** — `scripts/selftest.sh`, required in CI and before publication.
+
+Local script or config work may run **quick + affected**. Do not skip **full**
+for CI, release, or publishable evidence. Changes affecting serving behavior
+must also follow `docs/REVALIDATE.md`; record reproducible outputs under
+`results/` and update `docs/VALIDATION.md`. There is no percentage coverage
+target: promotion depends on correctness, determinism, benchmark, long-context,
+and soak evidence appropriate to the change. The current `scripts/selftest.sh`
+entrypoint is the **full** suite until the tiers are split into separate
+commands.
 
 ### Selftest structure (avoid spaghetti mocks)
 
@@ -462,10 +476,12 @@ interpretation as settled without explicit approval and an updated ADR. See
 
 For catalog, download, prepare, launch, pin, purge, or model-validation work,
 read `docs/MODEL_LIBRARY_DESIGN.md` and the applicable record under
-`docs/decisions/` before changing behavior. Authority descends from this file,
-to the accepted design and decision records, to operator runbooks and the
-code/schemas that own current behavior, and finally validation
-ledgers/evidence. Current code or a
+`docs/decisions/` before changing behavior. Authority roles (SIM-08,
+2026-08-22): ADRs hold decisions; `MODEL_LIBRARY_DESIGN.md` holds target
+architecture; `OPERATIONS.md` holds operator procedures; `MODELS.md` plus
+`models/*.conf` hold the live catalog (drift-tested); `VALIDATION.md` and
+`results/` hold evidence. Do not reintroduce a hand-maintained
+implementation-spec snapshot. Current code or a
 new result does not silently override an accepted architectural decision.
 Use `skills/change-pulsar-model-library/SKILL.md` as the repeatable workflow for
 this work; the skill is procedural and does not outrank these sources.
@@ -584,8 +600,9 @@ this work; the skill is procedural and does not outrank these sources.
   runtime-access contract verify on every serving rank. A failure before that
   barrier is failed preparation and leaves the release `Untested`.
 - Preserve historical evidence and mark it superseded rather than rewriting it.
-  A contract change must update the canonical design, operations, validation
-  ledger, and evidence index together.
+  A contract change updates the authoritative source for that fact (ADR,
+  design, operations, catalog, or evidence) rather than five copied
+  current-state documents. Generated projections are later work.
 
 ### Operational hygiene
 

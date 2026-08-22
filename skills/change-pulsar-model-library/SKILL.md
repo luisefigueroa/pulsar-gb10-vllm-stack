@@ -180,8 +180,9 @@ Run validation in proportion to the change:
 
 1. Run `git diff --check`.
 2. Run the repository's documentation or link checks when present.
-3. Run `scripts/selftest.sh` for script, configuration, or agent-guidance
-   changes.
+3. Run **quick + affected** locally for script or config changes (SIM-09).
+   Run `scripts/selftest.sh` (**full**) for agent-guidance changes, CI, and
+   publication.
 4. Search active guidance for contradictory ownership, identity, pin,
    resilience, transport, qualification-scope, smoke, and causal-invalidation claims; allow old language only in immutable
    historical evidence with a current supersession pointer.
