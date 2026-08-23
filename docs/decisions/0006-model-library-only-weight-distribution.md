@@ -16,6 +16,10 @@
 - **Amended by:**
   [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md)
   (ordinary-stop hot retention only; library-only mechanism unchanged)
+  and
+  [ADR 0011](./0011-portable-occupancy-and-cold-archive.md)
+  (occupancy transfer and NFS archive as home-loss recovery; library-only
+  mechanism unchanged)
 
 ## Context
 
@@ -118,11 +122,12 @@ rather than defaulted.
   import path. Remote-target, asymmetric-credentials, and restore gates
   remain physical validation follow-ups: the control plane exists; those
   cases are not yet covered by physical evidence.
-- **Durable-home loss is service loss** for the affected model until it is
-  re-acquired. ADR 0001 already records that home-loss resilience requires
-  an explicit durable-replica/failover policy on a distinct failure domain;
-  that policy is future work and this decision widens its blast radius from
-  an opt-in path to the whole product.
+- **Durable-home loss is service loss** for the affected model until occupancy
+  is restored. [ADR 0011](./0011-portable-occupancy-and-cold-archive.md) is
+  the failover policy: occupy-in-place after a live receipt rehash, restore
+  from a verified receipt-indexed NFS archive, or Hub `home add` only when
+  no receipt and no archive exist. A second Spark durable replica is not
+  that policy.
 - **Legacy-unsealed identity is weaker than sealed** (no reviewed seal;
   `identity_status=legacy-unsealed`). That risk existed before and is now
   first-class rather than experimental. Issuing seals for remaining

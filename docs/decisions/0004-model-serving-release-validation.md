@@ -466,18 +466,24 @@ label and a manifest generated from that same tree are insufficient.
 An unknown or pre-existing home retains the reviewed-expected-manifest reuse
 rule above. A source-attested home created by this workflow may be resumed
 or reused only after a complete offline rehash against the valid immutable
-site-local receipt attached to that exact live directory for the same public
-source identity. A catalog label, a matching historical receipt without the
-attachment, or a manifest generated from the current tree remains insufficient.
+site-local receipt for the same public source identity, with occupancy
+attached to the live directory. A catalog label or a manifest generated from
+the current tree remains insufficient. Occupancy may move with
+`home relocate` after a live full rehash against that receipt
+([ADR 0011](./0011-portable-occupancy-and-cold-archive.md)). A matching
+historical receipt without occupancy does not by itself authorize prepare.
 
 The implemented source-attested control plane resolves and hashes an immutable
 upstream revision, downloads through target-local authentication into private
 same-filesystem staging after confirmation, checks the complete upstream set,
 repeats all-rank absence, writes the immutable receipt, publishes with an
 atomic no-replace rename, and records the private current-home attachment.
-`home verify` performs the later receipt-backed offline full rehash only when
-that attachment matches the live home, and receipt-backed prepare additionally
-requires the exact model ID and commit. This tooling still may not issue trust,
+`home verify` performs the later receipt-backed offline full rehash when
+occupancy matches the live home. An unbound complete tree with a compatible
+receipt is occupied with `home relocate` after that same rehash, not by
+reconstructing the attachment from matching bytes and not by Hub
+re-download. Receipt-backed prepare still requires occupancy plus the exact
+model ID and commit. This tooling still may not issue trust,
 a seal, status, serving permission, or a Model Serving Release decision. Its
 deterministic tests do not prove physical Hub/DGX behavior.
 

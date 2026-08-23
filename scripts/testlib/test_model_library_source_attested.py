@@ -971,7 +971,7 @@ class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
             authority["reason"], source_attested.HOME_AUTHORITY_STALE_ATTACHMENT
         )
 
-    def test_path_node_rank_and_identity_mismatches_have_no_authority(self) -> None:
+    def test_path_node_and_identity_mismatches_have_no_authority(self) -> None:
         receipt = self._receipt()
         source_attested.write_source_attested_receipt(self.library_dir, receipt)
         published = self._publish(owner_id="c" * 64, hub_root=self.root / "mismatch-root")
@@ -980,7 +980,6 @@ class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
         other_path = str(self.root / "other-home")
         pathlib.Path(other_path).mkdir()
         cases = [
-            {"rank": 0},
             {"node_id": "node-other"},
             {"path": other_path},
             {
@@ -1008,6 +1007,16 @@ class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
             self.assertEqual(
                 authority["reason"], source_attested.HOME_AUTHORITY_STALE_ATTACHMENT
             )
+
+    def test_live_rank_need_not_match_receipt_download_rank(self) -> None:
+        receipt = self._receipt()
+        self.assertEqual(receipt["selected_rank"], self.rank)
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="c" * 64, hub_root=self.root / "move-rank")
+        self._attach(receipt, published)
+        authority = self._resolve(published, rank=0)
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_ATTACHED)
+        self.assertEqual(authority["receipt"]["selected_rank"], self.rank)
 
     def test_attachment_selects_receipt_not_lexicographic_minimum(self) -> None:
         first = self._receipt(selector="main")
@@ -1180,10 +1189,115 @@ class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
             json.dumps(tampered, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        authority = self._resolve(published, rank=0)
+        authority = self._resolve(published)
         self.assertEqual(
             authority["reason"], source_attested.HOME_AUTHORITY_INCOMPATIBLE_RECEIPT
         )
+
+    def test_occupy_after_rehash_moves_occupancy_without_download_rank(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        dest = self.root / "occupy-dest"
+        fixture.write_snapshot_hub(dest)
+        observed = model_library.inspect_snapshot_blob_identities(
+            dest,
+            model_id=self.model_id,
+            revision=fixture.COMMIT,
+            allow_empty_files=True,
+        )
+        live = model_library.inspect_live_directory_identity(dest)
+        attachment = source_attested.occupy_source_attested_home(
+            self.library_dir,
+            receipt=receipt,
+            observed_manifest=observed["manifest"],
+            node_id="node-0",
+            durable_home_path=str(dest),
+            directory_identity=live,
+        )
+        self.assertEqual(attachment["selected_rank"], receipt["selected_rank"])
+        self.assertEqual(attachment["node_id"], "node-0")
+        authority = source_attested.resolve_attached_source_attested_receipt(
+            self.library_dir,
+            model_id=self.model_id,
+            snapshot_revision=fixture.COMMIT,
+            selected_rank=0,
+            node_id="node-0",
+            durable_home_path=str(dest),
+            live_identity=live,
+        )
+        self.assertEqual(authority["state"], source_attested.HOME_AUTHORITY_ATTACHED)
+        self.assertEqual(authority["receipt"]["receipt_id"], receipt["receipt_id"])
+
+    def test_occupy_refuses_manifest_mismatch(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        dest = self.root / "occupy-bad"
+        fixture.write_snapshot_hub(dest)
+        live = model_library.inspect_live_directory_identity(dest)
+        observed = model_library.inspect_snapshot_blob_identities(
+            dest,
+            model_id=self.model_id,
+            revision=fixture.COMMIT,
+            allow_empty_files=True,
+        )
+        bad = dict(observed["manifest"])
+        bad["manifest_id"] = "f" * 64
+        with self.assertRaisesRegex(
+            source_attested.SourceAttestedAcquisitionError,
+            "rehash differs from the receipt|observed manifest is invalid",
+        ):
+            source_attested.occupy_source_attested_home(
+                self.library_dir,
+                receipt=receipt,
+                observed_manifest=bad,
+                node_id="node-0",
+                durable_home_path=str(dest),
+                directory_identity=live,
+            )
+        self.assertIsNone(
+            source_attested.load_source_attested_home_attachment(
+                self.library_dir,
+                model_id=self.model_id,
+                snapshot_revision=fixture.COMMIT,
+            )
+        )
+
+    def test_catalog_marks_extra_complete_tree_unbound(self) -> None:
+        receipt = self._receipt()
+        source_attested.write_source_attested_receipt(self.library_dir, receipt)
+        published = self._publish(owner_id="9" * 64, hub_root=self.root / "occ-root")
+        self._attach(receipt, published)
+        extra = self.root / "extra-complete"
+        extra.mkdir()
+        catalog = {
+            "schema_version": 2,
+            "models": [
+                {
+                    "model_id": self.model_id,
+                    "revision": fixture.COMMIT,
+                    "homes": [
+                        {
+                            "rank": 1,
+                            "node_id": self.node_id,
+                            "hub_path": published["target_hub"],
+                            "state": "complete",
+                        },
+                        {
+                            "rank": 0,
+                            "node_id": "node-0",
+                            "hub_path": str(extra),
+                            "state": "complete",
+                        },
+                    ],
+                }
+            ],
+        }
+        source_attested.classify_catalog_occupancy(catalog, self.library_dir)
+        homes = catalog["models"][0]["homes"]
+        self.assertEqual(homes[0]["home_class"], "occupancy")
+        self.assertTrue(homes[0]["occupancy"])
+        self.assertEqual(homes[1]["home_class"], "unbound-complete")
+        self.assertFalse(homes[1]["occupancy"])
 
     def test_noncanonical_paths_are_rejected(self) -> None:
         canonical = "/var/tmp/pulsar-canonical-home"

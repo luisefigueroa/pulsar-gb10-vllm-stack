@@ -2498,14 +2498,17 @@ def _attachment_matches_target(
     *,
     model_id: str,
     snapshot_revision: str,
-    selected_rank: int,
     node_id: str,
     durable_home_path: str,
 ) -> bool:
+    """Match occupancy, not Hub-download provenance.
+
+    ``selected_rank`` on the attachment is frozen download provenance copied
+    from the receipt. Occupancy is node, path, and live directory identity.
+    """
     return (
         attachment["model_id"] == model_id
         and attachment["snapshot_revision"] == snapshot_revision
-        and attachment["selected_rank"] == selected_rank
         and attachment["node_id"] == node_id
         and attachment["durable_home_path"] == durable_home_path
     )
@@ -2553,8 +2556,6 @@ def attach_source_attested_home_from_publication(
         fail("publication result is not an object")
     if publish_result.get("state") != "published":
         fail("publication result is not a published home")
-    if publish_result.get("rank") != receipt["selected_rank"]:
-        fail("publication rank differs from the receipt")
     identity = validate_live_directory_identity(
         publish_result.get("directory_identity")
     )
@@ -2613,6 +2614,11 @@ def resolve_attached_source_attested_receipt(
     durable_home_path: str,
     live_identity: dict[str, Any],
 ) -> dict[str, Any]:
+    """Resolve occupancy authority for a live directory.
+
+    ``selected_rank`` is a caller topology hint, not a match against receipt
+    download provenance. Occupancy matches node, path, and directory identity.
+    """
     _validate_hf_model_id(model_id, label="authority model_id")
     _validate_commit(snapshot_revision, label="authority snapshot_revision")
     selected_rank = _require_rank(selected_rank, label="authority selected_rank")
@@ -2638,7 +2644,6 @@ def resolve_attached_source_attested_receipt(
             attachment,
             model_id=model_id,
             snapshot_revision=snapshot_revision,
-            selected_rank=selected_rank,
             node_id=node_id,
             durable_home_path=durable_home_path,
         )
@@ -2743,7 +2748,6 @@ def detach_source_attested_home_attachment(
         attachment,
         model_id=model_id,
         snapshot_revision=snapshot_revision,
-        selected_rank=selected_rank,
         node_id=node_id,
         durable_home_path=durable_home_path,
     ):
@@ -2792,6 +2796,126 @@ def verify_source_attested_home(
         "bytes_hashed": expected.get("total_bytes"),
     }
     return validate_source_attested_home_verify_result(result)
+
+
+def occupy_source_attested_home(
+    library_dir: str | pathlib.Path,
+    *,
+    receipt: dict[str, Any],
+    observed_manifest: dict[str, Any],
+    node_id: str,
+    durable_home_path: str,
+    directory_identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Grant occupancy after a live full rehash against the immutable receipt.
+
+    ``selected_rank`` on the receipt stays Hub-download provenance and is not
+    a destination predicate. Silent reconstruct-from-bytes is refused because
+    this function always rehashes first.
+    """
+    receipt = validate_source_attested_acquisition_receipt(receipt)
+    verify_source_attested_home(
+        receipt,
+        observed_manifest,
+        model_id=receipt["model_id"],
+        snapshot_revision=receipt["snapshot_revision"],
+    )
+    durable_home_path = _require_durable_home_path(durable_home_path)
+    if directory_identity.get("kind") == LIVE_DIRECTORY_IDENTITY_KIND:
+        identity = validate_live_directory_identity(directory_identity)
+    else:
+        identity = validate_live_directory_identity(
+            {
+                "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+                "kind": LIVE_DIRECTORY_IDENTITY_KIND,
+                "path": durable_home_path,
+                "device": directory_identity.get("device"),
+                "inode": directory_identity.get("inode"),
+                "ctime_ns": directory_identity.get("ctime_ns"),
+            }
+        )
+    if identity["path"] != durable_home_path:
+        fail("occupy: live directory path differs from the durable home")
+    return write_source_attested_home_attachment(
+        library_dir,
+        receipt=receipt,
+        node_id=node_id,
+        durable_home_path=identity["path"],
+        directory_identity={
+            "device": identity["device"],
+            "inode": identity["inode"],
+            "ctime_ns": identity["ctime_ns"],
+        },
+    )
+
+
+def classify_catalog_occupancy(
+    catalog: dict[str, Any],
+    library_dir: str | pathlib.Path,
+) -> dict[str, Any]:
+    """Mark occupancy vs unbound-complete on scanned hub trees.
+
+    Sealed/legacy identities with no receipt or attachment are unchanged.
+    Source-attested identities count only a matching occupancy attachment as
+    a resolve-home. Extra complete hub trees are unbound-complete.
+    """
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
+        fail("catalog occupancy classification requires a catalog object")
+    for entry in catalog["models"]:
+        if not isinstance(entry, dict):
+            fail("catalog occupancy classification requires model objects")
+        _classify_entry_occupancy(entry, library_dir)
+    return catalog
+
+
+def _classify_entry_occupancy(
+    entry: dict[str, Any],
+    library_dir: str | pathlib.Path,
+) -> None:
+    model_id = entry.get("model_id")
+    revision = entry.get("revision")
+    homes = entry.get("homes")
+    if not isinstance(homes, list):
+        return
+    if not isinstance(model_id, str) or not isinstance(revision, str):
+        return
+    if not revision or revision in {"missing", "unknown"}:
+        return
+    try:
+        _validate_hf_model_id(model_id, label="catalog occupancy model_id")
+        _validate_commit(revision, label="catalog occupancy revision")
+    except SourceAttestedAcquisitionError:
+        return
+    try:
+        receipts = list_source_attested_receipts_for_revision(
+            library_dir, model_id=model_id, snapshot_revision=revision
+        )
+    except SourceAttestedAcquisitionError:
+        return
+    attachment = load_source_attested_home_attachment(
+        library_dir, model_id=model_id, snapshot_revision=revision
+    )
+    if not receipts and attachment is None:
+        return
+    occupancy_count = 0
+    for home in homes:
+        if not isinstance(home, dict):
+            fail("catalog occupancy classification requires home objects")
+        if home.get("state") != "complete":
+            home["occupancy"] = False
+            home["home_class"] = str(home.get("state") or "partial")
+            continue
+        matched = bool(
+            attachment is not None
+            and home.get("node_id") == attachment["node_id"]
+            and home.get("hub_path") == attachment["durable_home_path"]
+        )
+        home["occupancy"] = matched
+        home["home_class"] = "occupancy" if matched else "unbound-complete"
+        if matched:
+            occupancy_count += 1
+    if occupancy_count > 1:
+        fail("catalog: multiple occupancy attachments resolved for one revision")
 
 
 def validate_source_attested_home_verify_result(value: Any) -> dict[str, Any]:
@@ -3125,6 +3249,59 @@ def cmd_attach_current_home(args: argparse.Namespace) -> int:
     return _write_json(result)
 
 
+def cmd_occupy_current_home(args: argparse.Namespace) -> int:
+    receipt = validate_source_attested_acquisition_receipt(
+        _read_arg_json(args.receipt, label="receipt")
+    )
+    attachment = occupy_source_attested_home(
+        args.library_dir,
+        receipt=receipt,
+        observed_manifest=_read_arg_json(args.manifest, label="observed manifest"),
+        node_id=args.node_id,
+        durable_home_path=args.durable_home_path,
+        directory_identity=_read_arg_json(
+            args.live_identity, label="live directory identity"
+        ),
+    )
+    result = {
+        "schema_version": SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION,
+        "kind": SOURCE_ATTESTED_HOME_ATTACHMENT_RESULT_KIND,
+        "state": "attached",
+        "receipt_id": attachment["receipt_id"],
+        "model_id": attachment["model_id"],
+        "snapshot_revision": attachment["snapshot_revision"],
+    }
+    _public_json(result, label="current-home occupancy result")
+    return _write_json(result)
+
+
+def cmd_classify_catalog_occupancy(args: argparse.Namespace) -> int:
+    catalog_path = pathlib.Path(args.catalog)
+    catalog = _load_json_value(catalog_path.read_bytes(), label="catalog")
+    before = copy.deepcopy(catalog)
+    classify_catalog_occupancy(catalog, args.library_dir)
+    if catalog == before:
+        if args.json:
+            return _write_json(catalog)
+        return 0
+    raw = model_identity.pretty_json_bytes(catalog)
+    tmp_path = catalog_path.with_name(
+        f".{catalog_path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    )
+    try:
+        tmp_path.write_bytes(raw)
+        os.replace(tmp_path, catalog_path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+    if args.json:
+        return _write_json(catalog)
+    return 0
+
+
 def cmd_resolve_attached_receipt(args: argparse.Namespace) -> int:
     authority = resolve_attached_source_attested_receipt(
         args.library_dir,
@@ -3148,6 +3325,17 @@ def cmd_has_current_home_attachment(args: argparse.Namespace) -> int:
         snapshot_revision=args.revision,
     )
     return _write_json(attachment is not None)
+
+
+def cmd_show_current_home_attachment(args: argparse.Namespace) -> int:
+    attachment = load_source_attested_home_attachment(
+        args.library_dir,
+        model_id=args.model_id,
+        snapshot_revision=args.revision,
+    )
+    if attachment is None and not args.allow_missing:
+        fail("current-home attachment not found")
+    return _write_json(attachment)
 
 
 def cmd_detach_current_home(args: argparse.Namespace) -> int:
@@ -3314,6 +3502,21 @@ def build_parser() -> argparse.ArgumentParser:
     attach_home.add_argument("--node-id", required=True)
     attach_home.set_defaults(func=cmd_attach_current_home)
 
+    occupy_home = sub.add_parser("occupy-current-home")
+    occupy_home.add_argument("--library-dir", required=True)
+    occupy_home.add_argument("--receipt", required=True)
+    occupy_home.add_argument("--manifest", required=True)
+    occupy_home.add_argument("--node-id", required=True)
+    occupy_home.add_argument("--durable-home-path", required=True)
+    occupy_home.add_argument("--live-identity", required=True)
+    occupy_home.set_defaults(func=cmd_occupy_current_home)
+
+    classify_occupancy = sub.add_parser("classify-catalog-occupancy")
+    classify_occupancy.add_argument("--library-dir", required=True)
+    classify_occupancy.add_argument("--catalog", required=True)
+    classify_occupancy.add_argument("--json", action="store_true")
+    classify_occupancy.set_defaults(func=cmd_classify_catalog_occupancy)
+
     resolve_attached = sub.add_parser("resolve-attached-receipt")
     resolve_attached.add_argument("--library-dir", required=True)
     resolve_attached.add_argument("--model-id", required=True)
@@ -3333,6 +3536,13 @@ def build_parser() -> argparse.ArgumentParser:
     attachment_probe.add_argument("--model-id", required=True)
     attachment_probe.add_argument("--revision", required=True)
     attachment_probe.set_defaults(func=cmd_has_current_home_attachment)
+
+    show_attachment = sub.add_parser("show-current-home-attachment")
+    show_attachment.add_argument("--library-dir", required=True)
+    show_attachment.add_argument("--model-id", required=True)
+    show_attachment.add_argument("--revision", required=True)
+    show_attachment.add_argument("--allow-missing", action="store_true")
+    show_attachment.set_defaults(func=cmd_show_current_home_attachment)
 
     detach_home = sub.add_parser("detach-current-home")
     detach_home.add_argument("--library-dir", required=True)

@@ -1489,11 +1489,41 @@ def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
     return sorted(normalized, key=lambda item: item["identity_key"])
 
 
+def policy_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Homes that count for resolve/primary.
+
+    Source-attested occupancy classification marks complete hub trees as
+    ``occupancy`` or ``unbound-complete``. Only occupancy counts as a durable
+    home. Unclassified entries keep the legacy complete-tree rule.
+    """
+    homes = [home for home in (entry.get("homes") or []) if isinstance(home, dict)]
+    classified = [
+        home
+        for home in homes
+        if home.get("home_class") in {"occupancy", "unbound-complete"}
+    ]
+    if classified:
+        return [
+            home
+            for home in classified
+            if home.get("home_class") == "occupancy" and home.get("state") == "complete"
+        ]
+    return [home for home in homes if home.get("state") == "complete"]
+
+
+def unbound_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        home
+        for home in (entry.get("homes") or [])
+        if isinstance(home, dict) and home.get("home_class") == "unbound-complete"
+    ]
+
+
 def _apply_entry_primary_policy(
     entry: dict[str, Any],
     selection: dict[str, str] | None,
 ) -> None:
-    complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+    complete = policy_complete_homes(entry)
     for home in entry.get("homes") or []:
         home["primary"] = False
 
@@ -1532,6 +1562,7 @@ def _apply_entry_primary_policy(
             "mode": "unavailable",
             "status": "missing",
         }
+    entry["duplicate"] = len(complete) > 1
     entry["has_primary"] = any(h.get("primary") for h in complete)
 
 
@@ -1671,7 +1702,7 @@ def build_catalog(
         partial_homes = [h for h in entry["homes"] if h["state"] != "complete"]
         entry["homes"] = complete_homes + partial_homes
         entry["on_disk"] = bool(complete_homes)
-        entry["duplicate"] = len(complete_homes) > 1
+        entry["duplicate"] = len(policy_complete_homes(entry)) > 1
         statuses = {
             item.get("identity_status") for item in entry["profile_validation"]
         }
@@ -2014,7 +2045,7 @@ def resolve_entry(
             target = identity_key or profile or model_id or "?"
             warm_error = f"resolve: {target}: not found in warm catalog"
         else:
-            complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+            complete = policy_complete_homes(entry)
             if (entry.get("primary_selection") or {}).get("status") == "stale":
                 selection = entry["primary_selection"]
                 fail(
@@ -2023,6 +2054,12 @@ def resolve_entry(
                     "then explicitly select a complete home"
                 )
             if not complete:
+                if unbound_complete_homes(entry):
+                    fail(
+                        f"resolve: {entry['model_id']}: complete tree is unbound; "
+                        "occupy it with scripts/model-library.sh home relocate "
+                        "--node RANK --yes after a live receipt rehash"
+                    )
                 warm_error = (
                     f"resolve: {entry['model_id']}: no complete warm home "
                     "(download/place weights, then catalog refresh)"
@@ -2169,9 +2206,60 @@ def resolve_entry(
 def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     recommendations: list[dict[str, Any]] = []
     for entry in catalog.get("models") or []:
+        unbound = unbound_complete_homes(entry)
+        if unbound and not entry.get("duplicate"):
+            identity_arg = shlex.quote(entry["identity_key"])
+            recommendations.append(
+                {
+                    "model_id": entry["model_id"],
+                    "identity_key": entry["identity_key"],
+                    "homes": [
+                        {
+                            "rank": home["rank"],
+                            "node_id": home["node_id"],
+                            "hostname": home.get("hostname") or "",
+                            "bytes": home.get("bytes") or 0,
+                            "hub_path": home.get("hub_path") or "",
+                            "primary": False,
+                            "home_class": "unbound-complete",
+                        }
+                        for home in unbound
+                    ],
+                    "selection_status": (
+                        entry.get("primary_selection") or {}
+                    ).get("status"),
+                    "select_commands": [
+                        (
+                            "scripts/model-library.sh home relocate "
+                            f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+                        )
+                        for home in unbound
+                    ],
+                    "removal_commands": [
+                        {
+                            "rank": home["rank"],
+                            "check": (
+                                "scripts/model-library.sh home check "
+                                f"{identity_arg} --node {shlex.quote(str(home['rank']))}"
+                            ),
+                            "remove": (
+                                "scripts/model-library.sh home remove "
+                                f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+                            ),
+                        }
+                        for home in unbound
+                    ],
+                    "action": (
+                        "Occupy one complete tree with home relocate after a live "
+                        "receipt rehash, or remove unbound complete trees. They "
+                        "are not durable homes."
+                    ),
+                }
+            )
+            continue
         if not entry.get("duplicate"):
             continue
-        complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+        complete = policy_complete_homes(entry)
         identity_arg = shlex.quote(entry["identity_key"])
         primary = next((h for h in complete if h.get("primary")), None)
         select_commands = []
@@ -3143,6 +3231,12 @@ def classify_library_readiness(
             return {
                 "reason": "duplicate-home",
                 "remediation": cleanup,
+                "detail": text,
+            }
+        if "complete tree is unbound" in text:
+            return {
+                "reason": "occupancy-missing",
+                "remediation": f"scripts/model-library.sh home relocate {profile} --node RANK --yes",
                 "detail": text,
             }
         if "no primary home selected" in text:
@@ -5407,12 +5501,54 @@ def _health_issue(
     return issue
 
 
+def _append_cold_archive_health_issues(
+    issues: list[dict[str, Any]],
+    *,
+    library_dir: str | pathlib.Path | None,
+) -> None:
+    if not library_dir:
+        return
+    try:
+        from scripts import model_library_cold_archive as cold_archive
+    except ModuleNotFoundError:
+        try:
+            import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
+        except ModuleNotFoundError:
+            return
+    store = cold_archive.cold_archive_job_store(library_dir)
+    if not store.is_dir():
+        return
+    for path in sorted(store.glob("*.json")):
+        try:
+            job = cold_archive.validate_cold_archive_job(load_json(path))
+        except Exception:
+            continue
+        if job["state"] in {"pending", "running"}:
+            issues.append(_health_issue(
+                "cold-archive-pending",
+                "receipt-indexed cold archive is pending (not a serving gate)",
+                command="scripts/model-library.sh home archive run --receipt <id> --yes",
+            ))
+        elif job["state"] == "failed":
+            issues.append(_health_issue(
+                "cold-archive-failed",
+                job.get("detail") or "receipt-indexed cold archive failed",
+                command="scripts/model-library.sh home archive run --receipt <id> --yes",
+            ))
+        elif job["state"] == "unavailable":
+            issues.append(_health_issue(
+                "cold-archive-unavailable",
+                "cold root is not configured; last-home remove needs --allow-unarchived-last-home",
+            ))
+
+
 def build_health_report(
     *,
     catalog_path: str | pathlib.Path,
     topology_file: str | pathlib.Path,
     topology_id: str,
     observations_dir: str | pathlib.Path,
+    library_dir: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
     try:
         topology = load_topology_for_plan(topology_file)
@@ -5525,7 +5661,8 @@ def build_health_report(
         issues.append(_health_issue("catalog-topology-stale", "cached catalog differs from confirmed topology", command="scripts/model-library.sh catalog refresh"))
     public_models: list[dict[str, Any]] = []
     for entry in catalog.get("models") or []:
-        complete = [home for home in entry.get("homes") or [] if home.get("state") == "complete"]
+        complete = policy_complete_homes(entry)
+        unbound = unbound_complete_homes(entry)
         primary = entry.get("primary_selection") or {}
         duplicate = "none"
         if len(complete) > 1:
@@ -5533,6 +5670,12 @@ def build_health_report(
             code = "duplicate-home-redundant" if duplicate == "redundant" else "duplicate-home-unresolved"
             command = None if duplicate == "redundant" else "scripts/model-library.sh catalog primary set <model> --node <rank>"
             issues.append(_health_issue(code, "exact revision has multiple durable homes", command=command))
+        elif unbound:
+            issues.append(_health_issue(
+                "unbound-complete",
+                "complete tree has no occupancy; relocate after a live receipt rehash",
+                command="scripts/model-library.sh home relocate <model> --node <rank> --yes",
+            ))
         if primary.get("status") == "stale":
             issues.append(_health_issue("primary-selection-stale", "selected primary is no longer a complete home", command="scripts/model-library.sh catalog primary clear <model>"))
         expected_manifest = None
@@ -5559,6 +5702,7 @@ def build_health_report(
             },
             "duplicate_home": duplicate,
         })
+    _append_cold_archive_health_issues(issues, library_dir=library_dir)
     return {
         "schema_version": HEALTH_SCHEMA_VERSION,
         "kind": HEALTH_KIND,
@@ -7504,6 +7648,7 @@ def plan_home_removal(
     observations_dir: str | pathlib.Path,
     node_selector: str = "",
     allow_last_home: bool = False,
+    allow_unarchived_last_home: bool = False,
     library_dir: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
     topology = load_topology_for_plan(topology_file)
@@ -7693,6 +7838,46 @@ def plan_home_removal(
                 "detail": last_home_detail,
             }
         )
+    if (
+        target["last_durable_home"]
+        and occupancy_class != INCOMPLETE_HUB_OCCUPANCY
+        and not allow_unarchived_last_home
+        and not _home_revision_is_unbound(target["revision"])
+        and library_dir
+    ):
+        try:
+            from scripts import model_library_cold_archive as cold_archive
+            from scripts import model_library_source_attested as source_attested
+        except ModuleNotFoundError:
+            import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
+            import model_library_source_attested as source_attested  # type: ignore[no-redef]
+        try:
+            receipts = source_attested.list_source_attested_receipts_for_revision(
+                library_dir,
+                model_id=target["model_id"],
+                snapshot_revision=target["revision"],
+            )
+        except Exception:
+            receipts = []
+        if receipts:
+            receipt_id = receipts[0]["receipt_id"]
+            if not cold_archive.archive_is_complete(
+                library_dir=library_dir,
+                receipt_id=receipt_id,
+                cold_root=configured_cold_root(),
+            ):
+                blockers.append(
+                    {
+                        "kind": "unarchived-last-home",
+                        "rank": rank,
+                        "node_id": home["node_id"],
+                        "detail": (
+                            "last occupancy has no verified receipt-indexed cold "
+                            "archive; pass --allow-unarchived-last-home to "
+                            "acknowledge there is no NFS backup"
+                        ),
+                    }
+                )
     if occupancy_class != INCOMPLETE_HUB_OCCUPANCY and target["alternate_homes"] and (
         target["primary_selection"].get("status") != "match"
         or not any(
@@ -8046,6 +8231,7 @@ def cmd_build_health(args: argparse.Namespace) -> int:
         topology_file=args.topology_file,
         topology_id=args.topology_id,
         observations_dir=args.observations_dir,
+        library_dir=getattr(args, "library_dir", None) or None,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return _health_exit(report)
@@ -8335,6 +8521,9 @@ def cmd_plan_home_removal(args: argparse.Namespace) -> int:
         observations_dir=args.observations_dir,
         node_selector=args.node,
         allow_last_home=args.allow_last_home,
+        allow_unarchived_last_home=getattr(
+            args, "allow_unarchived_last_home", False
+        ),
         library_dir=args.library_dir or None,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
@@ -9458,6 +9647,7 @@ def build_parser() -> argparse.ArgumentParser:
     health_build.add_argument("--topology-file", required=True)
     health_build.add_argument("--topology-id", required=True)
     health_build.add_argument("--observations-dir", required=True)
+    health_build.add_argument("--library-dir", default="")
     health_build.set_defaults(func=cmd_build_health)
 
     health_render = sub.add_parser("render-health", help="Render a health report")
@@ -9655,6 +9845,7 @@ def build_parser() -> argparse.ArgumentParser:
     home_plan.add_argument("--observations-dir", required=True)
     home_plan.add_argument("--node", default="")
     home_plan.add_argument("--allow-last-home", action="store_true")
+    home_plan.add_argument("--allow-unarchived-last-home", action="store_true")
     home_plan.add_argument("--library-dir", default="")
     home_plan.add_argument("query")
     home_plan.set_defaults(func=cmd_plan_home_removal)

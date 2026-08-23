@@ -14,6 +14,12 @@ explicitly selected reviewed-profile experimental preparation.
 defines the immutable Model Serving Release subject, frozen validation
 contracts, decision statuses, and the separation between distribution
 provenance and release identity.
+[ADR 0011](../../docs/decisions/0011-portable-occupancy-and-cold-archive.md)
+accepts portable occupancy, `home relocate`, and a receipt-indexed NFS
+archive. Relocate, occupancy classification, `home archive`, and `home restore`
+are control-plane implemented; physical relocate, NFS archive, and new-inode
+restore evidence are not in this directory yet and must not be inferred from
+Gate 14.
 
 Every artifact has a qualification scope: catalog/artifact, serving integration,
 model qualification, or combined release/promotion. A result remains valid

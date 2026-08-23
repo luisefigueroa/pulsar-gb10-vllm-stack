@@ -130,9 +130,10 @@ with its honest `legacy-unsealed` label but is not an exact ADR 0004
 qualification attempt. For an absent brand-new unsealed Hugging Face
 repository, the skill may plan and, after a separate confirmation, run the
 source-attested exact-commit acquisition service. Reuse of that home requires
-receipt-backed offline full verification against the receipt attached to the
-exact live directory. An unknown, restored, replaced, or otherwise unbound
-home still requires full verification against a reviewed expected manifest
+receipt-backed offline full verification against the receipt while occupancy
+names the exact live directory. Occupancy may move with `home relocate`
+after that live rehash. An unknown tree without a receipt still
+requires full verification against a reviewed expected manifest
 independent of the observed tree; catalog state and a self-observed manifest
 alone are insufficient. The acquisition creates catalog/artifact evidence
 only, not a seal, status, decision, serving permission, promotion, or physical
@@ -217,7 +218,7 @@ multi-rank profile requires explicit `--transport ssh-control`.
 
 The preparation service remains authoritative: it rechecks topology and
 primary placement, full-verifies the expected seal, performs exact all-rank
-storage admission, creates only non-home sealed-hot copies, publishes witnesses
+storage admission, creates only non-home working replicas (`sealed-hot`), publishes witnesses
 only after the all-rank barrier, and rolls back or leaves explicit incomplete
 state on failure. The interactive surface always obtains fresh health after the
 attempt. It provides no validation-status override, transport picker, fallback,
@@ -720,20 +721,30 @@ Source-attested crash and retry behavior:
 - A leftover exclusive writer temp next to receipts or attachments is ignored
   during enumeration and does not block a later write.
 - A receipt without a published home is an orphan history record. Retry may
-  reuse that receipt, publish, and attach.
-- A published home without a current attachment is unbound. Do not reconstruct
-  the attachment from matching bytes. Remove the home with supported
-  `home remove` and re-add, or use a reviewed expected manifest.
-- Supported `home remove --yes` detaches the current pointer before the
+  reuse that receipt, publish, and attach occupancy after the live rehash.
+- A published home without a current attachment is unbound-complete. Occupy it
+  with `home relocate --node` after a live full rehash against the compatible
+  receipt. Do not reconstruct occupancy without that rehash, and do not Hub
+  re-download when the receipt still exists
+  ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+- Supported `home remove --yes` detaches occupancy before the
   directory mutation and keeps receipts. `home check` and a declined remove
-  do not detach. If removal fails after detach, the surviving home is unbound.
-- Legitimate remove and re-add writes a new attachment for the new directory
-  identity. Older compatible receipts remain history.
+  do not detach. If removal fails after detach, the surviving tree is
+  unbound-complete.
+- `home relocate --node` grants occupancy to a destination tree after a live
+  rehash. Receipt `selected_rank` is Hub-download provenance and does not
+  block the move. Catalog refresh remains a separate next action.
+- After occupancy attach, `home archive` copies the receipt-indexed tree to
+  NFS in the background. It is not a serving gate. `home restore --node`
+  copies from that archive, rehashes, and occupies. Last occupancy remove
+  without a verified archive needs `--allow-unarchived-last-home`.
+  `cold scan` / `cold adopt` / `cold stage-only` stay layout-inferred fill
+  paths and do not mint receipts.
 
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the
 home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
-cache, and only non-home ranks own sealed-hot copies. Home-rank hot
+cache, and only non-home ranks own working replicas (`sealed-hot`). Home-rank hot
 materialization is ruled out by
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 

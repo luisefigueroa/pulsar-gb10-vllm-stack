@@ -41,12 +41,12 @@
 | Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles; ADR 0006 (2026-08-19) then removed the replicated and fabric paths and promoted every library scope to supported by decision, recording the open gates as accepted risks. ADR 0007 (2026-08-20) changed ordinary stop to retain unpinned prepared views. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16; library-only distribution accepted 2026-08-19 (ADR 0006); ordinary-stop retention accepted 2026-08-20 (ADR 0007) |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md) |
 | Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current operator/catalog state | [OPERATIONS.md](./OPERATIONS.md), [MODELS.md](./MODELS.md) |
-| Mechanism today | The model library, for every profile (ADR 0006): one exact durable home, exact home symlink, sealed-hot copies on non-home ranks, fixed eight-stream SSH-over-RoCE preparation for reviewed multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned views (ADR 0007) |
+| Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working replicas (`sealed-hot`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), fixed eight-stream SSH-over-RoCE preparation for reviewed multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working replicas (ADR 0007) |
 | Supported today | Two-rank sealed (physical GA evidence, 2026-08-16); one-rank and legacy-unsealed (supported by ADR 0006 decision). Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
-| Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; source-attested unsealed Hugging Face `home add` kept as core catalog/artifact ingress (SIM-03, 2026-08-22) with remote-target / asymmetric-credentials / restore as physical validation follow-ups; Hugging Face is the only current ingress format (local-directory import needs its own ADR); durable-home loss = service loss until a failover ADR; maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope |
+| Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; source-attested unsealed Hugging Face `home add` kept as core catalog/artifact ingress (SIM-03, 2026-08-22) with remote-target / asymmetric-credentials as physical validation follow-ups; Hugging Face is the only current ingress format (local-directory import needs its own ADR); occupancy loss recovers via ADR 0011 relocate/restore (receipt-indexed NFS archive implementation pending); maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope |
 | Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails closed; historical `results/weight-fabric/` evidence is superseded and not promoted. |
 
 **Current implementation integrity boundary:** catalog schema 2 accepts an
@@ -182,11 +182,12 @@ throughput/latency. An unsealed (`legacy-unsealed`) launch is not an exact
 ADR 0004 qualification attempt. For an absent repository, the skill composes
 the source-attested read-only plan and separately confirmed exact-commit
 acquisition. A source-attested home may be resumed or reused only after a
-complete offline rehash against the valid immutable receipt attached to that
-exact live directory for the same public source identity. Unknown,
-restored, replaced, or otherwise unbound homes still require full
-verification against a reviewed expected manifest independent of the observed
-tree; a shallow catalog label and self-observed manifest are insufficient.
+complete offline rehash against the valid immutable receipt while occupancy
+names that live directory. Occupancy may move with `home relocate` after the
+same live rehash ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+Unknown trees without a receipt still require full verification against a
+reviewed expected manifest independent of the observed tree; a shallow catalog
+label and self-observed manifest are insufficient.
 The acquisition is catalog/artifact evidence only and creates no seal, status,
 decision, serving permission, or physical claim. Its journal lives under
 `experiments/model-onboarding/workflows/` and is recovery state, not evidence.
@@ -505,10 +506,11 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   same-filesystem staging, checks the complete upstream set and Hugging Face
   missing/extra result, hashes every file, repeats the all-rank no-home check,
   writes an immutable site-local receipt, publishes with an atomic
-  no-replace rename, and binds that receipt to the exact published directory
-  through a private current-home attachment. `home verify` later performs an
-  offline full rehash and exact set check against the receipt attached to
-  that live directory. Source-attested acquisition creates
+  no-replace rename, and attaches occupancy to the exact published directory.
+  `home verify` later performs an offline full rehash against that receipt
+  when occupancy still names the live directory. Occupancy may move with
+  `home relocate --node` after the same live rehash; receipt `selected_rank`
+  is Hub-download provenance only ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)). Extra complete hub trees are unbound-complete, not homes. Source-attested acquisition creates
   observed/source identity and catalog-artifact evidence only; it does not
   create reviewed identity, a seal, status, serving permission, a Model
   Serving Release decision, or physical evidence. Catalog refresh, hot
@@ -617,9 +619,9 @@ For a warm-home service using `N` ranks:
 ```text
 idle durable storage     = 1 × model_size
 active storage           = 1 durable home + (N - 1) sealed-hot working copies
-after ordinary stop      = 1 durable home + (N - 1) unpinned sealed-hot copies
+after ordinary stop      = 1 durable home + (N - 1) unpinned working replicas (`sealed-hot`)
 after explicit purge-hot = 1 × model_size
-after pin                = 1 durable home + (N - 1) pinned sealed-hot copies
+after pin                = 1 durable home + (N - 1) pinned working replicas (`sealed-hot`)
 ```
 
 The home-rank symlink contributes no owned hot model bytes. Admission charges
@@ -668,14 +670,16 @@ The accepted warm-home claim is:
 
 - restart without cold storage, a transfer plane, or catalog refresh while the
   durable home and retained non-home hot copies remain valid;
-- ordinary stop leaves unpinned sealed-hot copies in place for that reuse;
+- ordinary stop leaves unpinned working replicas (`sealed-hot`) in place for that reuse;
 - restart after explicit `--purge-hot` prepares non-home ranks again from the
   durable home;
-- durable-home loss is service loss for this policy.
+- occupancy loss is service loss until ADR 0011 recovery.
 
-Home-loss resilience requires an explicit durable replica on another failure
-domain plus supported placement/failover behavior. A second copy on the same
-rank/filesystem is not that policy. In an exact multi-node geometry, losing the
+Home-loss resilience is occupy-in-place after a live receipt rehash, or
+restore from a verified receipt-indexed NFS archive, on a distinct failure
+domain ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+A second Spark durable home, and a second copy on the same rank/filesystem,
+are not that policy. In an exact multi-node geometry, losing the
 home node also removes a required compute rank.
 
 ### 4.5 Expected identity and verification tiers
@@ -805,7 +809,7 @@ local durable-storage dependency, not a retained network transfer plane.
 | Warm-home restart with retained unpinned views | Durable home plus remaining sealed-hot; no transfer/catalog refresh while witness and files remain valid |
 | Warm-home restart after explicit purge | Durable home plus preparation again |
 | Cold stage-only restart with complete pin | Pinned staged trees; cold may be unavailable |
-| Restart after durable-home loss | Unsupported without an explicit durable replica/failover policy |
+| Restart after durable-home loss | Occupy-in-place or restore from a verified receipt-indexed NFS archive ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)); Hub re-download only when no receipt and no archive exist |
 
 Inventory and labels must surface home identity, per-rank runtime source,
 expected/observed seal status, witness status, pin state, and transfer release.
@@ -922,7 +926,7 @@ requires every selected runtime view to be exact and ready before setting
 `--weight-source library-hot`. Container launch remains behind the wizard's
 separate final confirmation. A one-node catalog service is placed on its
 durable-home rank and uses that local view; multi-node preparation uses the
-exact profile ranks and creates sealed-hot copies only on non-home ranks.
+exact profile ranks and creates working replicas (`sealed-hot`) only on non-home ranks.
 
 On an ordinary stop, an observed `library-hot` service retains unpinned
 prepared views by default ([ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)).
@@ -1322,3 +1326,4 @@ rather than promotion blockers.
 | 2026-08-22 | **SIM-10:** removed `patches/pr41834-dspark-opt/`. Perf-neutral A/B stays in VALIDATION.md and git history. Flagship DeepSeek DSpark-in-checkpoint serving is unchanged. Compose was already removed by ADR 0010. |
 | 2026-08-22 | **SIM-12:** leftover `weight-fabric.sh show|unmount|teardown` and `./pulsar weight-fabric` removed after lab confirmation. Live NFS serving stays refused. Historical `results/weight-fabric/` and `WEIGHT_FABRIC.md` remain. |
 | 2026-08-22 | **SIM-13:** public `hot legacy check|remove` removed after lab confirmation that no schema-1/2 hot instances remained. Health still observes leftover schema-1/2 as untrusted and cannot launch. Historical `results/model-library/model-library-health-legacy-repair-gate-20260812.json` remains. `--force-unpin` on `purge-hot` is unchanged. |
+| 2026-08-23 | **ADR 0011 accepted:** portable occupancy, `home relocate` after a live receipt rehash, download-rank as provenance only, unbound-complete trees are not homes, NFS receipt-indexed archive as the distinct-failure-domain replica. Relocate, occupancy classification, `home archive` / `home restore`, and `--allow-unarchived-last-home` are implemented as control plane. No physical NFS/DGX archive claim. |
