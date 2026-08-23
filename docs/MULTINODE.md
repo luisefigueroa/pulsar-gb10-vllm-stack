@@ -143,10 +143,13 @@ Historical notes: `WEIGHT_FABRIC.md`.
 
 The model library is the only weight-distribution mechanism
 ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)):
-one durable home, a symlink/view on that rank, and sealed-hot copies only on
-non-home ranks. It is not a live NFS/RDMA mount and there is no fallback.
+one durable occupancy home, a symlink/view on that rank, and working replicas
+(sealed-hot copies) only on non-home ranks. Occupancy may move with
+`home relocate` after a live receipt rehash
+([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+It is not a live NFS/RDMA mount and there is no fallback.
 Typical CLI: enroll SSH trust, `scripts/model-library.sh home add` if no home
-exists, `catalog refresh`,
+exists, or `home relocate` for an unbound complete tree, `catalog refresh`,
 `prepare --backend copy --transport ssh-roce --copy-streams 8`, then
 `scripts/up.sh <profile>`. See [OPERATIONS.md](./OPERATIONS.md) and
 [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).

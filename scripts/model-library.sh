@@ -50,6 +50,8 @@ Usage:
       [--node RANK|NODE_ID] [--allow-last-home] [--json]
   scripts/model-library.sh home remove <profile|model_id|model_id@revision>
       [--node RANK|NODE_ID] [--allow-last-home] --yes
+  scripts/model-library.sh home relocate <profile|model_id|model_id@revision>
+      --node RANK|NODE_ID --yes [--json]
   scripts/model-library.sh cold scan [--json] [--complete-only] [--root PATH]
   scripts/model-library.sh cold show <model_id|/abs/path> [--json]
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
@@ -87,9 +89,12 @@ Notes:
     Validation labels are advisory: prepare accepts fully verified unsealed
     content without an override. --allow-unvalidated is removed (ADR 0008);
     drop the flag. It never bypassed a configured seal mismatch.
-  • Duplicate complete homes refuse resolve until an exact-revision primary is
-    chosen. The selection persists in the site catalog across refreshes; a
-    missing selected home is stale and fails closed rather than auto-electing.
+  • Duplicate occupancy homes refuse resolve until an exact-revision primary is
+    chosen. Source-attested occupancy is the current-home attachment; extra
+    complete hub trees are unbound-complete and do not freeze resolve when
+    occupancy exists. The selection persists in the site catalog across
+    refreshes; a missing selected home is stale and fails closed rather than
+    auto-electing.
   • home check/remove probes managed containers and every hot root on all
     confirmed nodes. Any dependent retained view blocks removal, including
     ready, verifying, or pinned hot state. Unobservable nodes fail closed.
@@ -107,7 +112,7 @@ Notes:
     --revision. --plan is read-only and prints the public source-attested
     plan without downloading model bytes. Execution needs --yes (or a
     confirmation) and writes an immutable receipt before publishing the
-    home, then binds that receipt to the exact published directory. For a
+    home, then attaches occupancy to the exact published directory. For a
     one-node profile, that rank may be any confirmed rank; for multi-node
     profiles it remains in the exact profile geometry. With no --node
     override, the eligible serving rank with the most free space is
@@ -116,10 +121,17 @@ Notes:
     same-filesystem staging and target-local modern hf. It creates no hot
     copies, starts nothing, never refreshes the catalog, and does not create
     a seal or status.
-  • home verify rehashes a receipt-created home against the receipt bound to
-    that exact live directory. An unknown, restored, or replaced tree still
-    needs a reviewed expected manifest. Both verifiers hash attested empty
-    snapshot files. Verification assigns no status.
+  • home verify rehashes a receipt-created home against the receipt when
+    occupancy still names that live directory. An unbound complete tree with a
+    compatible receipt needs home relocate --node, not a Hub re-download and
+    not occupancy without a live rehash. An unknown tree without a receipt
+    still needs a reviewed expected manifest. Both verifiers hash attested
+    empty snapshot files. Verification assigns no status.
+  • home relocate moves occupancy to --node after a live full rehash against
+    the immutable receipt. If that rank already has matching bytes, no copy
+    and no Hub download occur. Receipt selected_rank is download provenance
+    only and does not block the move. Catalog refresh is a separate next
+    action.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -623,6 +635,9 @@ PY
     build_args+=(--json)
   fi
   python3 "$PY_TOOL" "${build_args[@]}"
+  python3 "$SOURCE_ATTESTED_PY" classify-catalog-occupancy \
+    --library-dir "$LIBRARY_DIR" \
+    --catalog "$CATALOG_FILE"
 }
 
 cmd_catalog_list() {
@@ -1737,7 +1752,7 @@ sa.compare_observed_manifest_to_expected(
       --receipt "$tmp/receipt.json" \
       --publish-result "$tmp/publish.json" \
       --node-id "$selected_node" >"$tmp/attach.json"; then
-    die "home add: durable home published but the current-home attachment was not written; the home is unbound. Remove it with a supported home remove, then re-add, or use a reviewed expected manifest. Do not reconstruct the attachment from matching bytes."
+    die "home add: durable home published but occupancy was not attached. Remove it with a supported home remove, then re-add, or occupy it with home relocate --node after a live receipt rehash. Do not reconstruct occupancy without that rehash."
   fi
   local staging_cleanup
   staging_cleanup=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("staging_cleanup") or "removed")' \
@@ -1916,26 +1931,65 @@ cmd_home_verify() (
   ensure_catalog
   load_cluster_topology >/dev/null \
     || die "home verify: confirmed topology required"
-  resolved=$(
-    python3 "$PY_TOOL" resolve \
-      --catalog "$CATALOG_FILE" \
-      "$query" \
-      --models-dir "$REPO_DIR/models" \
-      --no-cold \
-      --json
-  ) || die "home verify: could not resolve $query"
-  model_id=$(printf '%s' "$resolved" | python3 -c \
+  local show_query="$query" entry attachment_json rank
+  if [[ "$query" != */* ]] && [[ "$query" != *@* ]]; then
+    load_conf "$query"
+    show_query="${MODEL:-$query}"
+  fi
+  entry=$(python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" "$show_query" --json) \
+    || die "home verify: could not resolve $query"
+  model_id=$(printf '%s' "$entry" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["model_id"])')
-  revision=$(printf '%s' "$resolved" | python3 -c \
+  revision=$(printf '%s' "$entry" | python3 -c \
     'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
-  home_rank=$(printf '%s' "$resolved" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
-  node_id=$(printf '%s' "$resolved" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["home"]["node_id"])')
-  hub_path=$(printf '%s' "$resolved" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["home"]["hub_path"])')
-  [ -n "$revision" ] \
+  [ -n "$revision" ] && [ "$revision" != unknown ] && [ "$revision" != missing ] \
     || die "home verify: catalog entry lacks an exact snapshot revision"
+  attachment_json=$(python3 "$SOURCE_ATTESTED_PY" show-current-home-attachment \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --allow-missing)
+  if [ "$attachment_json" != null ] && [ -n "$attachment_json" ]; then
+    node_id=$(printf '%s' "$attachment_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["node_id"])')
+    hub_path=$(printf '%s' "$attachment_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["durable_home_path"])')
+    home_rank=""
+    for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+      if [ "${CLUSTER_NODE_IDS[$rank]:-}" = "$node_id" ]; then
+        home_rank="$rank"
+        break
+      fi
+    done
+    [ -n "$home_rank" ] \
+      || die "home verify: occupancy node is not in the confirmed topology"
+  else
+    resolved=$(
+      python3 "$PY_TOOL" resolve \
+        --catalog "$CATALOG_FILE" \
+        "$query" \
+        --models-dir "$REPO_DIR/models" \
+        --no-cold \
+        --json
+    ) || resolved=""
+    if [ -z "$resolved" ]; then
+      receipt_lookup=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
+        --library-dir "$LIBRARY_DIR" \
+        --model-id "$model_id" \
+        --revision "$revision" \
+        --allow-missing)
+      if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
+        die "home verify: occupancy is missing for a source-attested receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+      fi
+      die "home verify: could not resolve $query"
+    fi
+    home_rank=$(printf '%s' "$resolved" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
+    node_id=$(printf '%s' "$resolved" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["home"]["node_id"])')
+    hub_path=$(printf '%s' "$resolved" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["home"]["hub_path"])')
+  fi
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-verify.XXXXXX")
   trap 'if [ -n "${tmp:-}" ]; then rm -rf "$tmp"; fi' EXIT
   receipt_json=$(resolve_attached_source_attested_receipt \
@@ -2003,8 +2057,209 @@ print(json.dumps({
       return 0
     fi
   fi
+  receipt_lookup=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --allow-missing)
+  if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
+    die "home verify: occupancy is missing for a source-attested receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+  fi
   die "home verify: unknown or pre-existing home requires a reviewed expected manifest"
 )
+
+confirmed_rank_from_node_selector() {
+  local selector="${1:?}" match="" rank
+  for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+    if [ "$selector" = "$rank" ] \
+        || [ "$selector" = "${CLUSTER_NODE_IDS[$rank]:-}" ]; then
+      if [ -n "$match" ] && [ "$match" != "$rank" ]; then
+        die "home relocate: --node must match exactly one confirmed rank or node ID"
+      fi
+      match="$rank"
+    fi
+  done
+  [ -n "$match" ] \
+    || die "home relocate: --node must match exactly one confirmed rank or node ID"
+  printf '%s\n' "$match"
+}
+
+cmd_home_relocate() {
+  local query="" node_selector="" yes=0 json=0 dest_rank dest_node
+  local model_id revision receipt_json attachment_json dest_hub dest_state
+  local cache_root hf_cli content_bytes tmp observed_json live_json
+  local source_node source_path source_rank occupy_json
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --node)
+        shift
+        [ $# -gt 0 ] || die "--node needs a rank or node ID"
+        node_selector="$1"
+        ;;
+      --yes|-y) yes=1 ;;
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] && [ -n "$node_selector" ] \
+    || die "usage: home relocate <profile|model_id|model_id@revision> --node RANK|NODE_ID --yes [--json]"
+  [ "$yes" = 1 ] \
+    || die "home relocate requires --yes after reviewing the destination rank"
+  require_py
+  ensure_catalog
+  load_cluster_topology >/dev/null \
+    || die "home relocate: confirmed topology required"
+  dest_rank=$(confirmed_rank_from_node_selector "$node_selector")
+  dest_node="${CLUSTER_NODE_IDS[$dest_rank]:-}"
+  [ -n "$dest_node" ] || die "home relocate: rank $dest_rank lacks a node ID"
+
+  local show_query="$query"
+  if [[ "$query" != */* ]] && [[ "$query" != *@* ]]; then
+    load_conf "$query"
+    show_query="${MODEL:-$query}"
+  fi
+  local entry
+  entry=$(python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" "$show_query" --json) \
+    || die "home relocate: catalog has no entry for $query; refresh, then retry"
+  model_id=$(printf '%s' "$entry" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  revision=$(printf '%s' "$entry" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  [ -n "$revision" ] && [ "$revision" != unknown ] && [ "$revision" != missing ] \
+    || die "home relocate: catalog entry lacks an exact snapshot revision"
+
+  receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --allow-missing)
+  [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
+    || die "home relocate: no source-attested receipt for $model_id@$revision; sealed homes keep expected-manifest verify, and Hub re-download is home add"
+
+  content_bytes=$(printf '%s' "$receipt_json" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["observed_manifest"]["total_bytes"])')
+  IFS=$'\t' read -r cache_root hf_cli < <(home_acquisition_rank_environment "$dest_rank")
+  [ -n "$cache_root" ] || die "home relocate: rank $dest_rank cache root is unobservable"
+  local dest_obs
+  dest_obs=$(run_model_library_on_rank "$dest_rank" \
+    inspect-home-acquisition-target \
+    --cache-root "$cache_root" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --required-content-bytes "$content_bytes" \
+    --rank "$dest_rank" \
+    --node-id "$dest_node" \
+    --hf-cli "${hf_cli:-}") \
+    || die "home relocate: destination rank is unobservable"
+  dest_hub=$(printf '%s' "$dest_obs" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target_hub"])')
+  dest_state=$(printf '%s' "$dest_obs" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["target_state"])')
+
+  attachment_json=$(python3 "$SOURCE_ATTESTED_PY" show-current-home-attachment \
+    --library-dir "$LIBRARY_DIR" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --allow-missing)
+  source_node=""
+  source_path=""
+  source_rank=""
+  if [ "$attachment_json" != null ] && [ -n "$attachment_json" ]; then
+    source_node=$(printf '%s' "$attachment_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["node_id"])')
+    source_path=$(printf '%s' "$attachment_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["durable_home_path"])')
+    local rank
+    for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
+      if [ "${CLUSTER_NODE_IDS[$rank]:-}" = "$source_node" ]; then
+        source_rank="$rank"
+        break
+      fi
+    done
+  fi
+
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-relocate.XXXXXX")
+  trap 'if [ -n "${tmp:-}" ]; then rm -rf "$tmp"; fi' RETURN
+  printf '%s\n' "$receipt_json" >"$tmp/receipt.json"
+
+  if [ "$dest_state" = occupied ]; then
+    observed_json=$(run_model_library_on_rank "$dest_rank" \
+      inspect-snapshot-blob-identities \
+      --hub-path "$dest_hub" \
+      --model-id "$model_id" \
+      --revision "$revision" \
+      --allow-empty-files) \
+      || die "home relocate: destination tree is not a complete matching snapshot; refuse Hub re-download"
+  elif [ "$dest_state" = absent ]; then
+    [ -n "$source_rank" ] && [ -n "$source_path" ] \
+      || die "home relocate: destination has no complete tree and occupancy is missing; restore from a verified cold archive (home restore) or acquire with home add"
+    [ "$source_rank" != "$dest_rank" ] \
+      || die "home relocate: occupancy is already on this rank but the destination hub path is absent"
+    COPY_SSH_MODE=roce
+    if [ "$dest_rank" != 0 ] && [ "$source_rank" != 0 ]; then
+      COPY_STREAMS=1
+    else
+      COPY_STREAMS=8
+    fi
+    export PULSAR_COPY_STREAMS="$COPY_STREAMS"
+    load_copy_ssh_roce_map "$source_rank" "$source_rank,$dest_rank" 0
+    copy_hub_to_rank "$dest_rank" "$source_path" "$dest_hub" "$source_rank" \
+      || die "home relocate: copy from current occupancy failed"
+    observed_json=$(run_model_library_on_rank "$dest_rank" \
+      inspect-snapshot-blob-identities \
+      --hub-path "$dest_hub" \
+      --model-id "$model_id" \
+      --revision "$revision" \
+      --allow-empty-files) \
+      || die "home relocate: copied destination failed snapshot inspection"
+  else
+    die "home relocate: destination hub path is not a usable directory ($dest_state)"
+  fi
+
+  printf '%s\n' "$observed_json" >"$tmp/observed.json"
+  python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["manifest"]))' \
+    <"$tmp/observed.json" >"$tmp/manifest.json"
+  live_json=$(run_model_library_on_rank "$dest_rank" \
+    inspect-live-directory-identity --path "$dest_hub") \
+    || die "home relocate: could not inspect the destination directory identity"
+  printf '%s\n' "$live_json" >"$tmp/live-identity.json"
+
+  occupy_json=$(python3 "$SOURCE_ATTESTED_PY" occupy-current-home \
+    --library-dir "$LIBRARY_DIR" \
+    --receipt "$tmp/receipt.json" \
+    --manifest "$tmp/manifest.json" \
+    --node-id "$dest_node" \
+    --durable-home-path "$dest_hub" \
+    --live-identity "$tmp/live-identity.json") \
+    || die "home relocate: live rehash did not match the receipt; occupancy was not moved"
+
+  if [ -n "$source_path" ] && [ "$source_path" != "$dest_hub" ] && [ -n "$source_rank" ]; then
+    if ! build_home_removal_plan "$model_id@$revision" "$source_rank" 0 >/dev/null; then
+      log "home relocate: occupancy moved; source tree remains unbound-complete (removal blocked)"
+    else
+      local retire_plan retire_state
+      retire_plan=$(build_home_removal_plan "$model_id@$revision" "$source_rank" 0)
+      retire_state=$(printf '%s' "$retire_plan" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["state"])')
+      if [ "$retire_state" = eligible ]; then
+        execute_home_removal_on_rank "$retire_plan" >/dev/null \
+          || log "home relocate: occupancy moved; source retirement failed and the old tree is unbound-complete"
+      else
+        log "home relocate: occupancy moved; source tree remains unbound-complete (removal blocked)"
+      fi
+    fi
+  fi
+
+  if [ "$json" = 1 ]; then
+    printf '%s\n' "$occupy_json"
+  else
+    log "Receipt occupancy moved after live rehash. Catalog refresh is still required. Cold archive is not a serving gate."
+    python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))' \
+      <<<"$occupy_json"
+  fi
+}
 
 cmd_home_check() {
   local query="" node_selector="" allow_last_home=0 json=0 plan state
@@ -2090,7 +2345,7 @@ cmd_home_remove() {
   result_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-home-removed.XXXXXX")
   trap 'rm -f "$result_file"' RETURN
   execute_home_removal_on_rank "$plan" >"$result_file" \
-    || die "home removal failed after detaching any current-home attachment; receipts were kept. If the home remains, it is unbound. Retry supported removal or use a reviewed expected manifest. Do not reconstruct the attachment from matching bytes."
+    || die "home removal failed after detaching any current-home attachment; receipts were kept. If the home remains, it is unbound-complete. Retry supported removal or occupy it with home relocate --node after a live receipt rehash. Do not reconstruct occupancy without that rehash."
   if ! cmd_catalog_refresh >/dev/null; then
     die "home was removed, but catalog refresh failed; run catalog refresh before serving"
   fi
@@ -3488,6 +3743,7 @@ main() {
         verify) cmd_home_verify "$@" ;;
         check) cmd_home_check "$@" ;;
         remove) cmd_home_remove "$@" ;;
+        relocate) cmd_home_relocate "$@" ;;
         *) usage; exit 2 ;;
       esac
       ;;

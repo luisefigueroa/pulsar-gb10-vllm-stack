@@ -85,21 +85,24 @@ manifest, runtime envelope, and selected access contract.
    private same-filesystem staging. It checks the complete upstream inventory,
    Hugging Face missing/extra verification, and every file digest; repeats the
    all-rank absence check; writes an immutable receipt; publishes with an
-   atomic no-replace rename; and binds that receipt to the exact published
-   directory. Do not download directly into the durable cache.
+   atomic no-replace rename; and attaches occupancy to the exact published
+   directory. Do not download directly into the durable cache. Do not wait
+   for a cold NFS archive before continuing.
 6. Record the result's exact revision, `source_digest`, `approval_id`, and
    `receipt_id` in the journal. Acquisition is catalog/artifact evidence only;
    it does not issue a seal or decision, assign status, promote a path, prove
    physical behavior, refresh the catalog, prepare a runtime view, or launch.
 7. Reuse a source-attested home only after
    `scripts/model-library.sh home verify <model_id@revision> --json` completes
-   an offline full SHA-256 rehash against the immutable receipt attached to
-   that exact live directory. An older or
-   otherwise pre-existing home still requires full verification against a
+   an offline full SHA-256 rehash against the immutable receipt while occupancy
+   names that live directory. Occupancy may move with
+   `scripts/model-library.sh home relocate <profile> --node RANK --yes`. An
+   older tree without a receipt still requires full verification against a
    reviewed expected manifest independent of the observed tree.
 8. Refuse a missing required receipt or reviewed manifest, failed or incomplete
-   verification, partial or wrong-revision content, a duplicate durable home,
-   or an out-of-geometry home. Do not treat a catalog `complete` label or a
+   verification, partial or wrong-revision content, a duplicate occupancy home,
+   or an out-of-geometry home. Unbound-complete trees with a compatible receipt
+   are relocate, not Hub re-add. Do not treat a catalog `complete` label or a
    later self-observed manifest as independent completeness proof.
 
 ## 5. Catalog and manifest

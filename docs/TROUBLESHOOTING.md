@@ -70,8 +70,12 @@ start a second model on the same port.
 With `HF_HUB_OFFLINE=1` (our default) huggingface_hub needs `refs/main` to
 resolve the revision and fails even though all weights are present.
 **Fix for offline Hugging Face loading:** restore `refs/main` to the
-intended exact revision, or re-acquire the durable home with
-`scripts/model-library.sh home add <profile> --revision <exact-commit> --yes`.
+intended exact revision. If a source-attested receipt exists, occupy the
+complete tree with
+`scripts/model-library.sh home relocate <profile> --node RANK --yes`
+after a live rehash rather than Hub re-download. Only re-acquire with
+`scripts/model-library.sh home add <profile> --revision <exact-commit> --yes`
+when no receipt and no occupancy remain.
 **Do not select the first directory from `snapshots/`:** a cache can contain
 several commits and filesystem order is not identity.
 

@@ -6,11 +6,15 @@
   model validation identity
 - **Canonical design:** [MODEL_LIBRARY_DESIGN.md](../MODEL_LIBRARY_DESIGN.md)
 - **Amended by:**
-  [ADR 0004](./0004-model-serving-release-validation.md)
-  and
+  [ADR 0004](./0004-model-serving-release-validation.md),
   [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md)
   (ordinary stop retains unpinned sealed-hot working copies; pin remains
-  protection from unforced purge; home-loss is still service loss)
+  protection from unforced purge),
+  and
+  [ADR 0011](./0011-portable-occupancy-and-cold-archive.md)
+  (occupancy is portable after a live receipt rehash; NFS receipt-indexed
+  archive is the distinct-failure-domain replica; home-rank symlink is
+  unchanged)
 
 ## Context
 
@@ -155,6 +159,18 @@ observed content boundary in this decision remains unchanged.
 Source-attested unsealed Hugging Face `home add` remains a core
 catalog/artifact ingress. SIM-03 does not weaken decision 4: a receipt
 and live-directory attachment are observed/source identity only. They
-cannot replace or create a lab-issued expected seal. Unknown, restored,
-or unbound homes still require a reviewed expected manifest independent
-of the observed tree.
+cannot replace or create a lab-issued expected seal. Unknown trees without
+a receipt still require a reviewed expected manifest independent of the
+observed tree. A complete tree with a compatible receipt is occupied with
+`home relocate` after a live rehash
+([ADR 0011](./0011-portable-occupancy-and-cold-archive.md)); it is not a
+Hub re-download and not occupancy without that rehash.
+
+## Interpretation note — 2026-08-23 (ADR 0011)
+
+Decision 2 is unchanged: the occupancy rank uses a validated symlink of
+the durable tree; do not materialize a second hot copy on that rank.
+Decision 3’s distinct-failure-domain replica is the receipt-indexed NFS
+archive in ADR 0011, not a second Spark home. Occupancy may move with
+the receipt after a live full rehash. Non-home full copies are working
+replicas (on-disk `sealed-hot` unchanged).

@@ -18,7 +18,9 @@ Work from the repository root. Before evaluating or changing behavior:
 2. Read `docs/MODEL_LIBRARY_DESIGN.md` completely.
 3. Read every applicable accepted or superseding record under
    `docs/decisions/`, especially ADR 0001 for home views and validation
-   identity and [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md)
+   identity, [ADR 0011](../../docs/decisions/0011-portable-occupancy-and-cold-archive.md)
+   for portable occupancy, relocate, and receipt-indexed NFS archive, and
+   [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md)
    for qualification scope and causal invalidation.
 4. Read `docs/OPERATIONS.md` and `docs/MODELS.md` when current operator
    behavior, the live profile catalog, or implementation gaps matter. Schema
@@ -138,10 +140,11 @@ Map the proposed work across these independent axes before editing:
 Reviewed Model Serving Release bindings, legacy expected seals, and unbound
 source-attested identity are distinct. Source-attested adoption is
 `catalog-artifact` observed/source identity only: it does not create a seal,
-status, serving permission, or a Model Serving Release decision. Unknown and
-pre-existing homes still require a reviewed expected manifest independent of
-the observed tree. A home created by source-attested acquisition may be reused
-only after a complete offline rehash against its valid receipt. The public
+status, serving permission, or a Model Serving Release decision. Unknown trees without a receipt still require a reviewed expected manifest
+independent of the observed tree. A home created by source-attested acquisition
+may be reused only after a complete offline rehash against its valid receipt
+while occupancy names the live directory. Occupancy may move with
+`home relocate` after that rehash (ADR 0011). The public
 read-only plan, separately confirmed exact-commit acquisition, immutable
 receipt, offline `home verify`, exact prepare binding, and onboarding-skill
 composition are implemented as deterministic control-plane behavior. They make

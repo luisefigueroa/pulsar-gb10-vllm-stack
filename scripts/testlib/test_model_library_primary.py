@@ -198,6 +198,38 @@ class PrimarySelectionContracts(unittest.TestCase):
                 cold_root=None,
             )
 
+    def test_occupancy_home_ignores_unbound_complete_duplicate(self) -> None:
+        catalog = self._build()
+        entry = self._entry(catalog)
+        entry["homes"][0]["home_class"] = "occupancy"
+        entry["homes"][0]["occupancy"] = True
+        entry["homes"][1]["home_class"] = "unbound-complete"
+        entry["homes"][1]["occupancy"] = False
+        model_library._apply_entry_primary_policy(entry, None)
+        self.assertFalse(entry["duplicate"])
+        self.assertTrue(entry["has_primary"])
+        self.assertEqual(entry["primary_selection"]["mode"], "automatic-single-home")
+        resolved = model_library.resolve_entry(
+            catalog, model_id=self.model_id, cold_root=None
+        )
+        self.assertEqual(resolved["home"]["node_id"], "node-a")
+
+    def test_unbound_complete_without_occupancy_fails_closed(self) -> None:
+        catalog = self._build()
+        entry = self._entry(catalog)
+        for home in entry["homes"]:
+            home["home_class"] = "unbound-complete"
+            home["occupancy"] = False
+        model_library._apply_entry_primary_policy(entry, None)
+        self.assertFalse(entry["duplicate"])
+        self.assertFalse(entry["has_primary"])
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError, "complete tree is unbound"
+        ):
+            model_library.resolve_entry(
+                catalog, model_id=self.model_id, cold_root=None
+            )
+
     def test_cleanup_recommends_only_explicit_safe_steps(self) -> None:
         self._write(self._build())
         unresolved = model_library.cleanup_recommend(

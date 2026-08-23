@@ -77,9 +77,11 @@ compare, and benchmark sequentially rather than using `validate/run-gates.sh`
 as an ADR attempt wrapper. For an absent brand-new unsealed Hugging Face
 repository, it may compose the source-attested read-only plan and separately
 confirmed exact-commit acquisition. Reuse of that home requires
-receipt-backed offline full verification against the receipt attached to the
-exact live directory. Unknown, restored, replaced, or otherwise unbound homes
-still require full verification against a reviewed expected manifest
+receipt-backed offline full verification against the receipt while occupancy
+names the exact live directory. Occupancy may move with `home relocate` after
+that live rehash ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+Unknown trees without a receipt still
+require full verification against a reviewed expected manifest
 independent of the observed tree; catalog state and a self-observed manifest
 alone are insufficient. Direct durable-cache download remains forbidden.
 Source-attested deterministic tests are control-plane evidence only. The
@@ -561,12 +563,13 @@ durable home separately before running preparation.
     - every confirmed rank is reobserved and an existing or raced repository
       blocks publication;
     - an immutable site-local receipt is written before an atomic no-replace
-      rename publishes the one durable home, and a private current-home
-      attachment then binds that receipt to the exact published directory;
+      rename publishes the one durable home, and occupancy is attached to the
+      exact published directory;
     - `home verify <model_id@commit>` completes an offline full rehash against
-      the attached receipt, and prepare accepts the receipt-backed home only
-      when that live-directory attachment is current and the exact model ID
-      and commit match; and
+      the receipt while occupancy names that live directory, `home relocate`
+      may move occupancy after the same live rehash without a Hub download,
+      and prepare accepts the receipt-backed home only when occupancy is
+      current and the exact model ID and commit match; and
     - the result states that catalog refresh, preparation, launch, reviewed
       identity, model qualification, status, decision, and promotion did not
       occur.

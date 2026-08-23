@@ -279,7 +279,7 @@ assert remove_body.index("detach-current-home") < remove_body.index(
 PY
 
 # Removing the current attachment unbinds the live home. Matching bytes do not
-# restore receipt authority.
+# restore receipt authority until home relocate rehashes and occupies.
 rm -f "$STATE/library/source-attested-home-attachments"/*.json
 if env "${BASE_ENV[@]}" "$LIBRARY" home verify \
     'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
@@ -287,10 +287,28 @@ if env "${BASE_ENV[@]}" "$LIBRARY" home verify \
   echo "unbound home verify unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q 'unknown or pre-existing home requires a reviewed expected manifest' \
-  "$STATE/unbound.err"
+grep -q 'home relocate' "$STATE/unbound.err"
+grep -q 'Do not Hub re-download' "$STATE/unbound.err"
 [ "$(find "$STATE/library/source-attested-receipts" -name '*.json' | wc -l)" -eq 1 ]
 [ "$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)" -eq 0 ]
+env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
+env "${BASE_ENV[@]}" "$LIBRARY" home relocate nemotron-3-nano-30b-nvfp4 \
+  --node 0 --yes --json >"$STATE/relocate.json"
+python3 - "$STATE/relocate.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "attached"
+assert "node_id" not in result
+PY
+[ "$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)" -eq 1 ]
+env "${BASE_ENV[@]}" "$LIBRARY" home verify \
+  'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  --json >"$STATE/verify-after-relocate.json"
+python3 - "$STATE/verify-after-relocate.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "verified"
+PY
 
 # Reacquisition after supported-style removal writes a new attachment and keeps
 # the earlier receipt.

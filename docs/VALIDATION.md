@@ -67,8 +67,9 @@ no physical DGX claim and create no release decision. For an absent brand-new
 unsealed Hugging Face repository, the skill may compose the source-attested
 read-only plan and separately confirmed exact-commit acquisition. Reuse of that
 home requires receipt-backed offline full verification against the receipt
-attached to the exact live directory. Unknown, restored, replaced, or
-otherwise unbound homes still require full verification against a reviewed
+while occupancy names the exact live directory. Occupancy may move with
+`home relocate` after that live rehash (ADR 0011). Unknown trees without a
+receipt still require full verification against a reviewed
 expected manifest independent of the observed tree; catalog state and a
 self-observed manifest alone are insufficient. The bounded Nemotron Nano Gate
 14 physically passes the one-node rank-0 catalog/artifact lifecycle. Remote

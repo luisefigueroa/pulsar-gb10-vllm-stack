@@ -173,12 +173,15 @@ language for new features without an explicit decision.
   confines downloads and transient caches to private same-filesystem staging,
   verifies the upstream set and every SHA-256, rechecks all-rank absence,
   writes an immutable site-local receipt, publishes with an atomic
-  no-replace rename, and binds that receipt to the exact published directory
-  through a private current-home attachment. It does not refresh the catalog,
+  no-replace rename, and attaches occupancy to the exact published directory.
+  It does not refresh the catalog,
   prepare a runtime view, launch, or create reviewed authority. A home
   created this way may later be resumed or reused only after `home verify`
-  completes an offline full rehash against the receipt attached to that live
-  directory. An unknown, restored, replaced, or otherwise unbound home still
+  completes an offline full rehash against the receipt while occupancy names
+  that live directory. Occupancy may move with `home relocate --node` after
+  that same live rehash; receipt `selected_rank` is Hub-download provenance
+  only ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
+  An unknown tree without a receipt still
   requires full verification against a reviewed expected manifest independent
   of the observed tree; the shallow catalog label and a self-observed
   manifest are not that proof. The skill must never download directly into
@@ -553,10 +556,12 @@ this work; the skill is procedural and does not outrank these sources.
   by an immutable receipt creates observed/source identity and catalog-artifact
   evidence only; it does not create a seal, status, serving permission, or
   Model Serving Release decision. Reuse requires receipt-backed offline full
-  verification against the receipt attached to the exact live directory.
-  Unknown, restored, replaced, or otherwise unbound homes still require a
+  verification against the receipt while occupancy names the live directory.
+  Occupancy may move with `home relocate` after a live rehash
+  ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
+  Unknown trees without a receipt still require a
   reviewed expected manifest independent of the observed tree. Prepare-time
-  resolution for receipt-backed content requires the attached receipt plus
+  resolution for receipt-backed content requires occupancy plus
   the exact model ID and commit. Deterministic controls alone make no physical
   claim. The bounded Nemotron Nano Gate 14 artifact physically passes the
   catalog/artifact lifecycle for a one-node rank-0 target across three
@@ -588,9 +593,10 @@ this work; the skill is procedural and does not outrank these sources.
   execution requires `--yes` and repeats source and topology checks before
   downloading the exact commit on the selected rank.
   `home verify <model_id@commit>` performs receipt-backed offline full
-  verification only when the current attachment still names that live
-  directory. The home must be one of the current profile's
-  serving ranks so active storage remains one home plus N−1 hot copies. Do not
+  verification only when occupancy still names that live directory.
+  `home relocate --node` moves occupancy after the same live rehash without a
+  Hub download. The home must be one of the current profile's
+  serving ranks so active storage remains one home plus N−1 working replicas. Do not
   silently choose another node,
   create a controller copy, refresh the catalog, prepare hot views, or launch.
   Guarded `home check` / `home remove --yes` may retire a recognized
@@ -608,9 +614,11 @@ this work; the skill is procedural and does not outrank these sources.
   witness may accelerate an unchanged launch only after full verification;
   drift causes visible full verification against the expected seal or fails
   closed. Never auto-reseal drift as validated content.
-- Warm-home pinning retains non-home hot copies but still requires the durable
-  home. Home-loss resilience and extra durable replicas are separate, explicit
-  policies on distinct failure domains.
+- Warm-home pinning retains non-home working replicas but still requires the
+  durable occupancy. Home-loss recovery is occupy-in-place or restore from a
+  verified receipt-indexed NFS archive
+  ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)), not
+  a second Spark durable home.
 - For multi-rank model preparation, use topology-bound `ssh-roce` copy with
   eight streams and no automatic fallback, as recorded in ADR 0003. The model
   library is the only weight-distribution mechanism

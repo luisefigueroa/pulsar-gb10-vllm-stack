@@ -1489,11 +1489,41 @@ def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
     return sorted(normalized, key=lambda item: item["identity_key"])
 
 
+def policy_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Homes that count for resolve/primary.
+
+    Source-attested occupancy classification marks complete hub trees as
+    ``occupancy`` or ``unbound-complete``. Only occupancy counts as a durable
+    home. Unclassified entries keep the legacy complete-tree rule.
+    """
+    homes = [home for home in (entry.get("homes") or []) if isinstance(home, dict)]
+    classified = [
+        home
+        for home in homes
+        if home.get("home_class") in {"occupancy", "unbound-complete"}
+    ]
+    if classified:
+        return [
+            home
+            for home in classified
+            if home.get("home_class") == "occupancy" and home.get("state") == "complete"
+        ]
+    return [home for home in homes if home.get("state") == "complete"]
+
+
+def unbound_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        home
+        for home in (entry.get("homes") or [])
+        if isinstance(home, dict) and home.get("home_class") == "unbound-complete"
+    ]
+
+
 def _apply_entry_primary_policy(
     entry: dict[str, Any],
     selection: dict[str, str] | None,
 ) -> None:
-    complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+    complete = policy_complete_homes(entry)
     for home in entry.get("homes") or []:
         home["primary"] = False
 
@@ -1532,6 +1562,7 @@ def _apply_entry_primary_policy(
             "mode": "unavailable",
             "status": "missing",
         }
+    entry["duplicate"] = len(complete) > 1
     entry["has_primary"] = any(h.get("primary") for h in complete)
 
 
@@ -1671,7 +1702,7 @@ def build_catalog(
         partial_homes = [h for h in entry["homes"] if h["state"] != "complete"]
         entry["homes"] = complete_homes + partial_homes
         entry["on_disk"] = bool(complete_homes)
-        entry["duplicate"] = len(complete_homes) > 1
+        entry["duplicate"] = len(policy_complete_homes(entry)) > 1
         statuses = {
             item.get("identity_status") for item in entry["profile_validation"]
         }
@@ -2014,7 +2045,7 @@ def resolve_entry(
             target = identity_key or profile or model_id or "?"
             warm_error = f"resolve: {target}: not found in warm catalog"
         else:
-            complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+            complete = policy_complete_homes(entry)
             if (entry.get("primary_selection") or {}).get("status") == "stale":
                 selection = entry["primary_selection"]
                 fail(
@@ -2023,6 +2054,12 @@ def resolve_entry(
                     "then explicitly select a complete home"
                 )
             if not complete:
+                if unbound_complete_homes(entry):
+                    fail(
+                        f"resolve: {entry['model_id']}: complete tree is unbound; "
+                        "occupy it with scripts/model-library.sh home relocate "
+                        "--node RANK --yes after a live receipt rehash"
+                    )
                 warm_error = (
                     f"resolve: {entry['model_id']}: no complete warm home "
                     "(download/place weights, then catalog refresh)"
@@ -2169,9 +2206,60 @@ def resolve_entry(
 def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     recommendations: list[dict[str, Any]] = []
     for entry in catalog.get("models") or []:
+        unbound = unbound_complete_homes(entry)
+        if unbound and not entry.get("duplicate"):
+            identity_arg = shlex.quote(entry["identity_key"])
+            recommendations.append(
+                {
+                    "model_id": entry["model_id"],
+                    "identity_key": entry["identity_key"],
+                    "homes": [
+                        {
+                            "rank": home["rank"],
+                            "node_id": home["node_id"],
+                            "hostname": home.get("hostname") or "",
+                            "bytes": home.get("bytes") or 0,
+                            "hub_path": home.get("hub_path") or "",
+                            "primary": False,
+                            "home_class": "unbound-complete",
+                        }
+                        for home in unbound
+                    ],
+                    "selection_status": (
+                        entry.get("primary_selection") or {}
+                    ).get("status"),
+                    "select_commands": [
+                        (
+                            "scripts/model-library.sh home relocate "
+                            f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+                        )
+                        for home in unbound
+                    ],
+                    "removal_commands": [
+                        {
+                            "rank": home["rank"],
+                            "check": (
+                                "scripts/model-library.sh home check "
+                                f"{identity_arg} --node {shlex.quote(str(home['rank']))}"
+                            ),
+                            "remove": (
+                                "scripts/model-library.sh home remove "
+                                f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+                            ),
+                        }
+                        for home in unbound
+                    ],
+                    "action": (
+                        "Occupy one complete tree with home relocate after a live "
+                        "receipt rehash, or remove unbound complete trees. They "
+                        "are not durable homes."
+                    ),
+                }
+            )
+            continue
         if not entry.get("duplicate"):
             continue
-        complete = [h for h in entry.get("homes") or [] if h.get("state") == "complete"]
+        complete = policy_complete_homes(entry)
         identity_arg = shlex.quote(entry["identity_key"])
         primary = next((h for h in complete if h.get("primary")), None)
         select_commands = []
@@ -3143,6 +3231,12 @@ def classify_library_readiness(
             return {
                 "reason": "duplicate-home",
                 "remediation": cleanup,
+                "detail": text,
+            }
+        if "complete tree is unbound" in text:
+            return {
+                "reason": "occupancy-missing",
+                "remediation": f"scripts/model-library.sh home relocate {profile} --node RANK --yes",
                 "detail": text,
             }
         if "no primary home selected" in text:
@@ -5525,7 +5619,8 @@ def build_health_report(
         issues.append(_health_issue("catalog-topology-stale", "cached catalog differs from confirmed topology", command="scripts/model-library.sh catalog refresh"))
     public_models: list[dict[str, Any]] = []
     for entry in catalog.get("models") or []:
-        complete = [home for home in entry.get("homes") or [] if home.get("state") == "complete"]
+        complete = policy_complete_homes(entry)
+        unbound = unbound_complete_homes(entry)
         primary = entry.get("primary_selection") or {}
         duplicate = "none"
         if len(complete) > 1:
@@ -5533,6 +5628,12 @@ def build_health_report(
             code = "duplicate-home-redundant" if duplicate == "redundant" else "duplicate-home-unresolved"
             command = None if duplicate == "redundant" else "scripts/model-library.sh catalog primary set <model> --node <rank>"
             issues.append(_health_issue(code, "exact revision has multiple durable homes", command=command))
+        elif unbound:
+            issues.append(_health_issue(
+                "unbound-complete",
+                "complete tree has no occupancy; relocate after a live receipt rehash",
+                command="scripts/model-library.sh home relocate <model> --node <rank> --yes",
+            ))
         if primary.get("status") == "stale":
             issues.append(_health_issue("primary-selection-stale", "selected primary is no longer a complete home", command="scripts/model-library.sh catalog primary clear <model>"))
         expected_manifest = None
