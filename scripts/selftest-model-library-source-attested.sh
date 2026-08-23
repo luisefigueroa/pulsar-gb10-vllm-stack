@@ -415,6 +415,86 @@ result = json.load(open(sys.argv[1], encoding="utf-8"))
 assert result["state"] == "verified"
 PY
 
+# Archive must not take the exclusive occupancy lock: a held exclusive lock
+# must not delay home archive run (P1).
+rm -rf "$STATE/cold/pulsar-receipts"
+mkdir -p "$STATE/library"
+: >"$STATE/library/lifecycle.lock"
+flock -x "$STATE/library/lifecycle.lock" sleep 8 &
+exclusive_holder=$!
+sleep 0.1
+if ! kill -0 "$exclusive_holder" 2>/dev/null; then
+  echo "failed to hold exclusive lifecycle lock for archive test" >&2
+  exit 1
+fi
+archive_start=$(date +%s)
+if ! env "${ARCHIVE_ENV[@]}" \
+    PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS=3 \
+    "$LIBRARY" home archive run --receipt "$receipt_id" --yes --json \
+    >"$STATE/archive-under-exclusive.json" 2>"$STATE/archive-under-exclusive.err"; then
+  kill "$exclusive_holder" 2>/dev/null || true
+  wait "$exclusive_holder" 2>/dev/null || true
+  echo "archive run failed while exclusive occupancy lock was held" >&2
+  cat "$STATE/archive-under-exclusive.err" >&2
+  exit 1
+fi
+archive_elapsed=$(( $(date +%s) - archive_start ))
+kill "$exclusive_holder" 2>/dev/null || true
+wait "$exclusive_holder" 2>/dev/null || true
+if [ "$archive_elapsed" -ge 3 ]; then
+  echo "archive run blocked on exclusive lifecycle lock (${archive_elapsed}s)" >&2
+  exit 1
+fi
+
+# Autostart must complete without inheriting home add's exclusive lock.
+python3 - "$REPO_DIR" "$STATE/autostart" <<'PY'
+import pathlib
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib import model_library_source_attested_fixture as fixture
+fixture.write_cli_fixture(pathlib.Path(sys.argv[2]), ranks=1)
+PY
+mkdir -p "$STATE/autostart/cold" "$STATE/autostart/home"
+AUTOSTART_ENV=(
+  "PATH=$STATE/autostart/bin:$PATH"
+  "CLUSTER_TOPOLOGY_FILE=$STATE/autostart/topology.json"
+  "HF_CACHE=$STATE/autostart/cache"
+  "MODEL_LIBRARY_DIR=$STATE/autostart/library"
+  "MODEL_LIBRARY_CATALOG=$STATE/autostart/library/catalog.json"
+  "MOCK_HF_LOG=$STATE/autostart/hf.log"
+  "PULSAR_HF_SOURCE_INVENTORY_PY=$STATE/autostart/bin/hf-source-inventory.py"
+  "PULSAR_COLD_ROOT=$STATE/autostart/cold"
+  "PULSAR_COLD_ARCHIVE_AUTOSTART=1"
+  "PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS=3"
+)
+add_start=$(date +%s)
+env "${AUTOSTART_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+  --revision main --yes --json \
+  >"$STATE/autostart/add.json" 2>"$STATE/autostart/add.err"
+add_elapsed=$(( $(date +%s) - add_start ))
+if [ "$add_elapsed" -ge 3 ]; then
+  echo "home add blocked on autostart archive lock (${add_elapsed}s)" >&2
+  cat "$STATE/autostart/add.err" >&2
+  exit 1
+fi
+autostart_receipt=$(python3 -c 'import json,sys,pathlib; p=next(pathlib.Path(sys.argv[1]).glob("*.json")); print(json.loads(p.read_text())["receipt_id"])' "$STATE/autostart/library/source-attested-receipts")
+ok=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  state=$(env "${AUTOSTART_ENV[@]}" "$LIBRARY" home archive status "$autostart_receipt" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d or {}).get("state") or "")')
+  if [ "$state" = complete ]; then
+    ok=1
+    break
+  fi
+  sleep 0.2
+done
+if [ "$ok" != 1 ]; then
+  echo "autostart archive stayed $state (expected complete)" >&2
+  ls -la "$STATE/autostart/library/cold-archive-logs" 2>/dev/null || true
+  cat "$STATE/autostart/library/cold-archive-logs/"*.log 2>/dev/null || true
+  exit 1
+fi
+
 "$LIBRARY" --help | grep -q 'home add <profile>'
 "$LIBRARY" --help | grep -q 'home verify'
 "$LIBRARY" --help | grep -q 'home archive'
