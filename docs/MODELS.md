@@ -44,6 +44,7 @@ any status in the table.
 |---|---|---|---|---|---|---|---|
 | `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 4 GB (~3.8 GiB sealed) | 1 | 32K | — | **tested diagnostic canary; lab-sealed exact identity** — hidden from serving wizard |
 | `qwen3.8-27b-fp8` | Qwen/Qwen3.8-27B-FP8 | FP8 | 29 GB | 1 | 131,072 configured; context not evaluated | — | legacy **`STATUS=untested`**; ADR 0004 **Testing incomplete** — strict same-boot and absolute performance passed; stability, accuracy, serving integration, and physical geometry remain unevaluated; not recommended |
+| `qwen3.8-27b-fp8-2node` | same, TP=2 cross-node on official v0.27.1-aarch64 | FP8 | 29 GB | 2 / TP=2 | 131,072 configured; unevaluated | — | unbound draft; legacy **`STATUS=untested`**; no ADR 0004 binding; graphs on; no spec decode; not recommended |
 | `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 4 GB | 2 / TP=2 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
 | `qwen3.6-27b-fp8-2node` | 27B split TP=2 cross-node | FP8 | 29 GB | 2 / TP=2 | — | — | **DO NOT USE** — GDN hybrids hang cross-node (VALIDATION.md) |
 | `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 (hybrid: 16 full-attn + 48 GDN layers) | FP8 block | 29 GB | 1 | 131,072 (needle 3/3 @121K; ledger only — no `results/` artifact) | ngram **FORBIDDEN** (corrupts) | **tested** |
