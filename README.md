@@ -36,16 +36,19 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Model library<br/>durable homes · sealed hot views"] --> artifacts
+  library["Model library<br/>occupancy homes · working replicas"] --> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
 ```
 
+Library terms (home, occupancy tree, receipt, `home archive`, working replica)
+are in [docs/GLOSSARY.md](docs/GLOSSARY.md).
+
 The model library is the only weight-distribution mechanism
 ([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)):
-one durable home per exact revision, sealed hot views on non-home ranks, and
-local files on every rank before vLLM starts. There is no mode-selection
+one durable home per exact revision, working replicas (`sealed-hot`) on
+non-home ranks, and local files on every rank before vLLM starts. There is no mode-selection
 axis; `--weight-source`/`--weight-mode` fail closed. Live NFSv4.2/RDMA under
 vLLM remains rejected as a serving runtime source (ADR 0005): a crashed rank
 cannot cold-start without the owner export; leftover site mounts get
@@ -504,7 +507,7 @@ no leaks, no thermal throttling anywhere).
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
-| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **MODEL_SERVING_RELEASE_CAPTURE** (ADR 0004 evidence-capture candidates), **decisions/** (accepted rationale, including ADR 0004's Model Serving Release policy), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
+| `docs/` | **GLOSSARY** (homes, occupancy, receipts, archives, working replicas), **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **MODEL_SERVING_RELEASE_CAPTURE** (ADR 0004 evidence-capture candidates), **decisions/** (accepted rationale, including ADR 0004's Model Serving Release policy), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.

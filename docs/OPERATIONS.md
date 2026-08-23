@@ -1,6 +1,8 @@
 # Operations runbook — running this stack day to day
 
-Diagnosis lives in TROUBLESHOOTING.md; this page is procedure. Run cluster
+Diagnosis lives in TROUBLESHOOTING.md; this page is procedure. Terms such as
+occupancy, receipt, `home archive`, and working replica are defined in
+[GLOSSARY.md](./GLOSSARY.md). Run cluster
 commands on the machine confirmed as rank 0. Remote SSH targets, control
 interfaces, HCAs, and rank placement come from `.cluster-topology.json`; names
 do not need to follow any pattern.

@@ -33,6 +33,7 @@ performance validation.
 
 The model library is the only weight-distribution mechanism
 ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)).
+Library terms: [GLOSSARY.md](./GLOSSARY.md).
 For reviewed multi-rank profiles, ADR 0003 fixes non-home transfer to
 topology-bound eight-stream SSH-over-RoCE with no fallback. This is a
 distribution policy, not a model-support or release claim; it does not change

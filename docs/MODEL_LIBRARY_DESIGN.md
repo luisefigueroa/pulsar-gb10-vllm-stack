@@ -18,6 +18,7 @@
 > [docs/archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md).
 > Current operator behavior and the live profile catalog are documented in
 > [OPERATIONS.md](./OPERATIONS.md) and [MODELS.md](./MODELS.md).
+> Term finder: [GLOSSARY.md](./GLOSSARY.md).
 > The maintainer-only, candidate-stage release workflow is documented in
 > [MODEL_RELEASE.md](./MODEL_RELEASE.md).
 > The durable rationale for the home-view and validation-identity decision is

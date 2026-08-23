@@ -224,7 +224,8 @@ Treat human-readable command-line output as a primary product requirement. Optim
 ### Plain technical language
 
 Use the project's canonical terms and status names exactly as defined, while
-explaining them in straightforward language.
+explaining them in straightforward language. The term list is
+[docs/GLOSSARY.md](docs/GLOSSARY.md).
 
 - Lead with what happens, what it affects, and the condition that causes it.
 - On first use of a specialized term, immediately explain it in ordinary words.

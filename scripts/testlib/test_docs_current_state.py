@@ -27,6 +27,7 @@ ACTIVE_CURRENT_STATE = (
     REPO_ROOT / "docs" / "MULTINODE.md",
     REPO_ROOT / "docs" / "RECIPES.md",
     REPO_ROOT / "docs" / "MODEL_LIBRARY_DESIGN.md",
+    REPO_ROOT / "docs" / "GLOSSARY.md",
 )
 
 

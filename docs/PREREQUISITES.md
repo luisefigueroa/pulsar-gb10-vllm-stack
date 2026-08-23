@@ -358,6 +358,7 @@ not permission to serve an unmeasured geometry.
 
 | Doc | When |
 |-----|------|
+| [GLOSSARY.md](./GLOSSARY.md) | Homes, occupancy, receipts, archives, working replicas, and nearby terms |
 | [HARDWARE.md](./HARDWARE.md) | Measured bandwidth, RoCE map, storage |
 | [MULTINODE.md](./MULTINODE.md) | Discovery/manifest contract, native `--nnodes`, validation policy |
 | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Superseded live NFS/RDMA serving notes and leftover teardown (ADR 0005) |
