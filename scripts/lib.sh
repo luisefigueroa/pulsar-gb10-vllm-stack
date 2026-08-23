@@ -109,9 +109,23 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1 (install it and retry)"
 }
 
-# Serialize supported launches/library operations against destructive durable-
-# home removal. Shared holders may read/prepare/launch concurrently; removal
-# takes the exclusive form before it probes references and changes a home.
+# Close-on-exec so background children (archive workers) cannot inherit a
+# held flock and deadlock on a second exclusive lock of the same file.
+_fd_cloexec() {
+  local fd="${1:-}"
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 0
+  python3 -c 'import fcntl, sys; fcntl.fcntl(int(sys.argv[1]), fcntl.F_SETFD, fcntl.FD_CLOEXEC)' "$fd" \
+    || die "cannot mark lock fd $fd close-on-exec"
+}
+
+# Serialize occupancy mutations against destructive home removal.
+# Exclusive: home add/remove/relocate/restore (they change occupancy).
+# Shared: prepare/launch and occupancy readers (verify/check).
+# No lifecycle lock: home archive status|run. Archive reads occupancy and
+# writes NFS/job files; last-home remove already requires a complete archive.
+# An in-flight archive vs remove is fail-and-retry, not a serving race.
+# Holding exclusive (or even shared) for a long NFS copy would block relocate
+# and experiments.
 acquire_model_library_lifecycle_lock() {
   local mode="${1:-shared}" timeout lock_dir lock_path lock_parent lock_fd
   case "$mode" in
@@ -146,6 +160,7 @@ acquire_model_library_lifecycle_lock() {
       die "durable-home removal is in progress; launch/library lock timed out"
     }
   fi
+  _fd_cloexec "$lock_fd"
   PULSAR_MODEL_LIBRARY_LOCK_FD="$lock_fd"
   PULSAR_MODEL_LIBRARY_LOCK_MODE="$mode"
 }
@@ -187,6 +202,7 @@ acquire_model_library_hot_lock() {
       die "hot preparation/pin/purge is in progress; hot read lock timed out"
     }
   fi
+  _fd_cloexec "$lock_fd"
   PULSAR_MODEL_LIBRARY_HOT_LOCK_FD="$lock_fd"
   PULSAR_MODEL_LIBRARY_HOT_LOCK_MODE="$mode"
 }

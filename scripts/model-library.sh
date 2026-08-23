@@ -138,10 +138,11 @@ Notes:
     only and does not block the move. Catalog refresh is a separate next
     action.
   • After receipt issuance, a receipt-indexed NFS archive starts in the
-    background and is not a serving gate. home archive status|run and
-    home restore occupy from that archive after a live rehash. vLLM never
-    opens NFS. Legacy cold scan/adopt/stage-only remain fill paths, not
-    receipt identity.
+    background and is not a serving gate. home archive status|run take no
+    occupancy lifecycle lock so they cannot block prepare, launch, or
+    relocate; workers flock only their job file. home restore occupy from
+    that archive after a live rehash. vLLM never opens NFS. Legacy cold
+    scan/adopt/stage-only remain fill paths, not receipt identity.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -2293,10 +2294,20 @@ start_cold_archive_after_receipt() {
   autostart="${PULSAR_COLD_ARCHIVE_AUTOSTART:-1}"
   if [ "$autostart" != 0 ] && [ "$state" = pending ]; then
     mkdir -p "$LIBRARY_DIR/cold-archive-logs"
-    setsid nohup env \
-      PULSAR_COLD_ARCHIVE_AUTOSTART=0 \
-      "$REPO_DIR/scripts/model-library.sh" home archive run --receipt "$receipt_id" --yes \
-      >>"$LIBRARY_DIR/cold-archive-logs/${receipt_id}.log" 2>&1 < /dev/null &
+    (
+      if [[ "${PULSAR_MODEL_LIBRARY_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+        eval "exec ${PULSAR_MODEL_LIBRARY_LOCK_FD}>&-"
+      fi
+      if [[ "${PULSAR_MODEL_LIBRARY_HOT_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+        eval "exec ${PULSAR_MODEL_LIBRARY_HOT_LOCK_FD}>&-"
+      fi
+      unset PULSAR_MODEL_LIBRARY_LOCK_FD PULSAR_MODEL_LIBRARY_LOCK_MODE
+      unset PULSAR_MODEL_LIBRARY_HOT_LOCK_FD PULSAR_MODEL_LIBRARY_HOT_LOCK_MODE
+      exec setsid nohup env \
+        PULSAR_COLD_ARCHIVE_AUTOSTART=0 \
+        "$REPO_DIR/scripts/model-library.sh" home archive run --receipt "$receipt_id" --yes \
+        >>"$LIBRARY_DIR/cold-archive-logs/${receipt_id}.log" 2>&1 < /dev/null
+    ) &
   fi
 }
 
@@ -2372,6 +2383,16 @@ cmd_home_archive_run() {
     cold_root="${MODELS_NFS:-}"
   fi
   [ -n "$cold_root" ] || die "home archive run: cold root is not configured"
+  local archive_job_lock archive_job_fd
+  archive_job_lock="$LIBRARY_DIR/cold-archive-jobs/${receipt_id}.lock"
+  mkdir -p "$LIBRARY_DIR/cold-archive-jobs"
+  exec {archive_job_fd}>"$archive_job_lock" \
+    || die "home archive run: cannot open job lock"
+  flock -x -w "${PULSAR_COLD_ARCHIVE_JOB_LOCK_TIMEOUT_SECONDS:-2}" "$archive_job_fd" || {
+    exec {archive_job_fd}>&-
+    die "home archive run: another archive worker holds this receipt"
+  }
+  _fd_cloexec "$archive_job_fd"
   python3 "$COLD_ARCHIVE_PY" set-job-state \
     --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" \
     --state running --detail "copying occupancy tree to receipt-indexed cold archive" \
@@ -3972,6 +3993,14 @@ main() {
   [ "$cmd" = activate ] && refuse_removed_activate_command
   case "$cmd:${1:-}:${2:-}" in
     -h:*|--help:*|help:*) ;;
+    home:archive:*)
+      # Archive reads occupancy and writes NFS/job state. No lifecycle lock:
+      # exclusive would block prepare/launch; shared would block relocate for
+      # the whole copy. Last-home remove already requires a complete archive.
+      ;;
+    home:verify:*|home:check:*)
+      acquire_model_library_lifecycle_lock shared
+      ;;
     home:*|catalog:refresh:*|catalog:primary:set|catalog:primary:clear)
       acquire_model_library_lifecycle_lock exclusive
       ;;

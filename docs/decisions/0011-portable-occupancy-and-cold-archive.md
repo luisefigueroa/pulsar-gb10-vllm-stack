@@ -76,9 +76,12 @@ and is never opened by vLLM.
   and catalog unbound-complete classification are implemented.
 - Receipt-indexed `home archive status|run`, background enqueue after
   `home add`, `home restore`, and `--allow-unarchived-last-home` are
-  implemented as catalog/artifact control plane. Physical NFS archive and
-  restore on DGX hardware are not claimed. Legacy `cold scan` / `cold adopt` /
-  `cold stage-only` remain fill paths without receipt identity.
+  implemented as catalog/artifact control plane. Archive workers take **no
+  occupancy lifecycle lock** (job-file flock only) so they cannot block
+  prepare, launch, or relocate; last-home remove already requires a complete
+  archive. Physical NFS archive and restore on DGX hardware are not claimed.
+  Legacy `cold scan` / `cold adopt` / `cold stage-only` remain fill paths
+  without receipt identity.
 
 ## Consequences
 

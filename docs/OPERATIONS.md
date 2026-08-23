@@ -735,9 +735,13 @@ Source-attested crash and retry behavior:
   rehash. Receipt `selected_rank` is Hub-download provenance and does not
   block the move. Catalog refresh remains a separate next action.
 - After occupancy attach, `home archive` copies the receipt-indexed tree to
-  NFS in the background. It is not a serving gate. `home restore --node`
-  copies from that archive, rehashes, and occupies. Last occupancy remove
-  without a verified archive needs `--allow-unarchived-last-home`.
+  NFS in the background. It is not a serving gate and takes **no occupancy
+  lifecycle lock** (exclusive would block prepare/launch; shared would block
+  relocate for the whole copy). Last-home remove already requires a verified
+  archive; an in-flight copy vs remove is fail-and-retry. Archive workers
+  flock only their job file. `home restore --node` copies from that archive,
+  rehashes, and occupies. Last occupancy remove without a verified archive
+  needs `--allow-unarchived-last-home`.
   `cold scan` / `cold adopt` / `cold stage-only` stay layout-inferred fill
   paths and do not mint receipts.
 
