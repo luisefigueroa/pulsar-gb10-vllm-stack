@@ -5501,12 +5501,54 @@ def _health_issue(
     return issue
 
 
+def _append_cold_archive_health_issues(
+    issues: list[dict[str, Any]],
+    *,
+    library_dir: str | pathlib.Path | None,
+) -> None:
+    if not library_dir:
+        return
+    try:
+        from scripts import model_library_cold_archive as cold_archive
+    except ModuleNotFoundError:
+        try:
+            import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
+        except ModuleNotFoundError:
+            return
+    store = cold_archive.cold_archive_job_store(library_dir)
+    if not store.is_dir():
+        return
+    for path in sorted(store.glob("*.json")):
+        try:
+            job = cold_archive.validate_cold_archive_job(load_json(path))
+        except Exception:
+            continue
+        if job["state"] in {"pending", "running"}:
+            issues.append(_health_issue(
+                "cold-archive-pending",
+                "receipt-indexed cold archive is pending (not a serving gate)",
+                command="scripts/model-library.sh home archive run --receipt <id> --yes",
+            ))
+        elif job["state"] == "failed":
+            issues.append(_health_issue(
+                "cold-archive-failed",
+                job.get("detail") or "receipt-indexed cold archive failed",
+                command="scripts/model-library.sh home archive run --receipt <id> --yes",
+            ))
+        elif job["state"] == "unavailable":
+            issues.append(_health_issue(
+                "cold-archive-unavailable",
+                "cold root is not configured; last-home remove needs --allow-unarchived-last-home",
+            ))
+
+
 def build_health_report(
     *,
     catalog_path: str | pathlib.Path,
     topology_file: str | pathlib.Path,
     topology_id: str,
     observations_dir: str | pathlib.Path,
+    library_dir: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
     try:
         topology = load_topology_for_plan(topology_file)
@@ -5660,6 +5702,7 @@ def build_health_report(
             },
             "duplicate_home": duplicate,
         })
+    _append_cold_archive_health_issues(issues, library_dir=library_dir)
     return {
         "schema_version": HEALTH_SCHEMA_VERSION,
         "kind": HEALTH_KIND,
@@ -7605,6 +7648,7 @@ def plan_home_removal(
     observations_dir: str | pathlib.Path,
     node_selector: str = "",
     allow_last_home: bool = False,
+    allow_unarchived_last_home: bool = False,
     library_dir: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
     topology = load_topology_for_plan(topology_file)
@@ -7794,6 +7838,46 @@ def plan_home_removal(
                 "detail": last_home_detail,
             }
         )
+    if (
+        target["last_durable_home"]
+        and occupancy_class != INCOMPLETE_HUB_OCCUPANCY
+        and not allow_unarchived_last_home
+        and not _home_revision_is_unbound(target["revision"])
+        and library_dir
+    ):
+        try:
+            from scripts import model_library_cold_archive as cold_archive
+            from scripts import model_library_source_attested as source_attested
+        except ModuleNotFoundError:
+            import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
+            import model_library_source_attested as source_attested  # type: ignore[no-redef]
+        try:
+            receipts = source_attested.list_source_attested_receipts_for_revision(
+                library_dir,
+                model_id=target["model_id"],
+                snapshot_revision=target["revision"],
+            )
+        except Exception:
+            receipts = []
+        if receipts:
+            receipt_id = receipts[0]["receipt_id"]
+            if not cold_archive.archive_is_complete(
+                library_dir=library_dir,
+                receipt_id=receipt_id,
+                cold_root=configured_cold_root(),
+            ):
+                blockers.append(
+                    {
+                        "kind": "unarchived-last-home",
+                        "rank": rank,
+                        "node_id": home["node_id"],
+                        "detail": (
+                            "last occupancy has no verified receipt-indexed cold "
+                            "archive; pass --allow-unarchived-last-home to "
+                            "acknowledge there is no NFS backup"
+                        ),
+                    }
+                )
     if occupancy_class != INCOMPLETE_HUB_OCCUPANCY and target["alternate_homes"] and (
         target["primary_selection"].get("status") != "match"
         or not any(
@@ -8147,6 +8231,7 @@ def cmd_build_health(args: argparse.Namespace) -> int:
         topology_file=args.topology_file,
         topology_id=args.topology_id,
         observations_dir=args.observations_dir,
+        library_dir=getattr(args, "library_dir", None) or None,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return _health_exit(report)
@@ -8436,6 +8521,9 @@ def cmd_plan_home_removal(args: argparse.Namespace) -> int:
         observations_dir=args.observations_dir,
         node_selector=args.node,
         allow_last_home=args.allow_last_home,
+        allow_unarchived_last_home=getattr(
+            args, "allow_unarchived_last_home", False
+        ),
         library_dir=args.library_dir or None,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
@@ -9559,6 +9647,7 @@ def build_parser() -> argparse.ArgumentParser:
     health_build.add_argument("--topology-file", required=True)
     health_build.add_argument("--topology-id", required=True)
     health_build.add_argument("--observations-dir", required=True)
+    health_build.add_argument("--library-dir", default="")
     health_build.set_defaults(func=cmd_build_health)
 
     health_render = sub.add_parser("render-health", help="Render a health report")
@@ -9756,6 +9845,7 @@ def build_parser() -> argparse.ArgumentParser:
     home_plan.add_argument("--observations-dir", required=True)
     home_plan.add_argument("--node", default="")
     home_plan.add_argument("--allow-last-home", action="store_true")
+    home_plan.add_argument("--allow-unarchived-last-home", action="store_true")
     home_plan.add_argument("--library-dir", default="")
     home_plan.add_argument("query")
     home_plan.set_defaults(func=cmd_plan_home_removal)

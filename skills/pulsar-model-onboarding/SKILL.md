@@ -163,6 +163,8 @@ inventory, runs Hugging Face missing/extra verification, hashes every file,
 rechecks all-rank absence, writes the immutable site-local receipt, publishes
 the home atomically, and attaches occupancy to the exact published directory.
 Do not wait for a cold NFS archive; that is durability, not a serving gate.
+Record archive pending in the journal when a receipt exists. Prepare and
+launch do not require archive-complete.
 It does not refresh the catalog, prepare a
 runtime view, launch, issue a seal or decision, assign status, or promote a
 path. Record the result's exact revision, `source_digest`, `approval_id`, and

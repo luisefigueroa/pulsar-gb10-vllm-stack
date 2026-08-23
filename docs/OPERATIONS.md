@@ -218,7 +218,7 @@ multi-rank profile requires explicit `--transport ssh-control`.
 
 The preparation service remains authoritative: it rechecks topology and
 primary placement, full-verifies the expected seal, performs exact all-rank
-storage admission, creates only non-home sealed-hot copies, publishes witnesses
+storage admission, creates only non-home working replicas (`sealed-hot`), publishes witnesses
 only after the all-rank barrier, and rolls back or leaves explicit incomplete
 state on failure. The interactive surface always obtains fresh health after the
 attempt. It provides no validation-status override, transport picker, fallback,
@@ -734,11 +734,17 @@ Source-attested crash and retry behavior:
 - `home relocate --node` grants occupancy to a destination tree after a live
   rehash. Receipt `selected_rank` is Hub-download provenance and does not
   block the move. Catalog refresh remains a separate next action.
+- After occupancy attach, `home archive` copies the receipt-indexed tree to
+  NFS in the background. It is not a serving gate. `home restore --node`
+  copies from that archive, rehashes, and occupies. Last occupancy remove
+  without a verified archive needs `--allow-unarchived-last-home`.
+  `cold scan` / `cold adopt` / `cold stage-only` stay layout-inferred fill
+  paths and do not mint receipts.
 
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the
 home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
-cache, and only non-home ranks own sealed-hot copies. Home-rank hot
+cache, and only non-home ranks own working replicas (`sealed-hot`). Home-rank hot
 materialization is ruled out by
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 

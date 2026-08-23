@@ -10,6 +10,7 @@ SCRIPT_NAME=model-library
 
 PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library_source_attested.py}"
+COLD_ARCHIVE_PY="${PULSAR_COLD_ARCHIVE_PY:-$REPO_DIR/scripts/model_library_cold_archive.py}"
 HF_SOURCE_INVENTORY_PY="${PULSAR_HF_SOURCE_INVENTORY_PY:-$REPO_DIR/scripts/hf_source_inventory.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
 CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-$LIBRARY_DIR/catalog.json}"
@@ -49,9 +50,12 @@ Usage:
   scripts/model-library.sh home check <profile|model_id|model_id@revision>
       [--node RANK|NODE_ID] [--allow-last-home] [--json]
   scripts/model-library.sh home remove <profile|model_id|model_id@revision>
-      [--node RANK|NODE_ID] [--allow-last-home] --yes
+      [--node RANK|NODE_ID] [--allow-last-home] [--allow-unarchived-last-home] --yes
   scripts/model-library.sh home relocate <profile|model_id|model_id@revision>
       --node RANK|NODE_ID --yes [--json]
+  scripts/model-library.sh home archive status <profile|model_id@revision|receipt_id> [--json]
+  scripts/model-library.sh home archive run --receipt RECEIPT_ID --yes [--json]
+  scripts/model-library.sh home restore <profile|model_id@revision> --node RANK --yes [--json]
   scripts/model-library.sh cold scan [--json] [--complete-only] [--root PATH]
   scripts/model-library.sh cold show <model_id|/abs/path> [--json]
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
@@ -100,7 +104,8 @@ Notes:
     ready, verifying, or pinned hot state. Unobservable nodes fail closed.
     Removal is exact-repository-only, refuses multi-revision hub trees, and
     needs --allow-last-home before deleting the final durable copy or the last
-    occupancy of an identity. A recognized incomplete or refs-only hub stub is
+    occupancy of an identity. Receipted last occupancy also needs a verified
+    NFS archive or --allow-unarchived-last-home. A recognized incomplete or refs-only hub stub is
     inspectable and retireable through the same read-only check then confirmed
     remove --yes path so a later source-attested home add can occupy that
     repository. Complete homes keep the complete-home contract. Duplicate
@@ -132,6 +137,11 @@ Notes:
     and no Hub download occur. Receipt selected_rank is download provenance
     only and does not block the move. Catalog refresh is a separate next
     action.
+  • After receipt issuance, a receipt-indexed NFS archive starts in the
+    background and is not a serving gate. home archive status|run and
+    home restore occupy from that archive after a live rehash. vLLM never
+    opens NFS. Legacy cold scan/adopt/stage-only remain fill paths, not
+    receipt identity.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -1196,7 +1206,8 @@ build_health_report_file() {
     --catalog "$CATALOG_FILE" \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --observations-dir "$tmp" >"$destination" || rc=$?
+    --observations-dir "$tmp" \
+    --library-dir "$LIBRARY_DIR" >"$destination" || rc=$?
   rm -rf "$tmp"
   return "$rc"
 }
@@ -1228,6 +1239,7 @@ cmd_health() {
 build_home_removal_plan() (
   set -euo pipefail
   local query="${1:?}" node_selector="${2:-}" allow_last_home="${3:-0}"
+  local allow_unarchived="${4:-0}"
   local target tmp rank node_id home_rank home_node_id cache_root hub_path
   local model_id revision
   local -a plan_args
@@ -1284,6 +1296,7 @@ build_home_removal_plan() (
   )
   [ -z "$node_selector" ] || plan_args+=(--node "$node_selector")
   [ "$allow_last_home" = 0 ] || plan_args+=(--allow-last-home)
+  [ "$allow_unarchived" = 0 ] || plan_args+=(--allow-unarchived-last-home)
   plan_args+=("$query")
   python3 "$PY_TOOL" "${plan_args[@]}"
 )
@@ -1766,6 +1779,7 @@ sa.compare_observed_manifest_to_expected(
   else
     python3 "$SOURCE_ATTESTED_PY" render-result --result /dev/stdin <<<"$result_json"
   fi
+  start_cold_archive_after_receipt "$tmp/receipt.json" "$json"
 )
 
 cmd_home_add() (
@@ -2261,8 +2275,284 @@ cmd_home_relocate() {
   fi
 }
 
+start_cold_archive_after_receipt() {
+  local receipt_file="${1:?}" json="${2:-0}" job_json state receipt_id autostart
+  job_json=$(python3 "$COLD_ARCHIVE_PY" enqueue \
+    --library-dir "$LIBRARY_DIR" \
+    --receipt "$receipt_file") \
+    || return 0
+  state=$(printf '%s' "$job_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+  receipt_id=$(printf '%s' "$job_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
+  if [ "$json" != 1 ]; then
+    if [ "$state" = pending ]; then
+      log "Cold archive pending (not a serving gate)."
+    elif [ "$state" = unavailable ]; then
+      log "Cold archive unavailable; last-home remove will need --allow-unarchived-last-home."
+    fi
+  fi
+  autostart="${PULSAR_COLD_ARCHIVE_AUTOSTART:-1}"
+  if [ "$autostart" != 0 ] && [ "$state" = pending ]; then
+    mkdir -p "$LIBRARY_DIR/cold-archive-logs"
+    setsid nohup env \
+      PULSAR_COLD_ARCHIVE_AUTOSTART=0 \
+      "$REPO_DIR/scripts/model-library.sh" home archive run --receipt "$receipt_id" --yes \
+      >>"$LIBRARY_DIR/cold-archive-logs/${receipt_id}.log" 2>&1 < /dev/null &
+  fi
+}
+
+cmd_home_archive() {
+  local action="${1:-}"
+  [ $# -gt 0 ] && shift
+  case "$action" in
+    status) cmd_home_archive_status "$@" ;;
+    run) cmd_home_archive_run "$@" ;;
+    *) die "usage: home archive <status|run>" ;;
+  esac
+}
+
+cmd_home_archive_status() {
+  local query="" json=0 receipt_id
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] || die "usage: home archive status <profile|model_id@revision|receipt_id>"
+  require_py
+  if [[ "$query" =~ ^[0-9a-f]{64}$ ]]; then
+    receipt_id="$query"
+  else
+    local show_query="$query" entry model_id revision receipt_json
+    ensure_catalog
+    if [[ "$query" != */* ]] && [[ "$query" != *@* ]]; then
+      load_conf "$query"
+      show_query="${MODEL:-$query}"
+    fi
+    entry=$(python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" "$show_query" --json) \
+      || die "home archive status: catalog has no entry for $query"
+    model_id=$(printf '%s' "$entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
+    revision=$(printf '%s' "$entry" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+    receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
+      --library-dir "$LIBRARY_DIR" --model-id "$model_id" --revision "$revision" --allow-missing)
+    [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
+      || die "home archive status: no source-attested receipt"
+    receipt_id=$(printf '%s' "$receipt_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
+  fi
+  python3 "$COLD_ARCHIVE_PY" show-job \
+    --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" --allow-missing
+}
+
+cmd_home_archive_run() {
+  local receipt_id="" yes=0 json=0 receipt_file attachment_json hub_path node_id rank
+  local cold_root job_json
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --receipt)
+        shift
+        [ $# -gt 0 ] || die "--receipt needs a receipt id"
+        receipt_id="$1"
+        ;;
+      --yes|-y) yes=1 ;;
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) die "unexpected arg: $1" ;;
+    esac
+    shift
+  done
+  [ -n "$receipt_id" ] || die "usage: home archive run --receipt RECEIPT_ID --yes"
+  [ "$yes" = 1 ] || die "home archive run requires --yes"
+  require_py
+  receipt_file="$LIBRARY_DIR/source-attested-receipts/${receipt_id}.json"
+  [ -f "$receipt_file" ] || die "home archive run: receipt is missing"
+  cold_root="${PULSAR_COLD_ROOT-}"
+  if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
+    cold_root="${MODELS_NFS:-}"
+  fi
+  [ -n "$cold_root" ] || die "home archive run: cold root is not configured"
+  python3 "$COLD_ARCHIVE_PY" set-job-state \
+    --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" \
+    --state running --detail "copying occupancy tree to receipt-indexed cold archive" \
+    >/dev/null || python3 "$COLD_ARCHIVE_PY" enqueue \
+      --library-dir "$LIBRARY_DIR" --receipt "$receipt_file" --cold-root "$cold_root" \
+      >/dev/null
+  python3 "$COLD_ARCHIVE_PY" set-job-state \
+    --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" \
+    --state running --detail "copying occupancy tree to receipt-indexed cold archive" \
+    >/dev/null
+  local model_id revision
+  model_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["model_id"])' "$receipt_file")
+  revision=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["snapshot_revision"])' "$receipt_file")
+  attachment_json=$(python3 "$SOURCE_ATTESTED_PY" show-current-home-attachment \
+    --library-dir "$LIBRARY_DIR" --model-id "$model_id" --revision "$revision" --allow-missing)
+  if [ "$attachment_json" = null ] || [ -z "$attachment_json" ]; then
+    python3 "$COLD_ARCHIVE_PY" set-job-state \
+      --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" \
+      --state failed --detail "occupancy is missing; archive needs a live home" >/dev/null
+    die "home archive run: occupancy is missing"
+  fi
+  hub_path=$(printf '%s' "$attachment_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["durable_home_path"])')
+  node_id=$(printf '%s' "$attachment_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["node_id"])')
+  load_cluster_topology >/dev/null || true
+  rank=""
+  local r
+  for ((r = 0; r < ${CLUSTER_TOPOLOGY_COUNT:-0}; r++)); do
+    if [ "${CLUSTER_NODE_IDS[$r]:-}" = "$node_id" ]; then
+      rank="$r"
+      break
+    fi
+  done
+  local source_hub="$hub_path"
+  local tmp=""
+  if [ -n "$rank" ] && [ "$rank" != 0 ]; then
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-cold-archive.XXXXXX")
+    trap 'rm -rf "${tmp:-}"' RETURN
+    COPY_SSH_MODE="${COPY_SSH_MODE:-control}"
+    COPY_STREAMS=1
+    copy_hub_to_rank 0 "$hub_path" "$tmp/home" "$rank" \
+      || {
+        python3 "$COLD_ARCHIVE_PY" set-job-state \
+          --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" \
+          --state failed --detail "copy from occupancy failed" >/dev/null
+        die "home archive run: copy from occupancy failed"
+      }
+    source_hub="$tmp/home"
+  fi
+  if ! job_json=$(python3 "$COLD_ARCHIVE_PY" publish \
+      --library-dir "$LIBRARY_DIR" \
+      --receipt "$receipt_file" \
+      --cold-root "$cold_root" \
+      --source-hub "$source_hub"); then
+    python3 "$COLD_ARCHIVE_PY" set-job-state \
+      --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" \
+      --state failed --detail "cold archive publish failed" >/dev/null
+    die "home archive run: publish failed"
+  fi
+  trap - RETURN
+  if [ "$json" = 1 ]; then
+    printf '%s\n' "$job_json"
+  else
+    log "Receipt-indexed cold archive complete (not a serving gate)."
+  fi
+}
+
+cmd_home_restore() {
+  local query="" node_selector="" yes=0 json=0 dest_rank dest_node
+  local model_id revision receipt_json receipt_id receipt_file cold_root
+  local dest_hub dest_obs cache_root hf_cli occupy_json tmp
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --node)
+        shift
+        [ $# -gt 0 ] || die "--node needs a rank or node ID"
+        node_selector="$1"
+        ;;
+      --yes|-y) yes=1 ;;
+      --json) json=1 ;;
+      -h|--help) usage; return 0 ;;
+      *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
+    esac
+    shift
+  done
+  [ -n "$query" ] && [ -n "$node_selector" ] \
+    || die "usage: home restore <profile|model_id@revision> --node RANK --yes"
+  [ "$yes" = 1 ] || die "home restore requires --yes"
+  require_py
+  ensure_catalog
+  load_cluster_topology >/dev/null \
+    || die "home restore: confirmed topology required"
+  dest_rank=$(confirmed_rank_from_node_selector "$node_selector")
+  dest_node="${CLUSTER_NODE_IDS[$dest_rank]:-}"
+  local show_query="$query" entry
+  if [[ "$query" != */* ]] && [[ "$query" != *@* ]]; then
+    load_conf "$query"
+    show_query="${MODEL:-$query}"
+  fi
+  entry=$(python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" "$show_query" --json) \
+    || die "home restore: catalog has no entry for $query; refresh after restore is still required"
+  model_id=$(printf '%s' "$entry" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
+  revision=$(printf '%s' "$entry" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  [ -n "$revision" ] && [ "$revision" != unknown ] \
+    || die "home restore: catalog entry lacks an exact snapshot revision"
+  receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
+    --library-dir "$LIBRARY_DIR" --model-id "$model_id" --revision "$revision" --allow-missing)
+  [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
+    || die "home restore: no source-attested receipt"
+  receipt_id=$(printf '%s' "$receipt_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
+  receipt_file="$LIBRARY_DIR/source-attested-receipts/${receipt_id}.json"
+  cold_root="${PULSAR_COLD_ROOT-}"
+  if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
+    cold_root="${MODELS_NFS:-}"
+  fi
+  [ -n "$cold_root" ] || die "home restore: cold root is not configured"
+  python3 "$COLD_ARCHIVE_PY" verify-presence \
+    --receipt "$receipt_file" --cold-root "$cold_root" >/dev/null \
+    || die "home restore: verified receipt-indexed archive is missing"
+  local archive_hub
+  archive_hub="$cold_root/pulsar-receipts/${receipt_id}/home"
+  IFS=$'\t' read -r cache_root hf_cli < <(home_acquisition_rank_environment "$dest_rank")
+  dest_obs=$(run_model_library_on_rank "$dest_rank" \
+    inspect-home-acquisition-target \
+    --cache-root "$cache_root" \
+    --model-id "$model_id" \
+    --revision "$revision" \
+    --required-content-bytes 1 \
+    --rank "$dest_rank" \
+    --node-id "$dest_node" \
+    --hf-cli "${hf_cli:-}") \
+    || die "home restore: destination rank is unobservable"
+  dest_hub=$(printf '%s' "$dest_obs" | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_hub"])')
+  dest_state=$(printf '%s' "$dest_obs" | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_state"])')
+  if [ "$dest_state" = absent ]; then
+    if [ "$dest_rank" = 0 ]; then
+      mkdir -p "$(dirname "$dest_hub")"
+      python3 -c 'import shutil,sys; shutil.copytree(sys.argv[1], sys.argv[2], symlinks=False)' \
+        "$archive_hub" "$dest_hub" \
+        || die "home restore: copy from cold archive failed"
+    else
+      COPY_SSH_MODE=roce
+      COPY_STREAMS=1
+      load_copy_ssh_roce_map 0 "0,$dest_rank" 0
+      copy_hub_to_rank "$dest_rank" "$archive_hub" "$dest_hub" 0 \
+        || die "home restore: copy from cold archive failed"
+    fi
+  elif [ "$dest_state" != occupied ]; then
+    die "home restore: destination hub path is not usable ($dest_state)"
+  fi
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-restore.XXXXXX")
+  trap 'rm -rf "${tmp:-}"' RETURN
+  printf '%s\n' "$receipt_json" >"$tmp/receipt.json"
+  observed_json=$(run_model_library_on_rank "$dest_rank" \
+    inspect-snapshot-blob-identities \
+    --hub-path "$dest_hub" --model-id "$model_id" --revision "$revision" --allow-empty-files) \
+    || die "home restore: destination failed snapshot inspection"
+  printf '%s\n' "$observed_json" >"$tmp/observed.json"
+  python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["manifest"]))' \
+    <"$tmp/observed.json" >"$tmp/manifest.json"
+  live_json=$(run_model_library_on_rank "$dest_rank" \
+    inspect-live-directory-identity --path "$dest_hub") \
+    || die "home restore: could not inspect destination identity"
+  printf '%s\n' "$live_json" >"$tmp/live-identity.json"
+  occupy_json=$(python3 "$SOURCE_ATTESTED_PY" occupy-current-home \
+    --library-dir "$LIBRARY_DIR" \
+    --receipt "$tmp/receipt.json" \
+    --manifest "$tmp/manifest.json" \
+    --node-id "$dest_node" \
+    --durable-home-path "$dest_hub" \
+    --live-identity "$tmp/live-identity.json") \
+    || die "home restore: live rehash did not match the receipt"
+  trap - RETURN
+  if [ "$json" = 1 ]; then
+    printf '%s\n' "$occupy_json"
+  else
+    log "Restored occupancy from receipt-indexed cold archive after live rehash."
+  fi
+}
+
 cmd_home_check() {
-  local query="" node_selector="" allow_last_home=0 json=0 plan state
+  local query="" node_selector="" allow_last_home=0 allow_unarchived=0 json=0 plan state
   while [ $# -gt 0 ]; do
     case "$1" in
       --node)
@@ -2271,6 +2561,7 @@ cmd_home_check() {
         node_selector="$1"
         ;;
       --allow-last-home) allow_last_home=1 ;;
+      --allow-unarchived-last-home) allow_unarchived=1 ;;
       --json) json=1 ;;
       -h|--help) usage; return 0 ;;
       *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
@@ -2279,7 +2570,7 @@ cmd_home_check() {
   done
   [ -n "$query" ] \
     || die "usage: home check <profile|model_id|identity> [--node RANK|NODE_ID]"
-  plan=$(build_home_removal_plan "$query" "$node_selector" "$allow_last_home")
+  plan=$(build_home_removal_plan "$query" "$node_selector" "$allow_last_home" "$allow_unarchived")
   if [ "$json" = 1 ]; then
     printf '%s\n' "$plan"
   else
@@ -2291,7 +2582,7 @@ cmd_home_check() {
 }
 
 cmd_home_remove() {
-  local query="" node_selector="" allow_last_home=0 yes=0 plan state
+  local query="" node_selector="" allow_last_home=0 allow_unarchived=0 yes=0 plan state
   local result_file
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -2301,6 +2592,7 @@ cmd_home_remove() {
         node_selector="$1"
         ;;
       --allow-last-home) allow_last_home=1 ;;
+      --allow-unarchived-last-home) allow_unarchived=1 ;;
       --yes|-y) yes=1 ;;
       -h|--help) usage; return 0 ;;
       *) [ -z "$query" ] || die "unexpected arg: $1"; query="$1" ;;
@@ -2309,7 +2601,7 @@ cmd_home_remove() {
   done
   [ -n "$query" ] \
     || die "usage: home remove <profile|model_id|identity> [--node RANK|NODE_ID] --yes"
-  plan=$(build_home_removal_plan "$query" "$node_selector" "$allow_last_home")
+  plan=$(build_home_removal_plan "$query" "$node_selector" "$allow_last_home" "$allow_unarchived")
   render_home_removal_plan_json "$plan"
   state=$(printf '%s' "$plan" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["state"])')
@@ -3744,6 +4036,8 @@ main() {
         check) cmd_home_check "$@" ;;
         remove) cmd_home_remove "$@" ;;
         relocate) cmd_home_relocate "$@" ;;
+        archive) cmd_home_archive "$@" ;;
+        restore) cmd_home_restore "$@" ;;
         *) usage; exit 2 ;;
       esac
       ;;

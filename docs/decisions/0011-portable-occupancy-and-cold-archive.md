@@ -74,11 +74,11 @@ and is never opened by vLLM.
 
 - Occupancy match no longer uses download rank. `home relocate` occupy-after-rehash
   and catalog unbound-complete classification are implemented.
-- Receipt-indexed background archive (`home archive` / `home restore`) and
-  `--allow-unarchived-last-home` are accepted here and land in a follow-up
-  implementation. Until that ships, last-home remove keeps today’s
-  `--allow-last-home` contract, and NFS remains the optional legacy fill tier
-  (`cold scan` / `cold adopt` / `cold stage-only`) without receipt identity.
+- Receipt-indexed `home archive status|run`, background enqueue after
+  `home add`, `home restore`, and `--allow-unarchived-last-home` are
+  implemented as catalog/artifact control plane. Physical NFS archive and
+  restore on DGX hardware are not claimed. Legacy `cold scan` / `cold adopt` /
+  `cold stage-only` remain fill paths without receipt identity.
 
 ## Consequences
 

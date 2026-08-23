@@ -16,6 +16,8 @@ BASE_ENV=(
   "MODEL_LIBRARY_CATALOG=$STATE/library/catalog.json"
   "MOCK_HF_LOG=$STATE/hf.log"
   "PULSAR_HF_SOURCE_INVENTORY_PY=$STATE/bin/hf-source-inventory.py"
+  "PULSAR_COLD_ROOT="
+  "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
 )
 
 if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
@@ -52,6 +54,8 @@ REMOTE_ENV=(
   "MOCK_REMOTE_HOME=$STATE/remote/home"
   "PULSAR_SSH=$STATE/remote/bin/ssh"
   "PULSAR_HF_SOURCE_INVENTORY_PY=$STATE/remote/bin/hf-source-inventory.py"
+  "PULSAR_COLD_ROOT="
+  "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
 )
 
 # Sealed/no-attachment flows must not perform a remote live-directory probe just
@@ -121,6 +125,8 @@ AUTO_ENV=(
   "MOCK_REMOTE_HF_CACHE=$STATE/auto-meta/cache-1"
   "MOCK_REMOTE_HOME=$STATE/auto-meta/home"
   "MOCK_HF_INVENTORY_FAIL_IF_CACHE=$STATE/auto-meta/cache"
+  "PULSAR_COLD_ROOT="
+  "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
   "PULSAR_SSH=$STATE/auto-meta/bin/ssh"
   "PULSAR_HF_SOURCE_INVENTORY_PY=$STATE/auto-meta/bin/hf-source-inventory.py"
 )
@@ -368,8 +374,50 @@ else
   exit 1
 fi
 
+mkdir -p "$STATE/cold"
+ARCHIVE_ENV=(
+  "${BASE_ENV[@]}"
+  "PULSAR_COLD_ROOT=$STATE/cold"
+  "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
+)
+receipt_id=$(python3 -c 'import json,sys,pathlib; p=next(pathlib.Path(sys.argv[1]).glob("*.json")); print(json.loads(p.read_text())["receipt_id"])' "$STATE/library/source-attested-receipts")
+env "${ARCHIVE_ENV[@]}" "$LIBRARY" home archive run --receipt "$receipt_id" --yes --json \
+  >"$STATE/archive.json"
+python3 - "$STATE/archive.json" <<'PY'
+import json, sys
+presence = json.load(open(sys.argv[1], encoding="utf-8"))
+assert presence["state"] == "complete"
+assert presence["kind"] == "pulsar-model-library-cold-archive-presence"
+PY
+env "${ARCHIVE_ENV[@]}" "$LIBRARY" home archive status "$receipt_id" \
+  >"$STATE/archive-status.json"
+python3 - "$STATE/archive-status.json" <<'PY'
+import json, sys
+job = json.load(open(sys.argv[1], encoding="utf-8"))
+assert job["state"] == "complete"
+PY
+rm -rf "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
+rm -f "$STATE/library/source-attested-home-attachments"/*.json
+env "${ARCHIVE_ENV[@]}" "$LIBRARY" home restore nemotron-3-nano-30b-nvfp4 --node 0 --yes --json \
+  >"$STATE/restore.json"
+python3 - "$STATE/restore.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "attached"
+PY
+test -d "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4/snapshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+env "${ARCHIVE_ENV[@]}" "$LIBRARY" home verify \
+  'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  --json >"$STATE/restore-verify.json"
+python3 - "$STATE/restore-verify.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "verified"
+PY
+
 "$LIBRARY" --help | grep -q 'home add <profile>'
 "$LIBRARY" --help | grep -q 'home verify'
+"$LIBRARY" --help | grep -q 'home archive'
 python3 - "$REPO_DIR/scripts/model-library.sh" <<'PY'
 from pathlib import Path
 import sys

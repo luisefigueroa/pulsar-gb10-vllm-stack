@@ -181,6 +181,8 @@ language for new features without an explicit decision.
   that live directory. Occupancy may move with `home relocate --node` after
   that same live rehash; receipt `selected_rank` is Hub-download provenance
   only ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
+  A receipt-indexed NFS archive is enqueued immediately after occupancy attach
+  and must not block prepare or launch.
   An unknown tree without a receipt still
   requires full verification against a reviewed expected manifest independent
   of the observed tree; the shallow catalog label and a self-observed
@@ -608,8 +610,8 @@ this work; the skill is procedural and does not outrank these sources.
   Onboarding must explicitly refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.
-- Only non-home ranks receive temporary or pinned sealed-hot copies. Symlinks
-  and bind mounts are runtime views, not extra ownership or resilience.
+- Only non-home ranks receive temporary or pinned working replicas (`sealed-hot`).
+  The occupancy rank uses a symlink/view of the durable tree, not a second copy.
 - Full content verification happens at trust boundaries. A serve-time metadata
   witness may accelerate an unchanged launch only after full verification;
   drift causes visible full verification against the expected seal or fails
