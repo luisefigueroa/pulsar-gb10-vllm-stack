@@ -738,10 +738,12 @@ Source-attested crash and retry behavior:
   the cold root in the background. It is not a serving gate and takes **no occupancy
   lifecycle lock** (exclusive would block prepare/launch; shared would block
   relocate for the whole copy). Last occupancy remove of a receipted identity
-  rehashes the cold archive and requires it to sit on a distinct device from
-  occupancy (NFS, an external disk, or another mount). Layout-only
-  `presence.json` is not that proof. An in-flight copy vs remove is
-  fail-and-retry. Archive workers flock only their job file. `home restore --node`
+  rehashes the cold archive on the controller (`home check`, and again after
+  `--yes` before occupancy detach). Rank 0 homes also require a distinct
+  device from occupancy. NFS, an external disk, or another mount can qualify.
+  Layout-only `presence.json` is not that proof. The occupancy rank only
+  deletes the inspected hub tree and does not reopen receipts. An in-flight
+  copy vs remove is fail-and-retry. Archive workers flock only their job file. `home restore --node`
   copies from that archive, rehashes, and occupies. Last occupancy remove
   without a verified distinct-failure-domain replica needs
   `--allow-unarchived-last-home`. Unbound-complete trees are not homes and do

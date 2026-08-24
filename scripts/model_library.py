@@ -7145,6 +7145,7 @@ def inspect_removable_home(
         "snapshot_entries": [],
         "ref_targets": [],
         "fingerprint": None,
+        "occupancy_device": None,
         "blockers": [],
     }
     blockers: list[dict[str, str]] = result["blockers"]
@@ -7163,6 +7164,7 @@ def inspect_removable_home(
         block("home-unavailable", f"cannot inspect durable home: {exc}")
         result["state"] = "blocked"
         return result
+    result["occupancy_device"] = int(hub_meta.st_dev)
     if stat.S_ISLNK(hub_meta.st_mode):
         block("home-is-symlink", "durable home repository root must not be a symlink")
     elif not stat.S_ISDIR(hub_meta.st_mode):
@@ -7878,12 +7880,22 @@ def plan_home_removal(
             from scripts import model_library_cold_archive as cold_archive
         except ModuleNotFoundError:
             import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
+        receipt_id = cold_archive.resolve_last_occupancy_receipt_id(
+            library_dir,
+            model_id=target["model_id"],
+            snapshot_revision=target["revision"],
+        )
+        if receipt_id:
+            target["receipt_id"] = receipt_id
         archive_detail = cold_archive.last_occupancy_cold_archive_blocker(
             library_dir=library_dir,
             model_id=target["model_id"],
             snapshot_revision=target["revision"],
             occupancy_hub_path=str(home["hub_path"]),
             allow_unarchived=allow_unarchived_last_home,
+            occupancy_device=inspection.get("occupancy_device"),
+            occupancy_rank=rank,
+            expected_receipt_id=receipt_id,
         )
         if archive_detail:
             blockers.append(
@@ -7960,8 +7972,8 @@ def plan_home_removal(
         "inspection": inspection,
         "allow_last_home": allow_last_home,
         "allow_unarchived_last_home": allow_unarchived_last_home,
-        "library_dir": str(library_dir) if library_dir else "",
         "occupancy_class": occupancy_class,
+        "receipt_id": target.get("receipt_id") or "",
         "action": action,
         "observed_nodes": observed_nodes,
         "blockers": blockers,
@@ -8097,31 +8109,6 @@ def execute_home_removal_plan(
         fail("home removal: execution node differs from the plan")
     if target.get("last_durable_home") and not plan.get("allow_last_home"):
         fail("home removal: last-home acknowledgement is missing")
-    if (
-        target.get("last_durable_home")
-        and (plan.get("occupancy_class") or target.get("occupancy_class"))
-        != INCOMPLETE_HUB_OCCUPANCY
-        and not _home_revision_is_unbound(target.get("revision"))
-        and not plan.get("allow_unarchived_last_home")
-    ):
-        library_dir = plan.get("library_dir")
-        if not library_dir:
-            fail(
-                "home removal: library dir is required to re-verify the cold archive"
-            )
-        try:
-            from scripts import model_library_cold_archive as cold_archive
-        except ModuleNotFoundError:
-            import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
-        archive_detail = cold_archive.last_occupancy_cold_archive_blocker(
-            library_dir=library_dir,
-            model_id=target["model_id"],
-            snapshot_revision=str(target["revision"]),
-            occupancy_hub_path=str(home["hub_path"]),
-            allow_unarchived=False,
-        )
-        if archive_detail:
-            fail(f"home removal: {archive_detail}")
 
     current = inspect_removable_home(
         home["hub_path"],
@@ -8607,6 +8594,21 @@ def cmd_execute_home_removal(args: argparse.Namespace) -> int:
         node_id=args.node_id,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_reverify_last_home_archive(args: argparse.Namespace) -> int:
+    try:
+        from scripts import model_library_cold_archive as cold_archive
+    except ModuleNotFoundError:
+        import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
+    try:
+        cold_archive.reverify_last_home_archive(
+            _load_home_removal_plan_arg(args),
+            library_dir=args.library_dir,
+        )
+    except cold_archive.ColdArchiveError as exc:
+        fail(str(exc))
     return 0
 
 
@@ -9917,6 +9919,15 @@ def build_parser() -> argparse.ArgumentParser:
     home_execute.add_argument("--rank", type=int, required=True)
     home_execute.add_argument("--node-id", required=True)
     home_execute.set_defaults(func=cmd_execute_home_removal)
+
+    home_reverify = sub.add_parser(
+        "reverify-last-home-archive",
+        help="Controller-only last-occupancy cold-archive re-verify before detach",
+    )
+    home_reverify.add_argument("--plan-file", default="")
+    home_reverify.add_argument("--plan-json", default="")
+    home_reverify.add_argument("--library-dir", required=True)
+    home_reverify.set_defaults(func=cmd_reverify_last_home_archive)
 
     home_result = sub.add_parser(
         "render-home-removal-result",

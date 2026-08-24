@@ -81,8 +81,10 @@ NVMe. vLLM never opens it (ADR 0005).
   implemented as catalog/artifact control plane. Archive workers take **no
   occupancy lifecycle lock** (job-file flock only) so they cannot block
   prepare, launch, or relocate. Last occupancy remove of a receipted identity
-  rehashes the cold archive and requires a distinct device from occupancy;
-  unbound-complete trees are not last-home alternates. Physical cold archive
+  rehashes the cold archive on the controller before occupancy detach
+  (`home check`, and again after `--yes`). Rank-local execute only deletes
+  the inspected hub tree. Distinct-device proof is same-host (rank 0) only.
+  Unbound-complete trees are not last-home alternates. Physical cold archive
   and restore on DGX hardware are not claimed. Legacy `cold scan` /
   `cold adopt` / `cold stage-only` remain fill paths without receipt identity.
 

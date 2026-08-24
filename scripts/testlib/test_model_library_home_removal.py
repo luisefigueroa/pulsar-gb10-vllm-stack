@@ -1200,7 +1200,17 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         self.assertEqual(plan["state"], "eligible")
         self.assertEqual(plan["blockers"], [])
 
-    def test_execute_rehashes_archive_before_delete(self) -> None:
+    def test_execute_does_not_open_controller_receipt_store(self) -> None:
+        plan = self._plan()
+        self.assertEqual(plan["state"], "eligible")
+        self.assertNotIn("library_dir", plan)
+        result = model_library.execute_home_removal_plan(
+            plan, rank=0, node_id=self.node_id
+        )
+        self.assertEqual(result["state"], "removed")
+        self.assertFalse(self.hub.exists())
+
+    def test_controller_reverify_catches_truncated_archive_before_detach(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
         from scripts import model_library_source_attested as source_attested
 
@@ -1218,6 +1228,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=False):
             plan = self._plan(library_dir=library_dir)
         self.assertEqual(plan["state"], "eligible")
+        self.assertEqual(plan["receipt_id"], receipt["receipt_id"])
         weight = (
             cold_root
             / "pulsar-receipts"
@@ -1230,12 +1241,54 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         weight.write_bytes(b"truncated-after-plan")
         with mock.patch.dict(os.environ, env, clear=False):
             with self.assertRaisesRegex(
-                model_library.ModelLibraryError, "cold archive"
+                (model_library.ModelLibraryError, cold_archive.ColdArchiveError),
+                "cold archive|rehash",
             ):
-                model_library.execute_home_removal_plan(
-                    plan, rank=0, node_id=self.node_id
+                cold_archive.reverify_last_home_archive(
+                    plan, library_dir=library_dir
                 )
         self.assertTrue(self.hub.is_dir())
+
+    def test_reverify_fails_if_planned_receipt_disappears(self) -> None:
+        from scripts import model_library_cold_archive as cold_archive
+        from scripts import model_library_source_attested as source_attested
+
+        receipt = self._receipt_for_catalog()
+        library_dir = self.root / "archive-library"
+        source_attested.write_source_attested_receipt(library_dir, receipt)
+        cold_root = self.root / "cold"
+        cold_root.mkdir()
+        hub = self.root / "receipt-hub"
+        cold_archive.publish_verified_archive(cold_root, receipt, hub)
+        env = {
+            "PULSAR_COLD_ROOT": str(cold_root),
+            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            plan = self._plan(library_dir=library_dir)
+        receipt_path = (
+            library_dir / "source-attested-receipts" / f"{receipt['receipt_id']}.json"
+        )
+        receipt_path.unlink()
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(
+                Exception, "receipt is missing|receipt store"
+            ):
+                cold_archive.reverify_last_home_archive(
+                    plan, library_dir=library_dir
+                )
+        self.assertTrue(self.hub.is_dir())
+
+    def test_home_remove_cli_reverifies_before_detach(self) -> None:
+        source = (REPO_ROOT / "scripts" / "model-library.sh").read_text(
+            encoding="utf-8"
+        )
+        remove = source.split("cmd_home_remove()", 1)[1]
+        reverify_at = remove.index("reverify-last-home-archive")
+        detach_at = remove.index("detach-current-home")
+        execute_at = remove.index('execute_home_removal_on_rank "$plan"')
+        self.assertLess(reverify_at, detach_at)
+        self.assertLess(detach_at, execute_at)
 
 
 if __name__ == "__main__":
