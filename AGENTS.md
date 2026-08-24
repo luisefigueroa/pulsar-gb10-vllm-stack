@@ -181,7 +181,7 @@ language for new features without an explicit decision.
   that live directory. Occupancy may move with `home relocate --node` after
   that same live rehash; receipt `selected_rank` is Hub-download provenance
   only ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
-  A receipt-indexed NFS archive is enqueued immediately after occupancy attach
+  A receipt-indexed cold archive is enqueued immediately after occupancy attach
   and must not block prepare or launch.
   An unknown tree without a receipt still
   requires full verification against a reviewed expected manifest independent
@@ -618,7 +618,7 @@ this work; the skill is procedural and does not outrank these sources.
   closed. Never auto-reseal drift as validated content.
 - Warm-home pinning retains non-home working replicas but still requires the
   durable occupancy. Home-loss recovery is occupy-in-place or restore from a
-  verified receipt-indexed NFS archive
+  verified receipt-indexed cold archive
   ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)), not
   a second Spark durable home.
 - For multi-rank model preparation, use topology-bound `ssh-roce` copy with

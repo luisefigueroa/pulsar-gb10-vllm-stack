@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -171,6 +172,7 @@ class HomeRemovalFixture:
         self,
         *,
         allow_last_home: bool = True,
+        allow_unarchived_last_home: bool = False,
         node_selector: str = "",
         query: str = "qwen",
         library_dir: pathlib.Path | None = None,
@@ -193,6 +195,7 @@ class HomeRemovalFixture:
             observations_dir=self.observations,
             node_selector=node_selector,
             allow_last_home=allow_last_home,
+            allow_unarchived_last_home=allow_unarchived_last_home,
             library_dir=library_dir,
         )
 
@@ -1004,6 +1007,235 @@ class IncompleteHubOccupancyRemoval(HomeRemovalFixture, unittest.TestCase):
         )
         self.assertEqual(exact["home"]["hub_path"], str(self.hub))
         self.assertEqual(exact["revision"], self.revision)
+
+
+class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
+    def _receipt_for_catalog(self) -> dict[str, object]:
+        from scripts import model_library_source_attested as source_attested
+        from scripts.testlib import model_library_source_attested_fixture as fixture
+
+        source = fixture.build_source(
+            model_id=self.model_id, snapshot_revision=self.revision
+        )
+        identity = source_attested.resolve_huggingface_v1_acquisition_identity(
+            source=source, profile="qwen"
+        )
+        observations = []
+        for rank in (0, 1):
+            cache = self.root / f"acquire-cache-{rank}"
+            cache.mkdir(exist_ok=True)
+            observations.append(
+                fixture.observation(
+                    cache,
+                    rank=rank,
+                    node_id=f"node-{rank}" if rank else self.node_id,
+                    model_id=self.model_id,
+                    revision=self.revision,
+                    content_bytes=source["content_bytes"],
+                    available_bytes=10**12,
+                    hf_cli="hf",
+                )
+            )
+        plan, _handle = source_attested.plan_source_attested_acquisition(
+            source=source,
+            identity=identity,
+            observations=observations,
+            serving_nodes=1,
+            topology_generation="d" * 64,
+        )
+        hub = self.root / "receipt-hub"
+        fixture.write_snapshot_hub(hub, revision=self.revision)
+        observed = model_library.inspect_snapshot_blob_identities(
+            hub,
+            model_id=self.model_id,
+            revision=self.revision,
+            allow_empty_files=True,
+        )
+        return source_attested.build_source_attested_acquisition_receipt(
+            source=source,
+            identity=identity,
+            approval=plan["approval"],
+            observed_manifest=observed["manifest"],
+        )
+
+    def test_unbound_complete_does_not_clear_last_occupancy(self) -> None:
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        home = catalog["models"][0]["homes"][0]
+        home["home_class"] = "occupancy"
+        home["occupancy"] = True
+        catalog["models"][0]["homes"].append(
+            {
+                "rank": 1,
+                "node_id": "node-b",
+                "hostname": "fixture-unbound",
+                "ssh_host": "fixture-unbound",
+                "cache_root": "/unbound/cache",
+                "hub_path": "/unbound/cache/hub/models--Qwen--Qwen3-1.7B",
+                "state": "complete",
+                "bytes": 1,
+                "active": False,
+                "primary": False,
+                "home_class": "unbound-complete",
+                "occupancy": False,
+            }
+        )
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        plan = self._plan(allow_last_home=False)
+        self.assertTrue(plan["target"]["last_durable_home"])
+        self.assertIn("last-durable-home", self._kinds(plan))
+        self.assertNotIn("selected-primary-home", self._kinds(plan))
+        self.assertNotIn("primary-selection-required", self._kinds(plan))
+
+    def test_removing_unbound_does_not_require_last_home_or_primary(self) -> None:
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        home = catalog["models"][0]["homes"][0]
+        home["home_class"] = "occupancy"
+        home["occupancy"] = True
+        catalog["models"][0]["homes"].append(
+            {
+                "rank": 1,
+                "node_id": "node-b",
+                "hostname": "fixture-unbound",
+                "ssh_host": "fixture-unbound",
+                "cache_root": "/unbound/cache",
+                "hub_path": "/unbound/cache/hub/models--Qwen--Qwen3-1.7B",
+                "state": "complete",
+                "bytes": 1,
+                "active": False,
+                "primary": False,
+                "home_class": "unbound-complete",
+                "occupancy": False,
+            }
+        )
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        target = model_library.select_home_removal_target(
+            self.catalog_path, "qwen", node_selector="1"
+        )
+        self.assertFalse(target["last_durable_home"])
+        self.assertFalse(target["selected_is_occupancy"])
+        self.assertEqual(
+            [home["home_class"] for home in target["alternate_homes"]],
+            ["occupancy"],
+        )
+
+    def test_corrupt_receipt_store_fails_closed(self) -> None:
+        library_dir = self.root / "corrupt-library"
+        store = library_dir / "source-attested-receipts"
+        store.mkdir(parents=True)
+        (store / ("b" * 64 + ".json")).write_text("{not-json", encoding="utf-8")
+        with self.assertRaises(Exception):
+            self._plan(library_dir=library_dir)
+
+    def test_truncated_archive_blocks_last_occupancy(self) -> None:
+        from scripts import model_library_cold_archive as cold_archive
+        from scripts import model_library_source_attested as source_attested
+
+        receipt = self._receipt_for_catalog()
+        library_dir = self.root / "archive-library"
+        source_attested.write_source_attested_receipt(library_dir, receipt)
+        cold_root = self.root / "cold"
+        cold_root.mkdir()
+        hub = self.root / "receipt-hub"
+        cold_archive.publish_verified_archive(cold_root, receipt, hub)
+        weight = (
+            cold_root
+            / "pulsar-receipts"
+            / receipt["receipt_id"]
+            / "home"
+            / "snapshots"
+            / self.revision
+            / "model.safetensors"
+        )
+        weight.write_bytes(b"truncated")
+        env = {
+            "PULSAR_COLD_ROOT": str(cold_root),
+            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            plan = self._plan(library_dir=library_dir)
+        self.assertEqual(plan["state"], "blocked")
+        self.assertIn("unarchived-last-home", self._kinds(plan))
+        with mock.patch.dict(os.environ, env, clear=False):
+            allowed = self._plan(
+                library_dir=library_dir, allow_unarchived_last_home=True
+            )
+        self.assertEqual(allowed["state"], "eligible")
+
+    def test_same_device_archive_blocks_without_lab_override(self) -> None:
+        from scripts import model_library_cold_archive as cold_archive
+        from scripts import model_library_source_attested as source_attested
+
+        receipt = self._receipt_for_catalog()
+        library_dir = self.root / "archive-library"
+        source_attested.write_source_attested_receipt(library_dir, receipt)
+        cold_root = self.root / "cold"
+        cold_root.mkdir()
+        hub = self.root / "receipt-hub"
+        cold_archive.publish_verified_archive(cold_root, receipt, hub)
+        with mock.patch.dict(
+            os.environ, {"PULSAR_COLD_ROOT": str(cold_root)}, clear=False
+        ):
+            plan = self._plan(library_dir=library_dir)
+        self.assertEqual(plan["state"], "blocked")
+        self.assertIn("unarchived-last-home", self._kinds(plan))
+        self.assertIn("same device", plan["blockers"][0]["detail"])
+
+    def test_verified_archive_with_lab_same_device_is_eligible(self) -> None:
+        from scripts import model_library_cold_archive as cold_archive
+        from scripts import model_library_source_attested as source_attested
+
+        receipt = self._receipt_for_catalog()
+        library_dir = self.root / "archive-library"
+        source_attested.write_source_attested_receipt(library_dir, receipt)
+        cold_root = self.root / "cold"
+        cold_root.mkdir()
+        hub = self.root / "receipt-hub"
+        cold_archive.publish_verified_archive(cold_root, receipt, hub)
+        env = {
+            "PULSAR_COLD_ROOT": str(cold_root),
+            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            plan = self._plan(library_dir=library_dir)
+        self.assertEqual(plan["state"], "eligible")
+        self.assertEqual(plan["blockers"], [])
+
+    def test_execute_rehashes_archive_before_delete(self) -> None:
+        from scripts import model_library_cold_archive as cold_archive
+        from scripts import model_library_source_attested as source_attested
+
+        receipt = self._receipt_for_catalog()
+        library_dir = self.root / "archive-library"
+        source_attested.write_source_attested_receipt(library_dir, receipt)
+        cold_root = self.root / "cold"
+        cold_root.mkdir()
+        hub = self.root / "receipt-hub"
+        cold_archive.publish_verified_archive(cold_root, receipt, hub)
+        env = {
+            "PULSAR_COLD_ROOT": str(cold_root),
+            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            plan = self._plan(library_dir=library_dir)
+        self.assertEqual(plan["state"], "eligible")
+        weight = (
+            cold_root
+            / "pulsar-receipts"
+            / receipt["receipt_id"]
+            / "home"
+            / "snapshots"
+            / self.revision
+            / "model.safetensors"
+        )
+        weight.write_bytes(b"truncated-after-plan")
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaisesRegex(
+                model_library.ModelLibraryError, "cold archive"
+            ):
+                model_library.execute_home_removal_plan(
+                    plan, rank=0, node_id=self.node_id
+                )
+        self.assertTrue(self.hub.is_dir())
 
 
 if __name__ == "__main__":

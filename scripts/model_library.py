@@ -1519,6 +1519,33 @@ def unbound_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def catalog_homes_are_classified(homes: list[dict[str, Any]]) -> bool:
+    return any(
+        isinstance(home, dict)
+        and home.get("home_class") in {"occupancy", "unbound-complete"}
+        for home in homes
+    )
+
+
+def catalog_home_is_occupancy(
+    home: dict[str, Any], *, classified: bool
+) -> bool:
+    """Occupancy-class complete homes, or legacy complete trees when unclassified."""
+    if not isinstance(home, dict) or home.get("state") != "complete":
+        return False
+    if classified:
+        return home.get("home_class") == "occupancy"
+    return True
+
+
+def _catalog_home_identity(home: dict[str, Any]) -> tuple[int, str, str]:
+    try:
+        rank = int(home.get("rank", -1))
+    except (TypeError, ValueError):
+        rank = -1
+    return (rank, str(home.get("node_id") or ""), str(home.get("hub_path") or ""))
+
+
 def _apply_entry_primary_policy(
     entry: dict[str, Any],
     selection: dict[str, str] | None,
@@ -6978,28 +7005,26 @@ def select_home_removal_target(
     else:
         identity_key = str(entry.get("identity_key") or f"{entry['model_id']}@{revision}")
 
-    alternates = [
+    classified = catalog_homes_are_classified(homes)
+    selected_identity = _catalog_home_identity(selected)
+    occupancy_alternates = [
         home
         for home in complete
-        if not (
-            int(home.get("rank", -1)) == rank
-            and home.get("node_id") == selected.get("node_id")
-            and home.get("hub_path") == selected.get("hub_path")
-        )
+        if catalog_home_is_occupancy(home, classified=classified)
+        and _catalog_home_identity(home) != selected_identity
     ]
     other_incomplete = [
         home
         for home in incomplete
-        if not (
-            int(home.get("rank", -1)) == rank
-            and home.get("node_id") == selected.get("node_id")
-            and home.get("hub_path") == selected.get("hub_path")
-        )
+        if _catalog_home_identity(home) != selected_identity
     ]
+    selected_is_occupancy = catalog_home_is_occupancy(
+        selected, classified=classified
+    )
     if occupancy_class == COMPLETE_HOME_OCCUPANCY:
-        last_durable_home = not bool(alternates)
+        last_durable_home = selected_is_occupancy and not occupancy_alternates
     else:
-        last_durable_home = not bool(alternates or other_incomplete)
+        last_durable_home = not bool(occupancy_alternates or other_incomplete)
     return {
         "topology_id": catalog.get("topology_id") or "",
         "model_id": entry["model_id"],
@@ -7011,8 +7036,9 @@ def select_home_removal_target(
         "profiles": sorted(entry.get("profiles") or []),
         "primary_selection": entry.get("primary_selection") or {},
         "home": selected,
-        "alternate_homes": alternates,
+        "alternate_homes": occupancy_alternates,
         "last_durable_home": last_durable_home,
+        "selected_is_occupancy": selected_is_occupancy,
     }
 
 
@@ -7841,48 +7867,44 @@ def plan_home_removal(
     if (
         target["last_durable_home"]
         and occupancy_class != INCOMPLETE_HUB_OCCUPANCY
-        and not allow_unarchived_last_home
         and not _home_revision_is_unbound(target["revision"])
-        and library_dir
     ):
+        if not library_dir:
+            fail(
+                "home removal: library dir is required to inspect receipts "
+                "before last occupancy remove"
+            )
         try:
             from scripts import model_library_cold_archive as cold_archive
-            from scripts import model_library_source_attested as source_attested
         except ModuleNotFoundError:
             import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
-            import model_library_source_attested as source_attested  # type: ignore[no-redef]
-        try:
-            receipts = source_attested.list_source_attested_receipts_for_revision(
-                library_dir,
-                model_id=target["model_id"],
-                snapshot_revision=target["revision"],
+        archive_detail = cold_archive.last_occupancy_cold_archive_blocker(
+            library_dir=library_dir,
+            model_id=target["model_id"],
+            snapshot_revision=target["revision"],
+            occupancy_hub_path=str(home["hub_path"]),
+            allow_unarchived=allow_unarchived_last_home,
+        )
+        if archive_detail:
+            blockers.append(
+                {
+                    "kind": "unarchived-last-home",
+                    "rank": rank,
+                    "node_id": home["node_id"],
+                    "detail": archive_detail,
+                }
             )
-        except Exception:
-            receipts = []
-        if receipts:
-            receipt_id = receipts[0]["receipt_id"]
-            if not cold_archive.archive_is_complete(
-                library_dir=library_dir,
-                receipt_id=receipt_id,
-                cold_root=configured_cold_root(),
-            ):
-                blockers.append(
-                    {
-                        "kind": "unarchived-last-home",
-                        "rank": rank,
-                        "node_id": home["node_id"],
-                        "detail": (
-                            "last occupancy has no verified receipt-indexed cold "
-                            "archive; pass --allow-unarchived-last-home to "
-                            "acknowledge there is no NFS backup"
-                        ),
-                    }
-                )
-    if occupancy_class != INCOMPLETE_HUB_OCCUPANCY and target["alternate_homes"] and (
-        target["primary_selection"].get("status") != "match"
-        or not any(
-            candidate.get("primary")
-            for candidate in [home, *target["alternate_homes"]]
+    selected_is_occupancy = bool(target.get("selected_is_occupancy"))
+    if (
+        occupancy_class != INCOMPLETE_HUB_OCCUPANCY
+        and selected_is_occupancy
+        and target["alternate_homes"]
+        and (
+            target["primary_selection"].get("status") != "match"
+            or not any(
+                candidate.get("primary")
+                for candidate in [home, *target["alternate_homes"]]
+            )
         )
     ):
         blockers.append(
@@ -7898,6 +7920,7 @@ def plan_home_removal(
         )
     if (
         occupancy_class != INCOMPLETE_HUB_OCCUPANCY
+        and selected_is_occupancy
         and home.get("primary")
         and target["alternate_homes"]
     ):
@@ -7936,6 +7959,8 @@ def plan_home_removal(
         "target": target,
         "inspection": inspection,
         "allow_last_home": allow_last_home,
+        "allow_unarchived_last_home": allow_unarchived_last_home,
+        "library_dir": str(library_dir) if library_dir else "",
         "occupancy_class": occupancy_class,
         "action": action,
         "observed_nodes": observed_nodes,
@@ -8072,6 +8097,31 @@ def execute_home_removal_plan(
         fail("home removal: execution node differs from the plan")
     if target.get("last_durable_home") and not plan.get("allow_last_home"):
         fail("home removal: last-home acknowledgement is missing")
+    if (
+        target.get("last_durable_home")
+        and (plan.get("occupancy_class") or target.get("occupancy_class"))
+        != INCOMPLETE_HUB_OCCUPANCY
+        and not _home_revision_is_unbound(target.get("revision"))
+        and not plan.get("allow_unarchived_last_home")
+    ):
+        library_dir = plan.get("library_dir")
+        if not library_dir:
+            fail(
+                "home removal: library dir is required to re-verify the cold archive"
+            )
+        try:
+            from scripts import model_library_cold_archive as cold_archive
+        except ModuleNotFoundError:
+            import model_library_cold_archive as cold_archive  # type: ignore[no-redef]
+        archive_detail = cold_archive.last_occupancy_cold_archive_blocker(
+            library_dir=library_dir,
+            model_id=target["model_id"],
+            snapshot_revision=str(target["revision"]),
+            occupancy_hub_path=str(home["hub_path"]),
+            allow_unarchived=False,
+        )
+        if archive_detail:
+            fail(f"home removal: {archive_detail}")
 
     current = inspect_removable_home(
         home["hub_path"],

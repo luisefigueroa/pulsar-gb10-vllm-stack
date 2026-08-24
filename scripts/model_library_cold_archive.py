@@ -236,12 +236,21 @@ def load_cold_archive_presence(
     return validate_cold_archive_presence(model_library.load_json(path))
 
 
+COLD_ALLOW_SAME_DEVICE_ENV = "PULSAR_COLD_ALLOW_SAME_DEVICE"
+
+
 def archive_is_complete(
     *,
     library_dir: str | pathlib.Path,
     receipt_id: str,
     cold_root: str | None,
 ) -> bool:
+    """Layout-only presence: presence.json plus a home/ directory.
+
+    This is not last-home authority. Last occupancy delete must call
+    ``verify_existing_archive`` and ``cold_root_is_distinct_replica``.
+    """
+    _ = library_dir
     if cold_root is None:
         return False
     presence = load_cold_archive_presence(cold_root, receipt_id)
@@ -249,6 +258,107 @@ def archive_is_complete(
         return False
     hub = archived_hub_path(cold_root, receipt_id)
     return hub.is_dir() and presence["receipt_id"] == receipt_id
+
+
+def cold_root_is_distinct_replica(
+    cold_root: str | pathlib.Path,
+    occupancy_hub_path: str | pathlib.Path,
+) -> tuple[bool, str]:
+    """Reject same-device or nested cold roots. Does not claim NFS.
+
+    An external disk or remote mount typically differs in ``st_dev`` from
+    occupancy NVMe. Lab tests may set PULSAR_COLD_ALLOW_SAME_DEVICE=1.
+    """
+    try:
+        root = pathlib.Path(cold_root).expanduser().resolve()
+        occupancy = pathlib.Path(occupancy_hub_path).expanduser().resolve()
+    except OSError as exc:
+        return False, f"cannot resolve cold root or occupancy path ({exc})"
+    if not root.is_dir():
+        return False, "cold root is not a directory"
+    if not os.access(root, os.W_OK):
+        return False, "cold root is not writable"
+    receipts = root / "pulsar-receipts"
+    if receipts.exists() and not os.access(receipts, os.W_OK):
+        return False, "cold archive receipts directory is not writable"
+    try:
+        occupancy.relative_to(root)
+        return False, "cold root contains the occupancy tree"
+    except ValueError:
+        pass
+    try:
+        root.relative_to(occupancy)
+        return False, "cold root is nested under the occupancy tree"
+    except ValueError:
+        pass
+    try:
+        occupancy_dev = occupancy.stat().st_dev
+        root_dev = root.stat().st_dev
+    except OSError as exc:
+        return False, f"cannot compare cold root and occupancy devices ({exc})"
+    if occupancy_dev == root_dev and os.environ.get(COLD_ALLOW_SAME_DEVICE_ENV) != "1":
+        return False, (
+            "cold root is on the same device as occupancy; last occupancy "
+            "needs a distinct-failure-domain cold archive or "
+            "--allow-unarchived-last-home"
+        )
+    return True, ""
+
+
+def last_occupancy_cold_archive_blocker(
+    *,
+    library_dir: str | pathlib.Path,
+    model_id: str,
+    snapshot_revision: str,
+    occupancy_hub_path: str,
+    allow_unarchived: bool,
+) -> str | None:
+    """Return a blocker detail, or None if last occupancy may proceed.
+
+    An unreadable receipt store raises. ``allow_unarchived`` skips replica
+    verify after receipts list successfully; it does not ignore store errors.
+    """
+    receipts = source_attested.list_source_attested_receipts_for_revision(
+        library_dir,
+        model_id=model_id,
+        snapshot_revision=snapshot_revision,
+    )
+    if not receipts:
+        return None
+    if allow_unarchived:
+        return None
+    attachment = source_attested.load_source_attested_home_attachment(
+        library_dir, model_id=model_id, snapshot_revision=snapshot_revision
+    )
+    if attachment is not None:
+        receipt = source_attested.load_source_attested_receipt(
+            library_dir, attachment["receipt_id"]
+        )
+    else:
+        receipt = min(receipts, key=lambda item: item["receipt_id"])
+    cold_root = model_library.configured_cold_root()
+    if cold_root is None:
+        return (
+            "last occupancy has no distinct-failure-domain cold archive; "
+            "pass --allow-unarchived-last-home to acknowledge there is no "
+            "receipt-indexed replica"
+        )
+    ok, detail = cold_root_is_distinct_replica(cold_root, occupancy_hub_path)
+    if not ok:
+        return detail
+    try:
+        verify_existing_archive(cold_root, receipt)
+    except (
+        ColdArchiveError,
+        source_attested.SourceAttestedAcquisitionError,
+        model_library.ModelLibraryError,
+    ) as exc:
+        return (
+            "last occupancy has no verified receipt-indexed cold archive "
+            f"({exc}); pass --allow-unarchived-last-home to acknowledge "
+            "there is no distinct-failure-domain replica"
+        )
+    return None
 
 
 def _hash_hub(receipt: dict[str, Any], hub: pathlib.Path) -> dict[str, Any]:

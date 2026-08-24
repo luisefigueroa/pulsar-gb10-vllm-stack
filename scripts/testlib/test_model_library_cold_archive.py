@@ -106,6 +106,14 @@ class ColdArchiveContracts(unittest.TestCase):
         loaded = cold_archive.verify_existing_archive(self.cold_root, receipt)
         self.assertEqual(loaded["receipt_id"], receipt["receipt_id"])
 
+    def test_nested_cold_root_is_not_a_distinct_replica(self) -> None:
+        hub = self.root / "source-hub"
+        nested = hub / "nested-cold"
+        nested.mkdir(parents=True)
+        ok, detail = cold_archive.cold_root_is_distinct_replica(nested, hub)
+        self.assertFalse(ok)
+        self.assertIn("nested", detail)
+
     def test_mismatch_refuses_publish(self) -> None:
         receipt = self._receipt()
         other = self.root / "other-hub"

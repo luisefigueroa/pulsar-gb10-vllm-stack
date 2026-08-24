@@ -31,9 +31,10 @@ after a live full rehash. Recipes share one `model@revision`; they do not each
 need a durable home. Extra complete Spark trees are not homes.
 
 ADR 0001 already required home-loss resilience on a **distinct failure
-domain**, not a second Spark replica. Site NFS (`MODELS_NFS` /
-`PULSAR_COLD_ROOT`) is that domain when it stores a receipt-indexed archive
-and is never opened by vLLM.
+domain**, not a second Spark replica. The cold root (`PULSAR_COLD_ROOT`,
+legacy alias `MODELS_NFS`) is that domain when it stores a receipt-indexed
+archive: site NFS, an external disk, or another mount that is not occupancy
+NVMe. vLLM never opens it (ADR 0005).
 
 ## Decision
 
@@ -52,17 +53,18 @@ and is never opened by vLLM.
 4. **Catalog classes.** Occupancy (attachment matches the live tree) is the
    durable home. Extra complete hub trees are **unbound-complete**, not homes,
    and do not freeze resolve when occupancy exists. Working replicas (today’s
-   sealed-hot full copies) are not homes. Receipt-indexed NFS archives are not
+   sealed-hot full copies) are not homes. Receipt-indexed cold archives are not
    homes. Two occupancy documents for one revision remain store corruption and
    fail closed. Sealed/legacy trees with no source-attested receipt keep the
    complete-tree primary-selection rule.
-5. **NFS cold archive is the durable replica**, required after receipt
-   issuance, on a distinct failure domain. It starts immediately after
+5. **A receipt-indexed cold archive is the durable replica**, required after
+   receipt issuance, on a distinct failure domain (different device from
+   occupancy). NFS is one example, not the type. It starts immediately after
    occupancy attach as a **background** job and must not block prepare,
    launch, or experiments. Last occupancy remove fails closed without a
-   verified archive unless `--allow-unarchived-last-home`. Restore is copy
-   from the verified archive, live rehash, then occupy. vLLM never opens NFS
-   (ADR 0005).
+   content-verified archive unless `--allow-unarchived-last-home`. Restore is
+   copy from the verified archive, live rehash, then occupy. vLLM never opens
+   the cold root (ADR 0005).
 6. **Home-rank runtime view stays a symlink** of the occupancy tree
    (ADR 0001 decision 2). Operator-facing name for non-home full copies is
    **working replica**. On-disk hot schema 3 and `sealed-hot` are unchanged.
@@ -78,16 +80,17 @@ and is never opened by vLLM.
   `home add`, `home restore`, and `--allow-unarchived-last-home` are
   implemented as catalog/artifact control plane. Archive workers take **no
   occupancy lifecycle lock** (job-file flock only) so they cannot block
-  prepare, launch, or relocate; last-home remove already requires a complete
-  archive. Physical NFS archive and restore on DGX hardware are not claimed.
-  Legacy `cold scan` / `cold adopt` / `cold stage-only` remain fill paths
-  without receipt identity.
+  prepare, launch, or relocate. Last occupancy remove of a receipted identity
+  rehashes the cold archive and requires a distinct device from occupancy;
+  unbound-complete trees are not last-home alternates. Physical cold archive
+  and restore on DGX hardware are not claimed. Legacy `cold scan` /
+  `cold adopt` / `cold stage-only` remain fill paths without receipt identity.
 
 ## Consequences
 
 - A complete tree without occupancy is not a serving home.
 - Relocate does not refresh the catalog, prepare working replicas, or launch.
-- Physical relocate, new-inode restore, and receipt-indexed NFS archive
+- Physical relocate, new-inode restore, and receipt-indexed cold archive
   remain catalog/artifact evidence to capture; they are not claimed by this
   ADR’s acceptance.
 

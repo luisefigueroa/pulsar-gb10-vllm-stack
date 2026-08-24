@@ -105,7 +105,9 @@ Notes:
     Removal is exact-repository-only, refuses multi-revision hub trees, and
     needs --allow-last-home before deleting the final durable copy or the last
     occupancy of an identity. Receipted last occupancy also needs a verified
-    NFS archive or --allow-unarchived-last-home. A recognized incomplete or refs-only hub stub is
+    receipt-indexed cold archive on a distinct device, or
+    --allow-unarchived-last-home. home check rehashes that archive.
+    A recognized incomplete or refs-only hub stub is
     inspectable and retireable through the same read-only check then confirmed
     remove --yes path so a later source-attested home add can occupy that
     repository. Complete homes keep the complete-home contract. Duplicate
@@ -137,12 +139,14 @@ Notes:
     and no Hub download occur. Receipt selected_rank is download provenance
     only and does not block the move. Catalog refresh is a separate next
     action.
-  • After receipt issuance, a receipt-indexed NFS archive starts in the
-    background and is not a serving gate. home archive status|run take no
-    occupancy lifecycle lock so they cannot block prepare, launch, or
-    relocate; workers flock only their job file. home restore occupy from
-    that archive after a live rehash. vLLM never opens NFS. Legacy cold
-    scan/adopt/stage-only remain fill paths, not receipt identity.
+  • After receipt issuance, a receipt-indexed cold archive starts in the
+    background and is not a serving gate. The cold root may be NFS, an
+    external disk, or another distinct-failure-domain mount. home archive
+    status|run take no occupancy lifecycle lock so they cannot block prepare,
+    launch, or relocate; workers flock only their job file. home restore
+    occupy from that archive after a live rehash. vLLM never reads the cold
+    archive. Legacy cold scan/adopt/stage-only remain fill paths, not receipt
+    identity.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
