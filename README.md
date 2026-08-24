@@ -95,95 +95,106 @@ transfer remain distinct data planes even when they involve the same machines.
 ## Quick start
 
 **Run these on a DGX Spark (head node), not a laptop.**  
-Stack needs Docker + NVIDIA Container Toolkit on GB10 (aarch64).
-`scripts/model-library.sh home add` also needs `hf` or `huggingface-cli`
-on PATH before it can download a Hugging Face repository into the model
-library. Full host checklist:
+Stack needs Docker + NVIDIA Container Toolkit on GB10 (aarch64). The
+first-run serving profile is unsealed, so downloading it also needs `hf` or
+`huggingface-cli` on PATH. Full host checklist:
 [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
 
 ### Single-node quick start — first token
 
 ```bash
 git clone <this-repo> && cd pulsar-gb10-vllm-stack   # or your local path
-docker pull vllm/vllm-openai:v0.26.0
-
-# Host sanity (GPU, docker, port, cache)
-scripts/doctor.sh
-
-# Confirm topology identity once — serving requires a confirmed manifest,
-# and a single machine is a valid one-node topology (ADR 0006).
-scripts/detect-fabric.sh --write-topology
-
-# List every serving profile with advisory release and legacy labels
-scripts/list-models.sh --serving
-
-# First serving model: acquire one durable home, prepare exact runtime
-# views, then serve. Requires hf or huggingface-cli on PATH. An unsealed
-# profile uses the source-attested two-step: inspect a read-only plan,
-# then confirm the exact commit that plan reported.
-scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
-  --revision main --plan --json
-scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
-  --revision <exact-commit-from-plan> --yes
-scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
-./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
-# equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
-# The wizard (./pulsar wizard) guides topology confirmation, readiness, and
-# preparation for every profile, plus acquisition for sealed profiles; the
-# unsealed source-attested two-step above remains a manual CLI action.
-
-# Operator home (neutral workflow menu — no doctor/preflight until you pick)
 ./pulsar
-# Browse model storage; refresh/preparation is explicit and never starts serving
-./pulsar models
-# Direct serve/switch wizard (doctor + preflight; not the no-arg home)
-./pulsar wizard
-# equivalent: ./wizard.sh
-# Note: "./ wizard.sh" (space after ./) → "-bash: ./: Is a directory"; use "./pulsar wizard"
-# UI: vendored Gum on Linux ARM64 (blue palette). GUM=0 / NO_COLOR /
-# PULSAR_COLOR=never / TERM=dumb → plain uncolored menus (Gum not used).
-# PULSAR_ACCENT overrides blue accent when Gum is color-enabled (default 12)
-# Non-interactive stdin/stderr automatically uses the EOF-safe plain path
 ```
 
-**Operator home (`./pulsar`):** workflow menu — Current system status (default),
-Serve or switch a model, Stop a serving model, Models & storage, Maintenance,
-Diagnostics, Exit. Models & storage browses cached exact identity,
-durable-home/runtime placement, and findings. Browsing and health rechecks
-are read-only. A separate, confirmation-gated refresh can rescan confirmed
-ranks and update only the cached catalog; it never runs automatically. A
-second confirmed action can prepare a serving profile with reviewed identity
-using eight-stream SSH-over-RoCE and no fallback. It verifies and budgets
-rank-local views but does not start serving, qualify the model, or change
-its release status. Retention, cleanup, repair, and durable-home removal
-remain separate direct-CLI workflows.
-Home is read-only by default; it does not run doctor/inventory until you choose.
-Quick status is a focused overview (inventory + `/v1/models` advertisement only —
-**not** an inference smoke). Full completion smoke is optional and explicit.
-Stop/maintenance only offer inventory `safe_to_stop` stack-managed services and
-always confirm before calling `scripts/down.sh` (never Docker cleanup directly).
-No automatic stale cleanup on doctor or startup.
+`./pulsar` is the operator home. It does **not** run doctor, inventory, or
+model preflight until you pick a workflow. On a Spark TTY this is a Gum
+menu (blue palette; `GUM=0` / `NO_COLOR` / `PULSAR_COLOR=never` / `TERM=dumb`
+falls back to numbered plain menus). First lines:
 
-**Model switch safety (wizard):** `./pulsar wizard` still runs doctor once, then
-reads `scripts/inventory.sh --json` and `scripts/check-memory.sh`. It only offers
-stop for inventory `safe_to_stop` stack-managed services, never for unlabeled,
-legacy, mismatch, unknown, incomplete, or unreachable nodes. Stops run only
-after you confirm the final start/replace action; then inventory and cold
-memory preflight re-run (memory reclaim is never assumed). Docker/SSH probe
-errors fail closed and are never presented as missing artifacts; only
-label-proven complete node placements receive the already-loaded memory exemption. Hard
-memory FAIL never offers “continue anyway”; WARN may, with an explicit
-confirmation.
+```
+[home] operator home — using gum version v0.17.0 (6045525) at …/third_party/gum/linux-arm64/gum
+[home] read-only by default; mutations require confirmation and proven stack ownership
+```
 
-For a one-node profile on a confirmed topology, the wizard now makes physical
-placement explicit. It lists only identity-confirmed nodes whose Docker endpoint
-is reachable and whose **cold-start** memory check does not hard-fail, shows
-free memory and current Pulsar occupancy, and recommends an idle eligible node.
-Every later artifact, port, ownership, launch, health, status, restart, and stop
-step follows that immutable node ID. A service on other physical nodes is not a
-blocker and is never scheduled for replacement.
-See [docs/OPERATIONS.md](docs/OPERATIONS.md).
+Header **Pulsar operator home**; default cursor is the first item:
+
+```
+Current system status
+Serve or switch a model
+Stop a serving model
+Models & storage
+Maintenance
+Diagnostics
+Exit
+```
+
+Enter on the default only runs **Current system status** (read-only inventory
+plus `/v1/models` advertisement — **not** a completion smoke) and returns
+here. First launch is **Serve or switch a model**. That prints
+`[home] entering serve/switch wizard (doctor/preflight run inside wizard)…`
+and hands off to the wizard (`./pulsar wizard` is the same shortcut).
+
+The wizard then:
+
+1. Logs `[wizard] running doctor…` and exits if doctor fails
+   (`doctor failed — fix host issues first`).
+2. On a fresh tree: `[wizard] no confirmed topology manifest exists; serving requires one (one machine is fine)`, then
+   **Discover and confirm topology membership now? (required before serving)**.
+   Confirm **Yes**. Declining exits and tells you serving requires a confirmed
+   topology. After one node is confirmed it may also ask
+   **Discover and confirm additional GB10 cluster membership? (one confirmed node remains available if skipped)** —
+   decline that for a one-node first run.
+3. Shows serving profiles that fit the confirmed node count, header
+   `Choose a model · status labels are advisory · 1 confirmed nodes available`.
+   On one confirmed node the first (default) row is the first-run candidate:
+
+   ```
+   nemotron-3-nano-30b-nvfp4    1 node · first run · release=No release binding · legacy=tested
+   ```
+
+   Select it. Nano has no speculative-decode prompt.
+
+**Unsealed first-run gap (the wizard does not hide this):** Nano has no
+reviewed seal, so the wizard will **not** download it. After a MODEL FILES
+screen (`legacy-unsealed · full verification without a reviewed seal`) it
+asks **Prepare exact model views now, then continue to a separate start confirmation?**.
+With no durable home, prepare fails and the wizard prints:
+
+```
+[wizard] warn: if no durable home exists yet, acquire one first:
+[wizard] warn:   scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --revision <selector> --plan --json
+[wizard] warn:   scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --revision <exact-commit> --yes
+```
+
+then **Model files are not ready for nemotron-3-nano-30b-nvfp4 — what next?**
+(**Choose another model** / **Exit**). That two-step is still a direct library
+CLI: the plan is read-only; run `--yes` only with the exact commit the plan
+reported, not a mutable branch or tag. Sealed profiles can acquire inside the
+wizard; Nano cannot, and no sealed one-node serving profile is on this menu
+(`qwen3-1.7b` is diagnostic and hidden).
+
+After the home exists, pick **Serve or switch a model** again (or
+`./pulsar wizard`). Accept prepare, then
+`Start nemotron-3-nano-30b-nvfp4 on <confirmed-node> with library weights?`.
+If the official image is missing, the wizard asks
+`Image missing. Stage it on <confirmed-node> now?` and can pull
+`vllm/vllm-openai:v0.26.0` — you do not pull it before `./pulsar`. Procedure
+detail: [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+**Operator home** is read-only by default. **Models & storage** browses cached
+identity and placement; catalog refresh and prepare are separate confirmed
+actions and never start serving. Stop/maintenance only offer inventory
+`safe_to_stop` stack-managed services. No automatic stale cleanup on doctor or
+startup.
+
+**Model switch safety (wizard):** doctor runs once per wizard entry, then
+inventory and memory preflight. It only offers stop for inventory
+`safe_to_stop` stack-managed services. Stops wait for the final start/replace
+confirm; memory reclaim is never assumed. Hard memory FAIL never offers
+“continue anyway”. On one-node profiles the wizard lists identity-confirmed
+nodes whose Docker endpoint is reachable and whose **cold-start** memory check
+does not hard-fail, then binds every later step to that node id.
 
 **Smoke** (lab network only — do **not** expose `:8000` without auth;
 [SECURITY.md](SECURITY.md)):
@@ -201,13 +212,12 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
 ```bash
 ./pulsar status nemotron-3-nano-30b-nvfp4
 ./pulsar stop nemotron-3-nano-30b-nvfp4
-# equivalent: scripts/status.sh / scripts/down.sh
 ./pulsar inventory                 # read-only service + memory inventory
 
-# Explicit one-node placement (copy node_id from inventory --json):
-./pulsar start qwen3-1.7b --node <node-id>
-./pulsar status qwen3-1.7b --node <node-id>
-./pulsar stop qwen3-1.7b --node <node-id>
+# Explicit one-node placement (copy node_id from ./pulsar inventory --json):
+./pulsar start nemotron-3-nano-30b-nvfp4 --node <node-id>
+./pulsar status nemotron-3-nano-30b-nvfp4 --node <node-id>
+./pulsar stop nemotron-3-nano-30b-nvfp4 --node <node-id>
 ```
 
 Every serving profile is an exact Hugging Face `model_id@commit`; the
