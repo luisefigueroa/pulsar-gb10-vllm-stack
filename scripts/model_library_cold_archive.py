@@ -236,12 +236,21 @@ def load_cold_archive_presence(
     return validate_cold_archive_presence(model_library.load_json(path))
 
 
+COLD_ALLOW_SAME_DEVICE_ENV = "PULSAR_COLD_ALLOW_SAME_DEVICE"
+
+
 def archive_is_complete(
     *,
     library_dir: str | pathlib.Path,
     receipt_id: str,
     cold_root: str | None,
 ) -> bool:
+    """Layout-only presence: presence.json plus a home/ directory.
+
+    This is not last-home authority. Last occupancy delete must call
+    ``verify_existing_archive`` and ``cold_root_is_distinct_replica``.
+    """
+    _ = library_dir
     if cold_root is None:
         return False
     presence = load_cold_archive_presence(cold_root, receipt_id)
@@ -249,6 +258,197 @@ def archive_is_complete(
         return False
     hub = archived_hub_path(cold_root, receipt_id)
     return hub.is_dir() and presence["receipt_id"] == receipt_id
+
+
+def cold_root_is_distinct_replica(
+    cold_root: str | pathlib.Path,
+    occupancy_hub_path: str | pathlib.Path,
+    *,
+    occupancy_device: int | None = None,
+    compare_devices: bool = False,
+) -> tuple[bool, str]:
+    """Reject nested or same-host same-device cold roots. Does not claim NFS.
+
+    Path prefix is checked from path strings so a remote occupancy hub does
+    not have to exist on the controller. ``st_dev`` is compared only when
+    ``compare_devices`` is true (occupancy rank is the controller). Lab tests
+    may set PULSAR_COLD_ALLOW_SAME_DEVICE=1.
+    """
+    try:
+        root = pathlib.Path(cold_root).expanduser().resolve()
+    except OSError as exc:
+        return False, f"cannot resolve cold root ({exc})"
+    occupancy = pathlib.Path(occupancy_hub_path).expanduser()
+    try:
+        occupancy = occupancy.resolve()
+    except OSError:
+        occupancy = pathlib.Path(os.path.abspath(occupancy))
+    if not root.is_dir():
+        return False, "cold root is not a directory"
+    if not os.access(root, os.W_OK):
+        return False, "cold root is not writable"
+    receipts = root / "pulsar-receipts"
+    if receipts.exists() and not os.access(receipts, os.W_OK):
+        return False, "cold archive receipts directory is not writable"
+    try:
+        occupancy.relative_to(root)
+        return False, "cold root contains the occupancy tree"
+    except ValueError:
+        pass
+    try:
+        root.relative_to(occupancy)
+        return False, "cold root is nested under the occupancy tree"
+    except ValueError:
+        pass
+    if not compare_devices:
+        return True, ""
+    if occupancy_device is None:
+        return False, (
+            "occupancy device is unknown; cannot prove a "
+            "distinct-failure-domain cold archive"
+        )
+    try:
+        root_dev = root.stat().st_dev
+    except OSError as exc:
+        return False, f"cannot inspect cold root device ({exc})"
+    if int(occupancy_device) == int(root_dev) and os.environ.get(
+        COLD_ALLOW_SAME_DEVICE_ENV
+    ) != "1":
+        return False, (
+            "cold root is on the same device as occupancy; last occupancy "
+            "needs a distinct-failure-domain cold archive or "
+            "--allow-unarchived-last-home"
+        )
+    return True, ""
+
+
+def resolve_last_occupancy_receipt_id(
+    library_dir: str | pathlib.Path,
+    *,
+    model_id: str,
+    snapshot_revision: str,
+) -> str | None:
+    """Return one receipt id for the revision, or None if the store has none.
+
+    An unreadable store raises. Does not inspect the cold archive.
+    """
+    receipts = source_attested.list_source_attested_receipts_for_revision(
+        library_dir,
+        model_id=model_id,
+        snapshot_revision=snapshot_revision,
+    )
+    if not receipts:
+        return None
+    attachment = source_attested.load_source_attested_home_attachment(
+        library_dir, model_id=model_id, snapshot_revision=snapshot_revision
+    )
+    if attachment is not None:
+        return str(attachment["receipt_id"])
+    return min(item["receipt_id"] for item in receipts)
+
+
+def last_occupancy_cold_archive_blocker(
+    *,
+    library_dir: str | pathlib.Path,
+    model_id: str,
+    snapshot_revision: str,
+    occupancy_hub_path: str,
+    allow_unarchived: bool,
+    occupancy_device: int | None = None,
+    occupancy_rank: int = 0,
+    expected_receipt_id: str | None = None,
+) -> str | None:
+    """Return a blocker detail, or None if last occupancy may proceed.
+
+    Controller-only. An unreadable receipt store raises. ``allow_unarchived``
+    skips replica verify after receipts list successfully; it does not ignore
+    store errors. ``expected_receipt_id`` freezes the plan's receipt.
+    """
+    resolved_id = resolve_last_occupancy_receipt_id(
+        library_dir, model_id=model_id, snapshot_revision=snapshot_revision
+    )
+    if expected_receipt_id:
+        if resolved_id is None:
+            fail("home removal: planned source-attested receipt is missing")
+        if resolved_id != expected_receipt_id:
+            fail("home removal: source-attested receipt changed after the plan")
+        receipt_id = expected_receipt_id
+    else:
+        receipt_id = resolved_id
+    if not receipt_id:
+        return None
+    if allow_unarchived:
+        return None
+    receipt = source_attested.load_source_attested_receipt(library_dir, receipt_id)
+    if (
+        receipt["model_id"] != model_id
+        or receipt["snapshot_revision"] != snapshot_revision
+    ):
+        fail("home removal: frozen receipt does not match the planned identity")
+    cold_root = model_library.configured_cold_root()
+    if cold_root is None:
+        return (
+            "last occupancy has no distinct-failure-domain cold archive; "
+            "pass --allow-unarchived-last-home to acknowledge there is no "
+            "receipt-indexed replica"
+        )
+    ok, detail = cold_root_is_distinct_replica(
+        cold_root,
+        occupancy_hub_path,
+        occupancy_device=occupancy_device,
+        compare_devices=int(occupancy_rank) == 0,
+    )
+    if not ok:
+        return detail
+    try:
+        verify_existing_archive(cold_root, receipt)
+    except (
+        ColdArchiveError,
+        source_attested.SourceAttestedAcquisitionError,
+        model_library.ModelLibraryError,
+    ) as exc:
+        return (
+            "last occupancy has no verified receipt-indexed cold archive "
+            f"({exc}); pass --allow-unarchived-last-home to acknowledge "
+            "there is no distinct-failure-domain replica"
+        )
+    return None
+
+
+def reverify_last_home_archive(
+    plan: dict[str, Any],
+    *,
+    library_dir: str | pathlib.Path,
+) -> None:
+    """Controller-only TOCTOU re-check. Raises on failure. No hub mutation."""
+    target = plan.get("target") or {}
+    home = target.get("home") or {}
+    occupancy_class = (
+        plan.get("occupancy_class") or target.get("occupancy_class") or ""
+    )
+    if not target.get("last_durable_home"):
+        return
+    if occupancy_class == model_library.INCOMPLETE_HUB_OCCUPANCY:
+        return
+    revision = str(target.get("revision") or "")
+    if model_library._home_revision_is_unbound(revision):
+        return
+    if plan.get("allow_unarchived_last_home"):
+        return
+    if not library_dir:
+        fail("home removal: library dir is required to re-verify the cold archive")
+    detail = last_occupancy_cold_archive_blocker(
+        library_dir=library_dir,
+        model_id=str(target["model_id"]),
+        snapshot_revision=revision,
+        occupancy_hub_path=str(home["hub_path"]),
+        allow_unarchived=False,
+        occupancy_device=(plan.get("inspection") or {}).get("occupancy_device"),
+        occupancy_rank=int(home.get("rank", -1)),
+        expected_receipt_id=plan.get("receipt_id") or target.get("receipt_id"),
+    )
+    if detail:
+        fail(detail)
 
 
 def _hash_hub(receipt: dict[str, Any], hub: pathlib.Path) -> dict[str, Any]:

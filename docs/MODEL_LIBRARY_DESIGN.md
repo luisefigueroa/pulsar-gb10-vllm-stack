@@ -676,7 +676,7 @@ The accepted warm-home claim is:
 - occupancy loss is service loss until ADR 0011 recovery.
 
 Home-loss resilience is occupy-in-place after a live receipt rehash, or
-restore from a verified receipt-indexed NFS archive, on a distinct failure
+restore from a verified receipt-indexed cold archive, on a distinct failure
 domain ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
 A second Spark durable home, and a second copy on the same rank/filesystem,
 are not that policy. In an exact multi-node geometry, losing the
@@ -809,7 +809,7 @@ local durable-storage dependency, not a retained network transfer plane.
 | Warm-home restart with retained unpinned views | Durable home plus remaining sealed-hot; no transfer/catalog refresh while witness and files remain valid |
 | Warm-home restart after explicit purge | Durable home plus preparation again |
 | Cold stage-only restart with complete pin | Pinned staged trees; cold may be unavailable |
-| Restart after durable-home loss | Occupy-in-place or restore from a verified receipt-indexed NFS archive ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)); Hub re-download only when no receipt and no archive exist |
+| Restart after durable-home loss | Occupy-in-place or restore from a verified receipt-indexed cold archive ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)); Hub re-download only when no receipt and no archive exist |
 
 Inventory and labels must surface home identity, per-rank runtime source,
 expected/observed seal status, witness status, pin state, and transfer release.
@@ -1327,3 +1327,5 @@ rather than promotion blockers.
 | 2026-08-22 | **SIM-12:** leftover `weight-fabric.sh show|unmount|teardown` and `./pulsar weight-fabric` removed after lab confirmation. Live NFS serving stays refused. Historical `results/weight-fabric/` and `WEIGHT_FABRIC.md` remain. |
 | 2026-08-22 | **SIM-13:** public `hot legacy check|remove` removed after lab confirmation that no schema-1/2 hot instances remained. Health still observes leftover schema-1/2 as untrusted and cannot launch. Historical `results/model-library/model-library-health-legacy-repair-gate-20260812.json` remains. `--force-unpin` on `purge-hot` is unchanged. |
 | 2026-08-23 | **ADR 0011 accepted:** portable occupancy, `home relocate` after a live receipt rehash, download-rank as provenance only, unbound-complete trees are not homes, NFS receipt-indexed archive as the distinct-failure-domain replica. Relocate, occupancy classification, `home archive` / `home restore`, and `--allow-unarchived-last-home` are implemented as control plane. No physical NFS/DGX archive claim. |
+| 2026-08-23 | Last occupancy remove of a receipted identity fail-closes on an unreadable receipt store, rehashes the cold archive (not layout-only `presence.json`), treats unbound-complete as not a home for last-home/primary, and requires the cold root on a distinct device from occupancy. NFS is one cold-root example, not a type check. Lab `PULSAR_COLD_ALLOW_SAME_DEVICE=1` is not a production distinct-domain claim. Deterministic tests only; no physical last-home claim. |
+| 2026-08-23 | Last-home archive re-verify is controller-only: `home remove --yes` rehashes before occupancy detach. Rank-local execute deletes the inspected hub tree and does not open the receipt store. Distinct `st_dev` is compared only when occupancy is rank 0. |
