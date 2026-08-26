@@ -114,7 +114,7 @@ expectation, observed behavior, impact, failure scenario, resolution, closure
 validation, and affected code/docs/tests/evidence/ADR surfaces.
 
 For tested, supported, validated, or promoted model claims, compare the exact
-revision, expected seal and manifest, image digest, normalized configuration,
+revision, receipt/file list, image digest, normalized configuration,
 geometry, relevant runtime flags, evidence date, and supersession status.
 
 Report limitations instead of mutating state when verification would require

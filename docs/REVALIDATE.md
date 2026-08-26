@@ -7,38 +7,30 @@ runtime configuration, resolved image digest, or serving geometry/topology
 class change creates a new **Model Serving Release** under
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). No prior
 release status transfers across that change. In the current implementation,
-the same change invalidates the applicable schema-1 validation bundle and
-nothing keeps its legacy `STATUS=tested*` evidence label without new evidence.
+nothing keeps a legacy `STATUS=tested*` evidence label without new evidence.
 Serving permission is status-independent; the changed release still has to pass
 the concrete identity, recipe, compatibility, topology, capacity, security, and
 lifecycle checks for any attempted launch.
 This is the public, repository-relative sequence; expect roughly half a day,
 mostly machine time.
 
-Model-library catalog schema 2 and hot schema 3 now enforce a reviewed
-lab-issued expected model seal, exact commit/manifest comparison, and exact
-snapshot launch. Schema-1 validation bundles additionally bind declared
-external-artifact identities/digests, the digest-pinned image, normalized live
-runtime/memory settings, geometry, provenance, and evidence. Expected-seal and schema-1 bundles are not a live product
+Lab expected-identity files and the archived combined identity format are not a
+live product
 ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
 `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the live catalog.
-`qwen3-1.7b-2node` remains an unsealed plumbing canary. Never create an
-expected seal from arbitrary user-observed cache contents. Historical JSON is
+`qwen3-1.7b-2node` remains a tiny two-node test profile. Do not invent a lab
+expected-identity file from a user cache. Historical JSON is
 under [docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md). A future mirror may distribute the bytes, but hosting location is not
-validation identity. The rank-local serve witness is implemented for library preparation and
-sealed home acquisition: each creates it only after full verification, while
-unchanged launch uses metadata and drift visibly rehashes before refresh.
-Sealed acquisition pins the exact commit and every copy is verified. Unsealed
-profiles serve as `legacy-unsealed`, and live-mount serving is retired
+file identity. The rank-local serve witness is created only after full
+verification; unchanged launch uses metadata and drift visibly rehashes before
+refresh. Live profiles use receipt plus occupancy
+(`identity_status=legacy-unsealed`). Live-mount serving is retired
 (ADR 0005).
-The standalone bundle verifier is implemented. Maintainer-only
-`scripts/model-release.sh` can hash an exact commit and assemble/verify
-deterministic unreviewed candidates; trusted publication remains a deliberate
-reviewed repository change. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
-The separate `scripts/model-serving-release-plan.sh` can build and verify an
-unreviewed ADR 0004 release descriptor and frozen contract from a complete
-manifest, explicit runtime/hardware envelope, and criteria. Both exact
-Hugging Face snapshots and non-Hugging-Face complete content-addressed model
+`scripts/model-release.sh` is removed. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
+`scripts/model-serving-release-plan.sh` can build and verify a
+draft ADR 0004 release descriptor and frozen Validation Contract from a complete
+file list, explicit runtime/hardware envelope, and criteria. Both exact
+Hugging Face snapshots and non-Hugging-Face complete hashed model
 trees are valid primary identities. This planning step neither verifies the
 source bytes nor establishes physical behavior, evidence, status, or review.
 
@@ -48,7 +40,7 @@ reviewed validation decision, and the statuses `Untested`, `Testing incomplete`,
 `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
 `Superseded`. The pure release-descriptor and frozen-contract schemas are now
 implemented in `scripts/model_serving_release.py`, with deterministic fixtures
-and fail-closed tests. Pure immutable run-record, new evidence-bundle, reviewed
+and fail-without-fallback tests. Pure immutable run-record, evidence-bundle, reviewed
 validation-decision, status-derivation, and supersession schemas are implemented
 in `scripts/model_validation_evidence.py`. Together they perform no command
 execution, evidence capture, persistence, trusted issuance, profile update, or
@@ -56,48 +48,48 @@ launch. A syntactically reviewed decision cannot prove physical behavior
 or that repository review occurred. Read-only persistence and verification of
 stored ADR 0004 objects is implemented under
 `models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
-persistence is implemented and remains unreviewed. Maintainer-only issuance
+persistence is implemented and remains draft. Maintainer-only
 staging can propose those objects locally; repository review and merge remain
-the trust event. Closed validator
+what makes them trusted. Closed validator
 measurements and attempt-only spec composition are implemented for strict
 same-boot and absolute throughput/latency; they do not issue status or prove
-physical behavior. Advisory catalog/operator
-projection is implemented for a profile explicitly bound to a release ID;
-`qwen3.8-27b-fp8` binds the first reviewed lineage and projects
+physical behavior. The catalog shows a reviewed decision for a profile that
+sets `MODEL_SERVING_RELEASE_ID`;
+`qwen3.8-27b-fp8` points at the first reviewed lineage and shows
 `Testing incomplete`; other current profiles remain unbound. The supervised
-`pulsar-model-onboarding` skill is implemented as control-plane orchestration
-around those CLIs. It never issues a seal or validation decision, assigns
-status, binds a profile, writes the trusted registry, promotes a path, or
+`pulsar-model-onboarding` skill orchestrates
+those CLIs. It never writes a lab expected-identity file or a validation decision, assigns
+status, points a profile at a Model Serving Release, writes the trusted registry, promotes a path, or
 claims physical behavior. Current automated mapping covers only strict
 same-boot and absolute throughput/latency; the skill invokes greedy capture,
 compare, and benchmark sequentially rather than using `validate/run-gates.sh`
-as an ADR attempt wrapper. For an absent brand-new unsealed Hugging Face
-repository, it may compose the source-attested read-only plan and separately
+as an ADR attempt wrapper. For an absent brand-new Hugging Face
+repository, it may compose the read-only `home add --revision` plan and separately
 confirmed exact-commit acquisition. Reuse of that home requires
 receipt-backed offline full verification against the receipt while occupancy
 names the exact live directory. Occupancy may move with `home relocate` after
 that live rehash ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
-Unknown trees without a receipt still
-require full verification against a reviewed expected manifest
-independent of the observed tree; catalog state and a self-observed manifest
+Unknown trees without a receipt fail without fallback
+(ADR 0012); catalog state and a self-observed file list
 alone are insufficient. Direct durable-cache download remains forbidden.
-Source-attested deterministic tests are control-plane evidence only. The
+Those deterministic tests are lifecycle-script evidence only. The
 Nemotron Nano Gate 14 artifact is a bounded physical catalog/artifact PASS
 for one-node rank-0 acquisition on a three-rank topology; remote target
 execution, asymmetric credentials, and an actual external new-inode restore
 remain physically pending. Its journal is isolated
 under `experiments/model-onboarding/workflows/`. Deterministic skill and journal
 tests make no physical DGX claim and create no release decision. Maintainer-only
-issuance staging can propose exact registry objects from a verified capture
+staging can propose exact registry objects from a verified capture
 candidate plus explicit review input. A successful local command is not
 trusted until repository review and merge, does not edit a profile, and
 does not by itself create a reviewed production object.
 `MODEL_SERVING_RELEASE_ID` may be bound
 only in the reviewed publication that stores and verifies the exact lineage.
-Existing bundles, seals, profiles, and historical evidence remain unchanged and
-must not be automatically relabeled `Validated`. The corrected ADR 0004
+Existing ADR 0004 objects, archived lab expected-identity files, profiles, and
+historical evidence remain unchanged and must not be automatically relabeled
+`Validated`. The corrected ADR 0004
 objects remain schema version 1 because none was issued or persisted before
-the correction; older schema-1 seals/bundles are separate legacy formats and
+the correction; archived lab expected-identity files are a separate format and
 remain byte-for-byte untouched.
 Locally generated release-plan candidates made before the source-neutral
 schema correction are disposable and must be rebuilt. The correction remains
@@ -108,19 +100,20 @@ registry now contains the later Qwen3.8 lineage.
 
 Revalidation is scoped before commands are chosen. A release bundle still
 binds all of its exact inputs in the current serving schema. In the ADR 0004
-model, the implemented release descriptor binds the four-part identity and the
-implemented Validation Contract freezes criteria. The implemented stage-2
-schemas separately bind immutable attempts, evidence sets, and reviewed
-decisions. Read-only verification can inspect stored objects. Local evidence-capture
-candidate persistence can emit unreviewed run and bundle candidates; it does
-not issue a reviewed decision, project status, or launch a release.
+model, the implemented release descriptor binds the exact model + recipe +
+image + hardware identity and the implemented Validation Contract freezes
+criteria. The implemented stage-2 schemas separately bind immutable attempts,
+evidence sets, and reviewed decisions. Read-only verification can inspect
+stored objects. Local evidence-capture candidate persistence can emit draft
+run and bundle JSON; it does not write a reviewed decision, show catalog
+status, or launch a Model Serving Release.
 Reusable subsystem evidence is not erased by an unrelated change.
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
 defines four scopes:
 
 | Scope | Typical evidence | What it does not prove |
 |---|---|---|
-| Catalog and artifact service | Seal/manifest match, placement, transfer integrity, witness/lifecycle, retention, repair, cleanup | Any Model Serving Release validation criterion or a supported release |
+| Catalog and artifact service | Receipt/file-list match, placement, transfer integrity, witness/lifecycle, retention, repair, cleanup | Any Model Serving Release validation criterion or a supported release |
 | Serving integration | Exact-source mount/load, health, warmup, completion smoke, owned stop | Stability, accuracy, throughput, latency, strict same-boot, context, or soak |
 | Model qualification | Stability, accuracy, throughput, latency, strict same-boot, context, and soak for exact runtime inputs | Storage-policy safety outside the tested runtime source |
 | Release and promotion | Provenance/security, physical geometry, and all required subsystem results bound to one supported profile/policy | Broader geometries, images, revisions, or storage paths |
@@ -139,7 +132,7 @@ cannot satisfy a validation criterion.
 | Changed input or contract | Required revalidation |
 |---|---|
 | Model Artifact Set content or identity: model revision/snapshot manifest, tokenizer/model code, adapter/draft, or another behavior-affecting artifact | New Model Serving Release; catalog identity/full verification, serving integration, and complete model qualification |
-| Expected-seal or schema-1 bundle trust metadata only, with the Model Artifact Set and every other release input unchanged | Same Model Serving Release; issue and verify the required new schema-1 artifact IDs and cross-links, review provenance/evidence/privacy, and refresh or reprepare current hot state when its legacy identity changes. Reassess the validation decision when its evidence or review basis changes, but do not automatically rerun model qualification |
+| Retired lab expected-identity / archived combined-identity metadata only | Not a live product (ADR 0012). Do not issue those files. Reassess the ADR 0004 decision when its evidence or review basis changes; do not automatically rerun model qualification |
 | Image, dependency, engine flags, memory contract, or geometry | New Model Serving Release; serving integration and complete model qualification; retain generic catalog mechanics unless the change affects them |
 | Transfer/copy algorithm or admission policy | Same release when it still converges on the identical verified `local-verified-readonly` runtime-access contract; rerun affected catalog physical gates and integration smoke, and model gates only when runtime inputs change or evidence shows a causal execution effect |
 | Catalog-manifest, witness, metadata, retention, repair, or cleanup semantics | Affected identity/lifecycle gates and integration smoke when launch views change; no automatic accuracy rerun |
@@ -150,9 +143,9 @@ cannot satisfy a validation criterion.
 Changing an image, model, configuration, or geometry creates a new release ID
 and requires a newly frozen contract and reviewed decision under ADR 0004. The
 pure libraries can build and validate all five object roles, but no current
-operator or serving path consumes them as launch permission. A new schema-1
-bundle is still required before a legacy `STATUS=tested` recommendation or a
-guided/default claim can move. Preserving unchanged catalog evidence is scoped
+operator or serving path consumes them as launch permission. A new ADR 0004
+evidence bundle and reviewed decision are required before a `STATUS=tested`
+recommendation or a wizard-suggested claim can move. Preserving unchanged catalog evidence is scoped
 evidence reuse, not release-status or bundle inheritance.
 Health and completion smoke are never substitutes for model qualification.
 
@@ -169,10 +162,10 @@ release cross-links, including recipe/geometry consistency and privacy-safe
 descriptor fields. The review-derived provenance/security criterion is one
 closed canonical template; extra requirements are rejected because the
 decision evaluator would have no run metric with which to satisfy them.
-Bundle `review_evidence_artifact_ids` are leftover non-run artifacts.
-Empty is expected after measurement capture. A decision may cite an empty
-list when every provenance component is `pending`; a `pass` or `fail`
-still requires cited leftover `release-promotion` artifacts. That citation
+Bundle `review_evidence_artifact_ids` are extra review files besides the
+measurement runs. Empty is expected after measurement capture. A decision may
+cite an empty list when every provenance component is `pending`; a `pass` or
+`fail` still requires cited extra `release-promotion` review files. That citation
 rule is not a new Model Serving Release.
 Every persisted free-form release/contract string without a stricter closed
 grammar is screened for secret, absolute-path, endpoint, and deployment-only
@@ -239,7 +232,8 @@ decision points backward to prior decision IDs only with strictly later
 chronology and an acyclic relationship; readers project the older one as
 `Superseded` without rewriting it. `predecessor_evidence_registry` and
 `decision_evidence_registry` are complete caller-supplied source registries for
-pure validation; neither is trusted persistence or evidence of issuance.
+pure validation; neither is trusted persistence or evidence that a PR was
+merged.
 
 These functions validate supplied JSON-compatible objects only.
 `predecessor_evidence_registry` and `decision_evidence_registry` are
@@ -247,12 +241,12 @@ caller-supplied validation input, not the trusted store. Read-only
 verification of stored ADR 0004 objects is implemented under
 `models/model-serving-releases/` and holds the reviewed Qwen3.8 lineage
 (`Testing incomplete`). Local capture
-candidates are unreviewed and do not replace those artifacts. Continue
+candidates are draft and do not replace those artifacts. Continue
 retaining the existing raw/sanitized artifacts and
-current schema-1 release materials described below. Do not create a
+archived lab expected-identity materials described below. Do not create a
 `Validated` claim merely by calling a builder or copying a synthetic document.
 
-Structural privacy checks are fail-closed for recognized credential, path,
+Structural privacy checks fail without fallback for recognized credential, path,
 explicit URI, private/site endpoint, and topology forms, including
 credential-bearing extensible field names. Ordinary dotted public identifiers
 remain valid, but these checks are not a complete privacy proof. The future
@@ -441,11 +435,12 @@ durable home separately before running preparation.
 3. deterministic/correctness/long-context gates on the healthy fabric service;
 4. interrupted load, link loss, NFS restart, owner reboot, restart loop, and
    soak recovery;
-5. exact expected-versus-observed model seal and revision binding;
+5. exact receipt-versus-observed file list and revision binding;
 6. proof that non-home clients retain no complete durable model cache;
-7. for library-hot, preparation-created witness plus unchanged-launch fast-path,
-   metadata-drift full-verify/fail-closed behavior on every rank, no-follow
-   purge, and honest durable-home pin/restart dependency.
+7. for local files on every rank, preparation-created witness plus
+   unchanged-launch fast-path, metadata-drift full-verify/fail-without-fallback
+   behavior on every rank, no-follow purge, and honest durable-home pin/restart
+   dependency.
 8. active-use durable-home removal protection on the confirmed physical
    topology:
    - duplicate discovery refuses resolution before selection;
@@ -461,7 +456,7 @@ durable home separately before running preparation.
    - normal last-home refusal and separate `--allow-last-home` acknowledgement;
    - retained `ready`, `verifying`, and `pinned` hot references;
    - running and stopped managed-container references;
-   - fail-closed unreachable-node, Docker, and malformed-hot-state probes;
+   - fail-without-fallback unreachable-node, Docker, and malformed-hot-state probes;
    - shared/exclusive lifecycle-lock race behavior; and
    - actual deletion only against a disposable exact HF repository, with
      sibling preservation and catalog refresh. Never delete a production or
@@ -469,10 +464,10 @@ durable home separately before running preparation.
      disposable synthetic repository instead.
 9. exact hot-storage admission before writes:
    - every selected rank is observed exactly once and unreachable/missing ranks
-     fail closed;
-   - warm-home charges zero model bytes on the home rank and exact manifest
+     fail without fallback;
+   - warm-home charges zero model bytes on the home rank and exact file-list
      bytes on each non-home rank; cold stage-only charges every rank;
-   - the flagship-sized dry-run preserves the default
+   - a large-model dry-run preserves the default
      `max(64 GiB, 5% filesystem capacity)` reserve on every selected rank;
    - an explicit undersized hard cap blocks before mutation; and
    - no automatic eviction, reserve relaxation, or transport fallback occurs.
@@ -488,9 +483,9 @@ durable home separately before running preparation.
 11. interactive model-storage delegation when its eligibility or command
     contract changes:
     - browsing and health recheck remain mutation-free;
-    - stale topology, missing reviewed identity, missing primary, unsealed
+    - stale topology, missing receipt/occupancy, missing primary,
       profile metadata, and invalid profile JSON suppress this interactive
-      reviewed-identity preparation action; validation status does not;
+      preparation action; validation status does not;
     - the preview names exact revision/manifest, durable-home dependency,
       approximate non-home storage, and the selected transfer policy;
     - confirmation defaults to no and decline invokes no mutation;
@@ -514,7 +509,7 @@ durable home separately before running preparation.
     - preparation and launch retain separate confirmations, and failed or
       incomplete preparation cannot launch;
     - one-node catalog preparation and launch use the durable-home rank; a
-      non-home choice fails closed instead of creating a second hot copy;
+      non-home choice fails without fallback instead of creating a second hot copy;
     - a replacement snapshots the exact live launch contract, physical placement,
       source, spec state, and library identity/runtime/retention before stop;
       ephemeral catalog views are pinned until confirmed replacement or exact
@@ -528,38 +523,30 @@ durable home separately before running preparation.
     - repeat physical serving integration when the selected placement or
       runtime-resolution algorithm changes. Existing evidence may be reused
       only for the exact placement and contract it measured.
-13. reviewed durable-home acquisition when download, placement, staging, or
-    publication behavior changes:
-    - every confirmed rank is observed and exact rank/node identity is bound;
-    - only a sealed profile and immutable reviewed commit are accepted;
-    - automatic placement chooses the eligible most-free-space serving rank;
-      one-node profiles may select any confirmed rank while multi-node profiles
-      remain in their exact geometry, preserving one home plus N−1 hot copies,
-      and an explicit ineligible or out-of-geometry `--node` fails without
-      fallback;
-    - target-side Hugging Face CLI, authentication/egress, and capacity failure
-      leave no published home;
-    - download occurs in plan-owned same-filesystem staging and interruption or
-      verification failure removes only that staging tree;
-    - an existing repository before download or one appearing on any rank
-      during download blocks publication;
-    - full expected-manifest SHA-256 verification precedes the atomic rename;
-    - one exact durable home is visible after explicit catalog refresh, with no
-      non-home durable repository or hot copy created; and
-    - the result states that catalog refresh, preparation, launch, model
-      qualification, and release promotion did not occur.
-14. source-attested durable-home acquisition when source resolution, inventory,
+13. (historical) lab expected-identity durable-home acquisition is not a live
+    product (ADR 0012). Do not re-run `home add` without `--revision`. Live
+    acquisition is gate 14. The 2026-08-13 Qwen artifact remains history.
+14. Hugging Face `home add --revision` when source resolution, inventory,
     receipt, offline verification, or exact prepare binding changes:
     - a read-only plan asks in-geometry candidates with modern `hf` to resolve
       the supplied selector and complete upstream Git/LFS file inventory without
       downloading model bytes; failed candidates become ineligible, successful
       candidates must agree, and the selected target must already have produced
       that matching source;
+    - every confirmed rank is observed and exact rank/node identity is bound;
     - execution requires a separate confirmation, uses that exact commit, and
-      binds the reviewed rank;
+      binds the selected rank;
+    - automatic placement chooses the eligible most-free-space serving rank;
+      one-node profiles may select any confirmed rank while multi-node profiles
+      remain in their exact geometry, preserving one home plus N−1 working
+      copies, and an explicit ineligible or out-of-geometry `--node` fails
+      without fallback;
     - authentication remains on the selected rank and no credential is passed,
       logged, or persisted by Pulsar;
+    - target-side Hugging Face CLI, authentication/egress, and capacity failure
+      leave no published home;
     - model, Xet, and asset bytes remain in private same-filesystem staging;
+      interruption or verification failure removes only that staging tree;
     - the upstream inventory, Hugging Face missing/extra result, local file set,
       sizes, Git/LFS identities, and every SHA-256 match before publication;
     - every confirmed rank is reobserved and an existing or raced repository
@@ -571,13 +558,14 @@ durable home separately before running preparation.
       the receipt while occupancy names that live directory, `home relocate`
       may move occupancy after the same live rehash without a Hub download,
       and prepare accepts the receipt-backed home only when occupancy is
-      current and the exact model ID and commit match; and
-    - the result states that catalog refresh, preparation, launch, reviewed
-      identity, model qualification, status, decision, and promotion did not
-      occur.
+      current and the exact model ID and commit match;
+    - one exact durable home is visible after explicit catalog refresh, with no
+      non-home durable repository or working copy created; and
+    - the result states that catalog refresh, preparation, launch, model
+      qualification, status, decision, and promotion did not occur.
 
-The reviewed acquisition contract passed this three-node physical gate on
-2026-08-13 using the sealed `qwen3-1.7b` profile. The run proved guarded removal
+The historical lab expected-identity acquisition contract passed a three-node
+physical gate on 2026-08-13 using the then-live `qwen3-1.7b` profile. The run proved guarded removal
 of the prior final home, interrupted remote staging cleanup, explicit remote
 placement, automatic most-free-space remote placement, full reviewed-manifest
 verification, atomic publication, explicit catalog refresh, and a final
@@ -666,17 +654,17 @@ historical replicated evidence.
   evidence/recommendation contract and only when the evidence supports the
   label. Bind `MODEL_SERVING_RELEASE_ID` only in the reviewed publication that
   stores and verifies the exact ADR 0004 release lineage; never derive that
-  binding from a local candidate or legacy bundle. Release and legacy status
-  changes never authorize or prohibit serving. Update
+  binding from a local candidate or archived combined identity file. Release and
+  legacy status changes never authorize or prohibit serving. Update
   `docs/VALIDATION.md` with the measured
-  numbers, exact model commit/manifest identity, resolved image digest,
+  numbers, exact model commit/file-list identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
-- Capture and issue ADR 0004 objects per
+- Capture and stage ADR 0004 objects per
   [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) and
   [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md).
   `scripts/model-release.sh` is retired (ADR 0012). After merge, run
   `scripts/model-serving-release-registry.sh verify`. Never promote a locally
-  observed tree into expected identity.
+  observed tree into a lab expected-identity file.
 - Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
 - Archive the new raw results under `results/` using a unique bump tag.
 - Store publishable command provenance as structured, sanitized descriptors;

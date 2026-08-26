@@ -41,10 +41,10 @@ build below). Stock `v0.26.0` livelocks under multi-node load for this model
 | Image | Pin | Role |
 |---|---|---|
 | `vllm/vllm-openai:v0.26.0` | `sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52` | mainline: Qwen, Nemotron, Laguna, and small canaries |
-| `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | `sha256:260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2` | **DeepSeek-V4-Flash flagship and Inkling-Small-NVFP4** |
+| `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | `sha256:260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2` | **Historical DeepSeek-V4-Flash and Inkling-Small-NVFP4** |
 
 Digest-pin discipline: tags are mutable; `Dockerfile` FROMs the digest, and
-`qwen3-1.7b` plus the issued bundles pin that same digest. Most other
+the historical `qwen3-1.7b` conf pinned that same digest. Most other
 mainline serving confs inherit `VLLM_IMAGE_MAINLINE` (`vllm/vllm-openai:v0.26.0`
 **tag**) at launch. When bumping, re-run the validation suite
 (docs/VALIDATION.md) before changing the pin — and `rm -rf ~/.cache/vllm` +
@@ -150,15 +150,14 @@ from the upstream vLLM checkout.
 `torch_cuda_arch_list='12.0'` compiles the 12.0f family target (covers
 sm_121 natively under CUDA 13.0.3) plus the 12.0a/12.1a quant-kernel gates.
 
-**Validation:** this image earns nothing until gates in
-`models/deepseek-v4-flash.conf` + docs/VALIDATION.md pass (battery, needle,
-soak). Use `cluster/start-cluster.sh deepseek-v4-flash` for the default DSpark
-path after the image is loaded on both exact flagship ranks; `--no-spec-decode` is rollback.
+**Validation:** this image's DeepSeek measurements live in docs/VALIDATION.md
+(battery, needle, soak). The live `deepseek-v4-flash` profile was removed
+(ADR 0012). Do not `cluster/start-cluster.sh deepseek-v4-flash`.
 
 ### Removed: DSpark draft-path overlay
 
 `patches/pr41834-dspark-opt/` was a perf-neutral pure-Python A/B overlay on
-PR-41834. It is **not** the flagship serving path (DSpark is in the 0731
+PR-41834. It is **not** a live serving path (DSpark is in the 0731
 checkpoint). Removed 2026-08-22 (SIM-10). Measurements stay in
 [VALIDATION.md](./VALIDATION.md); the files remain in git history. Do not
 point conf `IMAGE=` at `*-dspark-opt-*` tags.

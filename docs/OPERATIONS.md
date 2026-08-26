@@ -259,7 +259,7 @@ and proven complete ownership. Unknown, legacy, mismatch, incomplete/unproven,
 foreign GPU, and any remote-unobservable multi-node services are excluded. After
 selection, final confirmation is required; only `scripts/down.sh <conf>` runs
 (revalidates labels/IDs). Decline → no mutation. When the stopped service's
-labels prove `weight-source=library-hot`, ordinary stop retains unpinned prepared
+labels prove local files on every rank (`weight-source=library-hot`), ordinary stop retains unpinned prepared
 views ([ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)).
 The durable home is still required. Interactive stop offers retain (default)
 versus free, and states the restage consequence when a non-home byte count can
@@ -826,7 +826,7 @@ invalid scans fail without fallback; model files are not changed. Refresh never 
 or deletes a model, and it never runs automatically.
 
 From an exact model detail, the labeled preparation option is a second separate
-default-no action. It is offered only for reviewed-seal serving profiles and
+default-no action. It is offered for serving-purpose profiles and
 delegates to the fixed eight-stream SSH-over-RoCE preparation command documented
 above for multi-rank profiles. The service revalidates exact identity, topology,
 capacity, and all-rank completion; there is no fallback. The action does not

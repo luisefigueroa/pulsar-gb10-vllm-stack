@@ -7,7 +7,7 @@ hashed Model Serving Release registry objects and any
 privacy-cleared publishable evidence.
 
 A successful local `plan` or `stage` does not establish trust. Repository
-review and merge remain the trust event. The existing pure schema modules
+review and merge are what make the objects trusted. The existing pure schema modules
 derive the decision status. Status stays display-only and never permits or
 blocks serving. This workflow does not edit a model profile, set
 `MODEL_SERVING_RELEASE_ID`, authorize serving, or claim physical DGX
@@ -155,8 +155,8 @@ Privacy handling:
   content digest, media type, and qualification scope stay the same.
 - `evidence_privacy` must match that artifact disposition. Passing every
   artifact makes `evidence_privacy` `pass`, which is conclusive and
-  requires leftover `release-promotion` review artifacts. Incomplete
-  issuance with an empty leftover list keeps every provenance component
+  requires extra `release-promotion` review files. Incomplete
+  staging with an empty extra-review-file list keeps every provenance component
   `pending`, including privacy.
 
 Predecessor and supersession source sets come only from the tracked registry.
@@ -202,13 +202,13 @@ dry-run display checks verify that separate edit.
 
 ## Trust and scope
 
-- Local schema shape is not the trust event.
+- Local schema shape is not what makes the objects trusted.
 - Validation status is display-only.
 - Deterministic selftests prove lifecycle-script contracts only.
 - This workflow makes no physical DGX claim.
 - After repository merge, verify with
   `scripts/model-serving-release-registry.sh verify`. Schema-1
-  `validation-bundle verify` is a different command and fails on unsealed
+  `validation-bundle verify` is a different command and fails on live
   ADR 0004 profiles.
 
 The supervised `pulsar-model-serving-release-issuance` skill composes these

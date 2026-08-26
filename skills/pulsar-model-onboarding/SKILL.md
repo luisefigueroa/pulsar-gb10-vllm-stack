@@ -140,7 +140,7 @@ move with `scripts/model-library.sh home relocate <profile> --node RANK --yes`
 after that same live rehash; do not Hub re-download. An older tree without a
 receipt still fails without fallback (ADR 0012: expected-manifest fallback is retired).
 Refuse a
-missing required receipt or reviewed manifest, failed verification, a partial
+missing required receipt, failed verification, a partial
 tree, another revision, a duplicate occupancy home, or an out-of-geometry home.
 An unbound-complete tree with a compatible receipt is relocate, not re-add.
 Neither the catalog's shallow `complete` label nor a self-observed manifest is
@@ -203,10 +203,8 @@ Name the chosen distribution/source and transport. There is no silent fallback
 and no automatic fallback.
 
 A live profile serves with `identity_status=legacy-unsealed` after
-full verification; an unattested `home add` acquisition follows mutable
-`refs/main` at selection time. Both may be served with their honest labels,
-but neither is an exact ADR 0004 qualification attempt on its own. Do not
-add a product-code fix for that gap.
+full verification. Do not treat mutable `refs/main` as identity. That honest
+label is not an exact ADR 0004 qualification attempt on its own.
 
 ### 7. Build and verify the release plan
 

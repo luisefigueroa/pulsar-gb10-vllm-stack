@@ -18,7 +18,7 @@ single-stream ceiling as `240 / active-GB-per-token`:
 
 (raw sweeps in results/bench-*.json; the roofline model predicts within
 6-21% everywhere — active-bytes arithmetic is a reliable planning tool on
-this hardware. The flagship's larger gap is cross-node all-reduce time,
+this hardware. DeepSeek's larger gap is cross-node all-reduce time,
 consistent with the measured ~2.3 ms/token comms budget.)
 
 Compute is comparatively plentiful: prefill runs fine, and batching scales
@@ -84,10 +84,10 @@ number is promoted to a larger world size without remeasurement.
 - `--max-num-seqs`: dense models keep per-stream decode acceptable up to
   ~8-16 concurrent (bandwidth divides across streams); MoE models batch
   better (expert reads amortize). Numbers per model in results/bench-*.
-- `--max-num-batched-tokens 16384` is the current flagship DeepSeek value
+- `--max-num-batched-tokens 16384` was the measured DeepSeek two-node value
   (20 GB/rank KV, `max-num-seqs 5`, long-session prefills). `8192` was
-  the prior soaked 10 GB / `max-num-seqs 8` geometry — do not treat it as
-  today's production default.
+  the prior soaked 10 GB / `max-num-seqs 8` geometry. That profile is not in
+  the live catalog (ADR 0012).
 - Cold-start discipline for benchmarks: warm up at EACH concurrency level
   (Triton JITs per batch shape; cold numbers are ~100x artifacts).
   validate/bench_serve.py does this automatically.
@@ -102,11 +102,11 @@ the acceptance factor). Re-measured with fixed metering + natural prompts:
 
 | Method | Status | Notes |
 |---|---|---|
-| **DSpark k=5** on DeepSeek-V4-Flash (PR-41834, 2-node) | **DEFAULT** | +79% c=1 (48.4 vs 27.1); 150-min soaks PASS; roll back with `--no-spec-decode` |
+| **DSpark k=5** on DeepSeek-V4-Flash (PR-41834, 2-node) | **HISTORICAL default** (profile removed) | +79% c=1 (48.4 vs 27.1); 150-min soaks PASS; rolled back with `--no-spec-decode` |
 | **MTP k=1** on Nemotron-Super (triton draft head) | **opt-in WIN** | +47% c=1; lossless; `./serve.sh … --spec-decode` |
 | **DFlash k=15** on Laguna | **marginal opt-in** | +13% c=1; default conf keeps it off |
 | **ngram** on GDN hybrids (Qwen3.6) | **FAIL** | output corruption — never enable |
-| Generic **MTP** on DSV4 (pre-DSpark path) | superseded | use DSpark on the flagship image instead |
+| Generic **MTP** on DSV4 (pre-DSpark path) | superseded | historical DeepSeek used DSpark on the PR-41834 image |
 
 Always use `validate/bench_serve.py` (token counts from usage, not SSE chunks)
 and natural prompts for new A/Bs. Historical pre-fix tables in

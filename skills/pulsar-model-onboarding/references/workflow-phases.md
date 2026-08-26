@@ -99,7 +99,7 @@ manifest, runtime envelope, and selected access contract.
    names that live directory. Occupancy may move with
    `scripts/model-library.sh home relocate <profile> --node RANK --yes`. An
    older tree without a receipt fails without fallback (ADR 0012).
-8. Refuse a missing required receipt or reviewed manifest, failed or incomplete
+8. Refuse a missing required receipt, failed or incomplete
    verification, partial or wrong-revision content, a duplicate occupancy home,
    or an out-of-geometry home. Unbound-complete trees with a compatible receipt
    are relocate, not Hub re-add. Do not treat a catalog `complete` label or a

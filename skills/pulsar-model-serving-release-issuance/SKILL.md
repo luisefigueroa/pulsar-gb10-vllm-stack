@@ -7,7 +7,8 @@ description: Supervise maintainer staging of one independently verified draft AD
 
 Compose existing staging CLIs for one verified draft capture candidate.
 This skill has no authority. Local `plan` or `stage` does not establish trust.
-Repository review and merge remain the trust event. Never invent a review
+Repository review and merge remain the trust event: they are what make the
+objects trusted. Never invent a review
 outcome, mutate a capture candidate, assign `Validated` to skip missing
 criteria, authorize serving, promote a path, or claim physical behavior.
 
@@ -182,7 +183,7 @@ scripts/selftest.sh
 
 If the profile was bound, inspect that `release_id`. Do not run
 `validation-bundle verify` as the ADR 0004 check: that command is the
-schema-1 seal/bundle verifier and fails on unsealed profiles. Those
+schema-1 seal/bundle verifier and fails on live ADR 0004 profiles. Those
 checks still do not authorize serving.
 
 ## Resume

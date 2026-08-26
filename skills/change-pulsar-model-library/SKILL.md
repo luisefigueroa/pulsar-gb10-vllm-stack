@@ -70,8 +70,8 @@ Apply [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md
 a failure does not erase valid evidence from another scope
 without a demonstrated causal connection, but it blocks every combined claim
 that requires the failure to pass. Never treat health or completion smoke as
-model qualification. Do not carry `STATUS=tested` or an old validation bundle
-onto changed model, image, runtime, or geometry inputs merely because generic
+model qualification. Do not carry `STATUS=tested` or an archived combined
+identity file onto changed model, image, runtime, or geometry inputs merely because generic
 catalog evidence remains reusable.
 
 For a reviewed decision, include every applicable observation automatically.
@@ -129,19 +129,20 @@ Map the proposed work across these independent axes before editing:
 
 - durable ownership and placement;
 - origin, transfer, runtime source, and retention;
-- expected identity, observed identity, source-attested identity, validation
-  bundle, and witness state;
+- receipt/occupancy identity, observed identity, ADR 0004 Model Serving
+  Release identity, evidence bundle, and witness state;
 - control, inference, and weight-transfer planes;
 - rank geometry, topology identity, and trust boundaries;
 - preparation, launch, pin, purge, restart, home loss, and rollback;
 - human CLI behavior and machine-readable schemas; and
 - experimental, candidate, promoted, and historically tested claims.
 
-Reviewed Model Serving Release bindings, legacy expected seals, and unbound
-source-attested identity are distinct. Source-attested adoption is
-`catalog-artifact` observed/source identity only: it does not create a seal,
-status, serving permission, or a Model Serving Release decision. Unknown trees without a receipt still require a reviewed expected manifest
-independent of the observed tree. A home created by source-attested acquisition
+Reviewed Model Serving Release bindings and unbound receipt/occupancy
+identity are distinct. Lab expected-identity files are archive-only (ADR
+0012). Hugging Face `home add --revision` is `catalog-artifact`
+observed/source identity only: it does not create a lab expected-identity
+file, status, serving permission, or a Model Serving Release decision.
+Unknown trees without a receipt fail without fallback. A receipted home
 may be reused only after a complete offline rehash against its valid receipt
 while occupancy names the live directory. Occupancy may move with
 `home relocate` after that rehash (ADR 0011). The public
@@ -159,7 +160,7 @@ changes explicitly.
 
 Follow the repository's Bash/Python boundary and lifecycle rules. Keep
 fallbacks, alternate transports, replica policies, and geometry changes
-explicit and operator-visible. Preserve fail-closed behavior and avoid
+explicit and operator-visible. Preserve fail-without-fallback behavior and avoid
 expanding the request into unrelated promotion or cleanup work.
 
 Update the relevant authority and support surfaces together:
