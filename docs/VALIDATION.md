@@ -17,8 +17,8 @@ control plane; the `--weight-source`/`--weight-mode` axis fails closed; the
 absolute-path catalog profiles (`laguna-s-2.1-nvfp4`, `laguna-s-2.1-2node`,
 `inkling-small-nvfp4`) are removed because a durable home requires an exact
 Hugging Face `model_id@commit`; and a confirmed topology manifest (one-node
-is valid) becomes a serving prerequisite. Every library scope — two-rank
-sealed, one-rank, legacy-unsealed — is supported by decision. The one-rank
+is valid) becomes a serving prerequisite. Every live library scope uses local
+files on every rank and is supported by decision. The one-rank
 physical serving-integration evidence remains PENDING and is recorded in
 ADR 0006 as an accepted risk with follow-up capture. Historical replicated
 and weight-fabric rows below remain valid history; they are superseded as
@@ -69,9 +69,9 @@ read-only plan and separately confirmed exact-commit acquisition. Reuse of that
 home requires receipt-backed offline full verification against the receipt
 while occupancy names the exact live directory. Occupancy may move with
 `home relocate` after that live rehash (ADR 0011). Unknown trees without a
-receipt still require full verification against a reviewed
-expected manifest independent of the observed tree; catalog state and a
-self-observed manifest alone are insufficient. The bounded Nemotron Nano Gate
+receipt fail without fallback (ADR 0012: there is no lab expected-identity
+fallback); catalog state and a
+self-observed file list alone are insufficient. The bounded Nemotron Nano Gate
 14 physically passes the one-node rank-0 catalog/artifact lifecycle. Remote
 target execution, asymmetric credentials, serving integration, and model
 qualification remain pending.
@@ -172,13 +172,18 @@ This is the evidence-backed recommendation set, not a serving allowlist. Other
 catalog serving profiles remain selectable with their actual status and
 caveats when their concrete operational checks pass.
 
+`deepseek-v4-flash` and `qwen3-1.7b` are **not** live catalog profiles
+([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+Their measurements remain history below.
+
 | Role | What to run | Image | Notes |
 |---|---|---|---|
-| **Flagship (2-node)** | `cluster/start-cluster.sh deepseek-v4-flash` | published PR-41834 digest in model conf | DeepSeek-V4-Flash-**0731**; DSpark default-on at checkpoint-fixed k=5; canonical **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01; the 10 GB/577k result remains historical evidence. |
-| **Primary single-node** | `./serve.sh nemotron-3-nano-30b-nvfp4 -d` | mainline | Fastest tok/s on box. (The prior primary `laguna-s-2.1-nvfp4` profile was removed by ADR 0006 — absolute-path catalog; its measurements remain history below.) |
-| Large single-node | `./serve.sh nemotron-3-super-120b-nvfp4 -d` | mainline | MTP opt-in via `--spec-decode` |
-| Reasoning single-node | `./serve.sh qwen3.6-27b-fp8 -d` | mainline | **Never** ngram spec; not 2-node |
-| Diagnostic canary | `./serve.sh qwen3-1.7b -d` | `v0.26.0` digest pinned in model conf | Build/plumbing probe; first lab-sealed identity; hidden from serving wizard |
+| **Primary single-node** | `./pulsar start nemotron-3-nano-30b-nvfp4` | mainline | Fastest tok/s on box. (The prior primary `laguna-s-2.1-nvfp4` profile was removed by ADR 0006 — absolute-path catalog; its measurements remain history below.) |
+| Large single-node | `./pulsar start nemotron-3-super-120b-nvfp4` | mainline | MTP opt-in via `--spec-decode` |
+| Reasoning single-node | `./pulsar start qwen3.6-27b-fp8` | mainline | **Never** ngram spec; not 2-node |
+| ADR 0004 one-node (advisory `Testing incomplete`) | `./pulsar start qwen3.8-27b-fp8` | digest-pinned official image in conf | Not recommended; context unevaluated |
+| Tiny two-node test | `./pulsar start qwen3-1.7b-2node` | `v0.26.0` digest in conf | Hidden from serving wizard |
+| **HISTORICAL 2-node DeepSeek** | profile removed | published PR-41834 digest | DeepSeek-V4-Flash-**0731** measurements: DSpark k=5; **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01. Do not `./pulsar start deepseek-v4-flash`. |
 
 **Not shipped:** stock `v0.26.0` for DeepSeek-V4 multi-node (livelock); community sparkrun binary (removed from tree); Ray multi-node; ngram on GDN hybrids.
 
@@ -190,8 +195,8 @@ caveats when their concrete operational checks pass.
 | Single authoritative copy over NFSv4.2/RDMA | **RETIRED — NOT PROMOTED** | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) rejects live NFS/RDMA under vLLM as a serving runtime source. Historical artifacts remain under `results/weight-fabric/` and are superseded, not promotion evidence. Launch fails closed. |
 | Federated library to sealed local hot via 8-stream SSH-over-RoCE | **THE ONLY MECHANISM (ADR 0006); one-rank physical evidence pending** | ADR 0003 fixes topology-bound eight-stream SSH-over-RoCE with no fallback for reviewed multi-rank preparation. Transfer, integrity, interruption/retry, SSH identity, admission, one-home lifecycle, and prior serving integration already passed. The 2026-08-16 closure then removed the home-rank copy fallback and physically passed exact-symlink preparation, 30-minute c=5 serving with 587 completions and zero errors, restart, forced replacement failure, persisted recovery in a new wizard process, identity re-verification, owned cleanup, and one-home closeout. The soak retained a 1.14 GiB memory-shrink warning. Every library scope is supported by ADR 0006; one-rank physical serving-integration evidence remains an accepted risk. The failed DeepSeek strict same-boot result still blocks `Validated` for that Model Serving Release; no legacy status changed. See the [GA closure artifact](../results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json) and [evidence index](../results/model-library/README.md). |
 | Model-library health, interactive browsing/refresh/preparation, and serving-wizard delegation | **PASS — LIBRARY-ONLY OPERATOR PATH; ONE-RANK PHYSICAL EVIDENCE PENDING** | Health schema, Doctor rows, browsing, explicit refresh/preparation, and wizard delegation pass deterministic contracts. Public `hot legacy` repair is removed (SIM-13); leftover schema-1/2 still cannot launch. The wizard has no storage-mode choice (ADR 0006); it rechecks exact ready views and requires a separate final launch confirmation. The physical closure proved failed-launch recovery in addition to the earlier successful-launch gate. One-rank catalog placement stays on the durable-home rank and still needs its own physical serving-integration repeat. Refresh remains byte-free and nonautomatic; pinning does not claim home-loss resilience. No Model Serving Release status changed. |
-| Reviewed one-home acquisition | **CATALOG/ARTIFACT PASS — NOT PROMOTED** | `home add` accepts only a sealed profile, inspects every confirmed rank, lets a one-node profile select any confirmed rank while keeping multi-node profiles in their exact geometry, and chooses the most-free-space eligible candidate or an exact in-geometry override. Deterministic contracts cover identity, geometry, eligibility, races, tamper, mismatch, cleanup, confirmation, and JSON separation. The three-node physical Qwen gate then passed guarded last-home removal, interrupted target-side download cleanup, explicit and automatic rank-2 placement, full SHA-256 verification of the reviewed 4,079,450,110-byte manifest, atomic publication, explicit catalog refresh, and final healthy one-home/no-hot state. The target used Pulsar's managed HF CLI venv. This proves catalog/artifact acquisition only: no runtime view was prepared, no model was launched or qualified, and no storage path or default was promoted. See [the sanitized gate](../results/model-library/qwen3-1.7b-home-acquisition-gate-20260813.json). |
-| Source-attested unsealed one-home acquisition | **CONTROL PLANE PASS — PHYSICAL HUB/DGX GATE PENDING** | The public plan and execution contracts above are implemented for an absent brand-new unsealed Hugging Face repository. No real model acquisition, physical receipt-backed restart/prepare, serving integration, qualification, seal, status, decision, or promotion evidence has been collected. |
+| Reviewed one-home acquisition | **HISTORICAL CATALOG/ARTIFACT PASS — NOT PROMOTED** | The 2026-08-13 Qwen gate used lab expected-identity `home add` (retired by ADR 0012). It inspected every confirmed rank, let a one-node profile select any confirmed rank while keeping multi-node profiles in their exact geometry, and chose the most-free-space eligible candidate or an exact in-geometry override. The three-node physical Qwen gate then passed guarded last-home removal, interrupted target-side download cleanup, explicit and automatic rank-2 placement, full SHA-256 verification of the reviewed 4,079,450,110-byte file list, atomic publication, explicit catalog refresh, and final healthy one-home/no-hot state. The target used Pulsar's managed HF CLI venv. This proves catalog/artifact acquisition only: no runtime view was prepared, no model was launched or qualified, and no storage path or default was promoted. See [the sanitized gate](../results/model-library/qwen3-1.7b-home-acquisition-gate-20260813.json). Live acquisition is `home add --revision`. |
+| Hugging Face `home add --revision` | **CONTROL PLANE PASS — PHYSICAL HUB/DGX GATE PENDING** | The public plan and execution contracts above are implemented for an absent brand-new Hugging Face repository. No real model acquisition, physical receipt-backed restart/prepare, serving integration, qualification, status, decision, or promotion evidence has been collected. |
 
 The catalog/artifact and serving-integration results above are accepted within
 their recorded contracts. They do not change any model's legacy `tested` claim or assign a Model
@@ -200,9 +205,12 @@ strict same-boot criterion failed and required testing remains incomplete. That
 result did not prevent the bounded distribution subsystem from completing its
 separate GA closure task on 2026-08-16.
 
-### Issued model identities
+### Historical lab expected-identity (not live)
 
-The one-node diagnostic `qwen3-1.7b` profile now binds:
+These rows are **HISTORICAL**. Both profiles were removed from the live catalog
+by ADR 0012. Digests and numbers are unchanged.
+
+The one-node diagnostic `qwen3-1.7b` profile historically bound:
 
 - model commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`;
 - complete manifest
@@ -236,7 +244,7 @@ See
 [`qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json`](../results/model-library/qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json).
 No profile status or storage policy changed.
 
-The flagship `deepseek-v4-flash` profile now additionally binds:
+The two-node `deepseek-v4-flash` profile historically additionally bound:
 
 - model commit `7872f01b1d1fe23eabc4c98b48bffcef5a386062`;
 - complete manifest
@@ -350,17 +358,17 @@ guidance is:
 
 | Path | Default | Override |
 |---|---|---|
-| DeepSeek-V4-Flash **DSpark k=5** (PR-41834) | **on** | `--no-spec-decode` rolls back to base decode |
-| Nemotron-Super **MTP k=1** | base; **opt-in win** (+47% c=1) | `./serve.sh nemotron-3-super-120b-nvfp4 --spec-decode` |
-| Laguna **DFlash k=15** | **off** (marginal +13%) | only with a fresh A/B |
+| DeepSeek-V4-Flash **DSpark k=5** (PR-41834) | **HISTORICAL on** (profile removed) | `--no-spec-decode` rolled back to base decode |
+| Nemotron-Super **MTP k=1** | base; **opt-in win** (+47% c=1) | `./pulsar start nemotron-3-super-120b-nvfp4 --spec-decode` |
+| Laguna **DFlash k=15** | **off** (marginal +13%; profile removed) | only with a fresh A/B |
 | **ngram** on GDN hybrids | **never** | removed from conf — corrupts output |
-| Generic DSV4 **MTP** | superseded by DSpark on the flagship image | — |
+| Generic DSV4 **MTP** | superseded by DSpark on the historical DeepSeek image | — |
 
 Configs ship `SPEC_DECODE_ARGS` only where validated. `RECOMMENDED_SPEC=1`
 makes that validated path the default; `--no-spec-decode` is the explicit
 rollback. Optional profiles remain off unless `--spec-decode` is supplied.
 
-For the flagship, k=5 is a checkpoint invariant: it must equal
+For historical DeepSeek, k=5 is a checkpoint invariant: it must equal
 `dspark_block_size=5`. It is not a tuning knob; larger blocks draft unreachable
 positions and reduce acceptance
 ([vLLM PR #41834](https://github.com/vllm-project/vllm/pull/41834)).
@@ -451,7 +459,7 @@ up and healthy for **27+ hours total** across idle and load
 
 **Needle @447,237 tokens at max-model-len 500000: 3/3 PASS (2026-07-30).**
 
-**PROMOTED 2026-07-30**: `models/deepseek-v4-flash.conf` now runs the
+**HISTORICAL (promoted 2026-07-30; profile later removed by ADR 0012):** `models/deepseek-v4-flash.conf` then ran the
 upstream-lineage image (PR-41834). DSpark is the validated flagship default
 (see corrected A/B + soaks). Community-binary experiments are historical only
 and are not an in-tree launch path. Note historical lines above
@@ -609,9 +617,10 @@ Liveness confirmed with a real greedy completion (coherent) after 2.5 h
 of continuous load, not `/health`. Raw: results/soak-dsv4-0731-150min.json
 (300 samples) + results/soak-dsv4-0731-node2-samples.log (152 samples).
 
-**Consequence: 0731 is the flagship.** `models/deepseek-v4-flash.conf` now
-serves DeepSeek-V4-Flash-0731 with the integrated drafter (DSpark k=5
-default-on with `--no-spec-decode` rollback). The fully validated 04-22
+**Consequence: 0731 was the measured DeepSeek checkpoint.** The removed
+`models/deepseek-v4-flash.conf` then served DeepSeek-V4-Flash-0731 with the
+integrated drafter (DSpark k=5 default-on with `--no-spec-decode` rollback).
+The fully validated 04-22
 checkpoint was superseded and its serving profile has since been retired;
 the separate
 `deepseek-v4-flash-dspark.conf` is retired — the integrated drafter
