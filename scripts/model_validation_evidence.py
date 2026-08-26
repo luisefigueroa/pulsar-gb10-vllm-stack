@@ -1789,10 +1789,18 @@ def _validate_provenance_security_review(
         review.get("evidence_artifact_ids"),
         label="provenance/security review evidence_artifact_ids",
     )
-    if not artifact_ids:
-        fail("provenance/security review must cite evidence")
-    if artifact_ids != bundle["review_evidence_artifact_ids"]:
+    leftover_ids = bundle["review_evidence_artifact_ids"]
+    if artifact_ids != leftover_ids:
         fail("provenance/security review must cover every bundle review artifact")
+    conclusive = any(
+        review.get(component) in {"pass", "fail"}
+        for component in PROVENANCE_REVIEW_COMPONENTS
+    )
+    if conclusive and not artifact_ids:
+        fail(
+            "provenance/security review must cite leftover review evidence "
+            "when any component is pass or fail"
+        )
     if any(
         artifacts[artifact_id]["qualification_scope"] != "release-promotion"
         for artifact_id in artifact_ids

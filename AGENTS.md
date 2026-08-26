@@ -141,6 +141,13 @@ language for new features without an explicit decision.
   trust; repository review and merge are the trust event. It must not mutate
   the capture candidate, edit a profile, authorize serving, or claim physical
   behavior. Status remains advisory.
+  Bundle `review_evidence_artifact_ids` are leftover non-run artifacts, not
+  a second copy of compare/bench. Empty after measurement capture is
+  expected. A decision may cite an empty list only when every
+  provenance/security component is `pending`. Do not recapture a
+  maintainer essay to populate the list. `Validated` still requires a
+  provenance pass with cited leftover `release-promotion` artifacts.
+  Do not invent review evidence.
   `validate/validator_measurement.py` owns the closed, versioned, status-neutral
   measurement documents emitted by `validate/compare_captures.py` and
   `validate/bench_serve.py`. `scripts/model_serving_release_attempt.py` owns the

@@ -64,8 +64,15 @@ The review file is workflow input with schema version 1 and kind
 - name a privacy-safe reviewer, reviewed-at time, closed review reference,
   and any direct superseded decision IDs
 
+This review file is not evidence. It does not populate bundle
+`review_evidence_artifact_ids`. After onboarding capture of compare and
+bench only, that leftover list is empty; that is expected. Do not recapture
+a maintainer essay to make it non-empty. See the 2026-08-25 interpretation
+note in [ADR 0004](./decisions/0004-model-serving-release-validation.md).
+
 Keep the review file outside the tracked worktree or under an appropriate
-gitignored `experiments/` directory. Its closed shape is:
+gitignored `experiments/` directory. A first incomplete issuance typically
+looks like:
 
 ```json
 {
@@ -75,18 +82,18 @@ gitignored `experiments/` directory. Its closed shape is:
   "artifacts": [
     {
       "artifact_id": "<original artifact SHA-256 ID>",
-      "privacy_review": "passed"
+      "privacy_review": "pending"
     }
   ],
   "provenance_security_review": {
-    "artifact_identity": "pass",
-    "runtime_identity": "pass",
-    "contract_frozen_before_testing": "pass",
-    "evidence_privacy": "pass",
-    "security": "pass"
+    "artifact_identity": "pending",
+    "runtime_identity": "pending",
+    "contract_frozen_before_testing": "pending",
+    "evidence_privacy": "pending",
+    "security": "pending"
   },
   "criterion_exclusions": [],
-  "expected_status": "validated",
+  "expected_status": "testing-incomplete",
   "reviewer": "<privacy-safe maintainer ID>",
   "reviewed_at": "<RFC 3339 UTC time>",
   "review_reference": "repository-review:<privacy-safe change ID>",
@@ -94,11 +101,25 @@ gitignored `experiments/` directory. Its closed shape is:
 }
 ```
 
+When every provenance/security component is `pending`, the staged decision
+cites an empty leftover list. When any component is `pass` or `fail`, the
+decision must cite the bundle's non-empty `review_evidence_artifact_ids`,
+and those artifacts must be `release-promotion` leftovers rather than
+compare/bench measurements. A publishable `results/` provenance/security
+document is optional supporting evidence for that conclusive case only;
+attach it through capture `review_source_keys` before `verify-candidate`.
+
+A later all-pass review still uses the same kind, with `privacy_review`
+and provenance components set to `passed`/`pass` and
+`expected_status` matching the derived result (`validated` only when every
+frozen criterion passed).
+
 Artifact entries, exclusions, and superseded decision IDs must be sorted and
 unique. An exclusion names the original candidate `criterion_id`,
 `run_record_id`, ordinary-language `reason`, and one or more original
-`review_evidence_artifact_ids`; issuance remaps those IDs into the reviewed
-object graph.
+leftover `review_evidence_artifact_ids`; issuance remaps those IDs into the
+reviewed object graph. Exclusions still require leftover review artifacts
+because the reason document is not the run being excluded.
 
 Allowed review references are `pr:<id>`, `commit:<40-or-64-hex>`, and
 `repository-review:<privacy-safe-id>`. That syntax cannot prove review
@@ -106,7 +127,9 @@ occurred. This workflow does not contact GitHub or any network.
 
 The expected status is an assertion. The command fails if it differs from
 the status derived by `build_validation_decision`. Reviews do not have to
-pass merely to record an accurate non-`Validated` status.
+pass merely to record an accurate non-`Validated` status. Empty leftover
+`review_evidence_artifact_ids` with every provenance/security component
+`pending` is a legal incomplete issuance. Do not invent review evidence.
 
 ## Materialization
 
@@ -175,6 +198,7 @@ dry-run projection checks verify that separate edit.
 - Deterministic selftests prove control-plane contracts only.
 - This workflow makes no physical DGX claim.
 
-See [ADR 0004](./decisions/0004-model-serving-release-validation.md),
+See [ADR 0004](./decisions/0004-model-serving-release-validation.md)
+(including the 2026-08-25 leftover-list note),
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md),
 and [REVALIDATE.md](./REVALIDATE.md).

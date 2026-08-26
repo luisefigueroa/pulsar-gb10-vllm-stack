@@ -221,5 +221,9 @@ grep -Fq 'Do not use `validate/run-gates.sh` as the ADR attempt wrapper' "$phase
   || fail "phase checklist must keep sequential measurement rules"
 grep -Fq 'No seal was issued' "$handoff" \
   || fail "handoff template must deny reviewed authority"
+grep -Fq 'review_evidence_artifact_ids' "$skill" \
+  || fail "skill must name empty leftover review IDs after capture"
+grep -Fq 'empty after compare/bench is' "$handoff" \
+  || fail "handoff must treat empty leftover review IDs as expected"
 
 echo "OK   pulsar-model-onboarding skill package contracts"
