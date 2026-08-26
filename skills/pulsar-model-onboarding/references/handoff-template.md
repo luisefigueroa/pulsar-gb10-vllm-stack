@@ -29,6 +29,9 @@ List only artifacts that actually exist. Use repository-relative paths.
 - Unreviewed attempt specs:
 - Unreviewed capture candidates:
 - Assembled bundle candidate:
+- Leftover review-evidence IDs (`review_evidence_artifact_ids`): empty
+  unless a review source was captured; empty after compare/bench is
+  expected
 
 ## Missing criteria
 
@@ -38,7 +41,7 @@ unevaluated/incomplete unless separately captured.
 
 - Stability:
 - Accuracy:
-- Provenance/security:
+- Provenance/security: review-derived; not a compose output
 - Serving integration:
 - Physical geometry:
 - Context / soak:

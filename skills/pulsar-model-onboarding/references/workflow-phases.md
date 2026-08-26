@@ -48,7 +48,8 @@ Confirm the complete ADR 0004 contract before testing:
 
 State that current automated mapping covers only strict same-boot, absolute
 throughput, and absolute latency. Other required criteria remain
-unevaluated/incomplete until separately captured.
+unevaluated/incomplete until separately captured. Provenance/security is
+review-derived and is not a compose output.
 
 Agree and record this complete input before testing. The Validation Contract
 is not frozen until the planner later combines it with the exact artifact
@@ -204,7 +205,8 @@ scripts/model-serving-release-capture.sh verify-candidate \
   --candidate-dir DIR
 ```
 
-Capture immediately after compose.
+Capture immediately after compose. Empty `review_evidence_artifact_ids`
+is expected; do not add a review source.
 
 ## 11. Cleanup
 

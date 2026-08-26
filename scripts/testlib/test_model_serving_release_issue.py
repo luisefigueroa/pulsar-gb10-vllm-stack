@@ -265,6 +265,52 @@ class ModelServingReleaseIssueTests(unittest.TestCase):
             expected_status="testing-incomplete",
         )
 
+    def test_all_pending_empty_leftovers_derives_testing_incomplete(self) -> None:
+        dest, candidate = fixture.capture_criterion(self.repo, "accuracy-gsm8k")
+        self.assertEqual(candidate.bundle["review_evidence_artifact_ids"], [])
+        review_path, review = fixture.write_review(
+            self.repo,
+            candidate,
+            expected_status="testing-incomplete",
+            privacy="pending",
+            provenance_overrides={
+                "artifact_identity": "pending",
+                "runtime_identity": "pending",
+                "contract_frozen_before_testing": "pending",
+                "security": "pending",
+            },
+        )
+        code, payload, stdout, stderr = self.plan_or_stage(
+            "plan", dest, review_path
+        )
+        self.assertEqual(code, 0, stderr or stdout)
+        assert payload is not None
+        self.assertEqual(payload["status"], "testing-incomplete")
+        self.assert_trust_caveats(payload, stdout)
+        plan = issue.build_issue_plan(
+            repo_root=self.repo, candidate_dir=dest, review=review
+        )
+        self.assertEqual(plan.bundle["review_evidence_artifact_ids"], [])
+        self.assertEqual(
+            plan.decision["provenance_security_review"]["evidence_artifact_ids"],
+            [],
+        )
+
+    def test_conclusive_provenance_without_leftovers_fails(self) -> None:
+        dest, candidate = fixture.capture_criterion(self.repo, "accuracy-gsm8k")
+        self.assertEqual(candidate.bundle["review_evidence_artifact_ids"], [])
+        review_path, _review = fixture.write_review(
+            self.repo, candidate, expected_status="testing-incomplete"
+        )
+        code, payload, stdout, stderr = self.plan_or_stage(
+            "plan", dest, review_path
+        )
+        self.assertEqual(code, 1, stdout)
+        assert payload is not None
+        self.assertFalse(payload["ok"])
+        self.assertIn("leftover review evidence", payload["error"])
+        self.assert_trust_caveats(payload, stderr)
+
     def test_derived_tested_criteria_not_met_from_measurement(self) -> None:
         def builder():
             inputs = capture_fixture.failing_measurement_spec(self.repo)

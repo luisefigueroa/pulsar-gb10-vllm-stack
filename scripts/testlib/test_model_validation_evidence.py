@@ -620,6 +620,76 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
         )
         self.assertEqual(decision["status"], "testing-incomplete")
 
+    def test_all_pending_provenance_may_cite_empty_leftovers(self) -> None:
+        artifacts = fixture.build_artifacts(
+            include_review=False, measurement_privacy="pending"
+        )
+        runs = fixture.build_passing_runs(
+            release=self.release, contract=self.contract, artifacts=artifacts
+        )
+        bundle = fixture.build_bundle(
+            release=self.release,
+            contract=self.contract,
+            artifacts=artifacts,
+            run_records=runs,
+        )
+        self.assertEqual(bundle["review_evidence_artifact_ids"], [])
+        pending = dict.fromkeys(evidence.PROVENANCE_REVIEW_COMPONENTS, "pending")
+        review = fixture.build_review(artifacts, component_overrides=pending)
+        self.assertEqual(review["evidence_artifact_ids"], [])
+        decision = fixture.build_decision(
+            release=self.release,
+            contract=self.contract,
+            artifacts=artifacts,
+            run_records=runs,
+            bundle=bundle,
+            provenance_review=review,
+            status="testing-incomplete",
+        )
+        self.assertEqual(decision["status"], "testing-incomplete")
+        self.assertEqual(
+            decision["provenance_security_review"]["evidence_artifact_ids"], []
+        )
+
+    def test_conclusive_provenance_requires_leftover_review_evidence(self) -> None:
+        artifacts = fixture.build_artifacts(include_review=False)
+        runs = fixture.build_passing_runs(
+            release=self.release, contract=self.contract, artifacts=artifacts
+        )
+        bundle = fixture.build_bundle(
+            release=self.release,
+            contract=self.contract,
+            artifacts=artifacts,
+            run_records=runs,
+        )
+        self.assertEqual(bundle["review_evidence_artifact_ids"], [])
+        for label, overrides, status in (
+            ("all pass", {}, "validated"),
+            ("security fail", {"security": "fail"}, "tested-criteria-not-met"),
+            (
+                "mixed pass and pending",
+                {"runtime_identity": "pending"},
+                "testing-incomplete",
+            ),
+        ):
+            with self.subTest(label=label):
+                review = fixture.build_review(
+                    artifacts, component_overrides=overrides
+                )
+                with self.assertRaisesRegex(
+                    evidence.ModelValidationEvidenceError,
+                    "leftover review evidence",
+                ):
+                    fixture.build_decision(
+                        release=self.release,
+                        contract=self.contract,
+                        artifacts=artifacts,
+                        run_records=runs,
+                        bundle=bundle,
+                        provenance_review=review,
+                        status=status,
+                    )
+
     def test_explicit_status_is_rejected_when_evidence_derives_another(self) -> None:
         with self.assertRaisesRegex(
             evidence.ModelValidationEvidenceError,

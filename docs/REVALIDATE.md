@@ -172,6 +172,11 @@ release cross-links, including recipe/geometry consistency and privacy-safe
 descriptor fields. The review-derived provenance/security criterion is one
 closed canonical template; extra requirements are rejected because the
 decision evaluator would have no run metric with which to satisfy them.
+Bundle `review_evidence_artifact_ids` are leftover non-run artifacts.
+Empty is expected after measurement capture. A decision may cite an empty
+list when every provenance component is `pending`; a `pass` or `fail`
+still requires cited leftover `release-promotion` artifacts. That citation
+rule is not a new Model Serving Release.
 Every persisted free-form release/contract string without a stricter closed
 grammar is screened for secret, absolute-path, endpoint, and deployment-only
 content, including artifact identifiers, criterion/workload/protocol/threshold

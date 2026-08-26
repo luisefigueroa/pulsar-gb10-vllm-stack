@@ -162,6 +162,8 @@ def build_artifact(
 def build_artifacts(
     *,
     review_privacy: str = "passed",
+    include_review: bool = True,
+    measurement_privacy: str = "passed",
 ) -> list[dict[str, Any]]:
     contract = build_contract()
     criteria = {
@@ -169,18 +171,23 @@ def build_artifacts(
         for item in contract["release_criteria"]["criteria"]
     }
     artifacts = [
-        build_artifact(criterion_id, criterion["qualification_scope"])
+        build_artifact(
+            criterion_id,
+            criterion["qualification_scope"],
+            privacy_review=measurement_privacy,
+        )
         for criterion_id, criterion in sorted(criteria.items())
         if criterion["dimension"] != "provenance-security"
     ]
-    artifacts.append(
-        build_artifact(
-            "provenance-security-review",
-            "release-promotion",
-            privacy_review=review_privacy,
-            protected=True,
+    if include_review:
+        artifacts.append(
+            build_artifact(
+                "provenance-security-review",
+                "release-promotion",
+                privacy_review=review_privacy,
+                protected=True,
+            )
         )
-    )
     return sorted(artifacts, key=lambda item: item["artifact_id"])
 
 
@@ -192,6 +199,13 @@ def artifact_for_label(
         if artifact["location"].get("value") == expected_path:
             return artifact
     raise AssertionError(f"fixture artifact not found: {label}")
+
+
+def leftover_review_artifact_ids(artifacts: list[dict[str, Any]]) -> list[str]:
+    try:
+        return [review_artifact(artifacts)["artifact_id"]]
+    except AssertionError:
+        return []
 
 
 def review_artifact(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -606,13 +620,12 @@ def build_bundle(
     run_records = run_records or build_passing_runs(
         release=release, contract=contract, artifacts=artifacts
     )
-    review = review_artifact(artifacts)
     return model_validation_evidence.build_validation_evidence_bundle(
         release=release,
         contract=contract,
         run_records=run_records,
         evidence_artifacts=artifacts,
-        review_evidence_artifact_ids=[review["artifact_id"]],
+        review_evidence_artifact_ids=leftover_review_artifact_ids(artifacts),
     )
 
 
@@ -648,7 +661,7 @@ def build_review(
     values.update(component_overrides or {})
     return model_validation_evidence.build_provenance_security_review(
         **values,
-        evidence_artifact_ids=[review_artifact(artifacts)["artifact_id"]],
+        evidence_artifact_ids=leftover_review_artifact_ids(artifacts),
     )
 
 

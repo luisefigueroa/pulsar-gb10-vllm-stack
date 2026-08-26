@@ -139,7 +139,7 @@ against the verified planner objects. Closed top-level fields are:
 | `commands` | Allowlisted program, typed arguments, classified environment, and `repository-root`; no program version |
 | `criterion_observations` | Measurements that reference evidence by `source_key`, not by precomputed artifact IDs. Nested context and soak sources are part of the run artifact set. |
 | `evidence_sources` | Publishable `results/` files or protected digest locators |
-| `review_source_keys` | Explicit, sorted source keys reserved for review evidence. Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` scope. |
+| `review_source_keys` | Explicit, sorted source keys reserved for leftover review artifacts (files that are not run measurements). Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` scope. Attempt composition for compare and bench emits `[]`. Capture copies that list into bundle `review_evidence_artifact_ids` and does not invent sources. Empty is expected. |
 
 The loader rejects duplicate JSON keys, invalid UTF-8, `NaN`/`Infinity`,
 unknown fields, embedded release or contract objects, precomputed derived
@@ -269,8 +269,8 @@ Additions, removals, replacements, or path swaps fail closed.
 After the pure ADR bundle schema validates, capture-candidate policy
 still requires every evidence artifact to keep `privacy_review` pending
 and every `review_evidence_artifact_ids` entry to use
-`release-promotion` scope. Those checks do not change the broader
-schema enum and are not a reviewed decision.
+`release-promotion` scope. An empty leftover list is valid. Those checks
+do not change the broader schema enum and are not a reviewed decision.
 
 Publishable artifact locations must still be sanitized `results/` files
 and must not use any `raw` path. Protected artifacts must keep the
@@ -283,6 +283,8 @@ existing candidate or any existing ancestor that contains
 
 - Issue a reviewed validation decision or `Untested`
 - Write `models/model-serving-releases/`
+- Invent review sources or treat an empty `review_evidence_artifact_ids`
+  list as a capture defect
 - Change `STATUS`, a profile's release binding, recommendation/default policy,
   or runtime state
 - Persist a planner path or planner candidate ID
@@ -319,4 +321,7 @@ Focused contracts live in
 capture, persistence, and verification behavior only.
 The supervised `pulsar-model-onboarding` skill composes these commands and
 has its own control-plane tests; those tests make no physical DGX claim and
-create no release decision.
+create no release decision. Issuance of a verified candidate is a later
+maintainer workflow; see
+[MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md).
+Onboarding capture does not produce provenance review leftovers.

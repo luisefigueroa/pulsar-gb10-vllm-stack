@@ -309,7 +309,9 @@ Follow [references/handoff-template.md](references/handoff-template.md).
 List completed evidence, missing criteria, failures/inconclusive results,
 candidate locations, and that no reviewed status or authority was produced.
 Do not run `scripts/model-serving-release-issue.sh`; that maintainer
-workflow is a later, separate trust event.
+workflow is a later, separate trust event. Compose/capture of compare and
+bench leaves `review_evidence_artifact_ids` empty; that is expected. This
+skill does not produce provenance review leftovers.
 
 ### 13. Ownership-safe cleanup
 

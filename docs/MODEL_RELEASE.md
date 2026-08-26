@@ -70,7 +70,7 @@ content-addressed evidence references:
 | Object | Included | Deliberately excluded |
 |---|---|---|
 | Run record | Exact release/contract IDs, unique attempt identity and timestamps, completion condition, sorted `attempted_criterion_ids`, structured `observed_environment.cluster` and per-rank compatibility observations, opaque boot/launch IDs, closed typed `commands[].arguments[]` and value-free `commands[].environment[]` descriptors, preparation transport/subsystem provenance, full-verification barrier, current-release criterion measurements, timestamp-bound context/soak observations, and evidence IDs; `run_record_id` | Trusted review, predecessor baseline measurements, profile status, and runtime mutation |
-| ADR 0004 validation bundle | Exact release/contract IDs, immutable run IDs, content-addressed artifact descriptors and privacy state, review-evidence IDs, qualification-started fact, and criterion coverage; `bundle_id` | Reviewer authority, final status, profile mutation, and legacy schema-1 seal/bundle identity |
+| ADR 0004 validation bundle | Exact release/contract IDs, immutable run IDs, content-addressed artifact descriptors and privacy state, leftover review-evidence IDs (may be empty), qualification-started fact, and criterion coverage; `bundle_id` | Reviewer authority, final status, profile mutation, and legacy schema-1 seal/bundle identity |
 | Validation decision | Exact release/contract/bundle IDs; every automatically aggregated disposition with `included_run_record_ids`; explicit evidence-backed `excluded_run_records`; provenance/security/privacy review; an explicit base-status assertion that must equal the derived result; repository-review metadata; and backward supersession links; `decision_id` | Proof that the named review actually occurred, trusted placement/publication, catalog projection, or a launch operation |
 
 The descriptor cross-checks recipe TP/PP against the declared geometry. The
@@ -327,11 +327,16 @@ private-data-free, or that maintainers approved the claim. Those remain review
 decisions.
 
 Even a candidate whose behavioral gates pass remains `Testing incomplete`
-under ADR 0004 until every required gate and provenance/security review is
-complete and a reviewed validation decision exists. The current tooling does
-not assemble or publish that decision. The pure stage-2 schema can reject an
-internally inconsistent decision candidate, but it cannot establish reviewer
-authority or change the current serving/status implementation.
+under ADR 0004 while required gates are missing. A reviewed validation
+decision may record that status with provenance still `pending` and an
+empty leftover review-evidence list. `Validated` still requires every
+required gate and a completed provenance/security review with cited
+leftover `release-promotion` artifacts. The current tooling can stage an
+untrusted decision proposal; repository review and merge remain the trust
+event. Empty leftover review-evidence IDs with pending provenance are a
+legal incomplete decision. The pure stage-2 schema can reject an internally inconsistent
+decision candidate, but it cannot establish reviewer authority or change
+the current serving/status implementation.
 
 ## Preconditions
 
@@ -416,8 +421,10 @@ unreviewed authority state. Any profile drift or document tampering fails.
 ## Review and issuance
 
 The repository can stage an untrusted ADR 0004 issuance proposal with
-`scripts/model-serving-release-issue.sh`. That local command is not trusted
-until repository review and merge. Every
+`scripts/model-serving-release-issue.sh`. Empty leftover
+`review_evidence_artifact_ids` after measurement capture is expected; do
+not recapture a maintainer essay to populate the list. That local command
+is not trusted until repository review and merge. Every
 release pull request must receive maintainer review that confirms:
 
 - the manifest came from the exact snapshot used by the recorded lab run;

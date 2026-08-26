@@ -14,6 +14,12 @@
   The registry now holds the reviewed Qwen3.8 lineage; it is no longer empty.
   2026-08-22 — [ADR 0009](./0009-no-launch-trust-mode-axis.md) rejects a
   separate launch-trust-mode axis; existing labels remain the trust contract.
+  2026-08-25 — bundle `review_evidence_artifact_ids` are leftover non-run
+  artifacts, not a parallel measurement class. An empty list is expected
+  after measurement capture and is a legal decision citation when every
+  provenance/security component is `pending`. Schema version 1 is
+  unchanged. Issued Qwen3.8 objects are not migrated. The decision
+  builder implements this citation rule.
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
@@ -29,7 +35,9 @@
   implemented as control-plane orchestration; maintainer-only issuance
   staging implemented as an untrusted local proposal whose trust event is
   repository review and merge; first reviewed Qwen3.8 lineage stored and bound
-  with advisory status `Testing incomplete`;
+  with advisory status `Testing incomplete`; leftover review-evidence
+  citation rule implemented (empty list is legal when every provenance
+  component is `pending`);
   status-independent serving policy implemented;
   source-attested Hugging Face v1 planning, separately confirmed acquisition,
   immutable receipts, offline home verification, exact prepare binding, and
@@ -254,7 +262,7 @@ status-blocked.
 | Status | Meaning |
 |---|---|
 | **Untested** | Qualification has not begun under a frozen contract. Acquisition or distribution failure before the qualification barrier leaves this status unchanged. |
-| **Testing incomplete** | Qualification began, but required gates, evidence, or provenance/security review are still missing. Passing behavioral tests before reviewed issuance remains here. |
+| **Testing incomplete** | Qualification began, but required gates, evidence, or provenance/security review are still missing. Passing behavioral tests before reviewed issuance remains here. A reviewed decision may record this status with provenance still `pending` and an empty leftover review-evidence list. |
 | **Tested—criteria not met** | The evidence is sufficient to conclude that one or more frozen criteria failed. |
 | **Tested—inconclusive** | Testing ran, but noise, interruption, conflict, or insufficient evidence prevents a pass/fail conclusion. |
 | **Validated** | Every frozen criterion and applicable integration/physical prerequisite passed, including stability, accuracy, throughput, latency, strict same-boot reproducibility, and provenance/security review; the reviewed decision binds the exact release and evidence. |
@@ -445,6 +453,68 @@ results were known. Locally observed content can match a reviewed identity but
 cannot create it. Repository-reviewed issuance plus content digests remains the
 initial authority model; cryptographic signing is deferred.
 
+Issuance records the review that occurred. Recording a decision is not the
+same as completing provenance/security review. A decision whose provenance
+components are all `pending` is a reviewed record of incomplete provenance,
+not a provenance pass. `Validated` still requires that pass.
+
+### Interpretation note — 2026-08-25
+
+Bundle `review_evidence_artifact_ids` is the explicit leftover partition:
+artifacts in `evidence_artifacts` that are not bound to any run record.
+Those leftovers are extra files that are not measurements — an
+exclusion-reason document, or a later conclusive provenance/security
+write-up. They are not a parallel evidence class for compare, bench, or
+other run observations. Run `evidence_artifact_ids` already cite the
+measurements.
+
+Measurement capture has no review-source producer. Attempt composition for
+strict same-boot and absolute throughput/latency emits
+`review_source_keys: []`. Capture copies those keys into
+`review_evidence_artifact_ids` and does not invent sources. An empty
+leftover list after onboarding capture is expected and is not a candidate
+defect. Physical-geometry observations also use `release-promotion` scope
+when they exist and are run-bound, so leftovers cannot be derived as "every
+`release-promotion` artifact."
+
+Three objects stay distinct:
+
+1. The gitignored `pulsar-model-serving-release-issue-review` file is
+   issuance workflow input. It is not a sixth ADR object, not evidence,
+   and does not populate `review_evidence_artifact_ids`.
+2. A publishable provenance/security review document under `results/` is
+   optional supporting evidence. Attach it only by capturing it as a
+   `release-promotion` review source when a conclusive provenance review
+   actually exists. Recapturing a maintainer essay solely to make the
+   leftover list non-empty is not issuance.
+3. Bundle `review_evidence_artifact_ids` lists leftover artifacts only.
+
+A validation decision may cite an empty leftover list if and only if every
+provenance/security component is `pending` (disposition `not-evaluated`;
+no component `pass` or `fail`). That rule is independent of derived status:
+it applies to `Testing incomplete`, `Tested—criteria not met`, and
+`Tested—inconclusive`.
+
+A validation decision must cite a non-empty leftover list, equal to the
+bundle's `review_evidence_artifact_ids`, when any provenance component is
+`pass` or `fail`. Those artifacts must use `qualification_scope:
+release-promotion`. Measurement artifacts cannot substitute.
+
+`Validated` is unchanged: it still requires a provenance `pass`, which
+therefore still requires cited leftover review artifacts.
+
+Schema version 1 is unchanged. The leftover list was already structurally
+allowed to be empty; this note corrects the over-constraint that every
+decision must cite at least one leftover artifact. The stored Qwen3.8
+one-rank decision remains valid and is not migrated; it cited a recaptured
+review document and recorded provenance as `pass`. Future incomplete
+issuances must not copy that workaround.
+
+This note does not add a versioned decision framework, extra provenance
+protocol parameters, or a required
+`pulsar-model-serving-provenance-security-review-evidence` kind. The
+decision builder implements this citation rule.
+
 ### 7. The onboarding skill is orchestration, not authority
 
 The supervised end-to-end skill is named
@@ -589,7 +659,10 @@ inconclusive, and a conclusive requirement miss fails. Strict evidence cannot
 span live server boots, bundles reject reused attempt identities, and review
 timestamps cannot precede their evidence or the decisions they supersede.
 Incomplete privacy or provenance review cannot become `Validated`, and a failed
-distribution before the qualification barrier derives `Untested`. Experimental
+distribution before the qualification barrier derives `Untested`.
+Incomplete provenance can be issued as `Testing incomplete` or another
+non-`Validated` derived status without leftover review artifacts when every
+provenance/security component is `pending`. Experimental
 subsystem use is recorded but does not cap the result. Runtime compatibility
 and architecture/geometry are checked structurally without claiming physical
 behavior. Command descriptors use the closed typed schema and reject raw site
@@ -725,6 +798,12 @@ Implement this decision in focused, reviewable units:
    closure evidence. The reviewed two-rank subsystem is GA, while remote
    one-rank and legacy-unsealed use remain experimental. This stage did not
    issue a Model Serving Release decision or change the guided default.
+6. **Implemented:** align the validation-decision builder with the 2026-08-25
+   leftover-list citation rule so an empty `review_evidence_artifact_ids`
+   list is accepted when every provenance/security component is `pending`,
+   and remains required when any component is `pass` or `fail`. Issued
+   objects are not migrated. Recapturing dummy review documents is not a
+   substitute.
 
 Each unit must update the canonical design, current implementation spec,
 operator/revalidation docs, validation ledger, and evidence index when its
