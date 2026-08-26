@@ -338,7 +338,7 @@ refresh_library_serving_check() {
 }
 
 # The model library is the only weight mechanism (ADR 0006). Establish exact
-# ready runtime views (durable home + prepared hot) for every selected rank,
+# ready runtime views (durable home + prepared working copies) for every selected rank,
 # or return 2 (choose another model) / exit without changing model files.
 # Admission uses local files on every rank (ADR 0012). Acquisition remains
 # home add --revision, not wizard home add.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Maintainer ADR 0004 issuance staging.
+# Maintainer ADR 0004 staging.
 # Not routed by ./pulsar. Stages an untrusted proposal only. Repository
 # review and merge remain the trust event. Does not edit a profile, authorize
 # serving, or claim physical behavior.

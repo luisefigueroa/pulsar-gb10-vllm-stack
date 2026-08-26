@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Snapshot-manifest constants and the live profile-contract schema.
+"""Snapshot file-list constants and the live normalized-profile checksum schema.
 
-Expected-seal and schema-1 validation-bundle documents are not a live product
-(ADR 0012). Snapshot hashing and ADR 0004 Model Serving Release objects live
-elsewhere.
+Lab expected-identity files and the archived combined identity format are not
+a live product (ADR 0012). Snapshot hashing and ADR 0004 Model Serving Release
+objects live elsewhere.
 """
 
 from __future__ import annotations

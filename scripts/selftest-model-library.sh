@@ -149,7 +149,7 @@ python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["recommendations"]
   && ok "cleanup-recommend lists duplicate" || not_ok "cleanup-recommend lists duplicate"
 
 # CLI wrapper local-only path needs topology — skip full refresh; smoke --help
-assert_true "model-library.sh help" bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'Federated model library'"
+assert_true "model-library.sh help" bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'Model library'"
 assert_true "model-library.sh is executable" test -x "$REPO_DIR/scripts/model-library.sh"
 assert_true "validation-bundle verify is not documented in CLI" \
   bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'validation-bundle verify'"

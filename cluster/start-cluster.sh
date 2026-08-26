@@ -68,7 +68,7 @@ for ((rank = 1; rank < NODES; rank++)); do
     --expected-validation-json "$LIBRARY_HOT_VALIDATION_JSON" \
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}" \
     --serve-time-witness)
-  echo "[cluster] serve witness + fail-closed identity verify: rank $rank"
+  echo "[cluster] serve witness + identity verify (no fallback): rank $rank"
   ssh_node "$rank" "$library_verify_command" \
     <"$REPO_DIR/scripts/model_library.py" >/dev/null \
     || die "library: rank $rank failed exact identity verification"

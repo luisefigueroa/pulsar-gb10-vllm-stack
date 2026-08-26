@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""No-overwrite launch-to-first-health startup evidence (schema 2).
+"""No-overwrite launch-to-first-health startup evidence (record format 2).
 
-Extracted from the retired weight_fabric tool (ADR 0006). The model library
+Extracted from the retired weight-fabric tool (ADR 0006). The model library
 is the only weight-distribution mechanism, so new records always carry
-weight_source=library-hot; the field stays in the record for continuity with
-historical schema-2 evidence.
+weight_source=library-hot (stored enum); the field stays in the record for
+continuity with historical evidence.
 """
 
 from __future__ import annotations

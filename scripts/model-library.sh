@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Federated model library: warm catalog + optional cold + hot staging.
+# Model library: warm catalog + optional cold + working-copy staging.
 # The model library is the only weight-distribution mechanism (ADR 0006).
 set -euo pipefail
 SCRIPT_NAME=model-library
@@ -29,7 +29,7 @@ esac
 
 usage() {
   cat <<'EOF'
-Federated model library (warm catalog + optional cold + hot staging)
+Model library (warm catalog + optional cold + working-copy staging)
 
 Usage:
   scripts/model-library.sh catalog refresh [--json] [--local-only]
@@ -584,7 +584,7 @@ validate_catalog_profile_contracts() {
     [ -e "$conf" ] || continue
     profile="${conf##*/}"
     profile="${profile%.conf}"
-    # A sealed profile is validated here from its sourced Bash values. The
+    # A serving profile is loaded here from its sourced Bash values. The
     # Python catalog parser deliberately handles only the small declarative
     # subset and cannot reconstruct arrays, defaults, or resolved image state.
     load_conf "$profile"
@@ -660,7 +660,7 @@ cmd_catalog_list() {
     case "$1" in
       --json) args+=(--json) ;;
       --reviewed-identity)
-        die "--reviewed-identity is retired (ADR 0012): expected-seal catalog filter is not a live product"
+        die "--reviewed-identity is retired (ADR 0012): lab expected-identity catalog filter is not a live product"
         ;;
       --validated) refuse_removed_catalog_validated_flag ;;
       -h|--help) usage; return 0 ;;
@@ -3130,7 +3130,7 @@ cmd_activate() {
     return 0
   fi
 
-  # A provisional seal carries the exact manifest but is never discoverable as
+  # A provisional stamp carries the exact file list but is never discoverable as
   # ready. The all-rank verification barrier publishes the final stamp later.
   verifying_stamp_json=$(printf '%s' "$stamp_json" | python3 -c '
 import json,sys

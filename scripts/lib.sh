@@ -865,11 +865,11 @@ refuse_removed_weight_mode_flag() {
   die "$WEIGHT_MODE_FLAG_REMOVED_MESSAGE" 2
 }
 
-# ADR 0008 / SIM-11: deprecated public no-ops and aliases fail closed with a
+# ADR 0008: deprecated public no-ops and aliases fail without fallback with a
 # named replacement. Parsers still recognize the token so operators do not
 # get a generic "unknown arg".
 REMOVED_FORCE_MESSAGE='--force was removed (ADR 0008): status labels never block serving. Drop the flag.'
-REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): drop the flag. Expected-seal and schema-1 bundles are not a live product (ADR 0012).'
+REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): drop the flag. Lab expected-identity files are not a live product (ADR 0012).'
 REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --legacy-tested (historical STATUS=tested*). It does not mean ADR 0004 Validated.'
 REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): drop the flag. --reviewed-identity is retired (ADR 0012). It does not mean ADR 0004 Validated.'
 REMOVED_ACTIVATE_MESSAGE='activate was removed (ADR 0008): use prepare.'
@@ -1179,7 +1179,7 @@ library_hot_info_for_profile() {
   printf '%s\n' "$info"
 }
 
-# Resolve a ready hot-staging instance for library-hot launch.
+# Resolve a ready working-copy instance for model-library launch.
 # Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
 # LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
 # LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
@@ -1284,7 +1284,7 @@ load_docker_argv_from_plan() {
 }
 
 # Build a validated launch-plan JSON file from the currently loaded profile,
-# confirmed topology, and resolved library-hot instance. Not a permit.
+# confirmed topology, and resolved model-library instance. Not a permit.
 write_launch_plan_file() {
   local dest="${1:?destination required}"
   local action="${2:-start}"
@@ -1601,8 +1601,9 @@ print(str(labels.get(sys.argv[1], "") or ""))
 
 # Return the declared model-weight source from ownership metadata. The value
 # is provenance, not a mode: every managed launch since ADR 0006 writes
-# library-hot, and containers labeled replicated (or unlabeled, predating the
-# label) are legacy observations. Malformed JSON is an observation failure.
+# library-hot (stored enum), and containers labeled replicated (or unlabeled,
+# predating the label) are historical observations. Malformed JSON is an
+# observation failure.
 container_weight_source_field() {
   local metadata="${1:?}"
   printf '%s' "$metadata" | python3 -c '

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Source-attested Hugging Face v1 acquisition contracts.
+"""Hugging Face download (recorded file list) acquisition contracts.
 
-This module owns the closed version-1 source inventory, identity
+This module owns the closed source inventory, identity
 precedence, privacy-safe approval, public plan, immutable receipt,
 site-local current-home attachment, and offline verification helpers. It
 parses Hub metadata JSON and manages site-local receipts and current-home
@@ -9,7 +9,7 @@ attachments, but it does not call the Hub, accept a token, refresh the
 catalog, prepare a runtime view, launch, assign status, or issue a Model
 Serving Release decision.
 
-Sealed HOME_ACQUISITION_SCHEMA_VERSION=1 plan/result contracts are retired
+Lab expected-identity HOME_ACQUISITION plan/result contracts are retired
 (ADR 0012). This module is intentionally not imported from model_library.py
 so remote inspection can still stream that file alone.
 """

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Short-lived, fail-closed serving replacement transaction state.
+"""Short-lived serving replacement transaction state (fails without fallback).
 
 The record is a recovery aid, not service history. It contains no secrets,
 container argv, hostnames, IP addresses, or filesystem paths.
@@ -564,7 +564,7 @@ def cmd_verify_rollback(args: argparse.Namespace) -> int:
 def classify_saved_transaction(value: Any) -> dict[str, Any]:
     """Classify a saved record without treating incompatibility as a crash.
 
-    Current library-hot transactions validate normally. Pre-ADR 0006
+    Current model-library transactions validate normally. Pre-ADR 0006
     replicated captures and other unreadable records are incompatible:
     exact rollback is impossible, but the live file can be archived.
     """

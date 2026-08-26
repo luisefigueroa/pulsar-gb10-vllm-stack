@@ -678,7 +678,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(
                     evidence.ModelValidationEvidenceError,
-                    "leftover review evidence",
+                    "extra review files",
                 ):
                     fixture.build_decision(
                         release=self.release,

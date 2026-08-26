@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Federated model library: warm catalog + optional cold + hot staging.
+"""Model library: warm catalog + optional cold + working-copy staging.
 
 Bash owns topology/SSH, model preparation/adoption, and operator entrypoints. This
 module owns operational schemas, hub/flat completeness, labels, digests,
-hot.json, disk budget, and cold-archive resolve (warm → cold → fail closed).
+hot.json, disk budget, and cold-archive resolve (warm → cold → fail without fallback).
 Trust-document schemas live in model_identity.py.
 """
 
@@ -77,11 +77,11 @@ OWNED_HUB_STAGING_KIND = "pulsar-model-library-owned-hub-staging"
 LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION = 1
 LIVE_DIRECTORY_IDENTITY_KIND = "pulsar-model-library-live-directory-identity"
 RENAME_NOREPLACE = 1
-# Source-attested Hugging Face v1 planning contracts live in
+# Hugging Face download (recorded file list) contracts live in
 # model_library_source_attested.py. They use a separate schema/kind and must
-# not change this sealed plan/result contract. This module does not import
-# that planner; the Bash boundary composes these generic remote primitives
-# with the separate schema owner.
+# not change this home-acquisition plan/result contract. This module does not
+# import that planner; the Bash boundary composes these generic remote
+# primitives with the separate schema owner.
 
 HOT_BUDGET_SCHEMA_VERSION = 1
 HOT_BUDGET_OBSERVATION_KIND = "pulsar-model-library-hot-budget-observation"
@@ -238,7 +238,7 @@ def model_id_to_hub_dirname(model_id: str) -> str:
 
 
 def read_revision(hub_root: pathlib.Path) -> str | None:
-    """Return mutable refs/main for legacy callers; never use it as sealed identity."""
+    """Return mutable refs/main for legacy callers; never use it as file identity."""
     ref_path = hub_root / "refs" / "main"
     if not ref_path.is_file():
         return None
@@ -415,7 +415,7 @@ def weight_dir_state(weight_dir: pathlib.Path) -> str:
 
 
 def hub_tree_state(hub_root: pathlib.Path) -> str:
-    """Return legacy refs/main state; sealed paths use hub_snapshot_state()."""
+    """Return legacy refs/main state; exact-commit paths use hub_snapshot_state()."""
     if not hub_root.is_dir():
         return "missing"
     revision = read_revision(hub_root)
@@ -1029,7 +1029,7 @@ def compare_profile_expected_identity(
     profile: dict[str, Any],
     manifest: dict[str, Any],
 ) -> dict[str, Any]:
-    """Label observed bytes as unsealed library-hot identity (ADR 0012)."""
+    """Label observed bytes as receipt/occupancy identity (ADR 0012)."""
     if profile.get("expected_model_seal") is not None:
         fail(
             f"{profile.get('profile')}: EXPECTED_MODEL_SEAL is retired (ADR 0012)"
@@ -1051,7 +1051,7 @@ def require_activation_identity(
     allow_unvalidated: bool,
 ) -> dict[str, Any]:
     # Public --allow-unvalidated is refused (ADR 0008). This leftover keyword
-    # cannot bypass a configured seal mismatch; validation status is advisory.
+    # cannot bypass identity checks; validation status is display-only.
     _ = allow_unvalidated
     validation = compare_profile_expected_identity(profile, manifest)
     return validation
@@ -2222,7 +2222,7 @@ def plan_cold_stage(
             allow_unvalidated=allow_unvalidated,
         )
     source_digest = integrity_manifest["manifest_id"]
-    # Instance path is keyed by the exact sealed snapshot identity.
+    # Instance path is keyed by the exact snapshot identity.
     cid = hot_content_id(entry["identity_key"], source_digest, validation)
     bytes_logical = integrity_manifest["total_bytes"]
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
@@ -4389,9 +4389,9 @@ def plan_activate(
             )
         target_ranks = [target_rank]
     elif node_count == 1:
-        # A one-node library-hot service consumes the durable-home view. The
+        # A one-node model-library service consumes the durable-home view. The
         # caller may make that placement explicit, but omission must not
-        # silently turn rank 0 into a non-home sealed-hot service.
+        # silently turn rank 0 into a non-home working copy.
         target_ranks = [int(home["rank"])]
     else:
         target_ranks = list(range(node_count))
@@ -9221,7 +9221,7 @@ def cmd_compare_ssh_roce_bench(args: argparse.Namespace) -> int:
 
 REMOVED_ALLOW_UNVALIDATED_MESSAGE = (
     "--allow-unvalidated was removed (ADR 0008): Drop the flag. "
-    "Expected-seal and schema-1 bundles are not a live product (ADR 0012)."
+    "Lab expected-identity files are not a live product (ADR 0012)."
 )
 REMOVED_CATALOG_VALIDATED_MESSAGE = (
     "--validated was removed (ADR 0008): drop the flag. "
@@ -9229,7 +9229,7 @@ REMOVED_CATALOG_VALIDATED_MESSAGE = (
     "It does not mean ADR 0004 Validated."
 )
 REMOVED_REVIEWED_IDENTITY_MESSAGE = (
-    "--reviewed-identity is retired (ADR 0012): expected-seal catalog "
+    "--reviewed-identity is retired (ADR 0012): lab expected-identity catalog "
     "filter is not a live product"
 )
 
