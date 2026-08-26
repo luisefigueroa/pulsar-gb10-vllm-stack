@@ -272,8 +272,7 @@ fail without fallback.
 **Do not use these as live brands.** Describe the thing:
 
 - `library-hot` → local files on every rank, prepared from the model home
-  (new writes use `local-files`; leftover running containers may still carry
-  the old label, which inventory/stop still recognize)
+  (new writes use `local-files`; leftover labels are not dual-read)
 - `source-attested` → Hugging Face download with a recorded file list and hashes
   (new writes use `identity_class=download-receipt`, `download-receipts/`, and
   `home-occupancy/`)

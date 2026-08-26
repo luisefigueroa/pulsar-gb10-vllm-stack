@@ -279,7 +279,7 @@ print(f"{source}\t{nodes}")
   [ -n "$meta" ] || { printf 'skip\n'; return 0; }
   source="${meta%%$'\t'*}"
   nodes="${meta#*$'\t'}"
-  [ "$source" = local-files ] || [ "$source" = library-hot ] || { printf 'skip\n'; return 0; }
+  [ "$source" = local-files ] || { printf 'skip\n'; return 0; }
   if ! [[ "$nodes" =~ ^[0-9]+$ ]] || [ "$nodes" -lt 2 ]; then
     printf 'one-rank\n'
     return 0

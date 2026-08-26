@@ -26,7 +26,7 @@ def main() -> int:
     parser.add_argument(
         "--identity-status",
         default="receipt-occupancy",
-        choices=("receipt-occupancy", "unvalidated"),
+        choices=("receipt-occupancy",),
     )
     parser.add_argument("--seal-id", default="")
     parser.add_argument("--bundle-id", default="")

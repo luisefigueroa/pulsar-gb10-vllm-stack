@@ -63,7 +63,7 @@ FORBIDDEN_PERMIT_KEYS = frozenset(
         "authorisation",
     }
 )
-IDENTITY_STATUSES = ("receipt-occupancy", "unvalidated")
+IDENTITY_STATUSES = ("receipt-occupancy",)
 LIFECYCLE_ACTIONS = ("start", "replace", "dry-run")
 SPEC_DECODE_SOURCES = (
     "profile-default",

@@ -1380,12 +1380,12 @@ print("1" if item.get("complete") is True and item.get("safe_to_stop") is True e
     # Live switches stop without a restore promise. Leftover transaction
     # files are archived, not used as the live switch path.
     [ "$stoppable" = 1 ] || {
-      if [ "$running_source" != local-files ] && [ "$running_source" != library-hot ]; then
+      if [ "$running_source" != local-files ]; then
         die "the running pre-library service is incomplete or unobservable; no service was stopped"
       fi
       die "the running model-library service is incomplete or unobservable; no service was stopped"
     }
-    if [ "$running_source" != local-files ] && [ "$running_source" != library-hot ]; then
+    if [ "$running_source" != local-files ]; then
       warn "stopping a pre-library service; exact rollback is unavailable for it"
     else
       warn "stopping a model-library service without an exact restore contract"
@@ -1418,7 +1418,7 @@ prepare_exact_rollback() {
   local health_file="$WIZARD_WORK_DIR/rollback-health.json" contract_id inventory
   local inventory_file="$WIZARD_WORK_DIR/rollback-inventory.json"
   load_transaction_summary
-  [ "$TRANSACTION_SOURCE" = local-files ] || [ "$TRANSACTION_SOURCE" = library-hot ] \
+  [ "$TRANSACTION_SOURCE" = local-files ] \
     || die "saved transaction is not a model-library contract; archive it instead of rollback"
   NAME="$TRANSACTION_PREVIOUS_PROFILE"
   load_conf "$NAME"

@@ -17,9 +17,8 @@
 #   --purge-hot       delete hot staging, including an existing pin
 # Ordinary stop of a model-library service retains unpinned views (ADR 0007).
 # PULSAR_HOT_STOP_POLICY=retain|purge may select the named-profile default;
-# flags override it. --all never auto-purges. Legacy containers without a
-# library-hot label (pre-ADR 0006 launches) stop cleanly and never invoke
-# model-library cleanup.
+# flags override it. --all never auto-purges. Containers without a
+# local-files label stop cleanly and never invoke model-library cleanup.
 set -euo pipefail
 SCRIPT_NAME=down
 # shellcheck disable=SC1091
@@ -138,7 +137,7 @@ set_default_hot_policy() {
     warn "could not prove the service weight policy; hot storage will be left unchanged"
     return 0
   fi
-  if [ "$source" = local-files ] || [ "$source" = library-hot ]; then
+  if [ "$source" = local-files ]; then
     policy="${PULSAR_HOT_STOP_POLICY:-retain}"
     case "$policy" in
       retain)

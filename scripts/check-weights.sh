@@ -182,7 +182,6 @@ elif [ "${QUIET:-0}" = 1 ]; then
   identity_status=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "invalid")')
   case "$identity_status" in
     receipt-occupancy) identity_label="receipt/occupancy" ;;
-    unvalidated) identity_label="identity not checked" ;;
     *) identity_label="$identity_status" ;;
   esac
   echo "PASS  weights   model files ready · identity=$identity_label"

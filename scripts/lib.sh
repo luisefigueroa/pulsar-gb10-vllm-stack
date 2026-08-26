@@ -1579,10 +1579,9 @@ print(str(labels.get(sys.argv[1], "") or ""))
 }
 
 # Return the declared model-weight source from ownership metadata. The value
-# is provenance, not a mode: every managed launch since ADR 0006 writes
-# local-files (stored enum), leftover library-hot, and containers labeled replicated (or unlabeled,
-# predating the label) are historical observations. Malformed JSON is an
-# observation failure.
+# is provenance, not a mode: current managed launches write local-files.
+# Containers labeled replicated or unlabeled are historical observations.
+# Malformed JSON is an observation failure.
 container_weight_source_field() {
   local metadata="${1:?}"
   printf '%s' "$metadata" | python3 -c '

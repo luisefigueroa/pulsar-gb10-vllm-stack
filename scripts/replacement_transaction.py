@@ -184,8 +184,8 @@ def library_contract(
         fail("model-library catalog is stale for the confirmed topology")
     revision = require_revision(service.get("model_revision"), "model revision")
     identity = service.get("model_identity_status")
-    if identity not in {"receipt-occupancy", "unvalidated"}:
-        fail("library-backed service identity is not a live unsealed status")
+    if identity != "receipt-occupancy":
+        fail("library-backed service identity is not receipt/occupancy")
     if service.get("model_seal_id") is not None or service.get("validation_bundle_id") is not None:
         fail("library-backed service cannot claim retired seal provenance")
     content = require_content_id(
@@ -213,7 +213,7 @@ def library_contract(
             fail("prepared runtime-view metadata is not current schema 3")
         if view.get("runtime_source") not in {"durable-home", "working-copy"}:
             fail("prepared runtime source is unknown")
-        if view.get("identity_status") not in {"receipt-occupancy", "unvalidated"} \
+        if view.get("identity_status") != "receipt-occupancy" \
                 or view.get("witness_status") != "match":
             fail("prepared runtime-view identity or witness does not match")
         if view.get("active_reference") is not True:
@@ -508,7 +508,7 @@ def verify_library_views_for_rollback(
             fail("saved library runtime-view metadata is no longer current")
         if item.get("runtime_source") != wanted[item["rank"]]:
             fail("saved library runtime source changed")
-        if item.get("identity_status") not in {"receipt-occupancy", "unvalidated"} \
+        if item.get("identity_status") != "receipt-occupancy" \
                 or item.get("witness_status") != "match":
             fail("saved library runtime-view identity drifted")
         if item.get("active_reference") is not False:
@@ -779,8 +779,7 @@ def service_matches_snapshot(
     if weight["source"] == "local-files":
         return (
             service.get("model_revision") == weight["revision"]
-            and service.get("model_identity_status")
-            in {"receipt-occupancy", "unvalidated"}
+            and service.get("model_identity_status") == "receipt-occupancy"
             and service.get("weight_owner_node_id") == weight["home_node_id"]
             and service.get("weight_configuration_id") == weight["content_id"]
         )

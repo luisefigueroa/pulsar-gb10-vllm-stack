@@ -123,7 +123,7 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         r"[A-Za-z0-9._-]+", model_revision
     ):
         fail("startup metric: invalid local-files model revision")
-    if identity_status not in ("receipt-occupancy", "unvalidated"):
+    if identity_status != "receipt-occupancy":
         fail("startup metric: invalid local-files identity status")
     if runtime_model_path is None or not runtime_model_path.endswith(
         f"/snapshots/{model_revision}"
@@ -185,7 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     startup_metric.add_argument("--integrity-scheme")
     startup_metric.add_argument(
         "--identity-status",
-        choices=("receipt-occupancy", "unvalidated"),
+        choices=("receipt-occupancy",),
     )
     startup_metric.add_argument("--model-revision")
     startup_metric.add_argument("--runtime-model-path")

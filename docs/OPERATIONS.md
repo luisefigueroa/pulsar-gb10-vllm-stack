@@ -126,7 +126,7 @@ orchestration only: it never writes a lab expected-identity file or a validation
 status, points a profile at a Model Serving Release, writes the trusted registry, promotes a
 path, or claims physical behavior. Current automated mapping covers only
 strict same-boot and absolute throughput/latency. A live profile serves
-with receipt/occupancy identity (`identity_status=legacy-unsealed`) but is not an exact ADR 0004
+with receipt/occupancy identity (`identity_status=receipt-occupancy`) but is not an exact ADR 0004
 qualification attempt. For an absent brand-new Hugging Face
 repository, the skill may plan and, after a separate confirmation, run
 `home add --revision` (recorded file list and hashes). Reuse of that home requires
@@ -417,7 +417,7 @@ Immediately before stopping one running service, the wizard requires complete
 fresh inventory plus current launch-contract/spec labels. Exact restore that
 required `identity_status=match` is retired with lab expected-identity files
 (ADR 0012). A complete, safe-to-stop model-library service
-(`identity_status=legacy-unsealed` or `unvalidated`, including first-run Nemotron) is
+(`identity_status=receipt-occupancy`, including first-run Nemotron) is
 stopped without a rollback transaction — exact restore is unavailable, as with
 a leftover pre-library launch. Multiple running stop targets, partial
 services, old unlabeled services, drift, or failed retention leave the
@@ -940,7 +940,7 @@ eviction is not implemented.
 **Current identity behavior:** lab expected-identity files and the archived
 combined identity format are not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
 There is no v2 of that format. Live admission uses local files on every rank
-with `identity_status=legacy-unsealed` or `unvalidated`. ADR 0004 objects under
+with `identity_status=receipt-occupancy`. ADR 0004 objects under
 `models/model-serving-releases/` are a different format; `MODEL_SERVING_RELEASE_ID`
 is display-only, not a serving gate. Inspect
 reviewed Model Serving Releases with:

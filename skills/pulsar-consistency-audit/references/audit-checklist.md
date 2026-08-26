@@ -125,8 +125,7 @@ Build a consistency table covering at least:
 
 `home`, `owner`, `primary`, `rank 0`, `prepare`, `preparation`, `activation`,
 `durable-home`, `working-copy`, `live-mount`,
-`replicated`, `catalog`, `local-files` (leftover containers may still say
-`library-hot`), `fabric`, `ssh-control`, `ssh-roce`, `nfs-rdma`, `durable`,
+`replicated`, `catalog`, `local-files`, `fabric`, `ssh-control`, `ssh-roce`, `nfs-rdma`, `durable`,
 `ephemeral`, `pinned`, receipt, occupancy, `witness`, file list,
 ADR 0004 evidence bundle, `serving integration`, `model qualification`, and
 `promotion`. Flag live use of archive-only nouns: expected-seal,

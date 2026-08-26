@@ -346,7 +346,7 @@ def preparation_check(
             for instance in model_instances(report, model)
             if instance.get("profile") == profile["id"]
             and instance.get("metadata_status") == "current"
-            and instance.get("identity_status") in {"receipt-occupancy", "unvalidated"}
+            and instance.get("identity_status") == "receipt-occupancy"
             and instance.get("witness_status") == "match"
             and instance.get("runtime_source")
             == (

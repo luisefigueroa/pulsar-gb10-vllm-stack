@@ -2199,17 +2199,12 @@ def plan_cold_stage(
             revision=revision,
         )
     if profile_data is None:
-        validation = {
-            "identity_status": "unvalidated",
-            "expected_seal": None,
-            "observed_seal": observed_model_seal_projection(integrity_manifest),
-        }
-    else:
-        validation = require_activation_identity(
-            profile_data,
-            integrity_manifest,
-            allow_unvalidated=allow_unvalidated,
-        )
+        fail("cold stage-only: model profile is required")
+    validation = require_activation_identity(
+        profile_data,
+        integrity_manifest,
+        allow_unvalidated=allow_unvalidated,
+    )
     source_digest = integrity_manifest["manifest_id"]
     # Instance path is keyed by the exact snapshot identity.
     cid = hot_content_id(entry["identity_key"], source_digest, validation)
@@ -2765,7 +2760,7 @@ def hot_content_id(
     validation: dict[str, Any],
 ) -> str:
     validation_key = validation.get("identity_status")
-    if validation_key not in {"receipt-occupancy", "unvalidated"}:
+    if validation_key != "receipt-occupancy":
         fail("hot content identity lacks receipt/occupancy provenance")
     return content_id_for(f"{identity_key}|validation:{validation_key}", digest)
 
@@ -2972,7 +2967,7 @@ def validate_hot_validation(
     if not isinstance(profile, str) or not profile:
         fail("hot validation profile is invalid")
     status = validation.get("identity_status")
-    if status not in {"receipt-occupancy", "unvalidated"}:
+    if status != "receipt-occupancy":
         fail(f"hot identity status is unsupported: {status!r}")
     observed = validation.get("observed_seal")
     expected_observed = observed_model_seal_projection(manifest)

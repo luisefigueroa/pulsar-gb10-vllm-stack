@@ -171,7 +171,7 @@ class LaunchPlanContracts(unittest.TestCase):
         document["storage"]["model_seal_id"] = SEAL
         with self.assertRaisesRegex(plan.LaunchPlanError, "ADR 0012"):
             plan.build_launch_plan(document)
-        clean = plan.build_launch_plan(facts(identity="unvalidated"))
+        clean = plan.build_launch_plan(facts(identity="receipt-occupancy"))
         self.assertNotIn("model_seal_id", clean["storage"])
         self.assertNotIn("validation_bundle_id", clean["storage"])
 
