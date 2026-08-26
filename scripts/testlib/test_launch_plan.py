@@ -166,13 +166,14 @@ class LaunchPlanContracts(unittest.TestCase):
         with self.assertRaisesRegex(plan.LaunchPlanError, "library-hot"):
             plan.build_launch_plan(document)
 
-    def test_unsealed_cannot_claim_seal(self) -> None:
+    def test_storage_refuses_retired_seal_fields(self) -> None:
         document = facts(identity="legacy-unsealed")
         document["storage"]["model_seal_id"] = SEAL
-        with self.assertRaisesRegex(plan.LaunchPlanError, "unsealed"):
+        with self.assertRaisesRegex(plan.LaunchPlanError, "ADR 0012"):
             plan.build_launch_plan(document)
         clean = plan.build_launch_plan(facts(identity="unvalidated"))
-        self.assertIsNone(clean["storage"]["model_seal_id"])
+        self.assertNotIn("model_seal_id", clean["storage"])
+        self.assertNotIn("validation_bundle_id", clean["storage"])
 
     def test_absolute_path_model_id_is_rejected(self) -> None:
         document = facts()

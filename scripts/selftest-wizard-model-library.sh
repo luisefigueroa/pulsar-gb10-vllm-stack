@@ -482,7 +482,7 @@ run_wizard healthy-active.json 0 0 $'2\n2\ny\n' \
   "$STATE/inventory.json.running"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" \
-  'without a reviewed identity match|exact rollback is unavailable' \
+  'without an exact restore contract|exact rollback is unavailable' \
   "same-source restart stops without a restore promise (ADR 0012)"
 assert_contains "$STATE/logs/down.log" \
   '^qwen3.8-27b-fp8-2node$' \
@@ -496,7 +496,7 @@ run_wizard healthy-active.json 0 0 $'2\n2\ny\n' \
   "$STATE/inventory.json.rollback" "$STATE/reports/profiles.json" 1
 # Launch is expected to fail; the point is no match-identity restore.
 assert_contains "$STATE/logs/output.log" \
-  'exact rollback is unavailable' \
+  'without an exact restore contract' \
   "launch failure does not offer match-identity restore (ADR 0012)"
 grep -q 'Restore previous exact service' "$STATE/logs/output.log" \
   && { echo "FAIL retired match restore was offered" >&2; exit 1; } \

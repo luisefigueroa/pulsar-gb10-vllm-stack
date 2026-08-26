@@ -807,7 +807,7 @@ assert_eq "$LAST_RC" "0" "replace managed exit 0"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "replace: stopped blocker"
 assert_file_contains "$STATE/logs/up.log" "qwen3.8-27b-fp8" "replace: started target"
 assert_file_contains "$STATE/logs/wizard.combined" \
-  "without a reviewed identity match" \
+  "without an exact restore contract" \
   "unsealed library-hot replace names missing exact rollback"
 assert_file_not_contains "$STATE/logs/down.log" "--pin-weights" \
   "unsealed library-hot replace does not pin for rollback"
@@ -990,7 +990,7 @@ assert_eq "$down_lines" "1" "still-fail: single down (no extra stops)"
 assert_false "still-fail: never up failed target" \
   bash -c "grep -q qwen3.8-27b-fp8 '$STATE/logs/up.log' 2>/dev/null"
 assert_file_contains "$STATE/logs/wizard.combined" \
-  "without a reviewed identity match" \
+  "without an exact restore contract" \
   "unsealed library-hot stop warns that exact rollback is unavailable"
 assert_file_not_contains "$STATE/logs/wizard.combined" \
   "Restore previous exact service" \
@@ -1049,7 +1049,7 @@ assert_file_not_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" \
   "launch-fail: no automatic restart of the unsealed library-hot service"
 assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail: reported failure"
 assert_file_contains "$STATE/logs/wizard.combined" \
-  "without a reviewed identity match" \
+  "without an exact restore contract" \
   "launch-fail: unsealed library-hot stop warned about rollback"
 assert_false "launch-fail: no docker mutation language" grep -qE 'docker[[:space:]]+rm|docker[[:space:]]+kill|kill -9' "$STATE/logs/wizard.combined"
 
@@ -1321,7 +1321,7 @@ echo "=== static safety checks ==="
 assert_true "wizard has execute_pending_stops" grep -q "execute_pending_stops" "$REPO_DIR/wizard.sh"
 assert_true "wizard defers stop until after final confirm helper" grep -q "final_confirm_start" "$REPO_DIR/wizard.sh"
 assert_true "unsealed library-hot stop warns that exact rollback is unavailable" \
-  grep -q "without a reviewed identity match" "$REPO_DIR/wizard.sh"
+  grep -q "without an exact restore contract" "$REPO_DIR/wizard.sh"
 # ensure cmd_down is only in execute_pending_stops
 downs=$(grep -n "cmd_down" "$REPO_DIR/wizard.sh" | grep -v '^#' || true)
 # Only definition and execute_pending_stops should call it

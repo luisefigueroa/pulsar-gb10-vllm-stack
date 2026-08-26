@@ -235,8 +235,6 @@ def library_contract(
     return {
         "source": "library-hot",
         "revision": revision,
-        "model_seal_id": None,
-        "validation_bundle_id": None,
         "manifest_id": None,
         "content_id": content,
         "home_node_id": owner,

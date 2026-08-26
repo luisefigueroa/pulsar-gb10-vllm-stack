@@ -99,8 +99,6 @@ LABEL_WEIGHT_SOURCE = "io.pulsar.gb10.weight-source"
 LABEL_WEIGHT_OWNER = "io.pulsar.gb10.weight-owner"
 LABEL_WEIGHT_CONFIG = "io.pulsar.gb10.weight-config"
 LABEL_MODEL_REVISION = "io.pulsar.gb10.model-revision"
-LABEL_MODEL_SEAL = "io.pulsar.gb10.model-seal"
-LABEL_VALIDATION_BUNDLE = "io.pulsar.gb10.validation-bundle"
 LABEL_IDENTITY_STATUS = "io.pulsar.gb10.model-identity-status"
 LABEL_LAUNCH_CONTRACT = "io.pulsar.gb10.launch-contract"
 LABEL_SPEC_DECODE = "io.pulsar.gb10.spec-decode"
@@ -346,12 +344,10 @@ def _validate_storage(storage: dict[str, Any], *, nodes: int) -> dict[str, Any]:
     if not container_path.endswith(f"/snapshots/{revision}"):
         fail("storage.container_model_path is not the exact revision")
     hub_path = require_text(storage.get("hub_path"), "storage.hub_path")
-    seal_id = storage.get("model_seal_id")
-    bundle_id = storage.get("validation_bundle_id")
-    if seal_id is not None or bundle_id is not None:
-        fail("storage: unsealed identity cannot claim seal provenance")
-    seal_id = None
-    bundle_id = None
+    if storage.get("model_seal_id") is not None or storage.get(
+        "validation_bundle_id"
+    ) is not None:
+        fail("storage: lab expected-identity fields are retired (ADR 0012)")
     transport = require_text(storage.get("transport"), "storage.transport")
     if transport not in ("ssh-control", "ssh-roce"):
         fail(
@@ -367,8 +363,6 @@ def _validate_storage(storage: dict[str, Any], *, nodes: int) -> dict[str, Any]:
         "hub_path": hub_path,
         "container_model_path": container_path,
         "transport": transport,
-        "model_seal_id": seal_id,
-        "validation_bundle_id": bundle_id,
     }
     extra = set(storage) - set(cleaned)
     if extra:
@@ -660,8 +654,6 @@ def rank_docker_argv(
         LABEL_WEIGHT_CONFIG,
         LABEL_MODEL_REVISION,
         LABEL_IDENTITY_STATUS,
-        LABEL_MODEL_SEAL,
-        LABEL_VALIDATION_BUNDLE,
     ]
     if plan["nodes"] == 1:
         # Match serve.sh: world-size is not currently labeled on N=1.
@@ -715,8 +707,6 @@ def rank_docker_argv(
             LABEL_WEIGHT_CONFIG,
             LABEL_MODEL_REVISION,
             LABEL_IDENTITY_STATUS,
-            LABEL_MODEL_SEAL,
-            LABEL_VALIDATION_BUNDLE,
             LABEL_TOPOLOGY,
             LABEL_NODE_ID,
         ):

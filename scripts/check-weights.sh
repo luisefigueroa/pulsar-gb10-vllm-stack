@@ -175,8 +175,6 @@ print(json.dumps({"state": "ok", "source": "library-hot", "ok": True,
   "content_id": d["stamp"].get("content_id"),
   "revision": d["stamp"].get("revision"),
   "identity_status": (d["stamp"].get("validation") or {}).get("identity_status"),
-  "model_seal_id": (((d["stamp"].get("validation") or {}).get("expected_seal") or {}).get("seal_id")),
-  "validation_bundle_id": (((d["stamp"].get("validation") or {}).get("expected_seal") or {}).get("validation_bundle_id")),
   "runtime_model_path": d.get("container_model_path"),
   "pinned": bool(d["stamp"].get("pinned"))}, indent=2, sort_keys=True))
 '

@@ -101,8 +101,6 @@ def command_startup_metric(args: argparse.Namespace) -> None:
     integrity_scheme = args.integrity_scheme or None
     model_revision = args.model_revision or None
     identity_status = args.identity_status or None
-    model_seal_id = args.model_seal_id or None
-    validation_bundle_id = args.validation_bundle_id or None
     runtime_model_path = args.runtime_model_path or None
     owner_node_id = args.owner_node_id or None
     if owner_node_id is not None:
@@ -131,8 +129,6 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         f"/snapshots/{model_revision}"
     ):
         fail("startup metric: runtime model path is not the exact revision")
-    if model_seal_id is not None or validation_bundle_id is not None:
-        fail("startup metric: unsealed identity cannot claim seal provenance")
     destination = pathlib.Path(args.output)
     if destination == pathlib.Path("/") or destination.exists():
         fail("startup metric: output must be a new bounded path")
@@ -152,8 +148,6 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         "integrity_scheme": integrity_scheme,
         "model_revision": model_revision,
         "identity_status": identity_status,
-        "model_seal_id": model_seal_id,
-        "validation_bundle_id": validation_bundle_id,
         "runtime_model_path": runtime_model_path,
         "owner_node_fingerprint": fingerprint(owner_node_id),
         "tag": tag,
@@ -194,8 +188,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("legacy-unsealed", "unvalidated"),
     )
     startup_metric.add_argument("--model-revision")
-    startup_metric.add_argument("--model-seal-id")
-    startup_metric.add_argument("--validation-bundle-id")
     startup_metric.add_argument("--runtime-model-path")
     startup_metric.add_argument("--tag")
     startup_metric.add_argument("--started-at", required=True)

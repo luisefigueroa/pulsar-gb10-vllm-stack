@@ -37,8 +37,6 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             "integrity_scheme": "sha256-snapshot-manifest-v1",
             "model_revision": "d" * 40,
             "identity_status": "legacy-unsealed",
-            "model_seal_id": None,
-            "validation_bundle_id": None,
             "runtime_model_path": (
                 "/root/.cache/huggingface/hub/models--Org--Fixture/"
                 + "snapshots/"
@@ -69,8 +67,8 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
         )
         self.assertEqual(metric["model_revision"], "d" * 40)
         self.assertEqual(metric["identity_status"], "legacy-unsealed")
-        self.assertIsNone(metric["model_seal_id"])
-        self.assertIsNone(metric["validation_bundle_id"])
+        self.assertNotIn("model_seal_id", metric)
+        self.assertNotIn("validation_bundle_id", metric)
         self.assertTrue(metric["runtime_model_path"].endswith("d" * 40))
         self.assertEqual(
             metric["owner_node_fingerprint"],

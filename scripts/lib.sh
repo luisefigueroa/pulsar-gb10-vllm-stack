@@ -1175,7 +1175,6 @@ library_hot_info_for_profile() {
 # LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
 # LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
 # LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
-# LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
 # LIBRARY_HOT_VALIDATION_JSON, and pinned state.
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
@@ -1207,10 +1206,6 @@ resolve_library_hot_for_profile() {
     'import json,sys; print(json.load(sys.stdin).get("container_model_path") or "")')
   LIBRARY_HOT_IDENTITY_STATUS=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "")')
-  LIBRARY_HOT_MODEL_SEAL_ID=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print((((json.load(sys.stdin)["stamp"].get("validation") or {}).get("expected_seal") or {}).get("seal_id") or ""))')
-  LIBRARY_HOT_VALIDATION_BUNDLE_ID=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print((((json.load(sys.stdin)["stamp"].get("validation") or {}).get("expected_seal") or {}).get("validation_bundle_id") or ""))')
   LIBRARY_HOT_VALIDATION_JSON=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
   LIBRARY_HOT_PINNED=$(printf '%s' "$info" | python3 -c \
@@ -1224,12 +1219,7 @@ resolve_library_hot_for_profile() {
     && [ -n "$LIBRARY_HOT_CONTAINER_MODEL_PATH" ] \
     && [ -n "$LIBRARY_HOT_IDENTITY_STATUS" ] \
     && [ -n "$LIBRARY_HOT_VALIDATION_JSON" ] \
-    || die "library-hot: sealed hot provenance is incomplete for $profile"
-  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-    [ -n "$LIBRARY_HOT_MODEL_SEAL_ID" ] \
-      && [ -n "$LIBRARY_HOT_VALIDATION_BUNDLE_ID" ] \
-      || die "library-hot: validated identity lacks seal/bundle provenance"
-  fi
+    || die "library-hot: prepared view provenance is incomplete for $profile"
 }
 
 json_encode_strings() {
@@ -1372,8 +1362,6 @@ print(json.dumps(ranks))
   LIBRARY_HOT_HUB_PATH="$LIBRARY_HOT_HUB_PATH" \
   LIBRARY_HOT_CONTAINER_MODEL_PATH="$LIBRARY_HOT_CONTAINER_MODEL_PATH" \
   LIBRARY_HOT_TRANSPORT="$LIBRARY_HOT_TRANSPORT" \
-  LIBRARY_HOT_MODEL_SEAL_ID="${LIBRARY_HOT_MODEL_SEAL_ID:-}" \
-  LIBRARY_HOT_VALIDATION_BUNDLE_ID="${LIBRARY_HOT_VALIDATION_BUNDLE_ID:-}" \
   REPO_DIR="$REPO_DIR" \
   python3 - "$dest" <<'PY'
 import json
