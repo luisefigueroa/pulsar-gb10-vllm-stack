@@ -48,7 +48,10 @@ and merge.
 `stage` operates only on a clean non-default branch in the real repository.
 It refuses detached HEAD and the default branch. Unrelated dirty files fail.
 Equal planned proposal files from an interrupted earlier `stage` are allowed
-so retry can complete.
+so retry can complete. `plan` and `stage` still hash the candidate's original
+publishable `results/` measurement files even when privacy is `pending`;
+those files must exist. Extra untracked files are not issuance inputs and
+fail the clean-worktree check.
 
 ## Review declaration
 
@@ -149,6 +152,11 @@ Privacy handling:
   candidate artifact was publishable, the reviewed artifact becomes
   `visibility=protected` with the schema's content-addressed locator. The
   content digest, media type, and qualification scope stay the same.
+- `evidence_privacy` must match that artifact disposition. Passing every
+  artifact makes `evidence_privacy` `pass`, which is conclusive and
+  requires leftover `release-promotion` review artifacts. Incomplete
+  issuance with an empty leftover list keeps every provenance component
+  `pending`, including privacy.
 
 Predecessor and supersession source sets come only from the tracked registry.
 Normal planning fully verifies that registry first. If an interrupted earlier
@@ -197,6 +205,10 @@ dry-run projection checks verify that separate edit.
 - Validation status is advisory.
 - Deterministic selftests prove control-plane contracts only.
 - This workflow makes no physical DGX claim.
+- After repository merge, verify with
+  `scripts/model-serving-release-registry.sh verify`. Schema-1
+  `validation-bundle verify` is a different command and fails on unsealed
+  ADR 0004 profiles.
 
 The supervised `pulsar-model-serving-release-issuance` skill composes these
 commands after an onboarding handoff. It has no issuance authority.

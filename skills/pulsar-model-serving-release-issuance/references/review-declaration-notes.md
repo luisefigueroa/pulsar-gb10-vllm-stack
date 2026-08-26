@@ -28,7 +28,11 @@ locations are content-addressed and are not copied as raw publishable bytes.
 `privacy_review` on each review-file artifact is a maintainer answer:
 `passed`, `failed`, or `pending`. Issuance copies publishable bytes only
 when `passed` and the file digest still matches. `failed` or `pending`
-does not publish raw bytes.
+does not publish raw bytes. `evidence_privacy` must match that
+disposition. Passing every artifact makes `evidence_privacy` `pass`,
+which requires leftover `release-promotion` review artifacts. Keep
+privacy `pending` when the leftover list is empty and provenance is not
+judged.
 
 ## Provenance answers
 
@@ -55,4 +59,6 @@ Sorted and unique. Do not exclude a failure to manufacture a pass.
 
 Files not named as candidate evidence (for example an extra concurrency
 sweep) are not issuance inputs unless they were in the frozen contract
-and captured into that candidate.
+and captured into that candidate. They still fail `stage` if left
+untracked in the worktree. Park them. Candidate `results/` measurement
+files must still exist so `plan`/`stage` can hash them.

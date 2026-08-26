@@ -97,6 +97,10 @@ For every `evidence_artifacts[]` entry, record visibility, location, and an
 explicit `passed` / `failed` / `pending` privacy result. Scan publishable
 `results/` files for site paths, hosts, addresses, node IDs, and topology
 identifiers. A leak is `failed` or `pending`, not a silent `passed`.
+`privacy_review=passed` on every artifact forces `evidence_privacy=pass`,
+which is conclusive and requires leftover `release-promotion` review
+artifacts. Incomplete issuance with an empty leftover list must keep
+**all five** provenance components `pending`, including privacy.
 
 ### 4. Provenance and security
 
@@ -151,7 +155,11 @@ scripts/model-serving-release-issue.sh stage \
 ```
 
 Retry of an interrupted equal proposal is allowed. Unrelated dirty files
-and default-branch writes fail closed.
+and default-branch writes fail closed. `plan`/`stage` still hash the
+candidate's original `results/` measurement files even when privacy is
+`pending`; those files must exist. Extra untracked files (raw captures,
+extra sweeps, caches) are not issuance inputs: park them or commit only
+the candidate measurement files first so the worktree is otherwise clean.
 
 ### 8. Optional same-PR profile bind
 
@@ -168,11 +176,14 @@ Open a ready-for-review PR. Do not merge. Local stage is not trust.
 After the user reports merge, sync main and run:
 
 ```text
-scripts/model-library.sh validation-bundle verify <profile>
+scripts/model-serving-release-registry.sh verify
 scripts/selftest.sh
 ```
 
-Those checks still do not authorize serving.
+If the profile was bound, inspect that `release_id`. Do not run
+`validation-bundle verify` as the ADR 0004 check: that command is the
+schema-1 seal/bundle verifier and fails on unsealed profiles. Those
+checks still do not authorize serving.
 
 ## Resume
 

@@ -71,7 +71,7 @@ grep -Fq 'Never recapture a maintainer essay' "$skill" \
 grep -Fq 'Empty `review_evidence_artifact_ids`' "$skill" \
   || fail "skill must treat empty leftover review IDs as expected"
 grep -Fq 'Do not invent review evidence' "$skill" \
-  || fail "skill must stop on the leftover-list implementation gap"
+  || fail "skill must not invent review evidence to make plan succeed"
 
 grep -Fq 'scripts/model-serving-release-capture.sh verify-candidate' "$skill" \
   || fail "skill must re-verify the capture candidate"
@@ -87,8 +87,15 @@ grep -Fq 'Same publication only' "$skill" \
   || fail "skill must keep profile bind on the same publication"
 grep -Fq 'Do not merge' "$skill" \
   || fail "skill must not merge the issuance PR"
-grep -Fq 'validation-bundle verify' "$skill" \
-  || fail "skill must verify the bundle after reported merge"
+grep -Fq 'scripts/model-serving-release-registry.sh verify' "$skill" \
+  || fail "skill must verify the ADR 0004 registry after reported merge"
+if grep -Fq 'scripts/model-library.sh validation-bundle verify' "$skill"; then
+  fail "skill must not run schema-1 validation-bundle verify as the ADR 0004 check"
+fi
+grep -Fq 'all five' "$skill" \
+  || fail "skill must keep all five provenance components pending for empty leftovers"
+grep -Fq 'Park them' "$notes" \
+  || fail "review notes must park extra untracked files before stage"
 grep -Fq 'docs/MODEL_SERVING_RELEASE_ISSUANCE.md' "$skill" \
   || fail "skill must defer the review schema to the issuance runbook"
 
