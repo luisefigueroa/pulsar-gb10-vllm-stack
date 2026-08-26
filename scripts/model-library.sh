@@ -83,21 +83,21 @@ Notes:
     org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
   • cold adopt imports into a durable warm HF home; cold stage-only fills hot
     only (cold remains sole durable copy; pin still allows warm restart).
-  • Catalog identity labels are unsealed library-hot: legacy-unsealed or
-    unvalidated. Local bytes never create ADR 0004 identity. --reviewed-identity
-    and schema-1 bundle verification are retired (ADR 0012). --validated
-    is removed (ADR 0008). Validation labels are advisory: prepare accepts
-    fully verified unsealed content. --allow-unvalidated is removed
+  • Catalog identity labels are receipt/occupancy (legacy-unsealed) or
+    unvalidated. Local bytes never create an ADR 0004 decision. --reviewed-identity
+    and archived combined-identity verification are retired (ADR 0012). --validated
+    is removed (ADR 0008). Status labels do not grant or deny start: prepare accepts
+    fully verified receipt/occupancy content. --allow-unvalidated is removed
     (ADR 0008); drop the flag.
   • Duplicate occupancy homes refuse resolve until an exact-revision primary is
-    chosen. Source-attested occupancy is the current-home attachment; extra
+    chosen. Occupancy is the current-home attachment; extra
     complete hub trees are unbound-complete and do not freeze resolve when
     occupancy exists. The selection persists in the site catalog across
-    refreshes; a missing selected home is stale and fails closed rather than
-    auto-electing.
+    refreshes; a missing selected home is stale and fails without fallback rather than
+    auto-electing another home.
   • home check/remove probes managed containers and every hot root on all
     confirmed nodes. Any dependent retained view blocks removal, including
-    ready, verifying, or pinned hot state. Unobservable nodes fail closed.
+    ready, verifying, or pinned hot state. Unobservable nodes fail without fallback.
     Removal is exact-repository-only, refuses multi-revision hub trees, and
     needs --allow-last-home before deleting the final durable copy or the last
     occupancy of an identity. Receipted last occupancy also needs a verified
@@ -108,14 +108,14 @@ Notes:
     tree.
     A recognized incomplete or refs-only hub stub is
     inspectable and retireable through the same read-only check then confirmed
-    remove --yes path so a later source-attested home add can occupy that
+    remove --yes path so a later home add --revision can occupy that
     repository. Complete homes keep the complete-home contract. Duplicate
     removal requires a selected primary and can target only a non-primary home.
     home check never mutates; without --yes, home remove changes nothing.
   • home add downloads one exact revision directly on one selected serving
-    rank. Hugging Face profiles require --revision (ADR 0012: sealed
-    exact-commit home add is retired). --plan is read-only and prints the
-    public source-attested plan without downloading model bytes. Execution
+    rank. Hugging Face profiles require --revision (ADR 0012: lab
+    expected-identity home add is retired). --plan is read-only and prints the
+    public Hugging Face file-list plan without downloading model bytes. Execution
     needs --yes (or a confirmation) and writes an immutable receipt before
     publishing the home, then attaches occupancy to the exact published
     directory. For a one-node profile, that rank may be any confirmed rank;
@@ -125,12 +125,12 @@ Notes:
     --node resolves metadata only on that rank. Download uses private
     same-filesystem staging and target-local modern hf. It creates no hot
     copies, starts nothing, never refreshes the catalog, and does not create
-    a seal or status.
+    a lab expected-identity file or status.
   • home verify rehashes a receipt-created home against the receipt when
     occupancy still names that live directory. An unbound complete tree with a
     compatible receipt needs home relocate --node, not a Hub re-download and
     not occupancy without a live rehash. An unknown tree without a receipt
-    fails closed (ADR 0012: expected-manifest fallback is retired). Both
+    fails without fallback (ADR 0012: expected-manifest fallback is retired). Both
     verifiers hash attested empty snapshot files. Verification assigns no
     status.
   • home relocate moves occupancy to --node after a live full rehash against
@@ -138,7 +138,7 @@ Notes:
     and no Hub download occur. Receipt selected_rank is download provenance
     only and does not block the move. Catalog refresh is a separate next
     action.
-  • After receipt issuance, a receipt-indexed cold archive starts in the
+  • After a receipt is written, a receipt-indexed cold archive starts in the
     background and is not a serving gate. The cold root may be NFS, an
     external disk, or another distinct-failure-domain mount. home archive
     status|run take no occupancy lifecycle lock so they cannot block prepare,
@@ -155,11 +155,11 @@ Notes:
     multi-rank profile requires explicit --transport ssh-control. Every library
     scope is supported.
   • prepare full-verifies every rank and creates a rank-local serve witness.
-    Unchanged launch checks metadata; drift visibly rehashes or fails closed.
-  • Benchmark/probe commands are explicit experiments and permit legacy-unsealed
-    profiles. Expected-seal is not a live product (ADR 0012).
+    Unchanged launch checks metadata; drift visibly rehashes or fails without fallback.
+  • Benchmark/probe commands are explicit experiments and permit receipt/occupancy
+    profiles. Lab expected-identity files are not a live product (ADR 0012).
   • probe-ssh-roce / bench-ssh-roce: experimental control SSH vs SSH-over-RoCE
-    A/B (no product default change). Requires topology schema-2 SSH enrollment
+    A/B (no product default change). Requires current topology SSH enrollment
     and sshd on fabric IPs. Each report is one ordered pair; repeat both
     --order values before any fast-path decision.
   • pin prevents purge. Cold stage-only hot is self-contained; warm-home

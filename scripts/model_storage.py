@@ -223,11 +223,11 @@ def _node_label(rank: int) -> str:
 
 def _validation_label(value: object) -> str:
     labels = {
-        "expected-unverified": "reviewed identity expected",
-        "legacy-unsealed": "legacy identity",
-        "unvalidated": "unvalidated",
+        "expected-unverified": "lab identity expected (retired)",
+        "legacy-unsealed": "receipt and occupancy identity",
+        "unvalidated": "identity not checked",
         "missing": "not present",
-        "match": "identity match",
+        "match": "historical identity match",
     }
     text = _safe_text(value) or "unknown"
     return labels.get(text, text.replace("-", " "))
@@ -236,8 +236,8 @@ def _validation_label(value: object) -> str:
 def _runtime_label(value: object) -> str:
     labels = {
         "durable-home": "durable home",
-        "sealed-hot": "sealed hot",
-        "live-mount": "live mount",
+        "sealed-hot": "working copy on other node",
+        "live-mount": "live NFS mount (retired)",
     }
     text = _safe_text(value) or "unknown"
     return labels.get(text, text.replace("-", " "))
@@ -626,7 +626,7 @@ def render_detail(
     term.emit("Runtime views")
     if not instances:
         term.emit(
-            "No prepared library-hot runtime views are recorded.",
+            "No prepared model-library runtime views are recorded.",
             initial_indent="  ",
             subsequent_indent="  ",
         )
@@ -635,7 +635,7 @@ def render_detail(
             _node_label(int(instance["rank"])),
             _runtime_label(instance.get("runtime_source")),
             _status_label(instance.get("retention")),
-            f"identity {_status_label(instance.get('identity_status'))}",
+            f"identity {_validation_label(instance.get('identity_status'))}",
             f"witness {_status_label(instance.get('witness_status'))}",
         ]
         if instance.get("active_reference"):
@@ -731,12 +731,12 @@ def render_about(width: int | None = None) -> None:
     term.emit("HOW MODEL STORAGE WORKS")
     term.field("mechanism", "the model library serves every profile (ADR 0006)")
     term.field("catalog", "one durable home per exact revision")
-    term.field("prepared", "sealed hot copies only on non-home serving nodes")
-    term.field("home node", "uses its durable model through a validated local view")
+    term.field("prepared", "working copies only on non-home serving nodes")
+    term.field("home node", "uses its durable model through a hashed local view")
     term.field("pin", "retains non-home hot copies but still requires the durable home")
     term.blank()
     term.emit(
-        "Every library scope (two-rank sealed, one-rank, legacy-unsealed) is supported (ADR 0006). Browsing does not change serving policy or qualify a model."
+        "Every live profile uses local files on every rank (ADR 0006). Browsing does not change serving policy or qualify a model."
     )
 
 
@@ -758,7 +758,7 @@ def render_refresh(report: dict[str, Any], width: int | None = None) -> None:
         "This rescans durable Hugging Face model homes on every confirmed rank and atomically updates the cached inventory."
     )
     term.emit(
-        "It preserves explicit exact-revision primary selections. Incomplete rank or topology observation fails closed."
+        "It preserves explicit exact-revision primary selections. Incomplete rank or topology observation fails without fallback."
     )
     term.emit(
         "It does not download, copy, prepare, start, pin, purge, repair, or delete model files."
@@ -826,7 +826,7 @@ def render_preparation(
         (
             f"about {weights:g} GiB on each non-home serving node"
             if weights is not None
-            else "one complete sealed copy on each non-home serving node"
+            else "one complete working copy on each non-home serving node"
         ),
         label_width=label_width,
     )

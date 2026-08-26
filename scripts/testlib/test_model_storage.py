@@ -218,7 +218,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn(REVISION, compact)
         self.assertIn("no reviewed expected manifest", prose)
         self.assertIn("node 2 (rank 1)", prose)
-        self.assertIn("sealed hot", prose)
+        self.assertIn("working copy on other node", prose)
         self.assertIn("durable home", prose)
         self.assertIn("witness match", prose)
         self.assertIn("do not provide durable-home-loss", prose)
@@ -279,8 +279,8 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("one durable home", prose)
         self.assertIn("only on non-home", prose)
         self.assertIn("still requires the durable home", prose)
-        self.assertIn("Every library scope", prose)
-        self.assertIn("supported (ADR 0006)", prose)
+        self.assertIn("Every live profile", prose)
+        self.assertIn("local files on every rank", prose)
 
     def test_refresh_preview_is_explicit_bounded_and_width_aware(self) -> None:
         output = capture(
@@ -291,7 +291,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("every confirmed rank", prose)
         self.assertIn("atomically updates the cached inventory", prose)
         self.assertIn("preserves explicit exact-revision primary selections", prose)
-        self.assertIn("fails closed", prose)
+        self.assertIn("fails without fallback", prose)
         self.assertIn("does not download, copy, prepare, start", prose)
         self.assertIn("delete model files", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
