@@ -44,15 +44,15 @@
 | Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md); [ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md) |
 | Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current operator/catalog state | [OPERATIONS.md](./OPERATIONS.md), [MODELS.md](./MODELS.md) |
-| Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working copies (`runtime_source=sealed-hot`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), fixed eight-stream SSH-over-RoCE preparation for multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working copies (ADR 0007) |
+| Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working copies (`runtime_source=working-copy`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), fixed eight-stream SSH-over-RoCE preparation for multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working copies (ADR 0007) |
 | Supported today | Local files on every rank for every live profile (ADR 0006/0012). Historical two-rank lab-identity gates remain in `results/`. Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
 | Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; Hugging Face `home add --revision` kept as core catalog/artifact ingress with remote-target / asymmetric-credentials as physical validation follow-ups; Hugging Face is the only current ingress format (local-directory import needs its own ADR); occupancy loss recovers via ADR 0011 relocate/restore (receipt-indexed NFS archive implementation pending); maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope |
 | Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails without fallback; historical `results/weight-fabric/` evidence is superseded and not promoted. |
 
 **Current implementation integrity boundary:** lab expected-identity files and
 the archived combined identity format are not a live product (ADR 0012).
-Catalog and working-copy records remain; live identity statuses are
-`legacy-unsealed` and `unvalidated`. There is no v2 of the expected-identity
+Catalog and working-copy records remain; live identity status is
+`receipt-occupancy`. There is no v2 of the expected-identity
 format. ADR 0004 objects are a different format. Historical
 `models/seals/*.json` files are archived under `docs/archive/` and are not
 loaded. Working-copy records observed revision and file list; leftover
@@ -151,8 +151,7 @@ Closed validator-measurement documents for `compare-captures` and
 caller context into the existing attempt-only specs. Neither surface issues a
 status, decision, or serving permission, and ordinary `validate/run-gates.sh`
 remains a human path that does not require a release plan.
-`qwen3.8-27b-fp8` binds the first reviewed ADR 0004 lineage and projects the
-advisory status `Testing incomplete`; other profiles remain neutral.
+No current profile binds an ADR 0004 lineage; the catalog remains unbound.
 Review-metadata shape checks cannot prove that
 repository review or physical qualification occurred. The supervised
 `pulsar-model-onboarding` skill is implemented as control-plane orchestration
@@ -161,7 +160,7 @@ lab expected-identity file or a validation decision, assigns status, points a
 profile at a Model Serving Release, writes the trusted registry, promotes a
 path, or claims physical behavior. Current automated mapping covers only
 strict same-boot and absolute throughput/latency. A receipt/occupancy
-(`legacy-unsealed`) launch is not an exact ADR 0004 qualification attempt.
+(`identity_status=receipt-occupancy`) launch is not an exact ADR 0004 qualification attempt.
 For an absent repository, the skill composes the read-only
 `home add --revision` plan and separately confirmed exact-commit acquisition.
 A receipted home may be resumed or reused only after a complete offline rehash
@@ -313,7 +312,7 @@ mount under vLLM is rejected as a serving runtime source
 - **Rank 0** is the API/control rank for the exact serving geometry.
 - **Origin** is `huggingface`, `cold-catalog`, or `managed-home`.
 - **Transfer** is `preexisting`, `ssh-control`, `ssh-roce`, or `nfs-rdma`.
-- **Runtime source** is `durable-home`, `sealed-hot`, or `live-mount`.
+- **Runtime source** is `durable-home`, `working-copy`, or `live-mount`.
 - **Retention** is `durable`, `ephemeral`, or `pinned`.
 - **Prepare / model preparation** is the user-facing operation that resolves the
   exact model, creates the required rank-local runtime views, transfers only
@@ -515,8 +514,8 @@ with their labels and caveats; recommendation/default policy may prefer
 stronger evidence. Exact identity, recipe, topology, capacity, lifecycle, and
 security checks still fail without fallback when the requested run cannot proceed.
 
-**Current implementation:** live profiles are labeled `legacy-unsealed` or
-`unvalidated`. `EXPECTED_MODEL_SEAL` is refused (ADR 0012). Historical JSON
+**Current implementation:** live profiles are labeled `receipt-occupancy`.
+`EXPECTED_MODEL_SEAL` is refused (ADR 0012). Historical JSON
 under `docs/archive/schema-1-expected-seal/` is not loaded.
 `catalog list --reviewed-identity` and `--validated` are removed (ADR 0008)
 and fail without fallback. They do not assign an ADR 0004 status. The
@@ -598,15 +597,15 @@ For a warm-home service using `N` ranks:
 
 ```text
 idle durable storage     = 1 × model_size
-active storage           = 1 durable home + (N - 1) working copies (`sealed-hot`)
-after ordinary stop      = 1 durable home + (N - 1) unpinned working replicas (`sealed-hot`)
+active storage           = 1 durable home + (N - 1) working copies (`working-copy`)
+after ordinary stop      = 1 durable home + (N - 1) unpinned working replicas (`working-copy`)
 after explicit purge-hot = 1 × model_size
-after pin                = 1 durable home + (N - 1) pinned working replicas (`sealed-hot`)
+after pin                = 1 durable home + (N - 1) pinned working replicas (`working-copy`)
 ```
 
 The home-rank symlink contributes no owned hot model bytes. Admission charges
 the exact file-list size only to ranks whose runtime source is
-`sealed-hot`; a `durable-home` view requires zero additional model bytes.
+`working-copy`; a `durable-home` view requires zero additional model bytes.
 Existing files anywhere below the hot root, including untracked or malformed
 managed content, still count toward that rank's current owned-hot total.
 
@@ -650,7 +649,7 @@ The accepted warm-home claim is:
 
 - restart without cold storage, a transfer plane, or catalog refresh while the
   durable home and retained non-home hot copies remain valid;
-- ordinary stop leaves unpinned working replicas (`sealed-hot`) in place for that reuse;
+- ordinary stop leaves unpinned working replicas (`working-copy`) in place for that reuse;
 - restart after explicit `--purge-hot` prepares non-home ranks again from the
   durable home;
 - occupancy loss is service loss until ADR 0011 recovery.
@@ -702,9 +701,11 @@ changed bytes as already-checked identity.
 
 **Current implementation:** working-copy records carry the observed revision
 and file list. Leftover expected-identity fields are untrusted observations.
-Preparation compares model ID, immutable commit, and file-list ID, then
+Preparation requires occupancy plus the download receipt. It compares model
+ID, immutable commit, and file-list ID against that receipt, then
 full-verifies every rank and atomically creates that rank's
-`.pulsar/witness.json` before publishing ready state. `home add --revision`
+`.pulsar/witness.json` before publishing ready state. A self-observed tree
+without a receipt is not identity. `home add --revision`
 records the complete upstream inventory and observed hashes in an immutable
 receipt, then attaches occupancy to the exact published directory. Later
 offline `home verify` and exact prepare use that current attachment, not a
@@ -712,8 +713,8 @@ matching tree or the lexicographically first stored receipt. Staging hashes
 the private target-rank tree before publication; acquisition does not create a
 serve witness because no runtime view has been prepared yet.
 Unknown trees without a receipt fail without fallback; there is no lab
-expected-identity fallback. Live `identity_status` values are
-`legacy-unsealed` and `unvalidated`. A witness never turns receipt/occupancy
+expected-identity fallback. Live `identity_status` is
+`receipt-occupancy`. A witness never turns receipt/occupancy
 identity into an ADR 0004 `Validated` decision.
 
 `qwen3-1.7b` and `deepseek-v4-flash` were the last profiles that used lab
@@ -728,7 +729,7 @@ boundary.
 
 ### 4.6 Prepare transfers
 
-Transfer moves bytes only to ranks whose runtime source is `sealed-hot`.
+Transfer moves bytes only to ranks whose runtime source is `working-copy`.
 The warm-home rank uses its existing `durable-home` view.
 
 | Transfer | Current CLI shape | Network/path claim | Promotion role |
@@ -750,7 +751,7 @@ copy plane. The service then uses:
 
 ```text
 home rank      → hashed durable-home view
-non-home ranks → verified working copies (`runtime_source=sealed-hot`)
+non-home ranks → verified working copies (`runtime_source=working-copy`)
 ```
 
 That teardown occurs before launch or before claiming ready-to-serve. It does not
@@ -884,7 +885,7 @@ requires every selected runtime view to be exact and ready before launch
 (local files on every rank). Container launch remains behind the wizard's
 separate final confirmation. A one-node catalog service is placed on its
 durable-home rank and uses that local view; multi-node preparation uses the
-exact profile ranks and creates working copies (`runtime_source=sealed-hot`)
+exact profile ranks and creates working copies (`runtime_source=working-copy`)
 only on non-home ranks.
 
 On an ordinary stop, an observed library service retains unpinned
@@ -896,8 +897,7 @@ for named-profile stops. Interactive home stop discloses the restage
 consequence before mutation. `down.sh --all` never auto-purges.
 Exact restore that required `identity_status=match` is retired with lab
 expected-identity files (ADR 0012). A wizard replacement of a complete,
-safe-to-stop library service (`identity_status=legacy-unsealed` or
-`unvalidated`) is stopped without a capture, so exact rollback is unavailable —
+safe-to-stop library service (`identity_status=receipt-occupancy`) is stopped without a capture, so exact rollback is unavailable —
 the same guard as a leftover pre-library launch. Incomplete, multi-service,
 legacy-unlabeled, drifted, or unretainable state makes automatic replacement
 unavailable before stop. A leftover transaction

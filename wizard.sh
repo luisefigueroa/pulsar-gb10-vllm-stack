@@ -649,8 +649,8 @@ render_model_selection() {
   local -a fields=(
     "Model" "$NAME"
     "Serves" "$SERVED_NAME on :$PORT"
-    "Release status" "$MODEL_SERVING_RELEASE_STATUS_LABEL · advisory"
-    "Legacy label" "$STATUS · advisory"
+    "Release status" "$MODEL_SERVING_RELEASE_STATUS_LABEL · display-only"
+    "Legacy label" "$STATUS · display-only"
     "Recipe" "exact $NODES-node profile"
   )
   if [ -n "${NOTES:-}" ]; then
@@ -971,7 +971,7 @@ import os
 
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 name = os.environ["NAME"]
-selected_weight_source = "library-hot"
+selected_weight_source = "local-files"
 port = int(os.environ.get("PORT") or 8000)
 target_count = int(os.environ.get("NODES") or 1)
 selected_node = os.environ.get("TARGET_NODE_KEY") or "head"
@@ -1375,44 +1375,31 @@ print("1" if item.get("complete") is True and item.get("safe_to_stop") is True e
 ')
     [ "${#svc_fields[@]}" -eq 3 ] || die "running service inventory is incomplete; no service was stopped"
     running_source="${svc_fields[0]}"
-    identity_status="${svc_fields[1]}"
     stoppable="${svc_fields[2]}"
-    # Exact rollback that required identity_status=match is retired (ADR 0012).
-    # Library-hot switches stop without a restore promise.
-    if [ "$running_source" != library-hot ] || true; then
-      [ "$stoppable" = 1 ] || {
-        if [ "$running_source" != library-hot ]; then
-          die "the running pre-library service is incomplete or unobservable; no service was stopped"
-        fi
-        die "the running model-library service is incomplete or unobservable; no service was stopped"
-      }
-      if [ "$running_source" != library-hot ]; then
-        warn "stopping a pre-library service; exact rollback is unavailable for it"
-      else
-        warn "stopping a model-library service without a reviewed identity match; exact rollback is unavailable for it"
+    # Exact restore that required identity_status=match is retired (ADR 0012).
+    # Live switches stop without a restore promise. Leftover transaction
+    # files are archived, not used as the live switch path.
+    [ "$stoppable" = 1 ] || {
+      if [ "$running_source" != local-files ]; then
+        die "the running pre-library service is incomplete or unobservable; no service was stopped"
       fi
-      down_args=()
-      if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
-        down_args=("${PLACEMENT_ARGS[@]}")
-      fi
-      log "stopping stack-managed conf=$conf…"
-      cmd_down "$conf" "${down_args[@]}" \
-        || die "stop failed for $conf; inspect with ./pulsar inventory"
-      STOPPED_CONFS+=("$conf")
-      PENDING_STOP=()
-      return 0
+      die "the running model-library service is incomplete or unobservable; no service was stopped"
+    }
+    if [ "$running_source" != local-files ]; then
+      warn "stopping a pre-library service; exact rollback is unavailable for it"
+    else
+      warn "stopping a model-library service without an exact restore contract"
     fi
-    capture_running_service_transaction "$conf" "$inventory"
-    log "stopping stack-managed conf=$conf from its captured placement…"
-    down_args=("${TRANSACTION_NODE_ARGS[@]}" --pin-weights)
-    log "prepared views remain retained until replacement or exact rollback succeeds"
-    if ! cmd_down "$conf" "${down_args[@]}"; then
-      die "stop failed for $conf; transaction and any temporary pin were retained for recovery"
+    down_args=()
+    if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
+      down_args=("${PLACEMENT_ARGS[@]}")
     fi
-    cmd_replacement_transaction phase \
-      --path "$REPLACEMENT_TRANSACTION_FILE" --to stopped >/dev/null
+    log "stopping stack-managed conf=$conf…"
+    cmd_down "$conf" "${down_args[@]}" \
+      || die "stop failed for $conf; inspect with ./pulsar inventory"
     STOPPED_CONFS+=("$conf")
-    PREVIOUS_PROFILE="$conf"
+    PENDING_STOP=()
+    return 0
   else
     for conf in "${PENDING_STOP[@]}"; do
       down_args=()
@@ -1431,7 +1418,7 @@ prepare_exact_rollback() {
   local health_file="$WIZARD_WORK_DIR/rollback-health.json" contract_id inventory
   local inventory_file="$WIZARD_WORK_DIR/rollback-inventory.json"
   load_transaction_summary
-  [ "$TRANSACTION_SOURCE" = library-hot ] \
+  [ "$TRANSACTION_SOURCE" = local-files ] \
     || die "saved transaction is not a model-library contract; archive it instead of rollback"
   NAME="$TRANSACTION_PREVIOUS_PROFILE"
   load_conf "$NAME"
@@ -2179,7 +2166,7 @@ for model in models:
     die "no serving profile fits the $topology_capacity confirmed node(s)"
   fi
 
-  pick=$(choose "Choose a model · status labels are advisory · $topology_context" "${choices[@]}")
+  pick=$(choose "Choose a model · status labels are display-only · $topology_context" "${choices[@]}")
   NAME=$(echo "$pick" | awk '{print $1}')
   [ -n "$NAME" ] || die "no selection"
 

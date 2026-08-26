@@ -16,11 +16,11 @@ import sys
 from typing import Any
 
 try:
-    from scripts import model_identity, model_library, model_library_source_attested as source_attested
+    from scripts import model_identity, model_library, model_library_receipt as source_attested
 except ModuleNotFoundError:
     import model_identity  # type: ignore[no-redef]
     import model_library  # type: ignore[no-redef]
-    import model_library_source_attested as source_attested  # type: ignore[no-redef]
+    import model_library_receipt as source_attested  # type: ignore[no-redef]
 
 
 COLD_ARCHIVE_SCHEMA_VERSION = 1
@@ -369,9 +369,9 @@ def last_occupancy_cold_archive_blocker(
     )
     if expected_receipt_id:
         if resolved_id is None:
-            fail("home removal: planned source-attested receipt is missing")
+            fail("home removal: planned download receipt is missing")
         if resolved_id != expected_receipt_id:
-            fail("home removal: source-attested receipt changed after the plan")
+            fail("home removal: download receipt changed after the plan")
         receipt_id = expected_receipt_id
     else:
         receipt_id = resolved_id

@@ -66,7 +66,7 @@ class ModelLibraryWitnessContracts(unittest.TestCase):
             revision=self.revision,
         )
         self.validation = {
-            "identity_status": "legacy-unsealed",
+            "identity_status": "receipt-occupancy",
             "expected_seal": None,
             "observed_seal": model_library.observed_model_seal_projection(
                 self.manifest

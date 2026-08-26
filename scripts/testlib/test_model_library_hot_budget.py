@@ -43,7 +43,7 @@ class HotBudgetContracts(unittest.TestCase):
         reserve: int | None = None,
         rank: int = 0,
         node_id: str = "node-zero",
-        runtime_source: str = "sealed-hot",
+        runtime_source: str = "working-copy",
         replacing_path: pathlib.Path | None = None,
     ) -> dict[str, object]:
         with mock.patch.dict(
@@ -172,9 +172,9 @@ class HotBudgetContracts(unittest.TestCase):
         self.assertEqual(
             [(item["runtime_source"], item["required_owned_bytes"]) for item in warm],
             [
-                ("sealed-hot", 167 * GIB),
+                ("working-copy", 167 * GIB),
                 ("durable-home", 0),
-                ("sealed-hot", 167 * GIB),
+                ("working-copy", 167 * GIB),
             ],
         )
         cold = model_library.build_hot_storage_requirements(
@@ -201,7 +201,7 @@ class HotBudgetContracts(unittest.TestCase):
             [first, second],
             expected_ranks=[0, 1],
             topology_id="topology-fixture",
-            mode="activate",
+            mode="prepare",
         )
         self.assertEqual(plan["state"], "blocked")
         self.assertEqual(plan["blockers"][0]["rank"], 1)
@@ -210,7 +210,7 @@ class HotBudgetContracts(unittest.TestCase):
                 [first],
                 expected_ranks=[0, 1],
                 topology_id="topology-fixture",
-                mode="activate",
+                mode="prepare",
             )
         duplicate_node = {**second, "node_id": "node-zero"}
         with self.assertRaisesRegex(
@@ -221,7 +221,7 @@ class HotBudgetContracts(unittest.TestCase):
                 [first, duplicate_node],
                 expected_ranks=[0, 1],
                 topology_id="topology-fixture",
-                mode="activate",
+                mode="prepare",
             )
 
     def test_human_plan_respects_narrow_terminal(self) -> None:

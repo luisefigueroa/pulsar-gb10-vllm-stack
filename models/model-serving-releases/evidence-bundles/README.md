@@ -10,5 +10,5 @@ set. Publishable repository-relative artifacts are stream-hashed against
 the checkout. Protected content-addressed artifacts are not required in
 Git. Hash agreement does not prove privacy review or physical behavior.
 
-A bundle may exist before any reviewed decision. This namespace holds
-the reviewed Qwen3.8 bundle. Do not add a `Validated` fixture here.
+A bundle may exist before any reviewed decision. This namespace is empty.
+Do not add a `Validated` fixture here.

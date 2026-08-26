@@ -8,7 +8,7 @@ immutable evidence bundle, and independently verify the resulting
 candidate.
 
 This module is not an issuing or promotion authority. A successful
-candidate is unreviewed, has privacy review pending, grants no serving
+candidate is a draft, has privacy review pending, grants no serving
 authorization, changes no catalog or profile status, and never writes the
 tracked release registry. Schema ownership remains in the pure ADR 0004
 modules.
@@ -69,7 +69,7 @@ BUNDLE_NAME = "evidence-bundle.json"
 RUN_RECORDS_DIR = "run-records"
 EVIDENCE_DIR = "evidence"
 
-CANDIDATE_STATE = "unreviewed"
+CANDIDATE_STATE = "draft"
 CANDIDATE_AUTHORITY = "none"
 CANDIDATE_PRIVACY = "pending"
 
@@ -224,7 +224,7 @@ READ_STABILITY_HOOK = None
 VERIFY_AFTER_SCAN_HOOK = None
 
 PERSISTENCE_NOTES = (
-    "This candidate is unreviewed and has no issuance authority.",
+    "This candidate is draft JSON and has no staging authority.",
     "Privacy review is pending.",
     "This workflow does not launch a release.",
     "Capture does not write the tracked release registry.",
@@ -1421,7 +1421,7 @@ def validate_candidate_manifest(value: Any) -> dict[str, Any]:
     if manifest.get("kind") != CANDIDATE_KIND:
         fail("capture candidate kind is invalid")
     if manifest.get("state") != CANDIDATE_STATE:
-        fail("capture candidate state must be unreviewed")
+        fail("capture candidate state must be draft")
     if manifest.get("authority") != CANDIDATE_AUTHORITY:
         fail("capture candidate cannot claim authority")
     if manifest.get("privacy_review") != CANDIDATE_PRIVACY:
@@ -2201,7 +2201,7 @@ def load_spec_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
 
 HELP_LINES = (
-    "Capture unreviewed ADR 0004 evidence-capture candidates",
+    "Capture draft ADR 0004 evidence-capture candidates",
     "",
     "Usage:",
     "scripts/model-serving-release-capture.sh plan --release-plan DIR --attempt-spec FILE [--json]",
@@ -2210,7 +2210,7 @@ HELP_LINES = (
     "scripts/model-serving-release-capture.sh verify-candidate --candidate-dir DIR [--json]",
     "",
     "Candidate safety:",
-    "Output is unreviewed and has no validation authority.",
+    "Output is draft JSON and has no validation authority.",
     "Privacy review remains pending. This tool does not launch a model.",
     "Default output is gitignored experiments/model-serving-release-captures/.",
     "This tool never writes models/, the tracked release registry, a profile, or catalog status.",
@@ -2312,7 +2312,7 @@ def cmd_verify_candidate(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Capture and verify unreviewed ADR 0004 evidence-capture candidates"
+            "Capture and verify draft ADR 0004 evidence-capture candidates"
         )
     )
     parser.add_argument("--repo-root", required=True, help=argparse.SUPPRESS)

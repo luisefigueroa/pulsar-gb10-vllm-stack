@@ -51,21 +51,21 @@ fi
 require_profile_topology "$NODES" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
   || exit 1
 
-LIBRARY_HOT_HUB_PATH=""
-LIBRARY_HOT_CONTENT_DIGEST=""
-LIBRARY_HOT_TRANSPORT=""
-LIBRARY_HOT_INTEGRITY_SCHEME=""
+LIBRARY_VIEW_HUB_PATH=""
+LIBRARY_VIEW_CONTENT_DIGEST=""
+LIBRARY_VIEW_TRANSPORT=""
+LIBRARY_VIEW_INTEGRITY_SCHEME=""
 resolve_library_hot_for_profile "$MODEL_NAME"
-WEIGHT_OWNER_ID="${LIBRARY_HOT_HOME_NODE_ID}"
-WEIGHT_CONFIG_ID="${LIBRARY_HOT_CONTENT_ID}"
-runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
+WEIGHT_OWNER_ID="${LIBRARY_VIEW_HOME_NODE_ID}"
+WEIGHT_CONFIG_ID="${LIBRARY_VIEW_CONTENT_ID}"
+runtime_model="$LIBRARY_VIEW_CONTAINER_MODEL_PATH"
 for ((rank = 1; rank < NODES; rank++)); do
   library_verify_command=$(shell_join_q \
     python3 - verify-hot \
-    --instance-dir "$LIBRARY_HOT_INSTANCE_DIR" \
+    --instance-dir "$LIBRARY_VIEW_INSTANCE_DIR" \
     --profile "$MODEL_NAME" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --expected-validation-json "$LIBRARY_HOT_VALIDATION_JSON" \
+    --expected-validation-json "$LIBRARY_VIEW_VALIDATION_JSON" \
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}" \
     --serve-time-witness)
   echo "[cluster] serve witness + identity verify (no fallback): rank $rank"
@@ -75,7 +75,7 @@ for ((rank = 1; rank < NODES; rank++)); do
 done
 
 echo "[cluster] exact profile: $MODEL_NAME · $NODES ranks · topology ${CLUSTER_TOPOLOGY_ID:0:12}"
-echo "[cluster] weights: model library · local hot staging · home=${WEIGHT_OWNER_ID:0:12} · identity=$LIBRARY_HOT_IDENTITY_STATUS · revision=${LIBRARY_HOT_REVISION:0:12}"
+echo "[cluster] weights: model library · local hot staging · home=${WEIGHT_OWNER_ID:0:12} · identity=$LIBRARY_VIEW_IDENTITY_STATUS · revision=${LIBRARY_VIEW_REVISION:0:12}"
 echo "[cluster] spec-decode=$([ "$SPEC_DECODE_ENABLED" = 1 ] && echo ON || echo off) ($SPEC_DECODE_SOURCE)"
 if [ "$SKIP_PREFLIGHT" = 0 ]; then
   cluster/preflight.sh "$MODEL_NAME" || {
@@ -157,12 +157,12 @@ record_startup_metric() {
   )
   metric_args+=(
     --content-id "$WEIGHT_CONFIG_ID"
-    --content-digest "$LIBRARY_HOT_CONTENT_DIGEST"
-    --transport "$LIBRARY_HOT_TRANSPORT"
-    --integrity-scheme "$LIBRARY_HOT_INTEGRITY_SCHEME"
-    --model-revision "$LIBRARY_HOT_REVISION"
-    --identity-status "$LIBRARY_HOT_IDENTITY_STATUS"
-    --runtime-model-path "$LIBRARY_HOT_CONTAINER_MODEL_PATH"
+    --content-digest "$LIBRARY_VIEW_CONTENT_DIGEST"
+    --transport "$LIBRARY_VIEW_TRANSPORT"
+    --integrity-scheme "$LIBRARY_VIEW_INTEGRITY_SCHEME"
+    --model-revision "$LIBRARY_VIEW_REVISION"
+    --identity-status "$LIBRARY_VIEW_IDENTITY_STATUS"
+    --runtime-model-path "$LIBRARY_VIEW_CONTAINER_MODEL_PATH"
   )
 
   [ -n "$WEIGHT_OWNER_ID" ] \

@@ -3,7 +3,7 @@
 
 Extracted from the retired weight-fabric tool (ADR 0006). The model library
 is the only weight-distribution mechanism, so new records always carry
-weight_source=library-hot (stored enum); the field stays in the record for
+weight_source=local-files (stored enum); the field stays in the record for
 continuity with historical evidence.
 """
 
@@ -101,38 +101,34 @@ def command_startup_metric(args: argparse.Namespace) -> None:
     integrity_scheme = args.integrity_scheme or None
     model_revision = args.model_revision or None
     identity_status = args.identity_status or None
-    model_seal_id = args.model_seal_id or None
-    validation_bundle_id = args.validation_bundle_id or None
     runtime_model_path = args.runtime_model_path or None
     owner_node_id = args.owner_node_id or None
     if owner_node_id is not None:
         owner_node_id = clean_text(owner_node_id, "owner_node_id")
     if owner_node_id is None:
-        fail("startup metric: library-hot evidence requires a home owner")
+        fail("startup metric: local-files evidence requires a home owner")
     if content_id is None or not re.fullmatch(r"[0-9a-f]{12}", content_id):
-        fail("startup metric: invalid library-hot content identity")
+        fail("startup metric: invalid local-files content identity")
     if content_digest is None or not re.fullmatch(
         r"[0-9a-f]{64}", content_digest
     ):
-        fail("startup metric: invalid library-hot content digest")
+        fail("startup metric: invalid local-files content digest")
     # nfs-rdma stays accepted read-side: hot instances prepared before the
     # one-shot experiment was retired may still carry it in their stamps.
     if transport not in ("ssh-control", "ssh-roce", "nfs-rdma"):
-        fail("startup metric: invalid library-hot transport")
+        fail("startup metric: invalid local-files transport")
     if integrity_scheme != "sha256-snapshot-manifest-v1":
-        fail("startup metric: invalid library-hot integrity scheme")
+        fail("startup metric: invalid local-files integrity scheme")
     if model_revision is None or not re.fullmatch(
         r"[A-Za-z0-9._-]+", model_revision
     ):
-        fail("startup metric: invalid library-hot model revision")
-    if identity_status not in ("legacy-unsealed", "unvalidated"):
-        fail("startup metric: invalid library-hot identity status")
+        fail("startup metric: invalid local-files model revision")
+    if identity_status != "receipt-occupancy":
+        fail("startup metric: invalid local-files identity status")
     if runtime_model_path is None or not runtime_model_path.endswith(
         f"/snapshots/{model_revision}"
     ):
         fail("startup metric: runtime model path is not the exact revision")
-    if model_seal_id is not None or validation_bundle_id is not None:
-        fail("startup metric: unsealed identity cannot claim seal provenance")
     destination = pathlib.Path(args.output)
     if destination == pathlib.Path("/") or destination.exists():
         fail("startup metric: output must be a new bounded path")
@@ -142,7 +138,7 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         "kind": "container-launch-to-first-health",
         "profile": profile_name(args.profile),
         "model": clean_text(args.model, "model"),
-        "weight_source": "library-hot",
+        "weight_source": "local-files",
         "nodes": bounded_int(args.nodes, "nodes", 2, 255),
         "topology_id": topology_id,
         "configuration_id": None,
@@ -152,12 +148,10 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         "integrity_scheme": integrity_scheme,
         "model_revision": model_revision,
         "identity_status": identity_status,
-        "model_seal_id": model_seal_id,
-        "validation_bundle_id": validation_bundle_id,
         "runtime_model_path": runtime_model_path,
         "owner_node_fingerprint": fingerprint(owner_node_id),
         "tag": tag,
-        "cache_state": "sealed-hot",
+        "cache_state": "working-copy",
         "started_at": clean_text(args.started_at, "started_at"),
         "first_healthy_at": clean_text(
             args.first_healthy_at, "first_healthy_at"
@@ -191,11 +185,9 @@ def build_parser() -> argparse.ArgumentParser:
     startup_metric.add_argument("--integrity-scheme")
     startup_metric.add_argument(
         "--identity-status",
-        choices=("legacy-unsealed", "unvalidated"),
+        choices=("receipt-occupancy",),
     )
     startup_metric.add_argument("--model-revision")
-    startup_metric.add_argument("--model-seal-id")
-    startup_metric.add_argument("--validation-bundle-id")
     startup_metric.add_argument("--runtime-model-path")
     startup_metric.add_argument("--tag")
     startup_metric.add_argument("--started-at", required=True)

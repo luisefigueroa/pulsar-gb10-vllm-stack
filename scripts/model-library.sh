@@ -9,7 +9,7 @@ SCRIPT_NAME=model-library
 . "$REPO_DIR/scripts/model-library-materialize.sh"
 
 PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
-SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library_source_attested.py}"
+SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library_receipt.py}"
 COLD_ARCHIVE_PY="${PULSAR_COLD_ARCHIVE_PY:-$REPO_DIR/scripts/model_library_cold_archive.py}"
 HF_SOURCE_INVENTORY_PY="${PULSAR_HF_SOURCE_INVENTORY_PY:-$REPO_DIR/scripts/hf_source_inventory.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
@@ -83,7 +83,7 @@ Notes:
     org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
   • cold adopt imports into a durable warm HF home; cold stage-only fills hot
     only (cold remains sole durable copy; pin still allows warm restart).
-  • Catalog identity labels are receipt/occupancy (legacy-unsealed) or
+  • Catalog identity labels are receipt/occupancy or
     unvalidated. Local bytes never create an ADR 0004 decision. --reviewed-identity
     and archived combined-identity verification are retired (ADR 0012). --validated
     is removed (ADR 0008). Status labels do not grant or deny start: prepare accepts
@@ -154,6 +154,10 @@ Notes:
     and no fallback (ADR 0003/0006). Management-network bulk copy on a
     multi-rank profile requires explicit --transport ssh-control. Every library
     scope is supported.
+  • prepare requires occupancy plus the download receipt file list. An unknown
+    tree without a receipt fails without fallback (ADR 0012). Use
+    home add --revision or home relocate; do not hash a self-observed tree as
+    identity.
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails without fallback.
   • Benchmark/probe commands are explicit experiments and permit receipt/occupancy
@@ -178,55 +182,6 @@ Notes:
   • activate is removed (ADR 0008): use prepare. Model preparation does
     not start a serving container or establish model qualification.
 EOF
-}
-
-cmd_validation_bundle_verify() {
-  local profile="${1:-}" json=0
-  shift || true
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --json) json=1 ;;
-      *) die "unknown validation-bundle verify option: $1" ;;
-    esac
-    shift
-  done
-  [ -n "$profile" ] \
-    || die "usage: validation-bundle verify <profile> [--json]"
-  load_conf "$profile"
-  [ -n "$EXPECTED_MODEL_SEAL" ] \
-    || die "$profile has no reviewed expected seal or validation bundle"
-  [ -n "$PROFILE_VALIDATION_BUNDLE_JSON" ] \
-    || die "$profile validation bundle verification returned no result"
-  if [ "$json" = 1 ]; then
-    printf '%s\n' "$PROFILE_VALIDATION_BUNDLE_JSON"
-    return 0
-  fi
-  local -a fields=()
-  mapfile -t fields < <(
-    printf '%s' "$PROFILE_VALIDATION_BUNDLE_JSON" |
-      python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print(d["validation_bundle"]["bundle_id"])
-print(d["expected_model_seal"]["seal_id"])
-print(d["expected_model_seal"]["snapshot_revision"])
-print(d["validation_bundle"]["image_digest"])
-print(d["validation_bundle"]["topology_class"])
-print(d["validation_bundle"]["nodes"])
-print(d["profile_contract_id"])
-'
-  )
-  [ "${#fields[@]}" -eq 7 ] \
-    || die "$profile validation bundle result is incomplete"
-  render_human_section "Validation bundle" \
-    "profile" "$profile" \
-    "state" "match" \
-    "bundle" "${fields[0]}" \
-    "model seal" "${fields[1]}" \
-    "revision" "${fields[2]}" \
-    "image" "${fields[3]}" \
-    "geometry" "${fields[5]} node(s) · ${fields[4]}" \
-    "profile contract" "${fields[6]}"
 }
 
 # Experiment: control (default) vs roce (rsync -e ssh to fabric IPs).
@@ -364,10 +319,10 @@ resolve_attached_source_attested_receipt() {
     --allow-missing
 }
 
-library_plan_activate() {
+library_plan_prepare() {
   local profile="${1:?profile required}"
   shift
-  local home_inventory model_id revision receipt_json manifest_json
+  local home_inventory model_id revision receipt_json manifest_json receipt_lookup
   local home_rank node_id hub_path tmp
   home_inventory=$(inspect_catalog_home "$profile") || return 1
   model_id=$(printf '%s' "$home_inventory" | python3 -c \
@@ -386,16 +341,26 @@ library_plan_activate() {
       "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
       "$tmp" "prepare"); then
     rm -rf "$tmp"
-    die "prepare: source-attested receipt lookup failed"
+    die "prepare: download receipt lookup failed"
   fi
   rm -rf "$tmp"
-  if [ "$receipt_json" != null ]; then
-    manifest_json=$(printf '%s' "$receipt_json" | python3 -c \
-      'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
-    extra+=(--require-exact-revision "$revision")
-    extra+=(--expected-integrity-manifest-json "$manifest_json")
+  if [ "$receipt_json" = null ] || [ -z "$receipt_json" ]; then
+    receipt_lookup=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
+      --library-dir "$LIBRARY_DIR" \
+      --model-id "$model_id" \
+      --revision "$revision" \
+      --allow-missing) \
+      || die "prepare: download receipt lookup failed"
+    if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
+      die "prepare: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $profile --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+    fi
+    die "prepare: unknown or pre-existing home has no download receipt. Create one with scripts/model-library.sh home add $profile --revision <commit> --plan then --yes (ADR 0012)."
   fi
-  python3 "$PY_TOOL" plan-activate \
+  manifest_json=$(printf '%s' "$receipt_json" | python3 -c \
+    'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
+  extra+=(--require-exact-revision "$revision")
+  extra+=(--expected-integrity-manifest-json "$manifest_json")
+  python3 "$PY_TOOL" plan-prepare \
     --catalog "$CATALOG_FILE" \
     --profile "$profile" \
     --models-dir "$REPO_DIR/models" \
@@ -462,7 +427,7 @@ merge_hot_budget_observation_file() {
 }
 
 build_hot_budget_plan_from_activation() {
-  local activation_plan="${1:?}" mode="${2:-activate}"
+  local activation_plan="${1:?}" mode="${2:-prepare}"
   local metadata profile model_id bytes_logical
   local rank runtime_source required_owned_bytes replacing_path observation
   local observations_file expected_ranks="" rc=0
@@ -1715,7 +1680,7 @@ print(model_library.model_id_to_hub_dirname(sys.argv[2]))' \
 import json,sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-import model_library_source_attested as sa
+import model_library_receipt as sa
 identity = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 observed = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 sa.compare_observed_manifest_to_expected(
@@ -1886,7 +1851,7 @@ cmd_home_verify() (
         --revision "$revision" \
         --allow-missing)
       if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
-        die "home verify: occupancy is missing for a source-attested receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+        die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
       fi
       die "home verify: could not resolve $query"
     fi
@@ -1902,7 +1867,7 @@ cmd_home_verify() (
   receipt_json=$(resolve_attached_source_attested_receipt \
       "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
       "$tmp" "home verify") \
-    || die "home verify: source-attested receipt lookup failed"
+    || die "home verify: download receipt lookup failed"
   if [ "$receipt_json" != null ]; then
     printf '%s\n' "$receipt_json" >"$tmp/receipt.json"
     observed_json=$(run_model_library_on_rank "$home_rank" \
@@ -1932,9 +1897,9 @@ cmd_home_verify() (
     --revision "$revision" \
     --allow-missing)
   if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
-    die "home verify: occupancy is missing for a source-attested receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+    die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
   fi
-  die "home verify: unknown or pre-existing home has no source-attested receipt (ADR 0012: expected-manifest fallback is retired)"
+  die "home verify: unknown or pre-existing home has no download receipt (ADR 0012: expected-manifest fallback is retired)"
 )
 
 confirmed_rank_from_node_selector() {
@@ -2005,7 +1970,7 @@ cmd_home_relocate() {
     --revision "$revision" \
     --allow-missing)
   [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
-    || die "home relocate: no source-attested receipt for $model_id@$revision; sealed homes keep expected-manifest verify, and Hub re-download is home add"
+    || die "home relocate: no download receipt for $model_id@$revision; unknown trees fail without fallback; Hub re-download is home add"
 
   content_bytes=$(printf '%s' "$receipt_json" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["observed_manifest"]["total_bytes"])')
@@ -2203,7 +2168,7 @@ cmd_home_archive_status() {
     receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
       --library-dir "$LIBRARY_DIR" --model-id "$model_id" --revision "$revision" --allow-missing)
     [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
-      || die "home archive status: no source-attested receipt"
+      || die "home archive status: no download receipt"
     receipt_id=$(printf '%s' "$receipt_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
   fi
   python3 "$COLD_ARCHIVE_PY" show-job \
@@ -2230,7 +2195,7 @@ cmd_home_archive_run() {
   [ -n "$receipt_id" ] || die "usage: home archive run --receipt RECEIPT_ID --yes"
   [ "$yes" = 1 ] || die "home archive run requires --yes"
   require_py
-  receipt_file="$LIBRARY_DIR/source-attested-receipts/${receipt_id}.json"
+  receipt_file="$LIBRARY_DIR/download-receipts/${receipt_id}.json"
   [ -f "$receipt_file" ] || die "home archive run: receipt is missing"
   cold_root="${PULSAR_COLD_ROOT-}"
   if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
@@ -2354,9 +2319,9 @@ cmd_home_restore() {
   receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
     --library-dir "$LIBRARY_DIR" --model-id "$model_id" --revision "$revision" --allow-missing)
   [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
-    || die "home restore: no source-attested receipt"
+    || die "home restore: no download receipt"
   receipt_id=$(printf '%s' "$receipt_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
-  receipt_file="$LIBRARY_DIR/source-attested-receipts/${receipt_id}.json"
+  receipt_file="$LIBRARY_DIR/download-receipts/${receipt_id}.json"
   cold_root="${PULSAR_COLD_ROOT-}"
   if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
     cold_root="${MODELS_NFS:-}"
@@ -2981,7 +2946,7 @@ phase_record() {
   fi
 }
 
-cmd_activate() {
+cmd_prepare() {
   local profile="" backend=copy backend_explicit=0 transport=""
   local yes=0 time_it=0 node_selector=""
   local plan stamp_json verifying_stamp_json expected_validation_json budget_plan
@@ -3100,7 +3065,7 @@ cmd_activate() {
   )
   [ -z "$target_rank" ] || plan_flags+=(--target-rank "$target_rank")
 
-  plan=$(library_plan_activate "$profile" "${plan_flags[@]}")
+  plan=$(library_plan_prepare "$profile" "${plan_flags[@]}")
   action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
   instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   hub_source=$(printf '%s' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("hub_source") or "")')
@@ -3111,7 +3076,7 @@ cmd_activate() {
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
   target_ranks_csv=$(IFS=,; printf '%s' "${target_ranks[*]}")
 
-  budget_plan=$(build_hot_budget_plan_from_activation "$plan" activate) \
+  budget_plan=$(build_hot_budget_plan_from_activation "$plan" prepare) \
     || die "prepare: all-rank hot admission failed"
   render_hot_budget_plan_json "$budget_plan"
   hot_budget_plan_is_eligible "$budget_plan" \
@@ -3373,7 +3338,7 @@ resolve_hot_profile_targets() {
       resolve_single_node_placement "$rank" || return 1
     fi
     [ -z "$home_rank" ] || [ "$rank" = "$home_rank" ] || {
-      warn "$profile: library-hot one-node lifecycle must target durable-home rank $home_rank"
+      warn "$profile: one-node local-files lifecycle must target durable-home rank $home_rank"
       return 1
     }
     ranks=("$rank")
@@ -3412,7 +3377,7 @@ cmd_pin() {
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
-    || die "pin: cannot resolve exact library-hot placement"
+    || die "pin: cannot resolve exact local-files placement"
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$HOT_TARGET_RANKS_CSV") \
@@ -3454,7 +3419,7 @@ cmd_unpin() {
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
-    || die "unpin: cannot resolve exact library-hot placement"
+    || die "unpin: cannot resolve exact local-files placement"
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   for rank in "${HOT_TARGET_RANKS[@]}"; do
@@ -3493,7 +3458,7 @@ cmd_purge_hot() {
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
-    || die "purge-hot: cannot resolve exact library-hot placement"
+    || die "purge-hot: cannot resolve exact local-files placement"
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
     || die "no hot instance for $profile on the selected serving placement"
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
@@ -3628,7 +3593,7 @@ cmd_probe_ssh_roce() {
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
   nodes="${nodes_override:-$NODES}"
-  plan=$(library_plan_activate "$profile" \
+  plan=$(library_plan_prepare "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
@@ -3765,7 +3730,7 @@ cmd_bench_ssh_roce() {
   [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-ssh-roce-${tag}.json"
   mkdir -p "$(dirname "$output")"
 
-  plan=$(library_plan_activate "$profile" \
+  plan=$(library_plan_prepare "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
@@ -3935,7 +3900,7 @@ main() {
         *) usage; exit 2 ;;
       esac
       ;;
-    prepare) cmd_activate "$@" ;;
+    prepare) cmd_prepare "$@" ;;
     activate) refuse_removed_activate_command ;;
     probe-ssh-roce) cmd_probe_ssh_roce "$@" ;;
     bench-ssh-roce) cmd_bench_ssh_roce "$@" ;;

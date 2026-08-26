@@ -206,7 +206,7 @@ language for new features without an explicit decision.
   directly into durable storage.
   Deterministic skill and journal tests make no physical DGX claim and create
   no Model Serving Release decision.
-  `scripts/model_library_source_attested.py` owns the closed Hugging Face
+  `scripts/model_library_receipt.py` owns the closed Hugging Face
   source, identity, public plan, privacy-safe approval, immutable
   receipt, private current-home attachment, result, and home-verification
   formats for that path. The thin Bash
@@ -216,8 +216,9 @@ language for new features without an explicit decision.
   That download creates observed/source identity and “did we store the right
   files?” evidence only. It does not issue reviewed identity, a lab
   expected-identity file, status, serving permission, a Model Serving Release
-  decision, or physical evidence. Receipt-backed prepare requires the exact
-  model ID, exact commit, and receipt file list together.
+  decision, or physical evidence. Prepare requires occupancy plus the exact
+  model ID, exact commit, and receipt file list together. A self-observed
+  file list is not that proof.
 - New multi-node library features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as other
   library CLIs.
@@ -272,8 +273,10 @@ fail without fallback.
 **Do not use these as live brands.** Describe the thing:
 
 - `library-hot` → local files on every rank, prepared from the model home
-  (the JSON/label value may still appear in machine output)
+  (new writes use `local-files`; leftover labels are not dual-read)
 - `source-attested` → Hugging Face download with a recorded file list and hashes
+  (new writes use `identity_class=download-receipt`, `download-receipts/`, and
+  `home-occupancy/`)
 - `advisory projection` / `binding` → the catalog shows the reviewed status;
   start does not use it as permission; `MODEL_SERVING_RELEASE_ID` points at one
   reviewed subject
@@ -288,10 +291,10 @@ fail without fallback.
 - public `activate` — the command is `prepare`
 
 **Do not say “sealed” or “unsealed” for live admission.** Working copies on
-nodes that do not hold the home are working copies (`runtime_source=sealed-hot`
-is the stored enum, not a lab expected-identity file). Live file identity is
-the receipt plus occupancy path (`identity_status=legacy-unsealed` is the
-stored enum). Lab expected-identity files are archive-only (ADR 0012).
+nodes that do not hold the home are working copies
+(`runtime_source=working-copy`). Live file identity is the receipt plus
+occupancy path (`identity_status=receipt-occupancy`). Lab expected-identity
+files are archive-only (ADR 0012).
 
 **Never say “schema N” without the kind.** Operator text should not mention
 schema numbers unless the reader is editing JSON. ADR 0004 objects, the
@@ -555,10 +558,8 @@ infrastructure unless that authority is explicitly part of the approved plan.
   Do not automatically relabel an existing profile or evidence bundle
   `Validated`. ADR 0004 object format is unchanged from the empty-registry
   correction; archived expected-identity files and raw evidence remain
-  untouched. The tracked ADR 0004 registry contains the reviewed Qwen3.8
-  lineage that `qwen3.8-27b-fp8` points at; the catalog shows
-  `Testing incomplete`, not `Validated`. Other current profiles do not set
-  `MODEL_SERVING_RELEASE_ID`.
+  untouched. The tracked ADR 0004 registry is empty. No current profile
+  sets `MODEL_SERVING_RELEASE_ID`.
 - `STATUS`, ADR 0004 decisions, recommendations/defaults, and
   `docs/VALIDATION.md` claims change only with reproducible evidence. The wizard
   still shows other fitting profiles with accurate labels and caveats. Preserve
@@ -621,8 +622,7 @@ this work; the skill is procedural and does not outrank these sources.
   implemented Validation Contract freezes its criteria, and the implemented
   evidence layer validates immutable run, evidence-bundle, and decision
   objects. Read-only trusted persistence can verify those objects under
-  `models/model-serving-releases/`. That store holds the reviewed
-  Qwen3.8-27B-FP8 lineage (`Testing incomplete`); other current profiles do
+  `models/model-serving-releases/`. That store is empty; current profiles do
   not set `MODEL_SERVING_RELEASE_ID`. Caller-supplied predecessor and decision
   registries remain validation input, not trusted persistence. Local
   evidence-capture drafts and source-neutral release-plan drafts are
@@ -647,18 +647,17 @@ this work; the skill is procedural and does not outrank these sources.
   `home relocate` after a live rehash
   ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
   Unknown trees without a receipt fail without fallback (ADR 0012: there is
-  no lab expected-identity fallback). Prepare-time resolution for
-  receipt-backed content requires occupancy plus the exact model ID and
-  commit. Deterministic controls alone make no physical claim. The bounded
+  no lab expected-identity fallback). Prepare requires occupancy plus the
+  exact model ID, commit, and receipt file list; a self-observed tree is not
+  identity. Deterministic controls alone make no physical claim. The bounded
   Nemotron Nano Gate 14 artifact physically passes the catalog/artifact
   lifecycle for a one-node rank-0 target across three confirmed ranks,
   including acquisition, attachment authority, offline verification, exact
   preparation/reuse, guarded cleanup, and reacquisition. Remote target
   execution and asymmetric per-rank Hugging Face credentials remain physically
   untested. The artifact makes no serving-integration, model-qualification,
-  status, or promotion claim. `qwen3.8-27b-fp8` points at the first reviewed
-  ADR 0004 lineage and the catalog shows `Testing incomplete`; other current
-  profiles remain neutral. A profile field that points at a Model Serving
+  status, or promotion claim. No current profile sets
+  `MODEL_SERVING_RELEASE_ID`. A profile field that points at a Model Serving
   Release does not grant serving permission, and pointing at one does not
   promote ADR 0004 status.
 - A deterministic draft has no authority by itself. What makes registry
@@ -695,7 +694,7 @@ this work; the skill is procedural and does not outrank these sources.
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.
 - Only non-home ranks receive temporary or pinned working replicas
-  (`runtime_source=sealed-hot`). The occupancy rank uses a symlink/view of the
+  (`runtime_source=working-copy`). The occupancy rank uses a symlink/view of the
   durable tree, not a second copy.
 - Full content verification happens at trust boundaries. A serve-time metadata
   witness may accelerate an unchanged launch only after full verification;

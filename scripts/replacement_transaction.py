@@ -184,8 +184,8 @@ def library_contract(
         fail("model-library catalog is stale for the confirmed topology")
     revision = require_revision(service.get("model_revision"), "model revision")
     identity = service.get("model_identity_status")
-    if identity not in {"legacy-unsealed", "unvalidated"}:
-        fail("library-backed service identity is not a live unsealed status")
+    if identity != "receipt-occupancy":
+        fail("library-backed service identity is not receipt/occupancy")
     if service.get("model_seal_id") is not None or service.get("validation_bundle_id") is not None:
         fail("library-backed service cannot claim retired seal provenance")
     content = require_content_id(
@@ -211,9 +211,9 @@ def library_contract(
     for view in views:
         if view.get("metadata_schema") != 3 or view.get("metadata_status") != "current":
             fail("prepared runtime-view metadata is not current schema 3")
-        if view.get("runtime_source") not in {"durable-home", "sealed-hot"}:
+        if view.get("runtime_source") not in {"durable-home", "working-copy"}:
             fail("prepared runtime source is unknown")
-        if view.get("identity_status") not in {"legacy-unsealed", "unvalidated"} \
+        if view.get("identity_status") != "receipt-occupancy" \
                 or view.get("witness_status") != "match":
             fail("prepared runtime-view identity or witness does not match")
         if view.get("active_reference") is not True:
@@ -233,10 +233,8 @@ def library_contract(
     if len(models) != 1:
         fail("catalog identity for the running library service is ambiguous")
     return {
-        "source": "library-hot",
+        "source": "local-files",
         "revision": revision,
-        "model_seal_id": None,
-        "validation_bundle_id": None,
         "manifest_id": None,
         "content_id": content,
         "home_node_id": owner,
@@ -305,7 +303,7 @@ def validate_transaction(value: Any) -> dict[str, Any]:
             fail("saved multi-node placement is not exact")
 
     weight = service.get("weight")
-    if not isinstance(weight, dict) or weight.get("source") != "library-hot":
+    if not isinstance(weight, dict) or weight.get("source") != "local-files":
         if isinstance(weight, dict) and weight.get("source") == "replicated":
             fail(
                 "saved transaction was captured under the removed replicated "
@@ -333,7 +331,7 @@ def validate_transaction(value: Any) -> dict[str, Any]:
     for item in views:
         if not isinstance(item, dict) or item.get("source") not in {
             "durable-home",
-            "sealed-hot",
+            "working-copy",
         }:
             fail("saved runtime view is invalid")
         rank = item.get("rank")
@@ -410,7 +408,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         )
     placement = capture_placement(inventory, service)
     source = service.get("weight_source")
-    if source == "library-hot":
+    if source == "local-files":
         if not args.library_health:
             fail("library-backed replacement requires current model-library health")
         weight = library_contract(
@@ -510,7 +508,7 @@ def verify_library_views_for_rollback(
             fail("saved library runtime-view metadata is no longer current")
         if item.get("runtime_source") != wanted[item["rank"]]:
             fail("saved library runtime source changed")
-        if item.get("identity_status") not in {"legacy-unsealed", "unvalidated"} \
+        if item.get("identity_status") != "receipt-occupancy" \
                 or item.get("witness_status") != "match":
             fail("saved library runtime-view identity drifted")
         if item.get("active_reference") is not False:
@@ -553,7 +551,7 @@ def cmd_verify_rollback(args: argparse.Namespace) -> int:
     verify_current_placement(
         value["previous_service"]["placement"], load_json(args.inventory)
     )
-    if value["previous_service"]["weight"]["source"] == "library-hot":
+    if value["previous_service"]["weight"]["source"] == "local-files":
         if not args.library_health:
             fail("library rollback requires current model-library health")
         verify_library_views_for_rollback(value, load_json(args.library_health))
@@ -778,11 +776,10 @@ def service_matches_snapshot(
     except TransactionError:
         return False
     weight = snapshot["weight"]
-    if weight["source"] == "library-hot":
+    if weight["source"] == "local-files":
         return (
             service.get("model_revision") == weight["revision"]
-            and service.get("model_identity_status")
-            in {"legacy-unsealed", "unvalidated"}
+            and service.get("model_identity_status") == "receipt-occupancy"
             and service.get("weight_owner_node_id") == weight["home_node_id"]
             and service.get("weight_configuration_id") == weight["content_id"]
         )

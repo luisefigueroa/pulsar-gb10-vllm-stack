@@ -59,7 +59,7 @@ RUNTIME_SOURCES = {
     "replicated-cache",
     "absolute-path",
     "durable-home",
-    "sealed-hot",
+    "working-copy",
     "live-mount",
 }
 RETENTION_POLICIES = {"durable", "ephemeral", "pinned", "external"}
@@ -506,7 +506,7 @@ def _validate_runtime_sources(
     if ranks != sorted(ranks) or len(ranks) != len(set(ranks)):
         fail("preparation provenance runtime_sources must be sorted by unique rank")
     if barrier_state == "passed" and ranks != list(range(node_count)):
-        fail("qualification barrier requires one runtime source for every rank")
+        fail("full verification before qualification requires one runtime source for every rank")
     access_contract = release["serving_recipe"]["model_access_contract"]
     source_names = {item["source"] for item in value}
     if access_contract == "live-remote-readonly":
@@ -556,7 +556,7 @@ def _validate_preparation_provenance(
     if verification.get("model_artifact_set_id") != expected_artifact_set_id:
         fail("preparation provenance Model Artifact Set identity mismatch")
     if barrier_state == "passed" and verification.get("status") != "passed":
-        fail("qualification barrier requires full artifact verification")
+        fail("full verification before qualification requires full artifact verification")
     _validate_runtime_sources(
         provenance.get("runtime_sources"),
         release=release,
@@ -751,7 +751,7 @@ def _validate_observed_environment(
         if identifier is not None:
             _sha256(identifier, label=f"observed environment {field}")
         if barrier_state == "passed" and identifier is None:
-            fail(f"passed qualification barrier requires observed {field}")
+            fail(f"passed full verification before qualification requires observed {field}")
     _validate_rank_observations(environment.get("ranks"), release=release)
     return environment
 
@@ -1492,7 +1492,7 @@ def validate_validation_run_record(
         if phase != "preparation":
             fail("pre-qualification failure must use the preparation phase")
         if attempt.get("completion") == "completed":
-            fail("not-reached qualification barrier cannot report completed")
+            fail("not-reached full verification before qualification cannot report completed")
         if attempted_criterion_ids:
             fail("pre-qualification preparation must declare no attempted criteria")
     elif phase != "preparation" and not attempted_criterion_ids:

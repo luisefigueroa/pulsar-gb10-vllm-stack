@@ -55,8 +55,7 @@ measurements and attempt-only spec composition are implemented for strict
 same-boot and absolute throughput/latency; they do not issue status or prove
 physical behavior. The catalog shows a reviewed decision for a profile that
 sets `MODEL_SERVING_RELEASE_ID`;
-`qwen3.8-27b-fp8` points at the first reviewed lineage and shows
-`Testing incomplete`; other current profiles remain unbound. The supervised
+no current profile sets that field. The supervised
 `pulsar-model-onboarding` skill orchestrates
 those CLIs. It never writes a lab expected-identity file or a validation decision, assigns
 status, points a profile at a Model Serving Release, writes the trusted registry, promotes a path, or

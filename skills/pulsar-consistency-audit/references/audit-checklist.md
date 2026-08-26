@@ -82,7 +82,7 @@ Verify consistency across doctrine, code, UI, tests, operations, and evidence:
   not offered as a serving alternative;
 - one durable home exists per exact revision by default;
 - the home rank uses its durable-home view, never a second hot copy;
-- only non-home ranks receive working copies (`runtime_source=sealed-hot`);
+- only non-home ranks receive working copies (`runtime_source=working-copy`);
 - hot copies are budgeted and lifecycle-managed;
 - pin retains hot copies but does not promise durable-home-loss resilience;
 - durable-home deletion is separate and confirmation-gated;
@@ -124,9 +124,8 @@ geometry, runtime flags, evidence date, and supersession state.
 Build a consistency table covering at least:
 
 `home`, `owner`, `primary`, `rank 0`, `prepare`, `preparation`, `activation`,
-`durable-home`, `sealed-hot` (stored enum for a working copy), `live-mount`,
-`replicated`, `catalog`, `library-hot` (stored enum for local files on every
-rank), `fabric`, `ssh-control`, `ssh-roce`, `nfs-rdma`, `durable`,
+`durable-home`, `working-copy`, `live-mount`,
+`replicated`, `catalog`, `local-files`, `fabric`, `ssh-control`, `ssh-roce`, `nfs-rdma`, `durable`,
 `ephemeral`, `pinned`, receipt, occupancy, `witness`, file list,
 ADR 0004 evidence bundle, `serving integration`, `model qualification`, and
 `promotion`. Flag live use of archive-only nouns: expected-seal,

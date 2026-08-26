@@ -17,9 +17,8 @@
 #   --purge-hot       delete hot staging, including an existing pin
 # Ordinary stop of a model-library service retains unpinned views (ADR 0007).
 # PULSAR_HOT_STOP_POLICY=retain|purge may select the named-profile default;
-# flags override it. --all never auto-purges. Legacy containers without a
-# library-hot label (pre-ADR 0006 launches) stop cleanly and never invoke
-# model-library cleanup.
+# flags override it. --all never auto-purges. Containers without a
+# local-files label stop cleanly and never invoke model-library cleanup.
 set -euo pipefail
 SCRIPT_NAME=down
 # shellcheck disable=SC1091
@@ -76,21 +75,21 @@ library_hot_after_stop() {
   fi
   case "$HOT_AFTER" in
     retain)
-      log "retaining unpinned library-hot staging for $profile (next start can reuse verified views; durable home still required; --purge-hot frees disk)"
+      log "retaining unpinned prepared views for $profile (next start can reuse verified views; durable home still required; --purge-hot frees disk)"
       ;;
     pin)
-      log "pinning library-hot staging for $profile"
+      log "pinning prepared views for $profile"
       "$MODEL_LIBRARY_CMD" pin "$profile" "${node_args[@]}" || \
         warn "pin failed (no hot instance?)"
       ;;
     purge-explicit)
-      log "purging library-hot staging for $profile"
+      log "purging prepared views for $profile"
       "$MODEL_LIBRARY_CMD" purge-hot "$profile" "${node_args[@]}" \
         --yes --force-unpin || \
         warn "purge-hot failed (no hot instance?)"
       ;;
     purge-default)
-      log "purging unpinned library-hot staging for $profile (site policy purge)"
+      log "purging unpinned prepared views for $profile (site policy purge)"
       "$MODEL_LIBRARY_CMD" purge-hot "$profile" "${node_args[@]}" --yes || \
         warn "hot staging was retained (it may be pinned); inspect with ./pulsar models"
       ;;
@@ -138,16 +137,16 @@ set_default_hot_policy() {
     warn "could not prove the service weight policy; hot storage will be left unchanged"
     return 0
   fi
-  if [ "$source" = library-hot ]; then
+  if [ "$source" = local-files ]; then
     policy="${PULSAR_HOT_STOP_POLICY:-retain}"
     case "$policy" in
       retain)
         HOT_AFTER=retain
-        log "library-hot service detected; unpinned prepared views will be retained after stop (next start can reuse them; durable home still required)"
+        log "local-files service detected; unpinned prepared views will be retained after stop (next start can reuse them; durable home still required)"
         ;;
       purge)
         HOT_AFTER=purge-default
-        log "library-hot service detected; site policy purge will remove unpinned prepared views after stop (next start restages from the durable home)"
+        log "local-files service detected; site policy purge will remove unpinned prepared views after stop (next start restages from the durable home)"
         ;;
       *)
         die "PULSAR_HOT_STOP_POLICY must be retain or purge" 2

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source-attested adapter, receipt, verify, and prepare contracts."""
+"""Download-receipt adapter, receipt, verify, and prepare contracts."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ import sys
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
-from scripts import model_library_source_attested as source_attested  # noqa: E402
-from scripts.testlib import model_library_source_attested_fixture as fixture  # noqa: E402
+from scripts import model_library_receipt as source_attested  # noqa: E402
+from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
 
 
 class SourceAttestedExecutionContracts(unittest.TestCase):
@@ -605,7 +605,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         }
         model_library.atomic_write_json(catalog_path, catalog)
         with self.assertRaisesRegex(Exception, "exact 40-hex commit"):
-            model_library.plan_activate(
+            model_library.plan_prepare(
                 catalog_path=str(catalog_path),
                 profile=self.profile,
                 topology_id="d" * 64,
@@ -616,7 +616,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
                 require_exact_revision="main",
                 expected_integrity_manifest=receipt["observed_manifest"],
             )
-        plan = model_library.plan_activate(
+        plan = model_library.plan_prepare(
             catalog_path=str(catalog_path),
             profile=self.profile,
             topology_id="d" * 64,
@@ -647,11 +647,11 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
             "inode",
             "ctime_ns",
             "durable_home_path",
-            "source-attested-home-attachments",
+            "home-occupancy",
         ):
             self.assertNotIn(banned, blob)
 
-    def test_prepare_without_receipt_manifest_stays_unsealed(self) -> None:
+    def test_prepare_without_receipt_manifest_fails_without_fallback(self) -> None:
         catalog_path = self.root / "catalog-unsealed.json"
         models_dir = self.root / "models-unsealed"
         models_dir.mkdir()
@@ -717,17 +717,47 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
             "primary_selections": [],
         }
         model_library.atomic_write_json(catalog_path, catalog)
-        plan = model_library.plan_activate(
-            catalog_path=str(catalog_path),
-            profile=self.profile,
-            topology_id="d" * 64,
-            hot_root=str(self.root / "hot-unsealed"),
-            models_dir=models_dir,
-            nodes=1,
-            home_inventory=home_inventory,
-        )
-        self.assertEqual(plan["revision"], fixture.COMMIT)
-        self.assertNotIn("receipt_id", json.dumps(plan))
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "download receipt revision and file list are required",
+        ):
+            model_library.plan_prepare(
+                catalog_path=str(catalog_path),
+                profile=self.profile,
+                topology_id="d" * 64,
+                hot_root=str(self.root / "hot-unsealed"),
+                models_dir=models_dir,
+                nodes=1,
+                home_inventory=home_inventory,
+            )
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "download receipt revision and file list are required",
+        ):
+            model_library.plan_prepare(
+                catalog_path=str(catalog_path),
+                profile=self.profile,
+                topology_id="d" * 64,
+                hot_root=str(self.root / "hot-unsealed"),
+                models_dir=models_dir,
+                nodes=1,
+                home_inventory=home_inventory,
+                require_exact_revision=fixture.COMMIT,
+            )
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "download receipt revision and file list are required",
+        ):
+            model_library.plan_prepare(
+                catalog_path=str(catalog_path),
+                profile=self.profile,
+                topology_id="d" * 64,
+                hot_root=str(self.root / "hot-unsealed"),
+                models_dir=models_dir,
+                nodes=1,
+                home_inventory=home_inventory,
+                expected_integrity_manifest=inventory["manifest"],
+            )
 
     def test_hub_inventory_can_preserve_empty_files_for_receipt_prepare(self) -> None:
         hub = self.root / "empty-file-hub"
@@ -1137,15 +1167,15 @@ class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
 
         with (
             mock.patch(
-                "scripts.model_library_source_attested.os.open",
+                "scripts.model_library_receipt.os.open",
                 side_effect=fake_open,
             ),
             mock.patch(
-                "scripts.model_library_source_attested.os.unlink",
+                "scripts.model_library_receipt.os.unlink",
                 side_effect=fake_unlink,
             ),
             mock.patch(
-                "scripts.model_library_source_attested.os.fsync",
+                "scripts.model_library_receipt.os.fsync",
                 side_effect=fake_fsync,
             ),
         ):

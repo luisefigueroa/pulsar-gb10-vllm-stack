@@ -58,7 +58,7 @@ emit_weights_gap() {
       python3 -c '
 import json, os
 payload = {
-    "state": "missing", "source": "library-hot", "ok": False,
+    "state": "missing", "source": "local-files", "ok": False,
     "model": os.environ["NAME_V"], "nodes": int(os.environ["NODES_V"]),
     "reason": os.environ["REASON_V"],
     "remediation": os.environ["REMEDIATION_V"],
@@ -168,21 +168,23 @@ if [ "$JSON" = 1 ]; then
   printf '%s\n' "$hot_info" | NAME_V="$NAME" NODES_V="$NODES" python3 -c '
 import json, os, sys
 d = json.load(sys.stdin)
-print(json.dumps({"state": "ok", "source": "library-hot", "ok": True,
+print(json.dumps({"state": "ok", "source": "local-files", "ok": True,
   "model": os.environ["NAME_V"], "nodes": int(os.environ["NODES_V"]),
   "instance_dir": d["instance_dir"], "hub_path": d["hub_path"],
   "home_node_id": d["stamp"].get("home_node_id"),
   "content_id": d["stamp"].get("content_id"),
   "revision": d["stamp"].get("revision"),
   "identity_status": (d["stamp"].get("validation") or {}).get("identity_status"),
-  "model_seal_id": (((d["stamp"].get("validation") or {}).get("expected_seal") or {}).get("seal_id")),
-  "validation_bundle_id": (((d["stamp"].get("validation") or {}).get("expected_seal") or {}).get("validation_bundle_id")),
   "runtime_model_path": d.get("container_model_path"),
   "pinned": bool(d["stamp"].get("pinned"))}, indent=2, sort_keys=True))
 '
 elif [ "${QUIET:-0}" = 1 ]; then
   identity_status=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "invalid")')
-  echo "PASS  weights   model files ready · identity=$identity_status"
+  case "$identity_status" in
+    receipt-occupancy) identity_label="receipt/occupancy" ;;
+    *) identity_label="$identity_status" ;;
+  esac
+  echo "PASS  weights   model files ready · identity=$identity_label"
 else
   echo "model files OK  instance=$instance"
   printf '%s\n' "$hot_info" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("hub", d["hub_path"]); print("runtime", d.get("container_model_path")); print("home", d["stamp"].get("home_node_id")); print("revision", d["stamp"].get("revision")); print("identity", (d["stamp"].get("validation") or {}).get("identity_status")); print("pinned", d["stamp"].get("pinned"))'

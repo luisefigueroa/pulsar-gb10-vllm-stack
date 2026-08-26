@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Maintainer ADR 0004 staging.
 # Not routed by ./pulsar. Stages an untrusted proposal only. Repository
-# review and merge remain the trust event. Does not edit a profile, authorize
+# review and merge are what make the objects trusted. Does not edit a profile, authorize
 # serving, or claim physical behavior.
 set -euo pipefail
 # Used by die/log after sourcing lib.sh.
@@ -71,7 +71,7 @@ done
 [ -n "$candidate_dir" ] && [ -n "$review_file" ] || die \
   "usage: model-serving-release-issue.sh $command --candidate-dir DIR --review-file FILE [--json]"
 
-[ -f "$PY_TOOL" ] || die "missing Python issuance tool"
+[ -f "$PY_TOOL" ] || die "missing Python staging tool"
 
 args=()
 if [ "${#passthrough[@]}" -eq 0 ]; then

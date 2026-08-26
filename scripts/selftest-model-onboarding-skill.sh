@@ -67,15 +67,15 @@ grep -Fq 'ADR 0004 qualification attempt' "$skill" \
   || fail "skill must name the refused qualification claim"
 grep -Fq 'refs/main' "$skill" \
   || fail "skill must name the mutable refs/main unsealed path"
-grep -Fq 'legacy-unsealed' "$skill" \
-  || fail "skill must name the honest legacy-unsealed identity label"
+grep -Fq 'receipt-occupancy' "$skill" \
+  || fail "skill must name the honest receipt-occupancy identity label"
 
 grep -Fq 'no silent fallback' "$skill" \
   || fail "skill must forbid silent fallback"
 grep -Fq 'no automatic fallback' "$skill" \
   || fail "skill must forbid automatic fallback"
-grep -Fq 'library-hot' "$skill" \
-  || fail "skill must name library-hot as the stored local-file path"
+grep -Fq 'local-files' "$skill" \
+  || fail "skill must name local-files as the stored local-file path"
 grep -Fq 'local-verified-readonly' "$skill" \
   || fail "skill must bind local files to local-verified-readonly"
 grep -Fq 'Do not offer live NFS/RDMA' "$skill" \

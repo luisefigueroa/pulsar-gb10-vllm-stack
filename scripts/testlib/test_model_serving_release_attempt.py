@@ -139,7 +139,7 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr.getvalue() + stdout.getvalue())
         planned = json.loads(stdout.getvalue())
         self.assertTrue(planned["ok"])
-        self.assertEqual(planned["state"], "unreviewed")
+        self.assertEqual(planned["state"], "draft")
         self.assertEqual(planned["authority"], "none")
         return code
 

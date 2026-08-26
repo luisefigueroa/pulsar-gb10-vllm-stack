@@ -38,7 +38,7 @@ usage: scripts/model-storage.sh
 Browse the cached distributed model catalog and rank-local runtime views.
 Browsing and health rechecks are read-only. An explicit, confirmation-gated
 action can rescan confirmed ranks and update only the cached catalog. This
-workflow can explicitly prepare a reviewed model through the model library.
+workflow can explicitly prepare a serving-purpose profile through the model library.
 It does not start a model or run pin, purge, repair, or durable-home
 operations.
 

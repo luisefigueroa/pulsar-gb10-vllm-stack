@@ -156,7 +156,7 @@ class ModelLibraryHealthContracts(unittest.TestCase):
                 "homes": homes,
                 "profiles": ["tiny-profile"],
                 "profile_validation": [],
-                "validation": "legacy-unsealed",
+                "validation": "receipt-occupancy",
             }],
         }
         self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
@@ -296,7 +296,7 @@ class ModelLibraryHealthContracts(unittest.TestCase):
         hub.symlink_to(durable, target_is_directory=True)
         manifest = model_library.build_snapshot_manifest(durable, model_id=model_id, revision=revision)
         validation = {
-            "identity_status": "legacy-unsealed",
+            "identity_status": "receipt-occupancy",
             "expected_seal": None,
             "observed_seal": model_library.observed_model_seal_projection(manifest),
         }
@@ -331,7 +331,7 @@ class ModelLibraryHealthContracts(unittest.TestCase):
             shutil.copytree(durable, hub)
             sealed = self.scan()["instances"][0]
             self.assertEqual(sealed["metadata_status"], "current")
-            self.assertEqual(sealed["runtime_source"], "sealed-hot")
+            self.assertEqual(sealed["runtime_source"], "working-copy")
             model_library.hot_witness_path(instance).write_text(
                 "{}\n", encoding="utf-8"
             )

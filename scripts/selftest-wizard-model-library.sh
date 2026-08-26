@@ -93,7 +93,7 @@ running["services"] = [{
     "safe_to_stop": True,
     "complete": True,
     "observability": "complete",
-    "weight_source": "library-hot",
+    "weight_source": "local-files",
     "required_remote_probes": [{
         "rank": "1", "node": "worker", "status": "ok", "reason": None,
     }],
@@ -219,7 +219,7 @@ one_health = {
         "metadata_status": "current",
         "runtime_source": "durable-home",
         "retention": "ephemeral",
-        "identity_status": "legacy-unsealed",
+        "identity_status": "receipt-occupancy",
         "witness_status": "match",
         "active_reference": False,
         "repairable": False,
@@ -399,6 +399,7 @@ run_wizard() {
   set +e
   printf '%s' "$input" | env \
     GUM=0 \
+    WIZARD_API_HEALTHY=1 \
     WIZARD_SKIP_DOCTOR=1 \
     WIZARD_SKIP_FABRIC_PROMPT=1 \
     WIZARD_SKIP_IMAGE=1 \
@@ -439,7 +440,7 @@ echo "=== ready library views launch without preparation ==="
 run_wizard healthy.json 0 0 $'2\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'legacy=untested' \
-  "wizard exposes a non-recommended serving profile with its advisory status"
+  "wizard exposes a non-recommended serving profile with its display-only status"
 assert_empty "$STATE/logs/prepare.log" "ready views need no preparation"
 assert_contains "$STATE/logs/weights.log" '^qwen3.8-27b-fp8-2node --json$' \
   "weight preflight carries no mode flag"
@@ -482,11 +483,11 @@ run_wizard healthy-active.json 0 0 $'2\n2\ny\n' \
   "$STATE/inventory.json.running"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" \
-  'without a reviewed identity match|exact rollback is unavailable' \
+  'without an exact restore contract|exact rollback is unavailable' \
   "same-source restart stops without a restore promise (ADR 0012)"
 assert_contains "$STATE/logs/down.log" \
   '^qwen3.8-27b-fp8-2node$' \
-  "same-source restart stops the previous library-hot service"
+  "same-source restart stops the previous local-files service"
 assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
   "restart launches through the library with no mode flag"
 
@@ -496,7 +497,7 @@ run_wizard healthy-active.json 0 0 $'2\n2\ny\n' \
   "$STATE/inventory.json.rollback" "$STATE/reports/profiles.json" 1
 # Launch is expected to fail; the point is no match-identity restore.
 assert_contains "$STATE/logs/output.log" \
-  'exact rollback is unavailable' \
+  'without an exact restore contract' \
   "launch failure does not offer match-identity restore (ADR 0012)"
 grep -q 'Restore previous exact service' "$STATE/logs/output.log" \
   && { echo "FAIL retired match restore was offered" >&2; exit 1; } \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Maintainer-only unreviewed ADR-0004 release planning. Not routed by ./pulsar.
+# Maintainer-only draft ADR 0004 release planning. Not routed by ./pulsar.
 set -euo pipefail
 # Used by die/log after sourcing lib.sh.
 # shellcheck disable=SC2034
@@ -11,7 +11,7 @@ PY_TOOL="${PULSAR_MODEL_SERVING_RELEASE_PLAN_PY:-$REPO_DIR/scripts/model_serving
 
 usage() {
   cat <<'EOF'
-Build and verify unreviewed Model Serving Release plans
+Build and verify draft Model Serving Release plans that are not in the trusted registry
 
 Usage:
   scripts/model-serving-release-plan.sh build <profile>
@@ -27,7 +27,7 @@ Usage:
       [--json]
 
 Candidate safety:
-  • Output is unreviewed and has no validation or serving authority.
+  • Output is draft JSON and has no validation or serving authority.
   • Repository-local output is restricted to gitignored
     experiments/model-onboarding/.
   • This tool never writes the trusted registry, issues a decision, changes a

@@ -41,31 +41,31 @@ HF_V1_ACQUISITION_SOURCE_KIND = (
 )
 ACQUISITION_IDENTITY_KIND = "pulsar-model-library-acquisition-identity"
 SOURCE_ATTESTED_ACQUISITION_APPROVAL_KIND = (
-    "pulsar-model-library-source-attested-acquisition-approval"
+    "pulsar-model-library-download-approval"
 )
 SOURCE_ATTESTED_ACQUISITION_PLAN_KIND = (
-    "pulsar-model-library-source-attested-acquisition-plan"
+    "pulsar-model-library-download-plan"
 )
 SOURCE_ATTESTED_ACQUISITION_RECEIPT_KIND = (
-    "pulsar-model-library-source-attested-acquisition-receipt"
+    "pulsar-model-library-download-receipt"
 )
 SOURCE_ATTESTED_ACQUISITION_RESULT_KIND = (
-    "pulsar-model-library-source-attested-acquisition-result"
+    "pulsar-model-library-download-result"
 )
 SOURCE_ATTESTED_HOME_VERIFY_KIND = (
-    "pulsar-model-library-source-attested-home-verify-result"
+    "pulsar-model-library-home-verify-result"
 )
 SOURCE_ATTESTED_HOME_ATTACHMENT_KIND = (
-    "pulsar-model-library-source-attested-home-attachment"
+    "pulsar-model-library-home-occupancy"
 )
 SOURCE_ATTESTED_HOME_ATTACHMENT_KEY_KIND = (
-    "pulsar-model-library-source-attested-home-attachment-key"
+    "pulsar-model-library-home-occupancy-key"
 )
 SOURCE_ATTESTED_HOME_ATTACHMENT_RESULT_KIND = (
-    "pulsar-model-library-source-attested-home-attachment-result"
+    "pulsar-model-library-home-occupancy-result"
 )
 SOURCE_ATTESTED_HOME_AUTHORITY_KIND = (
-    "pulsar-model-library-source-attested-home-authority"
+    "pulsar-model-library-home-occupancy-authority"
 )
 LIVE_DIRECTORY_IDENTITY_KIND = "pulsar-model-library-live-directory-identity"
 UNSUPPORTED_SOURCE_FORM = "unsupported Hugging Face source object form"
@@ -80,15 +80,15 @@ HF_V1_BLOB_LFS = "lfs-object"
 HF_V1_BLOB_KINDS = {HF_V1_BLOB_GIT, HF_V1_BLOB_LFS}
 
 IDENTITY_CLASS_REVIEWED_RELEASE = "reviewed-model-serving-release"
-IDENTITY_CLASS_SOURCE_ATTESTED = "source-attested"
+IDENTITY_CLASS_DOWNLOAD_RECEIPT = "download-receipt"
 ACQUISITION_IDENTITY_CLASSES = {
     IDENTITY_CLASS_REVIEWED_RELEASE,
-    IDENTITY_CLASS_SOURCE_ATTESTED,
+    IDENTITY_CLASS_DOWNLOAD_RECEIPT,
 }
 
 EXECUTION_CONTRACT_COMPLETE_MANIFEST = "complete-expected-manifest"
 EXECUTION_CONTRACT_MANIFEST_ID = "expected-manifest-id"
-EXECUTION_CONTRACT_SOURCE_ATTESTED = "source-attested-complete-hash"
+EXECUTION_CONTRACT_SOURCE_ATTESTED = "download-receipt-complete-hash"
 ACQUISITION_EXECUTION_CONTRACTS = {
     EXECUTION_CONTRACT_COMPLETE_MANIFEST,
     EXECUTION_CONTRACT_MANIFEST_ID,
@@ -309,7 +309,7 @@ PROHIBITED_APPROVAL_FIELD_NAMES = PROHIBITED_PUBLIC_FIELD_NAMES
 
 
 class SourceAttestedAcquisitionError(ValueError):
-    """Malformed or conflicting source-attested acquisition contract."""
+    """Malformed or conflicting download-receipt acquisition contract."""
 
 
 def fail(message: str) -> NoReturn:
@@ -811,19 +811,19 @@ def validate_acquisition_identity(value: Any) -> dict[str, Any]:
     execution_contract = identity.get("execution_contract")
     if execution_contract not in ACQUISITION_EXECUTION_CONTRACTS:
         fail("acquisition execution_contract is unsupported")
-    if identity_class == IDENTITY_CLASS_SOURCE_ATTESTED:
+    if identity_class == IDENTITY_CLASS_DOWNLOAD_RECEIPT:
         if identity.get("model_serving_release_id") is not None:
-            fail("source-attested identity must not carry a release binding")
+            fail("download-receipt identity must not carry a release binding")
         if identity.get("seal_id") is not None:
-            fail("source-attested identity must not carry a reviewed seal")
+            fail("download-receipt identity must not carry a reviewed seal")
         if identity.get("validation_bundle_id") is not None:
-            fail("source-attested identity must not carry a validation bundle")
+            fail("download-receipt identity must not carry a validation bundle")
         if identity.get("expected_manifest_id") is not None:
-            fail("source-attested identity must not carry an expected manifest")
+            fail("download-receipt identity must not carry an expected manifest")
         if execution_contract != EXECUTION_CONTRACT_SOURCE_ATTESTED:
             fail(
-                "source-attested identity execution_contract must be "
-                "source-attested-complete-hash"
+                "download-receipt identity execution_contract must be "
+                "download-receipt-complete-hash"
             )
     else:
         if identity.get("model_serving_release_id") is None:
@@ -861,7 +861,7 @@ def resolve_huggingface_v1_acquisition_identity(
     if expected_seal is not None:
         fail(
             "expected-seal acquisition identity is retired (ADR 0012); "
-            "use source-attested --revision or a bound Model Serving Release"
+            "use home add --revision or a bound Model Serving Release"
         )
     if model_serving_release_id:
         if repo_root is None:
@@ -901,7 +901,7 @@ def resolve_huggingface_v1_acquisition_identity(
     return _identity_document(
         source=source,
         profile=profile,
-        identity_class=IDENTITY_CLASS_SOURCE_ATTESTED,
+        identity_class=IDENTITY_CLASS_DOWNLOAD_RECEIPT,
         execution_contract=EXECUTION_CONTRACT_SOURCE_ATTESTED,
         model_serving_release_id=None,
         seal_id=None,
@@ -986,13 +986,13 @@ def _reject_prohibited_approval_fields(approval: dict[str, Any]) -> None:
 
 def validate_source_attested_acquisition_approval(value: Any) -> dict[str, Any]:
     approval = _require_fields(
-        value, SOURCE_ATTESTED_APPROVAL_FIELDS, label="source-attested approval"
+        value, SOURCE_ATTESTED_APPROVAL_FIELDS, label="download-receipt approval"
     )
     _reject_prohibited_approval_fields(approval)
     if approval.get("schema_version") != SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION:
-        fail("source-attested approval schema is unsupported")
+        fail("download-receipt approval schema is unsupported")
     if approval.get("kind") != SOURCE_ATTESTED_ACQUISITION_APPROVAL_KIND:
-        fail("source-attested approval kind is invalid")
+        fail("download-receipt approval kind is invalid")
     _validate_adapter(approval.get("adapter"))
     identity_class = approval.get("identity_class")
     if identity_class not in ACQUISITION_IDENTITY_CLASSES:
@@ -1028,12 +1028,12 @@ def validate_source_attested_acquisition_approval(value: Any) -> dict[str, Any]:
     seal_id = approval.get("seal_id")
     bundle_id = approval.get("validation_bundle_id")
     manifest_id = approval.get("expected_manifest_id")
-    if identity_class == IDENTITY_CLASS_SOURCE_ATTESTED:
+    if identity_class == IDENTITY_CLASS_DOWNLOAD_RECEIPT:
         if any(
             item is not None
             for item in (release_id, seal_id, bundle_id, manifest_id)
         ):
-            fail("source-attested approval must not carry reviewed identity")
+            fail("download-receipt approval must not carry reviewed identity")
     else:
         if release_id is None or manifest_id is None:
             fail("reviewed release approval requires release and manifest IDs")
@@ -1061,7 +1061,7 @@ def validate_source_attested_acquisition_approval(value: Any) -> dict[str, Any]:
         fail("approval required_free_bytes does not match the frozen capacity policy")
     _validate_policy(approval.get("policy"))
     _validate_hex_id(approval.get("approval_id"), label="approval_id")
-    _public_json(approval, label="source-attested approval")
+    _public_json(approval, label="download-receipt approval")
     return approval
 
 
@@ -1357,12 +1357,12 @@ def source_attested_plan_id(plan: dict[str, Any]) -> str:
 
 
 def validate_source_attested_acquisition_plan(value: Any) -> dict[str, Any]:
-    plan = _require_fields(value, SOURCE_ATTESTED_PLAN_FIELDS, label="source-attested plan")
-    _reject_prohibited_public_fields(plan, label="source-attested plan")
+    plan = _require_fields(value, SOURCE_ATTESTED_PLAN_FIELDS, label="download-receipt plan")
+    _reject_prohibited_public_fields(plan, label="download-receipt plan")
     if plan.get("schema_version") != SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION:
-        fail("source-attested plan schema is unsupported")
+        fail("download-receipt plan schema is unsupported")
     if plan.get("kind") != SOURCE_ATTESTED_ACQUISITION_PLAN_KIND:
-        fail("source-attested plan kind is invalid")
+        fail("download-receipt plan kind is invalid")
     source = validate_huggingface_v1_acquisition_source(plan.get("source"))
     identity = validate_acquisition_identity(plan.get("identity"))
     approval = validate_source_attested_acquisition_approval(plan.get("approval"))
@@ -1377,9 +1377,9 @@ def validate_source_attested_acquisition_plan(value: Any) -> dict[str, Any]:
     )
     for field in source_links:
         if identity[field] != source[field]:
-            fail(f"source-attested plan identity {field} differs from its source")
+            fail(f"download-receipt plan identity {field} differs from its source")
         if approval[field] != source[field]:
-            fail(f"source-attested plan approval {field} differs from its source")
+            fail(f"download-receipt plan approval {field} differs from its source")
     identity_links = (
         "identity_class",
         "profile",
@@ -1397,9 +1397,9 @@ def validate_source_attested_acquisition_plan(value: Any) -> dict[str, Any]:
     )
     for field in identity_links:
         if approval[field] != identity[field]:
-            fail(f"source-attested plan approval {field} differs from its identity")
+            fail(f"download-receipt plan approval {field} differs from its identity")
     if plan.get("plan_id") != source_attested_plan_id(plan):
-        fail("source-attested plan identity mismatch")
+        fail("download-receipt plan identity mismatch")
     _public_json(
         {
             "schema_version": plan["schema_version"],
@@ -1412,7 +1412,7 @@ def validate_source_attested_acquisition_plan(value: Any) -> dict[str, Any]:
             "snapshot_revision": source["snapshot_revision"],
             "approval_id": approval["approval_id"],
         },
-        label="source-attested plan summary",
+        label="download-receipt plan summary",
     )
     return plan
 
@@ -1767,13 +1767,13 @@ def _validate_snapshot_manifest(value: Any, *, label: str) -> dict[str, Any]:
 
 def validate_source_attested_acquisition_receipt(value: Any) -> dict[str, Any]:
     receipt = _require_fields(
-        value, SOURCE_ATTESTED_RECEIPT_FIELDS, label="source-attested receipt"
+        value, SOURCE_ATTESTED_RECEIPT_FIELDS, label="download-receipt receipt"
     )
-    _reject_prohibited_public_fields(receipt, label="source-attested receipt")
+    _reject_prohibited_public_fields(receipt, label="download-receipt receipt")
     if receipt.get("schema_version") != SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION:
-        fail("source-attested receipt schema is unsupported")
+        fail("download-receipt receipt schema is unsupported")
     if receipt.get("kind") != SOURCE_ATTESTED_ACQUISITION_RECEIPT_KIND:
-        fail("source-attested receipt kind is invalid")
+        fail("download-receipt receipt kind is invalid")
     source = validate_huggingface_v1_acquisition_source(receipt.get("source"))
     identity = validate_acquisition_identity(receipt.get("identity"))
     approval = validate_source_attested_acquisition_approval(receipt.get("approval"))
@@ -1833,7 +1833,7 @@ def validate_source_attested_acquisition_receipt(value: Any) -> dict[str, Any]:
         if approval[field] != identity[field]:
             fail(f"receipt approval {field} does not match its identity")
     if receipt.get("receipt_id") != source_attested_receipt_id(receipt):
-        fail("source-attested receipt identity mismatch")
+        fail("download-receipt receipt identity mismatch")
     _public_json(
         {
             key: receipt[key]
@@ -1847,7 +1847,7 @@ def validate_source_attested_acquisition_receipt(value: Any) -> dict[str, Any]:
                 "serving_ranks",
             )
         },
-        label="source-attested receipt summary",
+        label="download-receipt receipt summary",
     )
     return receipt
 
@@ -1886,13 +1886,13 @@ def build_source_attested_acquisition_receipt(
 
 
 def source_attested_receipt_store(library_dir: str | pathlib.Path) -> pathlib.Path:
-    return pathlib.Path(library_dir) / "source-attested-receipts"
+    return pathlib.Path(library_dir) / "download-receipts"
 
 
 def source_attested_home_attachment_store(
     library_dir: str | pathlib.Path,
 ) -> pathlib.Path:
-    return pathlib.Path(library_dir) / "source-attested-home-attachments"
+    return pathlib.Path(library_dir) / "home-occupancy"
 
 
 def _ensure_private_store(
@@ -1906,9 +1906,9 @@ def _ensure_private_store(
     try:
         library_info = library.lstat()
     except OSError as exc:
-        fail(f"source-attested library directory is unavailable: {exc}")
+        fail(f"download-receipt library directory is unavailable: {exc}")
     if stat.S_ISLNK(library_info.st_mode) or not stat.S_ISDIR(library_info.st_mode):
-        fail("source-attested library directory is not a regular directory")
+        fail("download-receipt library directory is not a regular directory")
     store = library / store_name
     try:
         os.mkdir(store, 0o700)
@@ -1932,16 +1932,16 @@ def _ensure_private_store(
 def _ensure_receipt_store(library_dir: str | pathlib.Path) -> pathlib.Path:
     return _ensure_private_store(
         library_dir,
-        "source-attested-receipts",
-        label="source-attested receipt store",
+        "download-receipts",
+        label="download-receipt receipt store",
     )
 
 
 def _ensure_home_attachment_store(library_dir: str | pathlib.Path) -> pathlib.Path:
     return _ensure_private_store(
         library_dir,
-        "source-attested-home-attachments",
-        label="source-attested home-attachment store",
+        "home-occupancy",
+        label="home-occupancy store",
     )
 
 
@@ -1987,24 +1987,24 @@ def _load_receipt_path(path: pathlib.Path) -> dict[str, Any]:
     try:
         fd = os.open(path, flags)
     except OSError as exc:
-        fail(f"source-attested receipt is unreadable: {exc}")
+        fail(f"download-receipt receipt is unreadable: {exc}")
     try:
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
-            fail("source-attested receipt is not a regular file")
+            fail("download-receipt receipt is not a regular file")
         with os.fdopen(fd, "rb", closefd=False) as handle:
             raw = handle.read()
         after = os.fstat(fd)
         stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
         if any(getattr(before, field) != getattr(after, field) for field in stable):
-            fail("source-attested receipt changed during read")
+            fail("download-receipt receipt changed during read")
     finally:
         os.close(fd)
     receipt = validate_source_attested_acquisition_receipt(
-        _load_json_value(raw, label="source-attested receipt")
+        _load_json_value(raw, label="download-receipt receipt")
     )
     if path.name != f"{receipt['receipt_id']}.json":
-        fail("source-attested receipt filename does not match its identity")
+        fail("download-receipt receipt filename does not match its identity")
     return receipt
 
 
@@ -2041,7 +2041,7 @@ def _write_receipt_exclusive(path: pathlib.Path, receipt: dict[str, Any]) -> Non
                 follow_symlinks=False,
             )
         except FileExistsError:
-            fail("home add: a source-attested receipt already exists")
+            fail("home add: a download-receipt receipt already exists")
         os.unlink(temp_name, dir_fd=store_fd)
         temp_created = False
         os.fsync(store_fd)
@@ -2067,11 +2067,11 @@ def write_source_attested_receipt(
         snapshot_revision=receipt["snapshot_revision"],
     ):
         if not source_attested_receipts_are_content_compatible(existing, receipt):
-            fail("home add: an incompatible source-attested receipt already exists")
+            fail("home add: an incompatible download-receipt receipt already exists")
     if path.exists() or path.is_symlink():
         existing = load_source_attested_receipt(library_dir, receipt["receipt_id"])
         if existing != receipt:
-            fail("home add: a different source-attested receipt already exists")
+            fail("home add: a different download-receipt receipt already exists")
         return existing
     try:
         _write_receipt_exclusive(path, receipt)
@@ -2080,7 +2080,7 @@ def write_source_attested_receipt(
             raise
         existing = load_source_attested_receipt(library_dir, receipt["receipt_id"])
         if existing != receipt:
-            fail("home add: a different source-attested receipt already exists")
+            fail("home add: a different download-receipt receipt already exists")
         return existing
     return receipt
 
@@ -2117,7 +2117,7 @@ def _listed_source_attested_receipts(
     return [
         _load_receipt_path(path)
         for path in _iter_private_store_final_paths(
-            store, label="source-attested receipt store"
+            store, label="download-receipt receipt store"
         )
     ]
 
@@ -2141,7 +2141,7 @@ def list_source_attested_receipts_for_revision(
     first = matches[0]
     for item in matches[1:]:
         if not source_attested_receipts_are_content_compatible(first, item):
-            fail("home add: incompatible source-attested receipts for this revision")
+            fail("home add: incompatible download-receipt receipts for this revision")
     return matches
 
 
@@ -2408,7 +2408,7 @@ def write_source_attested_home_attachment(
     )
     store = _ensure_home_attachment_store(library_dir)
     _iter_private_store_final_paths(
-        store, label="source-attested home-attachment store"
+        store, label="home-occupancy store"
     )
     path = store / f"{attachment['attachment_key']}.json"
     _write_attachment_replace(path, attachment)
@@ -2443,7 +2443,7 @@ def _listed_source_attested_home_attachments(
     return [
         _load_attachment_path(path)
         for path in _iter_private_store_final_paths(
-            store, label="source-attested home-attachment store"
+            store, label="home-occupancy store"
         )
     ]
 
@@ -2585,9 +2585,9 @@ def resolve_attached_source_attested_receipt(
             state=HOME_AUTHORITY_NONE, reason=HOME_AUTHORITY_MISSING_RECEIPT
         )
     except OSError as exc:
-        fail(f"source-attested receipt is unreadable: {exc}")
+        fail(f"download-receipt receipt is unreadable: {exc}")
     if not stat.S_ISREG(receipt_info.st_mode):
-        fail("source-attested receipt is not a regular file")
+        fail("download-receipt receipt is not a regular file")
     receipt = load_source_attested_receipt(library_dir, attachment["receipt_id"])
     if (
         receipt["model_id"] != attachment["model_id"]
@@ -2677,7 +2677,7 @@ def detach_source_attested_home_attachment(
     store = source_attested_home_attachment_store(library_dir)
     name = f"{attachment['attachment_key']}.json"
     if _unlink_store_document(
-        store, name, label="source-attested home-attachment store"
+        store, name, label="home-occupancy store"
     ):
         result["state"] = "detached"
         result["receipt_id"] = attachment["receipt_id"]
@@ -2778,7 +2778,7 @@ def classify_catalog_occupancy(
     """Mark occupancy vs unbound-complete on scanned hub trees.
 
     Sealed/legacy identities with no receipt or attachment are unchanged.
-    Source-attested identities count only a matching occupancy attachment as
+    Download-receipt identities count only a matching occupancy attachment as
     a resolve-home. Extra complete hub trees are unbound-complete.
     """
     if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
@@ -2842,39 +2842,39 @@ def _classify_entry_occupancy(
 
 def validate_source_attested_home_verify_result(value: Any) -> dict[str, Any]:
     result = _require_fields(
-        value, SOURCE_ATTESTED_VERIFY_FIELDS, label="source-attested verify result"
+        value, SOURCE_ATTESTED_VERIFY_FIELDS, label="download-receipt verify result"
     )
-    _reject_prohibited_public_fields(result, label="source-attested verify result")
+    _reject_prohibited_public_fields(result, label="download-receipt verify result")
     if result.get("schema_version") != SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION:
-        fail("source-attested verify schema is unsupported")
+        fail("download-receipt verify schema is unsupported")
     if result.get("kind") != SOURCE_ATTESTED_HOME_VERIFY_KIND:
-        fail("source-attested verify kind is invalid")
+        fail("download-receipt verify kind is invalid")
     if result.get("state") != "verified":
-        fail("source-attested verify state is invalid")
+        fail("download-receipt verify state is invalid")
     if result.get("identity_class") not in ACQUISITION_IDENTITY_CLASSES:
-        fail("source-attested verify identity_class is unsupported")
+        fail("download-receipt verify identity_class is unsupported")
     _validate_hex_id(result.get("receipt_id"), label="verify receipt_id")
     _validate_hf_model_id(result.get("model_id"), label="verify model_id")
     _validate_commit(result.get("snapshot_revision"), label="verify snapshot_revision")
     _require_positive_int(result.get("file_count"), label="verify file_count")
     _require_positive_int(result.get("bytes_hashed"), label="verify bytes_hashed")
-    _public_json(result, label="source-attested verify result")
+    _public_json(result, label="download-receipt verify result")
     return result
 
 
 def validate_source_attested_acquisition_result(value: Any) -> dict[str, Any]:
     result = _require_fields(
-        value, SOURCE_ATTESTED_RESULT_FIELDS, label="source-attested result"
+        value, SOURCE_ATTESTED_RESULT_FIELDS, label="download-receipt result"
     )
-    _reject_prohibited_public_fields(result, label="source-attested result")
+    _reject_prohibited_public_fields(result, label="download-receipt result")
     if result.get("schema_version") != SOURCE_ATTESTED_ACQUISITION_SCHEMA_VERSION:
-        fail("source-attested result schema is unsupported")
+        fail("download-receipt result schema is unsupported")
     if result.get("kind") != SOURCE_ATTESTED_ACQUISITION_RESULT_KIND:
-        fail("source-attested result kind is invalid")
+        fail("download-receipt result kind is invalid")
     if result.get("state") != "published":
-        fail("source-attested result state is invalid")
+        fail("download-receipt result state is invalid")
     if result.get("identity_class") not in ACQUISITION_IDENTITY_CLASSES:
-        fail("source-attested result identity_class is unsupported")
+        fail("download-receipt result identity_class is unsupported")
     _validate_hex_id(result.get("receipt_id"), label="result receipt_id")
     _validate_hex_id(result.get("source_digest"), label="result source_digest")
     _validate_hex_id(result.get("approval_id"), label="result approval_id")
@@ -2887,10 +2887,10 @@ def validate_source_attested_acquisition_result(value: Any) -> dict[str, Any]:
     _require_positive_int(result.get("content_bytes"), label="result content_bytes")
     _require_positive_int(result.get("bytes_hashed"), label="result bytes_hashed")
     if result.get("catalog_refreshed") is not False:
-        fail("source-attested result must not claim a catalog refresh")
+        fail("download-receipt result must not claim a catalog refresh")
     if result.get("staging_cleanup") not in {"removed", "incomplete"}:
-        fail("source-attested result staging_cleanup is invalid")
-    _public_json(result, label="source-attested result")
+        fail("download-receipt result staging_cleanup is invalid")
+    _public_json(result, label="download-receipt result")
     return result
 
 
@@ -2944,7 +2944,7 @@ def _terminal_writer() -> Any:
         try:
             from terminal_format import TerminalWriter
         except ModuleNotFoundError:
-            fail("source-attested rendering requires scripts/terminal_format.py")
+            fail("download-receipt rendering requires scripts/terminal_format.py")
     return TerminalWriter()
 
 
@@ -2954,12 +2954,12 @@ def render_source_attested_acquisition_plan(plan: dict[str, Any]) -> None:
     identity = plan["identity"]
     approval = plan["approval"]
     term = _terminal_writer()
-    term.emit("source-attested acquisition  PLAN")
+    term.emit("Hugging Face download  PLAN")
     term.field("model", source["model_id"])
     term.field("profile", identity["profile"])
     term.field("selector", source["selector"])
     term.field("revision", source["snapshot_revision"])
-    term.field("identity", identity["identity_class"].replace("-", " "))
+    term.field("identity", "download receipt")
     term.field("files", source["file_count"])
     term.field("content", _human_bytes(source["content_bytes"]))
     term.field("home", f"rank {approval['selected_rank']}")
@@ -2977,11 +2977,11 @@ def render_source_attested_acquisition_result(result: dict[str, Any]) -> None:
     result = validate_source_attested_acquisition_result(result)
     term = _terminal_writer()
     label = "READY" if result["state"] == "published" else "UNCHANGED"
-    term.emit(f"source-attested home  {label}")
+    term.emit(f"durable home  {label}")
     term.field("model", result["model_id"])
     term.field("revision", result["snapshot_revision"])
     term.field("home", f"rank {result['selected_rank']}")
-    term.field("identity", result["identity_class"].replace("-", " "))
+    term.field("identity", "download receipt")
     term.field("receipt", result["receipt_id"][:12])
     term.field("verified", f"{_human_bytes(result['bytes_hashed'])} SHA-256")
     term.field("catalog", "unchanged · explicit refresh required")
@@ -2995,11 +2995,11 @@ def render_source_attested_acquisition_result(result: dict[str, Any]) -> None:
 def render_source_attested_home_verify(result: dict[str, Any]) -> None:
     result = validate_source_attested_home_verify_result(result)
     term = _terminal_writer()
-    term.emit("source-attested home  VERIFIED")
+    term.emit("durable home  VERIFIED")
     term.field("model", result["model_id"])
     term.field("revision", result["snapshot_revision"])
     term.field("receipt", result["receipt_id"][:12])
-    term.field("identity", result["identity_class"].replace("-", " "))
+    term.field("identity", "download receipt")
     term.field("rehash", f"{_human_bytes(result['bytes_hashed'])} SHA-256")
     term.blank()
     term.emit("Receipt-backed offline rehash matched. No status was assigned.")
@@ -3058,7 +3058,7 @@ def cmd_resolve_identity(args: argparse.Namespace) -> int:
     if args.expected_seal:
         fail(
             "expected-seal acquisition identity is retired (ADR 0012); "
-            "use source-attested --revision or a bound Model Serving Release"
+            "use home add --revision or a bound Model Serving Release"
         )
     identity = resolve_huggingface_v1_acquisition_identity(
         source=source,
@@ -3237,7 +3237,7 @@ def cmd_resolve_attached_receipt(args: argparse.Namespace) -> int:
     )
     receipt = _receipt_from_authority(authority)
     if receipt is None and not args.allow_missing:
-        fail("source-attested receipt has no current-home authority")
+        fail("download-receipt receipt has no current-home authority")
     return _write_json(receipt)
 
 
@@ -3295,7 +3295,7 @@ def cmd_find_receipt(args: argparse.Namespace) -> int:
             snapshot_revision=args.revision,
         )
         if receipt is None and not args.allow_missing:
-            fail("source-attested receipt not found")
+            fail("download-receipt receipt not found")
     return _write_json(receipt)
 
 
@@ -3350,7 +3350,7 @@ def cmd_build_result(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Source-attested acquisition planning and receipt helpers"
+        description="Download-receipt acquisition planning and receipt helpers"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -3508,7 +3508,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except SourceAttestedAcquisitionError as exc:
-        print(f"source-attested: ERROR: {exc}", file=sys.stderr)
+        print(f"download-receipt: ERROR: {exc}", file=sys.stderr)
         return 1
 
 

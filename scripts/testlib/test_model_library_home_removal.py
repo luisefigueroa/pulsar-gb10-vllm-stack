@@ -119,7 +119,7 @@ class HomeRemovalFixture:
                     "model_id": self.model_id,
                     "revision": self.revision,
                     "identity_key": f"{self.model_id}@{self.revision}",
-                    "validation": "legacy-unsealed",
+                    "validation": "receipt-occupancy",
                     "profiles": ["qwen", "qwen3-1.7b"],
                     "profile_validation": [],
                     "homes": homes,
@@ -397,7 +397,7 @@ class HomeRemovalContracts(HomeRemovalFixture, unittest.TestCase):
         }
         library_labels = {
             **base_labels,
-            "io.pulsar.gb10.weight-source": "library-hot",
+            "io.pulsar.gb10.weight-source": "local-files",
             "io.pulsar.gb10.weight-owner": self.node_id,
             "io.pulsar.gb10.model-revision": self.revision,
         }
@@ -576,7 +576,7 @@ class HomeRemovalContracts(HomeRemovalFixture, unittest.TestCase):
                         "io.pulsar.gb10.managed": "true",
                         "io.pulsar.gb10.conf": "qwen3-1.7b",
                         "io.pulsar.gb10.rank": "single",
-                        "io.pulsar.gb10.weight-source": "library-hot",
+                        "io.pulsar.gb10.weight-source": "local-files",
                         "io.pulsar.gb10.weight-owner": self.node_id,
                         "io.pulsar.gb10.model-revision": self.revision,
                     },
@@ -782,7 +782,7 @@ class IncompleteHubOccupancyRemoval(HomeRemovalFixture, unittest.TestCase):
 
     def test_current_home_attachment_blocks_stub_retirement(self) -> None:
         library_dir = self.root / "attached-library"
-        store = library_dir / "source-attested-home-attachments"
+        store = library_dir / "home-occupancy"
         store.mkdir(parents=True)
         (store / "fixture.json").write_text(
             json.dumps(
@@ -858,7 +858,7 @@ class IncompleteHubOccupancyRemoval(HomeRemovalFixture, unittest.TestCase):
         self.assertEqual(plan["state"], "eligible")
         self.assertEqual(plan["occupancy_class"], "incomplete-hub")
         self.assertEqual(plan["action"]["occupancy_subtype"], "refs-only")
-        self.assertIn("source-attested home add", plan["action"]["enables"])
+        self.assertIn("home add --revision", plan["action"]["enables"])
         self.assertIn("--yes", plan["action"]["confirmation"])
 
     def test_public_cli_stub_remove_requires_yes_and_preserves_tree(self) -> None:
@@ -1011,8 +1011,8 @@ class IncompleteHubOccupancyRemoval(HomeRemovalFixture, unittest.TestCase):
 
 class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
     def _receipt_for_catalog(self) -> dict[str, object]:
-        from scripts import model_library_source_attested as source_attested
-        from scripts.testlib import model_library_source_attested_fixture as fixture
+        from scripts import model_library_receipt as source_attested
+        from scripts.testlib import model_library_receipt_fixture as fixture
 
         source = fixture.build_source(
             model_id=self.model_id, snapshot_revision=self.revision
@@ -1120,7 +1120,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
 
     def test_corrupt_receipt_store_fails_closed(self) -> None:
         library_dir = self.root / "corrupt-library"
-        store = library_dir / "source-attested-receipts"
+        store = library_dir / "download-receipts"
         store.mkdir(parents=True)
         (store / ("b" * 64 + ".json")).write_text("{not-json", encoding="utf-8")
         with self.assertRaises(Exception):
@@ -1128,7 +1128,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
 
     def test_truncated_archive_blocks_last_occupancy(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
-        from scripts import model_library_source_attested as source_attested
+        from scripts import model_library_receipt as source_attested
 
         receipt = self._receipt_for_catalog()
         library_dir = self.root / "archive-library"
@@ -1163,7 +1163,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
 
     def test_same_device_archive_blocks_without_lab_override(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
-        from scripts import model_library_source_attested as source_attested
+        from scripts import model_library_receipt as source_attested
 
         receipt = self._receipt_for_catalog()
         library_dir = self.root / "archive-library"
@@ -1182,7 +1182,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
 
     def test_verified_archive_with_lab_same_device_is_eligible(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
-        from scripts import model_library_source_attested as source_attested
+        from scripts import model_library_receipt as source_attested
 
         receipt = self._receipt_for_catalog()
         library_dir = self.root / "archive-library"
@@ -1212,7 +1212,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
 
     def test_controller_reverify_catches_truncated_archive_before_detach(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
-        from scripts import model_library_source_attested as source_attested
+        from scripts import model_library_receipt as source_attested
 
         receipt = self._receipt_for_catalog()
         library_dir = self.root / "archive-library"
@@ -1251,7 +1251,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
 
     def test_reverify_fails_if_planned_receipt_disappears(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
-        from scripts import model_library_source_attested as source_attested
+        from scripts import model_library_receipt as source_attested
 
         receipt = self._receipt_for_catalog()
         library_dir = self.root / "archive-library"
@@ -1267,7 +1267,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=False):
             plan = self._plan(library_dir=library_dir)
         receipt_path = (
-            library_dir / "source-attested-receipts" / f"{receipt['receipt_id']}.json"
+            library_dir / "download-receipts" / f"{receipt['receipt_id']}.json"
         )
         receipt_path.unlink()
         with mock.patch.dict(os.environ, env, clear=False):

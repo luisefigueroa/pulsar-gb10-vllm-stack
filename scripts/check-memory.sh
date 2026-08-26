@@ -115,7 +115,7 @@ check_node_cold() {
   fi
   # Hard fail only when free is clearly below the footprint estimate (8% slack
   # for WEIGHTS_GIB/overhead pad). require free >= footprint+spike was too
-  # strict on 121 GiB Sparks (flagship estimate ~118 need vs ~113 free while
+  # strict on 121 GiB Sparks (~118 need vs ~113 free while
   # the geometry is known to run with ~4 GiB residual).
   if awk -v a="$avail" -v f="$need_footprint" 'BEGIN{exit !(a+0 < f*0.92)}'; then
     result=fail
@@ -144,7 +144,7 @@ check_node_warm() {
   # Prefer buffer target; soak lived near ~3.5–4 GiB — warn if below buffer but above floor
   if awk -v a="$avail" -v b="$buffer" 'BEGIN{exit !(a+0 < b)}'; then
     if [ "$result" = pass ]; then result=warn; fi
-    reason="${reason}${label}: residual ${avail} GiB < preferred buffer ${buffer} GiB (model already loaded — expected under 20GB flagship); "
+    reason="${reason}${label}: residual ${avail} GiB < preferred buffer ${buffer} GiB (model already loaded — expected under the 20 GB KV geometry); "
   fi
 }
 

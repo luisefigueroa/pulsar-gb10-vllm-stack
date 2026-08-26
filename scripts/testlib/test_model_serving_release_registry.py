@@ -471,21 +471,13 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
         self.assertEqual(
             graph.counts(),
             {
-                "descriptors": 2,
-                "contracts": 2,
-                "run_records": 4,
-                "evidence_bundles": 2,
-                "decisions": 2,
+                "descriptors": 0,
+                "contracts": 0,
+                "run_records": 0,
+                "evidence_bundles": 0,
+                "decisions": 0,
             },
         )
-        for release_id in (
-            "8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7",
-            "2c653ea4fc96bed639978a7da7eb15347432e20874b8598ea2b1bafdb60e0933",
-        ):
-            inspected = registry.inspect_release(graph, release_id)
-            self.assertEqual(
-                inspected["inspection"]["effective_status"], "testing-incomplete"
-            )
         result = subprocess.run(
             [str(CLI), "verify", "--json"],
             cwd=str(REPO_ROOT),
@@ -496,7 +488,7 @@ class ModelServingReleaseRegistryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["counts"]["decisions"], 2)
+        self.assertEqual(payload["counts"]["decisions"], 0)
         self.assertEqual(
             payload["registry_root"], registry.DEFAULT_REGISTRY_RELATIVE
         )

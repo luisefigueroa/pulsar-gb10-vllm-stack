@@ -111,7 +111,7 @@ class ActivateTransportContracts(unittest.TestCase):
             content_digest=manifest["manifest_id"],
             integrity_manifest=manifest,
             validation={
-                "identity_status": "legacy-unsealed",
+                "identity_status": "receipt-occupancy",
                 "expected_seal": None,
                 "observed_seal": model_library.observed_model_seal_projection(
                     manifest

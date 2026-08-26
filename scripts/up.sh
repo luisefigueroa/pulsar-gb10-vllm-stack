@@ -77,8 +77,8 @@ export QUIET=1
 
 echo "┌─ up  $NAME"
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT"
-echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (advisory)"
-echo "│  legacy-status=$STATUS (advisory)"
+echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (display-only)"
+echo "│  legacy-status=$STATUS (display-only)"
 echo "│  weights=model library (hot staging)"
 if [ "$NODES" -eq 1 ]; then
   echo "│  placement=$(single_node_display)  node-id=${SINGLE_NODE_ID:-standalone}"
@@ -91,8 +91,8 @@ fi
 [ "$DRY" = 1 ] && echo "│  mode=DRY-RUN (checks only)"
 echo "├─ checks"
 
-echo "INFO  release   $MODEL_SERVING_RELEASE_STATUS_LABEL (advisory)"
-echo "INFO  legacy    $STATUS (advisory)"
+echo "INFO  release   $MODEL_SERVING_RELEASE_STATUS_LABEL (display-only)"
+echo "INFO  legacy    $STATUS (display-only)"
 warn_profile_status
 echo "PASS  conf      exact profile contract parsed"
 

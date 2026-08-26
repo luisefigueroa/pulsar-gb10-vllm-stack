@@ -181,14 +181,14 @@ import os
 snap = json.loads(os.environ["BODY"])
 for container in snap["containers"]:
     labels = container["labels"]
-    labels["io.pulsar.gb10.weight-source"] = "library-hot"
+    labels["io.pulsar.gb10.weight-source"] = "local-files"
     labels["io.pulsar.gb10.weight-owner"] = "node-fixture-home"
     labels["io.pulsar.gb10.weight-config"] = "c" * 12
 print(json.dumps(snap))
 PY
 )
 out=$(run_fixture "library-2rank" "$body_library")
-assert_eq "$(py_get "$out" 'd["services"][0]["weight_source"]')" "library-hot" "library: weight source aggregated"
+assert_eq "$(py_get "$out" 'd["services"][0]["weight_source"]')" "local-files" "library: weight source aggregated"
 assert_eq "$(py_get "$out" 'd["services"][0]["safe_to_stop"]')" "True" "library: uniform provenance is safe"
 
 body_library_broken=$(BODY="$body_library" python3 - <<PY

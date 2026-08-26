@@ -221,7 +221,6 @@ load_conf() {
   MODEL="" SERVED_NAME="" IMAGE="" NOTES="" STATUS="?"
   EXPECTED_MODEL_SEAL=""
   MODEL_SERVING_RELEASE_ID=""
-  PROFILE_VALIDATION_BUNDLE_JSON=""
   NODES=1 PORT=8000 GPU_MEM_UTIL=0.80
   ENGINE_ARGS=() CONTAINER_ENV=() SPEC_DECODE_ARGS=()
   WEIGHTS_GIB="" WEIGHTS_RAM_GIB="" KV_GIB="" OVERHEAD_GIB="" MEM_MIN_FREE_GIB=""
@@ -378,10 +377,6 @@ launch_contract_id_for_profile() {
     load_conf "$profile"
     loaded_launch_contract_id
   )
-}
-
-validate_loaded_profile_bundle() {
-  die "$CONF_NAME: expected-seal profile-bundle verification is retired (ADR 0012)"
 }
 
 model_source_kind() {
@@ -582,7 +577,7 @@ print("\t".join((
   [ "$MODEL_SERVING_RELEASE_DECISION_ID" != - ] \
     || MODEL_SERVING_RELEASE_DECISION_ID=""
   # Ambiguity and a recipe mismatch derived from an ambiguous release are
-  # valid advisory projections even though show-release exits 1.
+  # catalog may still show a status even though show-release exits 1.
   if [ "$rc" -ne 0 ] \
       && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != ambiguous ] \
       && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != recipe-mismatch ]; then
@@ -1111,10 +1106,6 @@ PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
-load_replicated_identity_plan() {
-  die "${1:-profile}: sealed exact-identity plan is retired (ADR 0012)"
-}
-
 # Print find-hot JSON for the selected rank. Return 0 on success, 255 when
 # that rank is SSH-unreachable, 2 when a found view fails verification, and
 # 1 when no ready instance is present. Requires load_conf plus confirmed
@@ -1180,65 +1171,55 @@ library_hot_info_for_profile() {
 }
 
 # Resolve a ready working-copy instance for model-library launch.
-# Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
-# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
-# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
-# LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
-# LIBRARY_HOT_MODEL_SEAL_ID, LIBRARY_HOT_VALIDATION_BUNDLE_ID,
-# LIBRARY_HOT_VALIDATION_JSON, and pinned state.
+# Sets LIBRARY_VIEW_INSTANCE_DIR, LIBRARY_VIEW_HUB_PATH, LIBRARY_VIEW_HOME_NODE_ID,
+# LIBRARY_VIEW_CONTENT_ID, LIBRARY_VIEW_CONTENT_DIGEST, LIBRARY_VIEW_TRANSPORT,
+# LIBRARY_VIEW_INTEGRITY_SCHEME, LIBRARY_VIEW_MODEL_ID, LIBRARY_VIEW_REVISION,
+# LIBRARY_VIEW_CONTAINER_MODEL_PATH, LIBRARY_VIEW_IDENTITY_STATUS,
+# LIBRARY_VIEW_VALIDATION_JSON, and pinned state.
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
   local topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] \
-    || die "library-hot requires confirmed topology (scripts/detect-fabric.sh --write-topology)"
+    || die "model files require confirmed topology (scripts/detect-fabric.sh --write-topology)"
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   info=$(library_hot_info_for_profile "$profile") \
-    || die "library-hot: model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
-  LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
+    || die "model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
+  LIBRARY_VIEW_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_HUB_PATH=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["hub_path"])')
-  LIBRARY_HOT_HOME_NODE_ID=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_HOME_NODE_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")')
-  LIBRARY_HOT_CONTENT_ID=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_CONTENT_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
-  LIBRARY_HOT_CONTENT_DIGEST=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_CONTENT_DIGEST=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_digest") or "")')
-  LIBRARY_HOT_TRANSPORT=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_TRANSPORT=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("transport") or "")')
-  LIBRARY_HOT_INTEGRITY_SCHEME=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_INTEGRITY_SCHEME=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print((json.load(sys.stdin)["stamp"].get("integrity") or {}).get("scheme") or "")')
-  LIBRARY_HOT_MODEL_ID=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_MODEL_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("model_id") or "")')
-  LIBRARY_HOT_REVISION=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_REVISION=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("revision") or "")')
-  LIBRARY_HOT_CONTAINER_MODEL_PATH=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_CONTAINER_MODEL_PATH=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin).get("container_model_path") or "")')
-  LIBRARY_HOT_IDENTITY_STATUS=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_IDENTITY_STATUS=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "")')
-  LIBRARY_HOT_MODEL_SEAL_ID=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print((((json.load(sys.stdin)["stamp"].get("validation") or {}).get("expected_seal") or {}).get("seal_id") or ""))')
-  LIBRARY_HOT_VALIDATION_BUNDLE_ID=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print((((json.load(sys.stdin)["stamp"].get("validation") or {}).get("expected_seal") or {}).get("validation_bundle_id") or ""))')
-  LIBRARY_HOT_VALIDATION_JSON=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_VALIDATION_JSON=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
-  LIBRARY_HOT_PINNED=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_PINNED=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print("1" if json.load(sys.stdin)["stamp"].get("pinned") else "0")')
-  [ -n "$LIBRARY_HOT_CONTENT_ID" ] \
-    && [ -n "$LIBRARY_HOT_CONTENT_DIGEST" ] \
-    && [ -n "$LIBRARY_HOT_TRANSPORT" ] \
-    && [ -n "$LIBRARY_HOT_INTEGRITY_SCHEME" ] \
-    && [ -n "$LIBRARY_HOT_MODEL_ID" ] \
-    && [ -n "$LIBRARY_HOT_REVISION" ] \
-    && [ -n "$LIBRARY_HOT_CONTAINER_MODEL_PATH" ] \
-    && [ -n "$LIBRARY_HOT_IDENTITY_STATUS" ] \
-    && [ -n "$LIBRARY_HOT_VALIDATION_JSON" ] \
-    || die "library-hot: sealed hot provenance is incomplete for $profile"
-  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-    [ -n "$LIBRARY_HOT_MODEL_SEAL_ID" ] \
-      && [ -n "$LIBRARY_HOT_VALIDATION_BUNDLE_ID" ] \
-      || die "library-hot: validated identity lacks seal/bundle provenance"
-  fi
+  [ -n "$LIBRARY_VIEW_CONTENT_ID" ] \
+    && [ -n "$LIBRARY_VIEW_CONTENT_DIGEST" ] \
+    && [ -n "$LIBRARY_VIEW_TRANSPORT" ] \
+    && [ -n "$LIBRARY_VIEW_INTEGRITY_SCHEME" ] \
+    && [ -n "$LIBRARY_VIEW_MODEL_ID" ] \
+    && [ -n "$LIBRARY_VIEW_REVISION" ] \
+    && [ -n "$LIBRARY_VIEW_CONTAINER_MODEL_PATH" ] \
+    && [ -n "$LIBRARY_VIEW_IDENTITY_STATUS" ] \
+    && [ -n "$LIBRARY_VIEW_VALIDATION_JSON" ] \
+    || die "prepared view provenance is incomplete for $profile"
 }
 
 json_encode_strings() {
@@ -1292,7 +1273,7 @@ write_launch_plan_file() {
   local contract
   [ -n "${CONF_NAME:-}" ] || die "write_launch_plan_file requires load_conf"
   [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] || die "write_launch_plan_file requires confirmed topology"
-  [ -n "${LIBRARY_HOT_HUB_PATH:-}" ] || die "write_launch_plan_file requires resolve_library_hot_for_profile"
+  [ -n "${LIBRARY_VIEW_HUB_PATH:-}" ] || die "write_launch_plan_file requires resolve_library_hot_for_profile"
   contract="${LAUNCH_CONTRACT_ID:-}"
   [ -n "$contract" ] || contract=$(loaded_launch_contract_id)
   if [ "$NODES" -gt 1 ]; then
@@ -1374,15 +1355,13 @@ print(json.dumps(ranks))
   CLUSTER_TOPOLOGY_ID="$CLUSTER_TOPOLOGY_ID" \
   SPEC_DECODE_ENABLED="${SPEC_DECODE_ENABLED:-0}" \
   SPEC_DECODE_SOURCE="${SPEC_DECODE_SOURCE:-profile-default}" \
-  LIBRARY_HOT_IDENTITY_STATUS="$LIBRARY_HOT_IDENTITY_STATUS" \
-  LIBRARY_HOT_REVISION="$LIBRARY_HOT_REVISION" \
-  LIBRARY_HOT_HOME_NODE_ID="$LIBRARY_HOT_HOME_NODE_ID" \
-  LIBRARY_HOT_CONTENT_ID="$LIBRARY_HOT_CONTENT_ID" \
-  LIBRARY_HOT_HUB_PATH="$LIBRARY_HOT_HUB_PATH" \
-  LIBRARY_HOT_CONTAINER_MODEL_PATH="$LIBRARY_HOT_CONTAINER_MODEL_PATH" \
-  LIBRARY_HOT_TRANSPORT="$LIBRARY_HOT_TRANSPORT" \
-  LIBRARY_HOT_MODEL_SEAL_ID="${LIBRARY_HOT_MODEL_SEAL_ID:-}" \
-  LIBRARY_HOT_VALIDATION_BUNDLE_ID="${LIBRARY_HOT_VALIDATION_BUNDLE_ID:-}" \
+  LIBRARY_VIEW_IDENTITY_STATUS="$LIBRARY_VIEW_IDENTITY_STATUS" \
+  LIBRARY_VIEW_REVISION="$LIBRARY_VIEW_REVISION" \
+  LIBRARY_VIEW_HOME_NODE_ID="$LIBRARY_VIEW_HOME_NODE_ID" \
+  LIBRARY_VIEW_CONTENT_ID="$LIBRARY_VIEW_CONTENT_ID" \
+  LIBRARY_VIEW_HUB_PATH="$LIBRARY_VIEW_HUB_PATH" \
+  LIBRARY_VIEW_CONTAINER_MODEL_PATH="$LIBRARY_VIEW_CONTAINER_MODEL_PATH" \
+  LIBRARY_VIEW_TRANSPORT="$LIBRARY_VIEW_TRANSPORT" \
   REPO_DIR="$REPO_DIR" \
   python3 - "$dest" <<'PY'
 import json
@@ -1412,14 +1391,14 @@ facts = {
         "source": os.environ.get("SPEC_DECODE_SOURCE") or "profile-default",
     },
     "storage": {
-        "mechanism": "library-hot",
-        "identity_status": os.environ["LIBRARY_HOT_IDENTITY_STATUS"],
-        "revision": os.environ["LIBRARY_HOT_REVISION"],
-        "home_node_id": os.environ["LIBRARY_HOT_HOME_NODE_ID"],
-        "content_id": os.environ["LIBRARY_HOT_CONTENT_ID"],
-        "hub_path": os.environ["LIBRARY_HOT_HUB_PATH"],
-        "container_model_path": os.environ["LIBRARY_HOT_CONTAINER_MODEL_PATH"],
-        "transport": os.environ["LIBRARY_HOT_TRANSPORT"],
+        "mechanism": "local-files",
+        "identity_status": os.environ["LIBRARY_VIEW_IDENTITY_STATUS"],
+        "revision": os.environ["LIBRARY_VIEW_REVISION"],
+        "home_node_id": os.environ["LIBRARY_VIEW_HOME_NODE_ID"],
+        "content_id": os.environ["LIBRARY_VIEW_CONTENT_ID"],
+        "hub_path": os.environ["LIBRARY_VIEW_HUB_PATH"],
+        "container_model_path": os.environ["LIBRARY_VIEW_CONTAINER_MODEL_PATH"],
+        "transport": os.environ["LIBRARY_VIEW_TRANSPORT"],
     },
     "ranks": json.loads(os.environ["PULSAR_PLAN_RANKS_JSON"]),
     "runtime": {
@@ -1600,10 +1579,9 @@ print(str(labels.get(sys.argv[1], "") or ""))
 }
 
 # Return the declared model-weight source from ownership metadata. The value
-# is provenance, not a mode: every managed launch since ADR 0006 writes
-# library-hot (stored enum), and containers labeled replicated (or unlabeled,
-# predating the label) are historical observations. Malformed JSON is an
-# observation failure.
+# is provenance, not a mode: current managed launches write local-files.
+# Containers labeled replicated or unlabeled are historical observations.
+# Malformed JSON is an observation failure.
 container_weight_source_field() {
   local metadata="${1:?}"
   printf '%s' "$metadata" | python3 -c '

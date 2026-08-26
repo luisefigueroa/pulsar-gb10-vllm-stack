@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Thin public-CLI scenarios for source-attested home add and verify.
+# Thin public-CLI scenarios for download-receipt home add and verify.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-source-attested-cli.XXXXXX")
+STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-download-receipt-cli.XXXXXX")
 trap 'rm -rf "$STATE"' EXIT
-python3 "$REPO_DIR/scripts/testlib/model_library_source_attested_fixture.py" "$STATE"
+python3 "$REPO_DIR/scripts/testlib/model_library_receipt_fixture.py" "$STATE"
 
 LIBRARY="$REPO_DIR/scripts/model-library.sh"
 BASE_ENV=(
@@ -37,7 +37,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, sys.argv[1])
-from scripts.testlib import model_library_source_attested_fixture as fixture
+from scripts.testlib import model_library_receipt_fixture as fixture
 
 fixture.write_cli_fixture(pathlib.Path(sys.argv[2]), ranks=2)
 PY
@@ -58,9 +58,9 @@ REMOTE_ENV=(
   "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
 )
 
-# Sealed/no-attachment flows must not perform a remote live-directory probe just
-# to discover that the source-attested authority is absent. A failing SSH path
-# therefore still returns the local no-authority result.
+# No-attachment flows must not perform a remote live-directory probe just
+# to discover that download-receipt occupancy authority is absent. A failing
+# SSH path therefore still returns the local no-authority result.
 no_attachment_probe=$(env \
   "${REMOTE_ENV[@]}" \
   "MODEL_LIBRARY_DIR=$STATE/no-attachment-library" \
@@ -109,7 +109,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, sys.argv[1])
-from scripts.testlib import model_library_source_attested_fixture as fixture
+from scripts.testlib import model_library_receipt_fixture as fixture
 
 fixture.write_cli_fixture(pathlib.Path(sys.argv[2]), ranks=2)
 PY
@@ -157,10 +157,10 @@ env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
 python3 - "$STATE/plan.json" "$STATE/plan.err" <<'PY'
 import json, sys
 plan = json.load(open(sys.argv[1], encoding="utf-8"))
-assert plan["kind"] == "pulsar-model-library-source-attested-acquisition-plan"
+assert plan["kind"] == "pulsar-model-library-download-plan"
 assert plan["source"]["selector"] == "main"
 assert plan["source"]["snapshot_revision"] == "a" * 40
-assert plan["identity"]["identity_class"] == "source-attested"
+assert plan["identity"]["identity_class"] == "download-receipt"
 assert plan["approval"]["selected_rank"] == 0
 blob = open(sys.argv[1], encoding="utf-8").read()
 err = open(sys.argv[2], encoding="utf-8").read()
@@ -182,10 +182,10 @@ fi
 if printf 'n\n' | COLUMNS=52 env "${BASE_ENV[@]}" "$LIBRARY" \
     home add nemotron-3-nano-30b-nvfp4 --revision main \
     >"$STATE/declined.out" 2>"$STATE/declined.err"; then
-  echo "declined source-attested home add unexpectedly succeeded" >&2
+  echo "declined download-receipt home add unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q 'source-attested acquisition' "$STATE/declined.out"
+grep -q 'Hugging Face download  PLAN' "$STATE/declined.out"
 python3 - "$STATE/declined.out" <<'PY'
 import sys
 lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
@@ -204,9 +204,9 @@ env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
 python3 - "$STATE/result.json" <<'PY'
 import json, sys
 result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["kind"] == "pulsar-model-library-source-attested-acquisition-result"
+assert result["kind"] == "pulsar-model-library-download-result"
 assert result["state"] == "published"
-assert result["identity_class"] == "source-attested"
+assert result["identity_class"] == "download-receipt"
 assert result["snapshot_revision"] == "a" * 40
 assert len(result["source_digest"]) == 64
 assert len(result["approval_id"]) == 64
@@ -215,7 +215,7 @@ assert "node_id" not in result
 assert "cache_root" not in result
 blob = open(sys.argv[1], encoding="utf-8").read()
 for banned in ("device", "inode", "ctime_ns", "durable_home_path",
-               "source-attested-home-attachments"):
+               "home-occupancy"):
     assert banned not in blob, banned
 PY
 grep -q -- 'download nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4' "$STATE/hf.log"
@@ -229,9 +229,9 @@ if grep -Eiq -- '--token|hf_token' "$STATE/hf.log"; then
   exit 1
 fi
 test -d "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4/snapshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-receipts=$(find "$STATE/library/source-attested-receipts" -name '*.json' | wc -l)
+receipts=$(find "$STATE/library/download-receipts" -name '*.json' | wc -l)
 [ "$receipts" -eq 1 ]
-attachments=$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)
+attachments=$(find "$STATE/library/home-occupancy" -name '*.json' | wc -l)
 [ "$attachments" -eq 1 ]
 
 env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
@@ -243,8 +243,32 @@ env "${BASE_ENV[@]}" \
   PULSAR_HOT_BUDGET_BYTES=1000000 \
   "$LIBRARY" prepare nemotron-3-nano-30b-nvfp4 \
   --transport ssh-control --yes >/dev/null
+# Prepare fails without occupancy even when a download receipt exists.
+occ_backup="$STATE/occ-backup"
+mkdir -p "$occ_backup"
+mv "$STATE/library/home-occupancy"/*.json "$occ_backup/"
+set +e
+env "${BASE_ENV[@]}" \
+  PULSAR_HOT_ROOT="$STATE/hot" \
+  PULSAR_HOT_RESERVE_BYTES=0 \
+  PULSAR_HOT_BUDGET_BYTES=1000000 \
+  "$LIBRARY" prepare nemotron-3-nano-30b-nvfp4 \
+  --transport ssh-control --yes >/dev/null 2>"$STATE/prepare-no-occ.err"
+prep_no_occ_rc=$?
+set -e
+mv "$occ_backup"/*.json "$STATE/library/home-occupancy/"
+rmdir "$occ_backup"
+if [ "$prep_no_occ_rc" -eq 0 ]; then
+  echo "prepare succeeded without occupancy" >&2
+  exit 1
+fi
+if ! grep -q "occupancy is missing for a download receipt" "$STATE/prepare-no-occ.err"; then
+  echo "prepare missing-occupancy error was unclear" >&2
+  cat "$STATE/prepare-no-occ.err" >&2
+  exit 1
+fi
 # An interrupted writer temp next to the final receipt must not block verify.
-python3 - "$STATE/library/source-attested-receipts" <<'PY'
+python3 - "$STATE/library/download-receipts" <<'PY'
 import pathlib
 import sys
 
@@ -259,7 +283,7 @@ env "${BASE_ENV[@]}" "$LIBRARY" home verify \
 python3 - "$STATE/verify.json" <<'PY'
 import json, sys
 result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["kind"] == "pulsar-model-library-source-attested-home-verify-result"
+assert result["kind"] == "pulsar-model-library-home-verify-result"
 assert result["state"] == "verified"
 blob = open(sys.argv[1], encoding="utf-8").read()
 for banned in ("node_id", "device", "inode", "ctime_ns", "durable_home_path"):
@@ -286,7 +310,7 @@ PY
 
 # Removing the current attachment unbinds the live home. Matching bytes do not
 # restore receipt authority until home relocate rehashes and occupies.
-rm -f "$STATE/library/source-attested-home-attachments"/*.json
+rm -f "$STATE/library/home-occupancy"/*.json
 if env "${BASE_ENV[@]}" "$LIBRARY" home verify \
     'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
     >"$STATE/unbound.out" 2>"$STATE/unbound.err"; then
@@ -295,8 +319,8 @@ if env "${BASE_ENV[@]}" "$LIBRARY" home verify \
 fi
 grep -q 'home relocate' "$STATE/unbound.err"
 grep -q 'Do not Hub re-download' "$STATE/unbound.err"
-[ "$(find "$STATE/library/source-attested-receipts" -name '*.json' | wc -l)" -eq 1 ]
-[ "$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)" -eq 0 ]
+[ "$(find "$STATE/library/download-receipts" -name '*.json' | wc -l)" -eq 1 ]
+[ "$(find "$STATE/library/home-occupancy" -name '*.json' | wc -l)" -eq 0 ]
 env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
 env "${BASE_ENV[@]}" "$LIBRARY" home relocate nemotron-3-nano-30b-nvfp4 \
   --node 0 --yes --json >"$STATE/relocate.json"
@@ -306,7 +330,7 @@ result = json.load(open(sys.argv[1], encoding="utf-8"))
 assert result["state"] == "attached"
 assert "node_id" not in result
 PY
-[ "$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)" -eq 1 ]
+[ "$(find "$STATE/library/home-occupancy" -name '*.json' | wc -l)" -eq 1 ]
 env "${BASE_ENV[@]}" "$LIBRARY" home verify \
   'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
   --json >"$STATE/verify-after-relocate.json"
@@ -331,8 +355,8 @@ assert result["state"] == "published"
 assert "node_id" not in result
 assert "ctime_ns" not in open(sys.argv[1], encoding="utf-8").read()
 PY
-[ "$(find "$STATE/library/source-attested-receipts" -name '*.json' | wc -l)" -eq 1 ]
-[ "$(find "$STATE/library/source-attested-home-attachments" -name '*.json' | wc -l)" -eq 1 ]
+[ "$(find "$STATE/library/download-receipts" -name '*.json' | wc -l)" -eq 1 ]
+[ "$(find "$STATE/library/home-occupancy" -name '*.json' | wc -l)" -eq 1 ]
 env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
 env "${BASE_ENV[@]}" "$LIBRARY" home verify \
   'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
@@ -346,7 +370,7 @@ PY
 if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
     --revision main --yes \
     >"$STATE/occupied.out" 2>"$STATE/occupied.err"; then
-  echo "source-attested home add overwrote an existing home" >&2
+  echo "download-receipt home add overwrote an existing home" >&2
   exit 1
 fi
 grep -q 'already exists' "$STATE/occupied.err"
@@ -366,7 +390,7 @@ ARCHIVE_ENV=(
   "PULSAR_COLD_ROOT=$STATE/cold"
   "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
 )
-receipt_id=$(python3 -c 'import json,sys,pathlib; p=next(pathlib.Path(sys.argv[1]).glob("*.json")); print(json.loads(p.read_text())["receipt_id"])' "$STATE/library/source-attested-receipts")
+receipt_id=$(python3 -c 'import json,sys,pathlib; p=next(pathlib.Path(sys.argv[1]).glob("*.json")); print(json.loads(p.read_text())["receipt_id"])' "$STATE/library/download-receipts")
 env "${ARCHIVE_ENV[@]}" "$LIBRARY" home archive run --receipt "$receipt_id" --yes --json \
   >"$STATE/archive.json"
 python3 - "$STATE/archive.json" <<'PY'
@@ -383,7 +407,7 @@ job = json.load(open(sys.argv[1], encoding="utf-8"))
 assert job["state"] == "complete"
 PY
 rm -rf "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
-rm -f "$STATE/library/source-attested-home-attachments"/*.json
+rm -f "$STATE/library/home-occupancy"/*.json
 env "${ARCHIVE_ENV[@]}" "$LIBRARY" home restore nemotron-3-nano-30b-nvfp4 --node 0 --yes --json \
   >"$STATE/restore.json"
 python3 - "$STATE/restore.json" <<'PY'
@@ -437,7 +461,7 @@ python3 - "$REPO_DIR" "$STATE/autostart" <<'PY'
 import pathlib
 import sys
 sys.path.insert(0, sys.argv[1])
-from scripts.testlib import model_library_source_attested_fixture as fixture
+from scripts.testlib import model_library_receipt_fixture as fixture
 fixture.write_cli_fixture(pathlib.Path(sys.argv[2]), ranks=1)
 PY
 mkdir -p "$STATE/autostart/cold" "$STATE/autostart/home"
@@ -463,7 +487,7 @@ if [ "$add_elapsed" -ge 3 ]; then
   cat "$STATE/autostart/add.err" >&2
   exit 1
 fi
-autostart_receipt=$(python3 -c 'import json,sys,pathlib; p=next(pathlib.Path(sys.argv[1]).glob("*.json")); print(json.loads(p.read_text())["receipt_id"])' "$STATE/autostart/library/source-attested-receipts")
+autostart_receipt=$(python3 -c 'import json,sys,pathlib; p=next(pathlib.Path(sys.argv[1]).glob("*.json")); print(json.loads(p.read_text())["receipt_id"])' "$STATE/autostart/library/download-receipts")
 ok=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   state=$(env "${AUTOSTART_ENV[@]}" "$LIBRARY" home archive status "$autostart_receipt" \
@@ -492,6 +516,6 @@ text = Path(sys.argv[1]).read_text(encoding="utf-8")
 body = text[text.index("cmd_home_verify()") : text.index("cmd_home_check()")]
 assert "EXPECTED_MODEL_SEAL" not in body
 assert "reviewed expected manifest" not in body
-assert "source-attested receipt" in body
+assert "download receipt" in body
 PY
-echo "model-library source-attested CLI scenarios: PASS"
+echo "model-library download-receipt CLI scenarios: PASS"
