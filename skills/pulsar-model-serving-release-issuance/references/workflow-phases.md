@@ -35,6 +35,9 @@ Do not mutate the candidate.
 For each `evidence_artifacts[]` row: visibility, repository path or
 protected locator, explicit `passed` / `failed` / `pending`.
 Scan publishable `results/` files for site identity. Leaks fail closed.
+All-passed privacy makes `evidence_privacy` pass and requires leftover
+review artifacts. Empty leftovers need all five provenance components
+`pending`.
 
 ## 4. Provenance/security
 
@@ -74,7 +77,8 @@ scripts/model-serving-release-issue.sh stage \
   --candidate-dir DIR --review-file FILE --json
 ```
 
-Local success is not trust.
+Local success is not trust. Original `results/` measurement files must
+exist. Park extra untracked files first.
 
 ## 8. Profile bind
 
@@ -84,5 +88,8 @@ Separate confirmation. Same PR as the staged lineage only.
 ## 9. PR and after merge
 
 Open a ready-for-review PR. Do not merge.
-After the user reports merge: `validation-bundle verify` and
-`scripts/selftest.sh`. Status remains advisory.
+After the user reports merge:
+`scripts/model-serving-release-registry.sh verify` and
+`scripts/selftest.sh`. If bound, inspect that `release_id`. Do not use
+schema-1 `validation-bundle verify` as the ADR 0004 check. Status remains
+advisory.
