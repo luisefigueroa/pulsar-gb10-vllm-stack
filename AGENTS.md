@@ -557,10 +557,8 @@ infrastructure unless that authority is explicitly part of the approved plan.
   Do not automatically relabel an existing profile or evidence bundle
   `Validated`. ADR 0004 object format is unchanged from the empty-registry
   correction; archived expected-identity files and raw evidence remain
-  untouched. The tracked ADR 0004 registry contains the reviewed Qwen3.8
-  lineage that `qwen3.8-27b-fp8` points at; the catalog shows
-  `Testing incomplete`, not `Validated`. Other current profiles do not set
-  `MODEL_SERVING_RELEASE_ID`.
+  untouched. The tracked ADR 0004 registry is empty. No current profile
+  sets `MODEL_SERVING_RELEASE_ID`.
 - `STATUS`, ADR 0004 decisions, recommendations/defaults, and
   `docs/VALIDATION.md` claims change only with reproducible evidence. The wizard
   still shows other fitting profiles with accurate labels and caveats. Preserve
@@ -623,8 +621,7 @@ this work; the skill is procedural and does not outrank these sources.
   implemented Validation Contract freezes its criteria, and the implemented
   evidence layer validates immutable run, evidence-bundle, and decision
   objects. Read-only trusted persistence can verify those objects under
-  `models/model-serving-releases/`. That store holds the reviewed
-  Qwen3.8-27B-FP8 lineage (`Testing incomplete`); other current profiles do
+  `models/model-serving-releases/`. That store is empty; current profiles do
   not set `MODEL_SERVING_RELEASE_ID`. Caller-supplied predecessor and decision
   registries remain validation input, not trusted persistence. Local
   evidence-capture drafts and source-neutral release-plan drafts are
@@ -658,9 +655,8 @@ this work; the skill is procedural and does not outrank these sources.
   preparation/reuse, guarded cleanup, and reacquisition. Remote target
   execution and asymmetric per-rank Hugging Face credentials remain physically
   untested. The artifact makes no serving-integration, model-qualification,
-  status, or promotion claim. `qwen3.8-27b-fp8` points at the first reviewed
-  ADR 0004 lineage and the catalog shows `Testing incomplete`; other current
-  profiles remain neutral. A profile field that points at a Model Serving
+  status, or promotion claim. No current profile sets
+  `MODEL_SERVING_RELEASE_ID`. A profile field that points at a Model Serving
   Release does not grant serving permission, and pointing at one does not
   promote ADR 0004 status.
 - A deterministic draft has no authority by itself. What makes registry

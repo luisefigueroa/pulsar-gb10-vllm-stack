@@ -24,13 +24,13 @@ from scripts.testlib import model_serving_release_fixture as release_fixture  # 
 
 
 EXPECTED_FIRST_RUN_RECORD_ID = (
-    "09c407fd2c7a8004ced8033d9b1e7e035aab94c40b2b10e8bf20d906a376709d"
+    "05985f562b9440b8a2a1dbc29f1fd6e4b013da6b16ea5e67c20e1f250855f038"
 )
 EXPECTED_EVIDENCE_BUNDLE_ID = (
-    "e8a98f17d14837c5a2405910095b2cbfb1bfbe3803abf4f5e06765a8c5a7fc07"
+    "1cd25787802ef9b71cf1d99e05c175e8d1e6e8ca408f26a84d6b5b7b7af85766"
 )
 EXPECTED_VALIDATION_DECISION_ID = (
-    "b87146549936390c3738ad4661dd4ed5ecb89e50dbfb43b140dd02abf6d37bb6"
+    "ff720e5adde6704e7b0a2127dceb00e68f4776c56aaaa82ad03592b5cb6d5e4f"
 )
 
 
@@ -224,7 +224,7 @@ def build_preparation_provenance(
 ) -> dict[str, Any]:
     release = release or build_release()
     runtime_sources = [
-        {"rank": 0, "source": "sealed-hot", "retention": "ephemeral"},
+        {"rank": 0, "source": "working-copy", "retention": "ephemeral"},
         {"rank": 1, "source": "durable-home", "retention": "durable"},
     ]
     if barrier == "not-reached":

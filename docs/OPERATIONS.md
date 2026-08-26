@@ -58,8 +58,8 @@ missing field displays `No release binding`; absence of a reviewed decision
 is not inferred as `Untested`, and ambiguity, registry errors, or a selected
 runtime-access recipe mismatch remain visible without blocking launch.
 
-`qwen3.8-27b-fp8` points at the first reviewed ADR 0004 lineage and the catalog
-shows `Testing incomplete`; other current profiles remain neutral.
+No current profile sets `MODEL_SERVING_RELEASE_ID`; the catalog shows
+`No release binding`.
 Profile `STATUS=tested*` remains a separate
 old evidence/recommendation label; it still determines recommendation
 order. Filter that class with `--legacy-tested`. `--validated` is removed
@@ -217,7 +217,7 @@ multi-rank profile requires explicit `--transport ssh-control`.
 
 The preparation service remains authoritative: it rechecks topology and
 primary placement, full-verifies the receipt (or occupancy) file list, performs exact all-rank
-storage admission, creates only non-home working copies (`runtime_source=sealed-hot`), publishes witnesses
+storage admission, creates only non-home working copies (`runtime_source=working-copy`), publishes witnesses
 only after the all-rank barrier, and rolls back or leaves explicit incomplete
 state on failure. The interactive surface always obtains fresh health after the
 attempt. It provides no validation-status override, transport picker, fallback,
@@ -259,7 +259,7 @@ and proven complete ownership. Unknown, legacy, mismatch, incomplete/unproven,
 foreign GPU, and any remote-unobservable multi-node services are excluded. After
 selection, final confirmation is required; only `scripts/down.sh <conf>` runs
 (revalidates labels/IDs). Decline → no mutation. When the stopped service's
-labels prove local files on every rank (`weight-source=library-hot`), ordinary stop retains unpinned prepared
+labels prove local files on every rank (`weight-source=local-files`), ordinary stop retains unpinned prepared
 views ([ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)).
 The durable home is still required. Interactive stop offers retain (default)
 versus free, and states the restage consequence when a non-home byte count can
@@ -735,7 +735,7 @@ Download crash and retry behavior:
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the
 home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
-cache, and only non-home ranks own working copies (`runtime_source=sealed-hot`). Home-rank hot
+cache, and only non-home ranks own working copies (`runtime_source=working-copy`). Home-rank hot
 materialization is ruled out by
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 

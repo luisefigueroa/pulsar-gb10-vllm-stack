@@ -14,9 +14,7 @@ component creates a new Model Serving Release. Descriptor and Validation
 Contract checks and
 read-only verification of stored ADR 0004 objects exist. Catalog, wizard, and
 start output can show a reviewed decision only when a profile explicitly
-sets `MODEL_SERVING_RELEASE_ID`. The
-`qwen3.8-27b-fp8` profile points at the first ADR 0004 lineage and the catalog
-shows `Testing incomplete`; other current profiles do not set that field.
+sets `MODEL_SERVING_RELEASE_ID`. No current profile sets that field.
 Local evidence-capture drafts are not in the trusted registry and do
 not change this table. Maintainer-only staging can propose registry
 objects, but a local command is not trusted until repository review and merge;
@@ -46,7 +44,7 @@ any status in the table.
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
 |---|---|---|---|---|---|---|---|
 | `qwen3-1.7b` — **profile removed by ADR 0012** (lab expected-identity JSON archived) | Qwen/Qwen3-1.7B | BF16 | 4 GB | 1 | 32K | — | historical one-node test profile; re-onboard onto ADR 0004 only as a later explicit change |
-| `qwen3.8-27b-fp8` | Qwen/Qwen3.8-27B-FP8 | FP8 | 29 GB | 1 | 131,072 configured; context not evaluated | — | legacy **`STATUS=untested`**; ADR 0004 **Testing incomplete** — strict same-boot and absolute performance passed; stability, accuracy, serving integration, and physical geometry remain unevaluated; not recommended |
+| `qwen3.8-27b-fp8` | Qwen/Qwen3.8-27B-FP8 | FP8 | 29 GB | 1 | 131,072 configured; context not evaluated | — | draft; legacy **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; not recommended |
 | `qwen3.8-27b-fp8-2node` | same, TP=2 cross-node on official v0.27.1-aarch64 | FP8 | 29 GB | 2 / TP=2 | 131,072 configured; unevaluated | — | draft; legacy **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; graphs on; no spec decode; not recommended |
 | `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 4 GB | 2 / TP=2 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
 | `qwen3.6-27b-fp8-2node` | 27B split TP=2 cross-node | FP8 | 29 GB | 2 / TP=2 | — | — | **DO NOT USE** — GDN hybrids hang cross-node (VALIDATION.md) |
@@ -77,15 +75,7 @@ historical artifact used for the run or revalidate the exact content. Library
 preparation full-verifies before creating rank-local serve witnesses. Unchanged
 launch uses the applicable metadata fast path, while drift rehashes.
 
-The Qwen3.8 row is the first profile that points at the ADR 0004 registry. Model
-Serving Release
-`8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7`
-uses exact commit `017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`, complete
-file list `aa533a36211b063f7fe310ba65c41d9c7fdc6b5f7571ba1dc69c926f47175d79`,
-the digest-pinned image, one-node recipe, and GB10 geometry. Its reviewed
-decision remains `Testing incomplete`; it does not create a lab expected-identity
-file, change profile `STATUS`, change how local files are served, or recommend the
-profile.
+The ADR 0004 registry is empty. `qwen3.8-27b-fp8` is an unbound draft recipe.
 
 Maintainers can assemble draft Model Serving Release JSON with
 `scripts/model-serving-release-plan.sh`, but that alone does not change any

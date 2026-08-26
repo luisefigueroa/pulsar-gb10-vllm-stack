@@ -111,10 +111,12 @@ runtime-access recipe mismatch, launch independence, JSON separation from
 legacy `STATUS`, and 48-column human output. These checks do not issue a
 decision or demonstrate physical model behavior.
 
-### Qwen3.8-27B-FP8 Model Serving Release (2026-08-19)
+### Qwen3.8-27B-FP8 Model Serving Release (2026-08-19) — historical
 
-Release `8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7`
-has reviewed advisory status **Testing incomplete** under contract
+The tracked registry no longer holds this lineage. The measurements below
+remain history. Former release
+`8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7`
+had reviewed advisory status **Testing incomplete** under contract
 `2d6710529c26dbef3583d4927f4605b4e5eca6d47a9631815dd8d541fab69597`.
 The exact same-boot comparison passed 30/30 records. The 32-request,
 concurrency-1 benchmark passed the frozen absolute thresholds at 8.376791
@@ -182,7 +184,7 @@ Their measurements remain history below.
 | **Primary single-node** | `./pulsar start nemotron-3-nano-30b-nvfp4` | mainline | Fastest tok/s on box. (The prior primary `laguna-s-2.1-nvfp4` profile was removed by ADR 0006 — absolute-path catalog; its measurements remain history below.) |
 | Large single-node | `./pulsar start nemotron-3-super-120b-nvfp4` | mainline | MTP opt-in via `--spec-decode` |
 | Reasoning single-node | `./pulsar start qwen3.6-27b-fp8` | mainline | **Never** ngram spec; not 2-node |
-| ADR 0004 one-node (advisory `Testing incomplete`) | `./pulsar start qwen3.8-27b-fp8` | digest-pinned official image in conf | Not recommended; context unevaluated |
+| Qwen3.8 one-node draft | `./pulsar start qwen3.8-27b-fp8` | digest-pinned official image in conf | Unbound; not recommended; context unevaluated |
 | Tiny two-node test | `./pulsar start qwen3-1.7b-2node` | `v0.26.0` digest in conf | Hidden from serving wizard |
 | **HISTORICAL 2-node DeepSeek** | profile removed | published PR-41834 digest | DeepSeek-V4-Flash-**0731** measurements: DSpark k=5; **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01. Do not `./pulsar start deepseek-v4-flash`. |
 

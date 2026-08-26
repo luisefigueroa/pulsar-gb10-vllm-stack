@@ -271,14 +271,12 @@ recipe, runtime/image identity, and supported hardware geometry; changing any
 component creates a new release. The repository now has Model Serving Release
 descriptor, Validation Contract, run-record, evidence-bundle, and
 reviewed-decision validators. Read-only persistence and verification of stored ADR 0004 objects
-is implemented under `models/model-serving-releases/`. That store holds the
-reviewed Qwen3.8-27B-FP8 lineage; the catalog shows
-`Testing incomplete`. Local ADR 0004 evidence-capture drafts
+is implemented under `models/model-serving-releases/`. That store is empty.
+Local ADR 0004 evidence-capture drafts
 can record run and evidence-bundle JSON that is not in the trusted registry
 and do not start a model. The catalog shows a reviewed status for a profile
-that sets `MODEL_SERVING_RELEASE_ID`; `qwen3.8-27b-fp8` does, and
-other current profiles do not, so they display a neutral
-state. Maintainer-only staging can propose registry objects; a
+that sets `MODEL_SERVING_RELEASE_ID`; no current profile sets that field.
+Maintainer-only staging can propose registry objects; a
 successful local command is not trusted until repository review and merge.
 Serving is status-independent, while concrete identity, recipe, topology,
 capacity, security, and lifecycle checks still fail without fallback. No schema object or selftest
@@ -491,7 +489,7 @@ no leaks, no thermal throttling anywhere).
 |---|---|
 | `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
 | `docs/archive/schema-1-expected-seal/` | archived lab expected-identity files and combined identity format; not a live product (ADR 0012) |
-| `models/model-serving-releases/` | tracked ADR 0004 descriptor / Validation Contract / run / evidence-bundle / decision registry; holds the reviewed Qwen3.8 lineages (`Testing incomplete`); read-only through `scripts/model-serving-release-registry.sh` |
+| `models/model-serving-releases/` | tracked ADR 0004 descriptor / Validation Contract / run / evidence-bundle / decision registry; currently empty; read-only through `scripts/model-serving-release-registry.sh` |
 | `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture drafts; not in the trusted registry, starts nothing |
 | `scripts/model_identity.py` | live normalized-profile checksum format and snapshot file-list constants; lab expected-identity builders are retired |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |

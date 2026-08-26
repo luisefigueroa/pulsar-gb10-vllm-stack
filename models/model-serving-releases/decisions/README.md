@@ -14,5 +14,4 @@ Inspection may show the stored base outcome and the effective superseded
 projection for that exact decision. Status is advisory and never serving
 authorization.
 
-This namespace holds the reviewed Qwen3.8 decision (`Testing incomplete`).
-Do not add a `Validated` fixture here.
+This namespace is empty. Do not add a `Validated` fixture here.

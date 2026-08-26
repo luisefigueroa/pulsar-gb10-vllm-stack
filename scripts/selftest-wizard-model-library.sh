@@ -399,6 +399,7 @@ run_wizard() {
   set +e
   printf '%s' "$input" | env \
     GUM=0 \
+    WIZARD_API_HEALTHY=1 \
     WIZARD_SKIP_DOCTOR=1 \
     WIZARD_SKIP_FABRIC_PROMPT=1 \
     WIZARD_SKIP_IMAGE=1 \

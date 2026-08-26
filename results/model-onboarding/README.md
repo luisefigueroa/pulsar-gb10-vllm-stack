@@ -5,11 +5,11 @@ ADR 0004 Model Serving Release onboarding. Raw captures, workflow journals,
 source-attested receipts, site topology, and candidate trees remain under
 gitignored local state and are not published here.
 
-## Qwen3.8-27B-FP8 — 2026-08-19
+## Qwen3.8-27B-FP8 — 2026-08-19 (historical)
 
-The reviewed release
+The tracked registry no longer holds this lineage. Former release
 `8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7`
-has advisory status `Testing incomplete`.
+had advisory status `Testing incomplete`.
 
 - `qwen3.8-27b-fp8/compare.json`: strict same-boot comparison, 30/30 exact.
 - `qwen3.8-27b-fp8/bench.json`: 32 requests at concurrency 1, 8.376791
@@ -23,11 +23,11 @@ unevaluated in the reviewed bundle. These artifacts do not authorize serving,
 promote experimental one-rank `library-hot`, change legacy `STATUS`, or claim
 `Validated`.
 
-## Qwen3.8-27B-FP8 2-node TP=2 — 2026-08-26
+## Qwen3.8-27B-FP8 2-node TP=2 — 2026-08-26 (historical)
 
-The reviewed release
+The tracked registry no longer holds this lineage. Former release
 `2c653ea4fc96bed639978a7da7eb15347432e20874b8598ea2b1bafdb60e0933`
-has advisory status `Testing incomplete`. Provenance/security components are
+had advisory status `Testing incomplete`. Provenance/security components are
 all `pending`; leftover `review_evidence_artifact_ids` are empty. The
 reviewed evidence artifacts are protected.
 
