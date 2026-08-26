@@ -82,7 +82,7 @@ confirm membership and do not construct topology.
 Not required on the host: vLLM Python install, Ray, host NCCL, jumbo MTU,
 GPUDirect RDMA.
 
-`./pulsar` opens the neutral operator home menu. `./pulsar wizard` (or
+`./pulsar` opens the workflow menu. `./pulsar wizard` (or
 `./wizard.sh`) is the direct serve/switch shortcut. Both use the vendored Gum
 v0.17.0 Linux ARM64 binary by default (shared `scripts/ui.sh`); no package
 installation is required.

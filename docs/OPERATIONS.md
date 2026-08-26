@@ -26,13 +26,13 @@ Wire that (not /health) into anything that pages or restarts. Also useful:
 Preferred operator entry point (scripts under `scripts/` remain canonical).
 For now, that surface **consumes** labeled profiles already in `models/`
 ([ADR 0010](./decisions/0010-operator-consumes-catalog.md)). Drafting a new
-recipe, pinning an image, and recording unreviewed qualification evidence
-remain maintainer tooling (`docs/MODEL_RELEASE.md`,
+recipe, pinning an image, and recording qualification evidence that is not in
+the trusted registry remain maintainer tooling (`docs/MODEL_RELEASE.md`,
 `skills/pulsar-model-onboarding/`), not `./pulsar` or the wizard.
 
 | Command | Action |
 |---|---|
-| `./pulsar` | Neutral **operator home** (workflow menu; no preflight on entry) |
+| `./pulsar` | Neutral **workflow menu** (no preflight on entry) |
 | `./pulsar wizard` | Serve/switch wizard (doctor + preflight; direct shortcut) |
 | `./pulsar models` | Browse cached models/runtime views; explicitly refresh or prepare reviewed models |
 | `./pulsar inventory [--json\|--verbose]` | Read-only service/memory inventory |
@@ -46,33 +46,33 @@ remain maintainer tooling (`docs/MODEL_RELEASE.md`,
 
 [ADR 0004](./decisions/0004-model-serving-release-validation.md) defines a
 Model Serving Release as the immutable exact-model + serving-recipe +
-runtime/image + supported-hardware-geometry tuple and introduces explicit
-validation-decision statuses. Any change to one tuple component creates a new
-release. Pure descriptor, contract, immutable run-record, evidence-bundle,
-reviewed-decision, status-derivation, and supersession schemas are implemented,
+runtime/image + supported-hardware-geometry combination and introduces explicit
+validation-decision statuses. Any change to one of those four parts creates a new
+Model Serving Release. Descriptor, Validation Contract, immutable run-record, evidence-bundle,
+reviewed-decision, status-derivation, and supersession formats are implemented,
 and the read-only registry verifies stored objects. Profiles may optionally
-bind an exact release with the reviewed `MODEL_SERVING_RELEASE_ID` field.
+set `MODEL_SERVING_RELEASE_ID` so the catalog points at one reviewed subject.
 `scripts/list-models.sh`, the wizard, and `scripts/up.sh` then display the one
-unambiguous reviewed effective decision as an advisory release status. A
-missing binding displays `No release binding`; absence of a reviewed decision
+unambiguous reviewed decision. Start does not use that status as permission. A
+missing field displays `No release binding`; absence of a reviewed decision
 is not inferred as `Untested`, and ambiguity, registry errors, or a selected
 runtime-access recipe mismatch remain visible without blocking launch.
 
-`qwen3.8-27b-fp8` binds the first reviewed ADR 0004 lineage and projects the
-advisory status `Testing incomplete`; other current profiles remain neutral.
-`STATUS=tested*` remains a separate
-legacy evidence/recommendation label; it still determines recommendation
+`qwen3.8-27b-fp8` points at the first reviewed ADR 0004 lineage and the catalog
+shows `Testing incomplete`; other current profiles remain neutral.
+Profile `STATUS=tested*` remains a separate
+old evidence/recommendation label; it still determines recommendation
 order. Filter that class with `--legacy-tested`. `--validated` is removed
-(ADR 0008) and fails closed with that replacement. Neither status field grants
-or denies serving. Existing reviewed seals/bundles are not automatically
+(ADR 0008) and fails without fallback with that replacement. Neither status field grants
+or denies serving. Archived lab expected-identity files are not automatically
 `Validated`. There is no separate launch-trust-mode to choose
 ([ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md)): the labels
 already on the profile are the contract.
 
 The current `./pulsar` commands do not capture or publish ADR 0004 objects or
-issue decisions. Local ADR 0004 release planning, attempt composition,
-evidence-capture candidate persistence, and issuance staging are separate
-maintainer commands and launch nothing; see [MODEL_RELEASE.md](./MODEL_RELEASE.md),
+write a decision. Local ADR 0004 release planning, attempt composition,
+evidence-capture drafts, and staging are separate
+maintainer commands and start nothing; see [MODEL_RELEASE.md](./MODEL_RELEASE.md),
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md), and
 [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md).
 A staged local proposal is not trusted until repository review and merge.
@@ -87,26 +87,26 @@ models use a public logical ID, public revision, and complete content manifest,
 never their local source path. Additional behavior artifacts require explicit
 descriptors and use bindings; `--artifact-reference` can normalize an exact
 deployment-local argument value to its public artifact key without persisting
-the mapping. Output is unreviewed under
+the mapping. Output is draft JSON under
 `experiments/model-onboarding/`, cannot target `models/`, and grants no status
 or serving authority. The explicit runtime/hardware envelope is a structural
 contract, not physical qualification.
 
-The corrected schemas remain version 1 because no ADR 0004 object was issued
-or persisted before the correction. Existing legacy schema-1 seals/bundles and
-raw evidence remain untouched. Criteria use canonical scopes: stability,
+ADR 0004 object format is unchanged from the empty-registry correction.
+Archived lab expected-identity files and raw evidence remain untouched. Criteria use canonical scopes: stability,
 accuracy, throughput, latency, and strict same-boot are
 `model-qualification`; serving integration is `serving-integration`; and
-provenance/security plus physical geometry are `release-promotion`.
-Catalog/artifact preparation may establish exact content and the qualification
-barrier, but it cannot satisfy a validation criterion.
+provenance/security plus physical geometry are `release-promotion`
+(provenance and geometry review).
+Storing and copying the right files may establish exact content before
+behavior tests count, but it cannot satisfy a Model Serving Release validation criterion.
 
 A decision automatically considers every applicable observation. The pure
 builder accepts exceptions only through `criterion_exclusions`; persisted
 results use `included_run_record_ids` and evidence-backed
 `excluded_run_records`. Pass+fail and pass+inconclusive are inconclusive,
 fail+inconclusive is fail, and all-pass is pass. A relative
-performance baseline binds the reviewed predecessor contract, bundle, decision,
+performance baseline binds the reviewed predecessor Validation Contract, evidence bundle, decision,
 and run whose relevant criterion passed; the predecessor does not need to be
 globally `Validated`. Runtime compatibility and architecture/geometry checks
 are structural and never replace physical DGX evidence. Supersession must be
@@ -114,7 +114,7 @@ later and acyclic. Predecessor and effective-supersession registries are
 caller-supplied validation inputs, not trusted storage. Command evidence uses
 allowlisted programs, SHA-256-shaped version identities, closed operations and
 resources, typed criterion/site references, and value-free `environment[]`
-descriptors. Each post-barrier non-preparation attempt declares a nonempty
+descriptors. After preparation has passed, each non-preparation attempt declares a nonempty
 scope-compatible `attempted_criterion_ids` set that its observations cover
 exactly; incomplete attempts use inconclusive observations. Structural privacy
 rejection does not replace the mandatory publication privacy audit.
@@ -122,31 +122,30 @@ rejection does not replace the mandatory publication privacy audit.
 The supervised skill is `skills/pulsar-model-onboarding/`. It composes
 available artifact reuse, distribution, verification, launch, test, evidence,
 and cleanup subsystems, including explicitly selected Experimental ones. It is
-orchestration only: it never issues a seal or validation decision, assigns
-status, binds a profile to a release, writes the trusted registry, promotes a
+orchestration only: it never writes a lab expected-identity file or a validation decision, assigns
+status, points a profile at a Model Serving Release, writes the trusted registry, promotes a
 path, or claims physical behavior. Current automated mapping covers only
-strict same-boot and absolute throughput/latency. An unsealed profile serves
-with its honest `legacy-unsealed` label but is not an exact ADR 0004
-qualification attempt. For an absent brand-new unsealed Hugging Face
-repository, the skill may plan and, after a separate confirmation, run the
-source-attested exact-commit acquisition service. Reuse of that home requires
+strict same-boot and absolute throughput/latency. A live profile serves
+with receipt/occupancy identity (`identity_status=legacy-unsealed`) but is not an exact ADR 0004
+qualification attempt. For an absent brand-new Hugging Face
+repository, the skill may plan and, after a separate confirmation, run
+`home add --revision` (recorded file list and hashes). Reuse of that home requires
 receipt-backed offline full verification against the receipt while occupancy
 names the exact live directory. Occupancy may move with `home relocate`
-after that live rehash. An unknown tree without a receipt still
-requires full verification against a reviewed expected manifest
-independent of the observed tree; catalog state and a self-observed manifest
-alone are insufficient. The acquisition creates catalog/artifact evidence
-only, not a seal, status, decision, serving permission, promotion, or physical
+after that live rehash. An unknown tree without a receipt fails without
+fallback (ADR 0012: there is no lab expected-identity fallback); catalog state and a self-observed file list
+alone are insufficient. The acquisition creates “did we store the right files?”
+evidence only, not a lab expected-identity file, status, decision, serving permission, promotion, or physical
 claim. Its recovery journal lives
 under `experiments/model-onboarding/workflows/`, separate from release-plan output.
 Deterministic skill and journal tests make no physical DGX claim and create no
-release decision.
+Model Serving Release decision.
 
 **Invalid habit:** `./ wizard.sh` (space after `./`) makes Bash run the directory
 `./` with `wizard.sh` as an argument, yielding `-bash: ./: Is a directory`.
 Use `./pulsar wizard` or `./wizard.sh`.
 
-## Operator home
+## Workflow menu (`./pulsar`)
 
 `./pulsar` with no arguments opens `scripts/home.sh` immediately — no doctor,
 inventory, weights, image, or model preflight until you pick a workflow.
@@ -155,7 +154,7 @@ Menu (default cursor: status):
 
 1. **Current system status** — `scripts/quick-status.sh` (read-only)
 2. **Serve or switch a model** — enters `wizard.sh` (its doctor/preflight)
-3. **Stop a serving model** — inventory-safe active managed only; library-hot
+3. **Stop a serving model** — inventory-safe active managed only; model-library
    services choose retain vs free, then confirm → `down.sh`
 4. **Models & storage** — cached identity, placement, runtime views, and findings
    (browsing is read-only; refresh/preparation are explicit; the model library
@@ -188,7 +187,7 @@ Browsing and **Recheck catalog health** only run
 `scripts/model-library.sh health --json`. They do not refresh the catalog,
 prepare or move files, start a model, pin or purge hot copies, run repair, or
 delete a durable home. `attention` and `unavailable` reports remain readable;
-invalid health JSON fails closed with no action. Catalog absence or health
+invalid health JSON fails without fallback with no action. Catalog absence or health
 findings do not affect already-running services, but new preparation is
 blocked until they resolve. Pinning remains a retention choice,
 not durable-home-loss resilience, and catalog/serving health is not model
@@ -201,8 +200,8 @@ new sanitized health report. It does not move model bytes.
 
 **Prepare for two-rank serving** or **Prepare for one-rank serving**
 appears only for a serving profile that is associated with the exact
-catalog entry and carries a reviewed expected seal. Before confirmation the
-view shows the exact model revision and manifest,
+catalog entry. Before confirmation the
+view shows the exact model revision and file list,
 durable-home dependency, serving node count, approximate non-home storage, and
 fixed transfer policy. Multi-node preparation uses SSH over the confirmed RoCE
 plane, eight streams, and no fallback. Confirmation delegates to:
@@ -217,24 +216,22 @@ streams. A one-node profile targets its durable-home rank and uses
 multi-rank profile requires explicit `--transport ssh-control`.
 
 The preparation service remains authoritative: it rechecks topology and
-primary placement, full-verifies the expected seal, performs exact all-rank
-storage admission, creates only non-home working replicas (`sealed-hot`), publishes witnesses
+primary placement, full-verifies the receipt (or occupancy) file list, performs exact all-rank
+storage admission, creates only non-home working copies (`runtime_source=sealed-hot`), publishes witnesses
 only after the all-rank barrier, and rolls back or leaves explicit incomplete
 state on failure. The interactive surface always obtains fresh health after the
 attempt. It provides no validation-status override, transport picker, fallback,
 or automatic launch. Success means the artifacts are prepared, not that a model
-was started, qualified, assigned a release status, or made the guided default.
+was started, qualified, assigned a Model Serving Release status, or made the wizard's suggested profile.
 
 ### Serving-wizard library path
 
 `./pulsar wizard` has no storage-mode choice. The model library serves every
-profile (ADR 0006). For a reviewed (sealed) profile the wizard reads current
-catalog health, displays exact revision/manifest and durable-home dependency,
-and either proves the selected views ready, offers a guided one-time `home add`
-acquisition when no durable home exists, or offers the bounded preparation
-above. An unsealed profile checks its prepared views directly and offers
-explicit preparation; its acquisition is the separate source-attested two-step
-CLI flow. Nothing refreshes the catalog automatically and there is no fallback
+profile (ADR 0006). It reads current catalog health, displays exact revision
+and durable-home dependency, and either proves the selected views ready or
+offers bounded preparation. Acquisition is the separate `home add --revision`
+CLI (recorded file list, then confirm the exact commit) — not wizard home add.
+Nothing refreshes the catalog automatically and there is no fallback
 path. After preparation the wizard requires exact ready views before the
 normal weight preflight. Starting remains a separate final confirmation.
 
@@ -272,7 +269,7 @@ be proven — for example “Free 167 GiB now; next start requires a full restag
 for a confirmed same-profile restart. `--purge-hot` is the explicit
 capacity-recovery action and may remove a pin. Site
 `PULSAR_HOT_STOP_POLICY=retain|purge` selects the named-profile CLI default;
-unset means retain; invalid values fail closed. `down.sh --all` never
+unset means retain; invalid values fail without fallback. `down.sh --all` never
 auto-purges. Legacy containers launched before ADR 0006 (label
 `weight-source=replicated`, or unlabeled) stop cleanly and never invoke
 model-library cleanup; restarting them migrates them to the library.
@@ -343,19 +340,19 @@ repo profile. Lifecycle scripts (`down.sh`, cluster stop) **revalidate** labels
 and IDs before remove. Unlabeled legacy, mismatch, unknown, incomplete, or
 remote-unobservable situations are never auto-stopped.
 
-Live inventory fails closed if rank 0 Docker cannot answer `info`, enumerate
+Live inventory fails without fallback if rank 0 Docker cannot answer `info`, enumerate
 containers, or return a valid snapshot. It probes every other confirmed node;
 any unreachable rank, Docker error, or enumeration error is accumulated in the
 compatibility `worker.status`/reason and blocks automatic multi-node
 stop/replacement. An operational failure is never converted into an empty
 “nothing is running” inventory.
 
-Weight readiness means more than “the cache directory exists.” Legacy-unsealed
-HF profiles require `refs/main` to resolve to a snapshot with a readable
-non-empty `config.json` and at least one non-empty weight file. Sealed
-profiles ignore `refs/main`, resolve the reviewed commit directly, and require
-the exact manifest identity through a rank-local witness or visible full-SHA
-fallback. `.incomplete` markers and local shard indexes that reference
+Weight readiness means more than “the cache directory exists.” Live
+HF profiles require the exact commit (receipt plus occupancy), a readable
+non-empty `config.json`, and at least one non-empty weight file. They ignore
+mutable `refs/main` as identity and require
+the exact file-list identity through a rank-local witness or visible full-SHA
+rehash. `.incomplete` markers and local shard indexes that reference
 missing/empty files fail preflight. Multi-node profiles are checked on every
 exact active rank. Docker/SSH failures are reported as operational failures and
 never offered as a download/pull problem.
@@ -371,12 +368,12 @@ always full.
 
 ## Model switch (wizard)
 
-`./pulsar wizard` (not the no-arg home) runs doctor once, offers cluster
+`./pulsar wizard` (not the no-arg menu) runs doctor once, offers cluster
 discovery/confirmation when no remote topology is active, then enters a
 **selection loop** (“Choose another model” does not re-run doctor). The menu is
 capacity-aware and status-transparent: it includes every serving-purpose
-profile with `NODES` no greater than confirmed capacity, displays its advisory
-status and notes, and orders legacy evidence-backed recommendations first. It
+profile with `NODES` no greater than confirmed capacity, displays the reviewed
+status the catalog shows and profile notes, and orders old evidence-backed recommendations first. It
 never derives a new TP/PP geometry from the discovered node count.
 
 After a one-node model is selected, the wizard evaluates every confirmed
@@ -417,11 +414,10 @@ a short target summary (not raw JSON). Decision highlights:
 
 **Stops are always deferred** until after the final start/replace confirmation.
 Immediately before stopping one running service, the wizard requires complete
-fresh inventory plus current launch-contract/spec labels. A `library-hot`
-service whose identity is a reviewed `match` records exact placement and
-weight policy in a short-lived site-local transaction; ephemeral views are
-pinned before stop. A complete, safe-to-stop library-hot service without that
-match (`legacy-unsealed` or `unvalidated`, including first-run Nemotron) is
+fresh inventory plus current launch-contract/spec labels. Exact restore that
+required `identity_status=match` is retired with lab expected-identity files
+(ADR 0012). A complete, safe-to-stop model-library service
+(`identity_status=legacy-unsealed` or `unvalidated`, including first-run Nemotron) is
 stopped without a rollback transaction — exact restore is unavailable, as with
 a leftover pre-library launch. Multiple running stop targets, partial
 services, old unlabeled services, drift, or failed retention leave the
@@ -466,10 +462,10 @@ runtime overrides.
   DSpark/Triton/block-FP8 JIT so the first real client is not the cold path.
   Skip with `--skip-warmup` (falls back to a single smoke completion).
   Manual: `python3 validate/warmup.py --url http://127.0.0.1:8000 --model <served>`.
-- **Flagship DeepSeek defaults** (`models/deepseek-v4-flash.conf`) target
+- **Historical DeepSeek defaults** (profile `deepseek-v4-flash` removed by ADR 0012) targeted
   **few long agent sessions** (≤5 concurrent, 500K client cap, tools/code),
   not high-QPS chat: 20 GB/rank KV, `max-num-seqs 5`, batch 16384, tool+
-  reasoning parsers. Before resizing KV further: `drop_caches` on both exact flagship ranks,
+  reasoning parsers. Before resizing KV on a similar two-node job: `drop_caches` on both exact serving ranks,
   step only (never ≥27.5 GB/rank — known OOM), read boot "GPU KV cache size",
   soak. Details in the conf header and docs/RECIPES.md / docs/MODELS.md.
 - One big model per node, ever. gpu-mem-util 0.85 leaves ~18 GiB for the OS
@@ -524,8 +520,8 @@ scripts/sync-image.sh <profile> --node <node-id> --pull --yes
 
 The model library downloads one durable home (`home add --revision`) and
 prepares rank-local hub views on every other node required by that profile.
-Expected-seal is not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
-Brand-new homes use source-attested exact-commit acquisition.
+Lab expected-identity files are not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+Brand-new homes use Hugging Face download with a recorded file list and hashes.
 Its normal output uses readable stages and hostnames; set `PULSAR_VERBOSE=1`
 to expose raw Hugging Face and rsync diagnostics. The image helper loads every
 missing required node and repairs digest references that a bare `docker load`
@@ -534,7 +530,7 @@ every required node and run `scripts/check-weights.sh`.
 
 ### Confirmed SSH identity and endpoint drift
 
-Topology schema 2 binds each selected transport address to the confirmed
+The current topology record binds each selected transport address to the confirmed
 node's stable SSH alias, enrolled host-key set, and immutable node ID. Enroll
 and check it explicitly while the cluster is idle:
 
@@ -545,7 +541,7 @@ scripts/doctor.sh
 ```
 
 Enrollment writes the gitignored `.cluster-ssh-config` alongside the topology.
-The shared loader rejects schema 2 if that generated config is missing or
+The shared loader rejects that topology record if the generated config is missing or
 stale. `doctor` reports the selected endpoint, expected/observed node identity
 and key fingerprints, and drift class. It is read-only: it never rewrites
 topology or OpenSSH trust, never accepts a replacement key, and never creates
@@ -588,10 +584,10 @@ exits 2. They are not unknown-argument failures.
 | `list-models.sh --validated` | `--legacy-tested` (historical `STATUS=tested*`). Not ADR 0004 `Validated`. |
 | `model-library.sh catalog list --validated` | Drop the flag. `--reviewed-identity` is retired (ADR 0012). Not ADR 0004 `Validated`. |
 | `model-library.sh activate` | `prepare` |
-| `model-library.sh hot legacy check\|remove` | Removed (SIM-13). Schema-1/2 hot metadata still cannot launch. Health remains read-only. |
+| `model-library.sh hot legacy check\|remove` | Removed. Leftover older working-copy metadata still cannot launch. Health remains read-only. |
 
-`--force-unpin` on `purge-hot` and topology schema 1 as `detect-fabric`
-output are not in this table. `HEAD_IP`/`WORKER_IP` never confirm
+`--force-unpin` on `purge-hot` and older `detect-fabric`
+output records are not in this table. `HEAD_IP`/`WORKER_IP` never confirm
 membership and do not construct topology.
 
 N≥2 `check-image.sh` JSON emits `rank-unreachable` / `rank-docker-error` /
@@ -599,10 +595,10 @@ N≥2 `check-image.sh` JSON emits `rank-unreachable` / `rank-docker-error` /
 `missing-on-target` still mean a different repair (`sync-image --pull`) than
 `missing-on-rank` (sync without `--pull`). Do not collapse those names.
 
-**The model library (federated catalog + local hot staging):** the only
-weight-distribution mechanism (ADR 0006); every scope — two-rank sealed,
-one-rank, legacy-unsealed — is supported. The fixed transport policy for
-reviewed multi-rank preparation is recorded in
+**The model library (one complete copy on any node, plus local working copies):** the only
+weight-distribution mechanism (ADR 0006); every live profile uses local files
+on every rank. The fixed transport policy for
+multi-rank preparation is recorded in
 [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md).
 
 "Prepare model for serving" is the operator-facing term for resolving the exact
@@ -619,7 +615,7 @@ scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog list
-# Unsealed library-hot: validation status is not a serving gate.
+# Validation status is not a serving gate.
 scripts/model-library.sh prepare <multi-rank-profile> --yes
 scripts/up.sh <multi-rank-profile>
 # optional after stop:
@@ -632,36 +628,24 @@ A reviewed single-rank profile has no non-home target and therefore no RoCE
 transfer. Prepare only its local durable-home runtime view:
 
 ```bash
-scripts/model-library.sh prepare <single-rank-sealed-profile> \
+scripts/model-library.sh prepare <single-rank-profile> \
   --backend copy --transport ssh-control --yes
 ```
 
-Legacy-unsealed profiles are outside ADR 0003's fixed transport and stream
-policy. Their low-level preparation path needs no validation-status override;
-choose and record its transport and stream count as experiment inputs rather
-than inheriting the reviewed-profile recipe. `--allow-unvalidated` is removed
-(ADR 0008); drop the flag. It never bypassed a configured seal mismatch.
+`--allow-unvalidated` is removed
+(ADR 0008); drop the flag. It never granted serving permission.
 
 Catalog refresh inventories existing durable homes; it does not download model
 bytes or create a primary home. Preparation therefore requires an eligible
-exact home to exist already; `home add` is the acquisition path (the wizard
-guides it for sealed profiles). `check-weights` / `up.sh` print the same
-commands: sealed `home add <profile> --yes`, the unsealed plan-then-`--yes`
-sequence, `cleanup-recommend` / `catalog primary set` when duplicate homes
+exact home to exist already; `home add --revision` is the acquisition path
+(manual CLI, not the wizard). `check-weights` / `up.sh` print the same
+commands: the plan-then-`--yes` sequence, `cleanup-recommend` / `catalog primary set` when duplicate homes
 have no primary, or `prepare` when a home already exists. For a one-node
 `--node` placement, an unreachable rank tells the operator to restore SSH
 (not restage), and a non-home rank names the durable-home node instead of
-`prepare`. For sealed profiles:
+`prepare`.
 
-```bash
-# Optional --node RANK|NODE_ID overrides most-free-space placement.
-scripts/model-library.sh home add <sealed-profile> --yes
-# Registration remains explicit; home add never refreshes automatically.
-scripts/model-library.sh catalog refresh
-scripts/model-library.sh catalog show <sealed-profile>
-```
-
-For a brand-new unsealed profile whose repository is absent everywhere, plan
+For a brand-new profile whose repository is absent everywhere, plan
 first. The plan is read-only and resolves the selector to an exact commit:
 
 ```bash
@@ -702,19 +686,19 @@ CLI, or an ineligible/out-of-geometry explicit node. A one-node profile may use
 any confirmed rank as its sole serving placement; without `--node`, the most-
 free-space eligible rank is selected. Multi-node placement remains limited to
 the profile's exact serving ranks so preparation retains the one-home plus N−1
-hot-copy contract. The chosen rank needs upstream access and
+working-copy contract. The chosen rank needs upstream access and
 its own Hugging Face authentication when the repository is gated. Pulsar checks
 the target's PATH and its managed `$HOME/.hf-cli/venv/bin/hf` installation. It
 downloads the exact commit into a private directory on the destination
 filesystem, repeats the cluster-wide duplicate check, and performs the
-applicable sealed or source-attested full verification before atomically
+applicable receipt full verification before atomically
 publishing one durable HF repository. It never copies
 through the controller, chooses a second node after failure, creates hot data,
 prepares a view, launches, or changes validation status. Download/verification
 failure removes only the current plan's staging directory. If cleanup reports
 incomplete, inspect that exact `.pulsar-acquire-*` directory before retrying.
 
-Source-attested crash and retry behavior:
+Download crash and retry behavior:
 
 - A leftover exclusive writer temp next to receipts or attachments is ignored
   during enumeration and does not block a later write.
@@ -751,7 +735,7 @@ Source-attested crash and retry behavior:
 `pin` marks non-home hot content as purge-protected. Cold stage-only hot may
 be fully self-contained. Warm-home preparation is deliberately different: the
 home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
-cache, and only non-home ranks own working replicas (`sealed-hot`). Home-rank hot
+cache, and only non-home ranks own working copies (`runtime_source=sealed-hot`). Home-rank hot
 materialization is ruled out by
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 
@@ -767,7 +751,7 @@ qualification scope:
 | Check or action | Evidence scope | Claim boundary |
 |---|---|---|
 | `health`, catalog refresh, primary state | Catalog/artifact inventory and policy state | Does not prove that a model can serve correctly |
-| `home add` exact download, verification, receipt when source-attested, and publication | Catalog/artifact acquisition | Does not prepare a runtime view, qualify the model, grant reviewed identity, or promote the storage path |
+| `home add` exact download, verification, receipt, and publication | Catalog/artifact acquisition | Does not prepare a runtime view, qualify the model, grant reviewed identity, or promote the storage path |
 | Preparation, seal/manifest verification, witness, pin/purge/repair | Catalog/artifact identity and lifecycle | Does not qualify runtime behavior |
 | Exact-source launch, health, warmup, completion smoke, owned stop | Serving integration | Does not prove accuracy, determinism, performance, context, or soak |
 | `validate/run-gates.sh` and profile-specific physical gates | Model qualification for the exact image/configuration/geometry | Does not independently prove another storage policy safe. Ordinary invocation stays human-compatible and does not require a release plan. Optional `--measurement-dir` writes closed compare/bench measurement files under `results/` or a safe explicit outside path; optional `--invocation-plan` is an explicit contract-driven bench overlay and fails closed instead of changing the default sweep. |
@@ -824,7 +808,7 @@ scripts/model-library.sh health --json
 ```
 
 `healthy` and `not-configured` exit zero. `attention` and `unavailable` exit
-nonzero after printing a complete schema-1 report. The command never refreshes
+nonzero after printing a complete health report. The command never refreshes
 the catalog or witness, hashes model bytes, or repairs automatically. Public
 JSON exposes rank numbers but no hosts, addresses, node or topology IDs,
 absolute paths, filesystem identity, or witness IDs. Schema-1/2 hot metadata
@@ -838,7 +822,7 @@ read-only. **Refresh distributed catalog** is a separate action that shows the
 cached age and scope, defaults its confirmation to no, and only then runs the
 same `catalog refresh` command shown above. A successful refresh is followed by
 a new sanitized health report. Missing/stale topology, unreachable ranks, or
-invalid scans fail closed; model files are not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
+invalid scans fail without fallback; model files are not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
 or deletes a model, and it never runs automatically.
 
 From an exact model detail, the labeled preparation option is a second separate
@@ -850,7 +834,7 @@ launch or qualify the model or assign a release status. Pin, purge, and
 durable-home removal remain direct CLI operations.
 
 Schema-1/2 hot metadata is obsolete and cannot launch. `hot legacy check|remove`
-is removed (SIM-13). Health still reports leftover schema-1/2 as attention.
+is removed. Health still reports leftover older working-copy records as attention.
 Any remaining leftover files under `PULSAR_HOT_ROOT` are site-admin cleanup,
 not a Pulsar command. Do not rename content over them.
 
@@ -887,7 +871,7 @@ A recognized incomplete or refs-only Hugging Face hub occupancy — typically
 `snapshots/<commit>` payload — is inspectable and retireable through the same
 `home check` then `home remove ... --yes` path. That occupancy is not a
 complete durable home. The plan states the action (retire the incomplete
-tree so the exact repository path becomes absent and a later source-attested
+tree so the exact repository path becomes absent and a later
 `home add` can proceed), the public model ID, the bound snapshot revision when
 live `refs/main` names one 40-hex commit, the rank role, why it is eligible, what
 exact hub directory will be deleted, and what will not be deleted (sibling
@@ -953,42 +937,42 @@ Ordinary stop retains unpinned prepared views; `PULSAR_HOT_STOP_POLICY=purge`
 restores named-profile purge-on-stop for storage-first labs. Budget-based
 eviction is not implemented.
 
-**Current identity behavior:** expected-seal and schema-1 validation bundles
-are not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
-There is no schema-2 of that format. Live admission is unsealed library-hot:
-`legacy-unsealed` or `unvalidated`. ADR 0004 objects under
-`models/model-serving-releases/` remain `schema_version: 1` of a different
-kind; `MODEL_SERVING_RELEASE_ID` is advisory, not a serving gate. Inspect
-reviewed releases with:
+**Current identity behavior:** lab expected-identity files and the archived
+combined identity format are not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+There is no v2 of that format. Live admission uses local files on every rank
+with `identity_status=legacy-unsealed` or `unvalidated`. ADR 0004 objects under
+`models/model-serving-releases/` are a different format; `MODEL_SERVING_RELEASE_ID`
+is display-only, not a serving gate. Inspect
+reviewed Model Serving Releases with:
 
 ```bash
 scripts/model-serving-release-registry.sh verify
 ```
 
-`home add` requires `--revision`. Unknown trees without a receipt fail closed.
-Historical seal JSON is archived under
+`home add` requires `--revision`. Unknown trees without a receipt fail without fallback.
+Historical expected-identity JSON is archived under
 [docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md)
 and is not loaded. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the
-live catalog. `qwen3-1.7b-2node` stays as an unsealed plumbing canary.
+live catalog. `qwen3-1.7b-2node` stays as a tiny two-node test profile.
 
 Preparation full-hashes every rank and atomically creates that rank's
 `<instance>/.pulsar/witness.json` before ready is published. Launch uses the
 witness when canonical view and file metadata are unchanged. A missing,
 malformed, or drifted witness prints a message and runs a stable full SHA-256
 verification. Success atomically refreshes the witness and continues; content
-mismatch fails closed and does not refresh. Do not hand-edit `hot.json` or
+mismatch fails without fallback and does not refresh. Do not hand-edit `hot.json` or
 `witness.json`. Leftover container `model-seal` / `validation-bundle` labels
 are untrusted observations.
 
-**Upgrade note:** catalog schema 1 and hot schemas 1/2 are intentionally not
+**Upgrade note:** older catalog and working-copy records are intentionally not
 accepted for launch or trust. Health may still recognize exact historical
-ownership metadata as untrusted leftover. There is no Pulsar repair command
-(SIM-13). After upgrading, run `catalog refresh`, then
-prepare each required profile again. Hot schema 3 instances created before witness
-support remain readable: the first `library-hot` readiness check visibly
-full-verifies and creates the missing rank-local witness. Current unsealed
-profiles do not need a validation-status override.
-Do not hand-edit or relabel old site-local state into the new schemas.
+ownership metadata as untrusted leftover. There is no Pulsar repair command.
+After upgrading, run `catalog refresh`, then
+prepare each required profile again. Current working-copy records created before witness
+support remain readable: the first model-library readiness check visibly
+full-verifies and creates the missing rank-local witness. Live profiles
+do not need a validation-status override.
+Do not hand-edit or relabel old site-local state into the current records.
 
 **Optional cold archive:** shared/local fill tier (conventionally
 `MODELS_NFS=/mnt/Models`, overridable with `PULSAR_COLD_ROOT`; empty
@@ -997,11 +981,11 @@ Do not hand-edit or relabel old site-local state into the new schemas.
 - `Official Models/<org>/<name>/` (and `Community Models/…`) — flat trees
 - `hub/models--org--name/` or `.cache/huggingface/hub/…` — HF hub trees
 
-Resolve order is **warm complete home → cold (if configured) → fail closed**.
+Resolve order is **warm complete home → cold (if configured) → fail without fallback**.
 Cold is preferred over a fresh Hugging Face download when warm misses; it is
-**not** the multi-node runtime filesystem. A sealed Hugging Face profile can
-stage only from a source preserving the expected commit and complete manifest;
-a flat archive with an inferred local revision will not match that seal.
+**not** the multi-node runtime filesystem. A Hugging Face home can
+stage only from a source preserving the expected commit and complete file list;
+a flat archive with an inferred local revision will not match that receipt.
 
 ```bash
 # inventory
@@ -1009,7 +993,7 @@ scripts/model-library.sh cold scan --json
 scripts/model-library.sh cold show <org>/<name>
 scripts/model-library.sh resolve <profile> --json   # warm, else cold
 
-# grow federated library (durable warm home on this node’s HF cache)
+# grow the library (durable warm home on this node’s HF cache)
 scripts/model-library.sh cold adopt <org>/<name> --yes
 scripts/model-library.sh catalog refresh
 
@@ -1020,7 +1004,7 @@ scripts/up.sh <profile>
 
 Unset/empty cold config skips the tier (no mount required). If cold is
 configured but unreadable, flows that **need** cold (warm miss, absolute-path
-conf, explicit `cold *`) fail closed; pure warm-catalog hits never require it.
+conf, explicit `cold *`) fail without fallback; pure warm-catalog hits never require it.
 See [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) §3.
 
 **One-shot NFS/RDMA preparation:** retired
@@ -1031,17 +1015,17 @@ internals; preparation is `--backend copy` (ssh-control or ssh-roce) only.
 Historical B-gate reports under `results/model-library/` remain valid
 evidence.
 
-**Prepare performance:** the accepted home-rank behavior is a validated
+**Prepare performance:** the accepted home-rank behavior is a hashed
 durable-home symlink/view with no second full write; non-home ranks
-materialize in parallel. Wall-clock is often limited by materialization, not
+copy in parallel. Wall-clock is often limited by that copy, not
 raw RoCE line rate.
 
-**SSH-over-RoCE policy for reviewed multi-rank preparation:** the same
+**SSH-over-RoCE policy for multi-rank preparation:** the same
 copy-based preparation (rsync + SSH) targets topology **RoCE IPs** so bulk
-TCP rides the fabric NIC without NFS/RDMA. It requires enrolled topology schema 2,
+TCP rides the fabric NIC without NFS/RDMA. It requires the enrolled current topology record,
 `sshd` reachable on fabric IPs, and routes via the confirmed RoCE netdev. The
 transport IP is never a separate trust identity: strict checking always uses
-the saved alias and enrolled key. The interactive reviewed-profile action is
+the saved alias and enrolled key. The interactive multi-rank prepare action is
 fixed to eight streams with no fallback by ADR 0003. Low-level benchmark and
 diagnostic commands may still select other transports/stream counts
 explicitly.
@@ -1052,23 +1036,23 @@ scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 
 # 2) Prove the model-library RoCE map for the profile
-scripts/model-library.sh probe-ssh-roce deepseek-v4-flash
+scripts/model-library.sh probe-ssh-roce qwen3.8-27b-fp8-2node
 
 # 3) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between).
 #    Stay for the run; no sudo required for pure copy paths. Admission uses the
 #    same all-rank filesystem reserve as normal preparation.
 scripts/model-library.sh budget
-scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
+scripts/model-library.sh bench-ssh-roce qwen3.8-27b-fp8-2node --yes \
   --tag "ssh-roce-$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Parallel bulk copy for large, many-blob models (experimental). Repeat both
 # orders before comparing paths; 150 ms staggering avoids an sshd admission
 # burst at 16 streams.
 PULSAR_COPY_STREAM_STAGGER_MS=150 \
-  scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
+  scripts/model-library.sh bench-ssh-roce qwen3.8-27b-fp8-2node --yes \
     --copy-streams 16 --order roce-first --tag parallel-roce-first
 PULSAR_COPY_STREAM_STAGGER_MS=150 \
-  scripts/model-library.sh bench-ssh-roce deepseek-v4-flash --yes \
+  scripts/model-library.sh bench-ssh-roce qwen3.8-27b-fp8-2node --yes \
     --copy-streams 16 --order control-first --tag parallel-control-first
 
 # Manual one-shot over RoCE TCP with the enrolled alias/key identity:
@@ -1120,7 +1104,7 @@ hours is a leak signal (none observed in 150-min soaks).
 
 - Spec decode is **not** "try random methods": only use paths that have
   validated `SPEC_DECODE_ARGS` and a positive ledger entry
-  (docs/VALIDATION.md). The flagship defaults to DSpark; use
+  (docs/VALIDATION.md). Historical DeepSeek defaults used DSpark; use
   `--no-spec-decode` as the operational rollback. Its k=5 is fixed by the
   checkpoint, not tunable. **Do not** enable ngram on GDN hybrids (corrupts
   output). Super MTP is opt-in; Laguna DFlash is marginal.

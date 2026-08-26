@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Neutral operator home screen for the Pulsar GB10 vLLM stack.
+# Neutral workflow menu for the Pulsar GB10 vLLM stack.
 #   scripts/home.sh          (also: ./pulsar with no arguments)
 #
 # Starts immediately — no doctor, inventory, weights, image, or model preflight
@@ -505,9 +505,9 @@ workflow_diagnostics() {
 # Main home loop
 # ---------------------------------------------------------------------------
 if [ "$have_gum" = 1 ]; then
-  log "operator home — using $("$GUM_CMD" --version 2>/dev/null || echo gum) at $GUM_CMD"
+  log "workflow menu — using $("$GUM_CMD" --version 2>/dev/null || echo gum) at $GUM_CMD"
 else
-  log "operator home — plain menus (GUM=0 / no-color / gum unavailable)"
+  log "workflow menu — plain menus (GUM=0 / no-color / gum unavailable)"
 fi
 
 log "read-only by default; mutations require confirmation and proven stack ownership"
@@ -515,7 +515,7 @@ log "read-only by default; mutations require confirmation and proven stack owner
 while true; do
   echo
   pick=""
-  if ! pick=$(choose "Pulsar operator home" \
+  if ! pick=$(choose "Pulsar workflow menu" \
     "Current system status" \
     "Serve or switch a model" \
     "Stop a serving model" \
@@ -523,7 +523,7 @@ while true; do
     "Maintenance" \
     "Diagnostics" \
     "Exit"); then
-    log "cancelled; exiting home (no containers changed)"
+    log "cancelled; exiting menu (no containers changed)"
     exit 0
   fi
 

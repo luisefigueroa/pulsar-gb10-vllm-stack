@@ -117,7 +117,7 @@ run "wizard explicit model-library serving" \
   "$REPO_DIR/scripts/selftest-wizard-model-library.sh"
 run "library-hot stop retention policy" \
   python3 "$REPO_DIR/scripts/testlib/test_down_hot_policy.py"
-run "operator home + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
+run "workflow menu + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "model catalog scopes" bash -c '
   set -e

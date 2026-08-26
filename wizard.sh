@@ -303,7 +303,7 @@ offer_one_node_home_placement() {
   esac
 }
 
-# Brand-new homes use source-attested CLI with --revision (ADR 0012).
+# Brand-new homes use home add --revision (ADR 0012).
 offer_library_home_add() {
   warn "no durable home exists for $NAME"
   warn "acquire it first with:"
@@ -340,8 +340,8 @@ refresh_library_serving_check() {
 # The model library is the only weight mechanism (ADR 0006). Establish exact
 # ready runtime views (durable home + prepared hot) for every selected rank,
 # or return 2 (choose another model) / exit without changing model files.
-# Admission is unsealed library-hot (ADR 0012). Acquisition remains the
-# source-attested CLI, not wizard home add.
+# Admission uses local files on every rank (ADR 0012). Acquisition remains
+# home add --revision, not wizard home add.
 confirm_library_serving() {
   local state transport streams home_rank home_json placement_index
   local scope_label identity_label prepare_rc=0
@@ -354,7 +354,7 @@ confirm_library_serving() {
     return 0
   fi
   scope_label=$(library_scope_label)
-  identity_label="unsealed library-hot · receipt and occupancy, not expected-seal"
+  identity_label="receipt and occupancy · not a lab expected-identity file"
   render_human_section "MODEL FILES" \
     "Mechanism" "model library · $scope_label" \
     "Identity" "$identity_label" \
@@ -1384,12 +1384,12 @@ print("1" if item.get("complete") is True and item.get("safe_to_stop") is True e
         if [ "$running_source" != library-hot ]; then
           die "the running pre-library service is incomplete or unobservable; no service was stopped"
         fi
-        die "the running library-hot service is incomplete or unobservable; no service was stopped"
+        die "the running model-library service is incomplete or unobservable; no service was stopped"
       }
       if [ "$running_source" != library-hot ]; then
         warn "stopping a pre-library service; exact rollback is unavailable for it"
       else
-        warn "stopping a library-hot service without a reviewed identity match; exact rollback is unavailable for it"
+        warn "stopping a model-library service without a reviewed identity match; exact rollback is unavailable for it"
       fi
       down_args=()
       if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
@@ -1432,7 +1432,7 @@ prepare_exact_rollback() {
   local inventory_file="$WIZARD_WORK_DIR/rollback-inventory.json"
   load_transaction_summary
   [ "$TRANSACTION_SOURCE" = library-hot ] \
-    || die "saved transaction is not a library-hot contract; archive it instead of rollback"
+    || die "saved transaction is not a model-library contract; archive it instead of rollback"
   NAME="$TRANSACTION_PREVIOUS_PROFILE"
   load_conf "$NAME"
   contract_id=$(loaded_launch_contract_id)

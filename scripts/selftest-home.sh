@@ -509,7 +509,7 @@ chmod +x "$REPO_DIR/pulsar" "$REPO_DIR/scripts/home.sh" "$REPO_DIR/scripts/quick
 
 # Help
 out=$("$REPO_DIR/pulsar" help 2>&1)
-assert_true "help mentions operator home" bash -c "printf '%s' \"\$0\" | grep -qiE 'home|workflow menu|operator'" "$out"
+assert_true "help mentions workflow menu" bash -c "printf '%s' \"\$0\" | grep -qiE 'home|workflow menu|operator'" "$out"
 assert_true "help mentions wizard shortcut" bash -c "printf '%s' \"\$0\" | grep -q wizard" "$out"
 
 # No-arg must invoke home.sh, not wizard immediately — prove via PATH-less
@@ -552,7 +552,7 @@ assert_false "no doctor before/on exit" bash -c "test -s '$STATE/logs/doctor.log
 assert_false "no inventory before exit-only" bash -c "test -s '$STATE/logs/inventory.log'"
 assert_false "no down on exit" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "no wizard on exit" bash -c "test -s '$STATE/logs/wizard.log'"
-assert_file_contains "$STATE/logs/home.combined" "operator home|Pulsar operator|plain menus|goodbye" "home greeting or exit"
+assert_file_contains "$STATE/logs/home.combined" "workflow menu|Pulsar workflow|plain menus|goodbye" "home greeting or exit"
 
 # ---------------------------------------------------------------------------
 # 3) Every home workflow + return/exit/cancel (GUM=0)

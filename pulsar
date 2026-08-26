@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Root dispatcher for the Pulsar GB10 vLLM stack.
-#   ./pulsar                 → neutral operator home (workflow menu)
+#   ./pulsar                 → workflow menu
 #   ./pulsar wizard          → serve/switch wizard (doctor + preflight)
 #   ./pulsar models          → catalog view + explicit refresh/preparation
 #   ./pulsar inventory …     → scripts/inventory.sh
@@ -23,7 +23,7 @@ usage() {
 Pulsar GB10 vLLM stack — root dispatcher
 
 Usage:
-  ./pulsar                      Operator home (workflow menu; read-only default)
+  ./pulsar                      Workflow menu (read-only default)
   ./pulsar wizard               Serve or switch a model (doctor + preflight)
   ./pulsar models               Browse storage; refresh or prepare explicitly
   ./pulsar inventory [opts]     Read-only service/memory inventory

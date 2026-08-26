@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fast read-only system overview for the operator home screen.
+# Fast read-only system overview for the workflow menu.
 #   scripts/quick-status.sh [--json]
 #
 # Consumes scripts/inventory.sh --json (ownership classifier is not reimplemented).
