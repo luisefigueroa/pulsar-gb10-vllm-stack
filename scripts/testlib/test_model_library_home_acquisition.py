@@ -107,7 +107,7 @@ class SourceAttestedAcquisitionContracts(unittest.TestCase):
         )
         self.assertEqual(first["schema_version"], 1)
         self.assertNotEqual(
-            first["kind"], model_library.HOME_ACQUISITION_PLAN_KIND
+            first["kind"], "pulsar-model-library-home-acquisition-plan"
         )
 
     def test_git_blob_has_no_invented_content_sha256(self) -> None:

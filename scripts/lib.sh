@@ -221,7 +221,6 @@ load_conf() {
   MODEL="" SERVED_NAME="" IMAGE="" NOTES="" STATUS="?"
   EXPECTED_MODEL_SEAL=""
   MODEL_SERVING_RELEASE_ID=""
-  PROFILE_VALIDATION_BUNDLE_JSON=""
   NODES=1 PORT=8000 GPU_MEM_UTIL=0.80
   ENGINE_ARGS=() CONTAINER_ENV=() SPEC_DECODE_ARGS=()
   WEIGHTS_GIB="" WEIGHTS_RAM_GIB="" KV_GIB="" OVERHEAD_GIB="" MEM_MIN_FREE_GIB=""
@@ -378,10 +377,6 @@ launch_contract_id_for_profile() {
     load_conf "$profile"
     loaded_launch_contract_id
   )
-}
-
-validate_loaded_profile_bundle() {
-  die "$CONF_NAME: expected-seal profile-bundle verification is retired (ADR 0012)"
 }
 
 model_source_kind() {
@@ -1110,10 +1105,6 @@ PULSAR_VALIDATION_BUNDLE_LABEL="io.pulsar.gb10.validation-bundle"
 PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
-
-load_replicated_identity_plan() {
-  die "${1:-profile}: sealed exact-identity plan is retired (ADR 0012)"
-}
 
 # Print find-hot JSON for the selected rank. Return 0 on success, 255 when
 # that rank is SSH-unreachable, 2 when a found view fails verification, and

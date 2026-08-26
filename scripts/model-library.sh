@@ -180,55 +180,6 @@ Notes:
 EOF
 }
 
-cmd_validation_bundle_verify() {
-  local profile="${1:-}" json=0
-  shift || true
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --json) json=1 ;;
-      *) die "unknown validation-bundle verify option: $1" ;;
-    esac
-    shift
-  done
-  [ -n "$profile" ] \
-    || die "usage: validation-bundle verify <profile> [--json]"
-  load_conf "$profile"
-  [ -n "$EXPECTED_MODEL_SEAL" ] \
-    || die "$profile has no reviewed expected seal or validation bundle"
-  [ -n "$PROFILE_VALIDATION_BUNDLE_JSON" ] \
-    || die "$profile validation bundle verification returned no result"
-  if [ "$json" = 1 ]; then
-    printf '%s\n' "$PROFILE_VALIDATION_BUNDLE_JSON"
-    return 0
-  fi
-  local -a fields=()
-  mapfile -t fields < <(
-    printf '%s' "$PROFILE_VALIDATION_BUNDLE_JSON" |
-      python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print(d["validation_bundle"]["bundle_id"])
-print(d["expected_model_seal"]["seal_id"])
-print(d["expected_model_seal"]["snapshot_revision"])
-print(d["validation_bundle"]["image_digest"])
-print(d["validation_bundle"]["topology_class"])
-print(d["validation_bundle"]["nodes"])
-print(d["profile_contract_id"])
-'
-  )
-  [ "${#fields[@]}" -eq 7 ] \
-    || die "$profile validation bundle result is incomplete"
-  render_human_section "Validation bundle" \
-    "profile" "$profile" \
-    "state" "match" \
-    "bundle" "${fields[0]}" \
-    "model seal" "${fields[1]}" \
-    "revision" "${fields[2]}" \
-    "image" "${fields[3]}" \
-    "geometry" "${fields[5]} node(s) · ${fields[4]}" \
-    "profile contract" "${fields[6]}"
-}
-
 # Experiment: control (default) vs roce (rsync -e ssh to fabric IPs).
 COPY_SSH_MODE="${PULSAR_COPY_SSH_MODE:-control}"
 case "$COPY_SSH_MODE" in
