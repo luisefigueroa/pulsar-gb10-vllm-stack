@@ -1,0 +1,156 @@
+{
+  "attempt": {
+    "attempt_id": "attempt-strict-same-boot",
+    "attempted_criterion_ids": [
+      "strict-same-boot-captures"
+    ],
+    "completion": "completed",
+    "ended_at": "2026-08-25T02:24:46Z",
+    "phase": "model-qualification",
+    "qualification_scope": "model-qualification",
+    "started_at": "2026-08-25T02:24:46Z"
+  },
+  "commands": [
+    {
+      "arguments": [
+        {
+          "kind": "operation",
+          "value": "compare-captures"
+        },
+        {
+          "criterion_id": "strict-same-boot-captures",
+          "kind": "criterion-reference"
+        }
+      ],
+      "environment": [],
+      "program": "validate/compare_captures.py",
+      "version": "sha256:0bf063ee77d8827f73569a0f085ca42b7bb696d8130ba8f153623818f49221b3",
+      "working_directory": "repository-root"
+    }
+  ],
+  "contract_id": "ddd1a8e6b8e9e2636c50d30cf76402a1e1f04198017e831f43f9814528362751",
+  "criterion_observations": [
+    {
+      "benchmark_protocol_id": "53984567ef6bc95fe11da4d774669be33f6fa196e7e3723d0cacb4974f450a8c",
+      "completion": "complete",
+      "contract_requirements": {
+        "context": null,
+        "soak": null
+      },
+      "criterion_id": "strict-same-boot-captures",
+      "evidence_artifact_ids": [
+        "370d49dba4dbd728cfe11eed85507eff583bb284f9947c9d08231c1ccf5fb83d"
+      ],
+      "metrics": [
+        {
+          "metric": "exact_match_rate",
+          "unit": "ratio",
+          "value": "1"
+        }
+      ],
+      "reason": "completed",
+      "sample_size": 30
+    }
+  ],
+  "evidence_artifact_ids": [
+    "370d49dba4dbd728cfe11eed85507eff583bb284f9947c9d08231c1ccf5fb83d"
+  ],
+  "kind": "pulsar-validation-run-record",
+  "observed_environment": {
+    "cluster": {
+      "accelerator_count": 2,
+      "interconnect_class": "roce-v2",
+      "node_count": 2,
+      "pipeline_parallel_size": 1,
+      "rails_per_pair": 2,
+      "tensor_parallel_size": 2,
+      "topology_class": "roce-full-mesh"
+    },
+    "image_digest": "sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c",
+    "launch_id": "c3d3c5e6c347a4a1246a4511cc10da9839410b277913021fc561a2ac6eb16b7f",
+    "ranks": [
+      {
+        "accelerator_count": 1,
+        "architecture": "aarch64",
+        "container_runtime": {
+          "capabilities": [
+            "ipc-host",
+            "nvidia-gpu"
+          ],
+          "family": "docker",
+          "version": "29.2.1"
+        },
+        "driver_abi": {
+          "family": "nvidia-open-kernel-module",
+          "version": "580.173.02"
+        },
+        "engine_version": "0.27.1",
+        "hardware_class": "nvidia-dgx-spark-gb10",
+        "kernel": {
+          "features": [],
+          "version": "6.17.0-1031-nvidia"
+        },
+        "rank": 0,
+        "unified_memory_gib": "121.689556121826171875"
+      },
+      {
+        "accelerator_count": 1,
+        "architecture": "aarch64",
+        "container_runtime": {
+          "capabilities": [
+            "ipc-host",
+            "nvidia-gpu"
+          ],
+          "family": "docker",
+          "version": "29.2.1"
+        },
+        "driver_abi": {
+          "family": "nvidia-open-kernel-module",
+          "version": "580.173.02"
+        },
+        "engine_version": "0.27.1",
+        "hardware_class": "nvidia-dgx-spark-gb10",
+        "kernel": {
+          "features": [],
+          "version": "6.17.0-1031-nvidia"
+        },
+        "rank": 1,
+        "unified_memory_gib": "121.6893463134765625"
+      }
+    ],
+    "server_boot_id": "e67fa406064fb89478290e17b7f86a2c0fcba87291e155e3c12ec9a98040f778",
+    "supported_hardware_geometry_id": "e68927a282c26ce0b41d5a717f953b9ca8aa27c02ac49502ed653e83270e396d"
+  },
+  "preparation_provenance": {
+    "elapsed_seconds": "15",
+    "origin": "managed-home",
+    "qualification_barrier": "passed",
+    "runtime_sources": [
+      {
+        "rank": 0,
+        "retention": "ephemeral",
+        "source": "sealed-hot"
+      },
+      {
+        "rank": 1,
+        "retention": "durable",
+        "source": "durable-home"
+      }
+    ],
+    "subsystems": [
+      {
+        "maturity": "experimental",
+        "name": "pulsar-model-library",
+        "version": "source-attested-v1"
+      }
+    ],
+    "transfer": "ssh-roce",
+    "verification": {
+      "model_artifact_set_id": "72fe498e274facf9f30ef84151c3b5f51c513444b99da6c2935093959dcf36ed",
+      "status": "passed"
+    }
+  },
+  "release_id": "2c653ea4fc96bed639978a7da7eb15347432e20874b8598ea2b1bafdb60e0933",
+  "run_record_id": "5e4eb246a06181797a0e426aeffb1515125eb77d43cacf083fa5e15c308c0eba",
+  "schema_version": 1
+}
