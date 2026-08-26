@@ -323,5 +323,6 @@ The supervised `pulsar-model-onboarding` skill composes these commands and
 has its own control-plane tests; those tests make no physical DGX claim and
 create no release decision. Issuance of a verified candidate is a later
 maintainer workflow; see
-[MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md).
-Onboarding capture does not produce provenance review leftovers.
+[MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md)
+and `pulsar-model-serving-release-issuance`. Onboarding capture does not
+produce provenance review leftovers.
