@@ -439,7 +439,7 @@ echo "=== ready library views launch without preparation ==="
 run_wizard healthy.json 0 0 $'2\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'legacy=untested' \
-  "wizard exposes a non-recommended serving profile with its advisory status"
+  "wizard exposes a non-recommended serving profile with its display-only status"
 assert_empty "$STATE/logs/prepare.log" "ready views need no preparation"
 assert_contains "$STATE/logs/weights.log" '^qwen3.8-27b-fp8-2node --json$' \
   "weight preflight carries no mode flag"

@@ -185,7 +185,7 @@ if printf 'n\n' | COLUMNS=52 env "${BASE_ENV[@]}" "$LIBRARY" \
   echo "declined source-attested home add unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q 'source-attested acquisition' "$STATE/declined.out"
+grep -q 'Hugging Face download  PLAN' "$STATE/declined.out"
 python3 - "$STATE/declined.out" <<'PY'
 import sys
 lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
@@ -492,6 +492,6 @@ text = Path(sys.argv[1]).read_text(encoding="utf-8")
 body = text[text.index("cmd_home_verify()") : text.index("cmd_home_check()")]
 assert "EXPECTED_MODEL_SEAL" not in body
 assert "reviewed expected manifest" not in body
-assert "source-attested receipt" in body
+assert "download receipt" in body
 PY
 echo "model-library source-attested CLI scenarios: PASS"

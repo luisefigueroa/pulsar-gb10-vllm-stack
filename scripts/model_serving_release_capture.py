@@ -224,7 +224,7 @@ READ_STABILITY_HOOK = None
 VERIFY_AFTER_SCAN_HOOK = None
 
 PERSISTENCE_NOTES = (
-    "This candidate is unreviewed and has no issuance authority.",
+    "This candidate is draft JSON and has no staging authority.",
     "Privacy review is pending.",
     "This workflow does not launch a release.",
     "Capture does not write the tracked release registry.",
@@ -2201,7 +2201,7 @@ def load_spec_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
 
 HELP_LINES = (
-    "Capture unreviewed ADR 0004 evidence-capture candidates",
+    "Capture draft ADR 0004 evidence-capture candidates",
     "",
     "Usage:",
     "scripts/model-serving-release-capture.sh plan --release-plan DIR --attempt-spec FILE [--json]",
@@ -2210,7 +2210,7 @@ HELP_LINES = (
     "scripts/model-serving-release-capture.sh verify-candidate --candidate-dir DIR [--json]",
     "",
     "Candidate safety:",
-    "Output is unreviewed and has no validation authority.",
+    "Output is draft JSON and has no validation authority.",
     "Privacy review remains pending. This tool does not launch a model.",
     "Default output is gitignored experiments/model-serving-release-captures/.",
     "This tool never writes models/, the tracked release registry, a profile, or catalog status.",

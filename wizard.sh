@@ -649,8 +649,8 @@ render_model_selection() {
   local -a fields=(
     "Model" "$NAME"
     "Serves" "$SERVED_NAME on :$PORT"
-    "Release status" "$MODEL_SERVING_RELEASE_STATUS_LABEL · advisory"
-    "Legacy label" "$STATUS · advisory"
+    "Release status" "$MODEL_SERVING_RELEASE_STATUS_LABEL · display-only"
+    "Legacy label" "$STATUS · display-only"
     "Recipe" "exact $NODES-node profile"
   )
   if [ -n "${NOTES:-}" ]; then
@@ -2166,7 +2166,7 @@ for model in models:
     die "no serving profile fits the $topology_capacity confirmed node(s)"
   fi
 
-  pick=$(choose "Choose a model · status labels are advisory · $topology_context" "${choices[@]}")
+  pick=$(choose "Choose a model · status labels are display-only · $topology_context" "${choices[@]}")
   NAME=$(echo "$pick" | awk '{print $1}')
   [ -n "$NAME" ] || die "no selection"
 

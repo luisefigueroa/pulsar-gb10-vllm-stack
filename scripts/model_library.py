@@ -4274,12 +4274,12 @@ def plan_activate(
         model_id=resolved["model_id"],
     )
     if (require_exact_revision is None) != (expected_integrity_manifest is None):
-        fail("prepare: source-attested revision and receipt manifest must be supplied together")
+        fail("prepare: download receipt revision and file list must be supplied together")
     if require_exact_revision:
         if re.fullmatch(r"[0-9a-f]{40}", require_exact_revision) is None:
-            fail("prepare: source-attested identity requires one exact 40-hex commit")
+            fail("prepare: download receipt identity requires one exact 40-hex commit")
         if resolved.get("revision") != require_exact_revision:
-            fail("prepare: catalog revision is not the exact source-attested commit")
+            fail("prepare: catalog revision is not the exact download-receipt commit")
         if resolved.get("identity_key") != f"{resolved['model_id']}@{require_exact_revision}":
             fail("prepare: catalog identity is not the exact model_id@commit")
         if integrity_manifest.get("snapshot_revision") != require_exact_revision:
@@ -5932,7 +5932,7 @@ def _home_removal_action(
                 "retire this incomplete/refs-only Hugging Face hub occupancy "
                 "so the exact repository path becomes absent"
             ),
-            "enables": "later source-attested home add of the same repository",
+            "enables": "later home add --revision of the same repository",
             "eligibility": [
                 "incomplete/partial hub tree",
                 "not a complete snapshot",
@@ -7171,7 +7171,7 @@ def render_home_removal_plan(plan: dict[str, Any]) -> None:
                 )
         term.blank()
         term.emit("Stop/remove dependent managed containers and purge their hot views.")
-        term.emit("Then rerun the check; unobservable nodes or metadata fail closed.")
+        term.emit("Then rerun the check; unobservable nodes or metadata fail without fallback.")
     else:
         term.blank()
         term.emit(
@@ -8622,7 +8622,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     acquisition_inspect = sub.add_parser(
         "inspect-home-acquisition-target",
-        help="Inspect one rank for exact reviewed durable-home acquisition",
+        help="Inspect one rank for a Hugging Face home add --revision target",
     )
     acquisition_inspect.add_argument("--cache-root", required=True)
     acquisition_inspect.add_argument("--model-id", required=True)
@@ -8686,7 +8686,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     absence_recheck = sub.add_parser(
         "recheck-home-acquisition-absence",
-        help="Recheck every confirmed rank before source-attested publication",
+        help="Recheck every confirmed rank before receipted home publication",
     )
     absence_recheck.add_argument("--topology-file", required=True)
     absence_recheck.add_argument("--topology-id", required=True)

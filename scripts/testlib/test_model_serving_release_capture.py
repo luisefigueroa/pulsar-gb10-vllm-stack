@@ -170,7 +170,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
 
         human = self.run_main(["plan", *self.capture_flags(inputs)])
         self.assertEqual(human[0], 0, human[2])
-        self.assertIn("unreviewed", human[1])
+        self.assertIn("draft JSON", human[1])
         self.assertIn("no", human[1])
         self.assert_safe_text(human[1])
         self.assert_no_plan_leak(human[1], inputs)
@@ -1159,7 +1159,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         for line in result.stdout.splitlines():
             self.assertLessEqual(len(line), 40, line)
-        self.assertIn("unreviewed", result.stdout)
+        self.assertIn("draft JSON", result.stdout)
 
     def test_hostile_privacy_passed_fails_independent_verify(self) -> None:
         from scripts import model_validation_evidence as evidence

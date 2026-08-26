@@ -83,7 +83,7 @@ Notes:
     org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
   • cold adopt imports into a durable warm HF home; cold stage-only fills hot
     only (cold remains sole durable copy; pin still allows warm restart).
-  • Catalog identity labels are receipt/occupancy (legacy-unsealed) or
+  • Catalog identity labels are receipt/occupancy or
     unvalidated. Local bytes never create an ADR 0004 decision. --reviewed-identity
     and archived combined-identity verification are retired (ADR 0012). --validated
     is removed (ADR 0008). Status labels do not grant or deny start: prepare accepts
@@ -337,7 +337,7 @@ library_plan_activate() {
       "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
       "$tmp" "prepare"); then
     rm -rf "$tmp"
-    die "prepare: source-attested receipt lookup failed"
+    die "prepare: download receipt lookup failed"
   fi
   rm -rf "$tmp"
   if [ "$receipt_json" != null ]; then
@@ -1837,7 +1837,7 @@ cmd_home_verify() (
         --revision "$revision" \
         --allow-missing)
       if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
-        die "home verify: occupancy is missing for a source-attested receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+        die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
       fi
       die "home verify: could not resolve $query"
     fi
@@ -1853,7 +1853,7 @@ cmd_home_verify() (
   receipt_json=$(resolve_attached_source_attested_receipt \
       "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
       "$tmp" "home verify") \
-    || die "home verify: source-attested receipt lookup failed"
+    || die "home verify: download receipt lookup failed"
   if [ "$receipt_json" != null ]; then
     printf '%s\n' "$receipt_json" >"$tmp/receipt.json"
     observed_json=$(run_model_library_on_rank "$home_rank" \
@@ -1883,9 +1883,9 @@ cmd_home_verify() (
     --revision "$revision" \
     --allow-missing)
   if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
-    die "home verify: occupancy is missing for a source-attested receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+    die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
   fi
-  die "home verify: unknown or pre-existing home has no source-attested receipt (ADR 0012: expected-manifest fallback is retired)"
+  die "home verify: unknown or pre-existing home has no download receipt (ADR 0012: expected-manifest fallback is retired)"
 )
 
 confirmed_rank_from_node_selector() {
@@ -1956,7 +1956,7 @@ cmd_home_relocate() {
     --revision "$revision" \
     --allow-missing)
   [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
-    || die "home relocate: no source-attested receipt for $model_id@$revision; sealed homes keep expected-manifest verify, and Hub re-download is home add"
+    || die "home relocate: no download receipt for $model_id@$revision; unknown trees fail without fallback; Hub re-download is home add"
 
   content_bytes=$(printf '%s' "$receipt_json" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["observed_manifest"]["total_bytes"])')
@@ -2154,7 +2154,7 @@ cmd_home_archive_status() {
     receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
       --library-dir "$LIBRARY_DIR" --model-id "$model_id" --revision "$revision" --allow-missing)
     [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
-      || die "home archive status: no source-attested receipt"
+      || die "home archive status: no download receipt"
     receipt_id=$(printf '%s' "$receipt_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
   fi
   python3 "$COLD_ARCHIVE_PY" show-job \
@@ -2305,7 +2305,7 @@ cmd_home_restore() {
   receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
     --library-dir "$LIBRARY_DIR" --model-id "$model_id" --revision "$revision" --allow-missing)
   [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
-    || die "home restore: no source-attested receipt"
+    || die "home restore: no download receipt"
   receipt_id=$(printf '%s' "$receipt_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
   receipt_file="$LIBRARY_DIR/source-attested-receipts/${receipt_id}.json"
   cold_root="${PULSAR_COLD_ROOT-}"

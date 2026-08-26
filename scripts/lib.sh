@@ -577,7 +577,7 @@ print("\t".join((
   [ "$MODEL_SERVING_RELEASE_DECISION_ID" != - ] \
     || MODEL_SERVING_RELEASE_DECISION_ID=""
   # Ambiguity and a recipe mismatch derived from an ambiguous release are
-  # valid advisory projections even though show-release exits 1.
+  # catalog may still show a status even though show-release exits 1.
   if [ "$rc" -ne 0 ] \
       && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != ambiguous ] \
       && [ "$MODEL_SERVING_RELEASE_PROJECTION_STATE" != recipe-mismatch ]; then
@@ -1180,10 +1180,10 @@ resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
   local topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] \
-    || die "library-hot requires confirmed topology (scripts/detect-fabric.sh --write-topology)"
+    || die "model files require confirmed topology (scripts/detect-fabric.sh --write-topology)"
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   info=$(library_hot_info_for_profile "$profile") \
-    || die "library-hot: model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
+    || die "model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
   LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \
@@ -1219,7 +1219,7 @@ resolve_library_hot_for_profile() {
     && [ -n "$LIBRARY_HOT_CONTAINER_MODEL_PATH" ] \
     && [ -n "$LIBRARY_HOT_IDENTITY_STATUS" ] \
     && [ -n "$LIBRARY_HOT_VALIDATION_JSON" ] \
-    || die "library-hot: prepared view provenance is incomplete for $profile"
+    || die "prepared view provenance is incomplete for $profile"
 }
 
 json_encode_strings() {

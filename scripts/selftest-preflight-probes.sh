@@ -231,7 +231,7 @@ weights_human=$(QUIET=1 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
   "$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8-2node)
-printf '%s\n' "$weights_human" | grep -q 'identity=legacy-unsealed'
+printf '%s\n' "$weights_human" | grep -q 'identity=receipt/occupancy'
 echo "OK   human and JSON weight projections agree"
 
 # One-node --node on an unreachable confirmed rank is not a prepare gap.

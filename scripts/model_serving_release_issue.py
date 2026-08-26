@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Maintainer ADR 0004 issuance staging.
+"""Maintainer ADR 0004 staging.
 
-Deterministically turn one independently verified unreviewed evidence-capture
+Deterministically turn one independently verified draft evidence-capture
 candidate plus an explicit review declaration into a proposal of
 content-addressed Model Serving Release registry objects and any
 privacy-cleared publishable evidence.
 
 This module is not a trust authority. A successful local plan or stage does
 not review, merge, authorize serving, or prove physical behavior. Repository
-review and merge remain the trust event. Schema ownership stays in the pure
-ADR 0004 modules. The registry module remains the read-only loader and
-graph inspector.
+review and merge are what make the objects trusted. Schema ownership stays in
+the pure ADR 0004 modules. The registry module remains the read-only loader
+and graph inspector.
 """
 
 from __future__ import annotations
@@ -1129,14 +1129,14 @@ def plan_payload(command: str, plan: IssuePlan) -> dict[str, Any]:
 
 def render_result(payload: dict[str, Any]) -> None:
     writer = terminal_format.TerminalWriter()
-    writer.emit("ADR 0004 Model Serving Release issuance proposal")
+    writer.emit("ADR 0004 Model Serving Release staging proposal")
     writer.blank()
     writer.field("Command", payload.get("command", ""))
     writer.field("State", payload.get("state", "proposal"))
     writer.field("Authority", payload.get("authority", "none"))
     writer.field("Trust", payload.get("trust", ""))
     if payload.get("ok") is False:
-        writer.field("Error", payload.get("error", "issuance failed"))
+        writer.field("Error", payload.get("error", "staging failed"))
         writer.blank()
         writer.emit("Notes")
         for note in payload.get("notes") or TRUST_NOTES:
@@ -1277,7 +1277,7 @@ def cmd_stage(args: argparse.Namespace) -> int:
         repo_root=repo, candidate_dir=candidate_dir, review=review
     )
     if plan.candidate_fingerprint != before:
-        fail("capture candidate changed during issuance planning")
+        fail("capture candidate changed during staging planning")
     hook = AFTER_PLAN_HOOK
     if hook is not None:
         hook(plan)
@@ -1285,13 +1285,13 @@ def cmd_stage(args: argparse.Namespace) -> int:
         dest, repo_root=repo
     )
     if candidate_tree_fingerprint(current) != before:
-        fail("capture candidate changed after issuance planning")
+        fail("capture candidate changed after staging planning")
     actions = stage_issue_plan(plan, repo_root=repo)
     after = model_serving_release_capture.load_verified_candidate(
         dest, repo_root=repo
     )
     if candidate_tree_fingerprint(after) != before:
-        fail("issuance must not mutate the capture candidate")
+        fail("staging must not mutate the capture candidate")
     plan.file_actions = actions
     payload = plan_payload("stage", plan)
     payload["state"] = "staged-proposal"
@@ -1306,17 +1306,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Plan or stage an untrusted ADR 0004 Model Serving Release "
-            "issuance proposal"
+            "proposal"
         )
     )
     parser.add_argument("--repo-root", required=True, help=argparse.SUPPRESS)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    help_cmd = subparsers.add_parser("help", help="Show issuance command help")
+    help_cmd = subparsers.add_parser("help", help="Show staging command help")
     help_cmd.set_defaults(func=cmd_help)
 
     plan = subparsers.add_parser(
-        "plan", help="Read-only exact preview of the issuance proposal"
+        "plan", help="Read-only exact preview of the staging proposal"
     )
     plan.add_argument("--candidate-dir")
     plan.add_argument("--review-file")
@@ -1324,7 +1324,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan.set_defaults(func=cmd_plan)
 
     stage = subparsers.add_parser(
-        "stage", help="Write the issuance proposal after repeating verification"
+        "stage", help="Write the staging proposal after repeating verification"
     )
     stage.add_argument("--candidate-dir")
     stage.add_argument("--review-file")

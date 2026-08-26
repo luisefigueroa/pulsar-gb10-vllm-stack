@@ -191,7 +191,7 @@ term.field(
 term.field(
     "Legacy status",
     "historical profile evidence/recommendation label; both status fields "
-    "are advisory and neither grants nor denies launch",
+    "are display-only and neither grants nor denies launch",
     indent=2,
     label_width=16,
 )

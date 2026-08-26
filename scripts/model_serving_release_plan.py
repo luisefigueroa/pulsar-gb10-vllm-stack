@@ -950,10 +950,10 @@ def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Build unreviewed source-neutral Model Serving Release plans"
+        description="Build draft source-neutral Model Serving Release plans"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    build = subparsers.add_parser("build", help="Build an unreviewed release plan")
+    build = subparsers.add_parser("build", help="Build a draft Model Serving Release plan")
     add_profile_arguments(build)
     build.add_argument("--artifact-manifest", required=True)
     build.add_argument("--runtime-envelope", required=True)
@@ -973,7 +973,7 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--output-dir", default="")
     build.add_argument("--json", action="store_true")
     build.set_defaults(func=cmd_build)
-    verify = subparsers.add_parser("verify", help="Verify an unreviewed release plan")
+    verify = subparsers.add_parser("verify", help="Verify a draft Model Serving Release plan")
     add_profile_arguments(verify)
     verify.add_argument("--candidate-dir", required=True)
     verify.add_argument("--json", action="store_true")
