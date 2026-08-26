@@ -1138,21 +1138,22 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                 ):
                     private(value, label="sample")
 
-    def test_published_schema_one_artifacts_remain_valid_unchanged(self) -> None:
-        seals = sorted((REPO_ROOT / "models" / "seals").glob("*.json"))
-        bundles = sorted(
-            (REPO_ROOT / "models" / "validation-bundles").glob("*.json")
-        )
+    def test_legacy_schema_one_seals_are_archived_not_loaded(self) -> None:
+        self.assertFalse((REPO_ROOT / "models" / "seals").exists())
+        self.assertFalse((REPO_ROOT / "models" / "validation-bundles").exists())
+        archive = REPO_ROOT / "docs" / "archive" / "schema-1-expected-seal"
+        seals = sorted((archive / "seals").glob("*.json"))
+        bundles = sorted((archive / "validation-bundles").glob("*.json"))
         self.assertTrue(seals)
         self.assertTrue(bundles)
         for path in seals:
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document["schema_version"], 1)
-            model_identity.validate_expected_model_seal(document)
+            self.assertEqual(document["kind"], "pulsar-expected-model-seal")
         for path in bundles:
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document["schema_version"], 1)
-            model_identity.validate_validation_bundle(document)
+            self.assertEqual(document["kind"], "pulsar-validation-bundle")
 
 
 if __name__ == "__main__":

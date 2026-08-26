@@ -70,7 +70,7 @@ start a second model on the same port.
 With `HF_HUB_OFFLINE=1` (our default) huggingface_hub needs `refs/main` to
 resolve the revision and fails even though all weights are present.
 **Fix for offline Hugging Face loading:** restore `refs/main` to the
-intended exact revision. If a source-attested receipt exists, occupy the
+intended exact revision. If a download receipt exists, occupy the
 complete tree with
 `scripts/model-library.sh home relocate <profile> --node RANK --yes`
 after a live rehash rather than Hub re-download. Only re-acquire with
@@ -79,15 +79,14 @@ when no receipt and no occupancy remain.
 **Do not select the first directory from `snapshots/`:** a cache can contain
 several commits and filesystem order is not identity.
 
-A sealed `library-hot` profile is different: catalog refresh discovers complete
-snapshot directories directly and selects `snapshot_revision` from the reviewed
-seal, so it does not require or trust `refs/main`. The exact sealed snapshot
-must still exist and match its manifest.
+Live library launch does not trust `refs/main`. Catalog refresh discovers
+complete snapshot directories; prepare and launch use the receipt plus occupancy
+and the exact snapshot path. The tree must still exist and match that file list.
 `scripts/check-weights.sh` (used by wizard/up) reports whether a prepared,
-identity-validated library view exists for the profile's confirmed topology
+hashed library view exists for the profile's confirmed topology
 (ADR 0006). Missing views are remediated with
-`scripts/model-library.sh prepare <profile> --yes`; launch never consults
-`refs/main` — only unsealed `home add` selection does, at acquisition time.
+`scripts/model-library.sh prepare <profile> --yes`. `home add --revision`
+resolves a selector at acquisition time only.
 
 ## Download completed but Pulsar cannot find the cache
 
@@ -99,7 +98,7 @@ Passing Pulsar's Hugging Face home (`$HF_CACHE`) writes
 **Fix:** use `scripts/model-library.sh home add <profile>` (ADR 0006). It
 stages into same-filesystem private staging under `$HF_CACHE`, fully
 verifies, and atomically publishes the durable home; conflicting copies fail
-closed.
+without fallback.
 
 ## Another cluster node has no internet route
 

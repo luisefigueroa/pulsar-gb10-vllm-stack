@@ -26,7 +26,7 @@ def main() -> int:
     parser.add_argument(
         "--identity-status",
         default="legacy-unsealed",
-        choices=("match", "legacy-unsealed", "unvalidated"),
+        choices=("legacy-unsealed", "unvalidated"),
     )
     parser.add_argument("--seal-id", default="")
     parser.add_argument("--bundle-id", default="")
@@ -39,12 +39,10 @@ def main() -> int:
         f"{args.hot_root}/{args.profile}-{args.topology_id[:12]}/" + "c" * 12
     )
     hub_path = f"{instance_dir}/{hub_dirname}"
-    validation: dict[str, object] = {"identity_status": args.identity_status}
-    if args.identity_status == "match":
-        validation["expected_seal"] = {
-            "seal_id": args.seal_id or "e" * 64,
-            "validation_bundle_id": args.bundle_id or "f" * 64,
-        }
+    validation: dict[str, object] = {
+        "identity_status": args.identity_status,
+        "expected_seal": None,
+    }
     info = {
         "instance_dir": instance_dir,
         "hub_path": hub_path,

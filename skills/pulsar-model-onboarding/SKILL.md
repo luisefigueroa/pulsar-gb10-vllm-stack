@@ -1,11 +1,11 @@
 ---
 name: pulsar-model-onboarding
-description: Supervise onboarding of a brand-new, not-yet-sealed Pulsar model through a separately reviewed draft profile, exact artifact acquisition assessment or safe reuse, explicit qualifying distribution, verification, Model Serving Release planning, launch, currently supported physical measurements, unreviewed evidence capture, handoff, and ownership-safe cleanup. Use for new-model onboarding, qualification planning, Model Serving Release evidence collection, resuming an interrupted onboarding, or when the user runs /pulsar-model-onboarding.
+description: Supervise onboarding of a brand-new Pulsar model through a separately reviewed draft profile, exact artifact acquisition assessment or safe reuse, explicit qualifying distribution, verification, Model Serving Release planning, launch, currently supported physical measurements, draft evidence capture, handoff, and ownership-safe cleanup. Use for new-model onboarding, qualification planning, Model Serving Release evidence collection, resuming an interrupted onboarding, or when the user runs /pulsar-model-onboarding.
 ---
 
 # Pulsar Model Onboarding
 
-Orchestrate a brand-new, not-yet-sealed model by composing existing Pulsar
+Orchestrate a brand-new model by composing existing Pulsar
 CLIs. Collaborate at material decisions. This skill has no authority: never issue a seal or validation decision, assign a status, bind a profile to a
 release, publish into the trusted registry, promote a path, or claim physical behavior.
 
@@ -26,7 +26,7 @@ template is [references/handoff-template.md](references/handoff-template.md).
 
 - Status is advisory and never blocks serving. Concrete identity, recipe,
   compatibility, topology, capacity, security, ownership, and lifecycle
-  failures still fail closed.
+  failures still fail without fallback.
 - Do not silently select another node, transport, storage policy, copy,
   runtime source, geometry, or validation criterion.
 - Do not offer live NFS/RDMA serving (`live-remote-readonly`) as a
@@ -36,7 +36,7 @@ template is [references/handoff-template.md](references/handoff-template.md).
 - Do not use `validate/run-gates.sh` as the ADR attempt wrapper.
 - Do not invent a missing validator measurement or share one enclosing
   timestamp across compare and benchmark.
-- Do not represent an unsealed (`identity_status=legacy-unsealed`) launch as an exact ADR 0004 qualification attempt.
+- Do not represent a receipt/occupancy (`identity_status=legacy-unsealed`) launch as an exact ADR 0004 qualification attempt.
 - Distribution transport is run provenance, not release identity. A failure
   before exact all-rank verification leaves qualification unstarted.
 - The journal is orchestration recovery state, not a sixth ADR object and
@@ -70,7 +70,7 @@ Start from a clean synced `main` and create a feature branch. First create
 - no recommendation or default promotion (`FAMILY_RECOMMENDED=0`,
   `RECOMMENDED_SPEC=0`)
 - explicit unbound caveats in `NOTES` (no reviewed identity, no release
-  binding, advisory status only, not a recommendation)
+  field, display-only status only, not a recommendation)
 
 Publish that profile as its own ready-for-review PR and **stop**.
 Do not begin the onboarding journal until the user reports that PR merged.
@@ -117,7 +117,7 @@ comparable predecessor is explicitly supplied.
 Refresh the catalog and observe every confirmed serving rank first. If one exact home
 already exists, follow the reuse rules below. If the repository path is absent
 on every rank, resolve the upstream selector through a read-only
-source-attested plan:
+Hugging Face plan (recorded file list):
 
 ```text
 scripts/model-library.sh home add <profile> --revision <selector> --plan --json
@@ -132,15 +132,15 @@ model bytes.
 Review its exact commit, file and byte counts, selected rank, serving ranks,
 identity class, and explicit no-promotion boundary.
 
-The source-attested plan refuses to create a duplicate if a repository appears
+The plan refuses to create a duplicate if a repository appears
 between assessment and planning. Reuse a home created by this service only after
 `home verify` completes an offline full SHA-256 rehash against the immutable
 site-local receipt while occupancy names that live directory. Occupancy may
 move with `scripts/model-library.sh home relocate <profile> --node RANK --yes`
 after that same live rehash; do not Hub re-download. An older tree without a
-receipt still requires a
-reviewed expected manifest that is independent of the observed tree. Refuse a
-missing required receipt or reviewed manifest, failed verification, a partial
+receipt still fails without fallback (ADR 0012: expected-manifest fallback is retired).
+Refuse a
+missing required receipt, failed verification, a partial
 tree, another revision, a duplicate occupancy home, or an out-of-geometry home.
 An unbound-complete tree with a compatible receipt is relocate, not re-add.
 Neither the catalog's shallow `complete` label nor a self-observed manifest is
@@ -175,26 +175,23 @@ or copy.
 ### 5. Catalog, resolve, manifest
 
 Explicitly refresh the catalog, re-resolve the exact `model_id@revision`,
-run the receipt-backed offline verification for a source-attested home, and
+run the receipt-backed offline verification for a receipted home, and
 refuse another revision, ambiguity, a partial tree, or a durable duplicate:
 
 ```text
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <model_id@revision>
 scripts/model-library.sh home verify <model_id@revision> --json
-scripts/model-release.sh manifest <profile> \
-  --hub-path <hub/models--namespace--name> --revision <exact-commit>
 ```
 
-Use `manifest` only after the applicable independent reuse check passed. It
-builds and full-verifies the complete unreviewed manifest consumed by the ADR
-planner. It records the tree's exact identity; it does not replace the
-source-attested receipt or retroactively prove an unknown acquisition.
+The download receipt and `home verify` full-hash are the live identity
+for the planner's artifact manifest. `scripts/model-release.sh` is retired
+(ADR 0012). Do not assemble expected-seal or schema-1 bundle candidates.
 
 ### 6. Select qualifying runtime access
 
-For ADR qualification of a brand-new unsealed model, confirm
-`library-hot` as `local-verified-readonly` after the exact rank-local
+For ADR qualification of a brand-new model, confirm
+local files on every rank (`library-hot`) as `local-verified-readonly` after the exact rank-local
 verified views exist.
 
 Do not offer live NFS/RDMA (`live-remote-readonly`) as a serving or
@@ -205,16 +202,14 @@ already presents local files on every rank.
 Name the chosen distribution/source and transport. There is no silent fallback
 and no automatic fallback.
 
-An unsealed profile serves with `identity_status=legacy-unsealed` after
-full verification; an unattested `home add` acquisition follows mutable
-`refs/main` at selection time. Both may be served with their honest labels,
-but neither is an exact ADR 0004 qualification attempt on its own. Do not
-add a product-code fix for that gap.
+A live profile serves with `identity_status=legacy-unsealed` after
+full verification. Do not treat mutable `refs/main` as identity. That honest
+label is not an exact ADR 0004 qualification attempt on its own.
 
 ### 7. Build and verify the release plan
 
 After the complete manifest exists and the runtime-access choice is explicit,
-build the unreviewed release and frozen Validation Contract from the agreed
+build the draft Model Serving Release and frozen Validation Contract from the agreed
 criteria and runtime envelope:
 
 ```text
@@ -300,7 +295,7 @@ inventing an ADR run.
 Otherwise compose attempt specs through
 `scripts/model-serving-release-attempt.sh compose`, capture each immediately
 through `scripts/model-serving-release-capture.sh capture-run`, assemble
-compatible runs, and verify the unreviewed candidate. Capture immediately
+compatible runs, and verify the draft candidate. Capture immediately
 after compose. Do not persist a planner path or planner candidate ID.
 
 ### 12. Handoff
@@ -309,11 +304,11 @@ Follow [references/handoff-template.md](references/handoff-template.md).
 List completed evidence, missing criteria, failures/inconclusive results,
 candidate locations, and that no reviewed status or authority was produced.
 Do not run `scripts/model-serving-release-issue.sh`; that maintainer
-workflow is a later, separate trust event. Use
+workflow is a later, separate merge. Use
 `skills/pulsar-model-serving-release-issuance/` after this handoff.
 Compose/capture of compare and bench leaves
 `review_evidence_artifact_ids` empty; that is expected. This skill does
-not produce provenance review leftovers.
+not produce extra review files for provenance.
 
 ### 13. Ownership-safe cleanup
 

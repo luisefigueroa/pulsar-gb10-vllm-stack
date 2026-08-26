@@ -19,16 +19,16 @@ def serving_profiles() -> dict[str, object]:
     return {
         "models": [
             {
-                "id": "deepseek-v4-flash",
-                "status": "tested",
+                "id": "qwen3.8-27b-fp8-2node",
+                "status": "untested",
                 "nodes": 2,
                 "source": "hf",
                 "purpose": "serving",
-                "weights_gib": 167.0,
-                "reviewed_identity": True,
-                "reviewed_model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
-                "reviewed_revision": REVISION,
-                "reviewed_manifest": MANIFEST,
+                "weights_gib": 29.0,
+                "reviewed_identity": False,
+                "reviewed_model_id": None,
+                "reviewed_revision": None,
+                "reviewed_manifest": None,
             },
             {
                 "id": "legacy-serving",
@@ -57,11 +57,11 @@ def healthy_report() -> dict[str, object]:
             "refreshed_at": "2026-08-12T12:00:00.000Z",
         },
         "models": [{
-            "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+            "model_id": "Qwen/Qwen3.8-27B-FP8",
             "revision": REVISION,
-            "profiles": ["deepseek-v4-flash"],
-            "expected_manifest": MANIFEST,
-            "validation": "expected-unverified",
+            "profiles": ["qwen3.8-27b-fp8-2node"],
+            "expected_manifest": None,
+            "validation": "unvalidated",
             "home_ranks": [1],
             "primary": {
                 "mode": "automatic-single-home",
@@ -73,14 +73,14 @@ def healthy_report() -> dict[str, object]:
         "hot_instances": [
             {
                 "rank": 0,
-                "profile": "deepseek-v4-flash",
-                "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "profile": "qwen3.8-27b-fp8-2node",
+                "model_id": "Qwen/Qwen3.8-27B-FP8",
                 "revision": REVISION,
                 "metadata_schema": 3,
                 "metadata_status": "current",
                 "runtime_source": "sealed-hot",
                 "retention": "ephemeral",
-                "identity_status": "match",
+                "identity_status": "legacy-unsealed",
                 "witness_status": "match",
                 "active_reference": False,
                 "repairable": False,
@@ -88,14 +88,14 @@ def healthy_report() -> dict[str, object]:
             },
             {
                 "rank": 1,
-                "profile": "deepseek-v4-flash",
-                "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+                "profile": "qwen3.8-27b-fp8-2node",
+                "model_id": "Qwen/Qwen3.8-27B-FP8",
                 "revision": REVISION,
                 "metadata_schema": 3,
                 "metadata_status": "current",
                 "runtime_source": "durable-home",
                 "retention": "ephemeral",
-                "identity_status": "match",
+                "identity_status": "legacy-unsealed",
                 "witness_status": "match",
                 "active_reference": False,
                 "repairable": False,
@@ -162,7 +162,7 @@ class ModelStorageContracts(unittest.TestCase):
     def test_choices_are_compact_and_profile_first(self) -> None:
         labels = model_storage.model_choice_labels(healthy_report(), width=48)
         self.assertEqual(len(labels), 1)
-        self.assertTrue(labels[0].startswith("deepseek-v4-flash"))
+        self.assertTrue(labels[0].startswith("qwen3.8-27b-fp8-2node"))
         self.assertLessEqual(len(labels[0]), 43)
 
     def test_stale_topology_never_maps_cached_placement_to_current_nodes(self) -> None:
@@ -216,9 +216,9 @@ class ModelStorageContracts(unittest.TestCase):
         prose = normalized(output)
         compact = "".join(output.split())
         self.assertIn(REVISION, compact)
-        self.assertIn(MANIFEST, compact)
+        self.assertIn("no reviewed expected manifest", prose)
         self.assertIn("node 2 (rank 1)", prose)
-        self.assertIn("sealed hot", prose)
+        self.assertIn("working copy on other node", prose)
         self.assertIn("durable home", prose)
         self.assertIn("witness match", prose)
         self.assertIn("do not provide durable-home-loss", prose)
@@ -279,8 +279,8 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("one durable home", prose)
         self.assertIn("only on non-home", prose)
         self.assertIn("still requires the durable home", prose)
-        self.assertIn("Every library scope", prose)
-        self.assertIn("supported (ADR 0006)", prose)
+        self.assertIn("Every live profile", prose)
+        self.assertIn("local files on every rank", prose)
 
     def test_refresh_preview_is_explicit_bounded_and_width_aware(self) -> None:
         output = capture(
@@ -291,7 +291,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("every confirmed rank", prose)
         self.assertIn("atomically updates the cached inventory", prose)
         self.assertIn("preserves explicit exact-revision primary selections", prose)
-        self.assertIn("fails closed", prose)
+        self.assertIn("fails without fallback", prose)
         self.assertIn("does not download, copy, prepare, start", prose)
         self.assertIn("delete model files", prose)
         self.assertTrue(all(len(line) <= 48 for line in output.splitlines()))
@@ -304,7 +304,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertEqual(check["state"], "available")
         self.assertEqual(
             [item["profile"] for item in check["candidates"]],
-            ["deepseek-v4-flash"],
+            ["qwen3.8-27b-fp8-2node"],
         )
         self.assertTrue(check["candidates"][0]["already_prepared"])
         self.assertNotIn("legacy-serving", str(check))
@@ -329,16 +329,14 @@ class ModelStorageContracts(unittest.TestCase):
         unsealed = model_storage.preparation_check(
             report, serving_profiles(), 0
         )
-        self.assertEqual(unsealed["state"], "blocked")
-        self.assertIn("reviewed exact model identity", " ".join(unsealed["blockers"]))
+        self.assertEqual(unsealed["state"], "available")
 
         profiles = serving_profiles()
         profiles["models"][0]["reviewed_revision"] = "9" * 40
         mismatch = model_storage.preparation_check(
             healthy_report(), profiles, 0
         )
-        self.assertEqual(mismatch["state"], "blocked")
-        self.assertIn("differs from the cached model", " ".join(mismatch["blockers"]))
+        self.assertEqual(mismatch["state"], "available")
 
     def test_preparation_preview_exposes_policy_and_claim_boundaries(self) -> None:
         output = capture(
@@ -353,7 +351,7 @@ class ModelStorageContracts(unittest.TestCase):
         self.assertIn("PREPARE FOR TWO-RANK SERVING", output)
         self.assertIn("SSH over confirmed RoCE · 8 streams", prose)
         self.assertIn("fallback none", prose)
-        self.assertIn("167 GiB on each non-home", prose)
+        self.assertIn("29 GiB on each non-home", prose)
         self.assertIn("full-verify the durable home", prose)
         self.assertIn("does not start or qualify a model", prose)
         self.assertIn("durable home remains required", prose)
@@ -361,7 +359,7 @@ class ModelStorageContracts(unittest.TestCase):
 
     def test_serving_check_requires_exact_ready_views(self) -> None:
         ready = model_storage.serving_preparation_check(
-            healthy_report(), serving_profiles(), "deepseek-v4-flash"
+            healthy_report(), serving_profiles(), "qwen3.8-27b-fp8-2node"
         )
         self.assertEqual(ready["state"], "ready")
         self.assertEqual(ready["target_ranks"], [0, 1])
@@ -371,7 +369,7 @@ class ModelStorageContracts(unittest.TestCase):
         report = healthy_report()
         report["hot_instances"] = report["hot_instances"][:1]
         missing = model_storage.serving_preparation_check(
-            report, serving_profiles(), "deepseek-v4-flash"
+            report, serving_profiles(), "qwen3.8-27b-fp8-2node"
         )
         self.assertEqual(missing["state"], "needs-preparation")
 
@@ -409,7 +407,7 @@ class ModelStorageContracts(unittest.TestCase):
 
     def test_serving_preview_preserves_claim_boundary(self) -> None:
         check = model_storage.serving_preparation_check(
-            healthy_report(), serving_profiles(), "deepseek-v4-flash"
+            healthy_report(), serving_profiles(), "qwen3.8-27b-fp8-2node"
         )
         output = capture(model_storage.render_serving_preparation, check, width=48)
         prose = normalized(output)

@@ -22,13 +22,13 @@ persistence and verification of those objects is implemented under
 `models/model-serving-releases/`; it contains the reviewed Qwen3.8 lineage.
 Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
-unreviewed. Advisory catalog/operator projection is implemented for an
+draft. The catalog shows reviewed status for an
 explicitly bound release; `qwen3.8-27b-fp8` binds the first reviewed lineage
-and other current profiles remain unbound. Maintainer-only issuance staging can propose registry objects; a
+and other current profiles remain unbound. Maintainer-only staging can propose registry objects; a
 successful local command is not trusted until repository review and merge.
-Serving permission is status-independent. The corrected schemas remain
+Serving permission is status-independent. The corrected ADR 0004 schemas remain
 version 1 because no ADR 0004 object was issued or persisted before the
-correction; existing legacy schema-1 seals/bundles and raw evidence are
+correction; archived lab expected-identity files and raw evidence are
 untouched.
 
 A Model Serving Release is the immutable combination of exact model identity,
@@ -82,7 +82,7 @@ confirm membership and do not construct topology.
 Not required on the host: vLLM Python install, Ray, host NCCL, jumbo MTU,
 GPUDirect RDMA.
 
-`./pulsar` opens the neutral operator home menu. `./pulsar wizard` (or
+`./pulsar` opens the workflow menu. `./pulsar wizard` (or
 `./wizard.sh`) is the direct serve/switch shortcut. Both use the vendored Gum
 v0.17.0 Linux ARM64 binary by default (shared `scripts/ui.sh`); no package
 installation is required.
@@ -363,14 +363,14 @@ not permission to serve an unmeasured geometry.
 | [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) | Superseded live NFS/RDMA serving notes and leftover teardown (ADR 0005) |
 | [decisions/0005-reject-live-nfs-rdma-serving.md](./decisions/0005-reject-live-nfs-rdma-serving.md) | Reject live-mount as a serving runtime source; keep ssh-roce / NCCL / topology |
 | [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md) | **Canonical architecture** — durable home, rank-local views, validation identity, preparation/hot/pin policy; the model library is the only weight mechanism (ADR 0006) |
-| [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: reviewed exact-content home symlink, non-home hot only, expected seal and serve-time witness |
+| [decisions/0001-model-library-home-view-and-validation-identity.md](./decisions/0001-model-library-home-view-and-validation-identity.md) | Accepted rationale: exact-content home symlink, working copies on non-home ranks only, receipt/occupancy identity and serve-time witness (lab expected-identity files retired by ADR 0012) |
 | [decisions/0002-subsystem-qualification-boundaries.md](./decisions/0002-subsystem-qualification-boundaries.md) | Accepted rationale: catalog, integration, model, and release evidence scopes plus causal invalidation |
 | [decisions/0003-explicit-model-preparation-transport.md](./decisions/0003-explicit-model-preparation-transport.md) | Accepted rationale: explicit reviewed-profile preparation uses topology-bound eight-stream SSH-over-RoCE with no fallback |
-| [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; validation status is advisory; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence and advisory projection implemented and empty/unbound; local evidence-capture candidate persistence implemented and unreviewed; maintainer issuance staging implemented as an untrusted local proposal |
+| [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; the catalog shows reviewed status and start does not use it as permission; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence implemented and empty/unbound; local evidence-capture candidate persistence implemented as draft JSON; maintainer staging writes untrusted local registry files until a PR is merged |
 | [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) | Maintainer-only ADR 0004 evidence-capture candidate persistence; no issuance and no runtime launch |
 | [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md) | Maintainer-only ADR 0004 issuance staging; local success is not repository review or serving authorization |
-| [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Maintainer-only exact-manifest and unreviewed release-candidate workflow; no issuance authority |
-| [models/seals/README.md](../models/seals/README.md) | Reviewed expected-seal schema, lab issuance boundary, and current migration status |
+| [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Pointer: lab expected-identity files are retired (ADR 0012); live identity is ADR 0004 capture and staging |
+| [archive/schema-1-expected-seal/README.md](./archive/schema-1-expected-seal/README.md) | Archived expected-seal and schema-1 bundles; not loaded |
 | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) | Archived exploration / option history only |
 | [BUILD.md](./BUILD.md) | Published PR #41834 image, provenance, and source-build fallback |
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |

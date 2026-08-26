@@ -60,8 +60,8 @@ workflow can stage an untrusted proposal into these namespaces; repository
 review and merge remain the trust event. That workflow is documented in
 [MODEL_SERVING_RELEASE_ISSUANCE.md](../../docs/MODEL_SERVING_RELEASE_ISSUANCE.md)
 and each proposed lineage remains untrusted until repository review and merge.
-Legacy schema-1
-seals and combined bundles remain under `models/seals/` and
-`models/validation-bundles/` and are not reused for ADR 0004 objects.
+Legacy schema-1 seals and combined bundles are archived under
+`docs/archive/schema-1-expected-seal/` and are not loaded (ADR 0012). They are
+not reused for ADR 0004 objects.
 
 See [ADR 0004](../../docs/decisions/0004-model-serving-release-validation.md).

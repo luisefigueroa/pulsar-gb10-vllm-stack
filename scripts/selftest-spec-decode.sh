@@ -14,26 +14,8 @@ assert_eq() {
   fi
 }
 
-# The flagship's validated fast path is automatic.
-load_conf deepseek-v4-flash
-resolve_spec_decode auto
-assert_eq 1 "$SPEC_DECODE_ENABLED" "flagship auto mode"
-assert_eq profile-default "$SPEC_DECODE_SOURCE" "flagship auto source"
-assert_eq --speculative-config "${SPEC_DECODE_ARGS[0]}" "flagship spec flag"
-python3 - "${SPEC_DECODE_ARGS[1]}" <<'PY'
-import json
-import sys
-
-config = json.loads(sys.argv[1])
-assert config == {"method": "dspark", "num_speculative_tokens": 5}, config
-PY
-
-# Rollback wins, but does not mutate the validated profile configuration.
-resolve_spec_decode off
-assert_eq 0 "$SPEC_DECODE_ENABLED" "flagship rollback"
-assert_eq forced-off "$SPEC_DECODE_SOURCE" "flagship rollback source"
-
-# Profiles with optional speculative decode stay off unless explicitly enabled.
+# No live catalog profile enables spec decode by default after ADR 0012.
+# Optional profiles stay off unless explicitly enabled.
 load_conf nemotron-3-super-120b-nvfp4
 resolve_spec_decode auto
 assert_eq 0 "$SPEC_DECODE_ENABLED" "optional auto mode"
@@ -72,8 +54,8 @@ fi
 "$REPO_DIR/scripts/list-models.sh" --legacy-tested --json | python3 -c '
 import json, sys
 models = {m["id"]: m for m in json.load(sys.stdin)["models"]}
-assert models["deepseek-v4-flash"]["spec"] == "recommended"
-assert models["deepseek-v4-flash"]["spec_default_enabled"] is True
+assert "deepseek-v4-flash" not in models
+assert not any(m.get("spec_default_enabled") for m in models.values())
 assert models["nemotron-3-super-120b-nvfp4"]["spec_default_enabled"] is False
 '
 

@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import launch_plan as plan  # noqa: E402
 
-PROFILE = "qwen3-1.7b"
+PROFILE = "qwen3-1.7b-2node"
 TOPOLOGY = "a" * 64
 CONTRACT = "b" * 64
 REVISION = "c" * 40
@@ -49,7 +49,7 @@ def rank(
     }
 
 
-def facts(*, nodes: int = 1, identity: str = "match", extra: dict | None = None) -> dict:
+def facts(*, nodes: int = 1, identity: str = "legacy-unsealed", extra: dict | None = None) -> dict:
     ranks = [
         rank(0, node_id=NODE_A, hostname="spark-a", ssh_host="local", ip="192.0.2.10")
     ]
@@ -73,9 +73,6 @@ def facts(*, nodes: int = 1, identity: str = "match", extra: dict | None = None)
         "container_model_path": CONTAINER_PATH,
         "transport": "ssh-roce" if nodes > 1 else "ssh-control",
     }
-    if identity == "match":
-        storage["model_seal_id"] = SEAL
-        storage["validation_bundle_id"] = BUNDLE
     document = {
         "lifecycle_action": "dry-run",
         "profile": PROFILE,
@@ -119,8 +116,6 @@ class LaunchPlanContracts(unittest.TestCase):
             plan.LABEL_WEIGHT_CONFIG,
             plan.LABEL_MODEL_REVISION,
             plan.LABEL_IDENTITY_STATUS,
-            plan.LABEL_MODEL_SEAL,
-            plan.LABEL_VALIDATION_BUNDLE,
         }
         self.assertTrue(shared <= set(spec1["labels"]))
         self.assertTrue(shared <= set(spec2["labels"]))
@@ -139,7 +134,7 @@ class LaunchPlanContracts(unittest.TestCase):
         self.assertEqual(one["network_mode"], "published-port")
         self.assertEqual(spec["network"]["mode"], "published-port")
         self.assertEqual(spec["health"]["kind"], "docker-health-cmd")
-        self.assertEqual(one["container_name"], "vllm-qwen3-1.7b")
+        self.assertEqual(one["container_name"], "vllm-qwen3-1.7b-2node")
 
     def test_n2_uses_numeric_ranks_host_network_and_completion_liveness(self) -> None:
         two = plan.build_launch_plan(facts(nodes=2))
@@ -151,7 +146,7 @@ class LaunchPlanContracts(unittest.TestCase):
         self.assertEqual(head["network"]["mode"], "host")
         self.assertEqual(worker["devices"], ["/dev/infiniband"])
         self.assertEqual(head["liveness"]["kind"], "completion-probe")
-        self.assertEqual(two["container_name"], "vllm-cluster-qwen3-1.7b")
+        self.assertEqual(two["container_name"], "vllm-cluster-qwen3-1.7b-2node")
 
     def test_plan_is_not_a_permit(self) -> None:
         document = facts()

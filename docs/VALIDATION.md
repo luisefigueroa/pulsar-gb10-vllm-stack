@@ -13,12 +13,12 @@ Status legend: PASS / FAIL / PENDING (not yet run) / N-A.
 [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md) makes
 the model library the only weight-distribution mechanism. Replicated
 per-node caches and the retired live-NFS workflow are removed from the
-control plane; the `--weight-source`/`--weight-mode` axis fails closed; the
+control plane; the `--weight-source`/`--weight-mode` axis fails without fallback; the
 absolute-path catalog profiles (`laguna-s-2.1-nvfp4`, `laguna-s-2.1-2node`,
 `inkling-small-nvfp4`) are removed because a durable home requires an exact
 Hugging Face `model_id@commit`; and a confirmed topology manifest (one-node
-is valid) becomes a serving prerequisite. Every library scope — two-rank
-sealed, one-rank, legacy-unsealed — is supported by decision. The one-rank
+is valid) becomes a serving prerequisite. Every live library scope uses local
+files on every rank and is supported by decision. The one-rank
 physical serving-integration evidence remains PENDING and is recorded in
 ADR 0006 as an accepted risk with follow-up capture. Historical replicated
 and weight-fabric rows below remain valid history; they are superseded as
@@ -32,11 +32,12 @@ runtime/image + supported-hardware-geometry tuple. It also defines the future
 decision statuses `Untested`, `Testing incomplete`,
 `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
 `Superseded`. This ledger still records the current implementation's
-`STATUS=tested*`, schema-1 bundles, and PASS/FAIL gate history. None of those
-records is automatically relabeled `Validated`. Release-descriptor and frozen
+`STATUS=tested*` labels and PASS/FAIL gate history. Archived lab
+expected-identity files are not current implementation (ADR 0012). None of
+those records is automatically relabeled `Validated`. Release-descriptor and frozen
 Validation Contract schema version 1 are implemented as pure Python contracts.
 Their primary artifact is source-neutral, and a separate maintainer planner
-can persist unreviewed release/contract candidates from a complete manifest,
+can persist draft release/contract JSON from a complete manifest,
 explicit runtime/hardware envelope, and frozen criteria.
 Immutable run-record, new evidence-bundle, reviewed-decision, independent
 status-derivation, and supersession schema version 1 are also implemented.
@@ -52,11 +53,11 @@ evidence cannot produce `Validated`.
 Read-only persistence and verification of stored ADR 0004 objects is
 implemented under `models/model-serving-releases/`. Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
-unreviewed. Closed compare/bench measurement documents and
+draft. Closed compare/bench measurement documents and
 `scripts/model-serving-release-attempt.sh` can compose attempt-only specs
 for strict same-boot and absolute throughput/latency. Those control-plane
-documents are not a ledger pass and do not issue status. Advisory
-catalog/operator projection is implemented for profiles
+documents are not a ledger pass and do not issue status. The catalog shows
+reviewed status for profiles
 explicitly bound by `MODEL_SERVING_RELEASE_ID`; no binding and no reviewed
 decision are neutral, not inferred as `Untested`. The
 `qwen3.8-27b-fp8` profile binds the first reviewed ADR 0004 lineage and other
@@ -64,14 +65,14 @@ current profiles remain unbound. The supervised `pulsar-model-onboarding`
 skill is implemented as control-plane orchestration only; it does not issue
 status or prove physical behavior. Deterministic skill and journal tests make
 no physical DGX claim and create no release decision. For an absent brand-new
-unsealed Hugging Face repository, the skill may compose the source-attested
-read-only plan and separately confirmed exact-commit acquisition. Reuse of that
+Hugging Face repository, the skill may compose the read-only
+`home add --revision` plan and separately confirmed exact-commit acquisition. Reuse of that
 home requires receipt-backed offline full verification against the receipt
 while occupancy names the exact live directory. Occupancy may move with
 `home relocate` after that live rehash (ADR 0011). Unknown trees without a
-receipt still require full verification against a reviewed
-expected manifest independent of the observed tree; catalog state and a
-self-observed manifest alone are insufficient. The bounded Nemotron Nano Gate
+receipt fail without fallback (ADR 0012: there is no lab expected-identity
+fallback); catalog state and a
+self-observed file list alone are insufficient. The bounded Nemotron Nano Gate
 14 physically passes the one-node rank-0 catalog/artifact lifecycle. Remote
 target execution, asymmetric credentials, serving integration, and model
 qualification remain pending.
@@ -124,7 +125,7 @@ Stability, accuracy, serving integration, and physical geometry have no ADR
 first-pass contract, and relative performance is N/A because no comparable
 predecessor was supplied. The profile keeps legacy `STATUS=untested`; the
 decision does not authorize serving or promote experimental one-rank
-`library-hot`.
+local-files-on-every-rank serving.
 
 The source-neutral release-planning tests cover Hugging Face and
 content-addressed primary identity, complete-manifest binding, image and
@@ -154,12 +155,12 @@ their current scope and interpretation.
 
 | Policy | Status | Evidence / limitation |
 |---|---|---|
-| Model Serving Release and legacy profile status inform operators but do not authorize serving | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-status-gate.sh`, the model catalog scope checks, `scripts/selftest-wizard-switch.sh`, `scripts/selftest-wizard-model-library.sh`, and model-library identity tests prove that all status labels remain available, visible, and launchable with respect to status; a profile labeled `Tested—criteria not met` is exercised through the guided library serving path. Removed `--force` and `--allow-unvalidated` flags fail closed with named replacements (ADR 0008); they never authorized serving. Exact identity mismatches and concrete recipe, runtime, topology, capacity, security, ownership, and lifecycle failures still fail closed in their owning paths. These deterministic tests do not launch a model, prove physical DGX behavior, change any release status, or add model-qualification evidence. |
-| Source-neutral unreviewed release planning | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/testlib/test_model_serving_release.py` and `scripts/testlib/test_model_serving_release_plan.py` prove deterministic complete-manifest identity, profile/runtime/geometry cross-checks, unreviewed output, and trusted-directory refusal. The planner does not acquire or inspect source bytes, capture results, issue a decision, or prove physical behavior. |
-| Source-attested unsealed home acquisition | **CATALOG/ARTIFACT PASS — BOUNDED PHYSICAL GATE** | Deterministic contracts cover mutable-selector resolution, complete public Git/LFS inventory, target-local eligibility, privacy-safe planning, private staging, full set/digest verification, all-rank race refusal, compatible immutable receipts, atomic no-replace publication, exact live-directory attachment authority, writer-temp handling, offline `home verify`, and exact prepare binding. The Nemotron Nano Gate 14 artifact physically passed the one-node rank-0 lifecycle across three confirmed ranks: two 19,362,748,480-byte Hub acquisitions, full rehash, attachment absence refusal/restoration, prepare/reuse without download, active-view removal blocker, purge, guarded detach/removal, receipt preservation, reacquisition, and final one-home/no-hot state. Remote target execution, asymmetric credentials, and actual external new-inode restore remain physically pending. No serving integration, model qualification, status, or promotion was produced. |
-| Supervised `pulsar-model-onboarding` skill | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-model-onboarding-skill.sh` checks that the documented skill procedure requires the draft-profile PR stop/resume boundary, composes a read-only source-attested plan and separately confirmed exact-commit acquisition bound to the reviewed rank, forbids direct durable-cache acquisition, distinguishes receipt-backed reuse from reviewed-manifest reuse of older content, requires exact qualifying paths, explicit no-fallback distribution, separate confirmations, contract-driven sequential measurements, same-boot reobservation, non-authority/status behavior, and ownership-safe cleanup. `scripts/testlib/test_onboarding_journal.py` exercises acquisition identity binding, journal integrity, privacy contracts, and separation from default release-plan output. These deterministic tests make no physical DGX claim and create no release decision. |
-| Supervised `pulsar-model-serving-release-issuance` skill | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-model-serving-release-issuance-skill.sh` checks that the documented skill procedure re-verifies an unreviewed capture candidate, forbids mutating it, forbids recapturing a maintainer essay to populate leftover `review_evidence_artifact_ids`, requires explicit privacy and provenance answers, runs `issue.sh plan` before `stage`, treats `expected_status` as an assertion that must match the derived status, keeps `issue.sh` from editing a profile, allows `MODEL_SERVING_RELEASE_ID` only as a separately confirmed same-publication edit, opens a PR without merging, verifies the ADR 0004 registry after merge rather than schema-1 `validation-bundle verify`, and keeps no orchestration journal. These deterministic tests make no physical DGX claim and create no release decision. Local `stage` is not the trust event. |
-| ADR 0004 leftover review-evidence citation | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | Empty `review_evidence_artifact_ids` is the measurement-only candidate and a legal decision citation when every provenance/security component is `pending`. A `pass` or `fail` still requires cited leftover `release-promotion` artifacts. Recapturing a dummy review document is not issuance. Issued Qwen3.8 objects are unchanged. `scripts/testlib/test_model_validation_evidence.py` and `scripts/testlib/test_model_serving_release_issue.py` prove the builder and `issue.sh plan` contracts. These tests make no physical DGX claim. |
+| Model Serving Release and legacy profile status inform operators but do not authorize serving | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-status-gate.sh`, the model catalog scope checks, `scripts/selftest-wizard-switch.sh`, `scripts/selftest-wizard-model-library.sh`, and model-library identity tests prove that all status labels remain available, visible, and launchable with respect to status; a profile labeled `Tested—criteria not met` is exercised through the library serving path. Removed `--force` and `--allow-unvalidated` flags fail without fallback with named replacements (ADR 0008); they never authorized serving. Exact identity mismatches and concrete recipe, runtime, topology, capacity, security, ownership, and lifecycle failures still fail without fallback in their owning paths. These deterministic tests do not launch a model, prove physical DGX behavior, change any release status, or add model-qualification evidence. |
+| Source-neutral draft release planning | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/testlib/test_model_serving_release.py` and `scripts/testlib/test_model_serving_release_plan.py` prove deterministic complete-manifest identity, profile/runtime/geometry cross-checks, draft output, and trusted-directory refusal. The planner does not acquire or inspect source bytes, capture results, write a decision, or prove physical behavior. |
+| Hugging Face `home add --revision` | **CATALOG/ARTIFACT PASS — BOUNDED PHYSICAL GATE** | Deterministic contracts cover mutable-selector resolution, complete public Git/LFS inventory, target-local eligibility, privacy-safe planning, private staging, full set/digest verification, all-rank race refusal, compatible immutable receipts, atomic no-replace publication, exact live-directory attachment authority, writer-temp handling, offline `home verify`, and exact prepare binding. The Nemotron Nano Gate 14 artifact physically passed the one-node rank-0 lifecycle across three confirmed ranks: two 19,362,748,480-byte Hub acquisitions, full rehash, attachment absence refusal/restoration, prepare/reuse without download, active-view removal blocker, purge, guarded detach/removal, receipt preservation, reacquisition, and final one-home/no-hot state. Remote target execution, asymmetric credentials, and actual external new-inode restore remain physically pending. No serving integration, model qualification, status, or promotion was produced. |
+| Supervised `pulsar-model-onboarding` skill | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-model-onboarding-skill.sh` checks that the documented skill procedure requires the draft-profile PR stop/resume boundary, composes a read-only `home add --revision` plan and separately confirmed exact-commit acquisition bound to the selected rank, forbids direct durable-cache acquisition, distinguishes receipt-backed reuse from unknown trees without a receipt, requires exact qualifying paths, explicit no-fallback distribution, separate confirmations, contract-driven sequential measurements, same-boot reobservation, non-authority/status behavior, and ownership-safe cleanup. `scripts/testlib/test_onboarding_journal.py` exercises acquisition identity binding, journal integrity, privacy contracts, and separation from default release-plan output. These deterministic tests make no physical DGX claim and create no release decision. |
+| Supervised `pulsar-model-serving-release-issuance` skill | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | `scripts/selftest-model-serving-release-issuance-skill.sh` checks that the documented skill procedure re-verifies a draft capture candidate, forbids mutating it, forbids recapturing a maintainer essay to populate extra `review_evidence_artifact_ids`, requires explicit privacy and provenance answers, runs `issue.sh plan` before `stage`, treats `expected_status` as an assertion that must match the derived status, keeps `issue.sh` from editing a profile, allows `MODEL_SERVING_RELEASE_ID` only as a separately confirmed same-publication edit, opens a PR without merging, verifies the ADR 0004 registry after merge rather than schema-1 `validation-bundle verify`, and keeps no orchestration journal. These deterministic tests make no physical DGX claim and create no release decision. Local `stage` is not what makes the objects trusted. |
+| ADR 0004 extra review-file citation | **PASS — IMPLEMENTED CONTROL PLANE ONLY** | Empty `review_evidence_artifact_ids` is the measurement-only candidate and a legal decision citation when every provenance/security component is `pending`. A `pass` or `fail` still requires cited extra `release-promotion` review files. Recapturing a dummy review document is not staging. Issued Qwen3.8 objects are unchanged. `scripts/testlib/test_model_validation_evidence.py` and `scripts/testlib/test_model_serving_release_issue.py` prove the builder and `issue.sh plan` contracts. These tests make no physical DGX claim. |
 
 ## Current ship set (read this first)
 
@@ -172,13 +173,18 @@ This is the evidence-backed recommendation set, not a serving allowlist. Other
 catalog serving profiles remain selectable with their actual status and
 caveats when their concrete operational checks pass.
 
+`deepseek-v4-flash` and `qwen3-1.7b` are **not** live catalog profiles
+([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+Their measurements remain history below.
+
 | Role | What to run | Image | Notes |
 |---|---|---|---|
-| **Flagship (2-node)** | `cluster/start-cluster.sh deepseek-v4-flash` | published PR-41834 digest in model conf | DeepSeek-V4-Flash-**0731**; DSpark default-on at checkpoint-fixed k=5; canonical **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01; the 10 GB/577k result remains historical evidence. |
-| **Primary single-node** | `./serve.sh nemotron-3-nano-30b-nvfp4 -d` | mainline | Fastest tok/s on box. (The prior primary `laguna-s-2.1-nvfp4` profile was removed by ADR 0006 — absolute-path catalog; its measurements remain history below.) |
-| Large single-node | `./serve.sh nemotron-3-super-120b-nvfp4 -d` | mainline | MTP opt-in via `--spec-decode` |
-| Reasoning single-node | `./serve.sh qwen3.6-27b-fp8 -d` | mainline | **Never** ngram spec; not 2-node |
-| Diagnostic canary | `./serve.sh qwen3-1.7b -d` | `v0.26.0` digest pinned in model conf | Build/plumbing probe; first lab-sealed identity; hidden from serving wizard |
+| **Primary single-node** | `./pulsar start nemotron-3-nano-30b-nvfp4` | mainline | Fastest tok/s on box. (The prior primary `laguna-s-2.1-nvfp4` profile was removed by ADR 0006 — absolute-path catalog; its measurements remain history below.) |
+| Large single-node | `./pulsar start nemotron-3-super-120b-nvfp4` | mainline | MTP opt-in via `--spec-decode` |
+| Reasoning single-node | `./pulsar start qwen3.6-27b-fp8` | mainline | **Never** ngram spec; not 2-node |
+| ADR 0004 one-node (advisory `Testing incomplete`) | `./pulsar start qwen3.8-27b-fp8` | digest-pinned official image in conf | Not recommended; context unevaluated |
+| Tiny two-node test | `./pulsar start qwen3-1.7b-2node` | `v0.26.0` digest in conf | Hidden from serving wizard |
+| **HISTORICAL 2-node DeepSeek** | profile removed | published PR-41834 digest | DeepSeek-V4-Flash-**0731** measurements: DSpark k=5; **20 GB/rank KV → 652,465 tok**, `max-num-seqs 5`, batch 16384. Earned by 447K needle + 150-min c=5 soak on 2026-08-01. Do not `./pulsar start deepseek-v4-flash`. |
 
 **Not shipped:** stock `v0.26.0` for DeepSeek-V4 multi-node (livelock); community sparkrun binary (removed from tree); Ray multi-node; ngram on GDN hybrids.
 
@@ -187,11 +193,11 @@ caveats when their concrete operational checks pass.
 | Path | Status | Evidence / rule |
 |---|---|---|
 | Replicated local HF caches | **RETIRED — REMOVED BY ADR 0006 (2026-08-19)** | Historical model/profile rows below remain valid evidence; the model library is now the only mechanism ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)) |
-| Single authoritative copy over NFSv4.2/RDMA | **RETIRED — NOT PROMOTED** | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) rejects live NFS/RDMA under vLLM as a serving runtime source. Historical artifacts remain under `results/weight-fabric/` and are superseded, not promotion evidence. Launch fails closed. |
-| Federated library to sealed local hot via 8-stream SSH-over-RoCE | **THE ONLY MECHANISM (ADR 0006); one-rank physical evidence pending** | ADR 0003 fixes topology-bound eight-stream SSH-over-RoCE with no fallback for reviewed multi-rank preparation. Transfer, integrity, interruption/retry, SSH identity, admission, one-home lifecycle, and prior serving integration already passed. The 2026-08-16 closure then removed the home-rank copy fallback and physically passed exact-symlink preparation, 30-minute c=5 serving with 587 completions and zero errors, restart, forced replacement failure, persisted recovery in a new wizard process, identity re-verification, owned cleanup, and one-home closeout. The soak retained a 1.14 GiB memory-shrink warning. Every library scope is supported by ADR 0006; one-rank physical serving-integration evidence remains an accepted risk. The failed DeepSeek strict same-boot result still blocks `Validated` for that Model Serving Release; no legacy status changed. See the [GA closure artifact](../results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json) and [evidence index](../results/model-library/README.md). |
+| Single authoritative copy over NFSv4.2/RDMA | **RETIRED — NOT PROMOTED** | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md) rejects live NFS/RDMA under vLLM as a serving runtime source. Historical artifacts remain under `results/weight-fabric/` and are superseded, not promotion evidence. Launch fails without fallback. |
+| Federated library to working copies via 8-stream SSH-over-RoCE | **THE ONLY MECHANISM (ADR 0006); one-rank physical evidence pending** | ADR 0003 fixes topology-bound eight-stream SSH-over-RoCE with no fallback for reviewed multi-rank preparation. Transfer, integrity, interruption/retry, SSH identity, admission, one-home lifecycle, and prior serving integration already passed. The 2026-08-16 closure then removed the home-rank copy fallback and physically passed exact-symlink preparation, 30-minute c=5 serving with 587 completions and zero errors, restart, forced replacement failure, persisted recovery in a new wizard process, identity re-verification, owned cleanup, and one-home closeout. The soak retained a 1.14 GiB memory-shrink warning. Every library scope is supported by ADR 0006; one-rank physical serving-integration evidence remains an accepted risk. The failed DeepSeek strict same-boot result still blocks `Validated` for that Model Serving Release; no legacy status changed. See the [GA closure artifact](../results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json) and [evidence index](../results/model-library/README.md). |
 | Model-library health, interactive browsing/refresh/preparation, and serving-wizard delegation | **PASS — LIBRARY-ONLY OPERATOR PATH; ONE-RANK PHYSICAL EVIDENCE PENDING** | Health schema, Doctor rows, browsing, explicit refresh/preparation, and wizard delegation pass deterministic contracts. Public `hot legacy` repair is removed (SIM-13); leftover schema-1/2 still cannot launch. The wizard has no storage-mode choice (ADR 0006); it rechecks exact ready views and requires a separate final launch confirmation. The physical closure proved failed-launch recovery in addition to the earlier successful-launch gate. One-rank catalog placement stays on the durable-home rank and still needs its own physical serving-integration repeat. Refresh remains byte-free and nonautomatic; pinning does not claim home-loss resilience. No Model Serving Release status changed. |
-| Reviewed one-home acquisition | **CATALOG/ARTIFACT PASS — NOT PROMOTED** | `home add` accepts only a sealed profile, inspects every confirmed rank, lets a one-node profile select any confirmed rank while keeping multi-node profiles in their exact geometry, and chooses the most-free-space eligible candidate or an exact in-geometry override. Deterministic contracts cover identity, geometry, eligibility, races, tamper, mismatch, cleanup, confirmation, and JSON separation. The three-node physical Qwen gate then passed guarded last-home removal, interrupted target-side download cleanup, explicit and automatic rank-2 placement, full SHA-256 verification of the reviewed 4,079,450,110-byte manifest, atomic publication, explicit catalog refresh, and final healthy one-home/no-hot state. The target used Pulsar's managed HF CLI venv. This proves catalog/artifact acquisition only: no runtime view was prepared, no model was launched or qualified, and no storage path or default was promoted. See [the sanitized gate](../results/model-library/qwen3-1.7b-home-acquisition-gate-20260813.json). |
-| Source-attested unsealed one-home acquisition | **CONTROL PLANE PASS — PHYSICAL HUB/DGX GATE PENDING** | The public plan and execution contracts above are implemented for an absent brand-new unsealed Hugging Face repository. No real model acquisition, physical receipt-backed restart/prepare, serving integration, qualification, seal, status, decision, or promotion evidence has been collected. |
+| Reviewed one-home acquisition | **HISTORICAL CATALOG/ARTIFACT PASS — NOT PROMOTED** | The 2026-08-13 Qwen gate used lab expected-identity `home add` (retired by ADR 0012). It inspected every confirmed rank, let a one-node profile select any confirmed rank while keeping multi-node profiles in their exact geometry, and chose the most-free-space eligible candidate or an exact in-geometry override. The three-node physical Qwen gate then passed guarded last-home removal, interrupted target-side download cleanup, explicit and automatic rank-2 placement, full SHA-256 verification of the reviewed 4,079,450,110-byte file list, atomic publication, explicit catalog refresh, and final healthy one-home/no-hot state. The target used Pulsar's managed HF CLI venv. This proves catalog/artifact acquisition only: no runtime view was prepared, no model was launched or qualified, and no storage path or default was promoted. See [the sanitized gate](../results/model-library/qwen3-1.7b-home-acquisition-gate-20260813.json). Live acquisition is `home add --revision`. |
+| Hugging Face `home add --revision` | **CONTROL PLANE PASS — PHYSICAL HUB/DGX GATE PENDING** | The public plan and execution contracts above are implemented for an absent brand-new Hugging Face repository. No real model acquisition, physical receipt-backed restart/prepare, serving integration, qualification, status, decision, or promotion evidence has been collected. |
 
 The catalog/artifact and serving-integration results above are accepted within
 their recorded contracts. They do not change any model's legacy `tested` claim or assign a Model
@@ -200,9 +206,12 @@ strict same-boot criterion failed and required testing remains incomplete. That
 result did not prevent the bounded distribution subsystem from completing its
 separate GA closure task on 2026-08-16.
 
-### Issued model identities
+### Historical lab expected-identity (not live)
 
-The one-node diagnostic `qwen3-1.7b` profile now binds:
+These rows are **HISTORICAL**. Both profiles were removed from the live catalog
+by ADR 0012. Digests and numbers are unchanged.
+
+The one-node diagnostic `qwen3-1.7b` profile historically bound:
 
 - model commit `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`;
 - complete manifest
@@ -219,10 +228,10 @@ Fresh run A/B outputs were 30/30 identical, the historical vLLM baseline was
 accepted FP-equivalent envelope. The trusted verifier returned `match`, and a
 post-issuance `library-hot` preparation/launch proved the same IDs physically.
 See the [model-library evidence index](../results/model-library/README.md).
-This is an identity issuance for a hidden diagnostic profile, not a
-`library-hot` promotion or a seal for the two-node Qwen profile. The sealed
-replicated control plane now enforces this issued identity; live-mount serving
-is retired (ADR 0005) and legacy-unsealed replicated profiles do not.
+This is historical identity publication for a hidden diagnostic profile, not a
+library-path promotion or a live expected-identity file for the two-node Qwen
+profile. That enforcement path was retired with the lab expected-identity
+product (ADR 0012); live-mount serving is retired (ADR 0005).
 
 The replicated enforcement gate then passed physically on the exact issued
 Qwen snapshot: the first readiness check full-hashed all 4,079,450,110 bytes,
@@ -236,7 +245,7 @@ See
 [`qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json`](../results/model-library/qwen3-1.7b-replicated-seal-enforcement-gate-20260811.json).
 No profile status or storage policy changed.
 
-The flagship `deepseek-v4-flash` profile now additionally binds:
+The two-node `deepseek-v4-flash` profile historically additionally bound:
 
 - model commit `7872f01b1d1fe23eabc4c98b48bffcef5a386062`;
 - complete manifest
@@ -350,17 +359,17 @@ guidance is:
 
 | Path | Default | Override |
 |---|---|---|
-| DeepSeek-V4-Flash **DSpark k=5** (PR-41834) | **on** | `--no-spec-decode` rolls back to base decode |
-| Nemotron-Super **MTP k=1** | base; **opt-in win** (+47% c=1) | `./serve.sh nemotron-3-super-120b-nvfp4 --spec-decode` |
-| Laguna **DFlash k=15** | **off** (marginal +13%) | only with a fresh A/B |
+| DeepSeek-V4-Flash **DSpark k=5** (PR-41834) | **HISTORICAL on** (profile removed) | `--no-spec-decode` rolled back to base decode |
+| Nemotron-Super **MTP k=1** | base; **opt-in win** (+47% c=1) | `./pulsar start nemotron-3-super-120b-nvfp4 --spec-decode` |
+| Laguna **DFlash k=15** | **off** (marginal +13%; profile removed) | only with a fresh A/B |
 | **ngram** on GDN hybrids | **never** | removed from conf — corrupts output |
-| Generic DSV4 **MTP** | superseded by DSpark on the flagship image | — |
+| Generic DSV4 **MTP** | superseded by DSpark on the historical DeepSeek image | — |
 
 Configs ship `SPEC_DECODE_ARGS` only where validated. `RECOMMENDED_SPEC=1`
 makes that validated path the default; `--no-spec-decode` is the explicit
 rollback. Optional profiles remain off unless `--spec-decode` is supplied.
 
-For the flagship, k=5 is a checkpoint invariant: it must equal
+For historical DeepSeek, k=5 is a checkpoint invariant: it must equal
 `dspark_block_size=5`. It is not a tuning knob; larger blocks draft unreachable
 positions and reduce acceptance
 ([vLLM PR #41834](https://github.com/vllm-project/vllm/pull/41834)).
@@ -451,7 +460,7 @@ up and healthy for **27+ hours total** across idle and load
 
 **Needle @447,237 tokens at max-model-len 500000: 3/3 PASS (2026-07-30).**
 
-**PROMOTED 2026-07-30**: `models/deepseek-v4-flash.conf` now runs the
+**HISTORICAL (promoted 2026-07-30; profile later removed by ADR 0012):** `models/deepseek-v4-flash.conf` then ran the
 upstream-lineage image (PR-41834). DSpark is the validated flagship default
 (see corrected A/B + soaks). Community-binary experiments are historical only
 and are not an in-tree launch path. Note historical lines above
@@ -609,9 +618,10 @@ Liveness confirmed with a real greedy completion (coherent) after 2.5 h
 of continuous load, not `/health`. Raw: results/soak-dsv4-0731-150min.json
 (300 samples) + results/soak-dsv4-0731-node2-samples.log (152 samples).
 
-**Consequence: 0731 is the flagship.** `models/deepseek-v4-flash.conf` now
-serves DeepSeek-V4-Flash-0731 with the integrated drafter (DSpark k=5
-default-on with `--no-spec-decode` rollback). The fully validated 04-22
+**Consequence: 0731 was the measured DeepSeek checkpoint.** The removed
+`models/deepseek-v4-flash.conf` then served DeepSeek-V4-Flash-0731 with the
+integrated drafter (DSpark k=5 default-on with `--no-spec-decode` rollback).
+The fully validated 04-22
 checkpoint was superseded and its serving profile has since been retired;
 the separate
 `deepseek-v4-flash-dspark.conf` is retired — the integrated drafter

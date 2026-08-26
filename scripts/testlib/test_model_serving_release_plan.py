@@ -30,7 +30,7 @@ from scripts import (  # noqa: E402
 from scripts.testlib import model_serving_release_fixture as fixture  # noqa: E402
 
 
-PROFILE = "qwen3-1.7b"
+PROFILE = "qwen3.8-27b-fp8"
 PROFILE_IMAGE = (
     "vllm/vllm-openai@sha256:"
     "ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52"
@@ -68,7 +68,7 @@ def publish_plan_candidate(
     return candidate, release, contract
 
 
-def manifest(*, model_id: str = "Qwen/Qwen3-1.7B") -> dict[str, object]:
+def manifest(*, model_id: str = "Qwen/Qwen3.8-27B-FP8") -> dict[str, object]:
     value: dict[str, object] = {
         "schema_version": model_library.SNAPSHOT_MANIFEST_SCHEMA_VERSION,
         "kind": model_library.SNAPSHOT_MANIFEST_KIND,
@@ -270,10 +270,10 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             self.assertEqual(list(root.iterdir()), [])
 
     def test_public_cli_builds_source_neutral_two_node_primary(self) -> None:
-        catalog_profile = "deepseek-v4-flash"
+        catalog_profile = "qwen3.8-27b-fp8-2node"
         catalog_image = (
-            "ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack@sha256:"
-            "260c854707e8e6db5001838998e390011b648f127bd42aa8705ad7a808fbe9e2"
+            "vllm/vllm-openai@sha256:"
+            "1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c"
         )
         with tempfile.TemporaryDirectory() as raw:
             root = pathlib.Path(raw)
@@ -281,7 +281,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             envelope_path = root / "runtime-envelope.json"
             criteria_path = root / "criteria.json"
             candidate_dir = root / "candidate"
-            catalog_manifest = manifest(model_id="deepseek-ai/DeepSeek-V4-Flash-0731")
+            catalog_manifest = manifest(model_id="Qwen/Qwen3.8-27B-FP8")
             write_json(manifest_path, catalog_manifest)
             write_json(
                 envelope_path,
@@ -307,7 +307,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             primary = release["model_artifact_set"]["artifacts"][0]
             self.assertEqual(primary["kind"], "huggingface-snapshot")
             self.assertEqual(
-                primary["model_id"], "deepseek-ai/DeepSeek-V4-Flash-0731"
+                primary["model_id"], "Qwen/Qwen3.8-27B-FP8"
             )
             self.assertNotIn("Official Models", release_raw)
             self.assertNotIn("/mnt/", release_raw)

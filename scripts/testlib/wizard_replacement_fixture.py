@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-PROFILE = "deepseek-v4-flash"
+PROFILE = "qwen3.8-27b-fp8-2node"
 REVISION = "7" * 40
 SEAL_ID = "a" * 64
 BUNDLE_ID = "b" * 64
@@ -54,9 +54,9 @@ def seed_running(args: argparse.Namespace) -> int:
         "launch_contract_id": args.contract_id,
         "spec_decode": "on",
         "model_revision": REVISION,
-        "model_seal_id": SEAL_ID,
-        "validation_bundle_id": BUNDLE_ID,
-        "model_identity_status": "match",
+        "model_seal_id": None,
+        "validation_bundle_id": None,
+        "model_identity_status": "legacy-unsealed",
         "weight_owner_node_id": home_node_id,
         "weight_configuration_id": CONTENT_ID,
     })
@@ -72,9 +72,7 @@ def seed_running(args: argparse.Namespace) -> int:
             "io.pulsar.gb10.weight-owner": home_node_id,
             "io.pulsar.gb10.weight-config": CONTENT_ID,
             "io.pulsar.gb10.model-revision": REVISION,
-            "io.pulsar.gb10.model-seal": SEAL_ID,
-            "io.pulsar.gb10.validation-bundle": BUNDLE_ID,
-            "io.pulsar.gb10.model-identity-status": "match",
+            "io.pulsar.gb10.model-identity-status": "legacy-unsealed",
             "io.pulsar.gb10.launch-contract": args.contract_id,
             "io.pulsar.gb10.spec-decode": "on",
         }

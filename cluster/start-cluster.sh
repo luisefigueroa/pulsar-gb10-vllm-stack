@@ -68,7 +68,7 @@ for ((rank = 1; rank < NODES; rank++)); do
     --expected-validation-json "$LIBRARY_HOT_VALIDATION_JSON" \
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}" \
     --serve-time-witness)
-  echo "[cluster] serve witness + fail-closed identity verify: rank $rank"
+  echo "[cluster] serve witness + identity verify (no fallback): rank $rank"
   ssh_node "$rank" "$library_verify_command" \
     <"$REPO_DIR/scripts/model_library.py" >/dev/null \
     || die "library: rank $rank failed exact identity verification"
@@ -164,12 +164,7 @@ record_startup_metric() {
     --identity-status "$LIBRARY_HOT_IDENTITY_STATUS"
     --runtime-model-path "$LIBRARY_HOT_CONTAINER_MODEL_PATH"
   )
-  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-    metric_args+=(
-      --model-seal-id "$LIBRARY_HOT_MODEL_SEAL_ID"
-      --validation-bundle-id "$LIBRARY_HOT_VALIDATION_BUNDLE_ID"
-    )
-  fi
+
   [ -n "$WEIGHT_OWNER_ID" ] \
     && metric_args+=(--owner-node-id "$WEIGHT_OWNER_ID")
   [ -n "${PULSAR_STARTUP_TAG:-}" ] \

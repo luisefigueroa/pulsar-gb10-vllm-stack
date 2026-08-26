@@ -678,7 +678,7 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(
                     evidence.ModelValidationEvidenceError,
-                    "leftover review evidence",
+                    "extra review files",
                 ):
                     fixture.build_decision(
                         release=self.release,
@@ -1322,17 +1322,18 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 predecessor_registry=[cycled],
             )
 
-    def test_legacy_schema_one_artifacts_remain_unchanged(self) -> None:
-        for path in sorted((REPO_ROOT / "models" / "validation-bundles").glob("*.json")):
+    def test_legacy_schema_one_artifacts_are_archived_not_loaded(self) -> None:
+        self.assertFalse((REPO_ROOT / "models" / "seals").exists())
+        self.assertFalse((REPO_ROOT / "models" / "validation-bundles").exists())
+        archive = REPO_ROOT / "docs" / "archive" / "schema-1-expected-seal"
+        for path in sorted((archive / "validation-bundles").glob("*.json")):
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document["schema_version"], 1)
-            self.assertEqual(document["kind"], model_identity.VALIDATION_BUNDLE_KIND)
-            model_identity.validate_validation_bundle(document)
-        for path in sorted((REPO_ROOT / "models" / "seals").glob("*.json")):
+            self.assertEqual(document["kind"], "pulsar-validation-bundle")
+        for path in sorted((archive / "seals").glob("*.json")):
             document = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(document["schema_version"], 1)
-            self.assertEqual(document["kind"], model_identity.EXPECTED_MODEL_SEAL_KIND)
-            model_identity.validate_expected_model_seal(document)
+            self.assertEqual(document["kind"], "pulsar-expected-model-seal")
 
 
 if __name__ == "__main__":

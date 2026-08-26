@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Short-lived, fail-closed serving replacement transaction state.
+"""Short-lived serving replacement transaction state (fails without fallback).
 
 The record is a recovery aid, not service history. It contains no secrets,
 container argv, hostnames, IP addresses, or filesystem paths.
@@ -183,10 +183,11 @@ def library_contract(
     if catalog.get("topology_compatible") is not True:
         fail("model-library catalog is stale for the confirmed topology")
     revision = require_revision(service.get("model_revision"), "model revision")
-    if service.get("model_identity_status") != "match":
-        fail("library-backed service identity is not an exact match")
-    seal = require_digest(service.get("model_seal_id"), "model seal")
-    bundle = require_digest(service.get("validation_bundle_id"), "validation bundle")
+    identity = service.get("model_identity_status")
+    if identity not in {"legacy-unsealed", "unvalidated"}:
+        fail("library-backed service identity is not a live unsealed status")
+    if service.get("model_seal_id") is not None or service.get("validation_bundle_id") is not None:
+        fail("library-backed service cannot claim retired seal provenance")
     content = require_content_id(
         service.get("weight_configuration_id"), "weight configuration"
     )
@@ -212,7 +213,8 @@ def library_contract(
             fail("prepared runtime-view metadata is not current schema 3")
         if view.get("runtime_source") not in {"durable-home", "sealed-hot"}:
             fail("prepared runtime source is unknown")
-        if view.get("identity_status") != "match" or view.get("witness_status") != "match":
+        if view.get("identity_status") not in {"legacy-unsealed", "unvalidated"} \
+                or view.get("witness_status") != "match":
             fail("prepared runtime-view identity or witness does not match")
         if view.get("active_reference") is not True:
             fail("prepared runtime view is not bound to the running service")
@@ -230,13 +232,12 @@ def library_contract(
     ]
     if len(models) != 1:
         fail("catalog identity for the running library service is ambiguous")
-    manifest = require_digest(models[0].get("expected_manifest"), "expected manifest")
     return {
         "source": "library-hot",
         "revision": revision,
-        "model_seal_id": seal,
-        "validation_bundle_id": bundle,
-        "manifest_id": manifest,
+        "model_seal_id": None,
+        "validation_bundle_id": None,
+        "manifest_id": None,
         "content_id": content,
         "home_node_id": owner,
         "original_retention": next(iter(retentions)),
@@ -317,7 +318,8 @@ def validate_transaction(value: Any) -> dict[str, Any]:
         ("validation_bundle_id", "saved validation bundle"),
         ("manifest_id", "saved manifest"),
     ):
-        require_digest(weight.get(key), label)
+        if weight.get(key) is not None:
+            fail(f"{label} is retired (ADR 0012)")
     require_content_id(weight.get("content_id"), "saved content identity")
     if not isinstance(weight.get("home_node_id"), str) or not weight["home_node_id"]:
         fail("saved durable-home identity is invalid")
@@ -508,7 +510,8 @@ def verify_library_views_for_rollback(
             fail("saved library runtime-view metadata is no longer current")
         if item.get("runtime_source") != wanted[item["rank"]]:
             fail("saved library runtime source changed")
-        if item.get("identity_status") != "match" or item.get("witness_status") != "match":
+        if item.get("identity_status") not in {"legacy-unsealed", "unvalidated"} \
+                or item.get("witness_status") != "match":
             fail("saved library runtime-view identity drifted")
         if item.get("active_reference") is not False:
             fail("saved library runtime view still has an active reference")
@@ -561,7 +564,7 @@ def cmd_verify_rollback(args: argparse.Namespace) -> int:
 def classify_saved_transaction(value: Any) -> dict[str, Any]:
     """Classify a saved record without treating incompatibility as a crash.
 
-    Current library-hot transactions validate normally. Pre-ADR 0006
+    Current model-library transactions validate normally. Pre-ADR 0006
     replicated captures and other unreadable records are incompatible:
     exact rollback is impossible, but the live file can be archived.
     """
@@ -778,9 +781,8 @@ def service_matches_snapshot(
     if weight["source"] == "library-hot":
         return (
             service.get("model_revision") == weight["revision"]
-            and service.get("model_seal_id") == weight["model_seal_id"]
-            and service.get("validation_bundle_id") == weight["validation_bundle_id"]
-            and service.get("model_identity_status") == "match"
+            and service.get("model_identity_status")
+            in {"legacy-unsealed", "unvalidated"}
             and service.get("weight_owner_node_id") == weight["home_node_id"]
             and service.get("weight_configuration_id") == weight["content_id"]
         )

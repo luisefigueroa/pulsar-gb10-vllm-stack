@@ -132,7 +132,7 @@ class ActivateTransportContracts(unittest.TestCase):
 
 class LibraryReadinessClassification(unittest.TestCase):
     NEMOTRON = "nemotron-3-nano-30b-nvfp4"
-    QWEN = "qwen3-1.7b"
+    QWEN = "qwen3.8-27b-fp8"
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -209,11 +209,15 @@ class LibraryReadinessClassification(unittest.TestCase):
         )
         report = self._classify(self.QWEN)
         self.assertEqual(report["reason"], "no-home")
-        self.assertEqual(
+        self.assertIn(
+            "home add qwen3.8-27b-fp8 --revision <selector> --plan",
             report["remediation"],
-            "scripts/model-library.sh home add qwen3-1.7b --yes",
         )
-        self.assertNotIn("--revision", report["remediation"])
+        self.assertIn("--yes", report["remediation"])
+        self.assertNotEqual(
+            report["remediation"],
+            "scripts/model-library.sh home add qwen3.8-27b-fp8 --yes",
+        )
 
     def test_duplicate_homes_name_cleanup_recommend(self) -> None:
         profile_info = model_library.parse_profile_conf_any(

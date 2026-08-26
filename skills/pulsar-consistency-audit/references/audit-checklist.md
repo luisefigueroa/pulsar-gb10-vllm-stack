@@ -16,7 +16,8 @@ Inspect at minimum, where present:
 
 - `AGENTS.md`, `README.md`, `PREREQUISITES.md`, and `MODELS.md`;
 - `pulsar`, `wizard.sh`, `serve.sh`, and operator help/output;
-- `models/*.conf` and `models/seals/`;
+- `models/*.conf` and `models/model-serving-releases/` (not archived
+  `docs/archive/schema-1-expected-seal/`);
 - `scripts/`, `scripts/testlib/`, `cluster/`, `validate/`, and `bench/`;
 - `docs/`, especially accepted ADRs, current specifications, operations,
   revalidation, validation, and model/fabric design documents;
@@ -37,7 +38,7 @@ Trace these workflows through policy, code, UI, tests, and evidence:
 2. **Topology and Doctor:** creation/refresh, cached and stale state, single- and
    two-node behavior, JSON/human parity, severity, and remediation.
 3. **Model discovery and selection:** tested/experimental filters, exact model
-   and revision, seals/manifests, interactive identity, and similar/truncated
+   and revision, receipts/file lists, interactive identity, and similar/truncated
    labels.
 4. **Library serving:** topology confirm, `home add`, catalog refresh, prepare,
    launch, health, status, stop, pin/purge, and cleanup. There is no replicated
@@ -56,7 +57,7 @@ For public commands and subsystem APIs, compare:
 - exit codes and documented success/failure meaning;
 - human-readable output, narrow-terminal rendering, and stable JSON schemas;
 - confirmation and ownership checks for destructive actions;
-- fail-closed behavior and whether remediation commands are valid;
+- fail-without-fallback behavior and whether remediation commands are valid;
 - interactive wrappers and direct CLI policy equivalence;
 - control, inference, and weight-transfer plane separation;
 - explicit experimental gates and absence of silent fallback; and
@@ -71,26 +72,26 @@ Verify consistency across doctrine, code, UI, tests, operations, and evidence:
 
 - the model library is the only weight-distribution mechanism (ADR 0006); no
   mode-selection flags exist, and `--weight-source`/`--weight-mode` fail
-  closed with remediation;
+  without fallback with remediation;
 - a confirmed topology manifest (one-node is valid) is a serving prerequisite;
 - operator language says “prepare model for serving”; public `activate` is
-  removed (ADR 0008) and fails closed with `prepare`; `activate` remains an
+  removed (ADR 0008) and fails without fallback with `prepare`; `activate` remains an
   internal-schema term;
 - no silent transport, storage, geometry, or cache fallback occurs;
 - live NFS/RDMA serving (`live-remote-readonly`) is rejected (ADR 0005) and is
   not offered as a serving alternative;
 - one durable home exists per exact revision by default;
 - the home rank uses its durable-home view, never a second hot copy;
-- only non-home ranks receive sealed-hot copies;
+- only non-home ranks receive working copies (`runtime_source=sealed-hot`);
 - hot copies are budgeted and lifecycle-managed;
 - pin retains hot copies but does not promise durable-home-loss resilience;
 - durable-home deletion is separate and confirmation-gated;
 - hot cleanup never follows the durable-home symlink;
-- exact revision, reviewed expected seal, and manifest remain visible;
+- exact revision, receipt, and file list remain visible;
 - observed local content cannot issue or replace trusted identity;
 - full verification occurs at trust boundaries;
 - metadata witnesses accelerate only previously verified unchanged launches;
-- witness drift causes full verification against the expected seal or fails;
+- witness drift causes full verification against the receipt or fails without fallback;
 - catalog refresh is explicit, with cached age/topology staleness visible;
 - reviewed-profile preparation uses topology-bound `ssh-roce`, eight streams,
   and no automatic fallback where ADR 0003 applies; and
@@ -115,7 +116,7 @@ unsupported physical claims, missing privacy audits, and evidence that cannot
 reconstruct exact model/runtime inputs.
 
 Do not treat selftests as physical proof. When reviewing a claim, compare model
-revision, seal, manifest, image digest, normalized profile/configuration,
+revision, receipt, file list, image digest, normalized profile/configuration,
 geometry, runtime flags, evidence date, and supersession state.
 
 ## Terminology
@@ -123,11 +124,14 @@ geometry, runtime flags, evidence date, and supersession state.
 Build a consistency table covering at least:
 
 `home`, `owner`, `primary`, `rank 0`, `prepare`, `preparation`, `activation`,
-`durable-home`, `sealed-hot`, `live-mount`, `replicated`, `catalog`,
-`library-hot`, `fabric`, `ssh-control`, `ssh-roce`, `nfs-rdma`, `durable`,
-`ephemeral`, `pinned`, `expected seal`, `observed seal`, `witness`, `manifest`,
-`validation bundle`, `serving integration`, `model qualification`, and
-`promotion`.
+`durable-home`, `sealed-hot` (stored enum for a working copy), `live-mount`,
+`replicated`, `catalog`, `library-hot` (stored enum for local files on every
+rank), `fabric`, `ssh-control`, `ssh-roce`, `nfs-rdma`, `durable`,
+`ephemeral`, `pinned`, receipt, occupancy, `witness`, file list,
+ADR 0004 evidence bundle, `serving integration`, `model qualification`, and
+`promotion`. Flag live use of archive-only nouns: expected-seal,
+`EXPECTED_MODEL_SEAL`, `identity_status=match`, `validation-bundle verify`,
+`model-release.sh`.
 
 Flag conflicting definitions, undefined or overloaded terms, obsolete
 operator-visible language, and ambiguity among control, inference, and transfer

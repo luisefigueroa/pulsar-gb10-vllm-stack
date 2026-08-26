@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Source-attested Hugging Face v1 acquisition contracts.
+"""Hugging Face download (recorded file list) acquisition contracts.
 
-This module owns the closed version-1 source inventory, identity
+This module owns the closed source inventory, identity
 precedence, privacy-safe approval, public plan, immutable receipt,
 site-local current-home attachment, and offline verification helpers. It
 parses Hub metadata JSON and manages site-local receipts and current-home
@@ -9,9 +9,9 @@ attachments, but it does not call the Hub, accept a token, refresh the
 catalog, prepare a runtime view, launch, assign status, or issue a Model
 Serving Release decision.
 
-The sealed HOME_ACQUISITION_SCHEMA_VERSION=1 plan/result contracts remain
-owned by model_library.py. This module is intentionally not imported from
-that file so remote inspection can still stream model_library.py alone.
+Lab expected-identity HOME_ACQUISITION plan/result contracts are retired
+(ADR 0012). This module is intentionally not imported from model_library.py
+so remote inspection can still stream that file alone.
 """
 
 from __future__ import annotations
@@ -80,11 +80,9 @@ HF_V1_BLOB_LFS = "lfs-object"
 HF_V1_BLOB_KINDS = {HF_V1_BLOB_GIT, HF_V1_BLOB_LFS}
 
 IDENTITY_CLASS_REVIEWED_RELEASE = "reviewed-model-serving-release"
-IDENTITY_CLASS_LEGACY_SEAL = "legacy-expected-seal"
 IDENTITY_CLASS_SOURCE_ATTESTED = "source-attested"
 ACQUISITION_IDENTITY_CLASSES = {
     IDENTITY_CLASS_REVIEWED_RELEASE,
-    IDENTITY_CLASS_LEGACY_SEAL,
     IDENTITY_CLASS_SOURCE_ATTESTED,
 }
 
@@ -740,22 +738,6 @@ def _release_expected_identity(release: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _seal_expected_identity(
-    expected_seal: dict[str, Any], *, profile: str, model_id: str
-) -> dict[str, str]:
-    seal = model_identity.validate_expected_model_seal(
-        expected_seal, profile=profile, model_id=model_id
-    )
-    projection = model_identity.expected_model_seal_projection(seal)
-    return {
-        "model_id": projection["model_id"],
-        "snapshot_revision": projection["snapshot_revision"],
-        "manifest_id": projection["manifest_id"],
-        "seal_id": projection["seal_id"],
-        "validation_bundle_id": projection["validation_bundle_id"],
-    }
-
-
 def _identity_document(
     *,
     source: dict[str, Any],
@@ -843,41 +825,20 @@ def validate_acquisition_identity(value: Any) -> dict[str, Any]:
                 "source-attested identity execution_contract must be "
                 "source-attested-complete-hash"
             )
-    elif identity_class == IDENTITY_CLASS_LEGACY_SEAL:
-        if identity.get("model_serving_release_id") is not None:
-            fail("legacy seal identity must not carry a release binding")
-        if identity.get("seal_id") is None:
-            fail("legacy seal identity requires seal_id")
-        if identity.get("validation_bundle_id") is None:
-            fail("legacy seal identity requires validation_bundle_id")
-        if identity.get("expected_manifest_id") is None:
-            fail("legacy seal identity requires expected_manifest_id")
-        if execution_contract != EXECUTION_CONTRACT_COMPLETE_MANIFEST:
-            fail(
-                "legacy seal identity execution_contract must be "
-                "complete-expected-manifest"
-            )
     else:
         if identity.get("model_serving_release_id") is None:
             fail("reviewed release identity requires model_serving_release_id")
         if identity.get("expected_manifest_id") is None:
             fail("reviewed release identity requires expected_manifest_id")
-        if identity.get("seal_id") is None:
-            if execution_contract != EXECUTION_CONTRACT_MANIFEST_ID:
-                fail(
-                    "release-only identity execution_contract must be "
-                    "expected-manifest-id"
-                )
-            if identity.get("validation_bundle_id") is not None:
-                fail("release-only identity must not invent a validation bundle")
-        else:
-            if identity.get("validation_bundle_id") is None:
-                fail("release-and-seal identity requires validation_bundle_id")
-            if execution_contract != EXECUTION_CONTRACT_COMPLETE_MANIFEST:
-                fail(
-                    "release-and-seal identity execution_contract must be "
-                    "complete-expected-manifest"
-                )
+        if identity.get("seal_id") is not None:
+            fail("reviewed release identity must not carry a retired expected seal")
+        if identity.get("validation_bundle_id") is not None:
+            fail("reviewed release identity must not carry a schema-1 validation bundle")
+        if execution_contract != EXECUTION_CONTRACT_MANIFEST_ID:
+            fail(
+                "release-only identity execution_contract must be "
+                "expected-manifest-id"
+            )
     _public_json(identity, label="acquisition identity")
     return identity
 
@@ -890,14 +851,18 @@ def resolve_huggingface_v1_acquisition_identity(
     model_serving_release_id: str | None = None,
     repo_root: str | pathlib.Path | None = None,
 ) -> dict[str, Any]:
-    """Resolve reviewed release, legacy seal, then unbound source identity.
+    """Resolve a verified Model Serving Release, else unbound source identity.
 
-    Precedence is (1) a verified MODEL_SERVING_RELEASE_ID binding, (2) a
-    legacy expected seal, (3) explicit source-attested identity. A bound
-    release that cannot be verified fails without falling back.
+    A bound release that cannot be verified fails without falling back.
+    Expected-seal identity is retired (ADR 0012).
     """
     source = validate_huggingface_v1_acquisition_source(source)
     profile = _validate_profile(profile)
+    if expected_seal is not None:
+        fail(
+            "expected-seal acquisition identity is retired (ADR 0012); "
+            "use source-attested --revision or a bound Model Serving Release"
+        )
     if model_serving_release_id:
         if repo_root is None:
             fail(
@@ -922,53 +887,15 @@ def resolve_huggingface_v1_acquisition_identity(
             and source["selector"] != expected["snapshot_revision"]
         ):
             fail("reviewed binding conflicts with the operator commit selector")
-        seal_id = None
-        validation_bundle_id = None
-        execution_contract = EXECUTION_CONTRACT_MANIFEST_ID
-        if expected_seal is not None:
-            seal = _seal_expected_identity(
-                expected_seal, profile=profile, model_id=source["model_id"]
-            )
-            for field in ("model_id", "snapshot_revision", "manifest_id"):
-                if seal[field] != expected[field]:
-                    fail(
-                        "reviewed release and expected seal disagree on "
-                        f"{field}"
-                    )
-            seal_id = seal["seal_id"]
-            validation_bundle_id = seal["validation_bundle_id"]
-            execution_contract = EXECUTION_CONTRACT_COMPLETE_MANIFEST
         return _identity_document(
             source=source,
             profile=profile,
             identity_class=IDENTITY_CLASS_REVIEWED_RELEASE,
-            execution_contract=execution_contract,
+            execution_contract=EXECUTION_CONTRACT_MANIFEST_ID,
             model_serving_release_id=release["release_id"],
-            seal_id=seal_id,
-            validation_bundle_id=validation_bundle_id,
+            seal_id=None,
+            validation_bundle_id=None,
             expected_manifest_id=expected["manifest_id"],
-        )
-
-    if expected_seal is not None:
-        seal = _seal_expected_identity(
-            expected_seal, profile=profile, model_id=source["model_id"]
-        )
-        if seal["snapshot_revision"] != source["snapshot_revision"]:
-            fail("expected seal commit differs from the selected revision")
-        if (
-            HF_V1_COMMIT_RE.fullmatch(source["selector"]) is not None
-            and source["selector"] != seal["snapshot_revision"]
-        ):
-            fail("expected seal conflicts with the operator commit selector")
-        return _identity_document(
-            source=source,
-            profile=profile,
-            identity_class=IDENTITY_CLASS_LEGACY_SEAL,
-            execution_contract=EXECUTION_CONTRACT_COMPLETE_MANIFEST,
-            model_serving_release_id=None,
-            seal_id=seal["seal_id"],
-            validation_bundle_id=seal["validation_bundle_id"],
-            expected_manifest_id=seal["manifest_id"],
         )
 
     return _identity_document(
@@ -1107,11 +1034,6 @@ def validate_source_attested_acquisition_approval(value: Any) -> dict[str, Any]:
             for item in (release_id, seal_id, bundle_id, manifest_id)
         ):
             fail("source-attested approval must not carry reviewed identity")
-    elif identity_class == IDENTITY_CLASS_LEGACY_SEAL:
-        if release_id is not None:
-            fail("legacy seal approval must not carry a release binding")
-        if seal_id is None or bundle_id is None or manifest_id is None:
-            fail("legacy seal approval requires complete reviewed references")
     else:
         if release_id is None or manifest_id is None:
             fail("reviewed release approval requires release and manifest IDs")
@@ -3133,13 +3055,14 @@ def cmd_parse_source(args: argparse.Namespace) -> int:
 
 def cmd_resolve_identity(args: argparse.Namespace) -> int:
     source = _read_arg_json(args.source, label="source")
-    expected_seal = None
     if args.expected_seal:
-        expected_seal = _read_arg_json(args.expected_seal, label="expected seal")
+        fail(
+            "expected-seal acquisition identity is retired (ADR 0012); "
+            "use source-attested --revision or a bound Model Serving Release"
+        )
     identity = resolve_huggingface_v1_acquisition_identity(
         source=source,
         profile=args.profile,
-        expected_seal=expected_seal,
         model_serving_release_id=args.release_id or None,
         repo_root=args.repo_root or None,
     )

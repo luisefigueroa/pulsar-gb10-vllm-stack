@@ -1,15 +1,15 @@
-# ADR 0004 Model Serving Release issuance staging
+# ADR 0004 Model Serving Release staging
 
-This is the maintainer runbook for the deterministic issuance workflow.
-It turns one independently verified unreviewed evidence-capture candidate
+This is the maintainer runbook for the deterministic staging workflow.
+It turns one independently verified draft capture directory
 plus an explicit review declaration into a staged proposal of the exact
-content-addressed Model Serving Release registry objects and any
+hashed Model Serving Release registry objects and any
 privacy-cleared publishable evidence.
 
 A successful local `plan` or `stage` does not establish trust. Repository
-review and merge remain the trust event. The existing pure schema modules
-derive the decision status. Status stays advisory and never permits or
-blocks serving. This workflow does not edit a model profile, bind
+review and merge are what make the objects trusted. The existing pure schema modules
+derive the decision status. Status stays display-only and never permits or
+blocks serving. This workflow does not edit a model profile, set
 `MODEL_SERVING_RELEASE_ID`, authorize serving, or claim physical DGX
 behavior.
 
@@ -20,12 +20,12 @@ recommendation order.
 
 | Subsystem | Responsibility |
 |---|---|
-| Capture candidate (`scripts/model-serving-release-capture.sh`) | Independently verified unreviewed input. The issuer never mutates it. |
+| Capture candidate (`scripts/model-serving-release-capture.sh`) | Independently verified draft input. The issuer never mutates it. |
 | Issue review declaration (this document) | Closed maintainer input. It is not a sixth ADR object, not evidence, and not status authority. |
 | ADR 0004 release/contract schema (`scripts/model_serving_release.py`) | Owns release-descriptor and frozen Validation Contract schema version 1 |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns evidence artifacts, run records, bundles, decisions, status derivation, exclusions, and supersession |
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only load, graph verification, and inspection. The issuer may ask it to validate an in-memory prospective graph but does not add a write command there. |
-| Issuance staging (`scripts/model-serving-release-issue.sh`) | Plans or stages the proposal. Local success is not review. |
+| Staging (`scripts/model-serving-release-issue.sh`) | Plans or stages the proposal. Local success is not review. |
 
 The Bash entrypoint is the operator boundary. Python owns review-declaration
 validation, deterministic rematerialization, prospective graph assembly,
@@ -67,14 +67,14 @@ The review file is workflow input with schema version 1 and kind
 - name a privacy-safe reviewer, reviewed-at time, closed review reference,
   and any direct superseded decision IDs
 
-This review file is not evidence. It does not populate bundle
+This review file is not evidence. It does not populate evidence-bundle field
 `review_evidence_artifact_ids`. After onboarding capture of compare and
-bench only, that leftover list is empty; that is expected. Do not recapture
+bench only, that list of extra review files is empty; that is expected. Do not recapture
 a maintainer essay to make it non-empty. See the 2026-08-25 interpretation
 note in [ADR 0004](./decisions/0004-model-serving-release-validation.md).
 
 Keep the review file outside the tracked worktree or under an appropriate
-gitignored `experiments/` directory. A first incomplete issuance typically
+gitignored `experiments/` directory. A first incomplete staging typically
 looks like:
 
 ```json
@@ -105,9 +105,10 @@ looks like:
 ```
 
 When every provenance/security component is `pending`, the staged decision
-cites an empty leftover list. When any component is `pass` or `fail`, the
-decision must cite the bundle's non-empty `review_evidence_artifact_ids`,
-and those artifacts must be `release-promotion` leftovers rather than
+cites an empty `review_evidence_artifact_ids` list. When any component is `pass` or `fail`, the
+decision must cite the evidence bundle's non-empty `review_evidence_artifact_ids`,
+and those artifacts must be extra review files for provenance and geometry
+review (`release-promotion`) rather than
 compare/bench measurements. A publishable `results/` provenance/security
 document is optional supporting evidence for that conclusive case only;
 attach it through capture `review_source_keys` before `verify-candidate`.
@@ -120,8 +121,8 @@ frozen criterion passed).
 Artifact entries, exclusions, and superseded decision IDs must be sorted and
 unique. An exclusion names the original candidate `criterion_id`,
 `run_record_id`, ordinary-language `reason`, and one or more original
-leftover `review_evidence_artifact_ids`; issuance remaps those IDs into the
-reviewed object graph. Exclusions still require leftover review artifacts
+`review_evidence_artifact_ids`; staging remaps those IDs into the
+reviewed object graph. Exclusions still require extra review files
 because the reason document is not the run being excluded.
 
 Allowed review references are `pr:<id>`, `commit:<40-or-64-hex>`, and
@@ -130,9 +131,9 @@ occurred. This workflow does not contact GitHub or any network.
 
 The expected status is an assertion. The command fails if it differs from
 the status derived by `build_validation_decision`. Reviews do not have to
-pass merely to record an accurate non-`Validated` status. Empty leftover
+pass merely to record an accurate non-`Validated` status. Empty
 `review_evidence_artifact_ids` with every provenance/security component
-`pending` is a legal incomplete issuance. Do not invent review evidence.
+`pending` is a legal incomplete staging. Do not invent review evidence.
 
 ## Materialization
 
@@ -154,13 +155,13 @@ Privacy handling:
   content digest, media type, and qualification scope stay the same.
 - `evidence_privacy` must match that artifact disposition. Passing every
   artifact makes `evidence_privacy` `pass`, which is conclusive and
-  requires leftover `release-promotion` review artifacts. Incomplete
-  issuance with an empty leftover list keeps every provenance component
+  requires extra `release-promotion` review files. Incomplete
+  staging with an empty extra-review-file list keeps every provenance component
   `pending`, including privacy.
 
 Predecessor and supersession source sets come only from the tracked registry.
 Normal planning fully verifies that registry first. If an interrupted earlier
-stage left an incomplete exact proposal, issuance performs a strict layout,
+stage left an incomplete exact proposal, staging performs a strict layout,
 JSON, kind, and filename-to-declared-ID scan so it can assemble the completed
 prospective graph. Content identity and every other normal graph rule must pass
 before any write. Unrelated invalid objects still make the operation fail. The
@@ -192,28 +193,28 @@ preexisting content.
 
 After a complete write, `stage` runs the normal `load_registry` verifier.
 
-## Profile binding
+## Profile field `MODEL_SERVING_RELEASE_ID`
 
-This command does not edit a model profile. A later issuance pull request
+This command does not edit a model profile. A later staging pull request
 may add `MODEL_SERVING_RELEASE_ID` only in the same reviewed publication
 that stores and verifies the exact lineage. Existing registry, catalog, and
-dry-run projection checks verify that separate edit.
+dry-run display checks verify that separate edit.
 
 ## Trust and scope
 
-- Local schema shape is not the trust event.
-- Validation status is advisory.
-- Deterministic selftests prove control-plane contracts only.
+- Local schema shape is not what makes the objects trusted.
+- Validation status is display-only.
+- Deterministic selftests prove lifecycle-script contracts only.
 - This workflow makes no physical DGX claim.
 - After repository merge, verify with
   `scripts/model-serving-release-registry.sh verify`. Schema-1
-  `validation-bundle verify` is a different command and fails on unsealed
+  `validation-bundle verify` is a different command and fails on live
   ADR 0004 profiles.
 
 The supervised `pulsar-model-serving-release-issuance` skill composes these
-commands after an onboarding handoff. It has no issuance authority.
+commands after an onboarding handoff. It cannot make the objects trusted.
 
 See [ADR 0004](./decisions/0004-model-serving-release-validation.md)
-(including the 2026-08-25 leftover-list note),
+(including the 2026-08-25 extra-review-files note),
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md),
 and [REVALIDATE.md](./REVALIDATE.md).

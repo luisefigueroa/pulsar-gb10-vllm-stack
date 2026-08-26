@@ -78,7 +78,7 @@ if [ "$rc" -eq 2 ]; then
   exit 1
 fi
 if [ "$rc" -ne 0 ]; then
-  echo "[stop] failed (operational error; initial probe was fail-closed)" >&2
+  echo "[stop] failed (operational error; initial probe failed without fallback)" >&2
   exit 1
 fi
 

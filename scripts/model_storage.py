@@ -223,11 +223,11 @@ def _node_label(rank: int) -> str:
 
 def _validation_label(value: object) -> str:
     labels = {
-        "expected-unverified": "reviewed identity expected",
-        "legacy-unsealed": "legacy identity",
-        "unvalidated": "unvalidated",
+        "expected-unverified": "lab identity expected (retired)",
+        "legacy-unsealed": "receipt and occupancy identity",
+        "unvalidated": "identity not checked",
         "missing": "not present",
-        "match": "identity match",
+        "match": "historical identity match",
     }
     text = _safe_text(value) or "unknown"
     return labels.get(text, text.replace("-", " "))
@@ -236,8 +236,8 @@ def _validation_label(value: object) -> str:
 def _runtime_label(value: object) -> str:
     labels = {
         "durable-home": "durable home",
-        "sealed-hot": "sealed hot",
-        "live-mount": "live mount",
+        "sealed-hot": "working copy on other node",
+        "live-mount": "live NFS mount (retired)",
     }
     text = _safe_text(value) or "unknown"
     return labels.get(text, text.replace("-", " "))
@@ -287,8 +287,6 @@ def preparation_check(
         blockers.append("catalog or rank observation is unavailable")
     if report["catalog"].get("topology_compatible") is not True:
         blockers.append("cached topology is stale; refresh the catalog")
-    if not model.get("expected_manifest"):
-        blockers.append("no reviewed exact model identity is available")
     primary = model.get("primary") or {}
     primary_current = primary.get("status") == "match" and isinstance(
         primary.get("rank"), int
@@ -299,23 +297,13 @@ def preparation_check(
     model_profiles = set(model.get("profiles") or [])
     candidates: list[dict[str, Any]] = []
     identity_mismatch = False
-    matched_reviewed_profile = False
+    matched_serving_profile = False
     for profile in profiles.get("models") or []:
         if profile.get("id") not in model_profiles:
             continue
         if profile.get("purpose") != "serving" or profile.get("source") != "hf":
             continue
-        if not profile.get("reviewed_identity"):
-            continue
-        if (
-            profile.get("reviewed_model_id") != model.get("model_id")
-            or profile.get("reviewed_revision") != model.get("revision")
-            or profile.get("reviewed_manifest")
-            != model.get("expected_manifest")
-        ):
-            identity_mismatch = True
-            continue
-        matched_reviewed_profile = True
+        matched_serving_profile = True
         candidate = {
             "profile": profile["id"],
             "nodes": profile["nodes"],
@@ -358,7 +346,7 @@ def preparation_check(
             for instance in model_instances(report, model)
             if instance.get("profile") == profile["id"]
             and instance.get("metadata_status") == "current"
-            and instance.get("identity_status") == "match"
+            and instance.get("identity_status") in {"legacy-unsealed", "unvalidated"}
             and instance.get("witness_status") == "match"
             and instance.get("runtime_source")
             == (
@@ -371,7 +359,7 @@ def preparation_check(
             int(instance["rank"]) for instance in instances
         } == set(target_ranks)
         candidates.append(candidate)
-    if not candidates and not matched_reviewed_profile:
+    if not candidates and not matched_serving_profile:
         if identity_mismatch:
             blockers.append(
                 "trusted profile identity differs from the cached model; "
@@ -379,7 +367,7 @@ def preparation_check(
             )
         else:
             blockers.append(
-                "no serving profile with a reviewed exact identity is available"
+                "no serving profile is available for this catalog entry"
             )
     if blockers:
         candidates = []
@@ -638,7 +626,7 @@ def render_detail(
     term.emit("Runtime views")
     if not instances:
         term.emit(
-            "No prepared library-hot runtime views are recorded.",
+            "No prepared model-library runtime views are recorded.",
             initial_indent="  ",
             subsequent_indent="  ",
         )
@@ -647,7 +635,7 @@ def render_detail(
             _node_label(int(instance["rank"])),
             _runtime_label(instance.get("runtime_source")),
             _status_label(instance.get("retention")),
-            f"identity {_status_label(instance.get('identity_status'))}",
+            f"identity {_validation_label(instance.get('identity_status'))}",
             f"witness {_status_label(instance.get('witness_status'))}",
         ]
         if instance.get("active_reference"):
@@ -743,12 +731,12 @@ def render_about(width: int | None = None) -> None:
     term.emit("HOW MODEL STORAGE WORKS")
     term.field("mechanism", "the model library serves every profile (ADR 0006)")
     term.field("catalog", "one durable home per exact revision")
-    term.field("prepared", "sealed hot copies only on non-home serving nodes")
-    term.field("home node", "uses its durable model through a validated local view")
+    term.field("prepared", "working copies only on non-home serving nodes")
+    term.field("home node", "uses its durable model through a hashed local view")
     term.field("pin", "retains non-home hot copies but still requires the durable home")
     term.blank()
     term.emit(
-        "Every library scope (two-rank sealed, one-rank, legacy-unsealed) is supported (ADR 0006). Browsing does not change serving policy or qualify a model."
+        "Every live profile uses local files on every rank (ADR 0006). Browsing does not change serving policy or qualify a model."
     )
 
 
@@ -770,7 +758,7 @@ def render_refresh(report: dict[str, Any], width: int | None = None) -> None:
         "This rescans durable Hugging Face model homes on every confirmed rank and atomically updates the cached inventory."
     )
     term.emit(
-        "It preserves explicit exact-revision primary selections. Incomplete rank or topology observation fails closed."
+        "It preserves explicit exact-revision primary selections. Incomplete rank or topology observation fails without fallback."
     )
     term.emit(
         "It does not download, copy, prepare, start, pin, purge, repair, or delete model files."
@@ -838,7 +826,7 @@ def render_preparation(
         (
             f"about {weights:g} GiB on each non-home serving node"
             if weights is not None
-            else "one complete sealed copy on each non-home serving node"
+            else "one complete working copy on each non-home serving node"
         ),
         label_width=label_width,
     )

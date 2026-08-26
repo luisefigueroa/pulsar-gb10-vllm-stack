@@ -308,7 +308,7 @@ class ModelServingReleaseIssueTests(unittest.TestCase):
         self.assertEqual(code, 1, stdout)
         assert payload is not None
         self.assertFalse(payload["ok"])
-        self.assertIn("leftover review evidence", payload["error"])
+        self.assertIn("extra review files", payload["error"])
         self.assert_trust_caveats(payload, stderr)
 
     def test_derived_tested_criteria_not_met_from_measurement(self) -> None:

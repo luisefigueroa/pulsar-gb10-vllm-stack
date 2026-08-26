@@ -51,10 +51,6 @@ run "model library integrity contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_integrity.py"
 run "model library serve-witness contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_witness.py"
-run "model library expected-seal and validation-bundle contracts" \
-  python3 "$REPO_DIR/scripts/testlib/test_model_library_expected_seal.py"
-run "model release identity and candidate contracts" \
-  python3 "$REPO_DIR/scripts/testlib/test_model_release.py"
 run "Model Serving Release and Validation Contract schemas" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release.py"
 run "Model Serving Release unreviewed planning" \
@@ -121,29 +117,28 @@ run "wizard explicit model-library serving" \
   "$REPO_DIR/scripts/selftest-wizard-model-library.sh"
 run "library-hot stop retention policy" \
   python3 "$REPO_DIR/scripts/testlib/test_down_hot_policy.py"
-run "operator home + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
+run "workflow menu + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "model catalog scopes" bash -c '
   set -e
   all=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --json)
-  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert m[\"qwen3-1.7b\"][\"purpose\"]==\"diagnostic\"; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\""
+  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert \"qwen3-1.7b\" not in m; assert \"deepseek-v4-flash\" not in m; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\""
 
   serving=$("'"$REPO_DIR"'/scripts/list-models.sh" --serving --json)
-  echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x for x in m); assert not any(x[\"id\"].startswith(\"qwen3-1.7b\") for x in m); assert any(x[\"status\"]==\"do-not-use\" for x in m); assert any(x[\"id\"]==\"deepseek-v4-flash\" and x[\"spec_default_enabled\"] and x[\"reviewed_identity\"] and x[\"weights_gib\"] > 160 and x[\"reviewed_model_id\"]==\"deepseek-ai/DeepSeek-V4-Flash-0731\" and len(x[\"reviewed_revision\"])==40 and len(x[\"reviewed_manifest\"])==64 for x in m); assert all((x[\"reviewed_model_id\"] is not None)==x[\"reviewed_identity\"] for x in m)"
+  echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x for x in m); assert not any(x[\"id\"]==\"qwen3-1.7b\" for x in m); assert \"deepseek-v4-flash\" not in {x[\"id\"] for x in m}; assert any(x[\"status\"]==\"do-not-use\" for x in m); assert not any(x.get(\"spec_default_enabled\") for x in m); assert all(x[\"reviewed_identity\"] is False for x in m); assert all((x[\"reviewed_model_id\"] is not None)==x[\"reviewed_identity\"] for x in m)"
 
   diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --diagnostic --json)
-  echo "$diagnostic" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert {x[\"id\"] for x in m}=={\"qwen3-1.7b\",\"qwen3-1.7b-2node\"}"
+  echo "$diagnostic" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert {x[\"id\"] for x in m}=={\"qwen3-1.7b-2node\"}"
 '
 
 run "WEIGHTS_GIB disk formula" bash -c '
   # shellcheck disable=SC1091
   . "'"$REPO_DIR"'/scripts/lib.sh"
-  load_conf deepseek-v4-flash
+  load_conf nemotron-3-super-120b-nvfp4
   w=$(estimate_weights_gib)
   need=$(awk -v w="$w" -v h=10 "BEGIN{printf \"%.0f\", w*1.1+h+0.999}")
-  # flagship must need far more than the old flat 20 GiB gate
-  awk -v n="$need" "BEGIN{exit !(n+0 > 100)}"
-  echo "deepseek weights=$w need~$need"
+  awk -v n="$need" "BEGIN{exit !(n+0 > 80)}"
+  echo "nemotron-super weights=$w need~$need"
 '
 
 run "soak exit policy (syntax + help)" bash -c '

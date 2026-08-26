@@ -1798,7 +1798,7 @@ def _validate_provenance_security_review(
     )
     if conclusive and not artifact_ids:
         fail(
-            "provenance/security review must cite leftover review evidence "
+            "provenance/security review must cite extra review files "
             "when any component is pass or fail"
         )
     if any(

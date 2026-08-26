@@ -75,9 +75,9 @@ grep -Fq 'no silent fallback' "$skill" \
 grep -Fq 'no automatic fallback' "$skill" \
   || fail "skill must forbid automatic fallback"
 grep -Fq 'library-hot' "$skill" \
-  || fail "skill must offer library-hot as a qualifying path"
+  || fail "skill must name library-hot as the stored local-file path"
 grep -Fq 'local-verified-readonly' "$skill" \
-  || fail "skill must bind library-hot to local-verified-readonly"
+  || fail "skill must bind local files to local-verified-readonly"
 grep -Fq 'Do not offer live NFS/RDMA' "$skill" \
   || fail "skill must refuse live NFS/RDMA as a qualifying path"
 grep -Fq 'Do not offer live NFS/RDMA' "$phases" \
@@ -93,15 +93,15 @@ then
   fail "onboarding must not use the removed weight-mode axis (ADR 0006)"
 fi
 grep -Fq 'scripts/model-library.sh home add <profile> --revision <selector> --plan --json' "$skill" \
-  || fail "skill must compose the read-only source-attested acquisition plan"
+  || fail "skill must compose the read-only Hugging Face acquisition plan"
 grep -Fq 'observe every confirmed serving rank' "$skill" \
   || fail "skill must check for durable homes before acquisition"
 grep -Fq "catalog's shallow \`complete\` label" "$skill" \
   || fail "skill must not equate the shallow catalog label with completeness"
 grep -Fq 'independent' "$skill" \
   || fail "skill must require independent completeness evidence before reuse"
-grep -Fq 'reviewed expected manifest that is independent of the' "$skill" \
-  || fail "skill must name the reviewed independent reuse evidence"
+grep -Fq 'expected-manifest fallback is retired' "$skill" \
+  || fail "skill must fail closed without a receipt (ADR 0012)"
 grep -Fq -- '--revision <exact-commit-from-plan>' "$skill" \
   || fail "skill must acquire the exact planned commit after confirmation"
 grep -Fq -- '--node <selected-rank-from-plan>' "$skill" \
@@ -200,8 +200,8 @@ grep -Fq 'Status is advisory' "$skill" \
   || fail "skill must keep status advisory"
 grep -Fq 'never blocks serving' "$skill" \
   || fail "skill must not treat status as a serving gate"
-grep -Fq 'fail closed' "$skill" \
-  || fail "skill must keep concrete operational failures fail-closed"
+grep -Fq 'fail without fallback' "$skill" \
+  || fail "skill must keep concrete operational failures fail without fallback"
 
 grep -Fq 'ownership-safe' "$skill" \
   || fail "skill must require ownership-safe cleanup"

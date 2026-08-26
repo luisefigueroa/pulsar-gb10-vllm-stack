@@ -8,7 +8,7 @@ filename.
 A stored run must name an exact stored release and contract. Full run
 validation needs the evidence-artifact descriptors carried by a stored
 bundle that includes the run. Orphan run files without a covering bundle
-fail closed.
+fail without fallback.
 
 This namespace holds the reviewed Qwen3.8 run records. Do not add a
 `Validated` fixture here.

@@ -61,13 +61,6 @@ for conf in "$REPO_DIR"/models/*.conf; do
     fi
     reviewed_identity=0 reviewed_model_id="" reviewed_revision=""
     reviewed_manifest=""
-    if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-      reviewed_identity=1
-      identity_fields=$(printf '%s' "$PROFILE_VALIDATION_BUNDLE_JSON" | \
-        python3 -c 'import json,sys; s=json.load(sys.stdin)["expected_model_seal"]; print("\t".join((s["model_id"],s["snapshot_revision"],s["manifest_id"])))')
-      IFS=$'\t' read -r reviewed_model_id reviewed_revision reviewed_manifest \
-        <<<"$identity_fields"
-    fi
     load_model_serving_release_projection local-verified-readonly
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$name" "$STATUS" "$NODES" "$src" "$SERVED_NAME" "$spec" \

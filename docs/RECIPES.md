@@ -14,21 +14,22 @@ Shared doctrine baked into every recipe:
 - multi-node adds `--network host --device /dev/infiniband` (host networking
   does NOT expose RDMA devices), per-rank interfaces from the confirmed
   topology, and the measured shared NCCL policy
-- speculative decode follows validated profile policy: **DSpark is default-on**
-  for the flagship and `--no-spec-decode` is its rollback; Super MTP remains
+- speculative decode follows validated profile policy: historical DeepSeek
+  **DSpark was default-on** with `--no-spec-decode` as rollback; Super MTP remains
   opt-in via `--spec-decode`; **never** use ngram on GDN hybrids. Only
   profiles with validated `SPEC_DECODE_ARGS` may enable it.
 - CUDA graphs ON except where noted
 
-## Flagship: DeepSeek-V4-Flash-0731, 2-node TP=2 — long-session agents @ 500K
+## HISTORICAL: DeepSeek-V4-Flash-0731, 2-node TP=2 — long-session agents @ 500K
 
-Image: published PR-41834 digest pinned in the model conf (docs/BUILD.md).
-**Preferred launch:** `./pulsar start deepseek-v4-flash` or
-`cluster/start-cluster.sh deepseek-v4-flash` (runs preflight, dual-node start,
-then `validate/warmup.py`). Guided: `./pulsar wizard`. Roll back to base
-decode with `--no-spec-decode`. Before replacing another model, use
-`./pulsar inventory` and the wizard’s ownership-safe stop flow (never
-`docker rm` unlabeled containers by guess).
+The live `deepseek-v4-flash` profile was removed ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+Do not `./pulsar start deepseek-v4-flash`. Flags and numbers below are the
+measured 2026-08 set.
+
+Image: published PR-41834 digest that was pinned in that conf (docs/BUILD.md).
+Historical launch was `cluster/start-cluster.sh deepseek-v4-flash` (preflight,
+dual-node start, then `validate/warmup.py`). Roll back to base decode with
+`--no-spec-decode`.
 
 ### Workload these flags target
 
@@ -44,7 +45,7 @@ decode with `--no-spec-decode`. Before replacing another model, use
 Not the target: high-QPS short chat, 8–16-way concurrency, or packing
 KV to free-memory readings on unified memory (27.5 GB/rank OOM’d node 2).
 
-### Engine flags (from `models/deepseek-v4-flash.conf`)
+### Engine flags (from the removed `models/deepseek-v4-flash.conf`)
 
 ```bash
 # Prefer: cluster/start-cluster.sh deepseek-v4-flash
@@ -128,12 +129,12 @@ unsupported.
 
 ## Utility recipes
 
-- **Canaries**: `qwen3-1.7b` (E2E smoke, ~2 min to healthy) and
-  `qwen3-1.7b-2node` (multi-node plumbing check, TP=2 mp backend).
-  They are hidden from the serving wizard; list them with
+- **Canaries**: `qwen3-1.7b` was removed (ADR 0012). `qwen3-1.7b-2node`
+  remains the tiny two-node test (TP=2 mp backend, hidden from the serving
+  wizard). List it with
   `scripts/list-models.sh --legacy-tested --diagnostic`. `--validated` is
-  removed (ADR 0008); use `--legacy-tested`. Neither reports the ADR 0004
-  release status.
+  removed (ADR 0008); use `--legacy-tested`. It does not report ADR 0004
+  decision status.
 - **Bit-exact reproducibility run** (standard-attention models only): add
   `-e VLLM_BATCH_INVARIANT=1` → greedy outputs identical across nodes AND
   boots (30/30 verified). Not for production throughput paths.

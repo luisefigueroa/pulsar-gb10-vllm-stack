@@ -79,36 +79,36 @@ mkdir -p "$SHIM" "$STATE/inv" "$STATE/mem" "$STATE/logs" "$STATE/mem_by_node"
 MODELS_JSON='{
   "models": [
     {
-      "id": "qwen3-1.7b",
-      "status": "tested",
-      "nodes": 1,
+      "id": "qwen3-1.7b-2node",
+      "status": "tested+soaked",
+      "nodes": 2,
       "source": "hf",
-      "served_name": "qwen3-1.7b",
-      "spec": "none",
-      "spec_default_enabled": false,
-      "first_run_candidate": true,
-      "family": "qwen3-1.7b",
-      "family_recommended": true
+      "served_name": "qwen3-1.7b-2node",
+      "spec": "recommended",
+      "spec_default_enabled": true,
+      "first_run_candidate": false
     },
     {
-      "id": "nemotron-3-nano-30b-nvfp4",
+      "id": "qwen3.6-27b-fp8",
       "status": "tested",
       "nodes": 1,
       "source": "hf",
-      "served_name": "nemotron-3-nano",
+      "served_name": "qwen3.6-27b-fp8",
       "spec": "none",
       "spec_default_enabled": false,
       "first_run_candidate": true
     },
     {
-      "id": "deepseek-v4-flash",
-      "status": "tested+soaked",
-      "nodes": 2,
+      "id": "qwen3.8-27b-fp8",
+      "status": "tested",
+      "nodes": 1,
       "source": "hf",
-      "served_name": "deepseek-v4-flash",
-      "spec": "recommended",
-      "spec_default_enabled": true,
-      "first_run_candidate": false
+      "served_name": "qwen3.8-27b-fp8",
+      "spec": "none",
+      "spec_default_enabled": false,
+      "first_run_candidate": true,
+      "family": "qwen3.8-27b-fp8",
+      "family_recommended": true
     }
   ]
 }'
@@ -146,7 +146,7 @@ PY
 }
 
 mem_pass() {
-  local path="$1" model="${2:-qwen3-1.7b}"
+  local path="$1" model="${2:-qwen3.8-27b-fp8}"
   python3 -c "
 import json
 print(json.dumps({
@@ -163,7 +163,7 @@ print(json.dumps({
 }
 
 mem_warn() {
-  local path="$1" model="${2:-qwen3-1.7b}"
+  local path="$1" model="${2:-qwen3.8-27b-fp8}"
   python3 -c "
 import json
 print(json.dumps({
@@ -181,7 +181,7 @@ print(json.dumps({
 }
 
 mem_fail() {
-  local path="$1" model="${2:-qwen3-1.7b}"
+  local path="$1" model="${2:-qwen3.8-27b-fp8}"
   python3 -c "
 import json
 print(json.dumps({
@@ -198,7 +198,7 @@ print(json.dumps({
 " >"$path"
 }
 
-QWEN_CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf qwen3-1.7b; loaded_launch_contract_id' _ "$REPO_DIR")
+QWEN_CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf qwen3.8-27b-fp8; loaded_launch_contract_id' _ "$REPO_DIR")
 NEMOTRON_CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf nemotron-3-nano-30b-nvfp4; loaded_launch_contract_id' _ "$REPO_DIR")
 
 svc_managed() {
@@ -209,7 +209,7 @@ svc_managed() {
   local conf="$1" state="$2" complete="$3" safe="$4" port="${5:-8000}"
   local contract_id weight_source identity_status
   case "$conf" in
-    qwen3-1.7b)
+    qwen3.8-27b-fp8)
       contract_id="$QWEN_CONTRACT_ID"
       weight_source=replicated
       identity_status=
@@ -663,7 +663,7 @@ assert_eq "$rc" "2" "pulsar unknown command → exit 2"
 echo "=== clean-clone standalone fallback ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
 export TEST_SKIP_FABRIC_PROMPT=0
 export TEST_USE_LOADED_TOPOLOGY_CAPACITY=1
 export TEST_CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json"
@@ -712,7 +712,7 @@ reset_logs
 seed_inv "$STATE/inv_current" 100 ""
 cat >"$STATE/weights.json" <<'JSON'
 {
-  "model": "qwen3-1.7b",
+  "model": "qwen3.8-27b-fp8",
   "state": "missing",
   "source": "library-hot",
   "ok": false
@@ -733,8 +733,8 @@ assert_false "weight failure: no stop" bash -c "test -s '$STATE/logs/down.log'"
 # ---------------------------------------------------------------------------
 echo "=== same healthy keep ==="
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
-mem_pass "$STATE/mem_current" qwen3-1.7b
+seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3.8-27b-fp8 running True True)"
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
 export WIZARD_API_HEALTHY=1
 # model=3; the running service is a pre-library launch, so the migration
 # menu interposes: keep=2
@@ -742,7 +742,7 @@ run_wizard $'3\n2\n'
 assert_eq "$LAST_RC" "0" "same-healthy keep exit 0"
 assert_false "keep: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_false "keep: no up" bash -c "test -s '$STATE/logs/up.log'"
-assert_file_contains "$STATE/logs/wizard.combined" "keeping qwen3-1.7b running" "keep message"
+assert_file_contains "$STATE/logs/wizard.combined" "keeping qwen3.8-27b-fp8 running" "keep message"
 assert_file_contains "$STATE/logs/wizard.combined" "pre-library launch" \
   "legacy running service is named a pre-library launch"
 assert_file_contains "$STATE/logs/wizard.out" "^MODEL SELECTED$" \
@@ -752,7 +752,7 @@ assert_file_contains "$STATE/logs/wizard.out" "^TARGET$" "wizard target uses a s
 assert_file_contains "$STATE/logs/wizard.out" "^PREFLIGHT$" "wizard preflight uses a semantic section"
 assert_file_contains "$STATE/logs/wizard.out" "^RELEVANT SERVICES" \
   "wizard diagnostics use stacked service sections"
-assert_file_contains "$STATE/logs/wizard.err" "qwen3-1\\.7b[[:space:]]+1 node · suggested · first run" "wizard model choice is compact and human-readable"
+assert_file_contains "$STATE/logs/wizard.err" "qwen3.8-27b-fp8[[:space:]]+1 node · suggested · first run" "wizard model choice is compact and human-readable"
 assert_file_not_contains "$STATE/logs/wizard.err" "spec none" "wizard model choice omits profile-detail clutter"
 assert_true "wizard model list is sorted by model name" python3 -c '
 import sys
@@ -760,17 +760,17 @@ text = open(sys.argv[1], encoding="utf-8").read()
 names = sys.argv[2:]
 positions = [text.find(name) for name in names]
 raise SystemExit(0 if min(positions) >= 0 and positions == sorted(positions) else 1)
-' "$STATE/logs/wizard.err" deepseek-v4-flash nemotron-3-nano-30b-nvfp4 qwen3-1.7b
+' "$STATE/logs/wizard.err" qwen3-1.7b-2node qwen3.6-27b-fp8 qwen3.8-27b-fp8
 
 # ---------------------------------------------------------------------------
 # 3) Same restart — stop only after final confirm
 # ---------------------------------------------------------------------------
 echo "=== same restart after final confirm ==="
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
+seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3.8-27b-fp8 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
-mem_pass "$STATE/mem_current" qwen3-1.7b
-mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
+mem_pass "$STATE/mem_after_stop" qwen3.8-27b-fp8
 export WIZARD_API_HEALTHY=1
 # Abort path: model, restart, final n → no mutation
 run_wizard $'3\n1\nn\n'
@@ -779,15 +779,15 @@ assert_false "restart aborted: no down before/without confirm" bash -c "test -s 
 assert_file_contains "$STATE/logs/wizard.combined" "aborted; no containers changed" "restart aborted message"
 
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)"
+seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3.8-27b-fp8 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
-mem_pass "$STATE/mem_current" qwen3-1.7b
-mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
+mem_pass "$STATE/mem_after_stop" qwen3.8-27b-fp8
 export WIZARD_API_HEALTHY=1
 run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "restart confirmed exit 0"
-assert_file_contains "$STATE/logs/down.log" "qwen3-1.7b" "restart: down called"
-assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "restart: up called"
+assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8" "restart: down called"
+assert_file_contains "$STATE/logs/up.log" "qwen3.8-27b-fp8" "restart: up called"
 
 # ---------------------------------------------------------------------------
 # 4) Different managed blocker — replace
@@ -796,8 +796,8 @@ echo "=== different managed replace ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
-mem_fail "$STATE/mem_current" qwen3-1.7b
-mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+mem_fail "$STATE/mem_current" qwen3.8-27b-fp8
+mem_pass "$STATE/mem_after_stop" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=1
 export MEM_AFTER_STOP_RC=0
 export WIZARD_API_HEALTHY=0
@@ -805,7 +805,7 @@ export WIZARD_API_HEALTHY=0
 run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "replace managed exit 0"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "replace: stopped blocker"
-assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "replace: started target"
+assert_file_contains "$STATE/logs/up.log" "qwen3.8-27b-fp8" "replace: started target"
 assert_file_contains "$STATE/logs/wizard.combined" \
   "without a reviewed identity match" \
   "unsealed library-hot replace names missing exact rollback"
@@ -820,7 +820,7 @@ assert_false "unsealed replace leaves no rollback transaction" \
 echo "=== decline replace ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
-mem_fail "$STATE/mem_current" qwen3-1.7b
+mem_fail "$STATE/mem_current" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=1
 export WIZARD_API_HEALTHY=0
 # model=3, keep current=2
@@ -836,7 +836,7 @@ echo "=== hard fail unknown consumer ==="
 reset_logs
 unmanaged='[{"node":"head","pid":9999,"process_name":"mystery-cuda","used_memory_mib":40000,"note":"read-only"}]'
 seed_inv "$STATE/inv_current" 20 "$(svc_unknown)" unset "$unmanaged"
-mem_fail "$STATE/mem_current" qwen3-1.7b
+mem_fail "$STATE/mem_current" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=1
 export WIZARD_API_HEALTHY=0
 # model=3, exit=1
@@ -852,7 +852,7 @@ assert_file_not_contains "$STATE/logs/wizard.combined" "Continue with start anyw
 echo "=== memory WARN continue ==="
 reset_logs
 seed_inv "$STATE/inv_current" 92 ""
-mem_warn "$STATE/mem_current" qwen3-1.7b
+mem_warn "$STATE/mem_current" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=2
 export WIZARD_API_HEALTHY=0
 # model=3, continue warn y, final y
@@ -866,10 +866,10 @@ assert_false "warn clean: no down" bash -c "test -s '$STATE/logs/down.log'"
 # ---------------------------------------------------------------------------
 echo "=== partial managed cleanup ==="
 reset_logs
-seed_inv "$STATE/inv_current" 40 "$(svc_partial_2node deepseek-v4-flash True)" ok
+seed_inv "$STATE/inv_current" 40 "$(svc_partial_2node qwen3-1.7b-2node True)" ok
 seed_inv "$STATE/inv_after_stop" 100 "" ok
-mem_pass "$STATE/mem_current" deepseek-v4-flash
-mem_pass "$STATE/mem_after_stop" deepseek-v4-flash
+mem_pass "$STATE/mem_current" qwen3-1.7b-2node
+mem_pass "$STATE/mem_after_stop" qwen3-1.7b-2node
 export MEM_CURRENT_RC=0
 export MEM_AFTER_STOP_RC=0
 export WIZARD_API_HEALTHY=0
@@ -885,8 +885,8 @@ assert_file_contains "$STATE/logs/wizard.combined" "cannot be captured exactly|i
 # ---------------------------------------------------------------------------
 echo "=== worker unreachable refusal ==="
 reset_logs
-seed_inv "$STATE/inv_current" 40 "$(svc_partial_2node deepseek-v4-flash True)" unreachable
-mem_pass "$STATE/mem_current" deepseek-v4-flash
+seed_inv "$STATE/inv_current" 40 "$(svc_partial_2node qwen3-1.7b-2node True)" unreachable
+mem_pass "$STATE/mem_current" qwen3-1.7b-2node
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
 # model=1 (deepseek 2-node), exit=1
@@ -920,14 +920,14 @@ write_inv "$STATE/inv_current" '{
     }
   }
 }'
-mem_pass "$STATE/mem_current" deepseek-v4-flash
+mem_pass "$STATE/mem_current" qwen3-1.7b-2node
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
 export TEST_TOPOLOGY_NODES=3
 # model=1 (validated 2-node profile), spec default yes, final yes
 run_wizard $'1\ny\ny\n'
 assert_eq "$LAST_RC" "0" "idle rank 2 exact-subset launch exit 0"
-assert_file_contains "$STATE/logs/up.log" "deepseek-v4-flash" \
+assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b-2node" \
   "idle rank 2: exact 2-node profile launches"
 assert_file_not_contains "$STATE/logs/wizard.combined" "Required cluster node unreachable" \
   "idle rank 2: no false required-node refusal"
@@ -941,16 +941,16 @@ assert_file_not_contains "$STATE/logs/wizard.out" "cluster node 3" \
 # ---------------------------------------------------------------------------
 echo "=== stale managed cleanup ==="
 reset_logs
-seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3-1.7b stale True True)"
+seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3.8-27b-fp8 stale True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
-mem_pass "$STATE/mem_current" qwen3-1.7b
-mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
+mem_pass "$STATE/mem_after_stop" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
 # model=3, remove stale=1, final y
 run_wizard $'3\n1\ny\n'
 assert_eq "$LAST_RC" "0" "stale cleanup exit 0"
-assert_file_contains "$STATE/logs/down.log" "qwen3-1.7b" "stale: down"
+assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8" "stale: down"
 assert_file_contains "$STATE/logs/wizard.combined" "does not hold model memory" "stale: memory note"
 
 # ---------------------------------------------------------------------------
@@ -960,7 +960,7 @@ echo "=== stop then still memory fail (exit stopped) ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 30 ""
-set_mem_model qwen3-1.7b fail
+set_mem_model qwen3.8-27b-fp8 fail
 set_mem_model nemotron-3-nano-30b-nvfp4 pass
 export WIZARD_API_HEALTHY=0
 # model=3, stop=1, final y, then Exit stopped=3
@@ -978,7 +978,7 @@ echo "=== stop then still memory fail (no rollback for unsealed library-hot) ===
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
-set_mem_model qwen3-1.7b fail
+set_mem_model qwen3.8-27b-fp8 fail
 set_mem_model nemotron-3-nano-30b-nvfp4 pass
 export WIZARD_API_HEALTHY=0
 # model=3 (qwen), stop=1, final y; still-fail exits nonzero (no restore menu)
@@ -988,7 +988,7 @@ assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "still-f
 down_lines=$(grep -c . "$STATE/logs/down.log" || true)
 assert_eq "$down_lines" "1" "still-fail: single down (no extra stops)"
 assert_false "still-fail: never up failed target" \
-  bash -c "grep -q qwen3-1.7b '$STATE/logs/up.log' 2>/dev/null"
+  bash -c "grep -q qwen3.8-27b-fp8 '$STATE/logs/up.log' 2>/dev/null"
 assert_file_contains "$STATE/logs/wizard.combined" \
   "without a reviewed identity match" \
   "unsealed library-hot stop warns that exact rollback is unavailable"
@@ -1002,13 +1002,13 @@ echo "=== launch failure after replace (exit stopped) ==="
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
-set_mem_model qwen3-1.7b pass
+set_mem_model qwen3.8-27b-fp8 pass
 set_mem_model nemotron-3-nano-30b-nvfp4 pass
 # Force cold-start pressure narrative via after-stop still ok; use current fail until stop
 # Actually for replace path: others_safe with qwen mem can be pass or fail.
 # Use mem_current fail via global for qwen before stop is not needed if others_safe triggers.
-mem_fail "$STATE/mem_current" qwen3-1.7b
-mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+mem_fail "$STATE/mem_current" qwen3.8-27b-fp8
+mem_pass "$STATE/mem_after_stop" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=1
 export MEM_AFTER_STOP_RC=0
 export WIZARD_API_HEALTHY=0
@@ -1019,7 +1019,7 @@ touch "$STATE/up_fail"
 # model=3, stop=1, final y, then Exit stopped=3
 run_wizard $'3\n1\ny\n3\n'
 assert_file_contains "$STATE/logs/down.log" "nemotron" "launch-fail exit: stopped previous"
-assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail exit: attempted up target"
+assert_file_contains "$STATE/logs/up.log" "qwen3.8-27b-fp8" "launch-fail exit: attempted up target"
 assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail exit message"
 assert_file_not_contains "$STATE/logs/up.log" "nemotron" "launch-fail exit: no restart up without choice"
 
@@ -1030,8 +1030,8 @@ echo "=== launch failure after replace (no rollback for unsealed library-hot) ==
 reset_logs
 seed_inv "$STATE/inv_current" 30 "$(svc_managed nemotron-3-nano-30b-nvfp4 running True True)"
 seed_inv "$STATE/inv_after_stop" 100 ""
-mem_fail "$STATE/mem_current" qwen3-1.7b
-mem_pass "$STATE/mem_after_stop" qwen3-1.7b
+mem_fail "$STATE/mem_current" qwen3.8-27b-fp8
+mem_pass "$STATE/mem_after_stop" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=1
 export MEM_AFTER_STOP_RC=0
 export WIZARD_API_HEALTHY=0
@@ -1044,7 +1044,7 @@ assert_eq "$LAST_RC" "1" "launch failure without exact rollback exits nonzero"
 assert_file_contains "$STATE/logs/down.log" "nemotron-3-nano-30b-nvfp4" "launch-fail: stopped previous once"
 down_lines=$(grep -c . "$STATE/logs/down.log" || true)
 assert_eq "$down_lines" "1" "launch-fail: single down only"
-assert_file_contains "$STATE/logs/up.log" "qwen3-1.7b" "launch-fail: attempted up target"
+assert_file_contains "$STATE/logs/up.log" "qwen3.8-27b-fp8" "launch-fail: attempted up target"
 assert_file_not_contains "$STATE/logs/up.log" "nemotron-3-nano-30b-nvfp4" \
   "launch-fail: no automatic restart of the unsealed library-hot service"
 assert_file_contains "$STATE/logs/wizard.combined" "launch failed" "launch-fail: reported failure"
@@ -1056,8 +1056,8 @@ assert_false "launch-fail: no docker mutation language" grep -qE 'docker[[:space
 # --------------------------------------------------------------------------
 echo "=== choose another model loop ==="
 reset_logs
-seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3-1.7b running True True)"
-mem_pass "$STATE/mem_current" qwen3-1.7b
+seed_inv "$STATE/inv_current" 100 "$(svc_managed qwen3.8-27b-fp8 running True True)"
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=1
 # model=3, choose another=4, model=2 (nano), keep current=2
@@ -1073,7 +1073,7 @@ assert_false "doctor not invoked in loop" bash -c "test -s '$STATE/logs/doctor.l
 echo "=== unknown port owner ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_unknown)"
-mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
 # model=3, exit=1
@@ -1087,7 +1087,7 @@ assert_file_contains "$STATE/logs/wizard.combined" "will not stop" "unknown port
 echo "=== no mutation before final confirm ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
 export MEM_CURRENT_RC=0
 export WIZARD_API_HEALTHY=0
 # model=3, final n
@@ -1159,14 +1159,14 @@ inv = {
         },
     },
     "services": [{
-        "service_id": "deepseek-v4-flash",
-        "profile": "deepseek-v4-flash",
-        "conf": "deepseek-v4-flash",
-        "served_name": "deepseek-v4-flash",
+        "service_id": "qwen3-1.7b-2node",
+        "profile": "qwen3-1.7b-2node",
+        "conf": "qwen3-1.7b-2node",
+        "served_name": "qwen3-1.7b-2node",
         "expected_nodes": 2,
         "expected_ranks": ["0", "1"],
         "observed_ranks": ["0", "1"],
-        "container_name": "vllm-cluster-deepseek-v4-flash",
+        "container_name": "vllm-cluster-qwen3-1.7b-2node",
         "state": "running",
         "ownership": "managed",
         "safe_to_stop": True,
@@ -1181,7 +1181,7 @@ inv = {
         "ranks": [
             {
                 "rank": "0", "node": "head", "expected_node": "head",
-                "container_name": "vllm-cluster-deepseek-v4-flash",
+                "container_name": "vllm-cluster-qwen3-1.7b-2node",
                 "container_id": "a" * 64, "container_id_short": "a" * 12,
                 "running": True, "stale": False, "status": "running",
                 "ownership": "managed", "safe_to_stop": True,
@@ -1191,7 +1191,7 @@ inv = {
             },
             {
                 "rank": "1", "node": "worker", "expected_node": "worker",
-                "container_name": "vllm-cluster-deepseek-v4-flash",
+                "container_name": "vllm-cluster-qwen3-1.7b-2node",
                 "container_id": "b" * 64, "container_id_short": "b" * 12,
                 "running": True, "stale": False, "status": "running",
                 "ownership": "managed", "safe_to_stop": True,
@@ -1207,12 +1207,12 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(inv, handle, indent=2)
     handle.write("\n")
 PY
-mem_pass "$STATE/mem_current" qwen3-1.7b
-mem_fail "$STATE/mem_by_node/11111111111111111111.json" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
+mem_fail "$STATE/mem_by_node/11111111111111111111.json" qwen3.8-27b-fp8
 printf '1\n' >"$STATE/mem_by_node/11111111111111111111.rc"
-mem_pass "$STATE/mem_by_node/22222222222222222222.json" qwen3-1.7b
+mem_pass "$STATE/mem_by_node/22222222222222222222.json" qwen3.8-27b-fp8
 printf '0\n' >"$STATE/mem_by_node/22222222222222222222.rc"
-mem_pass "$STATE/mem_by_node/33333333333333333333.json" qwen3-1.7b
+mem_pass "$STATE/mem_by_node/33333333333333333333.json" qwen3.8-27b-fp8
 printf '0\n' >"$STATE/mem_by_node/33333333333333333333.rc"
 export TEST_TOPOLOGY_NODES=3
 export WIZARD_API_HEALTHY=0
@@ -1241,13 +1241,13 @@ assert_file_contains "$STATE/logs/wizard.out" "idle" \
 assert_file_contains "$STATE/logs/wizard.out" "333333333333.*recommended" \
   "idle node 3 is recommended"
 assert_file_contains "$STATE/logs/memory.log" \
-  "qwen3-1.7b --node 33333333333333333333 --cold-start --json" \
+  "qwen3.8-27b-fp8 --node 33333333333333333333 --cold-start --json" \
   "placement eligibility explicitly uses the cold-start memory policy"
 assert_file_contains "$STATE/logs/up.log" \
-  "qwen3-1.7b --node 33333333333333333333 --yes" \
+  "qwen3.8-27b-fp8 --node 33333333333333333333 --yes" \
   "single-node launch targets node 3 by stable ID"
 assert_file_contains "$STATE/logs/status.log" \
-  "qwen3-1.7b --node 33333333333333333333" \
+  "qwen3.8-27b-fp8 --node 33333333333333333333" \
   "status follows the remote placement"
 assert_false "non-overlapping DeepSeek service is not stopped" \
   bash -c "grep -q deepseek '$STATE/logs/down.log'"
@@ -1270,7 +1270,7 @@ raise SystemExit(0 if all(len(line) <= 48 for line in text[start:end].splitlines
 echo "=== inventory command failure fails closed ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
 touch "$STATE/inv_fail"
 run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "inventory command failure exits nonzero"
@@ -1282,7 +1282,7 @@ assert_file_contains "$STATE/logs/wizard.combined" "inventory collection failed.
 echo "=== malformed inventory fails closed ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-mem_pass "$STATE/mem_current" qwen3-1.7b
+mem_pass "$STATE/mem_current" qwen3.8-27b-fp8
 touch "$STATE/inv_invalid"
 run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "malformed inventory exits nonzero"
@@ -1293,8 +1293,8 @@ assert_file_contains "$STATE/logs/wizard.combined" "inventory returned invalid d
 echo "=== unexpected memory exit fails closed ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-set_mem_model qwen3-1.7b pass
-echo 42 >"$STATE/mem_by_model/qwen3-1.7b.rc"
+set_mem_model qwen3.8-27b-fp8 pass
+echo 42 >"$STATE/mem_by_model/qwen3.8-27b-fp8.rc"
 run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "unexpected memory exit is not treated as pass"
 assert_false "unexpected memory exit: no down" bash -c "test -s '$STATE/logs/down.log'"
@@ -1305,8 +1305,8 @@ assert_file_contains "$STATE/logs/wizard.combined" "memory preflight failed inte
 echo "=== inconsistent memory result fails closed ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-set_mem_model qwen3-1.7b pass
-echo 2 >"$STATE/mem_by_model/qwen3-1.7b.rc"
+set_mem_model qwen3.8-27b-fp8 pass
+echo 2 >"$STATE/mem_by_model/qwen3.8-27b-fp8.rc"
 run_wizard $'3\n'
 assert_eq "$LAST_RC" "1" "memory JSON/exit disagreement exits nonzero"
 assert_false "inconsistent memory result: no up" bash -c "test -s '$STATE/logs/up.log'"

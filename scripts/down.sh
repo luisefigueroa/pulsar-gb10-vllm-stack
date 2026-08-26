@@ -10,12 +10,12 @@
 # stoppability predicate, not every vllm-* name. A live conf file is extra
 # geometry when present; a missing conf still stops from labels.
 #
-# After a successful profile stop, library-hot retention hooks:
+# After a successful profile stop, model-library retention hooks:
 #   --retain-weights  leave unpinned prepared views in place (product default)
 #   --pin-weights     protect retained hot staging from unforced purge; warm-home
 #                     preparation may still depend on its durable home symlink
 #   --purge-hot       delete hot staging, including an existing pin
-# Ordinary stop of a library-hot service retains unpinned views (ADR 0007).
+# Ordinary stop of a model-library service retains unpinned views (ADR 0007).
 # PULSAR_HOT_STOP_POLICY=retain|purge may select the named-profile default;
 # flags override it. --all never auto-purges. Legacy containers without a
 # library-hot label (pre-ADR 0006 launches) stop cleanly and never invoke

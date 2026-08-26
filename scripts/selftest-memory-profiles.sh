@@ -29,23 +29,13 @@ for conf in "$REPO_DIR"/models/*.conf; do
   echo "OK   $name ram=$ram disk=$disk kv=$kv"
 done
 
-# DeepSeek sets WEIGHTS_RAM_GIB=156; a subsequent profile without that key
-# must not inherit the resident figure (bleed would inflate check-memory).
-load_conf deepseek-v4-flash
-ram=$(estimate_weights_ram_gib)
-if [ "$ram" != "156" ]; then
-  echo "deepseek-v4-flash: expected WEIGHTS_RAM_GIB=156, got $ram" >&2
-  exit 1
-fi
-
-load_conf qwen3-1.7b
-ram=$(estimate_weights_ram_gib)
-assert_ne 156 "$ram" "qwen3-1.7b after deepseek must not inherit WEIGHTS_RAM_GIB"
-# qwen has WEIGHTS_GIB=4 and no WEIGHTS_RAM_GIB → ram falls back to disk.
-if [ "$ram" != "4" ]; then
-  echo "qwen3-1.7b: expected ram estimate 4 (disk fallback), got $ram" >&2
-  exit 1
-fi
+# A subsequent profile must not inherit the previous profile's weight
+# estimate (bleed would inflate check-memory).
+load_conf qwen3.8-27b-fp8
+first=$(estimate_weights_ram_gib)
+load_conf nemotron-3-nano-30b-nvfp4
+second=$(estimate_weights_ram_gib)
+assert_ne "$first" "$second" "nemotron after qwen3.8 must not inherit WEIGHTS ram estimate"
 
 # Explicit empty reset: WEIGHTS_RAM_GIB must be set (to empty) after load_conf
 # so set -u consumers never see an unbound optional field.

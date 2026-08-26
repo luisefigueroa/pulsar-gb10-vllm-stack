@@ -37,7 +37,7 @@ each node-count variant must earn its own status.
 Non-tested, failed, blocked, and experimental labels are warnings rather than
 permission gates. `--force` is removed (ADR 0008): status labels never block
 serving, so drop the flag. Exact geometry, topology, memory, image, weight
-integrity, lifecycle, and security checks are unchanged and still fail closed.
+integrity, lifecycle, and security checks are unchanged and still fail without fallback.
 
 ## Idle capacity and one-node placement
 
@@ -52,7 +52,7 @@ manifest ranks 0 and 1, while an independent one-node service may use rank 2.
 Port 8000 is host-local, so those services do not conflict. Remote one-node
 launches use the manifest's BatchMode SSH endpoint and label the container with
 both topology and physical node identity. Inventory and cleanup revalidate
-those labels against the current confirmed topology and fail closed if
+those labels against the current confirmed topology and fail without fallback if
 placement is missing, duplicated, unreachable, or ambiguous.
 
 ## Discover and confirm membership
@@ -97,13 +97,13 @@ It does not create topology-enrolled trust. A duplicate machine reached through
 several names or IPs is de-duplicated by machine identity, preferring its
 hostname/control endpoint over a RoCE address for SSH.
 
-On confirmation, discovery atomically writes schema-1
+On confirmation, discovery atomically writes topology schema 1
 `.cluster-topology.json` mode 0600. With the cluster idle, run
 `scripts/topology-ssh-trust.sh enroll` to authenticate the exact saved control
 endpoints through normal OpenSSH trust, verify every pairwise rail, and upgrade
-to schema 2. This also writes `.cluster-ssh-config`; both files are gitignored
-because they contain site-local membership and trust material. A schema-2
-manifest with a missing or stale generated config cannot load.
+to topology schema 2. This also writes `.cluster-ssh-config`; both files are gitignored
+because they contain site-local membership and trust material. A topology
+schema-2 manifest with a missing or stale generated config cannot load.
 
 Before replacement it proves that every rank in both the prior and proposed
 membership has no running stack-managed container; an unreachable Docker query
@@ -143,8 +143,8 @@ Historical notes: `WEIGHT_FABRIC.md`.
 
 The model library is the only weight-distribution mechanism
 ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)):
-one durable occupancy home, a symlink/view on that rank, and working replicas
-(sealed-hot copies) only on non-home ranks. Occupancy may move with
+one durable occupancy home, a symlink/view on that rank, and working copies
+only on non-home ranks. Occupancy may move with
 `home relocate` after a live receipt rehash
 ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
 It is not a live NFS/RDMA mount and there is no fallback.
@@ -165,7 +165,7 @@ ownership labels for profile, rank, world size, topology ID, and node ID.
 The native vLLM `--nnodes/--node-rank/--headless` path with the `mp` executor is
 the validated path here. Earlier Ray testing on this hardware served at
 concurrency 1 but hard-hung at concurrency 2 or above. Native TP=2 passed the
-small canary and the flagship correctness, concurrency, long-context, and soak
+small canary and the historical DeepSeek correctness, concurrency, long-context, and soak
 gates. It also avoids a second cluster-control system whose partial failure
 would complicate ownership and teardown.
 
@@ -186,9 +186,10 @@ communication cost; the exact evidence and soaks are in `VALIDATION.md`.
 
 Cross-node layout is still decided per profile, not globally:
 
-- the published PR-41834 DeepSeek image is stable with CUDA graphs and is the
-  flagship path;
-- the official v0.26.0 image works for the tiny TP=2 plumbing canary;
+- the published PR-41834 DeepSeek image was stable with CUDA graphs for that
+  historical two-node profile (removed from the live catalog, ADR 0012);
+- the official v0.26.0 image works for the tiny TP=2 test profile
+  `qwen3-1.7b-2node`;
 - real two-node models on the official image require their recorded workaround
   (often `--enforce-eager`) and must retain the status earned by that exact
   configuration;

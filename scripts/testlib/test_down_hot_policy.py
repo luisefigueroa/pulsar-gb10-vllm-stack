@@ -14,7 +14,7 @@ import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DOWN = REPO_ROOT / "scripts" / "down.sh"
-PROFILE = "qwen3-1.7b"
+PROFILE = "qwen3.8-27b-fp8"
 CONTAINER = f"vllm-{PROFILE}"
 
 

@@ -8,12 +8,12 @@
 *Topology-aware vLLM operations for one or more NVIDIA DGX Spark systems:
 every exact serving geometry must earn its status on GB10 hardware.*
 
-Upstream-oriented control plane for Grace-Blackwell GB10 clusters. It
-automatically discovers cluster membership and its node count, and can operate
+Lifecycle scripts for Grace-Blackwell GB10 clusters. They
+automatically discover cluster membership and its node count, and can operate
 any number of differently named confirmed nodes. Serving remains evidence-gated
 by exact profiles: the
-published matrix currently validates one- and two-node geometries, but that is
-an evidence boundary, not a control-plane limit (each validated node has
+published matrix currently covers one- and two-node geometries, but that is
+an evidence boundary, not a script limit (each measured node has
 121 GiB unified LPDDR5X and dual-rail 200GbE RoCE).
 Built and validated 2026-07-27..31; every serving claim below traces to a
 measured run in `docs/VALIDATION.md` with raw evidence in `results/`.
@@ -27,8 +27,8 @@ flowchart LR
   operator["Operator"] --> surfaces["Operator surfaces<br/>pulsar · wizard.sh · scripts/home.sh"]
   surfaces --> lifecycle["Lifecycle control<br/>scripts/up.sh · down.sh · status.sh"]
 
-  profiles["Model policy<br/>models/*.conf · reviewed seals"] --> lifecycle
-  topology["Topology and control plane<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
+  profiles["Model policy<br/>models/*.conf · reviewed release IDs"] --> lifecycle
+  topology["Topology and lifecycle scripts<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
   artifacts["Launch gates<br/>image · memory · weights · preflight"] --> lifecycle
 
   lifecycle --> single["Single-node launcher<br/>serve.sh"]
@@ -36,7 +36,7 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Model library<br/>durable homes · sealed hot views"] --> artifacts
+  library["Model library<br/>durable homes · working copies"] --> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
@@ -44,18 +44,19 @@ flowchart LR
 
 The model library is the only weight-distribution mechanism
 ([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)):
-one durable home per exact revision, sealed hot views on non-home ranks, and
+one durable home per exact revision, working copies on other serving ranks, and
 local files on every rank before vLLM starts. There is no mode-selection
-axis; `--weight-source`/`--weight-mode` fail closed. Live NFSv4.2/RDMA under
+axis; `--weight-source`/`--weight-mode` fail without fallback. Live NFSv4.2/RDMA under
 vLLM remains rejected as a serving runtime source (ADR 0005): a crashed rank
-cannot cold-start without the owner export; leftover site mounts get
-unmount/teardown only. Control SSH, inference NCCL/RoCE, and weight
-transfer remain distinct data planes even when they involve the same machines.
+cannot cold-start without the NFS export; leftover site mounts get
+unmount/teardown only. Control SSH, inference NCCL/RoCE, and the copy path
+used at prepare remain distinct data planes even when they involve the same machines.
 
 ## What sets this stack apart
 
 1. **Multi-node is real, measured, and root-caused — not "wired but
-   untested".** A 284B flagship serves TP=2 across the RoCE link at
+   untested".** DeepSeek-V4-Flash (284B; later dropped from the live catalog)
+   served TP=2 across the RoCE link at
    48 tok/s single-stream on the 0731 DSpark benches (27 base; no 20 GB
    tok/s re-run) with CUDA graphs on, soaked 150 min / 0 errors at 20 GB. The interconnect is characterized
    to physics (PCIe-x4-capped ~21 GB/s, 25 µs all-reduce floor), the
@@ -77,7 +78,7 @@ transfer remain distinct data planes even when they involve the same machines.
    against a BF16 control, needle tests at every claimed context length,
    and 1-vs-2-node eval-score parity.
 4. **Provenance that gets cheaper over time.** The overlay `Dockerfile` and
-   sealed canary pin official-image **digests**; most mainline serving
+   digest-pinned canaries use official-image **digests**; most mainline serving
    profiles still launch the mutable `v0.26.0` **tag**. The PR exception is
    published as a digest-pinned image built cleanly from a public PR head
    proposed for main — no private fork lineage. Upstream is
@@ -87,7 +88,7 @@ transfer remain distinct data planes even when they involve the same machines.
    hostname-independent GB10 membership and every RoCE pair; preflight and
    teardown visit every node used by the selected profile. Pin-bump and on-call runbooks plus
    exact profile geometry and topology gates keep invented node counts out of
-   the wizard, while validation labels remain visible and advisory.
+   the wizard, while validation labels remain visible and do not grant or deny start.
 
 ## Quick start
 
@@ -111,13 +112,14 @@ scripts/doctor.sh
 # and a single machine is a valid one-node topology (ADR 0006).
 scripts/detect-fabric.sh --write-topology
 
-# List every serving profile with advisory release and legacy labels
+# List every serving profile with the reviewed status the catalog shows
+# (start does not use that status as permission) plus profile STATUS labels
 scripts/list-models.sh --serving
 
 # First serving model: acquire one durable home, prepare exact runtime
-# views, then serve. Requires hf or huggingface-cli on PATH. An unsealed
-# profile uses the source-attested two-step: inspect a read-only plan,
-# then confirm the exact commit that plan reported.
+# views, then serve. Requires hf or huggingface-cli on PATH. Inspect a
+# read-only Hugging Face plan (recorded file list), then confirm the exact
+# commit that plan reported.
 scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
   --revision main --plan --json
 scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
@@ -127,14 +129,14 @@ scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
 ./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
 # equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
 # The wizard (./pulsar wizard) guides topology confirmation, readiness, and
-# preparation for every profile, plus acquisition for sealed profiles; the
-# unsealed source-attested two-step above remains a manual CLI action.
+# preparation. Hugging Face download with --revision remains a manual CLI
+# action (not wizard home add).
 
-# Operator home (neutral workflow menu — no doctor/preflight until you pick)
+# Workflow menu (no doctor/preflight until you pick)
 ./pulsar
 # Browse model storage; refresh/preparation is explicit and never starts serving
 ./pulsar models
-# Direct serve/switch wizard (doctor + preflight; not the no-arg home)
+# Direct serve/switch wizard (doctor + preflight; not the no-arg menu)
 ./pulsar wizard
 # equivalent: ./wizard.sh
 # Note: "./ wizard.sh" (space after ./) → "-bash: ./: Is a directory"; use "./pulsar wizard"
@@ -144,7 +146,7 @@ scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
 # Non-interactive stdin/stderr automatically uses the EOF-safe plain path
 ```
 
-**Operator home (`./pulsar`):** workflow menu — Current system status (default),
+**Workflow menu (`./pulsar`):** Current system status (default),
 Serve or switch a model, Stop a serving model, Models & storage, Maintenance,
 Diagnostics, Exit. Models & storage browses cached exact identity,
 durable-home/runtime placement, and findings. Browsing and health rechecks
@@ -153,9 +155,9 @@ ranks and update only the cached catalog; it never runs automatically. A
 second confirmed action can prepare a serving profile with reviewed identity
 using eight-stream SSH-over-RoCE and no fallback. It verifies and budgets
 rank-local views but does not start serving, qualify the model, or change
-its release status. Retention, cleanup, repair, and durable-home removal
+its Model Serving Release status. Retention, cleanup, repair, and durable-home removal
 remain separate direct-CLI workflows.
-Home is read-only by default; it does not run doctor/inventory until you choose.
+The menu is read-only by default; it does not run doctor/inventory until you choose.
 Quick status is a focused overview (inventory + `/v1/models` advertisement only —
 **not** an inference smoke). Full completion smoke is optional and explicit.
 Stop/maintenance only offer inventory `safe_to_stop` stack-managed services and
@@ -168,7 +170,7 @@ stop for inventory `safe_to_stop` stack-managed services, never for unlabeled,
 legacy, mismatch, unknown, incomplete, or unreachable nodes. Stops run only
 after you confirm the final start/replace action; then inventory and cold
 memory preflight re-run (memory reclaim is never assumed). Docker/SSH probe
-errors fail closed and are never presented as missing artifacts; only
+errors fail without fallback and are never presented as missing artifacts; only
 label-proven complete node placements receive the already-loaded memory exemption. Hard
 memory FAIL never offers “continue anyway”; WARN may, with an explicit
 confirmation.
@@ -202,20 +204,21 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
 ./pulsar inventory                 # read-only service + memory inventory
 
 # Explicit one-node placement (copy node_id from inventory --json):
-./pulsar start qwen3-1.7b --node <node-id>
-./pulsar status qwen3-1.7b --node <node-id>
-./pulsar stop qwen3-1.7b --node <node-id>
+./pulsar start nemotron-3-nano-30b-nvfp4 --node <node-id>
+./pulsar status nemotron-3-nano-30b-nvfp4 --node <node-id>
+./pulsar stop nemotron-3-nano-30b-nvfp4 --node <node-id>
 ```
 
 Every serving profile is an exact Hugging Face `model_id@commit`; the
 absolute-path catalog profiles were removed with the replicated path
 (ADR 0006).
 
-### Confirmed cluster — validated two-node flagship
+### Confirmed cluster — two-node
 
-Harder path: confirm the RoCE topology, then stage the published custom image
-and weights on every node required by the exact profile. DeepSeek remains an
-exact two-node profile; extra discovered capacity stays idle.
+Harder path: confirm the RoCE topology, then stage the image and weights on
+every node required by the exact profile. Extra discovered capacity stays
+idle. `deepseek-v4-flash` is no longer a live catalog profile (ADR 0012);
+its two-node measurements remain history in `docs/VALIDATION.md`.
 
 ```bash
 # Read-only discovery preview. Differently named hosts are supported.
@@ -229,71 +232,70 @@ scripts/detect-fabric.sh --write-topology
 # Optional runtime/path/auth overrides only; topology is not stored in .env.
 cp .env.example .env
 
-# Pull/stage the qualified digest to every node used by the profile, then
-# acquire one durable home and prepare sealed views on every serving rank.
-scripts/sync-image.sh deepseek-v4-flash --pull --yes
+# Pull/stage the digest to every node used by the profile, then acquire one
+# durable home (Hugging Face plan, then exact commit) and prepare working
+# copies on every serving rank.
+scripts/sync-image.sh qwen3.8-27b-fp8-2node --pull --yes
 scripts/topology-ssh-trust.sh enroll && scripts/topology-ssh-trust.sh check
-scripts/model-library.sh home add deepseek-v4-flash --yes
+scripts/model-library.sh home add qwen3.8-27b-fp8-2node \
+  --revision main --plan --json
+scripts/model-library.sh home add qwen3.8-27b-fp8-2node \
+  --revision <exact-commit-from-plan> --yes
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare deepseek-v4-flash \
+scripts/model-library.sh prepare qwen3.8-27b-fp8-2node \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
 
 scripts/doctor.sh
-scripts/up.sh deepseek-v4-flash                  # exact NODES=2, DSpark k=5
-# rollback: scripts/up.sh deepseek-v4-flash --no-spec-decode
-# dry-run checks only: scripts/up.sh deepseek-v4-flash --dry-run
+scripts/up.sh qwen3.8-27b-fp8-2node
+# dry-run checks only: scripts/up.sh qwen3.8-27b-fp8-2node --dry-run
 
-./pulsar status deepseek-v4-flash
-./pulsar stop deepseek-v4-flash
+./pulsar status qwen3.8-27b-fp8-2node
+./pulsar stop qwen3.8-27b-fp8-2node
 ```
 
 The wizard offers every exact serving profile that fits confirmed capacity,
-shows its status and profile notes, and orders legacy evidence-backed choices
+shows its status and profile notes, and orders old evidence-backed choices
 first. Validation status never blocks serving. There is no separate
 launch-trust-mode to choose
 ([ADR 0009](docs/decisions/0009-no-launch-trust-mode-axis.md)). No three-node profile is
-promoted today. Smoke served name:
-`deepseek-v4-flash`; cold load can take ~10+ minutes.
+promoted today.
 
-`--legacy-tested` filters the historical `STATUS=tested*` recommendation class.
-`--validated` was removed (ADR 0008); it fails closed and names `--legacy-tested`.
+`--legacy-tested` filters the historical profile `STATUS=tested*` recommendation class.
+`--validated` was removed (ADR 0008); it fails without fallback and names `--legacy-tested`.
 That filter is not a Model
 Serving Release status filter under
 [ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and no
 existing profile is automatically relabeled `Validated`. A **Model Serving
 Release** is the immutable combination of exact model identity, exact serving
 recipe, runtime/image identity, and supported hardware geometry; changing any
-component creates a new release. The repository now has pure version-1
-descriptor, contract, run-record, evidence-bundle, and reviewed-decision
-validators. Read-only persistence and verification of stored ADR 0004 objects
+component creates a new release. The repository now has Model Serving Release
+descriptor, Validation Contract, run-record, evidence-bundle, and
+reviewed-decision validators. Read-only persistence and verification of stored ADR 0004 objects
 is implemented under `models/model-serving-releases/`. That store holds the
-reviewed Qwen3.8-27B-FP8 lineage; its advisory decision is
-`Testing incomplete`. Local ADR 0004 evidence-capture candidate persistence
-can record unreviewed run and bundle candidates without writing that registry
-or launching a model. Advisory catalog/operator status projection is
-implemented for an explicitly bound release; `qwen3.8-27b-fp8` is bound, and
-other current profiles remain unbound and therefore display a neutral release
-state. Maintainer-only issuance staging can propose registry objects; a
+reviewed Qwen3.8-27B-FP8 lineage; the catalog shows
+`Testing incomplete`. Local ADR 0004 evidence-capture drafts
+can record run and evidence-bundle JSON that is not in the trusted registry
+and do not start a model. The catalog shows a reviewed status for a profile
+that sets `MODEL_SERVING_RELEASE_ID`; `qwen3.8-27b-fp8` does, and
+other current profiles do not, so they display a neutral
+state. Maintainer-only staging can propose registry objects; a
 successful local command is not trusted until repository review and merge.
 Serving is status-independent, while concrete identity, recipe, topology,
-capacity, security, and lifecycle checks still fail closed. No schema object or selftest
+capacity, security, and lifecycle checks still fail without fallback. No schema object or selftest
 establishes physical DGX behavior.
 
 **Weight storage:** the model library is the only mechanism
 ([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)).
 It keeps one durable home per exact revision, uses a symlink view on the
-home rank, and transfers sealed hot copies only to other ranks. Its control
-plane enforces reviewed exact commit/manifest seals where a profile carries
-one, creates a rank-local witness after full verification, uses a metadata
-fast path for unchanged launch, and visibly rehashes on drift before
-launching the exact snapshot. Profiles without a reviewed seal launch with
-`identity=legacy-unsealed` after full verification. The diagnostic
-`qwen3-1.7b` profile carries the first reviewed lab seal and validation
-bundle; the flagship `deepseek-v4-flash` profile carries the second and
-passed its post-issuance physical enforcement, one-home lifecycle, and
-2026-08-16 two-rank GA closure gates (587 requests, zero errors, 30 minutes;
-a 1.14 GiB memory-shrink warning is retained for review). The exact DeepSeek
-Model Serving Release failed strict same-boot determinism, so it cannot be
+home rank, and copies working trees only to other ranks. Lifecycle scripts
+create a rank-local witness after full verification, use a metadata
+fast path for unchanged launch, and visibly rehash on drift before
+launching the exact snapshot. Live file identity is the receipt plus occupancy
+path (`identity_status=legacy-unsealed` after full verification). Lab
+expected-identity files are not a live product (ADR 0012). Historical
+`qwen3-1.7b` and `deepseek-v4-flash` JSON is archived; DeepSeek two-node
+library gates from 2026-08-16 remain evidence, not a live catalog row. The
+exact DeepSeek Model Serving Release failed strict same-boot determinism, so it cannot be
 called `Validated`; that result does not invalidate the distribution
 subsystem. One-rank library serving is supported by decision with its
 physical serving-integration evidence still pending (ADR 0006 records the
@@ -301,7 +303,7 @@ accepted risk). Live NFS/RDMA serving is retired
 ([ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md); history in
 [docs/WEIGHT_FABRIC.md](docs/WEIGHT_FABRIC.md)); the canonical architecture
 is [docs/MODEL_LIBRARY_DESIGN.md](docs/MODEL_LIBRARY_DESIGN.md). For an
-existing eligible primary home, reviewed multi-rank preparation is
+existing eligible primary home, multi-rank preparation is
 topology-bound SSH-over-RoCE with eight streams and no fallback. Enroll and
 check SSH trust first, then use the exact preparation command:
 
@@ -309,7 +311,7 @@ check SSH trust first, then use the exact preparation command:
 scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare <multi-rank-sealed-profile> --yes
+scripts/model-library.sh prepare <multi-rank-profile> --yes
 ```
 
 Multi-rank `prepare` defaults to topology-bound eight-stream SSH-over-RoCE.
@@ -320,15 +322,8 @@ bulk copy.
 Catalog refresh inventories existing homes; it does not download a model or
 create the required durable home. Acquisition is `home add`: it creates
 exactly one durable home, which is then explicitly registered and prepared.
-A sealed profile uses its reviewed identity:
-
-```bash
-scripts/model-library.sh home add <sealed-profile> --yes
-scripts/model-library.sh catalog refresh
-```
-
-For a brand-new unsealed profile, first inspect a read-only source-attested
-plan, then separately confirm the exact commit shown by that plan:
+For a brand-new profile, first inspect a read-only Hugging Face plan
+(recorded file list), then separately confirm the exact commit shown by that plan:
 
 ```bash
 scripts/model-library.sh home add <profile> \
@@ -340,25 +335,25 @@ scripts/model-library.sh catalog refresh
 scripts/model-library.sh home verify <model_id@exact-commit> --json
 ```
 
-The selected target rank downloads and full-verifies the exact commit. The
-unsealed path binds complete upstream inventory and observed bytes in an
+The selected target rank downloads and full-verifies the exact commit. That
+path records complete upstream inventory and observed bytes in an
 immutable site-local receipt; acquisition creates source/catalog evidence, not
-a reviewed seal or validation decision. Neither path creates hot copies,
-starts serving, or promotes the path. A reviewed
+a lab expected-identity file or a Model Serving Release decision. It does not
+create working copies, start serving, or promote the path. A
 single-rank profile has no non-home target and therefore uses no RoCE copy;
 prepare that local runtime view with `--transport ssh-control` instead. See
 [ADR 0003](docs/decisions/0003-explicit-model-preparation-transport.md) and
 [ADR 0004](docs/decisions/0004-model-serving-release-validation.md).
 Maintainers can
-assemble deterministic unreviewed identity candidates through the separate
-[model release runbook](docs/MODEL_RELEASE.md); that tool cannot issue or
-promote a claim and is not exposed through `pulsar`.
+assemble draft Model Serving Release JSON through the separate
+[Model Serving Release runbook](docs/MODEL_RELEASE.md); that tool cannot make
+objects trusted or promote a claim and is not exposed through `pulsar`.
 
 ### What the tools do
 
 | Command | Role |
 |---|---|
-| `./pulsar` | Root dispatcher → operator home |
+| `./pulsar` | Root dispatcher → workflow menu |
 | `./pulsar wizard` | Guided serve/switch wizard |
 | `./pulsar models` | Cached distributed model identity, placement, findings, and explicit catalog refresh |
 | `./pulsar inventory` | Read-only managed service + memory inventory |
@@ -384,14 +379,14 @@ All servers speak the OpenAI API on :8000. Per-model flags live in
 | Image | What it is | Serves |
 |---|---|---|
 | `vllm/vllm-openai:v0.26.0` (runtime **tag**; digest pinned in `Dockerfile` and `qwen3-1.7b`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Qwen, Nemotron, Laguna, and small canaries |
-| `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | **Published arm64 source build of vLLM PR #41834 HEAD** (see below); immutable digest is pinned in model confs | DeepSeek-V4-Flash flagship and Inkling-Small-NVFP4 |
+| `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | **Published arm64 source build of vLLM PR #41834 HEAD** (see below); immutable digest is pinned in model confs | Historical DeepSeek-V4-Flash and Inkling-Small-NVFP4 |
 
 ### The PR #41834 image (the only "patch" in the stack)
 
 Stock release images **cannot** serve DeepSeek-V4 on GB10 — the
 `FLASHINFER_MLA_SPARSE_SM120` attention kernel livelocks under prefill load
 (upstream vllm#49026; reproduced here, probe series in VALIDATION.md). The
-fix is not merged upstream, so the published flagship image is built from the
+fix is not merged upstream, so the published DeepSeek image is built from the
 **head of vLLM PR #41834** ("DeepSeek-V4-Flash on SM12x", pinned at commit
 `d64074e6f`) — built as the PR tree, not cherry-picked, because it is the
 community-validated lineage (188 commits) and includes:
@@ -428,9 +423,9 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
   our own harness under-metering it (SSE chunk counting divided spec
   throughput by the accepted-block size; full story in TROUBLESHOOTING +
   the VALIDATION retraction trail). With honest metering and natural
-  prompts: DSpark on the flagship **+79%** (48.4 vs 27.1 tok/s c=1),
+  prompts: DSpark on DeepSeek-V4-Flash **+79%** (48.4 vs 27.1 tok/s c=1),
   Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). Optional paths
-  use `--spec-decode`; the flagship's soak-proven DSpark path is default-on
+  use `--spec-decode`; that soak-proven DSpark path was default-on for DeepSeek
   and rolls back with `--no-spec-decode`. Its k=5 equals the checkpoint's
   `dspark_block_size` and is not a tuning knob. The spec-enabled 150-min soak
   has PASSED twice. The one standing failure:
@@ -479,7 +474,7 @@ no leaks, no thermal throttling anywhere).
 
 ## Upstream tracking
 
-- **vllm PR #41834** — flagship image lineage; our pin IS the current PR
+- **vllm PR #41834** — DeepSeek image lineage; our pin IS the current PR
   head. On merge: retire the published PR image for a stock pin, rerun the gates.
 - **vllm #49026 / #46253** — the two stock-image blockers we reproduced.
 - **Bump trigger: v0.26.1-final with arm64 images** (rc0 tagged upstream).
@@ -495,11 +490,10 @@ no leaks, no thermal throttling anywhere).
 | Path | What |
 |---|---|
 | `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
-| `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
-| `models/validation-bundles/` | legacy schema-1 combined model/runtime/image/geometry/evidence claims; not a Model Serving Release ID and unchanged by the pre-issuance ADR 0004 schema correction |
-| `models/model-serving-releases/` | tracked ADR 0004 release/contract/run/bundle/decision registry; holds the reviewed Qwen3.8 lineage (`Testing incomplete`); read-only through `scripts/model-serving-release-registry.sh` |
-| `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture candidate persistence; unreviewed, launches nothing, never writes the tracked registry |
-| `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
+| `docs/archive/schema-1-expected-seal/` | archived lab expected-identity files and combined identity format; not a live product (ADR 0012) |
+| `models/model-serving-releases/` | tracked ADR 0004 descriptor / Validation Contract / run / evidence-bundle / decision registry; holds the reviewed Qwen3.8 lineages (`Testing incomplete`); read-only through `scripts/model-serving-release-registry.sh` |
+| `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture drafts; not in the trusted registry, starts nothing |
+| `scripts/model_identity.py` | live normalized-profile checksum format and snapshot file-list constants; lab expected-identity builders are retired |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |

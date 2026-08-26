@@ -303,22 +303,13 @@ offer_one_node_home_placement() {
   esac
 }
 
-# Sealed profile without a durable home: guided one-time acquisition.
+# Brand-new homes use home add --revision (ADR 0012).
 offer_library_home_add() {
-  local -a node_args=()
-  if [ "$NODES" -eq 1 ]; then
-    node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
-  fi
-  if ! confirm "No durable home exists for $NAME. Download it into the model library now?" no; then
-    log "library acquisition declined; no model files were changed"
-    return 1
-  fi
-  log "acquiring one durable home (full verification before publication)…"
-  cmd_model_library_prepare home add "$NAME" "${node_args[@]}" --yes \
-    || { warn "library acquisition failed; no model was started"; return 1; }
-  cmd_model_library_prepare catalog refresh \
-    || { warn "catalog refresh failed after acquisition"; return 1; }
-  return 0
+  warn "no durable home exists for $NAME"
+  warn "acquire it first with:"
+  warn "  scripts/model-library.sh home add $NAME --revision <selector> --plan --json"
+  warn "  scripts/model-library.sh home add $NAME --revision <exact-commit> --yes"
+  return 1
 }
 
 # Confirm then prepare. Exit 0 on success. Exit 2 if the operator leaves.
@@ -347,11 +338,10 @@ refresh_library_serving_check() {
 }
 
 # The model library is the only weight mechanism (ADR 0006). Establish exact
-# ready runtime views (durable home + prepared hot) for every selected rank,
+# ready runtime views (durable home + prepared working copies) for every selected rank,
 # or return 2 (choose another model) / exit without changing model files.
-# Sealed vs unsealed is identity data: the catalog serving-check requires a
-# reviewed seal, so unsealed profiles observe prepared views directly.
-# Unsealed acquisition remains the source-attested CLI, not wizard home add.
+# Admission uses local files on every rank (ADR 0012). Acquisition remains
+# home add --revision, not wizard home add.
 confirm_library_serving() {
   local state transport streams home_rank home_json placement_index
   local scope_label identity_label prepare_rc=0
@@ -364,103 +354,63 @@ confirm_library_serving() {
     return 0
   fi
   scope_label=$(library_scope_label)
-  if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-    identity_label="reviewed exact seal"
-  else
-    identity_label="legacy-unsealed · full verification without a reviewed seal"
-  fi
+  identity_label="receipt and occupancy · not a lab expected-identity file"
   render_human_section "MODEL FILES" \
     "Mechanism" "model library · $scope_label" \
     "Identity" "$identity_label" \
     "Fallback" "none; readiness must pass its own checks"
 
-  if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-    if ! collect_library_serving_check; then
-      warn "distributed catalog readiness could not be established"
-      choose_leave
-      return $?
-    fi
-    echo
-    render_library_serving_check
-    state=$(json_field "$LIBRARY_CHECK_JSON" state)
-    if [ "$state" = blocked ]; then
-      placement_index="${SINGLE_NODE_INDEX-}"
-      offer_one_node_home_placement \
-        "$(json_field "$LIBRARY_CHECK_JSON" home_rank)" || return $?
-      if [ "${SINGLE_NODE_INDEX-}" != "$placement_index" ]; then
-        refresh_library_serving_check "changing placement"
-        state=$(json_field "$LIBRARY_CHECK_JSON" state)
-      fi
-    fi
-    if [ "$state" = blocked ] \
-        && printf '%s' "$LIBRARY_CHECK_JSON" \
-          | grep -q "no current primary durable home"; then
-      if offer_library_home_add; then
-        refresh_library_serving_check "acquisition"
-        state=$(json_field "$LIBRARY_CHECK_JSON" state)
-      fi
-    fi
-    if [ "$state" = blocked ]; then
-      choose_leave
-      return $?
-    fi
-    if [ "$state" = needs-preparation ]; then
-      transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)
-      streams=$(json_field "$LIBRARY_CHECK_JSON" copy_streams)
-      if [ "$NODES" -eq 1 ]; then
-        node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
-      fi
-      confirm_library_prepare --transport "$transport" --copy-streams "$streams" \
-        "${node_args[@]}" || {
-        prepare_rc=$?
-        [ "$prepare_rc" -eq 2 ] && return 2
-        warn "model preparation failed (status $prepare_rc); serving was not started"
-        choose_leave
-        return $?
-      }
-      if ! collect_library_serving_check; then
-        die "preparation returned success, but current catalog readiness is unavailable; model was not started"
-      fi
-      state=$(json_field "$LIBRARY_CHECK_JSON" state)
-      if [ "$state" != ready ]; then
-        echo
-        render_library_serving_check
-        die "preparation did not publish exact ready views on every selected rank; model was not started"
-      fi
-    fi
-    log "library runtime views are ready ($scope_label; no fallback)"
-    return 0
-  fi
-
-  if [ "$NODES" -eq 1 ]; then
-    home_json=$(cmd_model_library_prepare resolve "$NAME" --json 2>/dev/null) \
-      || home_json=""
-    home_rank=$(printf '%s' "$home_json" | python3 -c \
-      'import json,sys; print(json.load(sys.stdin)["home"]["rank"])' 2>/dev/null) \
-      || home_rank=""
-    offer_one_node_home_placement "$home_rank" || return $?
-  fi
-  if cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null 2>&1; then
-    log "library runtime views are ready ($scope_label; no fallback)"
-    return 0
-  fi
-  if [ "$NODES" -eq 1 ]; then
-    node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
-  else
-    transport_args=(--transport ssh-roce --copy-streams 8)
-  fi
-  confirm_library_prepare "${transport_args[@]}" "${node_args[@]}" || {
-    prepare_rc=$?
-    [ "$prepare_rc" -eq 2 ] && return 2
-    warn "model preparation failed (status $prepare_rc); serving was not started"
-    warn "if no durable home exists yet, acquire one first:"
-    warn "  scripts/model-library.sh home add $NAME --revision <selector> --plan --json"
-    warn "  scripts/model-library.sh home add $NAME --revision <exact-commit> --yes"
+  if ! collect_library_serving_check; then
+    warn "distributed catalog readiness could not be established"
     choose_leave
     return $?
-  }
-  if ! cmd_check_weights "$NAME" "${PLACEMENT_ARGS[@]}" --json >/dev/null 2>&1; then
-    die "preparation did not publish exact ready views on every selected rank; model was not started"
+  fi
+  echo
+  render_library_serving_check
+  state=$(json_field "$LIBRARY_CHECK_JSON" state)
+  if [ "$state" = blocked ]; then
+    placement_index="${SINGLE_NODE_INDEX-}"
+    offer_one_node_home_placement \
+      "$(json_field "$LIBRARY_CHECK_JSON" home_rank)" || return $?
+    if [ "${SINGLE_NODE_INDEX-}" != "$placement_index" ]; then
+      refresh_library_serving_check "changing placement"
+      state=$(json_field "$LIBRARY_CHECK_JSON" state)
+    fi
+  fi
+  if [ "$state" = blocked ] \
+      && printf '%s' "$LIBRARY_CHECK_JSON" \
+        | grep -q "no current primary durable home"; then
+    offer_library_home_add || true
+    choose_leave
+    return $?
+  fi
+  if [ "$state" = blocked ]; then
+    choose_leave
+    return $?
+  fi
+  if [ "$state" = needs-preparation ]; then
+    transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)
+    streams=$(json_field "$LIBRARY_CHECK_JSON" copy_streams)
+    if [ "$NODES" -eq 1 ]; then
+      node_args=(--node "${PLACEMENT_SELECTOR:-$SINGLE_NODE_INDEX}")
+    fi
+    confirm_library_prepare --transport "$transport" --copy-streams "$streams" \
+      "${node_args[@]}" || {
+      prepare_rc=$?
+      [ "$prepare_rc" -eq 2 ] && return 2
+      warn "model preparation failed (status $prepare_rc); serving was not started"
+      choose_leave
+      return $?
+    }
+    if ! collect_library_serving_check; then
+      die "preparation returned success, but current catalog readiness is unavailable; model was not started"
+    fi
+    state=$(json_field "$LIBRARY_CHECK_JSON" state)
+    if [ "$state" != ready ]; then
+      echo
+      render_library_serving_check
+      die "preparation did not publish exact ready views on every selected rank; model was not started"
+    fi
   fi
   log "library runtime views are ready ($scope_label; no fallback)"
   return 0
@@ -1427,20 +1377,19 @@ print("1" if item.get("complete") is True and item.get("safe_to_stop") is True e
     running_source="${svc_fields[0]}"
     identity_status="${svc_fields[1]}"
     stoppable="${svc_fields[2]}"
-    # Exact rollback needs a reviewed identity match. Pre-library launches and
-    # library-hot services without that match (legacy-unsealed / unvalidated)
-    # stay switchable via a guarded stop, with no restore promise.
-    if [ "$running_source" != library-hot ] || [ "$identity_status" != match ]; then
+    # Exact rollback that required identity_status=match is retired (ADR 0012).
+    # Library-hot switches stop without a restore promise.
+    if [ "$running_source" != library-hot ] || true; then
       [ "$stoppable" = 1 ] || {
         if [ "$running_source" != library-hot ]; then
           die "the running pre-library service is incomplete or unobservable; no service was stopped"
         fi
-        die "the running library-hot service is incomplete or unobservable; no service was stopped"
+        die "the running model-library service is incomplete or unobservable; no service was stopped"
       }
       if [ "$running_source" != library-hot ]; then
         warn "stopping a pre-library service; exact rollback is unavailable for it"
       else
-        warn "stopping a library-hot service without a reviewed identity match; exact rollback is unavailable for it"
+        warn "stopping a model-library service without a reviewed identity match; exact rollback is unavailable for it"
       fi
       down_args=()
       if [ "$conf" = "$NAME" ] && [ "$NODES" -eq 1 ]; then
@@ -1483,7 +1432,7 @@ prepare_exact_rollback() {
   local inventory_file="$WIZARD_WORK_DIR/rollback-inventory.json"
   load_transaction_summary
   [ "$TRANSACTION_SOURCE" = library-hot ] \
-    || die "saved transaction is not a library-hot contract; archive it instead of rollback"
+    || die "saved transaction is not a model-library contract; archive it instead of rollback"
   NAME="$TRANSACTION_PREVIOUS_PROFILE"
   load_conf "$NAME"
   contract_id=$(loaded_launch_contract_id)
