@@ -146,7 +146,7 @@ svc_legacy() {
 import json
 print(json.dumps({
   'service_id': 'vllm-legacy',
-  'profile': 'qwen3-1.7b', 'conf': 'qwen3-1.7b', 'served_name': 'qwen3-1.7b',
+  'profile': 'qwen3.8-27b-fp8', 'conf': 'qwen3.8-27b-fp8', 'served_name': 'qwen3.8-27b-fp8',
   'expected_nodes': 1, 'expected_ranks': ['single'], 'observed_ranks': ['single'],
   'container_name': 'vllm-legacy', 'state': 'running', 'ownership': 'legacy',
   'safe_to_stop': False, 'complete': False, 'observability': 'partial',
@@ -171,7 +171,7 @@ svc_mismatch() {
 import json
 print(json.dumps({
   'service_id': 'vllm-mm',
-  'profile': 'qwen3-1.7b', 'conf': 'qwen3-1.7b', 'served_name': 'qwen3-1.7b',
+  'profile': 'qwen3.8-27b-fp8', 'conf': 'qwen3.8-27b-fp8', 'served_name': 'qwen3.8-27b-fp8',
   'expected_nodes': 1, 'expected_ranks': ['single'], 'observed_ranks': ['single'],
   'container_name': 'vllm-mm', 'state': 'running', 'ownership': 'mismatch',
   'safe_to_stop': False, 'complete': False, 'observability': 'partial',
@@ -431,7 +431,7 @@ cat >"$SHIM/api-ok" <<'SH'
 set -euo pipefail
 echo "api_probe" >>"${STATE_DIR}/logs/api.log"
 cat <<'JSON'
-{"data":[{"id":"qwen3-1.7b"}]}
+{"data":[{"id":"qwen3.8-27b-fp8"}]}
 JSON
 SH
 chmod +x "$SHIM/api-ok"
@@ -561,7 +561,7 @@ echo "=== home workflows plain mode ==="
 
 # Status → Back → Exit
 reset_logs
-seed_inv "$STATE/inv_current" 80 "$(svc_managed qwen3-1.7b running True True)"
+seed_inv "$STATE/inv_current" 80 "$(svc_managed qwen3.8-27b-fp8 running True True)"
 run_home $'1\n4\n7\n'
 assert_eq "$LAST_RC" "0" "status then exit"
 assert_file_contains "$STATE/logs/home.combined" "quick-status|managed|read-only" "status showed overview"
@@ -606,7 +606,7 @@ assert_file_contains "$STATE/logs/home.combined" "cancelled|goodbye|exiting" "EO
 # ---------------------------------------------------------------------------
 echo "=== quick-status fields ==="
 reset_logs
-seed_inv "$STATE/inv_current" 64.0 "$(svc_managed qwen3-1.7b running True True)" ok \
+seed_inv "$STATE/inv_current" 64.0 "$(svc_managed qwen3.8-27b-fp8 running True True)" ok \
   '[{"node":"head","pid":111,"process_name":"foreign","used_memory_mib":4096,"note":"x"}]'
 # Add stale via multi-service inventory
 python3 - <<PY
@@ -632,7 +632,7 @@ PY
 export QUICK_STATUS_INVENTORY_JSON="$STATE/inv_current"
 export QUICK_STATUS_API_CMD="$SHIM/api-forbid-completion"
 out=$("$REPO_DIR/scripts/quick-status.sh" 2>&1)
-assert_true "quick-status mentions conf" bash -c "printf '%s' \"\$0\" | grep -q qwen3-1.7b" "$out"
+assert_true "quick-status mentions conf" bash -c "printf '%s' \"\$0\" | grep -q qwen3.8-27b-fp8" "$out"
 assert_true "quick-status memory head" bash -c "printf '%s' \"\$0\" | grep -qi memory" "$out"
 assert_true "quick-status local hostname label" bash -c "printf '%s' \"\$0\" | grep -q 'dgx-spark-1 (this node)'" "$out"
 assert_true "quick-status remote hostname" bash -c "printf '%s' \"\$0\" | grep -q 'dgx-spark-3'" "$out"
@@ -663,7 +663,7 @@ out=$("$REPO_DIR/scripts/quick-status.sh" 2>&1)
 assert_true "API unavailable messaging" bash -c "printf '%s' \"\$0\" | grep -qi unavailable" "$out"
 
 # Worker unreachable
-seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3-1.7b running True True)" unreachable
+seed_inv "$STATE/inv_current" 50 "$(svc_managed qwen3.8-27b-fp8 running True True)" unreachable
 export QUICK_STATUS_INVENTORY_JSON="$STATE/inv_current"
 export QUICK_STATUS_API_CMD="$SHIM/api-ok"
 out=$("$REPO_DIR/scripts/quick-status.sh" 2>&1)
@@ -682,7 +682,7 @@ services = [
   json.loads(r'''$(svc_unknown)'''),
   json.loads(r'''$(svc_legacy)'''),
   json.loads(r'''$(svc_mismatch)'''),
-  json.loads(r'''$(svc_partial_2node deepseek-v4-flash True)'''),
+  json.loads(r'''$(svc_partial_2node qwen3.8-27b-fp8-2node True)'''),
   json.loads(r'''$(svc_managed unsafe-model running True False)'''),
 ]
 inv = {
@@ -726,14 +726,14 @@ assert_false "empty stop: no down" bash -c "test -s '$STATE/logs/down.log'"
 
 # Incomplete partial excluded
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_partial_2node deepseek-v4-flash True)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_partial_2node qwen3.8-27b-fp8-2node True)" ok
 run_home $'3\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "partial incomplete excluded"
 assert_false "partial: no down" bash -c "test -s '$STATE/logs/down.log'"
 
 # Worker unreachable 2-node complete excluded
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True)" unreachable
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True)" unreachable
 run_home $'3\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "worker-unreach 2-node excluded"
 assert_false "unreach: no down" bash -c "test -s '$STATE/logs/down.log'"
@@ -741,35 +741,35 @@ assert_false "unreach: no down" bash -c "test -s '$STATE/logs/down.log'"
 # Aggregate remote health may be degraded by an idle rank outside this exact
 # validated service. The required rank remains observable and stoppable.
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True)" unreachable
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True)" unreachable
 mark_idle_rank2_unreachable "$STATE/inv_current"
 run_home $'3\n1\ny\n7\n'
-assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash" \
+assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node" \
   "idle rank 2 does not hide exact 2-node stop"
 assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
   "idle rank 2 preserves exact-service eligibility"
 
 # library-hot stop discloses restage cost from the profile WEIGHTS_GIB
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True library-hot)" ok
 run_home $'3\n1\n1\ny\n7\n'
-assert_file_contains "$STATE/logs/home.combined" "free ~167 GiB now" \
+assert_file_contains "$STATE/logs/home.combined" "free ~29 GiB now" \
   "stop discloses restage bytes for library-hot"
 assert_file_contains "$STATE/logs/home.combined" "Keep prepared views" \
   "stop offers retain as the first prepared-view choice"
-assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash --retain-weights" \
+assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node --retain-weights" \
   "home retain choice passes --retain-weights"
 assert_file_not_contains "$STATE/logs/down.log" "estimated_footprint" \
   "stop disclosure does not pass GPU footprint as disk"
 
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True library-hot)" ok
 run_home $'3\n1\n2\ny\n7\n'
-assert_file_contains "$STATE/logs/down.log" "deepseek-v4-flash --purge-hot" \
+assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node --purge-hot" \
   "home free choice passes --purge-hot"
 
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node deepseek-v4-flash True library-hot)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True library-hot)" ok
 run_home $'3\n1\n1\nn\n7\n'
 assert_false "library-hot decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" \

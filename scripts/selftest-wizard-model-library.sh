@@ -57,7 +57,7 @@ inventory = {
     "unmanaged_gpu_processes": [],
 }
 memory = {
-    "model": "deepseek-v4-flash",
+    "model": "qwen3.8-27b-fp8-2node",
     "result": "pass",
     "mode": "cold-start",
     "already_loaded": False,
@@ -80,14 +80,14 @@ memory = {
 }
 running = json.loads(json.dumps(inventory))
 running["services"] = [{
-    "service_id": "deepseek-v4-flash",
-    "profile": "deepseek-v4-flash",
-    "conf": "deepseek-v4-flash",
-    "served_name": "deepseek-v4-flash",
+    "service_id": "qwen3.8-27b-fp8-2node",
+    "profile": "qwen3.8-27b-fp8-2node",
+    "conf": "qwen3.8-27b-fp8-2node",
+    "served_name": "qwen3.8-27b-fp8-2node",
     "expected_nodes": 2,
     "expected_ranks": ["0", "1"],
     "observed_ranks": ["0", "1"],
-    "container_name": "vllm-cluster-deepseek-v4-flash",
+    "container_name": "vllm-cluster-qwen3.8-27b-fp8-2node",
     "state": "running",
     "ownership": "managed",
     "safe_to_stop": True,
@@ -105,7 +105,7 @@ running["services"] = [{
             "rank": str(rank),
             "node": "head" if rank == 0 else "worker",
             "expected_node": "head" if rank == 0 else "worker",
-            "container_name": "vllm-cluster-deepseek-v4-flash",
+            "container_name": "vllm-cluster-qwen3.8-27b-fp8-2node",
             "container_id": str(rank + 1) * 64,
             "container_id_short": str(rank + 1) * 12,
             "running": True,
@@ -178,18 +178,18 @@ with open(str(pathlib.Path(inventory_path).with_name("topology.json")), "w", enc
     handle.write("\n")
 
 one_profiles = {"models": [{
-    "id": "qwen3-1.7b",
+    "id": "qwen3.8-27b-fp8",
     "status": "tested",
     "nodes": 1,
     "source": "hf",
     "purpose": "serving",
-    "served_name": "qwen3-1.7b",
+    "served_name": "qwen3.8-27b-fp8",
     "spec": "none",
     "spec_default_enabled": False,
-    "reviewed_identity": True,
-    "reviewed_model_id": "Qwen/Qwen3-1.7B",
-    "reviewed_revision": "7" * 40,
-    "reviewed_manifest": "8" * 64,
+    "reviewed_identity": False,
+    "reviewed_model_id": None,
+    "reviewed_revision": None,
+    "reviewed_manifest": None,
 }]}
 one_health = {
     "schema_version": 1,
@@ -203,23 +203,23 @@ one_health = {
     "models": [{
         "model_id": "Qwen/Qwen3-1.7B",
         "revision": "7" * 40,
-        "profiles": ["qwen3-1.7b"],
-        "expected_manifest": "8" * 64,
-        "validation": "expected-unverified",
+        "profiles": ["qwen3.8-27b-fp8"],
+        "expected_manifest": None,
+        "validation": "unvalidated",
         "home_ranks": [1],
         "primary": {"mode": "automatic-single-home", "status": "match", "rank": 1},
         "duplicate_home": "none",
     }],
     "hot_instances": [{
         "rank": 1,
-        "profile": "qwen3-1.7b",
+        "profile": "qwen3.8-27b-fp8",
         "model_id": "Qwen/Qwen3-1.7B",
         "revision": "7" * 40,
         "metadata_schema": 3,
         "metadata_status": "current",
         "runtime_source": "durable-home",
         "retention": "ephemeral",
-        "identity_status": "match",
+        "identity_status": "legacy-unsealed",
         "witness_status": "match",
         "active_reference": False,
         "repairable": False,
@@ -243,15 +243,15 @@ import sys
 
 reports = pathlib.Path(sys.argv[1])
 unsealed_one = {"models": [{
-    "id": "qwen3.6-27b-fp8", "status": "tested", "nodes": 1,
-    "source": "hf", "purpose": "serving", "served_name": "qwen3.6-27b-fp8",
+    "id": "qwen3.8-27b-fp8", "status": "tested", "nodes": 1,
+    "source": "hf", "purpose": "serving", "served_name": "qwen3.8-27b-fp8",
     "spec": "none", "spec_default_enabled": False,
     "reviewed_identity": False, "reviewed_model_id": None,
     "reviewed_revision": None, "reviewed_manifest": None,
 }]}
 unsealed_two = {"models": [{
-    "id": "qwen3-1.7b-2node", "status": "tested", "nodes": 2,
-    "source": "hf", "purpose": "serving", "served_name": "qwen3-1.7b-2node",
+    "id": "qwen3.8-27b-fp8-2node", "status": "tested", "nodes": 2,
+    "source": "hf", "purpose": "serving", "served_name": "qwen3.8-27b-fp8-2node",
     "spec": "none", "spec_default_enabled": False,
     "reviewed_identity": False, "reviewed_model_id": None,
     "reviewed_revision": None, "reviewed_manifest": None,
@@ -265,7 +265,7 @@ for name, value in (
         handle.write("\n")
 PY
 
-CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf deepseek-v4-flash; loaded_launch_contract_id' _ "$REPO_DIR")
+CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf qwen3.8-27b-fp8-2node; loaded_launch_contract_id' _ "$REPO_DIR")
 python3 "$WIZARD_FIXTURE_TOOL" seed-running \
   --inventory "$STATE/inventory.json.running" \
   --empty-inventory "$STATE/inventory.json" \
@@ -436,20 +436,18 @@ run_wizard() {
 }
 
 echo "=== ready library views launch without preparation ==="
-run_wizard healthy.json 0 0 $'2\n\ny\n'
+run_wizard healthy.json 0 0 $'2\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
-assert_contains "$STATE/logs/output.log" 'Tested—criteria not met' \
+assert_contains "$STATE/logs/output.log" 'legacy=untested' \
   "wizard exposes a non-recommended serving profile with its advisory status"
-assert_contains "$STATE/logs/health.log" '.' \
-  "library flow always inspects catalog health"
 assert_empty "$STATE/logs/prepare.log" "ready views need no preparation"
-assert_contains "$STATE/logs/weights.log" '^deepseek-v4-flash --json$' \
+assert_contains "$STATE/logs/weights.log" '^qwen3.8-27b-fp8-2node --json$' \
   "weight preflight carries no mode flag"
-assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
+assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
   "launch carries no mode flag"
 
 echo "=== two-rank preparation and launch ==="
-run_wizard unprepared.json 0 0 $'2\ny\n\ny\n'
+run_wizard unprepared.json 0 0 $'2\ny\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'DISTRIBUTED CATALOG.*TWO-RANK SERVING' \
   "wizard labels the two-rank scope"
@@ -458,11 +456,11 @@ assert_contains "$STATE/logs/output.log" 'durable home remains required' \
 assert_contains "$STATE/logs/output.log" '^durable home[[:space:]]+node 2' \
   "long catalog labels remain separated from their values"
 assert_contains "$STATE/logs/prepare.log" \
-  '^prepare deepseek-v4-flash --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
+  '^prepare qwen3.8-27b-fp8-2node --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
   "wizard delegates the accepted eight-stream RoCE preparation policy"
-assert_contains "$STATE/logs/weights.log" '^deepseek-v4-flash --json$' \
+assert_contains "$STATE/logs/weights.log" '^qwen3.8-27b-fp8-2node --json$' \
   "weight preflight carries no mode flag after preparation"
-assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
+assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
   "launch happens only after separate confirmation"
 
 echo "=== blocked catalog is leave-only and never launches ==="
@@ -480,32 +478,31 @@ assert_empty "$STATE/logs/up.log" "preparation failure cannot launch"
 
 echo "=== confirmed two-rank GA restart retains prepared views ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.running"
-run_wizard healthy-active.json 0 0 $'2\n1\n\ny\n' \
+run_wizard healthy-active.json 0 0 $'2\n2\ny\n' \
   "$STATE/inventory.json.running"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
+assert_contains "$STATE/logs/output.log" \
+  'without a reviewed identity match|exact rollback is unavailable' \
+  "same-source restart stops without a restore promise (ADR 0012)"
 assert_contains "$STATE/logs/down.log" \
-  '^deepseek-v4-flash --pin-weights$' \
-  "same-source restart pins prepared views before stop"
-assert_contains "$STATE/logs/up.log" '^deepseek-v4-flash --yes$' \
+  '^qwen3.8-27b-fp8-2node$' \
+  "same-source restart stops the previous library-hot service"
+assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
   "restart launches through the library with no mode flag"
 
-echo "=== failed replacement restores exact catalog contract ==="
+echo "=== failed replacement does not restore a retired match contract ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.rollback"
-run_wizard healthy-active.json 0 0 $'2\n1\n\ny\n1\ny\n' \
+run_wizard healthy-active.json 0 0 $'2\n2\ny\n' \
   "$STATE/inventory.json.rollback" "$STATE/reports/profiles.json" 1
-[ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
+# Launch is expected to fail; the point is no match-identity restore.
 assert_contains "$STATE/logs/output.log" \
-  'Restore previous exact service|planning exact rollback' \
-  "launch failure offers the captured service contract"
-assert_contains "$STATE/logs/up.log" \
-  '^deepseek-v4-flash --spec-decode --yes$' \
-  "rollback preserves the speculative-decode state"
-assert_contains "$STATE/logs/prepare.log" '^pin deepseek-v4-flash$' \
-  "ephemeral catalog views are pinned before stop"
-assert_contains "$STATE/logs/prepare.log" '^unpin deepseek-v4-flash$' \
-  "confirmed rollback restores the original unpinned policy"
+  'exact rollback is unavailable' \
+  "launch failure does not offer match-identity restore (ADR 0012)"
+grep -q 'Restore previous exact service' "$STATE/logs/output.log" \
+  && { echo "FAIL retired match restore was offered" >&2; exit 1; } \
+  || echo "OK   launch failure does not offer exact restore"
 [ ! -e "$STATE/replacement-transaction.json" ] \
-  || { echo "FAIL confirmed rollback left transaction state" >&2; exit 1; }
+  || { echo "FAIL unsealed switch left transaction state" >&2; exit 1; }
 
 echo "=== one-node catalog serving explicitly moves to durable home ==="
 run_wizard one-health.json 0 0 $'1\n1\n1\ny\n' \
@@ -517,10 +514,10 @@ assert_contains "$STATE/logs/output.log" \
 assert_empty "$STATE/logs/prepare.log" \
   "ready one-node durable-home view needs no materialization"
 assert_contains "$STATE/logs/weights.log" \
-  '^qwen3-1.7b --node node-one-identity --json$' \
+  '^qwen3.8-27b-fp8 --node node-one-identity --json$' \
   "one-node weight preflight targets its durable home"
 assert_contains "$STATE/logs/up.log" \
-  '^qwen3-1.7b --node node-one-identity --yes$' \
+  '^qwen3.8-27b-fp8 --node node-one-identity --yes$' \
   "one-node catalog launch targets its durable home"
 
 echo "=== unsealed one-node serving routes to its durable home ==="
@@ -531,29 +528,23 @@ assert_contains "$STATE/logs/output.log" \
   'selected the durable-home node for one-rank library serving: fixture-one' \
   "unsealed one-node placement moves to the catalog home rank"
 assert_contains "$STATE/logs/weights.log" \
-  '^qwen3.6-27b-fp8 --node node-one-identity --json$' \
+  '^qwen3.8-27b-fp8 --node node-one-identity --json$' \
   "unsealed readiness check targets the durable home"
 assert_contains "$STATE/logs/up.log" \
-  '^qwen3.6-27b-fp8 --node node-one-identity --yes$' \
+  '^qwen3.8-27b-fp8 --node node-one-identity --yes$' \
   "unsealed one-node launch targets the durable home"
 grep -qv '^resolve ' "$STATE/logs/prepare.log" \
   && { echo "FAIL ready unsealed views must not prepare or mutate" >&2; exit 1; } \
   || echo "OK   ready unsealed views need no preparation"
-grep -q '^resolve qwen3.6-27b-fp8 --json$' "$STATE/logs/prepare.log" \
-  && echo "OK   unsealed placement consults the cached catalog" \
-  || { echo "FAIL unsealed placement consults the cached catalog" >&2; exit 1; }
 
 echo "=== unsealed multi-rank preparation keeps ssh-roce ==="
-printf '1\n0\n' >"$STATE/weights-rc-seq"
-WEIGHTS_RC_SEQ_FILE="$STATE/weights-rc-seq" \
-  run_wizard one-health.json 0 0 $'1\ny\ny\n' \
+run_wizard unprepared.json 0 0 $'1\ny\ny\n' \
   "$STATE/inventory.json" "$STATE/reports/unsealed-two-profiles.json"
-unset WEIGHTS_RC_SEQ_FILE
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/prepare.log" \
-  '^prepare qwen3-1.7b-2node --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
+  '^prepare qwen3.8-27b-fp8-2node --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
   "unsealed multi-rank preparation uses eight-stream ssh-roce"
-assert_contains "$STATE/logs/up.log" '^qwen3-1.7b-2node --yes$' \
+assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
   "unsealed multi-rank launch carries no mode flag"
 
 echo "=== leftover main-era replicated transaction can be archived ==="

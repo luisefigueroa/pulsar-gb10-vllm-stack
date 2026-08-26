@@ -1,7 +1,9 @@
 # Model support matrix — current legacy and ADR 0004 profiles (2026-08-19)
 
-This table reports the implementation's existing `STATUS=tested*`, reviewed
-seal, and `legacy-unsealed` contracts. It does **not** assign the Model Serving
+This table reports the implementation's existing `STATUS=tested*` and
+unsealed library-hot contracts. Expected-seal and schema-1 validation
+bundles are not a live product
+([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)). It does **not** assign the Model Serving
 Release statuses accepted in
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). In
 particular, no row is automatically `Validated`: that status belongs to one
@@ -42,7 +44,7 @@ any status in the table.
 
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
 |---|---|---|---|---|---|---|---|
-| `qwen3-1.7b` | Qwen/Qwen3-1.7B | BF16 | 4 GB (~3.8 GiB sealed) | 1 | 32K | — | **tested diagnostic canary; lab-sealed exact identity** — hidden from serving wizard |
+| `qwen3-1.7b` — **profile removed by ADR 0012** (schema-1 expected-seal; JSON archived) | Qwen/Qwen3-1.7B | BF16 | 4 GB | 1 | 32K | — | historical lab-sealed canary; re-onboard onto ADR 0004 only as a later explicit change |
 | `qwen3.8-27b-fp8` | Qwen/Qwen3.8-27B-FP8 | FP8 | 29 GB | 1 | 131,072 configured; context not evaluated | — | legacy **`STATUS=untested`**; ADR 0004 **Testing incomplete** — strict same-boot and absolute performance passed; stability, accuracy, serving integration, and physical geometry remain unevaluated; not recommended |
 | `qwen3.8-27b-fp8-2node` | same, TP=2 cross-node on official v0.27.1-aarch64 | FP8 | 29 GB | 2 / TP=2 | 131,072 configured; unevaluated | — | unbound draft; legacy **`STATUS=untested`**; no ADR 0004 binding; graphs on; no spec decode; not recommended |
 | `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 4 GB | 2 / TP=2 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
@@ -51,7 +53,7 @@ any status in the table.
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 (needle 3/3 @124K; ledger only — no `results/` artifact) | MTP not offered | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP k=1 **opt-in +47%** (`--spec-decode`; triton draft) | **tested** — 16.2 tok/s c=1 base, 113 agg c=32, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` — **profile removed by ADR 0006** (absolute-path catalog; measurements remain history) | poolside/Laguna-S-2.1-NVFP4 | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K; ledger only — no `results/` artifact) | DFlash **marginal +13%** (off by default) | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
-| `deepseek-v4-flash` | deepseek-ai/DeepSeek-V4-Flash-**0731** (integrated DSpark drafter) on **published, digest-pinned PR-41834 image** | FP8+FP4 experts | 167 GB | **2 / TP=2** | **500K served** (client cap; **20 GB/rank KV → 652,465 tok, 1.30x @500K**; `max-num-seqs 5`; 20 GB needle 3/3 @447K in `results/needle-dsv4-20gb-447k.log`; prior soaked 10 GB→577k) | **DSpark default-on; k=5 checkpoint-fixed** (`--no-spec-decode` rollback; **0731 benches** 43–48 tok/s c=1 — no 20 GB throughput re-run) | **`STATUS=tested`** (20 GB soak in VALIDATION.md); **lab-sealed exact identity** — flagship; **2026-08-01 defaults retuned for few long agent sessions** (see conf header + DeepSeek notes) |
+| `deepseek-v4-flash` — **profile removed by ADR 0012** (schema-1 expected-seal; JSON archived) | deepseek-ai/DeepSeek-V4-Flash-0731 | FP8+FP4 experts | 167 GB | 2 / TP=2 | historical 500K/20 GB soak | historical DSpark | historical lab-sealed flagship; re-onboard onto ADR 0004 only as a later explicit change |
 | `inkling-small-nvfp4` — **profile removed by ADR 0006** (absolute-path catalog; probe history remains) | Thinkingmachines/Inkling-Small-NVFP4 (added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 131,072 in conf (checkpoint 1M; needle-gate first) | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
 | `laguna-s-2.1-2node` — **profile removed by ADR 0006** | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — advisory measurement-only label; stock graphs hang without `--enforce-eager` (baked in conf). Do not `./pulsar start` it. |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
@@ -61,28 +63,19 @@ any status in the table.
 "Status" is updated by validation runs only (docs/VALIDATION.md holds the
 numbers). Nothing gets `tested` from arithmetic.
 
-**Model-content identity transition:** these rows are historical profile
-validation claims except for the issued `qwen3-1.7b` and
-`deepseek-v4-flash` rows. The diagnostic Qwen claim binds exact commit
-`70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, manifest
-`775e58d51419ccd0c3b28a151ec2d5fc28e14f3bbcb54a5ef1c1b1d17de995e1`,
-digest-pinned image, normalized one-node profile, and repository evidence.
-The flagship claim binds commit
-`7872f01b1d1fe23eabc4c98b48bffcef5a386062`, manifest
-`27ab362a4898eadac54d61da14e1073f15b2acf5172de082575f8ee7f1c9ec9e`,
-the digest-pinned PR-41834 image, normalized two-node profile, and reviewed
-evidence. Profiles without seals—including `qwen3-1.7b-2node`—remain
-`legacy-unsealed`. Library acquisition/readiness/launch enforces the
-reviewed seal for profiles that have one; live-mount serving is retired
-(ADR 0005) and the replicated path was removed (ADR 0006).
-`STATUS=tested*` must not be interpreted as validating arbitrary bytes under
-the same repository ID. Do not generate an expected seal from a user cache;
-recover the lab artifact used for the run or revalidate the exact content.
-Library preparation and sealed home acquisition both full-verify before
-creating their distinct rank-local serve witnesses. Unchanged launch
-uses the applicable metadata fast path, while drift rehashes. Those mechanisms
-preserve an established identity but cannot turn legacy rows into lab-sealed
-claims.
+**Model-content identity:** live serving identity is unsealed library-hot
+(occupancy, rank-local verified views, and source-attested receipts for
+brand-new homes). ADR 0004 Model Serving Release objects are advisory
+projection, not a serving gate. `qwen3-1.7b` and `deepseek-v4-flash` were
+the last schema-1 expected-seal profiles; they are dropped from the live
+catalog and their JSON is archived. `qwen3-1.7b-2node` stays as an unsealed
+plumbing canary. Live-mount serving is retired (ADR 0005) and the replicated
+path was removed (ADR 0006). `STATUS=tested*` must not be interpreted as
+validating arbitrary bytes under the same repository ID. Do not generate an
+expected seal from a user cache; recover the lab artifact used for the run
+or revalidate the exact content. Library preparation full-verifies before
+creating rank-local serve witnesses. Unchanged launch uses the applicable
+metadata fast path, while drift rehashes.
 
 The Qwen3.8 row is the first profile bound to the ADR 0004 registry. Release
 `8fd9c4380205214c3671a00cc92b275adfd66f1231d52e72995c88fc836a96a7`

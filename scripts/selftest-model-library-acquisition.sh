@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Thin public-CLI scenarios for reviewed one-home model acquisition.
+# Thin public-CLI scenarios: sealed home add is retired (ADR 0012).
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,80 +16,20 @@ BASE_ENV=(
   "MOCK_HF_LOG=$STATE/hf.log"
 )
 
-if env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3-1.7b --json \
-    >"$STATE/json-no-yes.out" 2>"$STATE/json-no-yes.err"; then
-  echo "home add --json unexpectedly succeeded without --yes" >&2
+if env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3.8-27b-fp8 --json \
+    >"$STATE/json-no-revision.out" 2>"$STATE/json-no-revision.err"; then
+  echo "home add without --revision unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q -- '--json requires --yes' "$STATE/json-no-yes.err"
+grep -q -- 'pass --revision SELECTOR' "$STATE/json-no-revision.err"
+grep -q -- 'ADR 0012' "$STATE/json-no-revision.err"
 [ ! -s "$STATE/hf.log" ]
 
-if printf 'n\n' | COLUMNS=52 env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3-1.7b \
-    >"$STATE/declined.out" 2>"$STATE/declined.err"; then
-  echo "declined home add unexpectedly succeeded" >&2
+if env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3-1.7b --revision main --json \
+    >"$STATE/missing-conf.out" 2>"$STATE/missing-conf.err"; then
+  echo "home add of retired qwen3-1.7b unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q 'Add this reviewed model' "$STATE/declined.out"
-grep -Eq '^serving[[:space:]]+0$' "$STATE/declined.out"
-python3 - "$STATE/declined.out" <<'PY'
-import sys
-
-lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
-assert lines
-assert max(map(len, lines)) <= 52, max(lines, key=len)
-PY
-[ ! -s "$STATE/hf.log" ]
-
-env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3-1.7b --yes --json \
-  >"$STATE/result.json" 2>"$STATE/result.err"
-python3 - "$STATE/result.json" <<'PY'
-import json
-import sys
-
-result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["schema_version"] == 1
-assert result["kind"] == "pulsar-model-library-home-acquisition-result"
-assert result["state"] == "published"
-assert result["profile"] == "qwen3-1.7b"
-assert result["model_id"] == "Qwen/Qwen3-1.7B"
-assert result["rank"] == 0
-assert result["catalog_refreshed"] is False
-PY
-grep -q -- 'download Qwen/Qwen3-1.7B' "$STATE/hf.log"
-grep -q -- '--revision 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e' "$STATE/hf.log"
-grep -q -- '--cache-dir .*\.pulsar-acquire-' "$STATE/hf.log"
-
-mkdir -p "$STATE/managed-home/.hf-cli/venv/bin"
-cp "$STATE/bin/hf" "$STATE/managed-home/.hf-cli/venv/bin/hf"
-: >"$STATE/managed-hf.log"
-env \
-  "PATH=/usr/bin:/bin" \
-  "HOME=$STATE/managed-home" \
-  "CLUSTER_TOPOLOGY_FILE=$STATE/topology.json" \
-  "HF_CACHE=$STATE/managed-cache" \
-  "PULSAR_MODEL_LIBRARY_PY=$STATE/model_library_wrapper.py" \
-  "MOCK_HF_LOG=$STATE/managed-hf.log" \
-  "$LIBRARY" home add qwen3-1.7b --yes --json \
-  >"$STATE/managed-result.json" 2>"$STATE/managed-result.err"
-python3 - "$STATE/managed-result.json" <<'PY'
-import json
-import sys
-
-result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["state"] == "published"
-assert result["rank"] == 0
-PY
-grep -q -- 'download Qwen/Qwen3-1.7B' "$STATE/managed-hf.log"
-
-mkdir -p "$STATE/cache/hub/models--Qwen--Qwen3-1.7B"
-: >"$STATE/hf.log"
-if env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3-1.7b --yes \
-    >"$STATE/occupied.out" 2>"$STATE/occupied.err"; then
-  echo "home add unexpectedly overwrote an existing repository" >&2
-  exit 1
-fi
-grep -q 'catalog refresh' "$STATE/occupied.err"
-[ ! -s "$STATE/hf.log" ]
-
-"$LIBRARY" --help | grep -q 'home add <profile>'
-echo "model-library acquisition shell scenarios: PASS"
+grep -q -- 'no such config' "$STATE/missing-conf.err"
+echo "model-library acquisition CLI (ADR 0012): PASS"
+exit 0

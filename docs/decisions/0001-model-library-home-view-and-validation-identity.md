@@ -10,11 +10,14 @@
   [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md)
   (ordinary stop retains unpinned sealed-hot working copies; pin remains
   protection from unforced purge),
-  and
   [ADR 0011](./0011-portable-occupancy-and-cold-archive.md)
   (occupancy is portable after a live receipt rehash; NFS receipt-indexed
   archive is the distinct-failure-domain replica; home-rank symlink is
-  unchanged)
+  unchanged),
+  and
+  [ADR 0012](./0012-retire-expected-seal-and-schema-1-bundles.md)
+  (expected-seal and schema-1 validation bundles are not a live product;
+  they are not replaced by a schema-2 of that format)
 
 ## Context
 
@@ -174,3 +177,21 @@ Decision 3’s distinct-failure-domain replica is the receipt-indexed NFS
 archive in ADR 0011, not a second Spark home. Occupancy may move with
 the receipt after a live full rehash. Non-home full copies are working
 replicas (on-disk `sealed-hot` unchanged).
+
+## Interpretation note — 2026-08-26 (ADR 0012)
+
+Decisions 4–5 and 7 no longer describe a live expected-seal or schema-1
+validation-bundle product. Those issued JSON files are archived and are
+not loaded by `load_conf`, catalog, wizard, prepare, or launch. There is
+no schema-2 of that format. ADR 0004 Model Serving Release objects are a
+different kind and remain `schema_version: 1` of *that* schema.
+
+Live serving identity is the unsealed library-hot path: occupancy, rank-local
+verified views, and source-attested receipts for brand-new unsealed homes.
+A locally observed or source-attested tree still cannot create an ADR 0004
+release. `MODEL_SERVING_RELEASE_ID` remains advisory. Unknown trees without
+a receipt still fail closed; they no longer have a seal-backed reviewed
+expected-manifest fallback.
+
+`qwen3-1.7b` and `deepseek-v4-flash` are removed from the live catalog.
+Re-onboard them onto ADR 0004 only as a later explicit change.

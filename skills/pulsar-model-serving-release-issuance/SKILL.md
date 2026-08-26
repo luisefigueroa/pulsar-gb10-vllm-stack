@@ -166,7 +166,7 @@ the candidate measurement files first so the worktree is otherwise clean.
 After a successful `stage`, a separately confirmed edit may set
 `MODEL_SERVING_RELEASE_ID` to the staged `release_id` on the matching
 profile. Same publication only. Do not change `STATUS`, recommendation
-flags, or `EXPECTED_MODEL_SEAL` unless that is an explicit, in-scope
+flags unless that is an explicit, in-scope
 reviewed change with the REVALIDATE conjunction.
 
 ### 9. Pull request, then stop

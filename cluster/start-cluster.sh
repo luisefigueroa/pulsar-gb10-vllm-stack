@@ -164,12 +164,7 @@ record_startup_metric() {
     --identity-status "$LIBRARY_HOT_IDENTITY_STATUS"
     --runtime-model-path "$LIBRARY_HOT_CONTAINER_MODEL_PATH"
   )
-  if [ "$LIBRARY_HOT_IDENTITY_STATUS" = match ]; then
-    metric_args+=(
-      --model-seal-id "$LIBRARY_HOT_MODEL_SEAL_ID"
-      --validation-bundle-id "$LIBRARY_HOT_VALIDATION_BUNDLE_ID"
-    )
-  fi
+
   [ -n "$WEIGHT_OWNER_ID" ] \
     && metric_args+=(--owner-node-id "$WEIGHT_OWNER_ID")
   [ -n "${PULSAR_STARTUP_TAG:-}" ] \

@@ -19,15 +19,12 @@ Model-library catalog schema 2 and hot schema 3 now enforce a reviewed
 lab-issued expected model seal, exact commit/manifest comparison, and exact
 snapshot launch. Schema-1 validation bundles additionally bind declared
 external-artifact identities/digests, the digest-pinned image, normalized live
-runtime/memory settings, geometry, provenance, and evidence. The one-node
-diagnostic `qwen3-1.7b` profile is the first issued identity; the flagship
-`deepseek-v4-flash` profile is the second. Profiles without a reviewed seal,
-including `qwen3-1.7b-2node`, remain `legacy-unsealed`. Never create an
-expected seal or bundle from arbitrary
-user-observed cache contents. Recover the exact lab artifact used for the
-historical run or revalidate the intended revision, then follow
-[models/seals/README.md](../models/seals/README.md) in the evidence pull
-request. A future mirror may distribute the bytes, but hosting location is not
+runtime/memory settings, geometry, provenance, and evidence. Expected-seal and schema-1 bundles are not a live product
+([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+`qwen3-1.7b` and `deepseek-v4-flash` are dropped from the live catalog.
+`qwen3-1.7b-2node` remains an unsealed plumbing canary. Never create an
+expected seal from arbitrary user-observed cache contents. Historical JSON is
+under [docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md). A future mirror may distribute the bytes, but hosting location is not
 validation identity. The rank-local serve witness is implemented for library preparation and
 sealed home acquisition: each creates it only after full verification, while
 unchanged launch uses metadata and drift visibly rehashes before refresh.
@@ -674,17 +671,12 @@ historical replicated evidence.
   `docs/VALIDATION.md` with the measured
   numbers, exact model commit/manifest identity, resolved image digest,
   normalized runtime profile/geometry, selected backends, and artifact paths.
-- Build the exact manifest and unreviewed documents with
-  `scripts/model-release.sh manifest` and `assemble`, then run
-  `verify-candidate` against the final profile. Candidate output is not a
-  trusted claim and stays outside `models/`.
-- Review provenance, evidence privacy, exact inputs, the frozen contract, and
-  reproducibility. Only then publish the complete lab-reviewed current-schema
-  validation bundle and expected seal in the same evidence pull request and add
-  the profile
-  `EXPECTED_MODEL_SEAL` reference. Run
-  `scripts/model-library.sh validation-bundle verify <profile>` before merge.
-  Never promote a locally observed user seal or bundle into expected identity.
+- Capture and issue ADR 0004 objects per
+  [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) and
+  [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md).
+  `scripts/model-release.sh` is retired (ADR 0012). After merge, run
+  `scripts/model-serving-release-registry.sh verify`. Never promote a locally
+  observed tree into expected identity.
 - Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
 - Archive the new raw results under `results/` using a unique bump tag.
 - Store publishable command provenance as structured, sanitized descriptors;

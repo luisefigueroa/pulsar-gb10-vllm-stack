@@ -138,8 +138,8 @@ between assessment and planning. Reuse a home created by this service only after
 site-local receipt while occupancy names that live directory. Occupancy may
 move with `scripts/model-library.sh home relocate <profile> --node RANK --yes`
 after that same live rehash; do not Hub re-download. An older tree without a
-receipt still requires a
-reviewed expected manifest that is independent of the observed tree. Refuse a
+receipt still fails closed (ADR 0012: expected-manifest fallback is retired).
+Refuse a
 missing required receipt or reviewed manifest, failed verification, a partial
 tree, another revision, a duplicate occupancy home, or an out-of-geometry home.
 An unbound-complete tree with a compatible receipt is relocate, not re-add.
@@ -182,14 +182,11 @@ refuse another revision, ambiguity, a partial tree, or a durable duplicate:
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <model_id@revision>
 scripts/model-library.sh home verify <model_id@revision> --json
-scripts/model-release.sh manifest <profile> \
-  --hub-path <hub/models--namespace--name> --revision <exact-commit>
 ```
 
-Use `manifest` only after the applicable independent reuse check passed. It
-builds and full-verifies the complete unreviewed manifest consumed by the ADR
-planner. It records the tree's exact identity; it does not replace the
-source-attested receipt or retroactively prove an unknown acquisition.
+The source-attested receipt and `home verify` full-hash are the live identity
+for the planner's artifact manifest. `scripts/model-release.sh` is retired
+(ADR 0012). Do not assemble expected-seal or schema-1 bundle candidates.
 
 ### 6. Select qualifying runtime access
 

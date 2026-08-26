@@ -36,9 +36,9 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             "transport": "ssh-roce",
             "integrity_scheme": "sha256-snapshot-manifest-v1",
             "model_revision": "d" * 40,
-            "identity_status": "match",
-            "model_seal_id": "e" * 64,
-            "validation_bundle_id": "f" * 64,
+            "identity_status": "legacy-unsealed",
+            "model_seal_id": None,
+            "validation_bundle_id": None,
             "runtime_model_path": (
                 "/root/.cache/huggingface/hub/models--Org--Fixture/"
                 + "snapshots/"
@@ -68,9 +68,9 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             metric["integrity_scheme"], "sha256-snapshot-manifest-v1"
         )
         self.assertEqual(metric["model_revision"], "d" * 40)
-        self.assertEqual(metric["identity_status"], "match")
-        self.assertEqual(metric["model_seal_id"], "e" * 64)
-        self.assertEqual(metric["validation_bundle_id"], "f" * 64)
+        self.assertEqual(metric["identity_status"], "legacy-unsealed")
+        self.assertIsNone(metric["model_seal_id"])
+        self.assertIsNone(metric["validation_bundle_id"])
         self.assertTrue(metric["runtime_model_path"].endswith("d" * 40))
         self.assertEqual(
             metric["owner_node_fingerprint"],
@@ -120,7 +120,7 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             ({"content_id": "short"}, "content identity"),
             ({"transport": None}, "transport"),
             ({"model_revision": None}, "model revision"),
-            ({"model_seal_id": None}, "model seal"),
+            ({"identity_status": "match"}, "identity status"),
             ({"runtime_model_path": "Org/Fixture"}, "exact revision"),
         ):
             with self.subTest(overrides=overrides):

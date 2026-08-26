@@ -495,11 +495,10 @@ no leaks, no thermal throttling anywhere).
 | Path | What |
 |---|---|
 | `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
-| `models/seals/` | reviewed exact model seal contracts, including the issued `qwen3-1.7b` lab identity |
-| `models/validation-bundles/` | legacy schema-1 combined model/runtime/image/geometry/evidence claims; not a Model Serving Release ID and unchanged by the pre-issuance ADR 0004 schema correction |
-| `models/model-serving-releases/` | tracked ADR 0004 release/contract/run/bundle/decision registry; holds the reviewed Qwen3.8 lineage (`Testing incomplete`); read-only through `scripts/model-serving-release-registry.sh` |
+| `docs/archive/schema-1-expected-seal/` | archived expected-seal and schema-1 bundles; not a live product (ADR 0012) |
+| `models/model-serving-releases/` | tracked ADR 0004 release/contract/run/bundle/decision registry; holds the reviewed Qwen3.8 lineages (`Testing incomplete`); read-only through `scripts/model-serving-release-registry.sh` |
 | `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture candidate persistence; unreviewed, launches nothing, never writes the tracked registry |
-| `scripts/model_identity.py`, `scripts/model-release.sh` | shared trust schemas plus maintainer-only unreviewed release-candidate assembly; not part of normal `pulsar` UX |
+| `scripts/model_identity.py` | live profile-contract schema and snapshot-manifest constants; expected-seal builders are retired |
 | `cluster/` | Exact N-rank launch/preflight/teardown + confirmed topology loader |
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |

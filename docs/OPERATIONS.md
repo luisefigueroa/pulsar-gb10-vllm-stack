@@ -522,12 +522,10 @@ scripts/sync-image.sh <profile> --pull --yes
 scripts/sync-image.sh <profile> --node <node-id> --pull --yes
 ```
 
-The model library downloads one durable home and prepares sealed hub views
-tree to every other node required by that profile. For a profile with
-`EXPECTED_MODEL_SEAL`, it requests the reviewed commit explicitly, full-hashes
-the controller snapshot and every copied rank, and writes a rank-local witness
-outside the repository. A configured mismatch fails closed. Unsealed profiles
-retain the legacy mutable-`refs/main` workflow.
+The model library downloads one durable home (`home add --revision`) and
+prepares rank-local hub views on every other node required by that profile.
+Expected-seal is not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+Brand-new homes use source-attested exact-commit acquisition.
 Its normal output uses readable stages and hostnames; set `PULSAR_VERBOSE=1`
 to expose raw Hugging Face and rsync diagnostics. The image helper loads every
 missing required node and repairs digest references that a bare `docker load`
@@ -586,9 +584,9 @@ exits 2. They are not unknown-argument failures.
 | Removed | Replacement |
 |---|---|
 | `--force` on `up.sh`, `serve.sh`, `start-cluster.sh` | Drop the flag. Status labels never block serving. |
-| `--allow-unvalidated` | Drop the flag. Seals still fail closed. |
+| `--allow-unvalidated` | Drop the flag. Expected-seal is retired (ADR 0012). |
 | `list-models.sh --validated` | `--legacy-tested` (historical `STATUS=tested*`). Not ADR 0004 `Validated`. |
-| `model-library.sh catalog list --validated` | `--reviewed-identity`. Not ADR 0004 `Validated`. |
+| `model-library.sh catalog list --validated` | Drop the flag. `--reviewed-identity` is retired (ADR 0012). Not ADR 0004 `Validated`. |
 | `model-library.sh activate` | `prepare` |
 | `model-library.sh hot legacy check\|remove` | Removed (SIM-13). Schema-1/2 hot metadata still cannot launch. Health remains read-only. |
 
@@ -613,21 +611,21 @@ transferring only non-home bytes, and verifying every rank. Preparation does
 not create the durable home, start a serving container, or qualify the model.
 Public `activate` is removed (ADR 0008); use `prepare`.
 
-Typical reviewed multi-rank flow:
+Typical multi-rank flow:
 
 ```bash
 # Required before topology-bound SSH-over-RoCE preparation.
 scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh catalog list --reviewed-identity
-# Reviewed multi-rank sealed profile: validation status is not an override.
-scripts/model-library.sh prepare <multi-rank-sealed-profile> --yes
-scripts/up.sh <multi-rank-sealed-profile>
+scripts/model-library.sh catalog list
+# Unsealed library-hot: validation status is not a serving gate.
+scripts/model-library.sh prepare <multi-rank-profile> --yes
+scripts/up.sh <multi-rank-profile>
 # optional after stop:
-scripts/down.sh <multi-rank-sealed-profile>                 # retain unpinned non-home hot
-scripts/down.sh <multi-rank-sealed-profile> --pin-weights  # protect from later unforced purge
-scripts/down.sh <multi-rank-sealed-profile> --purge-hot    # free hot disk budget
+scripts/down.sh <multi-rank-profile>                 # retain unpinned non-home hot
+scripts/down.sh <multi-rank-profile> --pin-weights  # protect from later unforced purge
+scripts/down.sh <multi-rank-profile> --purge-hot    # free hot disk budget
 ```
 
 A reviewed single-rank profile has no non-home target and therefore no RoCE
@@ -955,64 +953,32 @@ Ordinary stop retains unpinned prepared views; `PULSAR_HOT_STOP_POLICY=purge`
 restores named-profile purge-on-stop for storage-first labs. Budget-based
 eviction is not implemented.
 
-**Current identity behavior:** any profile may reference a reviewed seal
-under `models/seals/` with `EXPECTED_MODEL_SEAL="seals/<file>.json"`.
-That seal must name a content-addressed document at
-`models/validation-bundles/<validation_bundle_id>.json`. Profile load verifies
-the bundle's model/seal projection, lab provenance/evidence, declared
-external-artifact identities/digests, digest-pinned image, normalized
-runtime/memory settings, and geometry against the live sourced profile.
-Inspect the release binding with:
+**Current identity behavior:** expected-seal and schema-1 validation bundles
+are not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
+There is no schema-2 of that format. Live admission is unsealed library-hot:
+`legacy-unsealed` or `unvalidated`. ADR 0004 objects under
+`models/model-serving-releases/` remain `schema_version: 1` of a different
+kind; `MODEL_SERVING_RELEASE_ID` is advisory, not a serving gate. Inspect
+reviewed releases with:
 
 ```bash
-scripts/model-library.sh validation-bundle verify <profile>
-scripts/model-library.sh validation-bundle verify <profile> --json
+scripts/model-serving-release-registry.sh verify
 ```
 
-Catalog schema 2 selects only its immutable commit. Preparation full-hashes every
-rank, compares model/commit/manifest to the expected seal, writes hot schema 3
-with expected and observed provenance, and atomically creates that rank's
-`<instance>/.pulsar/witness.json` before ready is published. A configured
-mismatch always fails; validation status and the removed `--allow-unvalidated`
-flag cannot bypass expected identity.
+`home add` requires `--revision`. Unknown trees without a receipt fail closed.
+Historical seal JSON is archived under
+[docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md)
+and is not loaded. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the
+live catalog. `qwen3-1.7b-2node` stays as an unsealed plumbing canary.
 
-Launch rechecks the live profile/seal locally and the controller-provided
-validation identity remotely **before** using the witness. An unchanged witness
-checks only rank-local metadata and hashes zero model bytes. It covers the
-canonical hub/snapshot targets, directory filesystem identity, exact revision
-and logical file set, and each resolved file's
-device/inode/size/`mtime_ns`/`ctime_ns`. The container mounts the hub read-only
-and receives the exact `snapshots/<revision>` path rather than mutable
-`main`. Labels and multi-node startup evidence include revision, identity
-status, seal ID, and bundle ID; per-rank witness labels remain future work.
-
-A missing, malformed, or drifted witness prints a message and runs a stable full
-SHA-256 verification. Success atomically refreshes the witness and continues;
-content mismatch or metadata changing during the full pass fails closed and
-does not refresh. Prepare the model again if the fallback fails. Do not hand-edit
-`hot.json` or `witness.json`, and do not treat a successful rehash of
-`legacy-unsealed` content as lab validation.
-
-The one-node diagnostic profile `qwen3-1.7b` is the first profile with a
-reviewed seal and validation bundle; the flagship `deepseek-v4-flash` profile
-is the second. Their `library-hot` preparation must match the reviewed identity, and home
-acquisition enforces the same commit/manifest.
-Profiles without a seal, including `qwen3-1.7b-2node`, may use `library-hot`
-after full observed-content verification without a validation-status override.
-Catalog
-refresh enumerates complete `snapshots/<revision>` directories directly. A
-sealed profile therefore finds its reviewed commit even when `refs/main` is
-absent or has moved; only a legacy-unsealed selection consults an
-unambiguous `refs/main`.
-
-Sealed home acquisition downloads the exact commit and full-verifies every
-copy before publication; profiles without a seal launch with
-`identity=legacy-unsealed` after full verification. Follow
-[models/seals/README.md](../models/seals/README.md) and
-[models/validation-bundles/README.md](../models/validation-bundles/README.md)
-for the lab issuance contract; never derive expected identity from a user
-cache. If witness fallback fails, prepare the profile again; do not hand-edit
-the witness.
+Preparation full-hashes every rank and atomically creates that rank's
+`<instance>/.pulsar/witness.json` before ready is published. Launch uses the
+witness when canonical view and file metadata are unchanged. A missing,
+malformed, or drifted witness prints a message and runs a stable full SHA-256
+verification. Success atomically refreshes the witness and continues; content
+mismatch fails closed and does not refresh. Do not hand-edit `hot.json` or
+`witness.json`. Leftover container `model-seal` / `validation-bundle` labels
+are untrusted observations.
 
 **Upgrade note:** catalog schema 1 and hot schemas 1/2 are intentionally not
 accepted for launch or trust. Health may still recognize exact historical

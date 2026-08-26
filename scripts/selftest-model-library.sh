@@ -151,36 +151,26 @@ python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["recommendations"]
 # CLI wrapper local-only path needs topology — skip full refresh; smoke --help
 assert_true "model-library.sh help" bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'Federated model library'"
 assert_true "model-library.sh is executable" test -x "$REPO_DIR/scripts/model-library.sh"
-assert_true "validation-bundle verify documented in CLI" \
-  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'validation-bundle verify'"
-reviewed_list=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
-  "$REPO_DIR/scripts/model-library.sh" catalog list --reviewed-identity --json)
-reviewed_count=$(printf '%s' "$reviewed_list" | \
-  python3 -c 'import json,sys; print(len(json.load(sys.stdin)["models"]))')
-assert_eq "catalog list accepts reviewed-identity filter" \
-  "$reviewed_count" "0"
+assert_true "validation-bundle verify is not documented in CLI" \
+  bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'validation-bundle verify'"
 set +e
+reviewed_list_out=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
+  "$REPO_DIR/scripts/model-library.sh" catalog list --reviewed-identity --json 2>&1)
+reviewed_list_rc=$?
+bundle_out=$("$REPO_DIR/scripts/model-library.sh" \
+  validation-bundle verify qwen3-1.7b-2node --json 2>&1)
+bundle_rc=$?
 validated_alias_out=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
   "$REPO_DIR/scripts/model-library.sh" catalog list --validated --json 2>&1)
 validated_alias_rc=$?
 set -e
+assert_eq "catalog list --reviewed-identity fails closed" "$reviewed_list_rc" "1"
+assert_true "catalog list --reviewed-identity names ADR 0012" \
+  grep -q "ADR 0012" <<<"$reviewed_list_out"
+assert_eq "validation-bundle verify fails closed" "$bundle_rc" "1"
+assert_true "validation-bundle verify names ADR 0012" \
+  grep -q "ADR 0012" <<<"$bundle_out"
 assert_eq "catalog list --validated fails closed" "$validated_alias_rc" "2"
-assert_true "catalog list --validated names --reviewed-identity" \
-  grep -q -- '--reviewed-identity' <<<"$validated_alias_out"
-bundle_sealed_state=$("$REPO_DIR/scripts/model-library.sh" \
-  validation-bundle verify qwen3-1.7b --json |
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
-assert_eq "validation-bundle verify accepts sealed profile" \
-  "$bundle_sealed_state" "match"
-set +e
-bundle_unsealed_out=$("$REPO_DIR/scripts/model-library.sh" \
-  validation-bundle verify qwen3-1.7b-2node --json 2>&1)
-bundle_unsealed_rc=$?
-set -e
-assert_eq "validation-bundle verify refuses unsealed profile" \
-  "$bundle_unsealed_rc" "1"
-assert_true "validation-bundle verify explains missing trust root" \
-  grep -q "no reviewed expected seal" <<<"$bundle_unsealed_out"
 
 # never write under HF_CACHE: build output is only catalog path
 assert_true "catalog written outside node caches" test -f "$STATE/catalog.json"
@@ -371,7 +361,7 @@ assert_true "cluster launch uses serve-time witness with full-verify fallback" \
 assert_true "preparation full-verifies and refreshes rank-local witnesses" \
   grep -q -- --refresh-witness "$REPO_DIR/scripts/model-library.sh"
 out=$(set +e; CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b 2>&1; true)
+  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node 2>&1; true)
 assert_true "check-weights fails closed without confirmed topology" \
   bash -c "printf '%s\n' $(printf '%q' "$out") | grep -q 'confirmed topology manifest'"
 out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)

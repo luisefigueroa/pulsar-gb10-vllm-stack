@@ -25,7 +25,6 @@ import shutil
 import stat
 import sys
 import tempfile
-import zlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -196,34 +195,6 @@ if _model_identity is None:
 
     def validate_profile_contract_document(value: Any) -> dict[str, Any]:
         return _identity_module_required().validate_profile_contract_document(value)
-
-
-    def validate_validation_bundle(
-        bundle: Any,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        return _identity_module_required().validate_validation_bundle(
-            bundle,
-            **kwargs,
-        )
-
-
-    def validation_bundle_projection(bundle: dict[str, Any]) -> dict[str, Any]:
-        return _identity_module_required().validation_bundle_projection(bundle)
-
-
-    def validate_expected_model_seal(
-        seal: Any,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        return _identity_module_required().validate_expected_model_seal(
-            seal,
-            **kwargs,
-        )
-
-
-    def expected_model_seal_projection(seal: dict[str, Any]) -> dict[str, Any]:
-        return _identity_module_required().expected_model_seal_projection(seal)
 else:
     # Trust-document schemas have one owner. Remote physical inspection still
     # works when this file is streamed alone; trust commands require checkout.
@@ -234,138 +205,24 @@ else:
     )
     SNAPSHOT_MANIFEST_KIND = _model_identity.SNAPSHOT_MANIFEST_KIND
     SNAPSHOT_INTEGRITY_SCHEME = _model_identity.SNAPSHOT_INTEGRITY_SCHEME
-    EXPECTED_MODEL_SEAL_SCHEMA_VERSION = (
-        _model_identity.EXPECTED_MODEL_SEAL_SCHEMA_VERSION
-    )
-    EXPECTED_MODEL_SEAL_KIND = _model_identity.EXPECTED_MODEL_SEAL_KIND
-    VALIDATION_BUNDLE_SCHEMA_VERSION = (
-        _model_identity.VALIDATION_BUNDLE_SCHEMA_VERSION
-    )
-    VALIDATION_BUNDLE_KIND = _model_identity.VALIDATION_BUNDLE_KIND
     SHA256_HEX_RE = _model_identity.SHA256_HEX_RE
     HF_COMMIT_RE = _model_identity.HF_COMMIT_RE
     HF_MODEL_ID_RE = _model_identity.HF_MODEL_ID_RE
     IMAGE_DIGEST_RE = _model_identity.IMAGE_DIGEST_RE
     SAFE_REV = _model_identity.SAFE_REV
     canonical_json_digest = _model_identity.canonical_json_digest
-    expected_model_seal_identity = _model_identity.expected_model_seal_identity
-    expected_model_seal_id = _model_identity.expected_model_seal_id
-    validation_bundle_identity = _model_identity.validation_bundle_identity
-    validation_bundle_id = _model_identity.validation_bundle_id
     build_profile_contract = _model_identity.build_profile_contract
     validate_profile_contract_document = (
         _model_identity.validate_profile_contract_document
     )
-    validate_validation_bundle = _model_identity.validate_validation_bundle
-    validation_bundle_projection = _model_identity.validation_bundle_projection
-    validate_expected_model_seal = _model_identity.validate_expected_model_seal
-    expected_model_seal_projection = _model_identity.expected_model_seal_projection
 
 
-def load_profile_expected_model_seal(
-    profile_path: pathlib.Path,
-    reference: str | None,
-    *,
-    profile: str,
-    model_id: str,
-) -> dict[str, Any] | None:
-    if not reference:
-        return None
-    relative = pathlib.PurePosixPath(reference)
-    if relative.is_absolute() or ".." in relative.parts or "\\" in reference:
-        fail(f"{profile}: EXPECTED_MODEL_SEAL must be relative to models/")
-    seal_root = (profile_path.parent / "seals").resolve()
-    candidate = (profile_path.parent / pathlib.Path(reference)).resolve()
-    try:
-        candidate.relative_to(seal_root)
-    except ValueError:
-        fail(f"{profile}: EXPECTED_MODEL_SEAL must live under models/seals/")
-    if not candidate.is_file():
-        fail(f"{profile}: expected model seal is missing: {candidate}")
-    seal = validate_expected_model_seal(
-        load_json(candidate),
-        profile=profile,
-        model_id=model_id,
-    )
-    repository_root = profile_path.parent.parent.resolve()
-    for evidence_ref in seal["provenance"]["evidence"]:
-        evidence_path = (repository_root / evidence_ref).resolve()
-        try:
-            evidence_path.relative_to(repository_root)
-        except ValueError:
-            fail(f"{profile}: expected seal evidence escapes the repository")
-        if not evidence_path.is_file():
-            fail(
-                f"{profile}: expected seal evidence is missing: {evidence_ref}"
-            )
-    return seal
-
-
-def load_profile_validation_bundle(
-    profile_path: pathlib.Path,
-    seal: dict[str, Any] | None,
-    *,
-    profile: str,
-    model_id: str,
-) -> dict[str, Any] | None:
-    if seal is None:
-        return None
-    seal = validate_expected_model_seal(
-        seal,
-        profile=profile,
-        model_id=model_id,
-    )
-    bundle_digest = seal["provenance"]["validation_bundle_id"]
-    bundle_root = (profile_path.parent / "validation-bundles").resolve()
-    candidate = (bundle_root / f"{bundle_digest}.json").resolve()
-    try:
-        candidate.relative_to(bundle_root)
-    except ValueError:
-        fail(f"{profile}: validation bundle escapes models/validation-bundles/")
-    if not candidate.is_file():
+def _refuse_expected_model_seal(profile: str, reference: str | None) -> None:
+    if reference:
         fail(
-            f"{profile}: validation bundle is missing: "
-            f"validation-bundles/{bundle_digest}.json"
+            f"{profile}: EXPECTED_MODEL_SEAL is retired (ADR 0012); "
+            "expected-seal and schema-1 validation bundles are not a live product"
         )
-    bundle = validate_validation_bundle(
-        load_json(candidate),
-        profile=profile,
-        expected_seal=seal,
-    )
-    repository_root = profile_path.parent.parent.resolve()
-    for evidence_ref in bundle["evidence"]:
-        evidence_path = (repository_root / evidence_ref).resolve()
-        try:
-            evidence_path.relative_to(repository_root)
-        except ValueError:
-            fail(f"{profile}: validation bundle evidence escapes the repository")
-        if not evidence_path.is_file():
-            fail(
-                f"{profile}: validation bundle evidence is missing: {evidence_ref}"
-            )
-    return bundle
-
-
-def load_profile_validation_identity(
-    profile_path: pathlib.Path,
-    reference: str | None,
-    *,
-    profile: str,
-    model_id: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    seal = load_profile_expected_model_seal(
-        profile_path,
-        reference,
-        profile=profile,
-        model_id=model_id,
-    )
-    bundle = load_profile_validation_bundle(
-        profile_path,
-        seal,
-        profile=profile,
-        model_id=model_id,
-    )
-    return seal, bundle
 
 
 def hub_dirname_to_model_id(dirname: str) -> str | None:
@@ -1067,12 +924,7 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
             model_id = f"{parts[-2]}/{parts[-1]}"
     else:
         model_id = model
-    expected_seal, validation_bundle = load_profile_validation_identity(
-        path,
-        expected_seal_ref,
-        profile=path.stem,
-        model_id=model_id,
-    )
+    _refuse_expected_model_seal(path.stem, expected_seal_ref)
     tested = bool(STATUS_TESTED.match(status))
     return {
         "profile": path.stem,
@@ -1081,9 +933,9 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
         "status": status,
         "nodes": nodes,
         "validated": tested,
-        "expected_model_seal_ref": expected_seal_ref,
-        "expected_model_seal": expected_seal,
-        "validation_bundle": validation_bundle,
+        "expected_model_seal_ref": None,
+        "expected_model_seal": None,
+        "validation_bundle": None,
     }
 
 
@@ -1115,12 +967,7 @@ def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
             expected_seal_ref = line.split("=", 1)[1].strip().strip("\"'") or None
     if not model or model.startswith("/"):
         return None
-    expected_seal, validation_bundle = load_profile_validation_identity(
-        path,
-        expected_seal_ref,
-        profile=path.stem,
-        model_id=model,
-    )
+    _refuse_expected_model_seal(path.stem, expected_seal_ref)
     tested = bool(STATUS_TESTED.match(status))
     return {
         "profile": path.stem,
@@ -1128,9 +975,9 @@ def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
         "status": status,
         "nodes": nodes,
         "validated": tested,
-        "expected_model_seal_ref": expected_seal_ref,
-        "expected_model_seal": expected_seal,
-        "validation_bundle": validation_bundle,
+        "expected_model_seal_ref": None,
+        "expected_model_seal": None,
+        "validation_bundle": None,
     }
 
 
@@ -1169,186 +1016,6 @@ def load_model_profile(
     return parsed
 
 
-def verify_profile_validation_bundle(
-    *,
-    models_dir: str | pathlib.Path,
-    profile: str,
-    profile_contract: dict[str, Any],
-    expected_seal_ref: str | None = None,
-) -> dict[str, Any]:
-    parsed = load_hf_profile(models_dir, profile)
-    seal = parsed.get("expected_model_seal")
-    bundle = parsed.get("validation_bundle")
-    if seal is None or bundle is None:
-        fail(f"{profile}: no reviewed expected seal and validation bundle")
-    if (
-        expected_seal_ref is not None
-        and parsed.get("expected_model_seal_ref") != expected_seal_ref
-    ):
-        fail(f"{profile}: sourced EXPECTED_MODEL_SEAL differs from parsed profile")
-    profile_contract = validate_profile_contract_document(profile_contract)
-    validate_validation_bundle(
-        bundle,
-        profile=profile,
-        expected_seal=seal,
-        expected_profile_contract=profile_contract,
-    )
-    return {
-        "state": "match",
-        "profile": profile,
-        "profile_contract_id": canonical_json_digest(profile_contract),
-        "expected_model_seal": expected_model_seal_projection(seal),
-        "validation_bundle": validation_bundle_projection(bundle),
-    }
-
-
-def load_profile_expected_snapshot_manifest(
-    models_dir: str | pathlib.Path,
-    profile: str,
-) -> dict[str, Any]:
-    """Resolve the reviewed complete manifest backing one expected seal."""
-    models_root = pathlib.Path(models_dir).resolve()
-    repository_root = models_root.parent
-    parsed = load_hf_profile(models_root, profile)
-    seal = parsed.get("expected_model_seal")
-    bundle = parsed.get("validation_bundle")
-    if not isinstance(seal, dict) or not isinstance(bundle, dict):
-        fail(f"{profile}: no reviewed expected seal and validation bundle")
-
-    expected_id = ((seal.get("manifest") or {}).get("manifest_id"))
-    matches: list[dict[str, Any]] = []
-    for evidence_ref in bundle.get("evidence") or []:
-        candidate = (repository_root / evidence_ref).resolve()
-        try:
-            candidate.relative_to(repository_root)
-        except ValueError:
-            fail(f"{profile}: validation evidence escapes the repository")
-        try:
-            document = load_json(candidate)
-        except (ModelLibraryError, OSError, json.JSONDecodeError):
-            continue
-        if (
-            not isinstance(document, dict)
-            or document.get("kind") != SNAPSHOT_MANIFEST_KIND
-        ):
-            continue
-        manifest = validate_snapshot_manifest(document)
-        if manifest.get("manifest_id") == expected_id:
-            matches.append(manifest)
-    if len(matches) != 1:
-        fail(
-            f"{profile}: expected manifest {expected_id} must resolve to exactly "
-            f"one reviewed evidence document (found {len(matches)})"
-        )
-    manifest = matches[0]
-    if manifest["model_id"] != seal.get("model_id"):
-        fail(f"{profile}: expected manifest model differs from the seal")
-    if manifest["snapshot_revision"] != seal.get("snapshot_revision"):
-        fail(f"{profile}: expected manifest revision differs from the seal")
-    return manifest
-
-
-def replicated_verification_plan(
-    models_dir: str | pathlib.Path,
-    profile: str,
-) -> dict[str, Any]:
-    parsed = load_hf_profile(models_dir, profile)
-    seal = parsed.get("expected_model_seal")
-    bundle = parsed.get("validation_bundle")
-    if not isinstance(seal, dict) or not isinstance(bundle, dict):
-        fail(f"{profile}: replicated exact identity requires a reviewed expected seal")
-    manifest = load_profile_expected_snapshot_manifest(models_dir, profile)
-    expected = expected_model_seal_projection(seal)
-    observed = observed_model_seal_projection(manifest)
-    validation = {
-        "identity_status": "match",
-        "expected_seal": expected,
-        "observed_seal": observed,
-    }
-    validate_hot_validation(validation, profile=profile, manifest=manifest)
-    plan: dict[str, Any] = {
-        "schema_version": REPLICATED_PLAN_SCHEMA_VERSION,
-        "kind": REPLICATED_PLAN_KIND,
-        "weight_source": REPLICATED_WEIGHT_SOURCE,
-        "profile": profile,
-        "model_id": parsed["model_id"],
-        "snapshot_revision": manifest["snapshot_revision"],
-        "manifest": manifest,
-        "validation": validation,
-    }
-    plan["plan_id"] = canonical_json_digest(plan)
-    return validate_replicated_verification_plan(plan)
-
-
-def validate_replicated_verification_plan(plan: Any) -> dict[str, Any]:
-    if not isinstance(plan, dict):
-        fail("replicated identity plan must be an object")
-    required = {
-        "schema_version",
-        "kind",
-        "weight_source",
-        "profile",
-        "model_id",
-        "snapshot_revision",
-        "manifest",
-        "validation",
-        "plan_id",
-    }
-    if set(plan) != required:
-        fail("replicated identity plan fields are invalid")
-    if plan.get("schema_version") != REPLICATED_PLAN_SCHEMA_VERSION:
-        fail("replicated identity plan schema is unsupported")
-    if plan.get("kind") != REPLICATED_PLAN_KIND:
-        fail("replicated identity plan kind is invalid")
-    if plan.get("weight_source") != REPLICATED_WEIGHT_SOURCE:
-        fail("replicated identity weight source is invalid")
-    for field in ("profile", "model_id", "snapshot_revision"):
-        if not isinstance(plan.get(field), str) or not plan[field]:
-            fail(f"replicated identity plan {field} is invalid")
-    if SAFE_REV.fullmatch(plan["snapshot_revision"]) is None:
-        fail("replicated identity plan revision is unsafe")
-    manifest = validate_snapshot_manifest(plan.get("manifest"))
-    if manifest["model_id"] != plan["model_id"]:
-        fail("replicated identity plan model differs from its manifest")
-    if manifest["snapshot_revision"] != plan["snapshot_revision"]:
-        fail("replicated identity plan revision differs from its manifest")
-    validate_hot_validation(
-        plan.get("validation"),
-        profile=plan["profile"],
-        manifest=manifest,
-    )
-    plan_id = plan.get("plan_id")
-    if (
-        not isinstance(plan_id, str)
-        or SHA256_HEX_RE.fullmatch(plan_id) is None
-        or plan_id
-        != canonical_json_digest(
-            {key: value for key, value in plan.items() if key != "plan_id"}
-        )
-    ):
-        fail("replicated identity plan digest mismatch")
-    return plan
-
-
-def encode_replicated_verification_plan(plan: dict[str, Any]) -> str:
-    plan = validate_replicated_verification_plan(plan)
-    payload = json.dumps(
-        plan,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return base64.urlsafe_b64encode(zlib.compress(payload, level=9)).decode("ascii")
-
-
-def decode_replicated_verification_plan(value: str) -> dict[str, Any]:
-    try:
-        payload = zlib.decompress(base64.urlsafe_b64decode(value.encode("ascii")))
-        plan = json.loads(payload)
-    except (ValueError, UnicodeError, zlib.error, json.JSONDecodeError) as exc:
-        fail(f"replicated identity plan encoding is invalid: {exc}")
-    return validate_replicated_verification_plan(plan)
-
-
 def observed_model_seal_projection(manifest: dict[str, Any]) -> dict[str, Any]:
     manifest = validate_snapshot_manifest(manifest)
     return {
@@ -1362,28 +1029,17 @@ def compare_profile_expected_identity(
     profile: dict[str, Any],
     manifest: dict[str, Any],
 ) -> dict[str, Any]:
-    """Compare observed bytes with a profile's lab-issued trust root."""
+    """Label observed bytes as unsealed library-hot identity (ADR 0012)."""
+    if profile.get("expected_model_seal") is not None:
+        fail(
+            f"{profile.get('profile')}: EXPECTED_MODEL_SEAL is retired (ADR 0012)"
+        )
     observed = observed_model_seal_projection(manifest)
-    expected = profile.get("expected_model_seal")
-    if expected is None:
-        return {
-            "identity_status": (
-                "legacy-unsealed" if profile.get("validated") else "unvalidated"
-            ),
-            "expected_seal": None,
-            "observed_seal": observed,
-        }
-
-    expected_projection = expected_model_seal_projection(expected)
-    for field in ("model_id", "snapshot_revision", "manifest_id"):
-        if observed[field] != expected_projection[field]:
-            fail(
-                f"expected model seal mismatch: {field} "
-                f"observed={observed[field]} expected={expected_projection[field]}"
-            )
     return {
-        "identity_status": "match",
-        "expected_seal": expected_projection,
+        "identity_status": (
+            "legacy-unsealed" if profile.get("validated") else "unvalidated"
+        ),
+        "expected_seal": None,
         "observed_seal": observed,
     }
 
@@ -1425,8 +1081,6 @@ def _profile_catalog_status(
 ) -> str:
     if not present:
         return "missing"
-    if profile.get("expected_model_seal") is not None:
-        return "expected-unverified"
     return "legacy-unsealed" if profile.get("validated") else "unvalidated"
 
 
@@ -1648,8 +1302,7 @@ def build_catalog(
 
     for profile in profiles:
         model_id = profile["model_id"]
-        expected = profile.get("expected_model_seal")
-        expected_revision = expected.get("snapshot_revision") if expected else None
+        expected_revision = None
         model_targets = [
             entry for entry in by_identity.values() if entry["model_id"] == model_id
         ]
@@ -1703,21 +1356,14 @@ def build_catalog(
                 "profile": profile["profile"],
                 "profile_status": profile["status"],
                 "identity_status": status,
-                "expected_model_seal_ref": profile.get("expected_model_seal_ref"),
-                "expected_model_seal": (
-                    expected_model_seal_projection(expected) if expected else None
-                ),
-                "validation_bundle": (
-                    validation_bundle_projection(profile["validation_bundle"])
-                    if profile.get("validation_bundle")
-                    else None
-                ),
+                "expected_model_seal_ref": None,
+                "expected_model_seal": None,
+                "validation_bundle": None,
             }
             entry["profiles"].append(profile["profile"])
             entry["profile_validation"].append(profile_state)
 
     precedence = (
-        "expected-unverified",
         "legacy-unsealed",
         "missing",
         "unvalidated",
@@ -1806,7 +1452,7 @@ def find_model_entry(
         if len(matches) > 1:
             fail(
                 f"resolve: profile {profile} matches multiple revisions; "
-                "add an EXPECTED_MODEL_SEAL with an exact commit"
+                "select an exact model_id@commit"
             )
         return matches[0] if matches else None
     if model_id:
@@ -1819,7 +1465,7 @@ def find_model_entry(
         if len(complete) > 1:
             fail(
                 f"resolve: model {model_id} has multiple revisions; "
-                "select an exact identity or profile seal"
+                "select an exact model_id@commit"
             )
         if complete:
             return complete[0]
@@ -2056,9 +1702,10 @@ def resolve_entry(
             if parsed:
                 model_id = model_id or parsed.get("model_id")
                 absolute_path = absolute_path or parsed.get("absolute_path")
-                expected_seal = parsed.get("expected_model_seal")
-                if expected_seal:
-                    profile_expected_revision = expected_seal["snapshot_revision"]
+                _refuse_expected_model_seal(
+                    parsed.get("profile") or profile,
+                    parsed.get("expected_model_seal_ref"),
+                )
 
     warm_error: str | None = None
     if catalog is not None and not absolute_path:
@@ -2431,9 +2078,10 @@ def plan_cold_adopt(
         if parsed:
             model_id = model_id or parsed.get("model_id")
             path = path or parsed.get("absolute_path")
-            expected_seal = parsed.get("expected_model_seal")
-            if expected_seal:
-                expected_revision = expected_seal["snapshot_revision"]
+            _refuse_expected_model_seal(
+                parsed.get("profile") or profile,
+                parsed.get("expected_model_seal_ref"),
+            )
 
     entry = find_cold_entry(
         root,
@@ -3127,10 +2775,9 @@ def hot_content_id(
     digest: str,
     validation: dict[str, Any],
 ) -> str:
-    expected = validation.get("expected_seal") or {}
-    validation_key = expected.get("seal_id") or validation.get("identity_status")
-    if not isinstance(validation_key, str) or not validation_key:
-        fail("hot content identity lacks validation provenance")
+    validation_key = validation.get("identity_status")
+    if validation_key not in {"legacy-unsealed", "unvalidated"}:
+        fail("hot content identity lacks unsealed validation provenance")
     return content_id_for(f"{identity_key}|validation:{validation_key}", digest)
 
 
@@ -3187,14 +2834,6 @@ def resolve_activate_transport(
     return "copy", "ssh-control"
 
 
-def _profile_has_reviewed_seal(
-    models_dir: str | pathlib.Path,
-    profile: str,
-) -> bool:
-    parsed = parse_profile_conf_any(pathlib.Path(models_dir) / f"{profile}.conf")
-    return bool(parsed and parsed.get("expected_model_seal"))
-
-
 def classify_library_readiness(
     *,
     profile: str,
@@ -3207,7 +2846,6 @@ def classify_library_readiness(
     """Classify why library views are not ready, without restaging."""
     refresh = "scripts/model-library.sh catalog refresh"
     prepare = f"scripts/model-library.sh prepare {profile} --yes"
-    sealed_add = f"scripts/model-library.sh home add {profile} --yes"
     unsealed_add = (
         f"scripts/model-library.sh home add {profile} --revision <selector> --plan && "
         f"scripts/model-library.sh home add {profile} --revision <exact-commit> --yes"
@@ -3248,10 +2886,9 @@ def classify_library_readiness(
     except ModelLibraryError as exc:
         text = str(exc)
         if "not found in warm catalog" in text or "no complete warm home" in text:
-            sealed = _profile_has_reviewed_seal(models_dir, profile)
             return {
                 "reason": "no-home",
-                "remediation": sealed_add if sealed else unsealed_add,
+                "remediation": unsealed_add,
                 "detail": text,
             }
         if "duplicate complete homes without primary" in text:
@@ -3346,31 +2983,13 @@ def validate_hot_validation(
     if not isinstance(profile, str) or not profile:
         fail("hot validation profile is invalid")
     status = validation.get("identity_status")
-    if status not in {"match", "legacy-unsealed", "unvalidated"}:
+    if status not in {"legacy-unsealed", "unvalidated"}:
         fail(f"hot identity status is unsupported: {status!r}")
     observed = validation.get("observed_seal")
     expected_observed = observed_model_seal_projection(manifest)
     if observed != expected_observed:
-        fail("hot observed seal differs from integrity manifest")
-    expected = validation.get("expected_seal")
-    if status == "match":
-        required = {
-            "seal_id",
-            "validation_bundle_id",
-            "model_id",
-            "snapshot_revision",
-            "manifest_id",
-        }
-        if not isinstance(expected, dict) or set(expected) != required:
-            fail("hot expected seal projection is invalid")
-        for digest_field in ("seal_id", "validation_bundle_id", "manifest_id"):
-            value = expected.get(digest_field)
-            if not isinstance(value, str) or SHA256_HEX_RE.fullmatch(value) is None:
-                fail(f"hot expected seal {digest_field} is invalid")
-        for field in ("model_id", "snapshot_revision", "manifest_id"):
-            if expected.get(field) != observed.get(field):
-                fail(f"hot expected and observed {field} differ")
-    elif expected is not None:
+        fail("hot observed identity differs from integrity manifest")
+    if validation.get("expected_seal") is not None:
         fail(f"hot {status} state must not carry an expected seal")
     return validation
 
@@ -3767,7 +3386,11 @@ def build_replicated_witness_observation(
     *,
     hub: pathlib.Path,
 ) -> dict[str, Any]:
-    plan = validate_replicated_verification_plan(plan)
+    fail(
+        "sealed replicated identity is retired (ADR 0012); "
+        "expected-seal and schema-1 bundles are not a live product"
+    )
+    plan = plan
     manifest = plan["manifest"]
     hot_shape = build_hot_witness_observation(
         {
@@ -5274,7 +4897,7 @@ def _schema3_hot_health(instance: pathlib.Path, stamp: dict[str, Any]) -> dict[s
     result: dict[str, Any] = {
         "metadata_valid": False,
         "runtime_source": "unknown",
-        "identity_status": "mismatch",
+        "identity_status": "unknown",
         "witness_status": "malformed",
         "expected_manifest": None,
         "detail": None,
@@ -5706,11 +5329,6 @@ def build_health_report(
         if primary.get("status") == "stale":
             issues.append(_health_issue("primary-selection-stale", "selected primary is no longer a complete home", command="scripts/model-library.sh catalog primary clear <model>"))
         expected_manifest = None
-        for validation in entry.get("profile_validation") or []:
-            seal = validation.get("expected_model_seal") or {}
-            if seal.get("manifest_id"):
-                expected_manifest = seal["manifest_id"]
-                break
         public_models.append({
             "model_id": entry.get("model_id"),
             "revision": entry.get("revision"),
@@ -6012,7 +5630,11 @@ def plan_home_acquisition(
     serving_nodes: int,
     node_selector: str = "",
 ) -> dict[str, Any]:
-    identity = validate_replicated_verification_plan(identity_plan)
+    fail(
+        "home add: sealed exact-commit acquisition is retired (ADR 0012); "
+        "use source-attested home add --revision"
+    )
+    identity = identity_plan
     topology = load_topology_for_plan(topology_file)
     if topology.get("topology_id") != topology_id:
         fail("home add: loaded topology differs from controller topology")
@@ -6274,8 +5896,12 @@ def execute_home_acquisition(
     node_id: str,
     workers: int | None = None,
 ) -> dict[str, Any]:
+    fail(
+        "home add: sealed exact-commit acquisition is retired (ADR 0012); "
+        "use source-attested home add --revision"
+    )
     plan = _validate_home_acquisition_execution_node(plan, rank=rank, node_id=node_id)
-    identity = validate_replicated_verification_plan(identity_plan)
+    identity = identity_plan
     expected = identity["validation"]["expected_seal"]
     identity_fields = {
         "profile": identity["profile"],
@@ -8178,19 +7804,8 @@ def execute_home_removal_plan(
     }
 
 
-def catalog_entry_has_expected_identity(entry: dict[str, Any]) -> bool:
-    """Return whether a catalog entry carries a reviewed lab expectation."""
-    return any(
-        item.get("expected_model_seal") is not None
-        and item.get("identity_status") in {"expected-unverified", "match"}
-        for item in entry.get("profile_validation") or []
-    )
-
-
-def render_catalog_human(catalog: dict[str, Any], *, validated_only: bool = False) -> None:
+def render_catalog_human(catalog: dict[str, Any]) -> None:
     models = catalog.get("models") or []
-    if validated_only:
-        models = [m for m in models if catalog_entry_has_expected_identity(m)]
     print(f"model library  topology={str(catalog.get('topology_id') or '')[:12]}")
     print(f"refreshed      {catalog.get('refreshed_at')}")
     print(f"entries        {len(models)}")
@@ -8681,63 +8296,10 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_verify_profile_bundle(args: argparse.Namespace) -> int:
-    contract = build_profile_contract(
-        model_id=args.model_id,
-        served_name=args.served_name,
-        image=args.image,
-        nodes=args.nodes,
-        port=args.port,
-        gpu_mem_util=args.gpu_mem_util,
-        engine_args=args.engine_arg,
-        container_env=args.container_env,
-        spec_decode_args=args.spec_decode_arg,
-        recommended_spec=bool(args.recommended_spec),
-        profile_purpose=args.profile_purpose,
-        topology_class=args.topology_class,
-        min_rails_per_pair=args.min_rails_per_pair,
-        weights_gib=args.weights_gib or None,
-        weights_ram_gib=args.weights_ram_gib or None,
-        kv_gib=args.kv_gib or None,
-        overhead_gib=args.overhead_gib or None,
-        mem_min_free_gib=args.mem_min_free_gib or None,
-    )
-    result = verify_profile_validation_bundle(
-        models_dir=args.models_dir,
-        profile=args.profile,
-        profile_contract=contract,
-        expected_seal_ref=args.expected_seal_ref or None,
-    )
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
-
-
-def cmd_replicated_plan(args: argparse.Namespace) -> int:
-    plan = replicated_verification_plan(args.models_dir, args.profile)
-    if args.transport_envelope:
-        print(
-            json.dumps(
-                {
-                    "encoded_plan": encode_replicated_verification_plan(plan),
-                    "plan": plan,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
-    elif args.encoded:
-        print(encode_replicated_verification_plan(plan))
-    else:
-        print(json.dumps(plan, indent=2, sort_keys=True))
-    return 0
-
-
 def cmd_list(args: argparse.Namespace) -> int:
     catalog = load_catalog(args.catalog)
     if args.json:
         models = catalog.get("models") or []
-        if args.validated:
-            models = [m for m in models if catalog_entry_has_expected_identity(m)]
         print(
             json.dumps(
                 {"schema_version": SCHEMA_VERSION, "models": models},
@@ -8746,7 +8308,7 @@ def cmd_list(args: argparse.Namespace) -> int:
             )
         )
     else:
-        render_catalog_human(catalog, validated_only=args.validated)
+        render_catalog_human(catalog)
     return 0
 
 
@@ -9658,12 +9220,17 @@ def cmd_compare_ssh_roce_bench(args: argparse.Namespace) -> int:
 
 
 REMOVED_ALLOW_UNVALIDATED_MESSAGE = (
-    "--allow-unvalidated was removed (ADR 0008): seals still fail closed. "
-    "Drop the flag."
+    "--allow-unvalidated was removed (ADR 0008): Drop the flag. "
+    "Expected-seal and schema-1 bundles are not a live product (ADR 0012)."
 )
 REMOVED_CATALOG_VALIDATED_MESSAGE = (
-    "--validated was removed (ADR 0008): use --reviewed-identity. "
+    "--validated was removed (ADR 0008): drop the flag. "
+    "--reviewed-identity is retired (ADR 0012). "
     "It does not mean ADR 0004 Validated."
+)
+REMOVED_REVIEWED_IDENTITY_MESSAGE = (
+    "--reviewed-identity is retired (ADR 0012): expected-seal catalog "
+    "filter is not a live product"
 )
 
 
@@ -9974,68 +9541,14 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--json", action="store_true")
     build.set_defaults(func=cmd_build)
 
-    verify_bundle = sub.add_parser(
-        "verify-profile-bundle",
-        help="Verify a sourced profile against its reviewed validation bundle",
-    )
-    verify_bundle.add_argument("--models-dir", required=True)
-    verify_bundle.add_argument("--profile", required=True)
-    verify_bundle.add_argument("--expected-seal-ref", default="")
-    verify_bundle.add_argument("--model-id", required=True)
-    verify_bundle.add_argument("--served-name", required=True)
-    verify_bundle.add_argument("--image", required=True)
-    verify_bundle.add_argument("--nodes", type=int, required=True)
-    verify_bundle.add_argument("--port", type=int, required=True)
-    verify_bundle.add_argument("--gpu-mem-util", required=True)
-    verify_bundle.add_argument("--engine-arg", action="append", default=[])
-    verify_bundle.add_argument("--container-env", action="append", default=[])
-    verify_bundle.add_argument("--spec-decode-arg", action="append", default=[])
-    verify_bundle.add_argument(
-        "--recommended-spec",
-        type=int,
-        choices=(0, 1),
-        required=True,
-    )
-    verify_bundle.add_argument(
-        "--profile-purpose",
-        choices=("serving", "diagnostic"),
-        required=True,
-    )
-    verify_bundle.add_argument("--topology-class", required=True)
-    verify_bundle.add_argument("--min-rails-per-pair", type=int, required=True)
-    verify_bundle.add_argument("--weights-gib", default="")
-    verify_bundle.add_argument("--weights-ram-gib", default="")
-    verify_bundle.add_argument("--kv-gib", default="")
-    verify_bundle.add_argument("--overhead-gib", default="")
-    verify_bundle.add_argument("--mem-min-free-gib", default="")
-    verify_bundle.set_defaults(func=cmd_verify_profile_bundle)
-
-    replicated_plan = sub.add_parser(
-        "replicated-plan",
-        help="Build the reviewed exact-identity plan for a replicated profile",
-    )
-    replicated_plan.add_argument("--models-dir", required=True)
-    replicated_plan.add_argument("--profile", required=True)
-    replicated_plan_output = replicated_plan.add_mutually_exclusive_group()
-    replicated_plan_output.add_argument(
-        "--encoded",
-        action="store_true",
-        help="Emit a compressed transport-safe plan for remote verification",
-    )
-    replicated_plan_output.add_argument(
-        "--transport-envelope",
-        action="store_true",
-        help="Emit the plan and its transport encoding from one reviewed load",
-    )
-    replicated_plan.set_defaults(func=cmd_replicated_plan)
-
     list_p = sub.add_parser("list", help="List catalog entries")
     list_p.add_argument("--catalog", required=True)
     list_p.add_argument(
         "--reviewed-identity",
-        dest="validated",
-        action="store_true",
-        help="show entries with a reviewed expected identity",
+        dest="_removed_reviewed_identity",
+        action=_RefuseRemovedFlag,
+        message=REMOVED_REVIEWED_IDENTITY_MESSAGE,
+        help=argparse.SUPPRESS,
     )
     list_p.add_argument(
         "--validated",

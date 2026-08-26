@@ -63,7 +63,7 @@ FORBIDDEN_PERMIT_KEYS = frozenset(
         "authorisation",
     }
 )
-IDENTITY_STATUSES = ("match", "legacy-unsealed", "unvalidated")
+IDENTITY_STATUSES = ("legacy-unsealed", "unvalidated")
 LIFECYCLE_ACTIONS = ("start", "replace", "dry-run")
 SPEC_DECODE_SOURCES = (
     "profile-default",
@@ -348,18 +348,10 @@ def _validate_storage(storage: dict[str, Any], *, nodes: int) -> dict[str, Any]:
     hub_path = require_text(storage.get("hub_path"), "storage.hub_path")
     seal_id = storage.get("model_seal_id")
     bundle_id = storage.get("validation_bundle_id")
-    if identity == "match":
-        if not COMMIT_REVISION.fullmatch(revision):
-            fail("storage.revision: matched identity requires an immutable commit")
-        seal_id = require_hex(seal_id, "storage.model_seal_id", HEX64)
-        bundle_id = require_hex(
-            bundle_id, "storage.validation_bundle_id", HEX64
-        )
-    else:
-        if seal_id is not None or bundle_id is not None:
-            fail("storage: unsealed identity cannot claim seal provenance")
-        seal_id = None
-        bundle_id = None
+    if seal_id is not None or bundle_id is not None:
+        fail("storage: unsealed identity cannot claim seal provenance")
+    seal_id = None
+    bundle_id = None
     transport = require_text(storage.get("transport"), "storage.transport")
     if transport not in ("ssh-control", "ssh-roce"):
         fail(
@@ -572,9 +564,6 @@ def rank_container_spec(plan: dict[str, Any], rank: int) -> dict[str, Any]:
         LABEL_MODEL_REVISION: storage["revision"],
         LABEL_IDENTITY_STATUS: storage["identity_status"],
     }
-    if storage["identity_status"] == "match":
-        labels[LABEL_MODEL_SEAL] = storage["model_seal_id"]
-        labels[LABEL_VALIDATION_BUNDLE] = storage["validation_bundle_id"]
     parts = [part for part in storage["container_model_path"].split("/") if part]
     try:
         hub_index = parts.index("hub")

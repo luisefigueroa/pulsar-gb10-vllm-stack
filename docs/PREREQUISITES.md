@@ -369,8 +369,8 @@ not permission to serve an unmeasured geometry.
 | [decisions/0004-model-serving-release-validation.md](./decisions/0004-model-serving-release-validation.md) | Accepted Model Serving Release identity, contract, evidence, status, onboarding, and subsystem-GA boundaries; validation status is advisory; descriptor, contract, immutable run, evidence-bundle, and reviewed-decision schemas implemented; read-only persistence and advisory projection implemented and empty/unbound; local evidence-capture candidate persistence implemented and unreviewed; maintainer issuance staging implemented as an untrusted local proposal |
 | [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) | Maintainer-only ADR 0004 evidence-capture candidate persistence; no issuance and no runtime launch |
 | [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md) | Maintainer-only ADR 0004 issuance staging; local success is not repository review or serving authorization |
-| [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Maintainer-only exact-manifest and unreviewed release-candidate workflow; no issuance authority |
-| [models/seals/README.md](../models/seals/README.md) | Reviewed expected-seal schema, lab issuance boundary, and current migration status |
+| [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Pointer: expected-seal is retired (ADR 0012); live identity is ADR 0004 capture/issuance |
+| [archive/schema-1-expected-seal/README.md](./archive/schema-1-expected-seal/README.md) | Archived expected-seal and schema-1 bundles; not loaded |
 | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) | Archived exploration / option history only |
 | [BUILD.md](./BUILD.md) | Published PR #41834 image, provenance, and source-build fallback |
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |

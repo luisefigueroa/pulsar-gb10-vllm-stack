@@ -20,6 +20,10 @@
   provenance/security component is `pending`. Schema version 1 is
   unchanged. Issued Qwen3.8 objects are not migrated. The decision
   builder implements this citation rule.
+  2026-08-26 — [ADR 0012](./0012-retire-expected-seal-and-schema-1-bundles.md)
+  retires expected-seal and schema-1 validation bundles as a live product.
+  ADR 0004 object `schema_version: 1` is unchanged and is not a v2 of those
+  legacy kinds.
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
@@ -383,9 +387,10 @@ compatibility observations. A soak observation records `started_at`,
 `ended_at`, and canonical `duration_seconds`; the validator checks that the
 duration exactly equals the contained timestamp interval.
 
-Existing schema-1 validation bundles and expected-model seals remain immutable.
-They are legacy combined identity/evidence artifacts and are not rehashed,
-rewritten, or automatically converted. Stage 1 adds a separate release
+Existing schema-1 validation bundles and expected-model seals remain
+byte-immutable historical artifacts. [ADR 0012](./0012-retire-expected-seal-and-schema-1-bundles.md)
+archives them; live loaders do not consume them, and they are not converted
+into ADR 0004 objects. They are not rehashed or rewritten. Stage 1 adds a separate release
 descriptor and frozen Validation Contract; stage 2 adds run records, evidence
 bundles, validation decisions, and their cross-links. Both pure-schema stages
 are implemented. Read-only trusted persistence and verification for those

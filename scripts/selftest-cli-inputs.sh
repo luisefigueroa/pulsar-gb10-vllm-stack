@@ -27,37 +27,37 @@ expect_failure() {
 }
 
 expect_failure 2 "--port requires a value" "serve missing port value" \
-  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --port
+  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --port
 expect_failure 2 "invalid --port" "serve rejects nonnumeric port" \
-  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --port nope
+  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --port nope
 expect_failure 2 "invalid --port" "serve rejects out-of-range port" \
-  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --port 70000
+  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --port 70000
 expect_failure 1 "invalid model id" "config loader rejects path traversal" \
   "$REPO_DIR/serve.sh" ../outside --dry-run
 expect_failure 2 "ADR 0006" "serve rejects the removed weight-mode axis" \
-  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --weight-source library-hot
+  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --weight-source library-hot
 expect_failure 2 "SIM-12" "pulsar refuses removed weight-fabric helper" \
-  "$REPO_DIR/pulsar" weight-fabric show qwen3-1.7b-2node
+  "$REPO_DIR/pulsar" weight-fabric show qwen3.8-27b-fp8-2node
 expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy repair" \
   "$REPO_DIR/scripts/model-library.sh" hot legacy check unused --json
 expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy remove" \
   "$REPO_DIR/scripts/model-library.sh" hot legacy remove unused --yes
 
 expect_failure 2 "ADR 0008" "serve refuses removed --force" \
-  "$REPO_DIR/serve.sh" qwen3-1.7b --dry-run --force
+  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --force
 expect_failure 2 "Drop the flag" "up refuses removed --force" \
-  "$REPO_DIR/scripts/up.sh" qwen3-1.7b --dry-run --force
+  "$REPO_DIR/scripts/up.sh" qwen3.8-27b-fp8 --dry-run --force
 expect_failure 2 "Drop the flag" "start-cluster refuses removed --force" \
-  "$REPO_DIR/cluster/start-cluster.sh" qwen3-1.7b --dry-run --force
+  "$REPO_DIR/cluster/start-cluster.sh" qwen3.8-27b-fp8 --dry-run --force
 expect_failure 2 "use --legacy-tested" "list-models refuses removed --validated" \
   "$REPO_DIR/scripts/list-models.sh" --validated
-expect_failure 2 "use --reviewed-identity" "catalog list refuses removed --validated" \
+expect_failure 2 "retired (ADR 0012)" "catalog list refuses removed --validated" \
   "$REPO_DIR/scripts/model-library.sh" catalog list --validated
 expect_failure 2 "use prepare" "model-library refuses removed activate" \
-  "$REPO_DIR/scripts/model-library.sh" activate qwen3-1.7b
+  "$REPO_DIR/scripts/model-library.sh" activate qwen3.8-27b-fp8
 expect_failure 2 "Drop the flag" "python plan-activate refuses --allow-unvalidated" \
   python3 "$REPO_DIR/scripts/model_library.py" plan-activate --allow-unvalidated
-expect_failure 2 "use --reviewed-identity" "python list refuses removed --validated" \
+expect_failure 2 "retired (ADR 0012)" "python list refuses removed --validated" \
   python3 "$REPO_DIR/scripts/model_library.py" list --catalog /dev/null --validated
 
 grep -q '\[ "$DRY" != 1 \].*PULL_IMG' "$REPO_DIR/scripts/up.sh"

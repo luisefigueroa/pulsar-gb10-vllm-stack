@@ -33,14 +33,13 @@ Federated model library (warm catalog + optional cold + hot staging)
 
 Usage:
   scripts/model-library.sh catalog refresh [--json] [--local-only]
-  scripts/model-library.sh catalog list [--reviewed-identity] [--json]
+  scripts/model-library.sh catalog list [--json]
   scripts/model-library.sh catalog show <model_id|profile> [--json]
   scripts/model-library.sh catalog primary list [--json]
   scripts/model-library.sh catalog primary set <profile|model_id|model_id@revision>
       --node RANK|NODE_ID [--json]
   scripts/model-library.sh catalog primary clear <profile|model_id|model_id@revision>
       [--json]
-  scripts/model-library.sh validation-bundle verify <profile> [--json]
   scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
   scripts/model-library.sh home add <profile>
@@ -84,15 +83,12 @@ Notes:
     org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
   • cold adopt imports into a durable warm HF home; cold stage-only fills hot
     only (cold remains sole durable copy; pin still allows warm restart).
-  • Catalog identity labels distinguish reviewed expected seals from
-    legacy-unsealed STATUS claims; local bytes never create expected identity.
-    catalog list --reviewed-identity shows present entries with reviewed
-    expected seals. --validated is removed (ADR 0008); use --reviewed-identity.
-    Sealed profiles also require a content-addressed validation bundle whose
-    model, image, runtime, geometry, artifact, and evidence contract matches.
-    Validation labels are advisory: prepare accepts fully verified unsealed
-    content without an override. --allow-unvalidated is removed (ADR 0008);
-    drop the flag. It never bypassed a configured seal mismatch.
+  • Catalog identity labels are unsealed library-hot: legacy-unsealed or
+    unvalidated. Local bytes never create ADR 0004 identity. --reviewed-identity
+    and schema-1 bundle verification are retired (ADR 0012). --validated
+    is removed (ADR 0008). Validation labels are advisory: prepare accepts
+    fully verified unsealed content. --allow-unvalidated is removed
+    (ADR 0008); drop the flag.
   • Duplicate occupancy homes refuse resolve until an exact-revision primary is
     chosen. Source-attested occupancy is the current-home attachment; extra
     complete hub trees are unbound-complete and do not freeze resolve when
@@ -117,15 +113,14 @@ Notes:
     removal requires a selected primary and can target only a non-primary home.
     home check never mutates; without --yes, home remove changes nothing.
   • home add downloads one exact revision directly on one selected serving
-    rank. A reviewed sealed profile without --revision keeps the existing
-    sealed path. A Hugging Face profile without a reviewed seal requires
-    --revision. --plan is read-only and prints the public source-attested
-    plan without downloading model bytes. Execution needs --yes (or a
-    confirmation) and writes an immutable receipt before publishing the
-    home, then attaches occupancy to the exact published directory. For a
-    one-node profile, that rank may be any confirmed rank; for multi-node
-    profiles it remains in the exact profile geometry. With no --node
-    override, the eligible serving rank with the most free space is
+    rank. Hugging Face profiles require --revision (ADR 0012: sealed
+    exact-commit home add is retired). --plan is read-only and prints the
+    public source-attested plan without downloading model bytes. Execution
+    needs --yes (or a confirmation) and writes an immutable receipt before
+    publishing the home, then attaches occupancy to the exact published
+    directory. For a one-node profile, that rank may be any confirmed rank;
+    for multi-node profiles it remains in the exact profile geometry. With
+    no --node override, the eligible serving rank with the most free space is
     selected. Eligibility includes target-local metadata access; an explicit
     --node resolves metadata only on that rank. Download uses private
     same-filesystem staging and target-local modern hf. It creates no hot
@@ -135,8 +130,9 @@ Notes:
     occupancy still names that live directory. An unbound complete tree with a
     compatible receipt needs home relocate --node, not a Hub re-download and
     not occupancy without a live rehash. An unknown tree without a receipt
-    still needs a reviewed expected manifest. Both verifiers hash attested
-    empty snapshot files. Verification assigns no status.
+    fails closed (ADR 0012: expected-manifest fallback is retired). Both
+    verifiers hash attested empty snapshot files. Verification assigns no
+    status.
   • home relocate moves occupancy to --node after a live full rehash against
     the immutable receipt. If that rank already has matching bytes, no copy
     and no Hub download occur. Receipt selected_rank is download provenance
@@ -161,7 +157,7 @@ Notes:
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails closed.
   • Benchmark/probe commands are explicit experiments and permit legacy-unsealed
-    profiles, but a configured expected-seal mismatch still fails closed.
+    profiles. Expected-seal is not a live product (ADR 0012).
   • probe-ssh-roce / bench-ssh-roce: experimental control SSH vs SSH-over-RoCE
     A/B (no product default change). Requires topology schema-2 SSH enrollment
     and sshd on fabric IPs. Each report is one ordered pair; repeat both
@@ -663,7 +659,9 @@ cmd_catalog_list() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) args+=(--json) ;;
-      --reviewed-identity) args+=(--reviewed-identity) ;;
+      --reviewed-identity)
+        die "--reviewed-identity is retired (ADR 0012): expected-seal catalog filter is not a live product"
+        ;;
       --validated) refuse_removed_catalog_validated_flag ;;
       -h|--help) usage; return 0 ;;
       *) die "unknown arg: $1" ;;
@@ -1491,7 +1489,7 @@ cmd_home_add_source_attested() (
   local content_bytes revision selected_rank selected_node selected_hf
   local hub_root target_hub staging_json staging_root
   local observed_json receipt_json result_json approval_id
-  local seal_args=() geometry_text match in_geometry geometry_rank
+  local geometry_text match in_geometry geometry_rank
   local rank hf_cli source_try metadata_csv
   local cleanup_needed=0
   local -a geometry_ranks=() metadata_ranks=()
@@ -1593,15 +1591,11 @@ cmd_home_add_source_attested() (
   content_bytes=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["content_bytes"])' \
     <"$tmp/source.json")
 
-  if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-    seal_args+=(--expected-seal "$REPO_DIR/models/$EXPECTED_MODEL_SEAL")
-  fi
   identity_json=$(python3 "$SOURCE_ATTESTED_PY" resolve-identity \
     --source "$tmp/source.json" \
     --profile "$profile" \
     --repo-root "$REPO_DIR" \
-    --release-id "${MODEL_SERVING_RELEASE_ID:-}" \
-    "${seal_args[@]}")
+    --release-id "${MODEL_SERVING_RELEASE_ID:-}")
   printf '%s\n' "$identity_json" >"$tmp/identity.json"
 
   collect_home_acquisition_observations \
@@ -1661,8 +1655,7 @@ cmd_home_add_source_attested() (
     --source "$tmp/live-source.json" \
     --profile "$profile" \
     --repo-root "$REPO_DIR" \
-    --release-id "${MODEL_SERVING_RELEASE_ID:-}" \
-    "${seal_args[@]}")
+    --release-id "${MODEL_SERVING_RELEASE_ID:-}")
   printf '%s\n' "$identity_json" >"$tmp/live-identity.json"
   python3 "$SOURCE_ATTESTED_PY" verify-approval \
     --plan "$tmp/plan.json" \
@@ -1821,119 +1814,11 @@ cmd_home_add() (
   [ -n "$profile" ] \
     || die "usage: home add <profile> [--revision SELECTOR] [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
   load_conf "$profile"
-  if [ -n "$revision_selector" ] || [ -z "${EXPECTED_MODEL_SEAL:-}" ]; then
-    [ -n "$revision_selector" ] \
-      || die "home add: $profile has no reviewed expected model seal; pass --revision SELECTOR"
-    cmd_home_add_source_attested \
-      "$profile" "$revision_selector" "$node_selector" \
-      "$plan_only" "$yes" "$json"
-    return
-  fi
-  [ "$plan_only" = 0 ] \
-    || die "home add --plan requires --revision on the source-attested path"
-  [ "$json" = 0 ] || [ "$yes" = 1 ] \
-    || die "home add --json requires --yes so stdout remains one result document"
-  require_py
-  load_cluster_topology >/dev/null \
-    || die "home add: confirmed topology required"
-  [ "$(model_source_kind)" = hf ] \
-    || die "home add: $profile is not a Hugging Face model profile"
-  [ -n "${EXPECTED_MODEL_SEAL:-}" ] \
-    || die "home add: $profile has no reviewed expected model seal"
-  load_replicated_identity_plan "$profile"
-  identity_plan_b64="$REPLICATED_PLAN_B64"
-  revision="$REPLICATED_REVISION"
-  model_id="$MODEL"
-  content_bytes=$(python3 "$PY_TOOL" replicated-plan \
-    --models-dir "$REPO_DIR/models" --profile "$profile" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["manifest"]["total_bytes"])')
-
-  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-add.XXXXXX")
-  result_file="$tmp/result.json"
-  # Invoked indirectly by the EXIT trap below.
-  # shellcheck disable=SC2317
-  cleanup_home_add() {
-    if [ "$cleanup_needed" = 1 ] && [ -n "${staging_root:-}" ]; then
-      run_model_library_on_rank "$target_rank" \
-        cleanup-home-acquisition-staging \
-        --plan-b64 "$plan_b64" \
-        --staging-root "$staging_root" \
-        --rank "$target_rank" \
-        --node-id "$target_node" >/dev/null 2>&1 \
-        || log "rank $target_rank: incomplete acquisition staging requires manual inspection" >&2
-    fi
-    rm -rf "$tmp"
-  }
-  trap cleanup_home_add EXIT
-  trap 'exit 130' INT TERM
-
-  collect_home_acquisition_observations \
-    "$tmp" "$model_id" "$revision" "$content_bytes"
-
-  local -a plan_args=(
-    plan-home-acquisition
-    --identity-plan-b64 "$identity_plan_b64"
-    --topology-file "$CLUSTER_TOPOLOGY_FILE"
-    --topology-id "$CLUSTER_TOPOLOGY_ID"
-    --observations-dir "$tmp"
-    --serving-nodes "$NODES"
-  )
-  [ -z "$node_selector" ] || plan_args+=(--node "$node_selector")
-  plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
-  plan_b64=$(printf '%s' "$plan" | base64 -w 0)
-  target_rank=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["rank"])')
-  target_node=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["node_id"])')
-  target_hf=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["hf_cli"])')
-
-  if [ "$json" = 0 ]; then
-    python3 "$PY_TOOL" render-home-acquisition-plan --plan-b64 "$plan_b64"
-    library_confirm "$yes" "Add this reviewed model to the library?"
-  fi
-
-  staging_json=$(run_model_library_on_rank "$target_rank" \
-    create-home-acquisition-staging \
-    --plan-b64 "$plan_b64" \
-    --rank "$target_rank" \
-    --node-id "$target_node") \
-    || die "home add: could not create plan-owned staging on rank $target_rank"
-  staging_root=$(printf '%s' "$staging_json" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["staging_root"])')
-  cleanup_needed=1
-
-  log "rank $target_rank: downloading exact revision $revision into private staging" >&2
-  download_home_acquisition_on_rank \
-    "$target_rank" "$target_hf" "$staging_root" "$model_id" "$revision" \
-    || die "home add: Hugging Face download failed; private staging cleanup was attempted"
-  collect_home_acquisition_observations \
-    "$tmp/recheck" "$model_id" "$revision" "$content_bytes"
-  python3 "$PY_TOOL" recheck-home-acquisition-publication \
-    --plan-b64 "$plan_b64" \
-    --topology-file "$CLUSTER_TOPOLOGY_FILE" \
-    --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --observations-dir "$tmp/recheck" >/dev/null \
-    || die "home add: one-home publication recheck failed; private staging cleanup was attempted"
-  log "rank $target_rank: full-verifying reviewed manifest before publication" >&2
-  run_model_library_on_rank "$target_rank" \
-    execute-home-acquisition \
-    --plan-b64 "$plan_b64" \
-    --identity-plan-b64 "$identity_plan_b64" \
-    --staging-root "$staging_root" \
-    --rank "$target_rank" \
-    --node-id "$target_node" \
-    --workers "${PULSAR_INTEGRITY_WORKERS:-8}" >"$result_file" \
-    || die "home add: verification or atomic publication failed; private staging cleanup was attempted"
-  cleanup_needed=0
-
-  if [ "$json" = 1 ]; then
-    python3 "$PY_TOOL" render-home-acquisition-result \
-      --result-file "$result_file" --json
-  else
-    python3 "$PY_TOOL" render-home-acquisition-result \
-      --result-file "$result_file"
-  fi
+  [ -n "$revision_selector" ] \
+    || die "home add: pass --revision SELECTOR (ADR 0012: expected-seal exact-commit home add is retired)"
+  cmd_home_add_source_attested \
+    "$profile" "$revision_selector" "$node_selector" \
+    "$plan_only" "$yes" "$json"
 )
 
 cmd_home_verify() (
@@ -2041,44 +1926,6 @@ cmd_home_verify() (
     python3 "$SOURCE_ATTESTED_PY" "${verify_args[@]}"
     return 0
   fi
-  if [[ "$query" != */* ]] && [[ "$query" != *@* ]]; then
-    load_conf "$query"
-    if [ -n "${EXPECTED_MODEL_SEAL:-}" ]; then
-      observed_json=$(run_model_library_on_rank "$home_rank" \
-        inspect-hub \
-        --hub-path "$hub_path" \
-        --rank "$home_rank" \
-        --node-id "$node_id" \
-        --model-id "$model_id" \
-        --revision "$revision" \
-        --allow-empty-files) \
-        || die "home verify: could not inspect the durable home"
-      python3 -c '
-import json, sys
-sys.path.insert(0, sys.argv[1])
-import model_library
-inventory = json.loads(sys.argv[2])
-expected = model_library.load_profile_expected_snapshot_manifest(sys.argv[4], sys.argv[3])
-observed = inventory.get("integrity_manifest") or {}
-if observed.get("manifest_id") != expected.get("manifest_id"):
-    raise SystemExit(
-        "home verify: offline SHA-256 rehash differs from the reviewed "
-        "expected manifest"
-    )
-print(json.dumps({
-    "schema_version": 1,
-    "kind": "pulsar-model-library-expected-manifest-home-verify-result",
-    "state": "verified",
-    "model_id": observed.get("model_id"),
-    "snapshot_revision": observed.get("snapshot_revision"),
-    "manifest_id": observed.get("manifest_id"),
-    "file_count": observed.get("file_count"),
-    "bytes_hashed": observed.get("total_bytes"),
-}, indent=2, sort_keys=True))
-' "$REPO_DIR/scripts" "$observed_json" "$query" "$REPO_DIR/models"
-      return 0
-    fi
-  fi
   receipt_lookup=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
     --library-dir "$LIBRARY_DIR" \
     --model-id "$model_id" \
@@ -2087,7 +1934,7 @@ print(json.dumps({
   if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
     die "home verify: occupancy is missing for a source-attested receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
   fi
-  die "home verify: unknown or pre-existing home requires a reviewed expected manifest"
+  die "home verify: unknown or pre-existing home has no source-attested receipt (ADR 0012: expected-manifest fallback is retired)"
 )
 
 confirmed_rank_from_node_selector() {
@@ -4057,13 +3904,7 @@ main() {
       esac
       ;;
     validation-bundle)
-      [ $# -ge 1 ] || { usage; exit 2; }
-      local bundle_sub="$1"
-      shift
-      case "$bundle_sub" in
-        verify) cmd_validation_bundle_verify "$@" ;;
-        *) usage; exit 2 ;;
-      esac
+      die "validation-bundle is retired (ADR 0012): expected-seal and schema-1 bundles are not a live product; use scripts/model-serving-release-registry.sh verify"
       ;;
     resolve) cmd_resolve "$@" ;;
     cleanup-recommend) cmd_cleanup_recommend "$@" ;;

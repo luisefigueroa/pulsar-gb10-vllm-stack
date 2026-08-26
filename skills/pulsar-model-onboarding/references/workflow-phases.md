@@ -98,8 +98,7 @@ manifest, runtime envelope, and selected access contract.
    an offline full SHA-256 rehash against the immutable receipt while occupancy
    names that live directory. Occupancy may move with
    `scripts/model-library.sh home relocate <profile> --node RANK --yes`. An
-   older tree without a receipt still requires full verification against a
-   reviewed expected manifest independent of the observed tree.
+   older tree without a receipt fails closed (ADR 0012).
 8. Refuse a missing required receipt or reviewed manifest, failed or incomplete
    verification, partial or wrong-revision content, a duplicate occupancy home,
    or an out-of-geometry home. Unbound-complete trees with a compatible receipt
@@ -112,15 +111,12 @@ manifest, runtime envelope, and selected access contract.
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh catalog show <model_id@revision>
 scripts/model-library.sh home verify <model_id@revision> --json
-scripts/model-release.sh manifest <profile> \
-  --hub-path <hub-path> --revision <exact-commit>
 ```
 
 Refuse another revision, ambiguity, a partial tree, or a durable
 duplicate. Do not mutate `refs/main`. Run `home verify` for source-attested
-content; use the applicable reviewed expected-manifest verification for older
-content. The later manifest records exact identity of the verified tree; it
-does not replace the independent acquisition proof.
+content. Unknown trees without a receipt fail closed (ADR 0012).
+`scripts/model-release.sh` is retired.
 
 ## 6. Distribution choice
 

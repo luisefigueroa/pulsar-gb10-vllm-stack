@@ -37,76 +37,57 @@
 
 | Field | Value |
 |---|---|
-| Authority | Accepted architecture; the model library is the only weight-distribution mechanism ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)); every scope (two-rank sealed, one-rank, legacy-unsealed) is supported |
+| Authority | Accepted architecture; the model library is the only weight-distribution mechanism ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md)); every unsealed library-hot scope is supported. Expected-seal is not a live product ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)) |
 | Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles; ADR 0006 (2026-08-19) then removed the replicated and fabric paths and promoted every library scope to supported by decision, recording the open gates as accepted risks. ADR 0007 (2026-08-20) changed ordinary stop to retain unpinned prepared views. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16; library-only distribution accepted 2026-08-19 (ADR 0006); ordinary-stop retention accepted 2026-08-20 (ADR 0007) |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md); [ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md) |
 | Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current operator/catalog state | [OPERATIONS.md](./OPERATIONS.md), [MODELS.md](./MODELS.md) |
 | Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working replicas (`sealed-hot`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), fixed eight-stream SSH-over-RoCE preparation for reviewed multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working replicas (ADR 0007) |
-| Supported today | Two-rank sealed (physical GA evidence, 2026-08-16); one-rank and legacy-unsealed (supported by ADR 0006 decision). Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
+| Supported today | Unsealed library-hot for every live profile (ADR 0006/0012). Historical two-rank sealed GA evidence remains in `results/`. Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
 | Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; source-attested unsealed Hugging Face `home add` kept as core catalog/artifact ingress (SIM-03, 2026-08-22) with remote-target / asymmetric-credentials as physical validation follow-ups; Hugging Face is the only current ingress format (local-directory import needs its own ADR); occupancy loss recovers via ADR 0011 relocate/restore (receipt-indexed NFS archive implementation pending); maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope |
 | Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails closed; historical `results/weight-fabric/` evidence is superseded and not promoted. |
 
-**Current implementation integrity boundary:** catalog schema 2 accepts an
-optional reviewed `models/seals/*.json` trust root and binds a profile to
-its exact Hugging Face commit. Hot schema 3 records the expected seal,
-validation-bundle ID, and locally observed revision/manifest. Preparation
-full-hashes every rank and atomically writes a rank-local witness before
-publishing ready state. Launch first rechecks the live profile or controller
-expectation, then uses the witness when canonical view and file metadata are
-unchanged. A missing, invalid, or drifted witness is visible and causes a stable
-full SHA-256 verification; success atomically refreshes it, while a content
+**Current implementation integrity boundary:** expected-seal and schema-1
+validation bundles are not a live product (ADR 0012). Catalog schema 2 and
+hot schema 3 remain; live identity statuses are `legacy-unsealed` and
+`unvalidated`. There is no schema-2 of the expected-seal format. ADR 0004
+objects remain `schema_version: 1` of a different kind. Historical
+`models/seals/*.json` files are archived under `docs/archive/` and are not
+loaded. Hot schema 3 records observed revision/manifest; leftover expected-seal
+fields are untrusted observations. Preparation full-hashes every rank and
+atomically writes a rank-local witness before publishing ready state. Launch
+uses the witness when canonical view and file metadata are unchanged. A
+missing, invalid, or drifted witness is visible and causes a stable full
+SHA-256 verification; success atomically refreshes it, while a content
 mismatch fails without refresh. Launch still passes the exact
-`snapshots/<revision>` path to vLLM. The one-node diagnostic `qwen3-1.7b`
-profile carries the first issued seal/bundle and reaches `identity=match` on
-`library-hot`. The flagship `deepseek-v4-flash` profile carries the second
-issued seal/bundle and passed its applicable two-node post-issuance physical
-enforcement gate. Profiles without a seal, including `qwen3-1.7b-2node`, remain
-`legacy-unsealed`; after full verification they may be prepared without a
-validation-status override. `--allow-unvalidated` is removed (ADR 0008) and
-fails closed; it never bypassed a configured seal mismatch. Catalog refresh discovers complete snapshot commit
-directories independently of mutable `refs/main`; sealed inspection,
-manifest construction, verification, and launch all receive that selected
-commit explicitly. Guarded home removal now requires all confirmed nodes'
-managed hot state and Docker state to be observable, blocks retained hot views
-and managed containers, and serializes supported readers/launchers against
-deletion. Removal is limited to an exact single-revision HF repository and
-rechecks its metadata immediately before retirement. A sealed profile now also
-requires a content-addressed schema-1 validation bundle whose primary model,
-external artifacts, lab provenance/evidence, digest-pinned image, normalized
-runtime contract, and geometry match the reviewed seal and live sourced
-profile. (Sealed replicated launch enforcement, described here historically,
-was removed together with the replicated path by ADR 0006; sealed enforcement
-now lives entirely in home acquisition and library preparation/launch.)
-The distributed library has a separate acquisition service: `home add`
-observes every confirmed rank, allows a one-node profile on
-any confirmed rank while preserving exact multi-node geometry, selects the
-eligible candidate with the most free space unless `--node` overrides it, and downloads there
-into private same-filesystem staging, rechecks that no home appeared elsewhere,
-full-verifies the expected manifest for sealed content, and atomically publishes
-exactly one durable HF repository. For a brand-new unsealed profile,
-`--revision <selector> --plan` first resolves a complete public Git/LFS inventory
-to an exact commit without downloading model bytes. Separately confirmed
-execution uses the selected rank's local authentication, verifies the complete
-upstream set and every SHA-256, writes an immutable site-local receipt, uses
-an atomic no-replace publication, and binds that receipt to the exact
-published directory. `home verify` later performs an offline full
-rehash against the attached receipt. Neither path creates hot copies or refreshes the
-catalog, so registration remains the operator's explicit next action. Target capability
-discovery accepts the CLI on PATH or Pulsar's managed user-venv installation;
-it does not move controller authentication to the selected rank.
-Unsealed `home add` selection consults `refs/main` at acquisition time only.
-Issuing or enforcing the DeepSeek flagship identity does not by itself change
-any release status.
+`snapshots/<revision>` path to vLLM. Live profiles, including the plumbing
+canary `qwen3-1.7b-2node`, are unsealed. `--allow-unvalidated` is removed
+(ADR 0008) and fails closed. Catalog refresh discovers complete snapshot
+commit directories independently of mutable `refs/main`. Guarded home removal
+requires all confirmed nodes' managed hot state and Docker state to be
+observable, blocks retained hot views and managed containers, and serializes
+supported readers/launchers against deletion. Removal is limited to an exact
+single-revision HF repository and rechecks its metadata immediately before
+retirement. The distributed library acquisition service is source-attested
+`home add --revision`: it observes every confirmed rank, allows a one-node
+profile on any confirmed rank while preserving exact multi-node geometry,
+selects the eligible candidate with the most free space unless `--node`
+overrides it, and downloads there into private same-filesystem staging,
+rechecks that no home appeared elsewhere, full-verifies every SHA-256, writes
+an immutable receipt, and atomically publishes exactly one durable HF
+repository. `--revision <selector> --plan` first resolves a complete public
+Git/LFS inventory to an exact commit without downloading model bytes.
+`home verify` later performs an offline full rehash against the attached
+receipt. Unknown trees without a receipt fail closed. Neither path creates
+hot copies or refreshes the catalog, so registration remains the operator's
+explicit next action.
 
-`scripts/model_identity.py` is the single local owner of the profile-contract,
-validation-bundle, and expected-seal schemas. `scripts/model-release.sh` can
-hash an explicitly selected commit and assemble deterministic candidate
-documents only under an untrusted output boundary. Candidates declare no
-authority, cannot write the reviewed model directories, cannot edit profiles,
-and do not affect validation status.
+`scripts/model_identity.py` is the single local owner of the live
+profile-contract schema and snapshot-manifest constants. Expected-seal and
+schema-1 validation-bundle builders are deleted (ADR 0012).
+`scripts/model-release.sh` is removed.
 
 `scripts/model_serving_release.py` now owns ADR 0004 release-descriptor and
 frozen Validation Contract schema version 1. The pure module normalizes and
@@ -1332,3 +1313,4 @@ rather than promotion blockers.
 | 2026-08-25 | **ADR 0004 leftover-list citation:** `review_evidence_artifact_ids` are extra files that are not run measurements. Empty after compare/bench capture is expected. A decision may cite nothing when every provenance/security component is `pending`. Recapturing a maintainer essay to make the list non-empty is not issuance. Schema version 1 and the stored Qwen3.8 one-rank decision are unchanged. Decision-builder alignment is a follow-up. |
 | 2026-08-25 | Implemented the leftover-list citation rule in the validation-decision builder and `issue.sh`: empty leftovers are accepted when every provenance/security component is `pending`, and remain required when any component is `pass` or `fail`. Deterministic tests only; issued objects are not migrated. |
 | 2026-08-26 | Issued the two-rank TP=2 Qwen3.8-27B-FP8 Model Serving Release lineage (`2c653ea4…`). Exact same-boot, absolute throughput, and absolute latency passed; provenance/security is pending with an empty leftover review-evidence list; stability, accuracy, serving integration, and physical geometry remain unevaluated. Advisory decision is `Testing incomplete`. The profile is not bound. Legacy `STATUS`, recommendation/default policy, and serving permission are unchanged. |
+| 2026-08-26 | **ADR 0012 accepted:** expected-seal and schema-1 validation bundles are not a live product. There is no schema-2 of that format. ADR 0004 objects remain `schema_version: 1` of a different kind. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the live catalog. Historical JSON is archived. |

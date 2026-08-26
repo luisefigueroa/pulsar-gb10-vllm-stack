@@ -125,22 +125,13 @@ def command_startup_metric(args: argparse.Namespace) -> None:
         r"[A-Za-z0-9._-]+", model_revision
     ):
         fail("startup metric: invalid library-hot model revision")
-    if identity_status not in ("match", "legacy-unsealed", "unvalidated"):
+    if identity_status not in ("legacy-unsealed", "unvalidated"):
         fail("startup metric: invalid library-hot identity status")
     if runtime_model_path is None or not runtime_model_path.endswith(
         f"/snapshots/{model_revision}"
     ):
         fail("startup metric: runtime model path is not the exact revision")
-    if identity_status == "match":
-        if not re.fullmatch(r"[0-9a-f]{40,64}", model_revision):
-            fail("startup metric: matched revision is not an immutable commit")
-        for name, value in (
-            ("model seal", model_seal_id),
-            ("validation bundle", validation_bundle_id),
-        ):
-            if value is None or not re.fullmatch(r"[0-9a-f]{64}", value):
-                fail(f"startup metric: invalid {name} identity")
-    elif model_seal_id is not None or validation_bundle_id is not None:
+    if model_seal_id is not None or validation_bundle_id is not None:
         fail("startup metric: unsealed identity cannot claim seal provenance")
     destination = pathlib.Path(args.output)
     if destination == pathlib.Path("/") or destination.exists():
@@ -200,7 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
     startup_metric.add_argument("--integrity-scheme")
     startup_metric.add_argument(
         "--identity-status",
-        choices=("match", "legacy-unsealed", "unvalidated"),
+        choices=("legacy-unsealed", "unvalidated"),
     )
     startup_metric.add_argument("--model-revision")
     startup_metric.add_argument("--model-seal-id")

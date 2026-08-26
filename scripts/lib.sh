@@ -259,7 +259,8 @@ load_conf() {
 
   [[ "$NODES" =~ ^[1-9][0-9]*$ ]] || die "$name: NODES must be a positive integer"
   validate_profile_contract
-  [ -z "$EXPECTED_MODEL_SEAL" ] || validate_loaded_profile_bundle
+  [ -z "$EXPECTED_MODEL_SEAL" ] ||
+    die "$name: EXPECTED_MODEL_SEAL is retired (ADR 0012); expected-seal and schema-1 validation bundles are not a live product"
 }
 
 engine_arg_value() {
@@ -380,21 +381,7 @@ launch_contract_id_for_profile() {
 }
 
 validate_loaded_profile_bundle() {
-  local tool output
-  local -a args
-  tool="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
-  [ -f "$tool" ] || die "missing $tool"
-  args=(
-    verify-profile-bundle
-    --models-dir "$REPO_DIR/models"
-    --profile "$CONF_NAME"
-    --expected-seal-ref "$EXPECTED_MODEL_SEAL"
-  )
-  append_loaded_profile_contract_args args
-  if ! output=$(python3 "$tool" "${args[@]}"); then
-    die "$CONF_NAME: reviewed validation bundle does not match the sourced profile"
-  fi
-  PROFILE_VALIDATION_BUNDLE_JSON="$output"
+  die "$CONF_NAME: expected-seal profile-bundle verification is retired (ADR 0012)"
 }
 
 model_source_kind() {
@@ -882,9 +869,9 @@ refuse_removed_weight_mode_flag() {
 # named replacement. Parsers still recognize the token so operators do not
 # get a generic "unknown arg".
 REMOVED_FORCE_MESSAGE='--force was removed (ADR 0008): status labels never block serving. Drop the flag.'
-REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): seals still fail closed. Drop the flag.'
+REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): drop the flag. Expected-seal and schema-1 bundles are not a live product (ADR 0012).'
 REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --legacy-tested (historical STATUS=tested*). It does not mean ADR 0004 Validated.'
-REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --reviewed-identity. It does not mean ADR 0004 Validated.'
+REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): drop the flag. --reviewed-identity is retired (ADR 0012). It does not mean ADR 0004 Validated.'
 REMOVED_ACTIVATE_MESSAGE='activate was removed (ADR 0008): use prepare.'
 
 refuse_removed_force_flag() {
@@ -1124,40 +1111,8 @@ PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
-# Load the reviewed exact-identity plan for a sealed profile (used by
-# model-library home acquisition). Sets REPLICATED_PLAN_B64,
-# REPLICATED_REVISION, REPLICATED_MODEL_SEAL_ID,
-# REPLICATED_VALIDATION_BUNDLE_ID, and REPLICATED_MANIFEST_ID. The name is
-# historical: the plan binds the exact commit/manifest/seal identity and is
-# independent of any distribution mode (ADR 0006).
 load_replicated_identity_plan() {
-  local profile="${1:?profile required}" envelope plan
-  local -a plan_args
-  [ -n "${EXPECTED_MODEL_SEAL:-}" ] ||
-    die "$profile: reviewed identity plan requires EXPECTED_MODEL_SEAL"
-  [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
-  plan_args=(
-    replicated-plan
-    --models-dir "$REPO_DIR/models"
-    --profile "$profile"
-  )
-  envelope=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${plan_args[@]}" --transport-envelope) ||
-    die "$profile: cannot build reviewed exact-identity plan"
-  plan=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["plan"]))') ||
-    die "$profile: cannot read reviewed exact-identity plan"
-  REPLICATED_PLAN_B64=$(printf '%s' "$envelope" | python3 -c 'import json,sys; print(json.load(sys.stdin)["encoded_plan"])') ||
-    die "$profile: cannot read encoded exact-identity plan"
-  REPLICATED_REVISION=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["snapshot_revision"])')
-  REPLICATED_MODEL_SEAL_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["seal_id"])')
-  REPLICATED_VALIDATION_BUNDLE_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["validation"]["expected_seal"]["validation_bundle_id"])')
-  REPLICATED_MANIFEST_ID=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"]["manifest_id"])')
-  if [ -z "$REPLICATED_PLAN_B64" ] ||
-      [ -z "$REPLICATED_REVISION" ] ||
-      [ -z "$REPLICATED_MODEL_SEAL_ID" ] ||
-      [ -z "$REPLICATED_VALIDATION_BUNDLE_ID" ] ||
-      [ -z "$REPLICATED_MANIFEST_ID" ]; then
-    die "$profile: reviewed exact-identity plan is incomplete"
-  fi
+  die "${1:-profile}: sealed exact-identity plan is retired (ADR 0012)"
 }
 
 # Print find-hot JSON for the selected rank. Return 0 on success, 255 when
@@ -1484,9 +1439,6 @@ facts = {
     },
     "memory": {"advisory": True, "result": os.environ.get("PULSAR_PLAN_MEMORY_RESULT") or "unchecked"},
 }
-if os.environ.get("LIBRARY_HOT_IDENTITY_STATUS") == "match":
-    facts["storage"]["model_seal_id"] = os.environ["LIBRARY_HOT_MODEL_SEAL_ID"]
-    facts["storage"]["validation_bundle_id"] = os.environ["LIBRARY_HOT_VALIDATION_BUNDLE_ID"]
 document = plan.build_launch_plan(facts)
 pathlib.Path(sys.argv[1]).write_text(plan.pretty_json(document), encoding="utf-8")
 PY

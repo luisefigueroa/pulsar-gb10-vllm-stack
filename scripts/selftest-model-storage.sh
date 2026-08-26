@@ -171,7 +171,7 @@ assert_contains "$STATE/prepare-decline.out" 'SSH over confirmed RoCE.*8 streams
   "preparation preview exposes the fixed transfer policy"
 assert_contains "$STATE/prepare-decline.out" 'fallback[[:space:]]+none' \
   "preparation preview promises no silent transfer fallback"
-assert_contains "$STATE/prepare-decline.out" '167 GiB on each non-home' \
+assert_contains "$STATE/prepare-decline.out" '29 GiB on each non-home' \
   "preparation preview estimates non-home storage"
 assert_contains "$STATE/prepare-decline.out" 'does not start or qualify a model' \
   "preparation preview preserves the launch boundary"
@@ -183,7 +183,7 @@ run_view unprepared.json 0 $'1\n1\ny\n6\n' "$STATE/prepare-success.out" 0 "" 0 \
   "$STATE/reports/healthy.json"
 [ "$VIEW_RC" -eq 0 ]
 [ "$(cat "$PREPARE_LOG")" = \
-  "prepare deepseek-v4-flash --backend copy --transport ssh-roce --copy-streams 8 --yes" ]
+  "prepare qwen3.8-27b-fp8-2node --backend copy --transport ssh-roce --copy-streams 8 --yes" ]
 [ "$(wc -l <"$LOG")" -eq 2 ]
 assert_contains "$STATE/prepare-success.out" 'model files prepared and verified' \
   "successful preparation reports verified model files"

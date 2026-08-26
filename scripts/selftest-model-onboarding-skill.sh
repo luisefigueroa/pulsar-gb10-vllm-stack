@@ -100,8 +100,8 @@ grep -Fq "catalog's shallow \`complete\` label" "$skill" \
   || fail "skill must not equate the shallow catalog label with completeness"
 grep -Fq 'independent' "$skill" \
   || fail "skill must require independent completeness evidence before reuse"
-grep -Fq 'reviewed expected manifest that is independent of the' "$skill" \
-  || fail "skill must name the reviewed independent reuse evidence"
+grep -Fq 'expected-manifest fallback is retired' "$skill" \
+  || fail "skill must fail closed without a receipt (ADR 0012)"
 grep -Fq -- '--revision <exact-commit-from-plan>' "$skill" \
   || fail "skill must acquire the exact planned commit after confirmation"
 grep -Fq -- '--node <selected-rank-from-plan>' "$skill" \

@@ -54,9 +54,7 @@ def inventory(*, source: str = "library-hot") -> dict[str, object]:
                 "io.pulsar.gb10.weight-owner": "node-1",
                 "io.pulsar.gb10.weight-config": CONTENT,
                 "io.pulsar.gb10.model-revision": REVISION,
-                "io.pulsar.gb10.model-seal": SEAL,
-                "io.pulsar.gb10.validation-bundle": BUNDLE,
-                "io.pulsar.gb10.model-identity-status": "match",
+                "io.pulsar.gb10.model-identity-status": "legacy-unsealed",
             })
         ranks.append({
             "rank": str(index),
@@ -78,9 +76,9 @@ def inventory(*, source: str = "library-hot") -> dict[str, object]:
         "launch_contract_id": CONTRACT,
         "spec_decode": "on",
         "model_revision": REVISION if source == "library-hot" else None,
-        "model_seal_id": SEAL if source == "library-hot" else None,
-        "validation_bundle_id": BUNDLE if source == "library-hot" else None,
-        "model_identity_status": "match" if source == "library-hot" else None,
+        "model_seal_id": None,
+        "validation_bundle_id": None,
+        "model_identity_status": "legacy-unsealed" if source == "library-hot" else None,
         "weight_owner_node_id": "node-1" if source == "library-hot" else None,
         "weight_configuration_id": CONTENT if source == "library-hot" else None,
     }
@@ -104,7 +102,7 @@ def health(*, retention: str = "ephemeral", active: bool = True) -> dict[str, ob
         "models": [{
             "profiles": [PROFILE],
             "revision": REVISION,
-            "expected_manifest": MANIFEST,
+            "expected_manifest": None,
         }],
         "hot_instances": [
             {
@@ -115,7 +113,7 @@ def health(*, retention: str = "ephemeral", active: bool = True) -> dict[str, ob
                 "metadata_status": "current",
                 "runtime_source": "sealed-hot",
                 "retention": retention,
-                "identity_status": "match",
+                "identity_status": "legacy-unsealed",
                 "witness_status": "match",
                 "active_reference": active,
             },
@@ -127,7 +125,7 @@ def health(*, retention: str = "ephemeral", active: bool = True) -> dict[str, ob
                 "metadata_status": "current",
                 "runtime_source": "durable-home",
                 "retention": retention,
-                "identity_status": "match",
+                "identity_status": "legacy-unsealed",
                 "witness_status": "match",
                 "active_reference": active,
             },
@@ -199,7 +197,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         saved = tx.load_json(path)
         weight = saved["previous_service"]["weight"]
         self.assertEqual(weight["revision"], REVISION)
-        self.assertEqual(weight["manifest_id"], MANIFEST)
+        self.assertIsNone(weight["manifest_id"])
         self.assertEqual(weight["original_retention"], "ephemeral")
         self.assertTrue(saved["temporary_retention"]["required"])
         bad = health(active=False)

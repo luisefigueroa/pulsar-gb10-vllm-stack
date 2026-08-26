@@ -84,13 +84,10 @@ language for new features without an explicit decision.
   declarative TOML is rejected; parser unification may happen later without
   a format change). Bash may `load_conf` and
   pass `MODEL` / `NODES` / `STATUS` into Python as args or a small JSON dump.
-  `EXPECTED_MODEL_SEAL` is only a reviewed repository-relative reference under
-  `models/seals/`; `scripts/model_identity.py` owns its strict schema and
-  identity validation. Bash and operator-local state must never manufacture or
-  rewrite reviewed expected seals. `scripts/model-release.sh` may assemble only
-  explicitly unreviewed candidates under gitignored
-  `experiments/release-candidates/` (or an explicit path outside the repo); it
-  must not write trust roots, edit profiles, or change validation status.
+  `EXPECTED_MODEL_SEAL` is retired (ADR 0012): `load_conf` fails closed if a
+  conf sets it. `scripts/model_identity.py` owns the live profile-contract
+  schema, not expected-seal. Do not manufacture seals or schema-1 bundles.
+  `scripts/model-release.sh` is removed.
   `scripts/model_serving_release.py` separately owns ADR 0004 release and
   contract schema version 1. `scripts/model-serving-release-plan.sh` may source
   a profile and assemble/verify only explicitly unreviewed source-neutral
@@ -479,9 +476,10 @@ infrastructure unless that authority is explicitly part of the approved plan.
   bound by `MODEL_SERVING_RELEASE_ID`; projection never changes recommendation
   order or serving permission. Absence of a profile binding or reviewed
   decision is neutral and is not inferred as `Untested`; multiple contract
-  lineages or unsuperseded heads stay ambiguous. Current `STATUS=tested*`,
-  `list-models.sh --legacy-tested`, expected seals, and schema-1 bundles remain
-  separate legacy implementation contracts. `--validated` is removed (ADR 0008).
+  lineages or unsuperseded heads stay ambiguous. Current `STATUS=tested*` and
+  `list-models.sh --legacy-tested` remain separate legacy labels. Expected-seal
+  and schema-1 bundles are not a live product (ADR 0012). `--validated` and
+  `--reviewed-identity` are removed.
   Do not automatically relabel an existing profile
   or bundle `Validated`. The corrected ADR 0004 objects remain schema
   version 1 because none was issued or persisted before the correction;

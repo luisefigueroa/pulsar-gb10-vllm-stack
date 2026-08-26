@@ -351,28 +351,14 @@ if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
 fi
 grep -q 'already exists' "$STATE/occupied.err"
 
-# Sealed path remains available without --revision.
-python3 "$REPO_DIR/scripts/testlib/model_library_acquisition_fixture.py" "$STATE/sealed"
-if env \
-  "PATH=$STATE/sealed/bin:$PATH" \
-  "CLUSTER_TOPOLOGY_FILE=$STATE/sealed/topology.json" \
-  "HF_CACHE=$STATE/sealed/cache" \
-  "PULSAR_MODEL_LIBRARY_PY=$STATE/sealed/model_library_wrapper.py" \
-  "MOCK_HF_LOG=$STATE/sealed-hf.log" \
-  "$LIBRARY" home add qwen3-1.7b --yes --json \
-  >"$STATE/sealed.json" 2>"$STATE/sealed.err"; then
-  python3 - "$STATE/sealed.json" <<'PY'
-import json, sys
-result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["kind"] == "pulsar-model-library-home-acquisition-result"
-assert result["state"] == "published"
-assert result["profile"] == "qwen3-1.7b"
-PY
-else
-  echo "sealed home add compatibility failed" >&2
-  cat "$STATE/sealed.err" >&2
+# Sealed exact-commit home add is retired (ADR 0012).
+if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 --yes --json \
+    >"$STATE/sealed.json" 2>"$STATE/sealed.err"; then
+  echo "home add without --revision unexpectedly succeeded" >&2
   exit 1
 fi
+grep -q -- 'pass --revision SELECTOR' "$STATE/sealed.err"
+grep -q -- 'ADR 0012' "$STATE/sealed.err"
 
 mkdir -p "$STATE/cold"
 ARCHIVE_ENV=(
@@ -504,7 +490,8 @@ import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 body = text[text.index("cmd_home_verify()") : text.index("cmd_home_check()")]
-seal_inspect = body[body.index("EXPECTED_MODEL_SEAL") :]
-assert "--allow-empty-files" in seal_inspect.split("die \"home verify: could not inspect the durable home\"", 1)[0]
+assert "EXPECTED_MODEL_SEAL" not in body
+assert "reviewed expected manifest" not in body
+assert "source-attested receipt" in body
 PY
 echo "model-library source-attested CLI scenarios: PASS"
