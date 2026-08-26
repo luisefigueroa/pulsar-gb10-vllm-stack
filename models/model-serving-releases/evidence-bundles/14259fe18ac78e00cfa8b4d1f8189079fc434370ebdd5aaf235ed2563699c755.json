@@ -1,0 +1,87 @@
+{
+  "bundle_id": "14259fe18ac78e00cfa8b4d1f8189079fc434370ebdd5aaf235ed2563699c755",
+  "contract_id": "ddd1a8e6b8e9e2636c50d30cf76402a1e1f04198017e831f43f9814528362751",
+  "criterion_coverage": [
+    {
+      "criterion_id": "accuracy-first-pass",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "latency-ttft",
+      "run_record_ids": [
+        "2252984ef1fede544dbeb3cf9071f507bde9a12e7f9252643e6022336ee50f74"
+      ]
+    },
+    {
+      "criterion_id": "physical-geometry-dgx",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "provenance-security-review",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "serving-integration-smoke",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "stability-first-pass",
+      "run_record_ids": []
+    },
+    {
+      "criterion_id": "strict-same-boot-captures",
+      "run_record_ids": [
+        "5e4eb246a06181797a0e426aeffb1515125eb77d43cacf083fa5e15c308c0eba"
+      ]
+    },
+    {
+      "criterion_id": "throughput-serving",
+      "run_record_ids": [
+        "2252984ef1fede544dbeb3cf9071f507bde9a12e7f9252643e6022336ee50f74"
+      ]
+    }
+  ],
+  "evidence_artifacts": [
+    {
+      "artifact_id": "370d49dba4dbd728cfe11eed85507eff583bb284f9947c9d08231c1ccf5fb83d",
+      "content": {
+        "media_type": "application/json",
+        "sha256": "ccac8422aa0a3c65e5bd48d5e14dce0900bb963fbf27c54ba26e36041773e2ca"
+      },
+      "kind": "pulsar-validation-evidence-artifact",
+      "location": {
+        "kind": "protected-content-addressed",
+        "value": "sha256:ccac8422aa0a3c65e5bd48d5e14dce0900bb963fbf27c54ba26e36041773e2ca"
+      },
+      "privacy_review": "pending",
+      "qualification_scope": "model-qualification",
+      "schema_version": 1,
+      "visibility": "protected"
+    },
+    {
+      "artifact_id": "3f9a55bdfc400da480a1118bb0c76fc953b6a55297e488f85391a4f80297ccb7",
+      "content": {
+        "media_type": "application/json",
+        "sha256": "fae39eb4a5dd698c15f6f7ed0d1a720fce659ac7e529e9627a0480f6be233032"
+      },
+      "kind": "pulsar-validation-evidence-artifact",
+      "location": {
+        "kind": "protected-content-addressed",
+        "value": "sha256:fae39eb4a5dd698c15f6f7ed0d1a720fce659ac7e529e9627a0480f6be233032"
+      },
+      "privacy_review": "pending",
+      "qualification_scope": "model-qualification",
+      "schema_version": 1,
+      "visibility": "protected"
+    }
+  ],
+  "kind": "pulsar-model-serving-validation-bundle",
+  "qualification_started": true,
+  "release_id": "2c653ea4fc96bed639978a7da7eb15347432e20874b8598ea2b1bafdb60e0933",
+  "review_evidence_artifact_ids": [],
+  "run_record_ids": [
+    "2252984ef1fede544dbeb3cf9071f507bde9a12e7f9252643e6022336ee50f74",
+    "5e4eb246a06181797a0e426aeffb1515125eb77d43cacf083fa5e15c308c0eba"
+  ],
+  "schema_version": 1
+}

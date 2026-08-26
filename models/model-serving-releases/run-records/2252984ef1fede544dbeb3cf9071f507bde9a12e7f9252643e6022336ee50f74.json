@@ -1,0 +1,182 @@
+{
+  "attempt": {
+    "attempt_id": "attempt-benchmark-serving",
+    "attempted_criterion_ids": [
+      "latency-ttft",
+      "throughput-serving"
+    ],
+    "completion": "completed",
+    "ended_at": "2026-08-25T02:34:01Z",
+    "phase": "model-qualification",
+    "qualification_scope": "model-qualification",
+    "started_at": "2026-08-25T02:24:57Z"
+  },
+  "commands": [
+    {
+      "arguments": [
+        {
+          "kind": "operation",
+          "value": "benchmark-serving"
+        },
+        {
+          "criterion_id": "latency-ttft",
+          "kind": "criterion-reference"
+        },
+        {
+          "criterion_id": "throughput-serving",
+          "kind": "criterion-reference"
+        }
+      ],
+      "environment": [],
+      "program": "validate/bench_serve.py",
+      "version": "sha256:673e494b1ad1f4ef5fab4fca6d592846d9720ce3579ee48e17ac283133052961",
+      "working_directory": "repository-root"
+    }
+  ],
+  "contract_id": "ddd1a8e6b8e9e2636c50d30cf76402a1e1f04198017e831f43f9814528362751",
+  "criterion_observations": [
+    {
+      "benchmark_protocol_id": "6027752a2e6846431cb8d46331e0918262a0095fd40c8000c1f3fd02031344e0",
+      "completion": "complete",
+      "contract_requirements": {
+        "context": null,
+        "soak": null
+      },
+      "criterion_id": "latency-ttft",
+      "evidence_artifact_ids": [
+        "3f9a55bdfc400da480a1118bb0c76fc953b6a55297e488f85391a4f80297ccb7"
+      ],
+      "metrics": [
+        {
+          "metric": "ttft_p95",
+          "unit": "milliseconds",
+          "value": "298.248664"
+        }
+      ],
+      "reason": "completed",
+      "sample_size": 32
+    },
+    {
+      "benchmark_protocol_id": "1edf6416d9b731fc92464116b26c6b3b7d6481fd19e46f246d8de12d8d2391fe",
+      "completion": "complete",
+      "contract_requirements": {
+        "context": null,
+        "soak": null
+      },
+      "criterion_id": "throughput-serving",
+      "evidence_artifact_ids": [
+        "3f9a55bdfc400da480a1118bb0c76fc953b6a55297e488f85391a4f80297ccb7"
+      ],
+      "metrics": [
+        {
+          "metric": "output_tokens_per_second",
+          "unit": "tokens-per-second",
+          "value": "15.116712"
+        }
+      ],
+      "reason": "completed",
+      "sample_size": 32
+    }
+  ],
+  "evidence_artifact_ids": [
+    "3f9a55bdfc400da480a1118bb0c76fc953b6a55297e488f85391a4f80297ccb7"
+  ],
+  "kind": "pulsar-validation-run-record",
+  "observed_environment": {
+    "cluster": {
+      "accelerator_count": 2,
+      "interconnect_class": "roce-v2",
+      "node_count": 2,
+      "pipeline_parallel_size": 1,
+      "rails_per_pair": 2,
+      "tensor_parallel_size": 2,
+      "topology_class": "roce-full-mesh"
+    },
+    "image_digest": "sha256:1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c",
+    "launch_id": "c3d3c5e6c347a4a1246a4511cc10da9839410b277913021fc561a2ac6eb16b7f",
+    "ranks": [
+      {
+        "accelerator_count": 1,
+        "architecture": "aarch64",
+        "container_runtime": {
+          "capabilities": [
+            "ipc-host",
+            "nvidia-gpu"
+          ],
+          "family": "docker",
+          "version": "29.2.1"
+        },
+        "driver_abi": {
+          "family": "nvidia-open-kernel-module",
+          "version": "580.173.02"
+        },
+        "engine_version": "0.27.1",
+        "hardware_class": "nvidia-dgx-spark-gb10",
+        "kernel": {
+          "features": [],
+          "version": "6.17.0-1031-nvidia"
+        },
+        "rank": 0,
+        "unified_memory_gib": "121.689556121826171875"
+      },
+      {
+        "accelerator_count": 1,
+        "architecture": "aarch64",
+        "container_runtime": {
+          "capabilities": [
+            "ipc-host",
+            "nvidia-gpu"
+          ],
+          "family": "docker",
+          "version": "29.2.1"
+        },
+        "driver_abi": {
+          "family": "nvidia-open-kernel-module",
+          "version": "580.173.02"
+        },
+        "engine_version": "0.27.1",
+        "hardware_class": "nvidia-dgx-spark-gb10",
+        "kernel": {
+          "features": [],
+          "version": "6.17.0-1031-nvidia"
+        },
+        "rank": 1,
+        "unified_memory_gib": "121.6893463134765625"
+      }
+    ],
+    "server_boot_id": "e67fa406064fb89478290e17b7f86a2c0fcba87291e155e3c12ec9a98040f778",
+    "supported_hardware_geometry_id": "e68927a282c26ce0b41d5a717f953b9ca8aa27c02ac49502ed653e83270e396d"
+  },
+  "preparation_provenance": {
+    "elapsed_seconds": "15",
+    "origin": "managed-home",
+    "qualification_barrier": "passed",
+    "runtime_sources": [
+      {
+        "rank": 0,
+        "retention": "ephemeral",
+        "source": "sealed-hot"
+      },
+      {
+        "rank": 1,
+        "retention": "durable",
+        "source": "durable-home"
+      }
+    ],
+    "subsystems": [
+      {
+        "maturity": "experimental",
+        "name": "pulsar-model-library",
+        "version": "source-attested-v1"
+      }
+    ],
+    "transfer": "ssh-roce",
+    "verification": {
+      "model_artifact_set_id": "72fe498e274facf9f30ef84151c3b5f51c513444b99da6c2935093959dcf36ed",
+      "status": "passed"
+    }
+  },
+  "release_id": "2c653ea4fc96bed639978a7da7eb15347432e20874b8598ea2b1bafdb60e0933",
+  "run_record_id": "2252984ef1fede544dbeb3cf9071f507bde9a12e7f9252643e6022336ee50f74",
+  "schema_version": 1
+}

@@ -47,9 +47,11 @@ authorize serving, or launch a release. Validation status is advisory.
 - Machine-readable command output uses `schema_version: 1` and reports only
   inspection results; it carries no serving-permission field.
 
-The store contains the reviewed Qwen3.8-27B-FP8 release lineage bound by
-`models/qwen3.8-27b-fp8.conf`. Its advisory decision is
-`Testing incomplete`; it is not a `Validated` fixture, a serving permission,
+The store contains the reviewed one-rank Qwen3.8-27B-FP8 release lineage
+bound by `models/qwen3.8-27b-fp8.conf`, and the reviewed two-rank TP=2
+lineage `2c653ea4fc96bed639978a7da7eb15347432e20874b8598ea2b1bafdb60e0933`
+which is not profile-bound. Both advisory decisions are
+`Testing incomplete`; they are not a `Validated` fixture, a serving permission,
 or a recommendation. Local ADR 0004
 evidence-capture candidate persistence writes only under gitignored
 `experiments/model-serving-release-captures/` (or an explicit safe external

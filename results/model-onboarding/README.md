@@ -22,3 +22,20 @@ Stability, accuracy, serving integration, and physical geometry remain
 unevaluated in the reviewed bundle. These artifacts do not authorize serving,
 promote experimental one-rank `library-hot`, change legacy `STATUS`, or claim
 `Validated`.
+
+## Qwen3.8-27B-FP8 2-node TP=2 — 2026-08-26
+
+The reviewed release
+`2c653ea4fc96bed639978a7da7eb15347432e20874b8598ea2b1bafdb60e0933`
+has advisory status `Testing incomplete`. Provenance/security components are
+all `pending`; leftover `review_evidence_artifact_ids` are empty. The
+reviewed evidence artifacts are protected.
+
+- `qwen3.8-27b-fp8-2node/compare.json`: strict same-boot comparison, 30/30 exact.
+- `qwen3.8-27b-fp8-2node/bench.json`: 32 requests at concurrency 1, 15.116712
+  aggregate output tokens/s, 298.248664 ms p95 TTFT.
+
+These closed measurement files are capture sources. They do not authorize
+serving, bind `MODEL_SERVING_RELEASE_ID`, change legacy `STATUS`, or claim
+`Validated`. Stability, accuracy, serving integration, and physical geometry
+remain unevaluated.
