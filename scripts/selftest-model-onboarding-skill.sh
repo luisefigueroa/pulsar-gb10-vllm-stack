@@ -223,6 +223,8 @@ grep -Fq 'No seal was issued' "$handoff" \
   || fail "handoff template must deny reviewed authority"
 grep -Fq 'review_evidence_artifact_ids' "$skill" \
   || fail "skill must name empty leftover review IDs after capture"
+grep -Fq 'pulsar-model-serving-release-issuance' "$skill" \
+  || fail "skill must hand off issuance to pulsar-model-serving-release-issuance"
 grep -Fq 'empty after compare/bench is' "$handoff" \
   || fail "handoff must treat empty leftover review IDs as expected"
 

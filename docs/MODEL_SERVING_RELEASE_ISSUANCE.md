@@ -198,6 +198,9 @@ dry-run projection checks verify that separate edit.
 - Deterministic selftests prove control-plane contracts only.
 - This workflow makes no physical DGX claim.
 
+The supervised `pulsar-model-serving-release-issuance` skill composes these
+commands after an onboarding handoff. It has no issuance authority.
+
 See [ADR 0004](./decisions/0004-model-serving-release-validation.md)
 (including the 2026-08-25 leftover-list note),
 [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md),

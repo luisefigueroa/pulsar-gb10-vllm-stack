@@ -421,7 +421,9 @@ unreviewed authority state. Any profile drift or document tampering fails.
 ## Review and issuance
 
 The repository can stage an untrusted ADR 0004 issuance proposal with
-`scripts/model-serving-release-issue.sh`. Empty leftover
+`scripts/model-serving-release-issue.sh`. The supervised
+`pulsar-model-serving-release-issuance` skill composes that CLI after
+onboarding handoff and still has no authority. Empty leftover
 `review_evidence_artifact_ids` after measurement capture is expected; do
 not recapture a maintainer essay to populate the list. That local command
 is not trusted until repository review and merge. Every

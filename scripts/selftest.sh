@@ -77,6 +77,8 @@ run "Model Serving Release attempt composition" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_attempt.py"
 run "Model Serving Release onboarding skill" \
   "$REPO_DIR/scripts/selftest-model-onboarding-skill.sh"
+run "Model Serving Release issuance skill" \
+  "$REPO_DIR/scripts/selftest-model-serving-release-issuance-skill.sh"
 run "Model Serving Release onboarding journal" \
   python3 "$REPO_DIR/scripts/testlib/test_onboarding_journal.py"
 run "model library durable-home removal contracts" \

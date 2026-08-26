@@ -148,6 +148,14 @@ language for new features without an explicit decision.
   maintainer essay to populate the list. `Validated` still requires a
   provenance pass with cited leftover `release-promotion` artifacts.
   Do not invent review evidence.
+  `skills/pulsar-model-serving-release-issuance/` is the supervised
+  maintainer skill that composes that CLI after onboarding handoff. It has
+  no issuance authority: `plan` is read-only, `stage` is an untrusted
+  proposal, and repository review and merge remain the trust event. It does
+  not mutate a capture candidate, invent a review outcome, keep an
+  orchestration journal, or bind `MODEL_SERVING_RELEASE_ID` except as a
+  separately confirmed edit in the same publication PR. Deterministic skill
+  tests make no physical DGX claim.
   `validate/validator_measurement.py` owns the closed, versioned, status-neutral
   measurement documents emitted by `validate/compare_captures.py` and
   `validate/bench_serve.py`. `scripts/model_serving_release_attempt.py` owns the
@@ -558,13 +566,15 @@ this work; the skill is procedural and does not outrank these sources.
   maintainer-only issuance staging can propose reviewed registry objects, but
   a local command is not the trust event. The supervised
   `pulsar-model-onboarding` skill is implemented as control-plane
-  orchestration around those CLIs; it does not issue a decision, assign
+  orchestration around capture CLIs; it does not issue a decision, assign
   status, or bind a profile. It can plan and, after a separate confirmation,
   acquire one absent brand-new unsealed exact Hugging Face revision through
   the source-attested service. Complete source and byte verification followed
   by an immutable receipt creates observed/source identity and catalog-artifact
   evidence only; it does not create a seal, status, serving permission, or
-  Model Serving Release decision. Reuse requires receipt-backed offline full
+  Model Serving Release decision. The supervised
+  `pulsar-model-serving-release-issuance` skill composes `issue.sh` after
+  that handoff and still has no issuance authority. Reuse requires receipt-backed offline full
   verification against the receipt while occupancy names the live directory.
   Occupancy may move with `home relocate` after a live rehash
   ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
