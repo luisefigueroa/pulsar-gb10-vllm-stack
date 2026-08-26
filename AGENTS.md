@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is an operations and validation stack for serving vLLM on NVIDIA DGX Spark GB10 systems. The preferred operator entry is `./pulsar` (home, wizard, start/stop/status). For now, that surface consumes the in-repo catalog; recipe craft and onboarding stay maintainer tooling ([ADR 0010](docs/decisions/0010-operator-consumes-catalog.md)). `serve.sh` and `cluster/*` are the low-level launchers. The control plane confirms an N-node topology; serving evidence currently validates one- and two-node geometries only. Model profiles are shell-style files under `models/`. Python benchmarks and correctness checks live in `validate/`, with measured artifacts in `results/` and hardware probes in `bench/`. Keep operational explanations in `docs/`; deprecated experimental overlays belong in `patches/`.
+This repository is an operations and validation stack for serving vLLM on NVIDIA DGX Spark GB10 systems. The preferred operator entry is `./pulsar` (menu, wizard, start/stop/status). For now, that surface consumes the in-repo catalog; recipe craft and onboarding stay maintainer tooling ([ADR 0010](docs/decisions/0010-operator-consumes-catalog.md)). `serve.sh` and `cluster/*` are the low-level launchers. Scripts that start, stop, and check without running the model confirm an N-node topology; serving evidence currently covers one- and two-node geometries only. Model profiles are shell-style files under `models/`. Python benchmarks and correctness checks live in `validate/`, with measured artifacts in `results/` and hardware probes in `bench/`. Keep operational explanations in `docs/`; deprecated experimental overlays belong in `patches/`.
 
 ### Pulsar subsystem map
 
@@ -11,8 +11,8 @@ flowchart LR
   operator["Operator"] --> surfaces["Operator surfaces<br/>pulsar · wizard.sh · scripts/home.sh"]
   surfaces --> lifecycle["Lifecycle control<br/>scripts/up.sh · down.sh · status.sh"]
 
-  profiles["Model policy<br/>models/*.conf · reviewed seals"] --> lifecycle
-  topology["Topology and control plane<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
+  profiles["Model policy<br/>models/*.conf · reviewed release IDs"] --> lifecycle
+  topology["Topology and lifecycle scripts<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
   artifacts["Launch gates<br/>image · memory · weights · preflight"] --> lifecycle
 
   lifecycle --> single["Single-node launcher<br/>serve.sh"]
@@ -20,7 +20,7 @@ flowchart LR
   single --> runtime["vLLM containers<br/>OpenAI-compatible API :8000"]
   cluster --> runtime
 
-  library["Model library<br/>durable homes · sealed hot views"] --> artifacts
+  library["Model library<br/>durable homes · working copies"] --> artifacts
 
   runtime --> validation["Validation and probes<br/>validate/* · bench/*"]
   validation --> evidence["Evidence and guidance<br/>results/* · docs/*"]
@@ -28,20 +28,20 @@ flowchart LR
 
 The model library is the only weight-distribution mechanism
 ([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md)):
-one durable home per exact revision, sealed hot views on non-home ranks, and
+one durable home per exact revision, working copies on other serving ranks, and
 local files on every rank before vLLM starts. There is no mode-selection
 axis; `--weight-source`/`--weight-mode` fail without fallback. Live NFSv4.2/RDMA under
 vLLM remains rejected as a serving runtime source (ADR 0005): a crashed rank
-cannot cold-start without the owner export; leftover site mounts get
-unmount/teardown only. Control SSH, inference NCCL/RoCE, and weight
-transfer remain distinct data planes even when they involve the same machines.
+cannot cold-start without the NFS export; leftover site mounts get
+unmount/teardown only. Control SSH, inference NCCL/RoCE, and the copy path
+used at prepare remain distinct data planes even when they involve the same machines.
 
 ## Build, Test, and Development Commands
 
-- `scripts/selftest.sh` runs control-plane tests and Python syntax checks without requiring Docker.
+- `scripts/selftest.sh` runs lifecycle-script tests and Python syntax checks without requiring Docker.
 - `scripts/doctor.sh` verifies GPU, Docker, port, cache, and optional worker readiness on GB10 hardware.
-- `scripts/list-models.sh --serving` lists every serving-purpose profile and its advisory status. `--legacy-tested` filters the historical `STATUS=tested*` recommendation class; it does not mean ADR 0004 `Validated`. `--validated` is removed (ADR 0008) and fails without fallback; use `--legacy-tested`.
-- `scripts/up.sh qwen3-1.7b --dry-run` exercises launch checks without starting a server.
+- `scripts/list-models.sh --serving` lists every serving-purpose profile and the reviewed status the catalog shows (start does not use that status as permission). `--legacy-tested` filters the historical profile `STATUS=tested*` recommendation class; it does not mean ADR 0004 `Validated`. `--validated` is removed (ADR 0008) and fails without fallback; use `--legacy-tested`.
+- `scripts/up.sh nemotron-3-nano-30b-nvfp4 --dry-run` exercises launch checks without starting a server.
 - `validate/run-gates.sh <served-name> --tag <label>` runs determinism captures, throughput benchmarks, and optional baseline/needle gates against an already-running server.
 - `docker build -t vllm-gb10:v0.26.0 .` builds the optional metadata overlay; see `docs/BUILD.md` before changing image pins.
 
@@ -54,12 +54,12 @@ Write Bash for orchestration (`#!/usr/bin/env bash`, `set -euo pipefail`) and Py
 This repo is intentionally hybrid. Match the existing pattern
 (`model-library.sh` + `model_library.py`, `lib.sh` + small Python helpers):
 **Bash at the operator boundary, Python for data and algorithms.** Do not
-rewrite the control plane into one language, and do not introduce a third
+rewrite the lifecycle scripts into one language, and do not introduce a third
 language for new features without an explicit decision.
 
 | Prefer **Bash** | Prefer **Python 3** |
 |---|---|
-| Operator CLIs and entrypoints (`scripts/*.sh`, `cluster/*.sh`, wizard/home) | JSON schemas, catalogs, digests, budgets, identity keys, merge/label logic, launch-plan/probe contracts (`launch_plan.py`) |
+| Operator CLIs and entrypoints (`scripts/*.sh`, `cluster/*.sh`, `wizard.sh`, `home.sh`) | JSON schemas, catalogs, digests, budgets, identity keys, merge/label logic, launch-plan/probe contracts (`launch_plan.py`) |
 | `source lib.sh`, `load_conf`, topology load, flag parsing | Multi-step planning, validation, policy decisions that fail without fallback |
 | SSH orchestration, `rsync`/`docker` argv assembly, sudo/interactive flows | Atomic read/write of site-local state files (catalog, stamps, audits) |
 | Thin wrappers that call Python and print human-oriented status | Machine-oriented `--json` structures and stable error codes/messages |
@@ -70,9 +70,9 @@ language for new features without an explicit decision.
 - One module should own each schema (usually Python). Bash must not hand-edit
   complex JSON with `sed`/`awk` when a Python helper already exists or belongs.
   `scripts/launch_plan.py` owns the versioned launch-plan, serving-probe, and
-  rank-spec contracts (SIM-04). `scripts/up.sh`, `serve.sh`, and
+  rank-spec contracts. `scripts/up.sh`, `serve.sh`, and
   `cluster/start-cluster.sh` build the same plan from loaded profile plus
-  topology plus library-hot facts; N=1 and N>1 docker argv come from
+  topology plus prepared local-file facts; N=1 and N>1 docker argv come from
   `rank_docker_argv`. A plan describes an intended serve action; it is not a
   permit. Mutable image, identity, topology, ownership, and health
   prerequisites still require an immediate recheck before mutation.
@@ -80,21 +80,22 @@ language for new features without an explicit decision.
   classifier; launchers consume proven-ownership primitives from `lib.sh`.
 - Reuse topology and SSH identity rules from shared helpers; do not reimplement
   confirmed-endpoint selection in a one-off Python script.
-- Profile confs remain shell-style under `models/` (SIM-05, 2026-08-22:
+- Profile confs remain shell-style under `models/` (2026-08-22:
   declarative TOML is rejected; parser unification may happen later without
   a format change). Bash may `load_conf` and
   pass `MODEL` / `NODES` / `STATUS` into Python as args or a small JSON dump.
-  `EXPECTED_MODEL_SEAL` is retired (ADR 0012): `load_conf` fails closed if a
-  conf sets it. `scripts/model_identity.py` owns the live profile-contract
-  schema, not expected-seal. Do not manufacture seals or schema-1 bundles.
-  `scripts/model-release.sh` is removed.
-  `scripts/model_serving_release.py` separately owns ADR 0004 release and
-  contract schema version 1. `scripts/model-serving-release-plan.sh` may source
-  a profile and assemble/verify only explicitly unreviewed source-neutral
-  release/contract candidates under gitignored
+  `EXPECTED_MODEL_SEAL` is retired (ADR 0012): `load_conf` fails without
+  fallback if a conf sets it. `scripts/model_identity.py` owns the live
+  normalized-profile checksum format, not the retired lab expected-identity
+  files. Do not manufacture those files or the archived combined identity
+  format. `scripts/model-release.sh` is removed.
+  `scripts/model_serving_release.py` separately owns ADR 0004 Model Serving
+  Release and Validation Contract objects. `scripts/model-serving-release-plan.sh`
+  may source a profile and assemble/verify only draft release/contract JSON
+  that is not in the trusted registry, under gitignored
   `experiments/model-onboarding/` (or an explicit path outside the repo). It
-  must require a complete manifest plus explicit runtime/hardware and criteria
-  inputs and explicit one-to-one bindings for every supplied additional
+  must require a complete file list plus explicit runtime/hardware and criteria
+  inputs and explicit one-to-one pointers for every supplied additional
   behavior artifact, and strip local source paths. It must not acquire bytes,
   write the tracked registry, issue a decision, change status, or claim
   physical behavior. Planner `verify` uses the public schema-owning
@@ -108,49 +109,51 @@ language for new features without an explicit decision.
   profile-reference mapping may normalize an exact argument
   value to a bound public artifact key, but the mapping itself must never be
   persisted. `scripts/model_validation_evidence.py` owns the
-  content-addressed evidence-artifact, immutable run-record, validation-bundle,
-  and reviewed-decision schema version 1. Keep both modules pure and
-  non-issuing. `scripts/model_serving_release_registry.py` owns read-only
+  evidence-artifact, run-record, evidence-bundle, and reviewed-decision
+  formats. Keep both modules pure and non-issuing. They do not write the
+  trusted registry or merge a PR.
+  `scripts/model_serving_release_registry.py` owns read-only
   filesystem loading, content verification, graph assembly, and inspection of
   stored ADR 0004 objects under `models/model-serving-releases/`; its verified
-  inspection result is the only source for read-only catalog/operator release
-  status projection. Profiles may bind that projection with the optional
-  reviewed `MODEL_SERVING_RELEASE_ID` field. The binding is a review assertion:
-  any four-part tuple change must update it to the newly derived release ID in
-  the same reviewed change. Runtime projection additionally checks the selected
-  model-access contract, but does not independently reconstruct the full tuple
-  from shell profile fields.
+  inspection result is the only source for the reviewed status the catalog
+  shows. Profiles may set the optional reviewed `MODEL_SERVING_RELEASE_ID`
+  field so that display points at one reviewed subject (exact model + recipe +
+  image + hardware). Changing any of those four parts must update the field to
+  the newly derived release ID in the same reviewed change. Runtime display
+  additionally checks the selected model-access contract, but does not
+  independently reconstruct the four parts from shell profile fields.
   `scripts/model-serving-release-capture.sh` owns local ADR 0004
-  evidence-capture candidate persistence: it composes a verified release-plan
-  candidate plus an attempt-only spec, independently validates release and
-  contract objects through `scripts/model_serving_release.py`, captures
-  immutable run records and content-addressed evidence, assembles compatible
-  runs, and independently verifies the unreviewed candidate. It must not write
+  evidence-capture draft persistence: it composes a verified release-plan
+  draft plus an attempt-only spec, independently validates Model Serving
+  Release and Validation Contract objects through
+  `scripts/model_serving_release.py`, captures
+  immutable run records and hashed evidence, assembles compatible
+  runs, and independently verifies the draft. It must not write
   the tracked registry, issue a decision, change catalog or profile status,
-  launch a release, persist a planner path or planner candidate ID, or issue
+  start a server, persist a planner path or planner candidate ID, or issue
   `Untested`.
   `scripts/model-serving-release-issue.sh` owns maintainer-only ADR 0004
-  issuance staging: it turns one independently verified unreviewed
-  evidence-capture candidate plus an explicit review declaration into a
-  staged proposal of the exact content-addressed registry objects and any
-  privacy-cleared publishable evidence. The existing pure schema modules
-  derive the decision status. A successful local command does not establish
-  trust; repository review and merge are the trust event. It must not mutate
-  the capture candidate, edit a profile, authorize serving, or claim physical
-  behavior. Status remains advisory.
-  Bundle `review_evidence_artifact_ids` are leftover non-run artifacts, not
-  a second copy of compare/bench. Empty after measurement capture is
-  expected. A decision may cite an empty list only when every
-  provenance/security component is `pending`. Do not recapture a
+  staging: it turns one independently verified draft capture directory plus an
+  explicit review declaration into a staged proposal of the exact hashed
+  registry objects and any privacy-cleared publishable evidence. The existing
+  pure schema modules derive the decision status. A successful local command
+  does not make the objects trusted; repository review and merge do. It must
+  not mutate the capture directory, edit a profile, authorize serving, or claim
+  physical behavior. Status remains display-only and does not grant or deny
+  start.
+  Evidence-bundle field `review_evidence_artifact_ids` lists extra review files
+  besides the measurement runs, not a second copy of compare/bench. Empty after
+  measurement capture is expected. A decision may cite an empty list only when
+  every provenance/security component is `pending`. Do not recapture a
   maintainer essay to populate the list. `Validated` still requires a
-  provenance pass with cited leftover `release-promotion` artifacts.
-  Do not invent review evidence.
+  provenance pass with cited extra review files for provenance and geometry
+  review. Do not invent review evidence.
   `skills/pulsar-model-serving-release-issuance/` is the supervised
-  maintainer skill that composes that CLI after onboarding handoff. It has
-  no issuance authority: `plan` is read-only, `stage` is an untrusted
-  proposal, and repository review and merge remain the trust event. It does
-  not mutate a capture candidate, invent a review outcome, keep an
-  orchestration journal, or bind `MODEL_SERVING_RELEASE_ID` except as a
+  maintainer skill that composes that CLI after onboarding handoff. It cannot
+  make the objects trusted: `plan` is read-only, `stage` is an untrusted
+  proposal, and repository review and merge remain what establishes trust. It
+  does not mutate a capture directory, invent a review outcome, keep an
+  orchestration journal, or set `MODEL_SERVING_RELEASE_ID` except as a
   separately confirmed edit in the same publication PR. Deterministic skill
   tests make no physical DGX claim.
   `validate/validator_measurement.py` owns the closed, versioned, status-neutral
@@ -160,7 +163,7 @@ language for new features without an explicit decision.
   measurements into existing attempt-only specs. It may consume only the
   supported publishable `results/` measurement files in this slice, must
   validate both generated specs through the capture contract, and may publish
-  only one exclusive unreviewed two-file directory under
+  only one exclusive draft two-file directory under
   `experiments/model-serving-release-attempts/` (or an explicit safe path
   outside the repository). It must not invent missing validator output, persist
   a publishable evidence digest in the attempt spec, issue a decision, change
@@ -168,24 +171,26 @@ language for new features without an explicit decision.
   independently re-read the evidence and derive its digest; regenerate the
   attempt specs if that file changes between commands.
   `skills/pulsar-model-onboarding/` is the ADR 0004 stage-4 supervised
-  onboarding skill. It composes those existing CLIs for a brand-new unsealed
-  model and collaborates at material decisions. It never issues a seal or
-  validation decision, assigns status, binds a profile to a release, writes
-  the trusted registry, promotes a path, or claims physical behavior.
+  onboarding skill. It composes those existing CLIs for a brand-new model and
+  collaborates at material decisions. It never writes a lab expected-identity
+  file or a validation decision, assigns status, points a profile at a Model
+  Serving Release, writes the trusted registry, promotes a path, or claims
+  physical behavior.
   `skills/pulsar-model-onboarding/scripts/onboarding_journal.py` owns only the
   skill-local append-only workflow journal (orchestration recovery state).
   It is not a sixth ADR object, not evidence, and not a status authority.
   Default local journal state belongs under gitignored
   `experiments/model-onboarding/workflows/`, separate from release-plan
-  candidate directories. For an absent brand-new unsealed repository, the
-  skill may compose the source-attested `home add --revision` service: first a
-  read-only plan, then a separately confirmed exact-commit acquisition. The
+  draft directories. For an absent brand-new repository, the
+  skill may compose `home add --revision` (Hugging Face download with a
+  recorded file list and hashes): first a read-only plan, then a separately
+  confirmed exact-commit acquisition. The
   service resolves and records the complete public Hugging Face Git/LFS
   inventory on the selected rank, uses that rank's local authentication,
   confines downloads and transient caches to private same-filesystem staging,
   verifies the upstream set and every SHA-256, rechecks all-rank absence,
   writes an immutable site-local receipt, publishes with an atomic
-  no-replace rename, and attaches occupancy to the exact published directory.
+  no-replace rename, and records that live directory as the home.
   It does not refresh the catalog,
   prepare a runtime view, launch, or create reviewed authority. A home
   created this way may later be resumed or reused only after `home verify`
@@ -195,28 +200,27 @@ language for new features without an explicit decision.
   only ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
   A receipt-indexed cold archive is enqueued immediately after occupancy attach
   and must not block prepare or launch.
-  An unknown tree without a receipt still
-  requires full verification against a reviewed expected manifest independent
-  of the observed tree; the shallow catalog label and a self-observed
-  manifest are not that proof. The skill must never download directly into
-  durable storage.
+  An unknown tree without a receipt fails without fallback (ADR 0012: there is
+  no lab expected-identity fallback). The shallow catalog label and a
+  self-observed file list are not that proof. The skill must never download
+  directly into durable storage.
   Deterministic skill and journal tests make no physical DGX claim and create
-  no release decision.
-  `scripts/model_library_source_attested.py` owns the closed version-1
-  Hugging Face source, identity, public plan, privacy-safe approval, immutable
+  no Model Serving Release decision.
+  `scripts/model_library_source_attested.py` owns the closed Hugging Face
+  source, identity, public plan, privacy-safe approval, immutable
   receipt, private current-home attachment, result, and home-verification
-  schemas for that path. The thin Bash
+  formats for that path. The thin Bash
   boundary selects the target and orchestrates its local `hf` CLI;
   `scripts/hf_source_inventory.py` uses the target's Hugging Face Python
   environment to resolve public source metadata without accepting a token.
-  Source-attested acquisition creates observed/source identity and
-  catalog-artifact evidence only. It does not issue reviewed identity, a seal,
-  status, serving permission, a Model Serving Release decision, or physical
-  evidence. Receipt-backed prepare requires the exact model ID, exact commit,
-  and receipt manifest together.
-- New multi-node library/fabric-style features: thin `scripts/<name>.sh` CLI +
-  `scripts/<name>.py` (or a small package) for the brain—same shape as weight
-  fabric.
+  That download creates observed/source identity and “did we store the right
+  files?” evidence only. It does not issue reviewed identity, a lab
+  expected-identity file, status, serving permission, a Model Serving Release
+  decision, or physical evidence. Receipt-backed prepare requires the exact
+  model ID, exact commit, and receipt file list together.
+- New multi-node library features: thin `scripts/<name>.sh` CLI +
+  `scripts/<name>.py` (or a small package) for the brain—same shape as other
+  library CLIs.
 - Selftests follow the same split: Bash scenarios invoke CLIs; Python owns
   fixture builders and parameterized mocks (see Testing Guidelines).
 
@@ -224,7 +228,7 @@ language for new features without an explicit decision.
 
 - Pure Bash for large indexes, digests, budgets, or all-or-nothing multi-rank
   barriers (hard to test; tends to rot).
-- A parallel Python-only control plane that bypasses `lib.sh` topology/lifecycle
+- A parallel Python-only lifecycle layer that bypasses `lib.sh` topology/lifecycle
   without a strong reason.
 - Go/Rust/other binaries for ops glue unless the project explicitly adopts a
   new toolchain for all Sparks.
@@ -235,20 +239,82 @@ Treat human-readable command-line output as a primary product requirement. Optim
 
 ### Plain technical language
 
-Use the project's canonical terms and status names exactly as defined, while
-explaining them in straightforward language.
+Lead with what happens, what it affects, and the condition that causes it.
+Use a name only when the thing is a durable product object or an unavoidable
+cluster term. On first use, gloss it in ordinary words. Do not invent a
+nickname when a short description is enough.
 
-- Lead with what happens, what it affects, and the condition that causes it.
-- On first use of a specialized term, immediately explain it in ordinary words.
-- Preserve defined terms such as `Model Serving Release`, `Validated`,
-  `library-hot`, and `rank`; do not replace them with approximate synonyms.
+**Keep these names** (gloss on first use; do not replace them with approximate
+synonyms that change meaning):
+
+- **Model Serving Release** — exact model bytes + serving recipe + image +
+  hardware shape, frozen together
+- **Validation Contract** — the frozen list of tests and thresholds for that
+  subject
+- **home** — the one complete on-disk copy of that revision (not the `./pulsar`
+  menu, not the NFS export node)
+- **prepare** — copy or link local files and hash them; does not start the server
+- **rank** — this job's slot in the serving group (rank 0 is the API; not
+  automatically the home node)
+- **receipt** — the recorded download file list and hashes
+- **witness** — saved file metadata so an unchanged tree is not fully rehashed
+  at start
+- **pin / purge** — keep / delete working copies (not a backup)
+- ADR 0004 decision strings, quoted exactly (`Untested`, `Testing incomplete`,
+  `Tested—criteria not met`, `Tested—inconclusive`, `Validated`, `Superseded`)
+- **fail without fallback** — the operation fails if the required condition
+  cannot be verified, and it does not skip the check, remap, or continue on a
+  weaker path
+
+Accepted ADRs may still say `fail closed`; in new operator-facing text, use
+fail without fallback.
+
+**Do not use these as live brands.** Describe the thing:
+
+- `library-hot` → local files on every rank, prepared from the model home
+  (the JSON/label value may still appear in machine output)
+- `source-attested` → Hugging Face download with a recorded file list and hashes
+- `advisory projection` / `binding` → the catalog shows the reviewed status;
+  start does not use it as permission; `MODEL_SERVING_RELEASE_ID` points at one
+  reviewed subject
+- `issuance` / `trust event` → write staged registry files vs merge the PR
+- `unreviewed candidate` → draft JSON that is not in the trusted registry yet
+- `leftover` for review files → extra review files besides the measurement runs
+  (`review_evidence_artifact_ids`)
+- `flagship`, `plumbing canary`, `GA`, `federated`, `guided default`,
+  `operator home`, `four-part tuple`, `qualification barrier`
+- ticket IDs (`SIM-…`) as product terms — cite the behavior or ADR; tickets
+  are tracking
+- public `activate` — the command is `prepare`
+
+**Do not say “sealed” or “unsealed” for live admission.** Working copies on
+nodes that do not hold the home are working copies (`runtime_source=sealed-hot`
+is the stored enum, not a lab expected-identity file). Live file identity is
+the receipt plus occupancy path (`identity_status=legacy-unsealed` is the
+stored enum). Lab expected-identity files are archive-only (ADR 0012).
+
+**Never say “schema N” without the kind.** Operator text should not mention
+schema numbers unless the reader is editing JSON. ADR 0004 objects, the
+retired expected-identity format, catalog records, and working-copy records
+are different formats that happen to number independently.
+
+**Never say “validated” or “tested” without saying which ladder:**
+profile `STATUS=tested` (old recommendation class), an ADR 0004 decision, or
+launch `identity_status`. `FAMILY_RECOMMENDED` / `RECOMMENDED_SPEC` are wizard
+sort flags, not a third status.
+
+**Never shorten Model Serving Release to “the release”** next to staging
+commands, evidence scopes, or tearing down a copy plane. The ADR 0004 evidence
+bundle is not the archived combined identity file. In prose call the evidence
+scope `release-promotion` “provenance and geometry review.”
+
+**Archive-only nouns** (history, refuse-paths, leftover files): expected-seal,
+`EXPECTED_MODEL_SEAL`, `identity_status=match`, `validation-bundle verify`,
+`model-release.sh`, weight fabric, live-mount. Do not teach them as live
+product.
+
 - Prefer concrete wording such as "preparation fails if the model identity
   cannot be verified."
-- When the policy is refuse rather than guess, say **fail without fallback**:
-  the operation fails if the required condition cannot be verified, and it
-  does not skip the check, remap, or continue on a weaker path. Accepted ADRs
-  may still say `fail closed`; in new operator-facing text, use fail without
-  fallback and do not assume the reader knows that glossary.
 - Explain scope words such as "bounded," "reviewed," and "two-rank" when their
   practical limits may not be obvious.
 - Avoid dense noun phrases, unexplained abbreviations, and implementation terms
@@ -263,7 +329,7 @@ product path, the Linear issue, the PR, or the milestone. Do not use a
 bare verb (“keep”, “close”, “remove”, “done”) next to a ticket id if it
 could mean either the feature or the tracking item.
 
-- Say “SIM-03 keeps source-attested unsealed Hugging Face `home add`;
+- Say “the product path keeps Hugging Face `home add --revision`;
   SWI-747 is already Done.”
 - Do not say “SIM-02/03: already implemented / keep.”
 - “Keep” means the product path stays. “Leave open” / “already Done”
@@ -273,7 +339,7 @@ could mean either the feature or the tracking item.
 
 ## Testing Guidelines
 
-Deterministic tests use three tiers (SIM-09, 2026-08-22):
+Deterministic tests use three tiers (target split, 2026-08-22):
 
 - **quick** — syntax, core schemas, documentation privacy, and critical
   identity/topology/ownership checks that fail without fallback.
@@ -292,7 +358,7 @@ entrypoint is the **full** suite.
 
 ### Selftest structure (avoid spaghetti mocks)
 
-Control-plane selftests must stay maintainable. Do not grow monolithic
+Lifecycle-script selftests must stay maintainable. Do not grow monolithic
 `scripts/selftest-*.sh` files by copy-pasting mock state machines or embedding
 fixture site maps inside generic doubles.
 
@@ -300,8 +366,8 @@ fixture site maps inside generic doubles.
 
 1. **Scenario** (`scripts/selftest-<area>.sh`) — arrange → act → assert only;
    keep thin.
-2. **Fixture** — topology, ranks, **roles** (owner/client/control), paths, and
-   golden inputs. Fixtures name *who* is owner/client; they do not bury that in
+2. **Fixture** — topology, ranks, **roles** (export-owner/client/control), paths, and
+   golden inputs. Fixtures name *who* is export-owner/client; they do not bury that in
    mock implementation.
 3. **Mock / test double** — parameterized helpers under `scripts/testlib/` (or
    `scripts/testdata/` for static trees). Mocks accept kind, identity, and
@@ -332,7 +398,7 @@ fixture site maps inside generic doubles.
 
 - [ ] New scenario reuses an existing helper, or adds one parameterized helper
 - [ ] No new hostname→behavior branches in mocks
-- [ ] Fixture documents owner/client (or equivalent) ranks/roles
+- [ ] Fixture documents export-owner/client (or equivalent) ranks/roles
 - [ ] No unjustified multi-hundred-line growth of a single selftest file
 - [ ] When fixing fabric/counter tests, prefer extracting
   `scripts/testlib/` mocks over another copy-paste path
@@ -365,7 +431,7 @@ when its tracked state is clean. Grok must not receive secrets or site-local
 state, expand policy or scope without approval, or operate external/privileged
 infrastructure unless that authority is explicitly part of the approved plan.
 
-### Fail closed; no silent policy changes
+### Fail without fallback; no silent policy changes
 
 - Partial weights, wrong transport, digest mismatch, stale topology, or incomplete preparation/start must **not** report healthy serving.
 - Do **not** silently fall back (e.g. missing durable home → ad-hoc download, ssh-roce rail → control-LAN copy, confirmed rail → “any route”). If an alternate path exists, it is an **explicit** operator choice and must be visible in CLI, labels, and docs.
@@ -388,7 +454,7 @@ infrastructure unless that authority is explicitly part of the approved plan.
 ### Lifecycle ownership
 
 - Launchers own cleanup for containers **they** create (including signal traps on interrupt). Prefer immutable launch IDs and ownership-safe stop (`down.sh` / stack labels)—never broad `docker rm` of unrelated workloads.
-- Destructive ops (purge hot, purge replicas, teardown exports, overwrite configs) are confirmation-gated; refuse when a managed service is still using the resource. Ordinary stop of a `library-hot` service retains unpinned prepared views ([ADR 0007](docs/decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)); `--purge-hot` is the explicit capacity-recovery action.
+- Destructive ops (purge hot, purge replicas, teardown exports, overwrite configs) are confirmation-gated; refuse when a managed service is still using the resource. Ordinary stop of a model-library service retains unpinned prepared views ([ADR 0007](docs/decisions/0007-ordinary-stop-retains-unpinned-hot-views.md)); `--purge-hot` is the explicit capacity-recovery action.
 - Privileged changes require usable sudo policy; support attended `--interactive-sudo` where the project already does. **Never** read, log, transport, or store the operator password, and do not weaken sudoers to automate.
 - All-or-nothing multi-rank steps (prepare, cluster start): on failure, roll back partial ranks or leave an explicit incomplete state that launch refuses—not a half-ready service.
 
@@ -412,21 +478,24 @@ infrastructure unless that authority is explicitly part of the approved plan.
   across stability, accuracy, throughput, and latency, plus reviewed
   provenance/security and strict same-boot reproducibility. FP-equivalent
   output does not satisfy the strict gate.
-- Validation status is advisory and never grants or denies serving. Catalog and
-  operator surfaces must not hide or block a release solely because of status,
+- Validation status is display-only and never grants or denies serving. Catalog and
+  operator surfaces must not hide or block a Model Serving Release solely because of status,
   including legacy `do-not-use`/`blocked` labels or no reviewed decision.
   Recommendation/default policy may prefer stronger evidence. There is no
   launch-trust-mode axis ([ADR 0009](docs/decisions/0009-no-launch-trust-mode-axis.md)):
-  existing labels are the trust contract; do not add a reviewed/unreviewed
-  start prompt or flag. Operational
+  existing labels are the trust contract; do not add a start prompt or flag
+  that asks whether files were reviewed. Operational
   admission still fails without fallback for concrete identity, integrity, recipe,
   runtime/geometry, capacity, topology, security, lifecycle, or ownership
   failures.
 - Criterion scopes are fixed: stability, accuracy, throughput, latency, and
-  strict same-boot are `model-qualification`; serving integration is
-  `serving-integration`; provenance/security and physical geometry are
-  `release-promotion`. `catalog-artifact` is preparation/subsystem evidence and
-  cannot satisfy a validation criterion.
+  strict same-boot are `model-qualification` (did this exact setup meet the
+  accuracy/speed/stability gates); serving integration is
+  `serving-integration` (did this image load those files and answer
+  health/smoke); provenance/security and physical geometry are
+  `release-promotion` (provenance and geometry review). `catalog-artifact`
+  (did we store and copy the right files?) is preparation evidence and
+  cannot satisfy a Model Serving Release validation criterion.
 - `scripts/model_serving_release.py` owns the pure ADR 0004 release-descriptor
   and frozen Validation Contract schemas. `scripts/model_validation_evidence.py`
   owns pure immutable run-record, evidence-bundle, and validation-decision
@@ -441,14 +510,15 @@ infrastructure unless that authority is explicitly part of the approved plan.
   conclusive failure even when its enclosing criterion observation is marked
   inconclusive.
   Every run attempt hash-binds a sorted `attempted_criterion_ids` declaration.
-  A post-barrier non-preparation attempt must name at least one scope-compatible
+  After preparation has passed, a non-preparation attempt must name at least one scope-compatible
   frozen criterion, and its observations must cover that set exactly;
   incomplete attempts may contribute only inconclusive observations. The
   review-derived provenance/security criterion uses one canonical closed
   template so unimplemented thresholds or parameters cannot be added silently.
-  Relative performance binds the reviewed predecessor contract, bundle,
-  decision, and run; the relevant predecessor criterion must pass, but the
-  predecessor release need not be globally `Validated`. Runtime compatibility
+  Relative performance binds the reviewed predecessor Validation Contract,
+  evidence bundle, decision, and run; the relevant predecessor criterion must
+  pass, but the predecessor Model Serving Release need not be globally
+  `Validated`. Runtime compatibility
   and architecture/geometry checks are structural only; physical behavior
   still requires physical evidence. Canonical compatibility ranges compare
   the numeric core of exact observed deployed versions, preserving accepted
@@ -463,37 +533,39 @@ infrastructure unless that authority is explicitly part of the approved plan.
   still pass trusted publication privacy review. Pure
   schema validation does not prove that a supplied digest names the checked-out
   executable or that no unknown private identifier escaped structural checks.
-  These builders do not capture evidence, issue a trusted decision, or launch
-  a release. Local source-neutral release-plan candidates can build and verify
-  unreviewed release/contract objects without status or issuance authority.
-  Local ADR 0004 evidence-capture candidate persistence
-  composes a verified release-plan candidate with an attempt-only spec and
-  can plan, capture, assemble, and verify unreviewed candidates without
-  writing the tracked registry, issuing `Untested`, or launching a release. Read-only trusted
+  These builders do not capture evidence, issue a trusted decision, or start
+  a server. Local source-neutral release-plan drafts can build and verify
+  Model Serving Release / Validation Contract JSON that is not in the trusted
+  registry, without status authority and without writing that registry.
+  Local ADR 0004 evidence-capture draft persistence
+  composes a verified release-plan draft with an attempt-only spec and
+  can plan, capture, assemble, and verify those drafts without
+  writing the tracked registry, issuing `Untested`, or starting a server. Read-only trusted
   persistence can verify exact reviewed objects under
   `models/model-serving-releases/`. Catalog, wizard, and `scripts/up.sh`
-  consume that inspection as an advisory projection for profiles explicitly
-  bound by `MODEL_SERVING_RELEASE_ID`; projection never changes recommendation
-  order or serving permission. Absence of a profile binding or reviewed
-  decision is neutral and is not inferred as `Untested`; multiple contract
-  lineages or unsuperseded heads stay ambiguous. Current `STATUS=tested*` and
-  `list-models.sh --legacy-tested` remain separate legacy labels. Expected-seal
-  and schema-1 bundles are not a live product (ADR 0012). `--validated` and
-  `--reviewed-identity` are removed.
-  Do not automatically relabel an existing profile
-  or bundle `Validated`. The corrected ADR 0004 objects remain schema
-  version 1 because none was issued or persisted before the correction;
-  existing legacy schema-1 seals/bundles and raw evidence remain untouched.
-  The tracked ADR 0004 registry contains the reviewed Qwen3.8 lineage bound by
-  `qwen3.8-27b-fp8`; its advisory status is `Testing incomplete`, not
-  `Validated`. Other current profiles remain unbound.
+  show that inspection for profiles that set `MODEL_SERVING_RELEASE_ID`;
+  the catalog display never changes recommendation order or serving permission.
+  Absence of that profile field or of a reviewed decision is neutral and is
+  not inferred as `Untested`; multiple contract lineages or unsuperseded heads
+  stay ambiguous. Current profile `STATUS=tested*` and
+  `list-models.sh --legacy-tested` remain separate old recommendation labels.
+  Lab expected-identity files and the archived combined identity format are
+  not a live product (ADR 0012). `--validated` and `--reviewed-identity` are
+  removed.
+  Do not automatically relabel an existing profile or evidence bundle
+  `Validated`. ADR 0004 object format is unchanged from the empty-registry
+  correction; archived expected-identity files and raw evidence remain
+  untouched. The tracked ADR 0004 registry contains the reviewed Qwen3.8
+  lineage that `qwen3.8-27b-fp8` points at; the catalog shows
+  `Testing incomplete`, not `Validated`. Other current profiles do not set
+  `MODEL_SERVING_RELEASE_ID`.
 - `STATUS`, ADR 0004 decisions, recommendations/defaults, and
   `docs/VALIDATION.md` claims change only with reproducible evidence. The wizard
   still shows other fitting profiles with accurate labels and caveats. Preserve
   failed and partial runs; do not rewrite failures as passes.
-- Selftests prove control-plane contracts; they do **not** replace physical gates for serving or storage claims (`docs/REVALIDATE.md`).
+- Selftests prove lifecycle-script contracts; they do **not** replace physical gates for serving or storage claims (`docs/REVALIDATE.md`).
 - Public `results/` bundles must stay free of secrets and private site values; use existing privacy-audit patterns when adding artifact publishers.
-- Document dependency honesty: if a mode needs owner/home/library after start, inventory and docs say so; if independence is claimed, tests must cover home-down restart.
+- Document dependency honesty: if a mode needs the NFS export, the durable home, or the library after start, inventory and docs say so; if independence is claimed, tests must cover home-down restart.
 
 ### Subsystem qualification boundaries
 
@@ -511,8 +583,8 @@ A failure in one subsystem does not erase valid evidence from another unless a
 causal connection is demonstrated. It does block any combined claim that
 requires both. Health or completion smoke is integration evidence, never model
 qualification. An image/runtime change creates a new Model Serving Release and
-invalidates applicable integration/model evidence; in the current schema it
-also requires a new validation bundle. It does not automatically invalidate
+invalidates applicable integration/model evidence; it also requires a new
+ADR 0004 evidence bundle for that subject. It does not automatically invalidate
 unchanged catalog mechanics. Preserve failed evidence and state its scope.
 Agents may propose a better boundary or causal model when new evidence warrants
 it, but must not change the accepted policy, promotion requirements, or
@@ -525,8 +597,8 @@ interpretation as settled without explicit approval and an updated ADR. See
 
 For catalog, download, prepare, launch, pin, purge, or model-validation work,
 read `docs/MODEL_LIBRARY_DESIGN.md` and the applicable record under
-`docs/decisions/` before changing behavior. Authority roles (SIM-08,
-2026-08-22): ADRs hold decisions; `MODEL_LIBRARY_DESIGN.md` holds target
+`docs/decisions/` before changing behavior. Authority roles
+(2026-08-22): ADRs hold decisions; `MODEL_LIBRARY_DESIGN.md` holds target
 architecture; `OPERATIONS.md` holds operator procedures; `MODELS.md` plus
 `models/*.conf` hold the live catalog (drift-tested); `VALIDATION.md` and
 `results/` hold evidence. Do not reintroduce a hand-maintained
@@ -541,72 +613,69 @@ this work; the skill is procedural and does not outrank these sources.
   removed (ADR 0008); use `prepare`. `activate` remains an internal-schema
   term, not the product label.
 
-- In the **current repository data**, each issued reviewed identity is attached
-  to a legacy `STATUS=tested` profile and binds
-  a schema-1 validation bundle, not a model repository ID alone. Only issued
-  seals (`qwen3-1.7b`, `deepseek-v4-flash` today) have that bundle. Other
-  `tested` serving profiles remain `legacy-unsealed`. Expected identity comes
-  from lab validation; locally observed content can match that identity but
-  cannot create or replace it. Under ADR 0004, the implemented separate release
-  descriptor owns the release ID, the implemented Validation Contract freezes
-  its criteria, and the implemented evidence layer validates immutable run,
-  bundle, and decision objects. Read-only trusted persistence can verify
-  those objects under `models/model-serving-releases/`. That store holds the
-  reviewed Qwen3.8-27B-FP8 lineage (`Testing incomplete`); other current
-  profiles remain unbound. Caller-supplied predecessor and decision registries remain
-  validation input, not trusted persistence. Local evidence-capture candidate
-  persistence and source-neutral release-plan candidate persistence are
-  implemented and remain unreviewed. Closed compare/benchmark measurements and
-  candidate-only attempt composition are implemented for strict same-boot and
-  absolute throughput/latency; they do not issue status or prove physical
-  behavior. Read-only
-  catalog/operator projection is implemented for an explicitly bound release;
-  maintainer-only issuance staging can propose reviewed registry objects, but
-  a local command is not the trust event. The supervised
-  `pulsar-model-onboarding` skill is implemented as control-plane
-  orchestration around capture CLIs; it does not issue a decision, assign
-  status, or bind a profile. It can plan and, after a separate confirmation,
-  acquire one absent brand-new unsealed exact Hugging Face revision through
-  the source-attested service. Complete source and byte verification followed
-  by an immutable receipt creates observed/source identity and catalog-artifact
-  evidence only; it does not create a seal, status, serving permission, or
-  Model Serving Release decision. The supervised
-  `pulsar-model-serving-release-issuance` skill composes `issue.sh` after
-  that handoff and still has no issuance authority. Reuse requires receipt-backed offline full
-  verification against the receipt while occupancy names the live directory.
-  Occupancy may move with `home relocate` after a live rehash
+- In the **current repository data**, live serving identity is the receipt plus
+  occupancy path plus hashed local views (ADR 0012). Lab expected-identity
+  files are not a live product. Profile `STATUS=tested` is the old
+  recommendation class; it is not an ADR 0004 decision. Under ADR 0004, the
+  implemented separate descriptor owns the Model Serving Release ID, the
+  implemented Validation Contract freezes its criteria, and the implemented
+  evidence layer validates immutable run, evidence-bundle, and decision
+  objects. Read-only trusted persistence can verify those objects under
+  `models/model-serving-releases/`. That store holds the reviewed
+  Qwen3.8-27B-FP8 lineage (`Testing incomplete`); other current profiles do
+  not set `MODEL_SERVING_RELEASE_ID`. Caller-supplied predecessor and decision
+  registries remain validation input, not trusted persistence. Local
+  evidence-capture drafts and source-neutral release-plan drafts are
+  implemented and are not in the trusted registry. Closed compare/benchmark
+  measurements and draft-only attempt composition are implemented for strict
+  same-boot and absolute throughput/latency; they do not issue status or prove
+  physical behavior. The catalog can show a reviewed decision for a profile
+  that sets `MODEL_SERVING_RELEASE_ID`; maintainer-only staging can propose
+  registry objects, but a local command is not what makes them trusted. The
+  supervised `pulsar-model-onboarding` skill orchestrates capture CLIs; it
+  does not issue a decision, assign status, or point a profile at a Model
+  Serving Release. It can plan and, after a separate confirmation, acquire one
+  absent brand-new exact Hugging Face revision through `home add --revision`
+  (recorded file list and hashes). Complete source and byte verification
+  followed by an immutable receipt creates observed/source identity and “did
+  we store the right files?” evidence only; it does not create a lab
+  expected-identity file, status, serving permission, or Model Serving Release
+  decision. The supervised `pulsar-model-serving-release-issuance` skill
+  composes `issue.sh` after that handoff and still cannot make the objects
+  trusted. Reuse requires receipt-backed offline full verification against the
+  receipt while occupancy names the live directory. Occupancy may move with
+  `home relocate` after a live rehash
   ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
-  Unknown trees without a receipt still require a
-  reviewed expected manifest independent of the observed tree. Prepare-time
-  resolution for receipt-backed content requires occupancy plus
-  the exact model ID and commit. Deterministic controls alone make no physical
-  claim. The bounded Nemotron Nano Gate 14 artifact physically passes the
-  catalog/artifact lifecycle for a one-node rank-0 target across three
-  confirmed ranks, including acquisition, attachment authority, offline
-  verification, exact preparation/reuse, guarded cleanup, and reacquisition.
-  Remote target execution and asymmetric per-rank Hugging Face credentials
-  remain physically untested. The artifact makes no serving-integration,
-  model-qualification, status, or promotion claim. `qwen3.8-27b-fp8` binds the
-  first reviewed ADR 0004 lineage and projects `Testing incomplete`; other
-  current profiles remain neutral.
-  Expected-seal identity and validation status are independent contracts: a
-  future non-tested profile may carry a reviewed seal, and a matching seal does
-  not promote its release status.
-- A deterministic release candidate has no authority by itself. Trusted
-  issuance remains a reviewed change that binds lab evidence; candidate tools
+  Unknown trees without a receipt fail without fallback (ADR 0012: there is
+  no lab expected-identity fallback). Prepare-time resolution for
+  receipt-backed content requires occupancy plus the exact model ID and
+  commit. Deterministic controls alone make no physical claim. The bounded
+  Nemotron Nano Gate 14 artifact physically passes the catalog/artifact
+  lifecycle for a one-node rank-0 target across three confirmed ranks,
+  including acquisition, attachment authority, offline verification, exact
+  preparation/reuse, guarded cleanup, and reacquisition. Remote target
+  execution and asymmetric per-rank Hugging Face credentials remain physically
+  untested. The artifact makes no serving-integration, model-qualification,
+  status, or promotion claim. `qwen3.8-27b-fp8` points at the first reviewed
+  ADR 0004 lineage and the catalog shows `Testing incomplete`; other current
+  profiles remain neutral. A profile field that points at a Model Serving
+  Release does not grant serving permission, and pointing at one does not
+  promote ADR 0004 status.
+- A deterministic draft has no authority by itself. What makes registry
+  objects trusted is a reviewed change that cites lab evidence; draft tools
   must fail if output claims review/promotion or targets trusted directories.
 - The default library policy is one durable home per exact model revision.
-  The home rank uses that durable tree through a validated symlink or equivalent
-  rank-local view; **do not materialize a second hot copy on the home rank**.
-- Reviewed upstream acquisition creates exactly one durable home: observe every
-  confirmed rank, download the immutable commit on the selected target into
-  same-filesystem private staging, recheck absence elsewhere, full-verify the
-  expected seal, then publish atomically. Accepted policy also allows a
-  source-attested exact upstream tree to follow that same staging, complete
-  inventory/set check, complete SHA-256, all-rank absence recheck, immutable
-  receipt, atomic no-replace publication, and private current-home attachment
-  sequence. Source-attested adoption is observed/source identity only. Public
-  `home add <unsealed-profile> --revision <selector> --plan` is read-only;
+  The home rank uses that durable tree through a hashed symlink or equivalent
+  rank-local view; **do not write a second working copy on the home rank**.
+- Hugging Face download with a recorded file list creates exactly one durable
+  home: observe every confirmed rank, download the immutable commit on the
+  selected target into same-filesystem private staging, recheck absence
+  elsewhere, full-verify every SHA-256 against that recorded list, then
+  publish atomically. The sequence is complete inventory/set check, complete
+  SHA-256, all-rank absence recheck, immutable receipt, atomic no-replace
+  publication, and private current-home attachment. That path is
+  observed/source identity only. Public
+  `home add <profile> --revision <selector> --plan` is read-only;
   execution requires `--yes` and repeats source and topology checks before
   downloading the exact commit on the selected rank.
   `home verify <model_id@commit>` performs receipt-backed offline full
@@ -615,22 +684,23 @@ this work; the skill is procedural and does not outrank these sources.
   Hub download. The home must be one of the current profile's
   serving ranks so active storage remains one home plus N−1 working replicas. Do not
   silently choose another node,
-  create a controller copy, refresh the catalog, prepare hot views, or launch.
+  create a controller copy, refresh the catalog, prepare working copies, or launch.
   Guarded `home check` / `home remove --yes` may retire a recognized
   incomplete or refs-only Hugging Face hub occupancy that blocks
-  source-attested `home add`. That path is exact-repository-only, fails without fallback,
+  `home add --revision`. That path is exact-repository-only, fails without fallback,
   and confirmation-gated: `home check` is read-only, `--yes` is required to
   mutate, catalog refresh never auto-deletes, and complete-home removal is
   unchanged.
   Onboarding must explicitly refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.
-- Only non-home ranks receive temporary or pinned working replicas (`sealed-hot`).
-  The occupancy rank uses a symlink/view of the durable tree, not a second copy.
+- Only non-home ranks receive temporary or pinned working replicas
+  (`runtime_source=sealed-hot`). The occupancy rank uses a symlink/view of the
+  durable tree, not a second copy.
 - Full content verification happens at trust boundaries. A serve-time metadata
   witness may accelerate an unchanged launch only after full verification;
-  drift causes visible full verification against the expected seal or fails
-  closed. Never auto-reseal drift as validated content.
+  drift causes visible full rehash against the receipt (or fails without
+  fallback). Never treat drifted bytes as already-checked identity.
 - Warm-home pinning retains non-home working replicas but still requires the
   durable occupancy. Home-loss recovery is occupy-in-place or restore from a
   verified receipt-indexed cold archive
@@ -640,26 +710,26 @@ this work; the skill is procedural and does not outrank these sources.
   eight streams and no automatic fallback, as recorded in ADR 0003. The model
   library is the only weight-distribution mechanism
   ([ADR 0006](docs/decisions/0006-model-library-only-weight-distribution.md));
-  every scope (two-rank sealed, one-rank, legacy-unsealed) is supported, a
+  every live profile uses local files on every rank, a
   confirmed topology manifest (one-node is valid) is a serving prerequisite,
   and this transport policy does not create a missing durable home.
 - Live NFSv4.2/RDMA under vLLM (`live-remote-readonly`) is rejected as a
   serving or onboarding alternative
   ([ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md)). A crashed
-  rank cannot cold-start without the owner export, NFS/RDMA stack, and exact
+  rank cannot cold-start without the NFS export, NFS/RDMA stack, and exact
   route. Library serving already presents local files. Launch fails without
   fallback and does not remap. Leftover site mounts use confirmation-gated unmount/teardown
   only. This does not retire `ssh-roce` copy, NCCL/RoCE inference, or
   topology discovery (`detect-fabric.sh`). The one-shot `nfs-rdma` prepare
   experiment is retired with the fabric internals (ADR 0006).
-- Distribution transport is run provenance, not Model Serving Release
-  identity. Qualification starts only after exact content and the intended
+- The copy path used at prepare is run provenance, not Model Serving Release
+  identity. Behavior tests count only after exact content and the intended
   runtime-access contract verify on every serving rank. A failure before that
-  barrier is failed preparation and leaves the release `Untested`.
+  is failed preparation and leaves the Model Serving Release `Untested`.
 - Preserve historical evidence and mark it superseded rather than rewriting it.
   A contract change updates the authoritative source for that fact (ADR,
   design, operations, catalog, or evidence) rather than five copied
-  current-state documents. Generated projections are later work.
+  current-state documents. Generated current-state summaries are later work.
 
 ### Operational hygiene
 
