@@ -36,7 +36,7 @@ template is [references/handoff-template.md](references/handoff-template.md).
 - Do not use `validate/run-gates.sh` as the ADR attempt wrapper.
 - Do not invent a missing validator measurement or share one enclosing
   timestamp across compare and benchmark.
-- Do not represent a receipt/occupancy (`identity_status=legacy-unsealed`) launch as an exact ADR 0004 qualification attempt.
+- Do not represent a receipt/occupancy (`identity_status=receipt-occupancy`) launch as an exact ADR 0004 qualification attempt.
 - Distribution transport is run provenance, not release identity. A failure
   before exact all-rank verification leaves qualification unstarted.
 - The journal is orchestration recovery state, not a sixth ADR object and
@@ -191,7 +191,7 @@ for the planner's artifact manifest. `scripts/model-release.sh` is retired
 ### 6. Select qualifying runtime access
 
 For ADR qualification of a brand-new model, confirm
-local files on every rank (`library-hot`) as `local-verified-readonly` after the exact rank-local
+local files on every rank (`local-files`) as `local-verified-readonly` after the exact rank-local
 verified views exist.
 
 Do not offer live NFS/RDMA (`live-remote-readonly`) as a serving or
@@ -202,7 +202,7 @@ already presents local files on every rank.
 Name the chosen distribution/source and transport. There is no silent fallback
 and no automatic fallback.
 
-A live profile serves with `identity_status=legacy-unsealed` after
+A live profile serves with `identity_status=receipt-occupancy` after
 full verification. Do not treat mutable `refs/main` as identity. That honest
 label is not an exact ADR 0004 qualification attempt on its own.
 

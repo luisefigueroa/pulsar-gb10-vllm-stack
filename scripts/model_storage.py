@@ -224,7 +224,7 @@ def _node_label(rank: int) -> str:
 def _validation_label(value: object) -> str:
     labels = {
         "expected-unverified": "lab identity expected (retired)",
-        "legacy-unsealed": "receipt and occupancy identity",
+        "receipt-occupancy": "receipt and occupancy identity",
         "unvalidated": "identity not checked",
         "missing": "not present",
         "match": "historical identity match",
@@ -236,7 +236,7 @@ def _validation_label(value: object) -> str:
 def _runtime_label(value: object) -> str:
     labels = {
         "durable-home": "durable home",
-        "sealed-hot": "working copy on other node",
+        "working-copy": "working copy on other node",
         "live-mount": "live NFS mount (retired)",
     }
     text = _safe_text(value) or "unknown"
@@ -346,13 +346,13 @@ def preparation_check(
             for instance in model_instances(report, model)
             if instance.get("profile") == profile["id"]
             and instance.get("metadata_status") == "current"
-            and instance.get("identity_status") in {"legacy-unsealed", "unvalidated"}
+            and instance.get("identity_status") in {"receipt-occupancy", "unvalidated"}
             and instance.get("witness_status") == "match"
             and instance.get("runtime_source")
             == (
                 "durable-home"
                 if int(instance["rank"]) == primary.get("rank")
-                else "sealed-hot"
+                else "working-copy"
             )
         ]
         candidate["already_prepared"] = {

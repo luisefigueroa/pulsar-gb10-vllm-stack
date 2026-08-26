@@ -69,7 +69,7 @@ LIVE_DIRECTORY_IDENTITY_SCHEMA_VERSION = 1
 LIVE_DIRECTORY_IDENTITY_KIND = "pulsar-model-library-live-directory-identity"
 RENAME_NOREPLACE = 1
 # Hugging Face download (recorded file list) contracts live in
-# model_library_source_attested.py. They use a separate schema/kind and must
+# model_library_receipt.py. They use a separate schema/kind and must
 # not change this home-acquisition plan/result contract. This module does not
 # import that planner; the Bash boundary composes these generic remote
 # primitives with the separate schema owner.
@@ -86,7 +86,7 @@ UTC_TIMESTAMP_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$"
 )
 HF_MODEL_ID_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
-# Exact Hugging Face snapshot commit. Source-attested detach uses this form.
+# Exact Hugging Face snapshot commit. Download-receipt detach uses this form.
 # Do not treat 41–64 hex as a bound home-removal identity.
 HF_EXACT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 HUB_DIR_RE = re.compile(r"^models--(.+)$")
@@ -96,7 +96,7 @@ COMPLETE_HOME_OCCUPANCY = "complete-home"
 INCOMPLETE_HUB_OCCUPANCY = "incomplete-hub"
 UNRECOGNIZED_HUB_OCCUPANCY = "unrecognized"
 HF_HUB_LAYOUT_NAMES = frozenset({"refs", "snapshots", "blobs", ".no_exist", ".locks"})
-SOURCE_ATTESTED_HOME_ATTACHMENT_STORE = "source-attested-home-attachments"
+SOURCE_ATTESTED_HOME_ATTACHMENT_STORE = "home-occupancy"
 STATUS_TESTED = re.compile(r"^tested")
 DEFAULT_HOT_ROOT = "/var/tmp/pulsar-hot"
 DEFAULT_HOT_RESERVE_BYTES = 64 * 1024**3
@@ -1027,9 +1027,7 @@ def compare_profile_expected_identity(
         )
     observed = observed_model_seal_projection(manifest)
     return {
-        "identity_status": (
-            "legacy-unsealed" if profile.get("validated") else "unvalidated"
-        ),
+        "identity_status": "receipt-occupancy",
         "expected_seal": None,
         "observed_seal": observed,
     }
@@ -1072,7 +1070,7 @@ def _profile_catalog_status(
 ) -> str:
     if not present:
         return "missing"
-    return "legacy-unsealed" if profile.get("validated") else "unvalidated"
+    return "receipt-occupancy"
 
 
 def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
@@ -1137,7 +1135,7 @@ def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
 def policy_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
     """Homes that count for resolve/primary.
 
-    Source-attested occupancy classification marks complete hub trees as
+    Download-receipt occupancy classification marks complete hub trees as
     ``occupancy`` or ``unbound-complete``. Only occupancy counts as a durable
     home. Unclassified entries keep the legacy complete-tree rule.
     """
@@ -1355,7 +1353,7 @@ def build_catalog(
             entry["profile_validation"].append(profile_state)
 
     precedence = (
-        "legacy-unsealed",
+        "receipt-occupancy",
         "missing",
         "unvalidated",
     )
@@ -2767,8 +2765,8 @@ def hot_content_id(
     validation: dict[str, Any],
 ) -> str:
     validation_key = validation.get("identity_status")
-    if validation_key not in {"legacy-unsealed", "unvalidated"}:
-        fail("hot content identity lacks unsealed validation provenance")
+    if validation_key not in {"receipt-occupancy", "unvalidated"}:
+        fail("hot content identity lacks receipt/occupancy provenance")
     return content_id_for(f"{identity_key}|validation:{validation_key}", digest)
 
 
@@ -2974,7 +2972,7 @@ def validate_hot_validation(
     if not isinstance(profile, str) or not profile:
         fail("hot validation profile is invalid")
     status = validation.get("identity_status")
-    if status not in {"legacy-unsealed", "unvalidated"}:
+    if status not in {"receipt-occupancy", "unvalidated"}:
         fail(f"hot identity status is unsupported: {status!r}")
     observed = validation.get("observed_seal")
     expected_observed = observed_model_seal_projection(manifest)
@@ -3656,7 +3654,7 @@ def build_hot_storage_requirements(
         requirements.append(
             {
                 "rank": rank,
-                "runtime_source": "durable-home" if durable_view else "sealed-hot",
+                "runtime_source": "durable-home" if durable_view else "working-copy",
                 "required_owned_bytes": 0 if durable_view else bytes_logical,
                 "replacing_path": str(instance),
             }
@@ -3780,7 +3778,7 @@ def budget_report(
             if isinstance(model_id, str) and model_id:
                 hub_path = hot_hub_path(instance, model_id)
                 runtime_source = (
-                    "durable-home" if hub_path.is_symlink() else "sealed-hot"
+                    "durable-home" if hub_path.is_symlink() else "working-copy"
                 )
             if pinned:
                 pinned_bytes += size
@@ -3870,7 +3868,7 @@ def hot_budget_admission(
     budget_bytes: int | None = None,
     reserve_bytes: int | None = None,
     replacing_path: str | pathlib.Path | None = None,
-    runtime_source: str = "sealed-hot",
+    runtime_source: str = "working-copy",
     rank: int = 0,
     node_id: str = "",
     hostname: str = "",
@@ -3883,7 +3881,7 @@ def hot_budget_admission(
         or required_owned_bytes < 0
     ):
         fail("hot admission: required owned bytes must be a non-negative integer")
-    if runtime_source not in {"durable-home", "sealed-hot", "inventory", "pin"}:
+    if runtime_source not in {"durable-home", "working-copy", "inventory", "pin"}:
         fail(f"hot admission: unsupported runtime source {runtime_source!r}")
     if runtime_source == "durable-home" and required_owned_bytes != 0:
         fail("hot admission: durable-home views must require zero owned model bytes")
@@ -4222,7 +4220,7 @@ def selected_rail_between(
     return rail[home_side], rail[client_side], rail["network"]
 
 
-def plan_activate(
+def plan_prepare(
     *,
     catalog_path: str,
     profile: str,
@@ -4307,8 +4305,8 @@ def plan_activate(
             fail("prepare: target rank must be non-negative")
         if target_rank != int(home["rank"]):
             fail(
-                "prepare: a one-node library-hot service must run on its "
-                "durable-home rank; choose that rank or use replicated weights"
+                "prepare: a one-node local-files service must run on its "
+                "durable-home rank"
             )
         target_ranks = [target_rank]
     elif node_count == 1:
@@ -4840,7 +4838,7 @@ def _schema3_hot_health(instance: pathlib.Path, stamp: dict[str, Any]) -> dict[s
     if hub_kind == "symlink":
         result["runtime_source"] = "durable-home"
     elif hub_kind == "directory":
-        result["runtime_source"] = "sealed-hot"
+        result["runtime_source"] = "working-copy"
     else:
         result["detail"] = f"runtime view is {hub_kind}"
         return result
@@ -5020,7 +5018,7 @@ def _managed_hot_reference(containers: list[dict[str, Any]], profile: Any) -> bo
         if str(labels.get("io.pulsar.gb10.managed") or "") != "true":
             continue
         source = str(labels.get("io.pulsar.gb10.weight-source") or "")
-        if source not in {"library-hot", "fabric"}:
+        if source not in {"local-files", "fabric"}:
             continue
         observed_profile = str(labels.get("io.pulsar.gb10.conf") or "")
         if not observed_profile or not profile or observed_profile == profile:
@@ -5191,7 +5189,7 @@ def build_health_report(
                         "rank-local runtime view is missing or unsafe",
                         rank=rank,
                     ))
-                if on_home and runtime == "sealed-hot":
+                if on_home and runtime == "working-copy":
                     issues.append(_health_issue("home-rank-materialized", "home rank has a prohibited hot copy", rank=rank))
                 if not on_home and runtime == "durable-home":
                     issues.append(_health_issue("non-home-symlink", "non-home rank has a prohibited durable-home view", rank=rank))
@@ -6722,7 +6720,7 @@ def _container_home_blocker(
 
     if source == "replicated":
         depends = on_home_node and (profile_matches or profile_model is None)
-    elif source in {"library-hot", "fabric"}:
+    elif source in {"local-files", "fabric"}:
         depends = owner_matches and (
             profile_matches
             or revision == target["revision"]
@@ -7815,7 +7813,7 @@ def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
             plan["hot_root"],
             int(plan["bytes_logical"]),
             replacing_path=plan["instance_dir"],
-            runtime_source="sealed-hot",
+            runtime_source="working-copy",
             rank=0,
             node_id="local-direct-execution",
         )
@@ -7995,7 +7993,7 @@ def cmd_inspect_hub(args: argparse.Namespace) -> int:
 
 
 
-def cmd_plan_activate(args: argparse.Namespace) -> int:
+def cmd_plan_prepare(args: argparse.Namespace) -> int:
     home_inventory = None
     if args.home_inventory_json:
         try:
@@ -8012,7 +8010,7 @@ def cmd_plan_activate(args: argparse.Namespace) -> int:
             fail(f"expected-integrity-manifest-json: {exc}")
         if not isinstance(expected_manifest, dict):
             fail("expected-integrity-manifest-json must be an object")
-    plan = plan_activate(
+    plan = plan_prepare(
         catalog_path=args.catalog,
         profile=args.profile,
         topology_id=args.topology_id,
@@ -8974,7 +8972,7 @@ def build_parser() -> argparse.ArgumentParser:
     primary_clear.set_defaults(func=cmd_catalog_primary)
 
     plan = sub.add_parser(
-        "plan-activate", help="Plan copy preparation into hot staging"
+        "plan-prepare", help="Plan copy preparation into hot staging"
     )
     plan.add_argument("--catalog", required=True)
     plan.add_argument("--profile", required=True)
@@ -9022,7 +9020,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help=argparse.SUPPRESS,
     )
-    plan.set_defaults(func=cmd_plan_activate)
+    plan.set_defaults(func=cmd_plan_prepare)
 
     classify = sub.add_parser(
         "classify-library-readiness",
@@ -9114,7 +9112,7 @@ def build_parser() -> argparse.ArgumentParser:
     badmit.add_argument(
         "--runtime-source",
         required=True,
-        choices=("durable-home", "sealed-hot", "inventory", "pin"),
+        choices=("durable-home", "working-copy", "inventory", "pin"),
     )
     badmit.add_argument("--required-owned-bytes", type=int, required=True)
     badmit.add_argument("--replacing-path", default="")

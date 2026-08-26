@@ -1400,7 +1400,7 @@ def cmd_check_measurement_dir(args: argparse.Namespace) -> int:
 def cmd_help(_args: argparse.Namespace) -> int:
     writer = terminal_format.TerminalWriter()
     for line in (
-        "Compose unreviewed ADR 0004 attempt-only specs",
+        "Compose draft ADR 0004 attempt-only specs",
         "",
         "Usage:",
         "scripts/model-serving-release-attempt.sh compose --release-plan DIR --context FILE --output-dir DIR [--compare-measurement FILE] [--benchmark-measurement FILE] [--json]",

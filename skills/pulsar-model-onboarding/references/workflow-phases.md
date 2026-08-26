@@ -120,12 +120,12 @@ content. Unknown trees without a receipt fail without fallback (ADR 0012).
 
 ## 6. Distribution choice
 
-Confirm local files on every rank (`library-hot`) → `local-verified-readonly`.
+Confirm local files on every rank (`local-files`) → `local-verified-readonly`.
 Do not offer live NFS/RDMA serving (`live-remote-readonly`; ADR 0005).
 The model library is the only weight mechanism (ADR 0006).
 
 Record the source and transport. No silent fallback. No automatic
-fallback. A live profile serves as `legacy-unsealed` after full
+fallback. A live profile serves as `receipt-occupancy` after full
 verification; that honest label is not an exact ADR 0004 qualification
 attempt.
 

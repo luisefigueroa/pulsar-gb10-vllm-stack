@@ -206,7 +206,7 @@ language for new features without an explicit decision.
   directly into durable storage.
   Deterministic skill and journal tests make no physical DGX claim and create
   no Model Serving Release decision.
-  `scripts/model_library_source_attested.py` owns the closed Hugging Face
+  `scripts/model_library_receipt.py` owns the closed Hugging Face
   source, identity, public plan, privacy-safe approval, immutable
   receipt, private current-home attachment, result, and home-verification
   formats for that path. The thin Bash
@@ -272,8 +272,11 @@ fail without fallback.
 **Do not use these as live brands.** Describe the thing:
 
 - `library-hot` → local files on every rank, prepared from the model home
-  (the JSON/label value may still appear in machine output)
+  (new writes use `local-files`; leftover running containers may still carry
+  the old label, which inventory/stop still recognize)
 - `source-attested` → Hugging Face download with a recorded file list and hashes
+  (new writes use `identity_class=download-receipt`, `download-receipts/`, and
+  `home-occupancy/`)
 - `advisory projection` / `binding` → the catalog shows the reviewed status;
   start does not use it as permission; `MODEL_SERVING_RELEASE_ID` points at one
   reviewed subject
@@ -288,10 +291,10 @@ fail without fallback.
 - public `activate` — the command is `prepare`
 
 **Do not say “sealed” or “unsealed” for live admission.** Working copies on
-nodes that do not hold the home are working copies (`runtime_source=sealed-hot`
-is the stored enum, not a lab expected-identity file). Live file identity is
-the receipt plus occupancy path (`identity_status=legacy-unsealed` is the
-stored enum). Lab expected-identity files are archive-only (ADR 0012).
+nodes that do not hold the home are working copies
+(`runtime_source=working-copy`). Live file identity is the receipt plus
+occupancy path (`identity_status=receipt-occupancy`). Lab expected-identity
+files are archive-only (ADR 0012).
 
 **Never say “schema N” without the kind.** Operator text should not mention
 schema numbers unless the reader is editing JSON. ADR 0004 objects, the
@@ -695,7 +698,7 @@ this work; the skill is procedural and does not outrank these sources.
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.
 - Only non-home ranks receive temporary or pinned working replicas
-  (`runtime_source=sealed-hot`). The occupancy rank uses a symlink/view of the
+  (`runtime_source=working-copy`). The occupancy rank uses a symlink/view of the
   durable tree, not a second copy.
 - Full content verification happens at trust boundaries. A serve-time metadata
   witness may accelerate an unchanged launch only after full verification;

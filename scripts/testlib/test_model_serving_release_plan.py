@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for unreviewed Model Serving Release planning."""
+"""Contracts for draft Model Serving Release planning."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             self.fail(f"command unexpectedly passed:\nstdout={result.stdout}")
         return result
 
-    def test_public_cli_builds_and_verifies_unreviewed_candidate(self) -> None:
+    def test_public_cli_builds_and_verifies_draft_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = pathlib.Path(raw)
             manifest_path = root / "manifest.json"
@@ -180,7 +180,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
                 "--json",
             )
             result = json.loads(build.stdout)
-            self.assertEqual(result["state"], "unreviewed")
+            self.assertEqual(result["state"], "draft")
             self.assertEqual(result["authority"], "none")
             self.assertEqual(result["promotion"], "not-authorized")
             self.assertEqual(
@@ -417,7 +417,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 model_serving_release_plan.render_result(
                     {
-                        "state": "unreviewed",
+                        "state": "draft",
                         "authority": "none",
                         "profile": PROFILE,
                         "release_id": "a" * 64,

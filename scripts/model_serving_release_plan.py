@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify unreviewed ADR-0004 release-planning candidates.
+"""Build and verify draft ADR-0004 release-planning candidates.
 
 This module turns one sourced profile, one complete content manifest, one
 explicit runtime/hardware envelope, and frozen criteria into the pure release
@@ -575,7 +575,7 @@ def build_candidate_document(
     candidate: dict[str, Any] = {
         "schema_version": CANDIDATE_SCHEMA_VERSION,
         "kind": CANDIDATE_KIND,
-        "state": "unreviewed",
+        "state": "draft",
         "authority": "none",
         "profile": profile,
         "source_kind": source_kind,
@@ -610,7 +610,7 @@ def validate_candidate_document(candidate: Any) -> dict[str, Any]:
         fail("release-plan candidate schema_version is unsupported")
     if candidate.get("kind") != CANDIDATE_KIND:
         fail("release-plan candidate kind is invalid")
-    if candidate.get("state") != "unreviewed" or candidate.get("authority") != "none":
+    if candidate.get("state") != "draft" or candidate.get("authority") != "none":
         fail("release-plan candidate cannot claim reviewed authority")
     profile = candidate.get("profile")
     if (
@@ -649,7 +649,7 @@ class VerifiedReleasePlanCandidate:
 def load_verified_release_plan_candidate(
     candidate_dir: str | pathlib.Path,
 ) -> VerifiedReleasePlanCandidate:
-    """Load a hardened, schema-validated unreviewed release-plan candidate.
+    """Load a hardened, schema-validated draft release-plan candidate.
 
     Shared filesystem primitives enforce the immutable directory. This module
     still owns candidate, release, and contract schema validation.

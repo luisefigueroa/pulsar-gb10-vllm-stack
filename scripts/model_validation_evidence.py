@@ -59,6 +59,8 @@ RUNTIME_SOURCES = {
     "replicated-cache",
     "absolute-path",
     "durable-home",
+    "working-copy",
+    # Issued ADR 0004 run records still store sealed-hot.
     "sealed-hot",
     "live-mount",
 }

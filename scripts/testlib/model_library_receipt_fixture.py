@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builders for source-attested acquisition unit and CLI tests."""
+"""Builders for download-receipt acquisition unit and CLI tests."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_identity, model_library  # noqa: E402
-from scripts import model_library_source_attested as source_attested  # noqa: E402
+from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts.topology_manifest import topology_digest  # noqa: E402
 
 
@@ -284,7 +284,7 @@ exec bash -c "$command"
 
 def main() -> int:
     if len(sys.argv) != 2:
-        raise SystemExit("usage: model_library_source_attested_fixture.py ROOT")
+        raise SystemExit("usage: model_library_receipt_fixture.py ROOT")
     write_cli_fixture(pathlib.Path(sys.argv[1]).resolve())
     return 0
 

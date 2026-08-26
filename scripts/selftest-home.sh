@@ -749,12 +749,12 @@ assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node" \
 assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
   "idle rank 2 preserves exact-service eligibility"
 
-# library-hot stop discloses restage cost from the profile WEIGHTS_GIB
+# local-files stop discloses restage cost from the profile WEIGHTS_GIB
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True library-hot)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
 run_home $'3\n1\n1\ny\n7\n'
 assert_file_contains "$STATE/logs/home.combined" "free ~29 GiB now" \
-  "stop discloses restage bytes for library-hot"
+  "stop discloses restage bytes for local-files"
 assert_file_contains "$STATE/logs/home.combined" "Keep prepared views" \
   "stop offers retain as the first prepared-view choice"
 assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node --retain-weights" \
@@ -763,17 +763,17 @@ assert_file_not_contains "$STATE/logs/down.log" "estimated_footprint" \
   "stop disclosure does not pass GPU footprint as disk"
 
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True library-hot)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
 run_home $'3\n1\n2\ny\n7\n'
 assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node --purge-hot" \
   "home free choice passes --purge-hot"
 
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True library-hot)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
 run_home $'3\n1\n1\nn\n7\n'
-assert_false "library-hot decline: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "local-files decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" \
-  "library-hot stop still requires final confirmation"
+  "local-files stop still requires final confirmation"
 
 # ---------------------------------------------------------------------------
 # 6) Stale maintenance

@@ -61,13 +61,13 @@ class RemoteHomeActivationContracts(unittest.TestCase):
                     "identity_key": (
                         f"Qwen/Qwen3-1.7B@{self.revision}"
                     ),
-                    "validation": "legacy-unsealed",
+                    "validation": "receipt-occupancy",
                     "profiles": ["qwen3-1.7b-2node"],
                     "profile_validation": [
                         {
                             "profile": "qwen3-1.7b-2node",
                             "profile_status": "tested",
-                            "identity_status": "legacy-unsealed",
+                            "identity_status": "receipt-occupancy",
                             "expected_model_seal_ref": None,
                             "expected_model_seal": None,
                         }
@@ -96,7 +96,7 @@ class RemoteHomeActivationContracts(unittest.TestCase):
         )
 
     def plan(self, inventory: dict[str, object]) -> dict[str, object]:
-        return model_library.plan_activate(
+        return model_library.plan_prepare(
             catalog_path=str(self.catalog_path),
             profile="qwen3-1.7b-2node",
             topology_id="topology-test",

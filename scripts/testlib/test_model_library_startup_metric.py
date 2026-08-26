@@ -36,7 +36,7 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             "transport": "ssh-roce",
             "integrity_scheme": "sha256-snapshot-manifest-v1",
             "model_revision": "d" * 40,
-            "identity_status": "legacy-unsealed",
+            "identity_status": "receipt-occupancy",
             "runtime_model_path": (
                 "/root/.cache/huggingface/hub/models--Org--Fixture/"
                 + "snapshots/"
@@ -57,8 +57,8 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
     def test_metric_binds_sealed_content_transport_and_redacted_owner(self) -> None:
         metric = self.invoke()
         self.assertEqual(metric["schema_version"], 2)
-        self.assertEqual(metric["weight_source"], "library-hot")
-        self.assertEqual(metric["cache_state"], "sealed-hot")
+        self.assertEqual(metric["weight_source"], "local-files")
+        self.assertEqual(metric["cache_state"], "working-copy")
         self.assertEqual(metric["content_id"], "b" * 12)
         self.assertEqual(metric["content_digest"], "c" * 64)
         self.assertEqual(metric["transport"], "ssh-roce")
@@ -66,7 +66,7 @@ class ModelLibraryStartupMetricContracts(unittest.TestCase):
             metric["integrity_scheme"], "sha256-snapshot-manifest-v1"
         )
         self.assertEqual(metric["model_revision"], "d" * 40)
-        self.assertEqual(metric["identity_status"], "legacy-unsealed")
+        self.assertEqual(metric["identity_status"], "receipt-occupancy")
         self.assertNotIn("model_seal_id", metric)
         self.assertNotIn("validation_bundle_id", metric)
         self.assertTrue(metric["runtime_model_path"].endswith("d" * 40))

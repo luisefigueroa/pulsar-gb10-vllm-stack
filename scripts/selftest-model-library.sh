@@ -107,7 +107,7 @@ assert cat["schema_version"] == 2
 assert cat["topology_id"] == "topo-test-001"
 models = {m["model_id"]: m for m in cat["models"]}
 q = models["Qwen/Qwen3-1.7B"]
-assert q["validation"] == "legacy-unsealed", q
+assert q["validation"] == "receipt-occupancy", q
 assert q["duplicate"] is True
 assert q["has_primary"] is False
 assert "qwen3-1.7b-2node" in q["profiles"]
@@ -182,7 +182,7 @@ export PULSAR_HOT_ROOT="$HOT"
 export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))
 export PULSAR_HOT_RESERVE_BYTES=0
 
-plan=$(python3 "$PY" plan-activate \
+plan=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
@@ -191,7 +191,7 @@ plan=$(python3 "$PY" plan-activate \
   --backend copy \
   --nodes 1)
 action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-assert_eq "plan-activate wants copy" "$action" "copy"
+assert_eq "plan-prepare wants copy" "$action" "copy"
 instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
 hub_src=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_source"])')
 hub_dst=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_dest"])')
@@ -206,7 +206,7 @@ python3 "$PY" write-hot-stamp --instance-dir "$instance" --stamp-json "$stamp_js
 python3 "$PY" verify-hot --instance-dir "$instance" --profile qwen3-1.7b-2node --topology-id topo-test-001 --models-dir "$STATE/models" >/dev/null \
   && ok "verify-hot after local copy" || not_ok "verify-hot after local copy"
 
-plan2=$(python3 "$PY" plan-activate \
+plan2=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
@@ -238,7 +238,7 @@ python3 "$PY" budget-admission \
   --hot-root "$HOT" \
   --rank 0 \
   --node-id node-a \
-  --runtime-source sealed-hot \
+  --runtime-source working-copy \
   --required-owned-bytes 2 \
   --compact >"$STATE/budget-blocked.json"
 python3 -c 'import json; d=json.load(open("'"$STATE/budget-blocked.json"'")); assert d["state"]=="blocked"; assert d["blockers"][0]["code"]=="hard-cap-exceeded"' \
@@ -316,7 +316,7 @@ python3 "$PY" build \
 
 # Retired fabric preparation fails closed (ADR 0006).
 set +e
-python3 "$PY" plan-activate \
+python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog-fabric.json" \
   --profile qwen3-1.7b-2node \
   --topology-id "$TOPO_ID" \
@@ -326,7 +326,7 @@ python3 "$PY" plan-activate \
   --backend fabric \
   --nodes 2 >/dev/null 2>"$STATE/plan-fabric.err"
 fab_rc=$?
-python3 "$PY" plan-activate \
+python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog-fabric.json" \
   --profile qwen3-1.7b-2node \
   --topology-id "$TOPO_ID" \
@@ -336,7 +336,7 @@ python3 "$PY" plan-activate \
   --transport nfs-rdma \
   --nodes 2 >/dev/null 2>"$STATE/plan-nfs-rdma.err"
 nfs_rc=$?
-python3 "$PY" plan-activate \
+python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
   --profile qwen3-1.7b-2node \
   --topology-id topo-test-001 \
@@ -352,8 +352,8 @@ assert_true "unknown backend rejected" test "$bad_rc" -ne 0
 # Launch wiring is library-only (no docker)
 assert_true "up.sh has no weight-mode axis" \
   bash -c "! grep -q 'WEIGHT_SOURCE=' '$REPO_DIR/scripts/up.sh'"
-assert_true "start-cluster labels launches library-hot" \
-  bash -c "grep -q write_launch_plan_file '$REPO_DIR/cluster/start-cluster.sh' && grep -q 'LABEL_WEIGHT_SOURCE' '$REPO_DIR/scripts/launch_plan.py' && grep -q 'STORAGE_MECHANISM = \"library-hot\"' '$REPO_DIR/scripts/launch_plan.py'"
+assert_true "start-cluster labels launches local-files" \
+  bash -c "grep -q write_launch_plan_file '$REPO_DIR/cluster/start-cluster.sh' && grep -q 'LABEL_WEIGHT_SOURCE' '$REPO_DIR/scripts/launch_plan.py' && grep -q 'STORAGE_MECHANISM = \"local-files\"' '$REPO_DIR/scripts/launch_plan.py'"
 assert_true "cluster launch validates remote expected identity" \
   grep -q -- --expected-validation-json "$REPO_DIR/cluster/start-cluster.sh"
 assert_true "cluster launch uses serve-time witness with full-verify fallback" \
@@ -531,9 +531,9 @@ stage2=$(python3 "$PY" plan-cold-stage \
 stage2_action=$(printf '%s' "$stage2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "stage-only skip when hot ready" "$stage2_action" "skip"
 
-# Preparation stays warm-only (the internal plan-activate command rejects a cold-only profile)
+# Preparation stays warm-only (the internal plan-prepare command rejects a cold-only profile)
 set +e
-python3 "$PY" plan-activate \
+python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog-cold.json" \
   --profile demo-cold-only \
   --topology-id topo-cold-001 \
@@ -543,7 +543,7 @@ python3 "$PY" plan-activate \
   --nodes 1 >/dev/null 2>"$STATE/activate-cold.err"
 ac_rc=$?
 set -e
-assert_eq "plan-activate refuses cold-only model" "$ac_rc" "1"
+assert_eq "plan-prepare refuses cold-only model" "$ac_rc" "1"
 
 assert_true "model-library.sh documents cold" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold'"
@@ -553,7 +553,7 @@ assert_true "prepare is the preferred CLI command" \
 assert_true "multi-rank prepare defaults to ssh-roce" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'multi-rank uses ssh-roce'"
 assert_true "prepare help does not call one-rank experimental" \
-  bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'one-rank and legacy-unsealed'"
+  bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'one-rank and receipt-occupancy'"
 set +e
 activate_out=$("$REPO_DIR/scripts/model-library.sh" activate qwen3-1.7b 2>&1)
 activate_rc=$?

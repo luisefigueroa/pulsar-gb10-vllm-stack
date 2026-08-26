@@ -201,8 +201,8 @@ import json
 import os
 
 data = json.loads(os.environ["WEIGHTS_JSON"])
-assert data["source"] == "library-hot", data
-assert data["identity_status"] == "legacy-unsealed", data
+assert data["source"] == "local-files", data
+assert data["identity_status"] == "receipt-occupancy", data
 assert data["model"] == "qwen3.8-27b-fp8-2node", data
 assert data["nodes"] == 2, data
 PY2

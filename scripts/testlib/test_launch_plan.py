@@ -49,7 +49,7 @@ def rank(
     }
 
 
-def facts(*, nodes: int = 1, identity: str = "legacy-unsealed", extra: dict | None = None) -> dict:
+def facts(*, nodes: int = 1, identity: str = "receipt-occupancy", extra: dict | None = None) -> dict:
     ranks = [
         rank(0, node_id=NODE_A, hostname="spark-a", ssh_host="local", ip="192.0.2.10")
     ]
@@ -64,7 +64,7 @@ def facts(*, nodes: int = 1, identity: str = "legacy-unsealed", extra: dict | No
             )
         )
     storage = {
-        "mechanism": "library-hot",
+        "mechanism": "local-files",
         "identity_status": identity,
         "revision": REVISION,
         "home_node_id": NODE_A,
@@ -119,8 +119,8 @@ class LaunchPlanContracts(unittest.TestCase):
         }
         self.assertTrue(shared <= set(spec1["labels"]))
         self.assertTrue(shared <= set(spec2["labels"]))
-        self.assertEqual(spec1["labels"][plan.LABEL_WEIGHT_SOURCE], "library-hot")
-        self.assertEqual(spec2["labels"][plan.LABEL_WEIGHT_SOURCE], "library-hot")
+        self.assertEqual(spec1["labels"][plan.LABEL_WEIGHT_SOURCE], "local-files")
+        self.assertEqual(spec2["labels"][plan.LABEL_WEIGHT_SOURCE], "local-files")
         self.assertEqual(spec1["mounts"], spec2["mounts"])
         self.assertTrue(spec1["api_auth_on_rank"])
         self.assertTrue(spec2["api_auth_on_rank"])
@@ -163,11 +163,11 @@ class LaunchPlanContracts(unittest.TestCase):
             plan.build_launch_plan(document)
         document = facts()
         document["storage"]["mechanism"] = "replicated"
-        with self.assertRaisesRegex(plan.LaunchPlanError, "library-hot"):
+        with self.assertRaisesRegex(plan.LaunchPlanError, "local-files"):
             plan.build_launch_plan(document)
 
     def test_storage_refuses_retired_seal_fields(self) -> None:
-        document = facts(identity="legacy-unsealed")
+        document = facts(identity="receipt-occupancy")
         document["storage"]["model_seal_id"] = SEAL
         with self.assertRaisesRegex(plan.LaunchPlanError, "ADR 0012"):
             plan.build_launch_plan(document)

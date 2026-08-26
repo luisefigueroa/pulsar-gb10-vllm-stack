@@ -79,7 +79,7 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
 
     def assert_no_authority(self, payload: dict[str, object], dest: pathlib.Path | None = None) -> None:
         self.assertEqual(payload["schema_version"], 1)
-        self.assertEqual(payload.get("state"), "unreviewed")
+        self.assertEqual(payload.get("state"), "draft")
         self.assertEqual(payload.get("authority"), "none")
         self.assertEqual(payload.get("privacy_review"), "pending")
         self.assertFalse(payload.get("promotion_authorized", False))

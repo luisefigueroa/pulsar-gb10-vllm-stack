@@ -63,14 +63,14 @@ FORBIDDEN_PERMIT_KEYS = frozenset(
         "authorisation",
     }
 )
-IDENTITY_STATUSES = ("legacy-unsealed", "unvalidated")
+IDENTITY_STATUSES = ("receipt-occupancy", "unvalidated")
 LIFECYCLE_ACTIONS = ("start", "replace", "dry-run")
 SPEC_DECODE_SOURCES = (
     "profile-default",
     "forced-on",
     "forced-off",
 )
-STORAGE_MECHANISM = "library-hot"
+STORAGE_MECHANISM = "local-files"
 OWNERSHIP_CLASSIFIER = "inventory"
 MEMORY_RESULTS = ("unchecked", "pass", "warn", "fail")
 DEFAULT_RUNTIME = {
@@ -277,7 +277,7 @@ def reject_removed_weight_axis(value: Any, field: str) -> None:
             if lowered in {"weight_source", "weight_mode"}:
                 fail(
                     f"{field}.{key}: weight-source/weight-mode are removed "
-                    "(ADR 0006); storage.mechanism is library-hot"
+                    "(ADR 0006); storage.mechanism is local-files"
                 )
             reject_removed_weight_axis(child, f"{field}.{key}")
     elif isinstance(value, list):
@@ -325,12 +325,12 @@ def _validate_storage(storage: dict[str, Any], *, nodes: int) -> dict[str, Any]:
     storage = require_object(storage, "storage")
     mechanism = require_text(storage.get("mechanism"), "storage.mechanism")
     if mechanism != STORAGE_MECHANISM:
-        fail("storage.mechanism must be library-hot (ADR 0006)")
+        fail("storage.mechanism must be local-files (ADR 0006)")
     identity = require_text(
         storage.get("identity_status"), "storage.identity_status"
     )
     if identity not in IDENTITY_STATUSES:
-        fail("storage.identity_status is not a servable library-hot status")
+        fail("storage.identity_status is not a servable local-files status")
     revision = require_text(storage.get("revision"), "storage.revision")
     if not REVISION.fullmatch(revision):
         fail("storage.revision is invalid")
@@ -351,7 +351,7 @@ def _validate_storage(storage: dict[str, Any], *, nodes: int) -> dict[str, Any]:
     transport = require_text(storage.get("transport"), "storage.transport")
     if transport not in ("ssh-control", "ssh-roce"):
         fail(
-            "storage.transport is not a current library-hot transport "
+            "storage.transport is not a current local-files transport "
             f"(nodes={nodes})"
         )
     cleaned = {

@@ -1090,7 +1090,9 @@ for key, ranks_list in sorted(groups.items(), key=lambda kv: kv[0]):
         reasons.append("one or more ranks lack weight source")
     if len(weight_sources) > 1:
         reasons.append("ranks disagree on weight source")
-    if weight_source == "library-hot" and (
+    if weight_source == "library-hot":
+        weight_source = "local-files"
+    if weight_source == "local-files" and (
         weight_owner_missing
         or weight_config_missing
         or len(weight_owners) != 1

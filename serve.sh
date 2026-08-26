@@ -86,8 +86,8 @@ resolve_single_node_placement "$NODE_SELECTOR" \
 
 [ "$(model_source_kind)" = hf ] \
   || die "non-HF model profiles are not servable (ADR 0006)"
-LIBRARY_HOT_HOME_NODE_ID=""
-LIBRARY_HOT_CONTENT_ID=""
+LIBRARY_VIEW_HOME_NODE_ID=""
+LIBRARY_VIEW_CONTENT_ID=""
 # Prefer topology from placement when available
 if [ -z "${CLUSTER_TOPOLOGY_ID:-}" ] && [ -n "${SINGLE_NODE_TOPOLOGY_ID:-}" ]; then
   CLUSTER_TOPOLOGY_ID="$SINGLE_NODE_TOPOLOGY_ID"
@@ -95,8 +95,8 @@ fi
 load_cluster_topology >/dev/null 2>&1 && [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] \
   || die "serving requires a confirmed topology manifest (one machine is fine): run scripts/detect-fabric.sh --write-topology"
 resolve_library_hot_for_profile "$MODEL_NAME"
-runtime_model="$LIBRARY_HOT_CONTAINER_MODEL_PATH"
-echo "library identity=$LIBRARY_HOT_IDENTITY_STATUS revision=${LIBRARY_HOT_REVISION:0:12} model_path=$runtime_model"
+runtime_model="$LIBRARY_VIEW_CONTAINER_MODEL_PATH"
+echo "library identity=$LIBRARY_VIEW_IDENTITY_STATUS revision=${LIBRARY_VIEW_REVISION:0:12} model_path=$runtime_model"
 
 CONTAINER=$(container_name_for "$MODEL_NAME" 1)
 PLAN_FILE=$(mktemp "${TMPDIR:-/tmp}/pulsar-launch-plan.XXXXXX")

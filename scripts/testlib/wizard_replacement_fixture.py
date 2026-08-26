@@ -56,7 +56,7 @@ def seed_running(args: argparse.Namespace) -> int:
         "model_revision": REVISION,
         "model_seal_id": None,
         "validation_bundle_id": None,
-        "model_identity_status": "legacy-unsealed",
+        "model_identity_status": "receipt-occupancy",
         "weight_owner_node_id": home_node_id,
         "weight_configuration_id": CONTENT_ID,
     })
@@ -68,11 +68,11 @@ def seed_running(args: argparse.Namespace) -> int:
             "io.pulsar.gb10.rank": str(index),
             "io.pulsar.gb10.topology": topology_id,
             "io.pulsar.gb10.node-id": nodes_by_rank[index],
-            "io.pulsar.gb10.weight-source": "library-hot",
+            "io.pulsar.gb10.weight-source": "local-files",
             "io.pulsar.gb10.weight-owner": home_node_id,
             "io.pulsar.gb10.weight-config": CONTENT_ID,
             "io.pulsar.gb10.model-revision": REVISION,
-            "io.pulsar.gb10.model-identity-status": "legacy-unsealed",
+            "io.pulsar.gb10.model-identity-status": "receipt-occupancy",
             "io.pulsar.gb10.launch-contract": args.contract_id,
             "io.pulsar.gb10.spec-decode": "on",
         }

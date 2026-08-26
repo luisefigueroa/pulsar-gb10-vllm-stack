@@ -93,7 +93,7 @@ running["services"] = [{
     "safe_to_stop": True,
     "complete": True,
     "observability": "complete",
-    "weight_source": "library-hot",
+    "weight_source": "local-files",
     "required_remote_probes": [{
         "rank": "1", "node": "worker", "status": "ok", "reason": None,
     }],
@@ -219,7 +219,7 @@ one_health = {
         "metadata_status": "current",
         "runtime_source": "durable-home",
         "retention": "ephemeral",
-        "identity_status": "legacy-unsealed",
+        "identity_status": "receipt-occupancy",
         "witness_status": "match",
         "active_reference": False,
         "repairable": False,
@@ -486,7 +486,7 @@ assert_contains "$STATE/logs/output.log" \
   "same-source restart stops without a restore promise (ADR 0012)"
 assert_contains "$STATE/logs/down.log" \
   '^qwen3.8-27b-fp8-2node$' \
-  "same-source restart stops the previous library-hot service"
+  "same-source restart stops the previous local-files service"
 assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
   "restart launches through the library with no mode flag"
 

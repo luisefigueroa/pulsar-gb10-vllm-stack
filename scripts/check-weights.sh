@@ -58,7 +58,7 @@ emit_weights_gap() {
       python3 -c '
 import json, os
 payload = {
-    "state": "missing", "source": "library-hot", "ok": False,
+    "state": "missing", "source": "local-files", "ok": False,
     "model": os.environ["NAME_V"], "nodes": int(os.environ["NODES_V"]),
     "reason": os.environ["REASON_V"],
     "remediation": os.environ["REMEDIATION_V"],
@@ -168,7 +168,7 @@ if [ "$JSON" = 1 ]; then
   printf '%s\n' "$hot_info" | NAME_V="$NAME" NODES_V="$NODES" python3 -c '
 import json, os, sys
 d = json.load(sys.stdin)
-print(json.dumps({"state": "ok", "source": "library-hot", "ok": True,
+print(json.dumps({"state": "ok", "source": "local-files", "ok": True,
   "model": os.environ["NAME_V"], "nodes": int(os.environ["NODES_V"]),
   "instance_dir": d["instance_dir"], "hub_path": d["hub_path"],
   "home_node_id": d["stamp"].get("home_node_id"),
@@ -181,7 +181,7 @@ print(json.dumps({"state": "ok", "source": "library-hot", "ok": True,
 elif [ "${QUIET:-0}" = 1 ]; then
   identity_status=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "invalid")')
   case "$identity_status" in
-    legacy-unsealed) identity_label="receipt/occupancy" ;;
+    receipt-occupancy) identity_label="receipt/occupancy" ;;
     unvalidated) identity_label="identity not checked" ;;
     *) identity_label="$identity_status" ;;
   esac

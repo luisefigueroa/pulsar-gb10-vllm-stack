@@ -13,8 +13,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
 from scripts import model_library_cold_archive as cold_archive  # noqa: E402
-from scripts import model_library_source_attested as source_attested  # noqa: E402
-from scripts.testlib import model_library_source_attested_fixture as fixture  # noqa: E402
+from scripts import model_library_receipt as source_attested  # noqa: E402
+from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
 
 
 class ColdArchiveContracts(unittest.TestCase):

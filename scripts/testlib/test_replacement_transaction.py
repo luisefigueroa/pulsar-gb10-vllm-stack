@@ -33,7 +33,7 @@ CONTENT = "6" * 12
 MANIFEST = "7" * 64
 
 
-def inventory(*, source: str = "library-hot") -> dict[str, object]:
+def inventory(*, source: str = "local-files") -> dict[str, object]:
     common = {
         "io.pulsar.gb10.managed": "true",
         "io.pulsar.gb10.conf": PROFILE,
@@ -49,12 +49,12 @@ def inventory(*, source: str = "library-hot") -> dict[str, object]:
             "io.pulsar.gb10.rank": str(index),
             "io.pulsar.gb10.node-id": f"node-{index}",
         }
-        if source == "library-hot":
+        if source == "local-files":
             labels.update({
                 "io.pulsar.gb10.weight-owner": "node-1",
                 "io.pulsar.gb10.weight-config": CONTENT,
                 "io.pulsar.gb10.model-revision": REVISION,
-                "io.pulsar.gb10.model-identity-status": "legacy-unsealed",
+                "io.pulsar.gb10.model-identity-status": "receipt-occupancy",
             })
         ranks.append({
             "rank": str(index),
@@ -75,12 +75,12 @@ def inventory(*, source: str = "library-hot") -> dict[str, object]:
         "weight_source": source,
         "launch_contract_id": CONTRACT,
         "spec_decode": "on",
-        "model_revision": REVISION if source == "library-hot" else None,
+        "model_revision": REVISION if source == "local-files" else None,
         "model_seal_id": None,
         "validation_bundle_id": None,
-        "model_identity_status": "legacy-unsealed" if source == "library-hot" else None,
-        "weight_owner_node_id": "node-1" if source == "library-hot" else None,
-        "weight_configuration_id": CONTENT if source == "library-hot" else None,
+        "model_identity_status": "receipt-occupancy" if source == "local-files" else None,
+        "weight_owner_node_id": "node-1" if source == "local-files" else None,
+        "weight_configuration_id": CONTENT if source == "local-files" else None,
     }
     return {
         "schema_version": 1,
@@ -111,9 +111,9 @@ def health(*, retention: str = "ephemeral", active: bool = True) -> dict[str, ob
                 "revision": REVISION,
                 "metadata_schema": 3,
                 "metadata_status": "current",
-                "runtime_source": "sealed-hot",
+                "runtime_source": "working-copy",
                 "retention": retention,
-                "identity_status": "legacy-unsealed",
+                "identity_status": "receipt-occupancy",
                 "witness_status": "match",
                 "active_reference": active,
             },
@@ -125,7 +125,7 @@ def health(*, retention: str = "ephemeral", active: bool = True) -> dict[str, ob
                 "metadata_status": "current",
                 "runtime_source": "durable-home",
                 "retention": retention,
-                "identity_status": "legacy-unsealed",
+                "identity_status": "receipt-occupancy",
                 "witness_status": "match",
                 "active_reference": active,
             },
@@ -146,7 +146,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         path.write_text(json.dumps(value) + "\n", encoding="utf-8")
         return path
 
-    def capture(self, *, source: str = "library-hot", report=None) -> pathlib.Path:
+    def capture(self, *, source: str = "local-files", report=None) -> pathlib.Path:
         inv = self.write("inventory.json", inventory(source=source))
         report_path = self.write("health.json", report) if report is not None else None
         output = self.root / "transaction.json"
@@ -167,7 +167,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         service = saved["previous_service"]
         self.assertEqual(service["launch_contract_id"], CONTRACT)
         self.assertEqual(service["spec_decode"], "on")
-        self.assertEqual(service["weight"]["source"], "library-hot")
+        self.assertEqual(service["weight"]["source"], "local-files")
         self.assertEqual(service["placement"]["mode"], "exact-topology")
         self.assertEqual(
             service["placement"]["ranks"],
@@ -193,7 +193,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         self.assertFalse((self.root / "transaction.json").exists())
 
     def test_library_capture_requires_active_exact_views_and_records_retention(self) -> None:
-        path = self.capture(source="library-hot", report=health())
+        path = self.capture(source="local-files", report=health())
         saved = tx.load_json(path)
         weight = saved["previous_service"]["weight"]
         self.assertEqual(weight["revision"], REVISION)
@@ -203,7 +203,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         bad = health(active=False)
         path.unlink()
         with self.assertRaisesRegex(tx.TransactionError, "not bound"):
-            self.capture(source="library-hot", report=bad)
+            self.capture(source="local-files", report=bad)
 
     def test_phase_is_monotonic_and_file_is_exclusive(self) -> None:
         path = self.capture(report=health())
@@ -217,11 +217,11 @@ class ReplacementTransactionTests(unittest.TestCase):
             self.capture(report=health())
 
     def test_rollback_rejects_profile_topology_and_retention_drift(self) -> None:
-        path = self.capture(source="library-hot", report=health())
+        path = self.capture(source="local-files", report=health())
         with contextlib.redirect_stdout(io.StringIO()):
             tx.cmd_phase(argparse.Namespace(path=str(path), to="retained"))
             tx.cmd_phase(argparse.Namespace(path=str(path), to="stopped"))
-        inv_path = self.write("rollback-inventory.json", inventory(source="library-hot"))
+        inv_path = self.write("rollback-inventory.json", inventory(source="local-files"))
         pinned_path = self.write("pinned.json", health(retention="pinned", active=False))
         args = argparse.Namespace(
             path=str(path), launch_contract_id=CONTRACT,
@@ -233,7 +233,7 @@ class ReplacementTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(tx.TransactionError, "profile changed"):
             tx.cmd_verify_rollback(args)
         args.launch_contract_id = CONTRACT
-        drifted = inventory(source="library-hot")
+        drifted = inventory(source="local-files")
         drifted["topology_id"] = "9" * 64
         args.inventory = str(self.write("drifted-inventory.json", drifted))
         with self.assertRaisesRegex(tx.TransactionError, "topology changed"):
@@ -244,7 +244,7 @@ class ReplacementTransactionTests(unittest.TestCase):
             tx.cmd_verify_rollback(args)
 
     def test_transaction_tamper_and_library_drift_fail_closed(self) -> None:
-        path = self.capture(source="library-hot", report=health())
+        path = self.capture(source="local-files", report=health())
         saved = tx.load_json(path)
         saved["previous_service"]["weight"]["runtime_views"] = []
         with self.assertRaisesRegex(tx.TransactionError, "runtime views are incomplete"):
@@ -256,11 +256,11 @@ class ReplacementTransactionTests(unittest.TestCase):
             tx.validate_transaction(saved)
 
         path.unlink()
-        path = self.capture(source="library-hot", report=health())
+        path = self.capture(source="local-files", report=health())
         with contextlib.redirect_stdout(io.StringIO()):
             tx.cmd_phase(argparse.Namespace(path=str(path), to="retained"))
             tx.cmd_phase(argparse.Namespace(path=str(path), to="stopped"))
-        inv_path = self.write("exact-inventory.json", inventory(source="library-hot"))
+        inv_path = self.write("exact-inventory.json", inventory(source="local-files"))
         report = health(retention="pinned", active=False)
         report["models"][0]["expected_manifest"] = "9" * 64
         args = argparse.Namespace(

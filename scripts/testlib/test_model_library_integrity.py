@@ -66,7 +66,7 @@ class ModelLibraryIntegrityContracts(unittest.TestCase):
             content_digest=self.manifest["manifest_id"],
             integrity_manifest=self.manifest,
             validation={
-                "identity_status": "legacy-unsealed",
+                "identity_status": "receipt-occupancy",
                 "expected_seal": None,
                 "observed_seal": model_library.observed_model_seal_projection(
                     self.manifest

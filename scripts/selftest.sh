@@ -53,7 +53,7 @@ run "model library serve-witness contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_witness.py"
 run "Model Serving Release and Validation Contract schemas" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release.py"
-run "Model Serving Release unreviewed planning" \
+run "Model Serving Release draft planning" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_plan.py"
 run "Model Serving Release evidence and decision schemas" \
   python3 "$REPO_DIR/scripts/testlib/test_model_validation_evidence.py"
@@ -83,14 +83,14 @@ run "model library durable-home acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_home_acquisition.py"
 run "model library durable-home acquisition public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-acquisition.sh"
-run "model library source-attested acquisition contracts" \
-  python3 "$REPO_DIR/scripts/testlib/test_model_library_source_attested.py"
+run "model library download-receipt acquisition contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_receipt.py"
 run "model library receipt-indexed cold archive contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_archive.py"
 run "model library Hugging Face source-inventory contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_hf_source_inventory.py"
-run "model library source-attested acquisition public CLI" \
-  "$REPO_DIR/scripts/selftest-model-library-source-attested.sh"
+run "model library download-receipt acquisition public CLI" \
+  "$REPO_DIR/scripts/selftest-model-library-receipt.sh"
 run "model library runtime-view materialization" \
   "$REPO_DIR/scripts/selftest-model-library-materialize.sh"
 run "model library persistent-primary contracts" \
@@ -115,7 +115,7 @@ run "serving replacement transaction contracts" \
 run "wizard model-switch + dispatcher" "$REPO_DIR/scripts/selftest-wizard-switch.sh"
 run "wizard explicit model-library serving" \
   "$REPO_DIR/scripts/selftest-wizard-model-library.sh"
-run "library-hot stop retention policy" \
+run "local-files stop retention policy" \
   python3 "$REPO_DIR/scripts/testlib/test_down_hot_policy.py"
 run "workflow menu + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 

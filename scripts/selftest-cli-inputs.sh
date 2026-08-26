@@ -55,8 +55,8 @@ expect_failure 2 "retired (ADR 0012)" "catalog list refuses removed --validated"
   "$REPO_DIR/scripts/model-library.sh" catalog list --validated
 expect_failure 2 "use prepare" "model-library refuses removed activate" \
   "$REPO_DIR/scripts/model-library.sh" activate qwen3.8-27b-fp8
-expect_failure 2 "Drop the flag" "python plan-activate refuses --allow-unvalidated" \
-  python3 "$REPO_DIR/scripts/model_library.py" plan-activate --allow-unvalidated
+expect_failure 2 "Drop the flag" "python plan-prepare refuses --allow-unvalidated" \
+  python3 "$REPO_DIR/scripts/model_library.py" plan-prepare --allow-unvalidated
 expect_failure 2 "retired (ADR 0012)" "python list refuses removed --validated" \
   python3 "$REPO_DIR/scripts/model_library.py" list --catalog /dev/null --validated
 

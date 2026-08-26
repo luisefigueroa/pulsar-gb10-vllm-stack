@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stop-time library-hot retention contracts with local command shims."""
+"""Stop-time local-files retention contracts with local command shims."""
 
 from __future__ import annotations
 
@@ -141,7 +141,7 @@ class DownHotPolicyTests(unittest.TestCase):
         return len(json.loads(self.state.read_text(encoding="utf-8")))
 
     def test_library_hot_stop_retains_unpinned_views_by_default(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self._library_args(), "")
@@ -149,20 +149,20 @@ class DownHotPolicyTests(unittest.TestCase):
         self.assertEqual(self._container_count(), 0)
 
     def test_explicit_retain_does_not_call_the_library(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run("--retain-weights")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self._library_args(), "")
-        self.assertIn("retaining unpinned library-hot staging", result.stdout)
+        self.assertIn("retaining unpinned prepared views", result.stdout)
 
     def test_explicit_pin_retains_selected_placement(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run("--pin-weights")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self._library_args(), f"pin {PROFILE} --node head")
 
     def test_explicit_purge_can_remove_a_pin(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run("--purge-hot")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -177,7 +177,7 @@ class DownHotPolicyTests(unittest.TestCase):
         self.assertEqual(self._library_args(), "")
 
     def test_site_policy_purge_removes_unpinned_views(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run(extra_env={"PULSAR_HOT_STOP_POLICY": "purge"})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -187,7 +187,7 @@ class DownHotPolicyTests(unittest.TestCase):
         self.assertNotIn("--force-unpin", self._library_args())
 
     def test_retain_flag_overrides_site_policy_purge(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run(
             "--retain-weights",
             extra_env={"PULSAR_HOT_STOP_POLICY": "purge"},
@@ -196,7 +196,7 @@ class DownHotPolicyTests(unittest.TestCase):
         self.assertEqual(self._library_args(), "")
 
     def test_invalid_site_policy_fails_closed_before_stop(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run(extra_env={"PULSAR_HOT_STOP_POLICY": "evict"})
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("PULSAR_HOT_STOP_POLICY must be retain or purge", result.stderr)
@@ -204,13 +204,13 @@ class DownHotPolicyTests(unittest.TestCase):
         self.assertEqual(self._container_count(), 1)
 
     def test_empty_site_policy_fails_closed(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run(extra_env={"PULSAR_HOT_STOP_POLICY": ""})
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(self._container_count(), 1)
 
     def test_site_policy_purge_warns_when_library_refuses(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run(
             library_rc=7,
             extra_env={"PULSAR_HOT_STOP_POLICY": "purge"},
@@ -220,7 +220,7 @@ class DownHotPolicyTests(unittest.TestCase):
         self.assertNotIn("--force-unpin", self._library_args())
 
     def test_retention_flags_are_mutually_exclusive(self) -> None:
-        self._seed("library-hot")
+        self._seed("local-files")
         result = self._run("--retain-weights", "--purge-hot")
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(self._container_count(), 1)

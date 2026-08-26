@@ -1171,11 +1171,11 @@ library_hot_info_for_profile() {
 }
 
 # Resolve a ready working-copy instance for model-library launch.
-# Sets LIBRARY_HOT_INSTANCE_DIR, LIBRARY_HOT_HUB_PATH, LIBRARY_HOT_HOME_NODE_ID,
-# LIBRARY_HOT_CONTENT_ID, LIBRARY_HOT_CONTENT_DIGEST, LIBRARY_HOT_TRANSPORT,
-# LIBRARY_HOT_INTEGRITY_SCHEME, LIBRARY_HOT_MODEL_ID, LIBRARY_HOT_REVISION,
-# LIBRARY_HOT_CONTAINER_MODEL_PATH, LIBRARY_HOT_IDENTITY_STATUS,
-# LIBRARY_HOT_VALIDATION_JSON, and pinned state.
+# Sets LIBRARY_VIEW_INSTANCE_DIR, LIBRARY_VIEW_HUB_PATH, LIBRARY_VIEW_HOME_NODE_ID,
+# LIBRARY_VIEW_CONTENT_ID, LIBRARY_VIEW_CONTENT_DIGEST, LIBRARY_VIEW_TRANSPORT,
+# LIBRARY_VIEW_INTEGRITY_SCHEME, LIBRARY_VIEW_MODEL_ID, LIBRARY_VIEW_REVISION,
+# LIBRARY_VIEW_CONTAINER_MODEL_PATH, LIBRARY_VIEW_IDENTITY_STATUS,
+# LIBRARY_VIEW_VALIDATION_JSON, and pinned state.
 resolve_library_hot_for_profile() {
   local profile="${1:?profile required}" info
   local topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
@@ -1184,41 +1184,41 @@ resolve_library_hot_for_profile() {
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   info=$(library_hot_info_for_profile "$profile") \
     || die "model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
-  LIBRARY_HOT_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  LIBRARY_HOT_HUB_PATH=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_HUB_PATH=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["hub_path"])')
-  LIBRARY_HOT_HOME_NODE_ID=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_HOME_NODE_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")')
-  LIBRARY_HOT_CONTENT_ID=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_CONTENT_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
-  LIBRARY_HOT_CONTENT_DIGEST=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_CONTENT_DIGEST=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_digest") or "")')
-  LIBRARY_HOT_TRANSPORT=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_TRANSPORT=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("transport") or "")')
-  LIBRARY_HOT_INTEGRITY_SCHEME=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_INTEGRITY_SCHEME=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print((json.load(sys.stdin)["stamp"].get("integrity") or {}).get("scheme") or "")')
-  LIBRARY_HOT_MODEL_ID=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_MODEL_ID=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("model_id") or "")')
-  LIBRARY_HOT_REVISION=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_REVISION=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["stamp"].get("revision") or "")')
-  LIBRARY_HOT_CONTAINER_MODEL_PATH=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_CONTAINER_MODEL_PATH=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin).get("container_model_path") or "")')
-  LIBRARY_HOT_IDENTITY_STATUS=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_IDENTITY_STATUS=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "")')
-  LIBRARY_HOT_VALIDATION_JSON=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_VALIDATION_JSON=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
-  LIBRARY_HOT_PINNED=$(printf '%s' "$info" | python3 -c \
+  LIBRARY_VIEW_PINNED=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print("1" if json.load(sys.stdin)["stamp"].get("pinned") else "0")')
-  [ -n "$LIBRARY_HOT_CONTENT_ID" ] \
-    && [ -n "$LIBRARY_HOT_CONTENT_DIGEST" ] \
-    && [ -n "$LIBRARY_HOT_TRANSPORT" ] \
-    && [ -n "$LIBRARY_HOT_INTEGRITY_SCHEME" ] \
-    && [ -n "$LIBRARY_HOT_MODEL_ID" ] \
-    && [ -n "$LIBRARY_HOT_REVISION" ] \
-    && [ -n "$LIBRARY_HOT_CONTAINER_MODEL_PATH" ] \
-    && [ -n "$LIBRARY_HOT_IDENTITY_STATUS" ] \
-    && [ -n "$LIBRARY_HOT_VALIDATION_JSON" ] \
+  [ -n "$LIBRARY_VIEW_CONTENT_ID" ] \
+    && [ -n "$LIBRARY_VIEW_CONTENT_DIGEST" ] \
+    && [ -n "$LIBRARY_VIEW_TRANSPORT" ] \
+    && [ -n "$LIBRARY_VIEW_INTEGRITY_SCHEME" ] \
+    && [ -n "$LIBRARY_VIEW_MODEL_ID" ] \
+    && [ -n "$LIBRARY_VIEW_REVISION" ] \
+    && [ -n "$LIBRARY_VIEW_CONTAINER_MODEL_PATH" ] \
+    && [ -n "$LIBRARY_VIEW_IDENTITY_STATUS" ] \
+    && [ -n "$LIBRARY_VIEW_VALIDATION_JSON" ] \
     || die "prepared view provenance is incomplete for $profile"
 }
 
@@ -1273,7 +1273,7 @@ write_launch_plan_file() {
   local contract
   [ -n "${CONF_NAME:-}" ] || die "write_launch_plan_file requires load_conf"
   [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] || die "write_launch_plan_file requires confirmed topology"
-  [ -n "${LIBRARY_HOT_HUB_PATH:-}" ] || die "write_launch_plan_file requires resolve_library_hot_for_profile"
+  [ -n "${LIBRARY_VIEW_HUB_PATH:-}" ] || die "write_launch_plan_file requires resolve_library_hot_for_profile"
   contract="${LAUNCH_CONTRACT_ID:-}"
   [ -n "$contract" ] || contract=$(loaded_launch_contract_id)
   if [ "$NODES" -gt 1 ]; then
@@ -1355,13 +1355,13 @@ print(json.dumps(ranks))
   CLUSTER_TOPOLOGY_ID="$CLUSTER_TOPOLOGY_ID" \
   SPEC_DECODE_ENABLED="${SPEC_DECODE_ENABLED:-0}" \
   SPEC_DECODE_SOURCE="${SPEC_DECODE_SOURCE:-profile-default}" \
-  LIBRARY_HOT_IDENTITY_STATUS="$LIBRARY_HOT_IDENTITY_STATUS" \
-  LIBRARY_HOT_REVISION="$LIBRARY_HOT_REVISION" \
-  LIBRARY_HOT_HOME_NODE_ID="$LIBRARY_HOT_HOME_NODE_ID" \
-  LIBRARY_HOT_CONTENT_ID="$LIBRARY_HOT_CONTENT_ID" \
-  LIBRARY_HOT_HUB_PATH="$LIBRARY_HOT_HUB_PATH" \
-  LIBRARY_HOT_CONTAINER_MODEL_PATH="$LIBRARY_HOT_CONTAINER_MODEL_PATH" \
-  LIBRARY_HOT_TRANSPORT="$LIBRARY_HOT_TRANSPORT" \
+  LIBRARY_VIEW_IDENTITY_STATUS="$LIBRARY_VIEW_IDENTITY_STATUS" \
+  LIBRARY_VIEW_REVISION="$LIBRARY_VIEW_REVISION" \
+  LIBRARY_VIEW_HOME_NODE_ID="$LIBRARY_VIEW_HOME_NODE_ID" \
+  LIBRARY_VIEW_CONTENT_ID="$LIBRARY_VIEW_CONTENT_ID" \
+  LIBRARY_VIEW_HUB_PATH="$LIBRARY_VIEW_HUB_PATH" \
+  LIBRARY_VIEW_CONTAINER_MODEL_PATH="$LIBRARY_VIEW_CONTAINER_MODEL_PATH" \
+  LIBRARY_VIEW_TRANSPORT="$LIBRARY_VIEW_TRANSPORT" \
   REPO_DIR="$REPO_DIR" \
   python3 - "$dest" <<'PY'
 import json
@@ -1391,14 +1391,14 @@ facts = {
         "source": os.environ.get("SPEC_DECODE_SOURCE") or "profile-default",
     },
     "storage": {
-        "mechanism": "library-hot",
-        "identity_status": os.environ["LIBRARY_HOT_IDENTITY_STATUS"],
-        "revision": os.environ["LIBRARY_HOT_REVISION"],
-        "home_node_id": os.environ["LIBRARY_HOT_HOME_NODE_ID"],
-        "content_id": os.environ["LIBRARY_HOT_CONTENT_ID"],
-        "hub_path": os.environ["LIBRARY_HOT_HUB_PATH"],
-        "container_model_path": os.environ["LIBRARY_HOT_CONTAINER_MODEL_PATH"],
-        "transport": os.environ["LIBRARY_HOT_TRANSPORT"],
+        "mechanism": "local-files",
+        "identity_status": os.environ["LIBRARY_VIEW_IDENTITY_STATUS"],
+        "revision": os.environ["LIBRARY_VIEW_REVISION"],
+        "home_node_id": os.environ["LIBRARY_VIEW_HOME_NODE_ID"],
+        "content_id": os.environ["LIBRARY_VIEW_CONTENT_ID"],
+        "hub_path": os.environ["LIBRARY_VIEW_HUB_PATH"],
+        "container_model_path": os.environ["LIBRARY_VIEW_CONTAINER_MODEL_PATH"],
+        "transport": os.environ["LIBRARY_VIEW_TRANSPORT"],
     },
     "ranks": json.loads(os.environ["PULSAR_PLAN_RANKS_JSON"]),
     "runtime": {
@@ -1580,7 +1580,7 @@ print(str(labels.get(sys.argv[1], "") or ""))
 
 # Return the declared model-weight source from ownership metadata. The value
 # is provenance, not a mode: every managed launch since ADR 0006 writes
-# library-hot (stored enum), and containers labeled replicated (or unlabeled,
+# local-files (stored enum), leftover library-hot, and containers labeled replicated (or unlabeled,
 # predating the label) are historical observations. Malformed JSON is an
 # observation failure.
 container_weight_source_field() {

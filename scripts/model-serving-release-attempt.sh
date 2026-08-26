@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compose unreviewed ADR 0004 attempt-only specs from validator measurements.
+# Compose draft ADR 0004 attempt-only specs from validator measurements.
 # Not routed by ./pulsar. Does not issue a decision, write the tracked
 # registry, change catalog/profile status, or launch a release.
 set -euo pipefail

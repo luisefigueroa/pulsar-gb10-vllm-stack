@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for source-attested planning helpers."""
+"""Contracts for download-receipt planning helpers."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts import (  # noqa: E402
     model_identity,
     model_library,
-    model_library_source_attested as source_attested,
+    model_library_receipt as source_attested,
 )
 from scripts.topology_manifest import topology_digest  # noqa: E402
 from scripts.testlib import (  # noqa: E402
@@ -205,7 +205,7 @@ class SourceAttestedAcquisitionContracts(unittest.TestCase):
         )
         self.assertEqual(
             identity["identity_class"],
-            source_attested.IDENTITY_CLASS_SOURCE_ATTESTED,
+            source_attested.IDENTITY_CLASS_DOWNLOAD_RECEIPT,
         )
         self.assertEqual(
             identity["execution_contract"],

@@ -8,7 +8,7 @@ immutable evidence bundle, and independently verify the resulting
 candidate.
 
 This module is not an issuing or promotion authority. A successful
-candidate is unreviewed, has privacy review pending, grants no serving
+candidate is a draft, has privacy review pending, grants no serving
 authorization, changes no catalog or profile status, and never writes the
 tracked release registry. Schema ownership remains in the pure ADR 0004
 modules.
@@ -69,7 +69,7 @@ BUNDLE_NAME = "evidence-bundle.json"
 RUN_RECORDS_DIR = "run-records"
 EVIDENCE_DIR = "evidence"
 
-CANDIDATE_STATE = "unreviewed"
+CANDIDATE_STATE = "draft"
 CANDIDATE_AUTHORITY = "none"
 CANDIDATE_PRIVACY = "pending"
 
@@ -1421,7 +1421,7 @@ def validate_candidate_manifest(value: Any) -> dict[str, Any]:
     if manifest.get("kind") != CANDIDATE_KIND:
         fail("capture candidate kind is invalid")
     if manifest.get("state") != CANDIDATE_STATE:
-        fail("capture candidate state must be unreviewed")
+        fail("capture candidate state must be draft")
     if manifest.get("authority") != CANDIDATE_AUTHORITY:
         fail("capture candidate cannot claim authority")
     if manifest.get("privacy_review") != CANDIDATE_PRIVACY:
@@ -2312,7 +2312,7 @@ def cmd_verify_candidate(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Capture and verify unreviewed ADR 0004 evidence-capture candidates"
+            "Capture and verify draft ADR 0004 evidence-capture candidates"
         )
     )
     parser.add_argument("--repo-root", required=True, help=argparse.SUPPRESS)

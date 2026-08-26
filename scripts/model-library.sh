@@ -9,7 +9,7 @@ SCRIPT_NAME=model-library
 . "$REPO_DIR/scripts/model-library-materialize.sh"
 
 PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
-SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library_source_attested.py}"
+SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library_receipt.py}"
 COLD_ARCHIVE_PY="${PULSAR_COLD_ARCHIVE_PY:-$REPO_DIR/scripts/model_library_cold_archive.py}"
 HF_SOURCE_INVENTORY_PY="${PULSAR_HF_SOURCE_INVENTORY_PY:-$REPO_DIR/scripts/hf_source_inventory.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
@@ -315,7 +315,7 @@ resolve_attached_source_attested_receipt() {
     --allow-missing
 }
 
-library_plan_activate() {
+library_plan_prepare() {
   local profile="${1:?profile required}"
   shift
   local home_inventory model_id revision receipt_json manifest_json
@@ -346,7 +346,7 @@ library_plan_activate() {
     extra+=(--require-exact-revision "$revision")
     extra+=(--expected-integrity-manifest-json "$manifest_json")
   fi
-  python3 "$PY_TOOL" plan-activate \
+  python3 "$PY_TOOL" plan-prepare \
     --catalog "$CATALOG_FILE" \
     --profile "$profile" \
     --models-dir "$REPO_DIR/models" \
@@ -413,7 +413,7 @@ merge_hot_budget_observation_file() {
 }
 
 build_hot_budget_plan_from_activation() {
-  local activation_plan="${1:?}" mode="${2:-activate}"
+  local activation_plan="${1:?}" mode="${2:-prepare}"
   local metadata profile model_id bytes_logical
   local rank runtime_source required_owned_bytes replacing_path observation
   local observations_file expected_ranks="" rc=0
@@ -1666,7 +1666,7 @@ print(model_library.model_id_to_hub_dirname(sys.argv[2]))' \
 import json,sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-import model_library_source_attested as sa
+import model_library_receipt as sa
 identity = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 observed = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 sa.compare_observed_manifest_to_expected(
@@ -2181,7 +2181,7 @@ cmd_home_archive_run() {
   [ -n "$receipt_id" ] || die "usage: home archive run --receipt RECEIPT_ID --yes"
   [ "$yes" = 1 ] || die "home archive run requires --yes"
   require_py
-  receipt_file="$LIBRARY_DIR/source-attested-receipts/${receipt_id}.json"
+  receipt_file="$LIBRARY_DIR/download-receipts/${receipt_id}.json"
   [ -f "$receipt_file" ] || die "home archive run: receipt is missing"
   cold_root="${PULSAR_COLD_ROOT-}"
   if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
@@ -2307,7 +2307,7 @@ cmd_home_restore() {
   [ "$receipt_json" != null ] && [ -n "$receipt_json" ] \
     || die "home restore: no download receipt"
   receipt_id=$(printf '%s' "$receipt_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
-  receipt_file="$LIBRARY_DIR/source-attested-receipts/${receipt_id}.json"
+  receipt_file="$LIBRARY_DIR/download-receipts/${receipt_id}.json"
   cold_root="${PULSAR_COLD_ROOT-}"
   if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
     cold_root="${MODELS_NFS:-}"
@@ -2932,7 +2932,7 @@ phase_record() {
   fi
 }
 
-cmd_activate() {
+cmd_prepare() {
   local profile="" backend=copy backend_explicit=0 transport=""
   local yes=0 time_it=0 node_selector=""
   local plan stamp_json verifying_stamp_json expected_validation_json budget_plan
@@ -3051,7 +3051,7 @@ cmd_activate() {
   )
   [ -z "$target_rank" ] || plan_flags+=(--target-rank "$target_rank")
 
-  plan=$(library_plan_activate "$profile" "${plan_flags[@]}")
+  plan=$(library_plan_prepare "$profile" "${plan_flags[@]}")
   action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
   instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   hub_source=$(printf '%s' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("hub_source") or "")')
@@ -3062,7 +3062,7 @@ cmd_activate() {
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
   target_ranks_csv=$(IFS=,; printf '%s' "${target_ranks[*]}")
 
-  budget_plan=$(build_hot_budget_plan_from_activation "$plan" activate) \
+  budget_plan=$(build_hot_budget_plan_from_activation "$plan" prepare) \
     || die "prepare: all-rank hot admission failed"
   render_hot_budget_plan_json "$budget_plan"
   hot_budget_plan_is_eligible "$budget_plan" \
@@ -3324,7 +3324,7 @@ resolve_hot_profile_targets() {
       resolve_single_node_placement "$rank" || return 1
     fi
     [ -z "$home_rank" ] || [ "$rank" = "$home_rank" ] || {
-      warn "$profile: library-hot one-node lifecycle must target durable-home rank $home_rank"
+      warn "$profile: one-node local-files lifecycle must target durable-home rank $home_rank"
       return 1
     }
     ranks=("$rank")
@@ -3363,7 +3363,7 @@ cmd_pin() {
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
-    || die "pin: cannot resolve exact library-hot placement"
+    || die "pin: cannot resolve exact local-files placement"
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$HOT_TARGET_RANKS_CSV") \
@@ -3405,7 +3405,7 @@ cmd_unpin() {
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
-    || die "unpin: cannot resolve exact library-hot placement"
+    || die "unpin: cannot resolve exact local-files placement"
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   for rank in "${HOT_TARGET_RANKS[@]}"; do
@@ -3444,7 +3444,7 @@ cmd_purge_hot() {
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
-    || die "purge-hot: cannot resolve exact library-hot placement"
+    || die "purge-hot: cannot resolve exact local-files placement"
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
     || die "no hot instance for $profile on the selected serving placement"
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
@@ -3579,7 +3579,7 @@ cmd_probe_ssh_roce() {
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
   nodes="${nodes_override:-$NODES}"
-  plan=$(library_plan_activate "$profile" \
+  plan=$(library_plan_prepare "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
@@ -3716,7 +3716,7 @@ cmd_bench_ssh_roce() {
   [ -n "$output" ] || output="$REPO_DIR/results/model-library/${profile}-ssh-roce-${tag}.json"
   mkdir -p "$(dirname "$output")"
 
-  plan=$(library_plan_activate "$profile" \
+  plan=$(library_plan_prepare "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
     --topology-file "$CLUSTER_TOPOLOGY_FILE" \
     --hot-root "$HOT_ROOT" \
@@ -3886,7 +3886,7 @@ main() {
         *) usage; exit 2 ;;
       esac
       ;;
-    prepare) cmd_activate "$@" ;;
+    prepare) cmd_prepare "$@" ;;
     activate) refuse_removed_activate_command ;;
     probe-ssh-roce) cmd_probe_ssh_roce "$@" ;;
     bench-ssh-roce) cmd_bench_ssh_roce "$@" ;;

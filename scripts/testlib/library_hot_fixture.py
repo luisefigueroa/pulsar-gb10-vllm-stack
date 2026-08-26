@@ -4,7 +4,7 @@
 The shape mirrors model_library.py find-hot output closely enough for
 lib.sh resolve_library_hot_for_profile: instance_dir, hub_path,
 container_model_path, and a stamp carrying provenance plus validation.
-Values default to a legacy-unsealed two-node fixture; every field a test
+Values default to a receipt-occupancy two-node fixture; every field a test
 cares about is overridable.
 """
 
@@ -25,8 +25,8 @@ def main() -> int:
     parser.add_argument("--revision", default="d" * 40)
     parser.add_argument(
         "--identity-status",
-        default="legacy-unsealed",
-        choices=("legacy-unsealed", "unvalidated"),
+        default="receipt-occupancy",
+        choices=("receipt-occupancy", "unvalidated"),
     )
     parser.add_argument("--seal-id", default="")
     parser.add_argument("--bundle-id", default="")
