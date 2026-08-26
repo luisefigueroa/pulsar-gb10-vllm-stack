@@ -55,10 +55,10 @@ Agree and record this complete input before testing. The Validation Contract
 is not frozen until the planner later combines it with the exact artifact
 manifest, runtime envelope, and selected access contract.
 
-## 4. Exact-home assessment, source-attested acquisition, and safe reuse
+## 4. Exact-home assessment, Hugging Face download, and safe reuse
 
 1. Refresh the catalog and observe all confirmed serving ranks before reuse.
-2. If the repository is absent everywhere, run a read-only source-attested
+2. If the repository is absent everywhere, run a read-only Hugging Face
    plan. It asks in-geometry candidate ranks with modern `hf` to resolve the
    selector and complete upstream Git/LFS inventory. A rank that cannot resolve
    the source is ineligible, every successful rank must report the same source,
@@ -93,12 +93,12 @@ manifest, runtime envelope, and selected access contract.
    `receipt_id` in the journal. Acquisition is catalog/artifact evidence only;
    it does not issue a seal or decision, assign status, promote a path, prove
    physical behavior, refresh the catalog, prepare a runtime view, or launch.
-7. Reuse a source-attested home only after
+7. Reuse a receipted home only after
    `scripts/model-library.sh home verify <model_id@revision> --json` completes
    an offline full SHA-256 rehash against the immutable receipt while occupancy
    names that live directory. Occupancy may move with
    `scripts/model-library.sh home relocate <profile> --node RANK --yes`. An
-   older tree without a receipt fails closed (ADR 0012).
+   older tree without a receipt fails without fallback (ADR 0012).
 8. Refuse a missing required receipt or reviewed manifest, failed or incomplete
    verification, partial or wrong-revision content, a duplicate occupancy home,
    or an out-of-geometry home. Unbound-complete trees with a compatible receipt
@@ -114,25 +114,25 @@ scripts/model-library.sh home verify <model_id@revision> --json
 ```
 
 Refuse another revision, ambiguity, a partial tree, or a durable
-duplicate. Do not mutate `refs/main`. Run `home verify` for source-attested
-content. Unknown trees without a receipt fail closed (ADR 0012).
+duplicate. Do not mutate `refs/main`. Run `home verify` for receipted
+content. Unknown trees without a receipt fail without fallback (ADR 0012).
 `scripts/model-release.sh` is retired.
 
 ## 6. Distribution choice
 
-Confirm `library-hot` → `local-verified-readonly`.
+Confirm local files on every rank (`library-hot`) → `local-verified-readonly`.
 Do not offer live NFS/RDMA serving (`live-remote-readonly`; ADR 0005).
 The model library is the only weight mechanism (ADR 0006).
 
 Record the source and transport. No silent fallback. No automatic
-fallback. An unsealed profile serves as `legacy-unsealed` after full
+fallback. A live profile serves as `legacy-unsealed` after full
 verification; that honest label is not an exact ADR 0004 qualification
 attempt.
 
 ## 7. Release plan
 
 After the exact manifest and access choice exist, build and verify the
-unreviewed plan before testing:
+draft plan before testing:
 
 ```text
 scripts/model-serving-release-plan.sh build <profile> \

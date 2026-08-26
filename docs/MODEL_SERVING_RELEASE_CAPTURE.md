@@ -1,22 +1,22 @@
 # ADR 0004 evidence-capture candidate persistence
 
 This is the maintainer runbook for the local, candidate-only ADR 0004
-evidence-capture workflow. It composes a verified unreviewed release-plan
-candidate with a separate attempt-only spec, independently validates the
-release and contract objects, captures immutable run records plus
-content-addressed evidence, assembles compatible run records into one
+evidence-capture workflow. It composes a verified draft release-plan
+directory with a separate attempt-only spec, independently validates the
+Model Serving Release and Validation Contract objects, captures immutable run records plus
+hashed evidence, assembles compatible run records into one
 immutable evidence bundle, and independently verifies the resulting
-candidate.
+draft.
 
 The workflow makes capture repeatable. It is not an issuing or promotion
-authority. A successful candidate is explicitly unreviewed, has privacy
-review pending, changes no catalog or profile status, launches nothing, and
-never writes the tracked release registry. It does not issue `Untested`.
+authority. A successful candidate is explicitly not in the trusted registry, has privacy
+review pending, changes no catalog or profile status, starts nothing, and
+never writes the tracked registry. It does not issue `Untested`.
 A pre-barrier failure means qualification did not start; absence of a
 reviewed decision stays neutral.
 
-This is **ADR 0004 evidence-capture candidate persistence**. It is not
-catalog/operator status projection (ADR 0004 numbered item 3). It does not
+This is **ADR 0004 evidence-capture draft persistence**. It is not
+the catalog display of a reviewed decision (ADR 0004 numbered item 3). It does not
 adapt `validate/*` output itself and makes no physical DGX claim. Closed
 validator-measurement documents and the separate attempt-composition service
 in `scripts/model-serving-release-attempt.sh` are the producer of attempt-only
@@ -35,12 +35,12 @@ or planner candidate ID.
 |---|---|
 | Attempt-only spec (this document) | Closed operator input: defensive `release_id` / `contract_id` foreign keys plus attempt fields, provenance/environment, command descriptors without program versions, criterion observations, and evidence-source metadata. Embeds neither release nor contract. |
 | ADR 0004 schema (`scripts/model_serving_release.py`) | Owns release-descriptor and frozen Validation Contract schema version 1; capture validates those objects independently |
-| Release-plan candidates (`scripts/model-serving-release-plan.sh`) | Unreviewed upstream release/contract values; capture consumes a verified planner directory through `load_verified_release_plan_candidate` |
+| Release-plan candidates (`scripts/model-serving-release-plan.sh`) | Draft Model Serving Release / Validation Contract JSON; capture consumes a verified planner directory through `load_verified_release_plan_candidate` |
 | Immutable descriptor directories (`scripts/immutable_descriptor_dir.py`) | Generic descriptor-rooted immutable-directory primitives only; not a schema owner |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns evidence-artifact, run-record, evidence-bundle, and reviewed-decision schema version 1 |
-| Capture persistence (`scripts/model-serving-release-capture.sh`) | Plans, captures, assembles, and verifies unreviewed candidates under a gitignored output boundary |
+| Capture persistence (`scripts/model-serving-release-capture.sh`) | Plans, captures, assembles, and verifies draft directories under a gitignored output boundary |
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only verification of reviewed objects under `models/model-serving-releases/`; this tool never writes it |
-| Issuance staging (`scripts/model-serving-release-issue.sh`) | Separate maintainer workflow that can stage an untrusted proposal from a verified capture candidate; capture still never writes the registry |
+| Staging (`scripts/model-serving-release-issue.sh`) | Separate maintainer workflow that can stage an untrusted proposal from a verified capture directory; capture still never writes the registry |
 | Validator measurements (`validate/compare_captures.py`, `validate/bench_serve.py`) | Optional closed measurement documents for `compare-captures` and `benchmark-serving`. Exit zero or a selftest is not a criterion pass. |
 | Attempt composition (`scripts/model-serving-release-attempt.sh`) | Maps verified release-plan criteria plus caller context and validator measurements into existing attempt-only specs. This slice requires publishable `results/` files: the supplied measurement path and evidence `repository_path` must name the same stably read file. Generated specs are capture-validated against those current bytes, then published as one exclusive two-file directory under `experiments/model-serving-release-attempts/` or a safe explicit outside path. The attempt spec carries no precomputed publishable digest; later capture independently re-reads the file and derives the digest. Emits metrics and completion only. |
 
@@ -100,7 +100,7 @@ later capture or benchmark.
 
 Each emitted file is an ordinary attempt-only spec accepted by the capture
 commands below. Run capture immediately after composition. The output
-directory is an exclusive unreviewed two-file directory; an existing target or
+directory is an exclusive draft two-file directory; an existing target or
 partial validation failure leaves it untouched.
 
 `plan` and `capture-run` require both `--release-plan DIR` and
@@ -139,7 +139,7 @@ against the verified planner objects. Closed top-level fields are:
 | `commands` | Allowlisted program, typed arguments, classified environment, and `repository-root`; no program version |
 | `criterion_observations` | Measurements that reference evidence by `source_key`, not by precomputed artifact IDs. Nested context and soak sources are part of the run artifact set. |
 | `evidence_sources` | Publishable `results/` files or protected digest locators |
-| `review_source_keys` | Explicit, sorted source keys reserved for leftover review artifacts (files that are not run measurements). Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` scope. Attempt composition for compare and bench emits `[]`. Capture copies that list into bundle `review_evidence_artifact_ids` and does not invent sources. Empty is expected. |
+| `review_source_keys` | Explicit, sorted source keys reserved for extra review files (files that are not run measurements). Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` (provenance and geometry review). Attempt composition for compare and bench emits `[]`. Capture copies that list into evidence-bundle `review_evidence_artifact_ids` and does not invent sources. Empty is expected. |
 
 The loader rejects duplicate JSON keys, invalid UTF-8, `NaN`/`Infinity`,
 unknown fields, embedded release or contract objects, precomputed derived
@@ -232,7 +232,7 @@ evidence/<sha256>    # publishable copies only
 ```
 
 The manifest kind is `pulsar-model-serving-release-capture-candidate`,
-schema version 1. It identifies itself as unreviewed, authority none, privacy
+schema version 1. It identifies itself as not in the trusted registry, authority none, privacy
 pending, and promotion not authorized. It binds the release ID, contract ID,
 sorted run-record IDs,
 bundle ID, exact file map of every file except `candidate.json`, and the
@@ -264,18 +264,18 @@ re-checks that snapshot through the held descriptors, confirms each
 `run-records` / `evidence` name on the candidate-root fd still names
 the same subdirectory inode, and confirms a fresh no-follow open of
 the supplied path still names the same root inode.
-Additions, removals, replacements, or path swaps fail closed.
+Additions, removals, replacements, or path swaps fail without fallback.
 
 After the pure ADR bundle schema validates, capture-candidate policy
 still requires every evidence artifact to keep `privacy_review` pending
 and every `review_evidence_artifact_ids` entry to use
-`release-promotion` scope. An empty leftover list is valid. Those checks
+`release-promotion` scope. An empty extra-review-file list is valid. Those checks
 do not change the broader schema enum and are not a reviewed decision.
 
 Publishable artifact locations must still be sanitized `results/` files
 and must not use any `raw` path. Protected artifacts must keep the
 exact `sha256:<digest>` locator. Program or evidence drift fails
-closed. There is no override. An output directory may not be an
+without fallback. There is no override. An output directory may not be an
 existing candidate or any existing ancestor that contains
 `candidate.json`.
 
@@ -293,7 +293,7 @@ existing candidate or any existing ancestor that contains
 - Claim physical DGX, model-download, container, or remote behavior
 - Route through `./pulsar` or the wizard
 
-Capture still does not issue a decision. Maintainer issuance staging is a
+Capture still does not issue a decision. Maintainer staging is a
 separate workflow in
 [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md);
 a successful local issue command is not trusted until repository review and
@@ -308,8 +308,8 @@ regenerate and compose again if the evidence file changes. The composer does
 not invent a validator measurement; supply the validator `--result-json`,
 including incomplete validator output. Selftests prove control-plane contracts
 only and do not prove physical DGX behavior.
-The separate read-only projection consumes only the tracked registry and never
-this unreviewed candidate output. Serving permission is status-independent.
+The separate read-only catalog display consumes only the tracked registry and never
+this draft output. Serving permission is status-independent.
 
 ## Tests
 
@@ -325,4 +325,4 @@ create no release decision. Issuance of a verified candidate is a later
 maintainer workflow; see
 [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md)
 and `pulsar-model-serving-release-issuance`. Onboarding capture does not
-produce provenance review leftovers.
+produce extra review files for provenance.
