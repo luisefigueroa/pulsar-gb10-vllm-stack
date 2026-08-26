@@ -20,7 +20,7 @@ class RemoteHomeActivationContracts(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
-        self.revision = "abc123def456"
+        self.revision = "a" * 40
         self.models_dir = self.root / "models"
         self.models_dir.mkdir()
         (self.models_dir / "qwen3-1.7b-2node.conf").write_text(
@@ -106,6 +106,8 @@ class RemoteHomeActivationContracts(unittest.TestCase):
             allow_unvalidated=True,
             nodes=2,
             home_inventory=inventory,
+            require_exact_revision=self.revision,
+            expected_integrity_manifest=inventory["integrity_manifest"],
         )
 
     def test_bound_remote_inventory_avoids_controller_path_probe(self) -> None:

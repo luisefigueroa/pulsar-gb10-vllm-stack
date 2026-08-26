@@ -4232,7 +4232,12 @@ def plan_prepare(
     require_exact_revision: str | None = None,
     expected_integrity_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return a model-preparation plan JSON for bash to execute (copy + stamp)."""
+    """Return a model-preparation plan JSON for bash to execute (copy + stamp).
+
+    Occupancy lookup lives in the Bash wrapper. This planner still requires
+    the download-receipt commit and file list; unknown trees without a receipt
+    fail without fallback and must not use a self-observed manifest as identity.
+    """
     backend, transport = resolve_activate_transport(
         backend, transport, nodes=nodes
     )
@@ -4266,23 +4271,24 @@ def plan_prepare(
         home_inventory,
         model_id=resolved["model_id"],
     )
-    if (require_exact_revision is None) != (expected_integrity_manifest is None):
-        fail("prepare: download receipt revision and file list must be supplied together")
-    if require_exact_revision:
-        if re.fullmatch(r"[0-9a-f]{40}", require_exact_revision) is None:
-            fail("prepare: download receipt identity requires one exact 40-hex commit")
-        if resolved.get("revision") != require_exact_revision:
-            fail("prepare: catalog revision is not the exact download-receipt commit")
-        if resolved.get("identity_key") != f"{resolved['model_id']}@{require_exact_revision}":
-            fail("prepare: catalog identity is not the exact model_id@commit")
-        if integrity_manifest.get("snapshot_revision") != require_exact_revision:
-            fail("prepare: home manifest revision is not the exact commit")
-    if expected_integrity_manifest is not None:
-        expected = validate_snapshot_manifest(expected_integrity_manifest)
-        if integrity_manifest.get("manifest_id") != expected.get("manifest_id"):
-            fail("prepare: receipt-backed home rehash differs from the receipt")
-        if integrity_manifest.get("files") != expected.get("files"):
-            fail("prepare: receipt-backed home file set differs from the receipt")
+    if require_exact_revision is None or expected_integrity_manifest is None:
+        fail(
+            "prepare: download receipt revision and file list are required; "
+            "unknown trees without a receipt fail without fallback"
+        )
+    if re.fullmatch(r"[0-9a-f]{40}", require_exact_revision) is None:
+        fail("prepare: download receipt identity requires one exact 40-hex commit")
+    if resolved.get("revision") != require_exact_revision:
+        fail("prepare: catalog revision is not the exact download-receipt commit")
+    if resolved.get("identity_key") != f"{resolved['model_id']}@{require_exact_revision}":
+        fail("prepare: catalog identity is not the exact model_id@commit")
+    if integrity_manifest.get("snapshot_revision") != require_exact_revision:
+        fail("prepare: home manifest revision is not the exact commit")
+    expected = validate_snapshot_manifest(expected_integrity_manifest)
+    if integrity_manifest.get("manifest_id") != expected.get("manifest_id"):
+        fail("prepare: receipt-backed home rehash differs from the receipt")
+    if integrity_manifest.get("files") != expected.get("files"):
+        fail("prepare: receipt-backed home file set differs from the receipt")
     validation = require_activation_identity(
         profile_data,
         integrity_manifest,

@@ -701,9 +701,11 @@ changed bytes as already-checked identity.
 
 **Current implementation:** working-copy records carry the observed revision
 and file list. Leftover expected-identity fields are untrusted observations.
-Preparation compares model ID, immutable commit, and file-list ID, then
+Preparation requires occupancy plus the download receipt. It compares model
+ID, immutable commit, and file-list ID against that receipt, then
 full-verifies every rank and atomically creates that rank's
-`.pulsar/witness.json` before publishing ready state. `home add --revision`
+`.pulsar/witness.json` before publishing ready state. A self-observed tree
+without a receipt is not identity. `home add --revision`
 records the complete upstream inventory and observed hashes in an immutable
 receipt, then attaches occupancy to the exact published directory. Later
 offline `home verify` and exact prepare use that current attachment, not a

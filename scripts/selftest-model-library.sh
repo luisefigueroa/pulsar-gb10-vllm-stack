@@ -28,7 +28,7 @@ assert_true() {
 
 # --- fixture: complete hub tree ---
 make_complete_hub() {
-  local root="$1" model_id="$2" rev="${3:-abc123def456}"
+  local root="$1" model_id="$2" rev="${3:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
   local hub_name dir snap
   hub_name="models--${model_id//\//--}"
   dir="$root/hub/$hub_name"
@@ -182,6 +182,32 @@ export PULSAR_HOT_ROOT="$HOT"
 export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))
 export PULSAR_HOT_RESERVE_BYTES=0
 
+set +e
+python3 "$PY" plan-prepare \
+  --catalog "$STATE/catalog2.json" \
+  --profile qwen3-1.7b-2node \
+  --topology-id topo-test-001 \
+  --hot-root "$HOT" \
+  --models-dir "$STATE/models" \
+  --backend copy \
+  --nodes 1 >/dev/null 2>"$STATE/plan-no-receipt.err"
+no_receipt_rc=$?
+set -e
+assert_eq "plan-prepare without receipt fails" "$no_receipt_rc" "1"
+assert_true "plan-prepare without receipt names the receipt requirement" \
+  grep -q "download receipt revision and file list are required" "$STATE/plan-no-receipt.err"
+
+QWEN_HUB="$NODE1/hub/models--Qwen--Qwen3-1.7B"
+qwen_inventory=$(python3 "$PY" inspect-hub \
+  --hub-path "$QWEN_HUB" \
+  --rank 1 \
+  --node-id node-b \
+  --model-id "Qwen/Qwen3-1.7B")
+QWEN_REV=$(printf '%s' "$qwen_inventory" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["revision"])')
+QWEN_MANIFEST=$(printf '%s' "$qwen_inventory" | python3 -c \
+  'import json,sys; print(json.dumps(json.load(sys.stdin)["integrity_manifest"]))')
+
 plan=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
   --profile qwen3-1.7b-2node \
@@ -189,7 +215,9 @@ plan=$(python3 "$PY" plan-prepare \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
   --backend copy \
-  --nodes 1)
+  --nodes 1 \
+  --require-exact-revision "$QWEN_REV" \
+  --expected-integrity-manifest-json "$QWEN_MANIFEST")
 action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "plan-prepare wants copy" "$action" "copy"
 instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
@@ -213,7 +241,9 @@ plan2=$(python3 "$PY" plan-prepare \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
   --backend copy \
-  --nodes 1)
+  --nodes 1 \
+  --require-exact-revision "$QWEN_REV" \
+  --expected-integrity-manifest-json "$QWEN_MANIFEST")
 action2=$(printf '%s' "$plan2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 assert_eq "second plan skips matching hot" "$action2" "skip"
 

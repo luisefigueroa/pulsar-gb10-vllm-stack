@@ -636,9 +636,10 @@ scripts/model-library.sh prepare <single-rank-profile> \
 (ADR 0008); drop the flag. It never granted serving permission.
 
 Catalog refresh inventories existing durable homes; it does not download model
-bytes or create a primary home. Preparation therefore requires an eligible
-exact home to exist already; `home add --revision` is the acquisition path
-(manual CLI, not the wizard). `check-weights` / `up.sh` print the same
+bytes or create a primary home. Preparation requires occupancy plus a download
+receipt for that exact home; an unknown tree without a receipt fails without
+fallback. `home add --revision` is the acquisition path (manual CLI, not the
+wizard); `home relocate` occupies an existing receipted tree. `check-weights` / `up.sh` print the same
 commands: the plan-then-`--yes` sequence, `cleanup-recommend` / `catalog primary set` when duplicate homes
 have no primary, or `prepare` when a home already exists. For a one-node
 `--node` placement, an unreachable rank tells the operator to restore SSH
@@ -949,7 +950,8 @@ reviewed Model Serving Releases with:
 scripts/model-serving-release-registry.sh verify
 ```
 
-`home add` requires `--revision`. Unknown trees without a receipt fail without fallback.
+`home add` requires `--revision`. Prepare requires occupancy plus that receipt.
+Unknown trees without a receipt fail without fallback.
 Historical expected-identity JSON is archived under
 [docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md)
 and is not loaded. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the

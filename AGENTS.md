@@ -216,8 +216,9 @@ language for new features without an explicit decision.
   That download creates observed/source identity and “did we store the right
   files?” evidence only. It does not issue reviewed identity, a lab
   expected-identity file, status, serving permission, a Model Serving Release
-  decision, or physical evidence. Receipt-backed prepare requires the exact
-  model ID, exact commit, and receipt file list together.
+  decision, or physical evidence. Prepare requires occupancy plus the exact
+  model ID, exact commit, and receipt file list together. A self-observed
+  file list is not that proof.
 - New multi-node library features: thin `scripts/<name>.sh` CLI +
   `scripts/<name>.py` (or a small package) for the brain—same shape as other
   library CLIs.
@@ -646,9 +647,9 @@ this work; the skill is procedural and does not outrank these sources.
   `home relocate` after a live rehash
   ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
   Unknown trees without a receipt fail without fallback (ADR 0012: there is
-  no lab expected-identity fallback). Prepare-time resolution for
-  receipt-backed content requires occupancy plus the exact model ID and
-  commit. Deterministic controls alone make no physical claim. The bounded
+  no lab expected-identity fallback). Prepare requires occupancy plus the
+  exact model ID, commit, and receipt file list; a self-observed tree is not
+  identity. Deterministic controls alone make no physical claim. The bounded
   Nemotron Nano Gate 14 artifact physically passes the catalog/artifact
   lifecycle for a one-node rank-0 target across three confirmed ranks,
   including acquisition, attachment authority, offline verification, exact

@@ -154,6 +154,10 @@ Notes:
     and no fallback (ADR 0003/0006). Management-network bulk copy on a
     multi-rank profile requires explicit --transport ssh-control. Every library
     scope is supported.
+  • prepare requires occupancy plus the download receipt file list. An unknown
+    tree without a receipt fails without fallback (ADR 0012). Use
+    home add --revision or home relocate; do not hash a self-observed tree as
+    identity.
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails without fallback.
   • Benchmark/probe commands are explicit experiments and permit receipt/occupancy
@@ -318,7 +322,7 @@ resolve_attached_source_attested_receipt() {
 library_plan_prepare() {
   local profile="${1:?profile required}"
   shift
-  local home_inventory model_id revision receipt_json manifest_json
+  local home_inventory model_id revision receipt_json manifest_json receipt_lookup
   local home_rank node_id hub_path tmp
   home_inventory=$(inspect_catalog_home "$profile") || return 1
   model_id=$(printf '%s' "$home_inventory" | python3 -c \
@@ -340,12 +344,22 @@ library_plan_prepare() {
     die "prepare: download receipt lookup failed"
   fi
   rm -rf "$tmp"
-  if [ "$receipt_json" != null ]; then
-    manifest_json=$(printf '%s' "$receipt_json" | python3 -c \
-      'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
-    extra+=(--require-exact-revision "$revision")
-    extra+=(--expected-integrity-manifest-json "$manifest_json")
+  if [ "$receipt_json" = null ] || [ -z "$receipt_json" ]; then
+    receipt_lookup=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
+      --library-dir "$LIBRARY_DIR" \
+      --model-id "$model_id" \
+      --revision "$revision" \
+      --allow-missing) \
+      || die "prepare: download receipt lookup failed"
+    if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
+      die "prepare: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $profile --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+    fi
+    die "prepare: unknown or pre-existing home has no download receipt. Create one with scripts/model-library.sh home add $profile --revision <commit> --plan then --yes (ADR 0012)."
   fi
+  manifest_json=$(printf '%s' "$receipt_json" | python3 -c \
+    'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
+  extra+=(--require-exact-revision "$revision")
+  extra+=(--expected-integrity-manifest-json "$manifest_json")
   python3 "$PY_TOOL" plan-prepare \
     --catalog "$CATALOG_FILE" \
     --profile "$profile" \

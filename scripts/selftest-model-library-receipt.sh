@@ -243,6 +243,30 @@ env "${BASE_ENV[@]}" \
   PULSAR_HOT_BUDGET_BYTES=1000000 \
   "$LIBRARY" prepare nemotron-3-nano-30b-nvfp4 \
   --transport ssh-control --yes >/dev/null
+# Prepare fails without occupancy even when a download receipt exists.
+occ_backup="$STATE/occ-backup"
+mkdir -p "$occ_backup"
+mv "$STATE/library/home-occupancy"/*.json "$occ_backup/"
+set +e
+env "${BASE_ENV[@]}" \
+  PULSAR_HOT_ROOT="$STATE/hot" \
+  PULSAR_HOT_RESERVE_BYTES=0 \
+  PULSAR_HOT_BUDGET_BYTES=1000000 \
+  "$LIBRARY" prepare nemotron-3-nano-30b-nvfp4 \
+  --transport ssh-control --yes >/dev/null 2>"$STATE/prepare-no-occ.err"
+prep_no_occ_rc=$?
+set -e
+mv "$occ_backup"/*.json "$STATE/library/home-occupancy/"
+rmdir "$occ_backup"
+if [ "$prep_no_occ_rc" -eq 0 ]; then
+  echo "prepare succeeded without occupancy" >&2
+  exit 1
+fi
+if ! grep -q "occupancy is missing for a download receipt" "$STATE/prepare-no-occ.err"; then
+  echo "prepare missing-occupancy error was unclear" >&2
+  cat "$STATE/prepare-no-occ.err" >&2
+  exit 1
+fi
 # An interrupted writer temp next to the final receipt must not block verify.
 python3 - "$STATE/library/download-receipts" <<'PY'
 import pathlib

@@ -651,7 +651,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         ):
             self.assertNotIn(banned, blob)
 
-    def test_prepare_without_receipt_manifest_stays_unsealed(self) -> None:
+    def test_prepare_without_receipt_manifest_fails_without_fallback(self) -> None:
         catalog_path = self.root / "catalog-unsealed.json"
         models_dir = self.root / "models-unsealed"
         models_dir.mkdir()
@@ -717,17 +717,47 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
             "primary_selections": [],
         }
         model_library.atomic_write_json(catalog_path, catalog)
-        plan = model_library.plan_prepare(
-            catalog_path=str(catalog_path),
-            profile=self.profile,
-            topology_id="d" * 64,
-            hot_root=str(self.root / "hot-unsealed"),
-            models_dir=models_dir,
-            nodes=1,
-            home_inventory=home_inventory,
-        )
-        self.assertEqual(plan["revision"], fixture.COMMIT)
-        self.assertNotIn("receipt_id", json.dumps(plan))
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "download receipt revision and file list are required",
+        ):
+            model_library.plan_prepare(
+                catalog_path=str(catalog_path),
+                profile=self.profile,
+                topology_id="d" * 64,
+                hot_root=str(self.root / "hot-unsealed"),
+                models_dir=models_dir,
+                nodes=1,
+                home_inventory=home_inventory,
+            )
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "download receipt revision and file list are required",
+        ):
+            model_library.plan_prepare(
+                catalog_path=str(catalog_path),
+                profile=self.profile,
+                topology_id="d" * 64,
+                hot_root=str(self.root / "hot-unsealed"),
+                models_dir=models_dir,
+                nodes=1,
+                home_inventory=home_inventory,
+                require_exact_revision=fixture.COMMIT,
+            )
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "download receipt revision and file list are required",
+        ):
+            model_library.plan_prepare(
+                catalog_path=str(catalog_path),
+                profile=self.profile,
+                topology_id="d" * 64,
+                hot_root=str(self.root / "hot-unsealed"),
+                models_dir=models_dir,
+                nodes=1,
+                home_inventory=home_inventory,
+                expected_integrity_manifest=inventory["manifest"],
+            )
 
     def test_hub_inventory_can_preserve_empty_files_for_receipt_prepare(self) -> None:
         hub = self.root / "empty-file-hub"
