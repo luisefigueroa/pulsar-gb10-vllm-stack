@@ -113,8 +113,8 @@ images over the control LAN and repairs digest references when needed.
 
 ## `docker load` succeeds but the worker still misses a digest-pinned image
 
-**Hit:** staging the published DeepSeek PR-41834 image printed `Loaded image
-ID`, then `sync-image.sh` failed its exact `repo@sha256:...` inspection.
+**Hit:** staging a digest-pinned image printed `Loaded image ID`, then
+`sync-image.sh` failed its exact `repo@sha256:...` inspection.
 **Cause:** Docker transferred every layer but registered the result only as an
 untagged image ID (`RepoTags=[]`, `RepoDigests=[]`). A digest reference cannot
 be restored with `docker tag`.
@@ -155,8 +155,8 @@ factories that touch CUDA. Run help/introspection with `--gpus all`.
 
 ## Cold loads look hung
 
-29 GB (27B FP8) took 222 s to load from local NVMe page-cold; 160 GB
-DeepSeek takes ~10 min. The `/health` endpoint appears only after engine
+Large models can spend several minutes loading from page-cold local NVMe. The
+`/health` endpoint appears only after engine
 init, and `--health-start-period` in our tooling is 900 s for this reason.
 Watch `docker logs -f` (`Loading weights took ...` line) before assuming a
 hang. NFS-hosted models (Laguna from /mnt/Models) add the 10 GbE ceiling.
@@ -220,18 +220,18 @@ IMAGE chown -R 1000:1000 /d/<dataset>`), or run containerized tools with
 
 ## Spec-decode throughput undercounted by the acceptance factor (harness bug)
 
-**Hit:** every spec-decode A/B before 2026-07-31 reported "slower" (-21% to
--51%); a torch-profiler trace then showed a DSpark request actually running
-~45 tok/s while the bench reported 14.
+**Hit:** speculative-decoding A/B results were undercounted even though the
+runtime trace showed higher token throughput.
 **Cause:** `validate/bench_serve.py` counted SSE stream chunks as tokens.
 Without spec decode, one chunk = one token and the number is right. Under
 speculative decoding, vLLM emits one chunk per VERIFIED BLOCK (up to k+1
 tokens), so throughput was silently divided by the mean accepted-block size
-(measured 3.46x on DSpark k=5). Second-order variant of the same trap: the
-synthetic "repeat this sequence" bench prompts also depress draft
+(the factor depends on the accepted block size). A second-order variant of the
+same trap is that synthetic "repeat this sequence" prompts can depress draft
 acceptance vs natural text.
 **Fix:** request `stream_options: {"include_usage": true}` and take token
 counts from `usage.completion_tokens` (bench_serve does this now); use
 `--prompt-style natural` for any spec-decode measurement.
 **Moral:** for any metric derived from a stream, verify the stream's unit.
-The corrected numbers flipped every spec-decode verdict — see VALIDATION.
+Re-run any affected measurement with the corrected harness; do not carry an
+old verdict forward.

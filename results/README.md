@@ -1,23 +1,19 @@
 # Results index
 
-Present-tense ship claims live in `docs/VALIDATION.md` (current ship set).
-This directory is the raw evidence map. Historical/superseded files stay;
-do not quote them as today's geometry or spec-decode verdicts.
+Present-tense claims live in [`docs/VALIDATION.md`](../docs/VALIDATION.md).
+This directory contains the publishable measurements that remain after the
+model-specific repository reset.
 
-| File | What |
+| Path | What it contains |
 |---|---|
-| `qwen1.7b-*` | canary: vLLM vs HF reference (FP-EQUIVALENT), node2 run-to-run, batch-invariant bit-identity across nodes |
-| `qwen27b-fp8-run{A,B,C,D}*.json` | 27B determinism: same-boot IDENTICAL, cross-boot/cross-node near-tie flips |
-| `qwen27b-noat/eager/BI-*` | divergence isolation: autotune-off, eager, batch-invariant |
-| `qwen27b-ngram*.json` | ngram spec decode FAIL (corrupted on GDN hybrid, both attention backends) |
-| `qwen27b-tp2-2node.json` | (absent — engine hung before capture completed; see VALIDATION) |
-| `laguna-*.json` | Laguna determinism (FLASHINFER-path noise isolation), 2-node eager parity. DFlash: historical FAIL under the broken meter; corrected +13% optional in `bench-laguna-dflash-natural-fixed.json` |
-| `super-*.json`, `nano-*.json` | Nemotron captures + MTP A/B |
-| `dsv4-*.json`, `*-0731*`, `*-20gb*` | flagship captures and 0731 / 20 GB geometry gates. Canonical soak: `soak-dsv4-20gb-150min.json` (c=5, 3201 req). Pre-20 GB soaks remain historical. gsm8k 0.925 lives in `lm-eval-dsv4-0731-500kv/` (10 GB / 500K), not the 20 GB section |
-| `needle-dsv4-20gb-447k.log` | only shipped needle transcript: 20 GB DeepSeek 3/3 @447K. Qwen 27B / Laguna / Nano needle PASS rows in VALIDATION.md have no `results/` file |
-| `bench-*.json` | concurrency sweeps (validate/bench_serve.py, warmup per level) |
-| `weight-fabric/<tag>/` | **superseded** historical live NFS/RDMA serving evidence (ADR 0005); not a serving path. See [weight-fabric/README.md](./weight-fabric/README.md) |
-| `model-library/` | federated-library preparation, SSH-over-RoCE, topology trust, seals/bundles, and current/superseded evidence index (`model-library/README.md`) |
-| `soak-*.json` | soak reports (errors, memory drift, thermals) |
-| `lm-eval-*/` | gsm8k runs (5-shot, 200 samples). Current 0731 flagship: `lm-eval-dsv4-0731/` (0.935). `lm-eval-dsv4/` 0.970 is pre-0731. NOTE: `lm-eval-laguna/` is the INVALID 0.055 run (client-side tokenization bug, kept as evidence); `lm-eval-laguna-textmode/` is the valid one |
-| `../bench/results/step0/` | NCCL sweeps + transport verification logs |
+| `qwen27b-*`, `bench-qwen27b-*`, `lm-eval-qwen27b-*`, `soak-qwen27b-*` | Qwen3.6 27B measurements |
+| `laguna-*`, `bench-laguna-*`, `lm-eval-laguna-*`, `soak-laguna-*` | Laguna measurements retained for their existing ledger claims |
+| `nano-*`, `super-*`, `bench-nano.json`, `bench-super-*`, `lm-eval-nano/`, `lm-eval-super/`, `soak-nano-*`, `soak-super-*` | Nemotron measurements |
+| [`model-library/`](./model-library/) | Current catalog and artifact evidence index |
+| [`model-onboarding/`](./model-onboarding/) | Empty until a model is onboarded again |
+| [`weight-fabric/`](./weight-fabric/) | Pointer for retired distribution paths; no model-specific evidence retained |
+| `../bench/results/step0/` | NCCL transport measurements |
+
+Do not infer a reviewed Model Serving Release from a raw result file. The
+tracked registry under `models/model-serving-releases/` is the authority for
+reviewed status, and it is currently empty.

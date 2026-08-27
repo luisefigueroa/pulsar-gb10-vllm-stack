@@ -16,8 +16,7 @@ Inspect at minimum, where present:
 
 - `AGENTS.md`, `README.md`, `PREREQUISITES.md`, and `MODELS.md`;
 - `pulsar`, `wizard.sh`, `serve.sh`, and operator help/output;
-- `models/*.conf` and `models/model-serving-releases/` (not archived
-  `docs/archive/schema-1-expected-seal/`);
+- `models/*.conf` and `models/model-serving-releases/`;
 - `scripts/`, `scripts/testlib/`, `cluster/`, `validate/`, and `bench/`;
 - `docs/`, especially accepted ADRs, current specifications, operations,
   revalidation, validation, and model/fabric design documents;

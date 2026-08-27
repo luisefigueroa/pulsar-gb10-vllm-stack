@@ -127,13 +127,13 @@ run "workflow menu + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "model catalog scopes" bash -c '
   set -e
-  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --json)
-  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert \"qwen3-1.7b\" not in m; assert \"deepseek-v4-flash\" not in m; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\""
+  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --json)
+  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert \"qwen3-1.7b\" not in m; assert \"deepseek-v4-flash\" not in m; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\"; assert m[\"qwen3-1.7b-2node\"][\"status\"]==\"untested\""
 
   serving=$("'"$REPO_DIR"'/scripts/list-models.sh" --serving --json)
   echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x for x in m); assert not any(x[\"id\"]==\"qwen3-1.7b\" for x in m); assert \"deepseek-v4-flash\" not in {x[\"id\"] for x in m}; assert any(x[\"status\"]==\"do-not-use\" for x in m); assert not any(x.get(\"spec_default_enabled\") for x in m); assert all(x[\"reviewed_identity\"] is False for x in m); assert all((x[\"reviewed_model_id\"] is not None)==x[\"reviewed_identity\"] for x in m)"
 
-  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --diagnostic --json)
+  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --diagnostic --json)
   echo "$diagnostic" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert {x[\"id\"] for x in m}=={\"qwen3-1.7b-2node\"}"
 '
 

@@ -23,11 +23,8 @@ written when `library-hot` was an explicit opt-in: after a successful stop,
 `model-library.sh purge-hot … --yes` unless the operator passed
 `--pin-weights`. That deleted unpinned sealed-hot copies from non-home ranks.
 
-For `deepseek-v4-flash` that copy is about 167 GB of disk. The next start
-cannot reuse prepare `action=skip`; it must transfer and full-verify again
-before vLLM load. The 2026-08-16 two-rank GA closure measured 74 s transfer
-and 47 s full verify (~121 s prepare wall) on top of ~400 s to first health
-when views were already present.
+For any large multi-rank model, deleting the non-home working copy makes the
+next start repeat transfer and full verification before vLLM load.
 
 The library still has no automatic eviction. The live choice was therefore
 “keep only by explicit pin” or “delete on every ordinary stop.” Pin is

@@ -14,12 +14,10 @@ single-stream ceiling as `240 / active-GB-per-token`:
 | Laguna-S-2.1-NVFP4 (A8B MoE) | ~9.8 | ~24 tok/s | **19.5 (79%)** | 66 @ c=4 |
 | Nemotron-3-Nano NVFP4 (A3B) | ~3.3 | ~72 tok/s | **61.9 (86%)** | 399 @ c=16 |
 | Nemotron-3-Super NVFP4 (A12B) | ~12.8 | ~19 tok/s | **16.2 (85%)** | 113 @ c=32 |
-| DeepSeek-V4-Flash 2-node TP=2 | ~5.7/node | ~40 | **27.0 (68%)** | 109 @ c=8 |
 
 (raw sweeps in results/bench-*.json; the roofline model predicts within
-6-21% everywhere — active-bytes arithmetic is a reliable planning tool on
-this hardware. DeepSeek's larger gap is cross-node all-reduce time,
-consistent with the measured ~2.3 ms/token comms budget.)
+6-21% for the retained rows — active-bytes arithmetic is a useful planning
+tool on this hardware.)
 
 Compute is comparatively plentiful: prefill runs fine, and batching scales
 aggregate throughput well past the single-stream ceiling (concurrency sweeps
@@ -84,10 +82,6 @@ number is promoted to a larger world size without remeasurement.
 - `--max-num-seqs`: dense models keep per-stream decode acceptable up to
   ~8-16 concurrent (bandwidth divides across streams); MoE models batch
   better (expert reads amortize). Numbers per model in results/bench-*.
-- `--max-num-batched-tokens 16384` was the measured DeepSeek two-node value
-  (20 GB/rank KV, `max-num-seqs 5`, long-session prefills). `8192` was
-  the prior soaked 10 GB / `max-num-seqs 8` geometry. That profile is not in
-  the live catalog (ADR 0012).
 - Cold-start discipline for benchmarks: warm up at EACH concurrency level
   (Triton JITs per batch shape; cold numbers are ~100x artifacts).
   validate/bench_serve.py does this automatically.
@@ -102,21 +96,13 @@ the acceptance factor). Re-measured with fixed metering + natural prompts:
 
 | Method | Status | Notes |
 |---|---|---|
-| **DSpark k=5** on DeepSeek-V4-Flash (PR-41834, 2-node) | **HISTORICAL default** (profile removed) | +79% c=1 (48.4 vs 27.1); 150-min soaks PASS; rolled back with `--no-spec-decode` |
 | **MTP k=1** on Nemotron-Super (triton draft head) | **opt-in WIN** | +47% c=1; lossless; `./serve.sh … --spec-decode` |
 | **DFlash k=15** on Laguna | **marginal opt-in** | +13% c=1; default conf keeps it off |
 | **ngram** on GDN hybrids (Qwen3.6) | **FAIL** | output corruption — never enable |
-| Generic **MTP** on DSV4 (pre-DSpark path) | superseded | historical DeepSeek used DSpark on the PR-41834 image |
 
 Always use `validate/bench_serve.py` (token counts from usage, not SSE chunks)
 and natural prompts for new A/Bs. Historical pre-fix tables in
 VALIDATION.md are retained as the retraction trail, not as ship guidance.
-
-DSpark k is not part of the tuning surface. For DeepSeek-V4-Flash-0731,
-`num_speculative_tokens` must equal the checkpoint's `dspark_block_size=5`.
-Larger values draft structurally unreachable positions and reduce acceptance
-([vLLM PR #41834](https://github.com/vllm-project/vllm/pull/41834)); changing k
-requires a checkpoint/upstream contract change and full revalidation.
 
 ## Determinism knobs
 

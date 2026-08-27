@@ -1138,22 +1138,11 @@ class ModelServingReleaseSchemaTests(unittest.TestCase):
                 ):
                     private(value, label="sample")
 
-    def test_legacy_schema_one_seals_are_archived_not_loaded(self) -> None:
+    def test_legacy_schema_one_seals_are_not_retained_or_loaded(self) -> None:
         self.assertFalse((REPO_ROOT / "models" / "seals").exists())
         self.assertFalse((REPO_ROOT / "models" / "validation-bundles").exists())
         archive = REPO_ROOT / "docs" / "archive" / "schema-1-expected-seal"
-        seals = sorted((archive / "seals").glob("*.json"))
-        bundles = sorted((archive / "validation-bundles").glob("*.json"))
-        self.assertTrue(seals)
-        self.assertTrue(bundles)
-        for path in seals:
-            document = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(document["schema_version"], 1)
-            self.assertEqual(document["kind"], "pulsar-expected-model-seal")
-        for path in bundles:
-            document = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(document["schema_version"], 1)
-            self.assertEqual(document["kind"], "pulsar-validation-bundle")
+        self.assertFalse(archive.exists())
 
 
 if __name__ == "__main__":

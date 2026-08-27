@@ -1,745 +1,166 @@
-# Revalidation runbook — after any Model Serving Release input changes
+# Revalidation runbook
 
-An image pin bump is the recurring event on this stack (upstream release or PR
-#41834 rebase/merge), but it is not the only invalidation trigger. A model
-revision/manifest, tokenizer or model code, draft/adapter, normalized profile
-runtime configuration, resolved image digest, or serving geometry/topology
-class change creates a new **Model Serving Release** under
-[ADR 0004](./decisions/0004-model-serving-release-validation.md). No prior
-release status transfers across that change. In the current implementation,
-nothing keeps a legacy `STATUS=tested*` evidence label without new evidence.
-Serving permission is status-independent; the changed release still has to pass
-the concrete identity, recipe, compatibility, topology, capacity, security, and
-lifecycle checks for any attempted launch.
-This is the public, repository-relative sequence; expect roughly half a day,
-mostly machine time.
+Use this runbook after changing any input to a Model Serving Release: exact
+model bytes, serving recipe, image, or supported hardware geometry. A change to
+one of those inputs creates a new Model Serving Release. Prior model-specific
+results do not transfer automatically.
 
-Lab expected-identity files and the archived combined identity format are not a
-live product
-([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
-`qwen3-1.7b` and `deepseek-v4-flash` are dropped from the live catalog.
-`qwen3-1.7b-2node` remains a tiny two-node test profile. Do not invent a lab
-expected-identity file from a user cache. Historical JSON is
-under [docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md). A future mirror may distribute the bytes, but hosting location is not
-file identity. The rank-local serve witness is created only after full
-verification; unchanged launch uses metadata and drift visibly rehashes before
-refresh. Live profiles use receipt plus occupancy
-(`identity_status=legacy-unsealed`). Live-mount serving is retired
-(ADR 0005).
-`scripts/model-release.sh` is removed. See [MODEL_RELEASE.md](./MODEL_RELEASE.md).
-`scripts/model-serving-release-plan.sh` can build and verify a
-draft ADR 0004 release descriptor and frozen Validation Contract from a complete
-file list, explicit runtime/hardware envelope, and criteria. Both exact
-Hugging Face snapshots and non-Hugging-Face complete hashed model
-trees are valid primary identities. This planning step neither verifies the
-source bytes nor establishes physical behavior, evidence, status, or review.
+## Current baseline
 
-**Policy versus implementation:** ADR 0004 defines a separate release
-descriptor, frozen Validation Contract, immutable run records, evidence bundle,
-reviewed validation decision, and the statuses `Untested`, `Testing incomplete`,
-`Tested—criteria not met`, `Tested—inconclusive`, `Validated`, and
-`Superseded`. The pure release-descriptor and frozen-contract schemas are now
-implemented in `scripts/model_serving_release.py`, with deterministic fixtures
-and fail-without-fallback tests. Pure immutable run-record, evidence-bundle, reviewed
-validation-decision, status-derivation, and supersession schemas are implemented
-in `scripts/model_validation_evidence.py`. Together they perform no command
-execution, evidence capture, persistence, trusted issuance, profile update, or
-launch. A syntactically reviewed decision cannot prove physical behavior
-or that repository review occurred. Read-only persistence and verification of
-stored ADR 0004 objects is implemented under
-`models/model-serving-releases/`. Local ADR 0004 evidence-capture candidate
-persistence is implemented and remains draft. Maintainer-only
-staging can propose those objects locally; repository review and merge remain
-what makes them trusted. Closed validator
-measurements and attempt-only spec composition are implemented for strict
-same-boot and absolute throughput/latency; they do not issue status or prove
-physical behavior. The catalog shows a reviewed decision for a profile that
-sets `MODEL_SERVING_RELEASE_ID`;
-no current profile sets that field. The supervised
-`pulsar-model-onboarding` skill orchestrates
-those CLIs. It never writes a lab expected-identity file or a validation decision, assigns
-status, points a profile at a Model Serving Release, writes the trusted registry, promotes a path, or
-claims physical behavior. Current automated mapping covers only strict
-same-boot and absolute throughput/latency; the skill invokes greedy capture,
-compare, and benchmark sequentially rather than using `validate/run-gates.sh`
-as an ADR attempt wrapper. For an absent brand-new Hugging Face
-repository, it may compose the read-only `home add --revision` plan and separately
-confirmed exact-commit acquisition. Reuse of that home requires
-receipt-backed offline full verification against the receipt while occupancy
-names the exact live directory. Occupancy may move with `home relocate` after
-that live rehash ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
-Unknown trees without a receipt fail without fallback
-(ADR 0012); catalog state and a self-observed file list
-alone are insufficient. Direct durable-cache download remains forbidden.
-Those deterministic tests are lifecycle-script evidence only. The
-Nemotron Nano Gate 14 artifact is a bounded physical catalog/artifact PASS
-for one-node rank-0 acquisition on a three-rank topology; remote target
-execution, asymmetric credentials, and an actual external new-inode restore
-remain physically pending. Its journal is isolated
-under `experiments/model-onboarding/workflows/`. Deterministic skill and journal
-tests make no physical DGX claim and create no release decision. Maintainer-only
-staging can propose exact registry objects from a verified capture
-candidate plus explicit review input. A successful local command is not
-trusted until repository review and merge, does not edit a profile, and
-does not by itself create a reviewed production object.
-`MODEL_SERVING_RELEASE_ID` may be bound
-only in the reviewed publication that stores and verifies the exact lineage.
-Existing ADR 0004 objects, archived lab expected-identity files, profiles, and
-historical evidence remain unchanged and must not be automatically relabeled
-`Validated`. The corrected ADR 0004
-objects remain schema version 1 because none was issued or persisted before
-the correction; archived lab expected-identity files are a separate format and
-remain byte-for-byte untouched.
-Locally generated release-plan candidates made before the source-neutral
-schema correction are disposable and must be rebuilt. The correction remains
-schema version 1 because no ADR 0004 object had been issued before it; the
-registry now contains the later Qwen3.8 lineage.
+- The tracked registry under `models/model-serving-releases/` is empty.
+- No current profile sets `MODEL_SERVING_RELEASE_ID`.
+- `qwen3.8-27b-fp8`, `qwen3.8-27b-fp8-2node`, and
+  `qwen3-1.7b-2node` are untested recipe shells. They carry no retained
+  onboarding, qualification, or Model Serving Release evidence.
+- Profile `STATUS=tested*` is the older recommendation class. It is not an
+  ADR 0004 decision and does not authorize serving.
 
-## Qualification scope and change impact
+## Qualification scopes
 
-Revalidation is scoped before commands are chosen. A release bundle still
-binds all of its exact inputs in the current serving schema. In the ADR 0004
-model, the implemented release descriptor binds the exact model + recipe +
-image + hardware identity and the implemented Validation Contract freezes
-criteria. The implemented stage-2 schemas separately bind immutable attempts,
-evidence sets, and reviewed decisions. Read-only verification can inspect
-stored objects. Local evidence-capture candidate persistence can emit draft
-run and bundle JSON; it does not write a reviewed decision, show catalog
-status, or launch a Model Serving Release.
-Reusable subsystem evidence is not erased by an unrelated change.
-[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md)
-defines four scopes:
+Keep four independent questions separate:
 
-| Scope | Typical evidence | What it does not prove |
-|---|---|---|
-| Catalog and artifact service | Receipt/file-list match, placement, transfer integrity, witness/lifecycle, retention, repair, cleanup | Any Model Serving Release validation criterion or a supported release |
-| Serving integration | Exact-source mount/load, health, warmup, completion smoke, owned stop | Stability, accuracy, throughput, latency, strict same-boot, context, or soak |
-| Model qualification | Stability, accuracy, throughput, latency, strict same-boot, context, and soak for exact runtime inputs | Storage-policy safety outside the tested runtime source |
-| Release and promotion | Provenance/security, physical geometry, and all required subsystem results bound to one supported profile/policy | Broader geometries, images, revisions, or storage paths |
-
-A failure in one scope blocks every release claim that depends on it, but does
-not invalidate another scope without a demonstrated causal connection. Select
-the smallest complete gate set from this change-impact matrix:
-
-The machine-readable criterion mapping is fixed: stability, accuracy,
-throughput, latency, and strict same-boot use `model-qualification`; serving
-integration uses `serving-integration`; provenance/security and physical
-geometry use `release-promotion`. `catalog-artifact` evidence establishes its
-own subsystem contract and the pre-qualification verification barrier only; it
-cannot satisfy a validation criterion.
-
-| Changed input or contract | Required revalidation |
+| Scope | What must be shown |
 |---|---|
-| Model Artifact Set content or identity: model revision/snapshot manifest, tokenizer/model code, adapter/draft, or another behavior-affecting artifact | New Model Serving Release; catalog identity/full verification, serving integration, and complete model qualification |
-| Retired lab expected-identity / archived combined-identity metadata only | Not a live product (ADR 0012). Do not issue those files. Reassess the ADR 0004 decision when its evidence or review basis changes; do not automatically rerun model qualification |
-| Image, dependency, engine flags, memory contract, or geometry | New Model Serving Release; serving integration and complete model qualification; retain generic catalog mechanics unless the change affects them |
-| Transfer/copy algorithm or admission policy | Same release when it still converges on the identical verified `local-verified-readonly` runtime-access contract; rerun affected catalog physical gates and integration smoke, and model gates only when runtime inputs change or evidence shows a causal execution effect |
-| Catalog-manifest, witness, metadata, retention, repair, or cleanup semantics | Affected identity/lifecycle gates and integration smoke when launch views change; no automatic accuracy rerun |
-| Interactive catalog/health orchestration with unchanged scan and schema semantics | Focused renderer/shell contracts plus full control-plane selftest; no new physical or model-qualification claim |
-| Runtime model-access contract | New Model Serving Release when the access contract changes (for example local verified bytes to a live remote dependency); catalog/lifecycle, serving integration, and complete model qualification |
-| Documentation-only policy/classification | Documentation checks and control-plane regression tests; no new physical claim |
+| Catalog and artifact service | Exact content, receipt and occupancy, durable placement, preparation, retention, recovery, and cleanup |
+| Serving integration | The exact recipe and image load the intended local files, become ready, answer a completion, and stop through owned cleanup |
+| Model qualification | Stability, accuracy, throughput, latency, strict same-boot reproducibility, context, and soak requirements frozen for this subject |
+| Release and promotion | Provenance/security and physical geometry review plus every required result above |
 
-Changing an image, model, configuration, or geometry creates a new release ID
-and requires a newly frozen contract and reviewed decision under ADR 0004. The
-pure libraries can build and validate all five object roles, but no current
-operator or serving path consumes them as launch permission. A new ADR 0004
-evidence bundle and reviewed decision are required before a `STATUS=tested`
-recommendation or a wizard-suggested claim can move. Preserving unchanged catalog evidence is scoped
-evidence reuse, not release-status or bundle inheritance.
-Health and completion smoke are never substitutes for model qualification.
+A pass in one scope does not satisfy another. A deterministic selftest is not
+physical DGX evidence.
 
-## Validation contract and status rules
+## 1. Establish the exact subject
 
-Freeze the two-layer Validation Contract before testing. Repository-wide rules
-require stability, accuracy, throughput, latency, strict same-boot
-reproducibility, provenance/security review, and immutable evidence. The
-release-specific layer declares the actual workloads, protocols, thresholds,
-sample sizes, context/soak conditions, and any comparable predecessor.
+1. Start from a reviewed profile diff under `models/`.
+2. Resolve the Hugging Face source to an exact commit and complete file list.
+3. Record the digest-pinned image and exact one-rank or multi-rank geometry.
+4. Freeze the Validation Contract before collecting results.
+5. Keep drafts under `experiments/`; do not write the trusted registry.
 
-`scripts/model_serving_release.py` now enforces that frozen shape and its
-release cross-links, including recipe/geometry consistency and privacy-safe
-descriptor fields. The review-derived provenance/security criterion is one
-closed canonical template; extra requirements are rejected because the
-decision evaluator would have no run metric with which to satisfy them.
-Bundle `review_evidence_artifact_ids` are extra review files besides the
-measurement runs. Empty is expected after measurement capture. A decision may
-cite an empty list when every provenance component is `pending`; a `pass` or
-`fail` still requires cited extra `release-promotion` review files. That citation
-rule is not a new Model Serving Release.
-Every persisted free-form release/contract string without a stricter closed
-grammar is screened for secret, absolute-path, endpoint, and deployment-only
-content, including artifact identifiers, criterion/workload/protocol/threshold
-strings, argument/environment values, N/A reasons, and extensible keys/values.
-`scripts/testlib/test_model_serving_release.py` verifies the
-schema contract during `scripts/selftest.sh`; it does not collect a run or
-establish that any physical criterion passed.
-
-`scripts/model_validation_evidence.py` validates the next evidence layer. Each
-run names the exact release and contract, hash-binds sorted
-`attempted_criterion_ids`, uses rank-relative observations and
-opaque boot/launch identities, records exact command descriptors and
-distribution/subsystem provenance, and distinguishes failure before the full
-verification barrier from qualification. Evidence artifacts are content
-addressed and explicitly `publishable` or `protected`, with privacy-review
-state. Before the barrier, a preparation failure declares no attempted
-criterion. After the barrier, every non-preparation attempt must declare at
-least one scope-compatible criterion and provide exactly one corresponding
-complete or inconclusive observation for each; an incomplete attempt may only
-provide inconclusive observations. A bundle must resolve the exact run and
-artifact sets. A decision must
-consider every applicable observation automatically; its supplied status must
-equal the independently derived result. Excluding an otherwise applicable
-observation requires an entry in the builder's `criterion_exclusions` input,
-and the decision retains it under
-`criterion_results[].excluded_run_records`; omission is not a selection
-mechanism. Included observations are recorded in
-`criterion_results[].included_run_record_ids`. For one criterion, pass+fail
-and pass+inconclusive aggregate to
-inconclusive, fail+inconclusive aggregates to fail, and all-pass aggregates to
-pass. The validator recomputes those results, required context and soak
-conditions, applicable predecessor-relative performance budgets, and the only
-permissible status. Missing comparison evidence cannot validate, and an
-over-budget comparison is a conclusive failure. A mismatch fails closed.
-Experimental distribution maturity is provenance and does not cap status.
-
-A relative baseline must cross-link the reviewed predecessor contract,
-evidence bundle, validation decision, and exact run. The relevant predecessor
-throughput or latency criterion must have passed in that decision. The
-predecessor release itself need not be globally `Validated`; unrelated criteria
-do not invalidate a criterion-specific baseline. The benchmark protocol and
-supported geometry must still be identical. A predecessor decision with
-supersession links must supply complete `prior_decision_sources` covering
-that lineage; incomplete, cyclic, or backdated lineage fails closed.
-
-Observed runtime compatibility and architecture/geometry are checked
-structurally against the release envelope. This can reject an incompatible run
-but cannot prove physical behavior; serving-integration and physical-geometry
-criteria need physical DGX evidence. Canonical compatibility ranges compare
-the numeric core of exact observed deployed versions; zero-padded components
-and vendor suffixes remain preserved evidence. Command descriptors use a closed
-schema: an allowlisted repository program, a `sha256:<digest>` program-version
-identity, exactly one allowed operation, closed repository resources, typed
-criterion references, typed protected/rank references for site-bearing
-options with ranks bounded by the release geometry, `environment[]` references
-without values or credential-shaped names, and the generic `repository-root`
-working directory. `observed_environment.cluster` and
-per-rank compatibility observations must match the release structurally, and a
-soak observation's `started_at`, `ended_at`, and `duration_seconds` must agree
-exactly. A completed nested context or soak failure remains conclusive even
-when the enclosing criterion is inconclusive. A later
-decision points backward to prior decision IDs only with strictly later
-chronology and an acyclic relationship; readers project the older one as
-`Superseded` without rewriting it. `predecessor_evidence_registry` and
-`decision_evidence_registry` are complete caller-supplied source registries for
-pure validation; neither is trusted persistence or evidence that a PR was
-merged.
-
-These functions validate supplied JSON-compatible objects only.
-`predecessor_evidence_registry` and `decision_evidence_registry` are
-caller-supplied validation input, not the trusted store. Read-only
-verification of stored ADR 0004 objects is implemented under
-`models/model-serving-releases/` and holds the reviewed Qwen3.8 lineage
-(`Testing incomplete`). Local capture
-candidates are draft and do not replace those artifacts. Continue
-retaining the existing raw/sanitized artifacts and
-archived lab expected-identity materials described below. Do not create a
-`Validated` claim merely by calling a builder or copying a synthetic document.
-
-Structural privacy checks fail without fallback for recognized credential, path,
-explicit URI, private/site endpoint, and topology forms, including
-credential-bearing extensible field names. Ordinary dotted public identifiers
-remain valid, but these checks are not a complete privacy proof. The future
-trusted capture path must compute program digests from the checked-out files,
-and publication must still run the repository privacy audit and reviewer
-inspection for unknown site codenames.
-
-FP-equivalent output does not pass strict same-boot reproducibility. If no
-reviewed criterion-passing comparable predecessor exists, the relative gate is
-`N/A` and absolute release-specific criteria still apply. Record every attempt,
-including interrupted, failed, and inconclusive runs. A pre-qualification
-acquisition or distribution failure leaves the release `Untested`; a completed
-criterion failure is
-`Tested—criteria not met`; noisy or insufficient evidence is
-`Tested—inconclusive`; missing gates or review is `Testing incomplete`; and
-only a complete reviewed pass is `Validated`.
-
-## 0. Prep (5 min)
+For a model that has no home yet:
 
 ```bash
-# From the repository root. Multi-node commands require a confirmed topology;
-# .env is only for optional runtime/path/auth overrides.
-scripts/detect-fabric.sh --json
+scripts/model-library.sh home add <profile> \
+  --revision <selector> --plan --json
 
-# Clear JIT caches locally, then repeat on every remote SSH target shown above.
-# Stale Triton cache can silently corrupt on sm_121.
-rm -rf ~/.cache/vllm ~/.triton 2>/dev/null
+scripts/model-library.sh home add <profile> \
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes --json
 
-# After updating the candidate profile IMAGE pin, stage it to every exact rank.
-scripts/sync-image.sh <profile> --pull --yes
-
-# Free local memory if other workloads ran; repeat on every exact rank.
-sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh home verify <model_id@exact-commit> --json
 ```
 
-Update the pin (`Dockerfile` digest or the conf's `IMAGE=`) in a branch.
-Keep the OLD captures in results/ — they are the A/B baselines. Use a unique
-`--tag`; the runner refuses to overwrite any matching artifact. Built-in
-Python clients automatically use `VLLM_API_KEY` / `API_KEY` when configured.
+The download creates a receipt and occupancy identity. It does not create a
+Model Serving Release or a validation decision.
 
-## 1. Canary (10 min)
+## 2. Run deterministic checks before hardware work
 
 ```bash
-./serve.sh qwen3-1.7b -d               # healthy in ~2 min or the image is broken
-validate/run-gates.sh qwen3-1.7b --tag <bump-tag>
-./pulsar stop qwen3-1.7b
-cluster/stop-cluster.sh --all
-cluster/start-cluster.sh qwen3-1.7b-2node   # multi-node plumbing
-cluster/stop-cluster.sh qwen3-1.7b-2node
+scripts/selftest.sh
+scripts/model-serving-release-registry.sh verify
+scripts/list-models.sh --json
 ```
 
-The canary remains an exact two-node profile. On a larger confirmed topology it
-uses ranks 0 and 1 only; extra ranks do not change this validation claim.
+The registry command must report a valid empty registry until a reviewed
+publication is merged. Do not add a profile binding before its complete object
+graph is reviewed in the same change.
 
-## 2. Single-node models (~1 h, mostly load time)
+## 3. Prepare the exact runtime view
 
-For each of `nemotron-3-nano-30b-nvfp4`, `nemotron-3-super-120b-nvfp4`,
-`qwen3.6-27b-fp8` (the Laguna profile was removed by ADR 0006; its historical
-gates stay in the ledger):
+For a one-rank profile:
 
 ```bash
-./serve.sh <name> -d && <wait healthy>
-validate/run-gates.sh <served-name> \
-    --baseline results/<prior-capture-runA>.json \
-    --needle-tokens <its validated ctx: 125000 nano+qwen / 0 super> \
-    --tag <bump-tag>
-./pulsar stop <name>
-```
-Gate reading: same-run comparison is strict (`--require-identical`) by
-default. It must be IDENTICAL for FLASH_ATTN-path models (qwen, nano). For
-Laguna only, explicitly append `--allow-fp-equivalent-run-to-run` because its
-known FLASHINFER-path noise is FP-equivalent. That flag changes only the
-human compare exit path; it does not rewrite a later strict same-boot
-measurement. Vs-baseline remains a human-only diagnostic and is not an ADR
-predecessor-relative gate. An incomplete warmup or measured concurrency
-level exits nonzero. Bench must remain within ~5% of the README table or be
-investigated. Optional `--measurement-dir DIR` writes closed compare and
-bench measurement documents and does not require a release plan. The
-directory must be under tracked `results/` or an explicit path outside the
-repository; `models/`, `.git`, and the repository root are refused, and
-existing measurement files are never overwritten. Those documents are
-validator output. Attempt composition consumes them later and does not invent
-a missing file. Optional `--invocation-plan FILE` is an explicit
-contract-driven bench argv overlay; an invalid plan fails closed and does not
-fall back to the default `c=1,2,4,8` sweep. The explicit request count must be
-at least the largest declared concurrency; otherwise the benchmark cannot
-exercise that protocol and is refused before network work begins. SIGINT or
-SIGTERM stops the remaining gate sequence with exit 130 or 143 respectively
-while preserving any output already written.
-
-**grep the engine log on every first boot** — backend selection changes
-silently across versions:
-```bash
-docker logs vllm-<name> 2>&1 | grep -E "attention backend|MoE backend|LinearMethod|Unknown vLLM env"
+scripts/model-library.sh prepare <one-rank-profile> --yes
+scripts/up.sh <one-rank-profile> --dry-run
 ```
 
-## 3. gsm8k spot (per quant-sensitive model, ~10 min each)
+For a multi-rank profile:
 
 ```bash
-HF_HUB_OFFLINE=0 lm_eval --model local-completions \
-  --model_args "base_url=http://127.0.0.1:8000/v1/completions,model=<served>,tokenizer=<hf-id-or-path>,num_concurrent=16,max_retries=2,timeout=600,tokenized_requests=False" \
-  --tasks gsm8k --num_fewshot 5 --limit 200 --output_path results/lm-eval-<name>-<tag>
+scripts/topology-ssh-trust.sh enroll
+scripts/topology-ssh-trust.sh check
+scripts/model-library.sh prepare <multi-rank-profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
+cluster/preflight.sh <multi-rank-profile>
 ```
-ALWAYS `tokenized_requests=False`. Gate: within stderr (±0.035) of the
-recorded score. For broken-tokenizer models run lm-eval inside the vLLM
-container (TROUBLESHOOTING.md).
 
-## 4. Flagship exact two-node profile (~2 h)
+Preparation must full-verify the receipt-backed content on every serving rank.
+It must not fall back to another transport, geometry, or source.
+
+## 4. Prove serving integration
+
+Use the profile's actual launcher:
 
 ```bash
-cluster/preflight.sh deepseek-v4-flash
-cluster/start-cluster.sh deepseek-v4-flash  # default DSpark ship path; NCCL_DEBUG=INFO on first bump boot
-docker logs vllm-cluster-deepseek-v4-flash 2>&1 | grep -m2 "NET/IB"   # RDMA, not TCP
-# THE STOCK-KILLER STRESS SEQUENCE — all three killed stock v0.26.0:
-validate/run-gates.sh deepseek-v4-flash --baseline results/dsv4-0731-dspark-capture.json --tag <bump-tag>
-#   (gate 1 = 30 sequential captures; gate 3's fresh prefills = the livelock trigger)
-API_KEY_VALUE="${VLLM_API_KEY:-${API_KEY:-}}"
-AUTH_HEADER=()
-[ -n "$API_KEY_VALUE" ] && AUTH_HEADER=(-H "Authorization: Bearer $API_KEY_VALUE")
-for i in $(seq 1 8); do curl -fsS --max-time 300 "${AUTH_HEADER[@]}" http://127.0.0.1:8000/v1/completions \
-  -H 'Content-Type: application/json' \
-  -d "{\"model\":\"deepseek-v4-flash\",\"prompt\":\"topic $i:\",\"max_tokens\":60,\"temperature\":0}" -o /dev/null & done; wait
-curl -fs "${AUTH_HEADER[@]}" http://127.0.0.1:8000/health && echo SURVIVED
-# needle at the claimed context:
-python3 validate/needle.py --model deepseek-v4-flash --context-tokens 450000 --depths 0.05 0.5 0.95
-# gsm8k as in step 3 (expect ~0.945-0.97)
+# one rank
+scripts/up.sh <one-rank-profile>
+
+# multiple ranks
+cluster/start-cluster.sh <multi-rank-profile>
 ```
 
-## 5. Soaks (promotion gate — background, ~5 h total)
+Record startup, health, warmup, one non-streaming completion, one streaming
+completion, runtime identity, and owned stop. On multi-rank jobs, confirm the
+intended NCCL/RoCE transport rather than inferring it from `/health`.
 
 ```bash
-python3 validate/soak.py --model deepseek-v4-flash --minutes 150 --concurrency 5 \
-    --out results/soak-dsv4-<tag>.json
+./pulsar status <profile>
+./pulsar stop <profile>
 ```
-Gate: process must print `PASS soak` and exit **0** (default: any request
-error fails; `completed>0`). MemAvailable shrink &gt;5% is a **WARN** finding
-by default — review it; use `--fail-on-mem-shrink` only for strict CI.
-Also check SM clock within ~2% of 2405 in the JSON summary.
 
-## 6. New node-count or geometry promotion
+## 5. Run the frozen model-qualification gates
 
-Control-plane support is not a serving promotion. For each new `NODES`, TP, or
-PP combination:
+Run only against the already-running exact subject:
 
-1. Create a separate exact profile variant with `TP × PP == NODES`, explicit
-   topology/rail requirements, and a non-tested status. Do not alter a tested
-   profile in place to cover another world size.
-2. Use `scripts/up.sh <profile>` for the deliberate experiment. The profile's
-   status remains visible and advisory; the launcher still requires confirmed
-   capacity and the exact topology.
-3. Capture correctness and determinism against the appropriate control; run
-   concurrency/throughput sweeps, context gates appropriate to the model, a
-   partial-rank/node-loss exercise, and the full soak. A relative performance
-   control must bind a reviewed predecessor contract, bundle, decision, and run
-   whose relevant criterion passed; the predecessor need not be globally
-   `Validated`. Re-measure collectives because adding ranks changes pair count
-   and algorithms.
-4. Store raw outputs under `results/` and add the exact image, hardware ranks,
-   topology ID/class, TP/PP, flags, verdicts, and artifact paths to
-   `VALIDATION.md`.
-5. Move only that variant into the legacy `STATUS=tested*` recommendation class
-   after every required gate passes. It remains visible in the wizard before
-   then, with its actual status and caveats.
+```bash
+validate/run-gates.sh <served-name> --tag <candidate-tag>
+```
 
-No three-node serving profile is promoted by the current ledger.
+Add the contract's required accuracy, context, concurrency, and soak commands.
+Do not invent missing output or relax a threshold after seeing results. Strict
+same-boot reproducibility is exact; floating-point similarity is diagnostic.
 
-## 7. Experimental catalog storage (conditional)
+The retained recipes have no carried-forward evidence. For example, running
+either Qwen3.8 recipe or the Qwen3 1.7B two-rank draft begins a new onboarding
+record, not a continuation of an older result.
 
-Live NFS/RDMA serving is retired (ADR 0005) and must not be used as a
-revalidation subject; the replicated path was removed (ADR 0006). Do not
-inherit **serving integration or model qualification** across mechanisms.
-Generic catalog evidence may be reused only when its measured
-identity, placement, transfer, and lifecycle contracts are unchanged. Follow
-`MODEL_LIBRARY_DESIGN.md` and
-[ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md), and
-preserve unique result bundles for the affected scopes:
+## 6. Capture and stage a reviewed proposal
 
-When the reviewed-profile interactive experiment is the subject of the gate,
-[ADR 0003](./decisions/0003-explicit-model-preparation-transport.md) fixes its
-copy policy to topology-bound `ssh-roce` with eight streams and no fallback.
-Catalog refresh is not model acquisition; establish and verify the exact
-durable home separately before running preparation.
+The onboarding skill composes planning, acquisition, preparation, launch, and
+measurement capture. It remains non-issuing. After capture, the maintainer
+issuance workflow may stage an untrusted proposal from the independently
+verified draft and explicit review declaration.
 
-When legacy `cold adopt` publication changes, deterministically verify that
-every pre-existing destination is preserved, the copy stays in private
-same-filesystem staging, an interrupted copy leaves no partial final
-repository, and a destination race loses to atomic no-replace publication.
+A successful local stage command does not make the objects trusted. Repository
+review and merge establish the tracked registry state. Add
+`MODEL_SERVING_RELEASE_ID` only as a separately reviewed profile edit in that
+same publication change.
 
-`cold stage-only` is retired. Its public command and internal planner must
-exit 2 with receipt-backed migration guidance. Any previously created
-stage-only hot state must fail readiness/launch while remaining discoverable
-for explicit unpin and purge.
+## 7. Model-library physical follow-ups
 
-1. (historical) two-node replicated-local and fabric cold I/O/startup A/B;
-2. three-node concurrent loading and interface-counter proof;
-3. deterministic/correctness/long-context gates on the healthy fabric service;
-4. interrupted load, link loss, NFS restart, owner reboot, restart loop, and
-   soak recovery;
-5. exact receipt-versus-observed file list and revision binding;
-6. proof that non-home clients retain no complete durable model cache;
-7. for local files on every rank, preparation-created witness plus
-   unchanged-launch fast-path, metadata-drift full-verify/fail-without-fallback
-   behavior on every rank, no-follow purge, and honest durable-home pin/restart
-   dependency.
-8. active-use durable-home removal protection on the confirmed physical
-   topology:
-   - duplicate discovery refuses resolution before selection;
-   - exact-revision primary selection survives catalog refresh;
-   - primary selection rejects a catalog rank/node that differs from confirmed
-     topology;
-   - a missing selected home becomes `stale` without auto-election;
-   - cleanup guidance emits no removal command before selection and targets
-     only explicit non-primary ranks afterward;
-   - direct `home remove --node` remains blocked before selection;
-   - selected-primary removal remains blocked until the intended survivor is
-     selected;
-   - normal last-home refusal and separate `--allow-last-home` acknowledgement;
-   - retained `ready`, `verifying`, and `pinned` hot references;
-   - running and stopped managed-container references;
-   - fail-without-fallback unreachable-node, Docker, and malformed-hot-state probes;
-   - shared/exclusive lifecycle-lock race behavior; and
-   - actual deletion only against a disposable exact HF repository, with
-     sibling preservation and catalog refresh. Never delete a production or
-     serving-validation canary durable home merely to prove the guard; create a
-     disposable synthetic repository instead.
-9. exact hot-storage admission before writes:
-   - every selected rank is observed exactly once and unreachable/missing ranks
-     fail without fallback;
-   - warm-home charges zero model bytes on the home rank and exact file-list
-     bytes on each non-home rank;
-   - a large-model dry-run preserves the default
-     `max(64 GiB, 5% filesystem capacity)` reserve on every selected rank;
-   - an explicit undersized hard cap blocks before mutation; and
-   - no automatic eviction, reserve relaxation, or transport fallback occurs.
-10. read-only health on every confirmed physical rank:
-   - health reports every rank, cached-catalog/primary state, leftover
-     schema-1/2 as untrusted, and Docker/SSH loss without hashing or mutation;
-   - public `hot legacy check|remove` is removed (SIM-13); do not reintroduce
-     a Pulsar mutation path for leftover schema-1/2;
-   - leftover files under `PULSAR_HOT_ROOT`, if any, are site-admin cleanup;
-   - historical disposable-repair evidence remains
-     `results/model-library/model-library-health-legacy-repair-gate-20260812.json`
-     and is not a live operator command.
-11. interactive model-storage delegation when its eligibility or command
-    contract changes:
-    - browsing and health recheck remain mutation-free;
-    - stale topology, missing receipt/occupancy, missing primary,
-      profile metadata, and invalid profile JSON suppress this interactive
-      preparation action; validation status does not;
-    - the preview names exact revision/manifest, durable-home dependency,
-      approximate non-home storage, and the selected transfer policy;
-    - confirmation defaults to no and decline invokes no mutation;
-    - multi-node acceptance delegates exactly to reviewed-profile eight-stream
-      SSH-over-RoCE copy; one-node acceptance targets the durable-home rank with
-      `ssh-control`, one stream, and no bulk transfer; neither path has fallback
-      or a validation-status override;
-    - success and failure both trigger fresh health, never claim launch or
-      promotion, and preserve service diagnostics; and
-    - repeat physical preparation only if the underlying identity, topology,
-      admission, transfer, rollback, witness, or lifecycle contract changes.
-      Pure UI delegation may reuse matching physical service evidence.
-12. serving-wizard catalog delegation when source selection, placement,
-    readiness, restart, or stop-retention behavior changes:
-    - the library flow discloses exact revision/manifest, durable-home
-      dependency, selected ranks, transfer policy, and no fallback;
-    - stale or invalid health blocks preparation and launch — there is no
-      fallback storage choice (ADR 0006);
-    - successful preparation is followed by fresh health and exact all-rank
-      readiness before weight preflight or launch;
-    - preparation and launch retain separate confirmations, and failed or
-      incomplete preparation cannot launch;
-    - one-node catalog preparation and launch use the durable-home rank; a
-      non-home choice fails without fallback instead of creating a second hot copy;
-    - a replacement snapshots the exact live launch contract, physical placement,
-      source, spec state, and library identity/runtime/retention before stop;
-      ephemeral catalog views are pinned until confirmed replacement or exact
-      rollback, while incomplete, ambiguous, legacy-unlabeled, or drifted state
-      fails before mutation;
-    - failed launch and interrupted-wizard recovery restore only the saved source,
-      placement, and spec state, and remove transaction state only after success;
-    - confirmed same-source restart pins before stop, ordinary stop retains
-      unpinned views, explicit `--purge-hot` restages on the next start, and
-      explicit pin remains durable-home dependent; and
-    - repeat physical serving integration when the selected placement or
-      runtime-resolution algorithm changes. Existing evidence may be reused
-      only for the exact placement and contract it measured.
-13. (historical) lab expected-identity durable-home acquisition is not a live
-    product (ADR 0012). Do not re-run `home add` without `--revision`. Live
-    acquisition is gate 14. The 2026-08-13 Qwen artifact remains history.
-14. Hugging Face `home add --revision` when source resolution, inventory,
-    receipt, offline verification, or exact prepare binding changes:
-    - a read-only plan asks in-geometry candidates with modern `hf` to resolve
-      the supplied selector and complete upstream Git/LFS file inventory without
-      downloading model bytes; failed candidates become ineligible, successful
-      candidates must agree, and the selected target must already have produced
-      that matching source;
-    - every confirmed rank is observed and exact rank/node identity is bound;
-    - execution requires a separate confirmation, uses that exact commit, and
-      binds the selected rank;
-    - automatic placement chooses the eligible most-free-space serving rank;
-      one-node profiles may select any confirmed rank while multi-node profiles
-      remain in their exact geometry, preserving one home plus N−1 working
-      copies, and an explicit ineligible or out-of-geometry `--node` fails
-      without fallback;
-    - authentication remains on the selected rank and no credential is passed,
-      logged, or persisted by Pulsar;
-    - target-side Hugging Face CLI, authentication/egress, and capacity failure
-      leave no published home;
-    - model, Xet, and asset bytes remain in private same-filesystem staging;
-      interruption or verification failure removes only that staging tree;
-    - the upstream inventory, Hugging Face missing/extra result, local file set,
-      sizes, Git/LFS identities, and every SHA-256 match before publication;
-    - every confirmed rank is reobserved and an existing or raced repository
-      blocks publication;
-    - an immutable site-local receipt is written before an atomic no-replace
-      rename publishes the one durable home, and occupancy is attached to the
-      exact published directory;
-    - `home verify <model_id@commit>` completes an offline full rehash against
-      the receipt while occupancy names that live directory, `home relocate`
-      may move occupancy after the same live rehash without a Hub download,
-      and prepare accepts the receipt-backed home only when occupancy is
-      current and the exact model ID and commit match;
-    - one exact durable home is visible after explicit catalog refresh, with no
-      non-home durable repository or working copy created; and
-    - the result states that catalog refresh, preparation, launch, model
-      qualification, status, decision, and promotion did not occur.
-15. Receipt control-state replica, last-home recovery-set checks, or archive
-    restore changes (ADR 0013):
-    - archive publication writes the canonical receipt under the private cold
-      control-state namespace and never inserts it into the model archive;
-    - canonical encoding, receipt ID, filename, regular-file shape, private
-      permissions, stable read, and atomic no-replace behavior pass;
-    - a complete model archive without the protected receipt replica blocks
-      last occupancy removal, and confirmed removal repeats both receipt and
-      full model-archive verification before occupancy detach;
-    - a same-device recovery set is accepted without an override when its paths
-      are operationally safe and both parts verify; nested paths that can
-      recurse during copy or couple deletion remain blocked;
-    - simulated controller receipt loss does not make restore import authority
-      automatically; explicit `home receipt recover --receipt ... --yes`
-      restores only the exact protected receipt;
-    - restore by receipt ID works without a live catalog, uses the receipt's
-      complete byte count for admission, copies only into private
-      same-filesystem staging, fully rehashes before atomic no-replace
-      publication, and creates new occupancy from the published directory;
-    - collision, interruption, corrupt replica, corrupt archive, insufficient
-      capacity, and failed occupancy attachment preserve existing homes and do
-      not bless archived bytes; and
-    - the recovery result remains catalog/artifact evidence. Repeat physical
-      NFS/controller-loss and remote-rank restore before claiming those
-      functional behaviors on DGX hardware. Do not treat deterministic or
-      physical evidence as certification of the operator's failure-domain
-      choice (ADR 0014).
-16. `home relocate` profile or destination-geometry changes:
-    - on a topology with at least one idle confirmed rank, a two-rank profile
-      refuses relocation to that idle rank before catalog access, capacity
-      inspection, copying, or occupancy mutation;
-    - a one-rank profile may select any one confirmed rank as its sole serving
-      placement;
-    - raw `model_id` and exact `model_id@revision` queries require an explicit
-      `--profile`, and a profile for different model bytes is refused;
-    - the accepted destination is rehashed against the immutable receipt before
-      occupancy moves, and a failed request leaves the source occupancy and
-      destination unchanged; and
-    - the result is catalog/artifact evidence only. Repeat physical relocation
-      and subsequent preparation/serving integration before claiming that path
-      on DGX hardware.
-17. Catalog refresh, receipt classification, or catalog persistence changes:
-    - scanned homes carry device, inode, and ctime for the repository directory;
-    - receipt and occupancy stores fail without fallback on malformed,
-      unexpected, or incompatible state;
-    - a replacement directory at the same node/path is classified
-      unbound-complete rather than inheriting occupancy;
-    - occupancy classification and primary-policy recomputation finish before
-      one atomic catalog write;
-    - `catalog refresh --json` is semantically identical to the saved catalog;
-    - the saved catalog remains mode `0600` under `umask 0002`; and
-    - a classification failure preserves the prior catalog byte-for-byte. This
-      is catalog/artifact control-plane evidence and makes no serving or Model
-      Serving Release claim.
+The retained catalog and artifact ledger includes the bounded Nemotron Nano
+Gate 14 acquisition lifecycle. It does not cover a remote target, asymmetric
+credentials, physical cold restore, or model serving. When changing those
+paths, capture the missing physical cases without extending Gate 14 beyond its
+recorded scope.
 
-The historical lab expected-identity acquisition contract passed a three-node
-physical gate on 2026-08-13 using the then-live `qwen3-1.7b` profile. The run proved guarded removal
-of the prior final home, interrupted remote staging cleanup, explicit remote
-placement, automatic most-free-space remote placement, full reviewed-manifest
-verification, atomic publication, explicit catalog refresh, and a final
-one-home/no-hot state. See
-`results/model-library/qwen3-1.7b-home-acquisition-gate-20260813.json`.
-
-The current guard passed that deterministic and three-node physical gate on
-2026-08-11. See
-`results/model-library/model-library-home-removal-guard-20260811.json`.
-Repeat the gate when removal targeting, reference observation, or lifecycle
-locking semantics change. Persistent-primary implementation changes removal
-targeting by adding a selected-primary blocker. Its deterministic contracts and
-a three-node disposable-repository physical targeting repeat passed on
-2026-08-12; see
-`results/model-library/model-library-primary-selection-reconciliation-gate-20260812.json`.
-Repeat again after any later targeting, observation, or locking change. The
-repeat did not reconcile the existing DeepSeek duplicate or promote the path.
-Health/reference observation and hot-lock behavior changed with the guarded
-legacy repair service. Gate 10 and the affected disposable home-removal subset
-passed a three-node repeat on 2026-08-12. The run proved local and remote
-repair, stopped-container and pinned blockers, no-follow/sibling preservation,
-continued attention for preserved untracked content, and exact disposable-home
-removal. See
-`results/model-library/model-library-health-legacy-repair-gate-20260812.json`.
-SIM-13 later removed the public repair command after lab confirmation that no
-schema-1/2 hot instances remained; that artifact stays historical.
-
-Gate 13 has deterministic Python and thin public-CLI coverage plus the physical
-Qwen acquisition artifact cited above. Gate 14 has deterministic Python,
-thin public-CLI coverage, and a bounded physical Nemotron Nano pass for a
-one-node rank-0 target across three confirmed ranks. The run covered two real
-Hub acquisitions, current-home attachment authority and controlled absence,
-offline full rehash, catalog refresh, exact prepare/reuse, guarded cleanup,
-receipt preservation, reacquisition, and final one-home/no-hot state. Remote
-target execution, asymmetric credentials, and an actual external new-inode
-restore remain physically pending; deterministic selftests must not be cited
-as proof of those behaviors. Gate 12 has deterministic wizard,
-placement, and lifecycle coverage. Its production two-node DeepSeek wizard
-flow passed physically on 2026-08-13, including explicit source selection,
-separate preparation and launch confirmations, fresh exact readiness,
-read-only exact-snapshot serving, warmup, completion, interactive owned stop,
-unpinned purge, and return to one durable home; see
-`results/model-library/deepseek-v4-flash-serving-wizard-gate-20260813.json`.
-The new remote one-node wizard path still needs its own serving-integration
-repeat before that placement receives a physical claim. The short-lived exact
-replacement transaction has deterministic Python, inventory, legacy-migration,
-pre-library leftover archive, and catalog rollback coverage. Its physical
-two-rank repeat passed on
-2026-08-16: a forced target launch failure left a persisted stopped transaction
-and pinned exact views; a new wizard process restored the captured contract,
-removed the transaction, and restored ephemeral retention. The same closure run
-also passed exact home-symlink behavior, 30-minute serving with zero request
-errors, restart, identity re-verification, owned cleanup, and one-home closeout.
-The 1.14 GiB memory-shrink warning remains recorded. See
-`results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
-This made the reviewed two-rank subsystem GA and records bounded
-model-qualification evidence for the soak and stability observations. It does
-not satisfy the release-specific soak criterion or confer `Validated`.
-ADR 0006 later promoted every library scope to supported by decision; the
-one-rank physical serving-integration repeat remains a recorded follow-up.
-
-Record a sanitized admission artifact without hostnames, node IDs, topology
-IDs, IPs, interface names, or absolute paths. `budget --json` is site-local
-input and must not be published verbatim.
-
-The current policy passed deterministic contracts and a non-mutating physical
-gate on 2026-08-11. It inventoried every confirmed rank, then proved exact
-home-zero/non-home manifest accounting, default-reserve preservation, explicit
-hard-cap refusal, and unchanged hot ownership on both DeepSeek-selected ranks. See
-`results/model-library/model-library-hot-budget-admission-gate-20260811.json`.
-Repeat it when admission arithmetic, hot-root accounting, selected-rank
-barriers, or hot locking changes.
-
-Catalog and integration gates may be recorded as accepted in their own scopes.
-A scope remains ineligible for release promotion if any required artifact is
-absent, even when the same model/profile/image is already `tested` from
-historical replicated evidence.
+The operator decides whether the configured cold root is an independent
+failure domain. Pulsar verifies path safety and the receipt/archive recovery
+set; it does not verify the operator's storage architecture.
 
 ## 8. Close out
 
-- Classify each result as catalog/artifact, serving integration, model
-  qualification, or release/promotion. Include every applicable observation,
-  record any evidence-backed exclusion, and let the frozen-contract rules
-  derive the ADR 0004 decision status without hiding conflicts, failures, or
-  missing evidence. Update conf `STATUS`/`NOTES` only under its current legacy
-  evidence/recommendation contract and only when the evidence supports the
-  label. Bind `MODEL_SERVING_RELEASE_ID` only in the reviewed publication that
-  stores and verifies the exact ADR 0004 release lineage; never derive that
-  binding from a local candidate or archived combined identity file. Release and
-  legacy status changes never authorize or prohibit serving. Update
-  `docs/VALIDATION.md` with the measured
-  numbers, exact model commit/file-list identity, resolved image digest,
-  normalized runtime profile/geometry, selected backends, and artifact paths.
-- Capture and stage ADR 0004 objects per
-  [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) and
-  [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md).
-  `scripts/model-release.sh` is retired (ADR 0012). After merge, run
-  `scripts/model-serving-release-registry.sh verify`. Never promote a locally
-  observed tree into a lab expected-identity file.
-- Mark the prior pin/rows **SUPERSEDED**; do not delete old evidence.
-- Archive the new raw results under `results/` using a unique bump tag.
-- Store publishable command provenance as structured, sanitized descriptors;
-  never include environment values, secrets, absolute site paths, or private
-  topology identifiers.
-- Run a current-tree secret/path scan and inspect `git diff` before merge.
-- Merge the pin branch only after every required gate passes.
+Before publication:
 
-Anything required by a `Validated` claim that fails prevents that decision.
-Record `Tested—criteria not met`, `Tested—inconclusive`, or
-`Testing incomplete` as applicable; do not invent `Tested—meets criteria`.
-Preserve successful evidence in its narrower scope, classify the failure, and
-file it in TROUBLESHOOTING.md with the failing command and artifact path, keep
-the old pin, and open an
-upstream issue when the evidence points outside this repository.
+```bash
+git diff --check
+scripts/selftest-docs-privacy.sh
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/testlib/test_docs_current_state.py
+scripts/selftest.sh
+```
+
+Then update `docs/VALIDATION.md` and the relevant `results/` index with only
+the evidence actually produced. State which physical gates were not run. A
+failed or incomplete new attempt stays visible in its new evidence set; it
+must not be converted into a pass.

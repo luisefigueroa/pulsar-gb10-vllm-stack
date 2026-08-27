@@ -1,13 +1,8 @@
-# Historical live NFS/RDMA serving evidence
+# Retired weight-fabric evidence area
 
-> **Superseded / not promoted.**
-> [ADR 0005](../../docs/decisions/0005-reject-live-nfs-rdma-serving.md)
-> rejects live NFS/RDMA under vLLM as a serving runtime source. These
-> 2026-08-07/08 artifacts remain for history. Do not delete them. Do not
-> rewrite PASS/FAIL rows in place. Do not promote from them.
+The live NFS/RDMA serving path is retired by ADR 0005 and the weight-fabric
+distribution path is retired by ADR 0006. Model-specific artifacts from those
+paths are not retained after the repository reset.
 
-Serving path today: the model library (`library-hot` /
-`local-verified-readonly`) — the only weight-distribution mechanism per
-[ADR 0006](../../docs/decisions/0006-model-library-only-weight-distribution.md).
-The replicated path and the one-shot `nfs-rdma` prepare experiment were
-retired by the same decision; their history here stays unmodified.
+This directory remains only as a pointer for older links. Current serving uses
+local files on every rank prepared by the model library.

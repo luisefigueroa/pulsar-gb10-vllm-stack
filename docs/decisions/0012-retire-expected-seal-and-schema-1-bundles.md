@@ -16,12 +16,11 @@
 
 ## Context
 
-Pulsar still loads two products for “reviewed identity”:
+Pulsar previously loaded two products for reviewed identity:
 
 1. **Legacy expected-model seal + combined validation bundle**
    (`pulsar-expected-model-seal` / `pulsar-validation-bundle`,
-   `schema_version: 1` in `scripts/model_identity.py`). Only
-   `qwen3-1.7b` and `deepseek-v4-flash` still set `EXPECTED_MODEL_SEAL`.
+   `schema_version: 1` in `scripts/model_identity.py`).
 2. **ADR 0004 Model Serving Release** — five separate content-addressed
    objects under `models/model-serving-releases/`. Those objects are also
    `schema_version: 1`, of **different kinds**. They are not a v2 of the
@@ -31,8 +30,7 @@ Carrying both keeps a sealed vs unsealed catalog split, a factory
 (`model-release.sh`) that cannot write the trusted directories, and a
 `validation-bundle verify` CLI that fails on unsealed ADR 0004 profiles.
 No future Model Serving Release will be issued as a schema-1 seal/bundle.
-The operator would rather drop the live sealed profiles and re-onboard
-later than keep dead dual-stack code.
+Profiles that depended on this product must be re-onboarded through ADR 0004.
 
 ## Decision
 
@@ -42,13 +40,12 @@ later than keep dead dual-stack code.
    `models/validation-bundles/`.
 2. **Do not introduce a schema-2 of that product.** Do not auto-convert
    seals into ADR 0004 objects.
-3. **Drop `qwen3-1.7b` and `deepseek-v4-flash` from the live catalog.**
-   They are the only remaining sealed serving profiles. Re-onboard onto
-   ADR 0004 only as a later, explicit request. `qwen3-1.7b-2node` stays
-   as an unsealed plumbing canary.
-4. **Archive the issued JSON.** Historical seal and bundle files move
-   under `docs/archive/`; they are not loaded. `results/` gate evidence
-   stays as history.
+3. **Remove profiles that depended on the retired identity product.** Any
+   recipe shell kept for later onboarding remains unbound, uses
+   `STATUS=untested`, and carries no prior qualification claim.
+4. **Do not retain the retired release history in this reset.** Delete the
+   issued seal/bundle JSON and the model-specific evidence that supported it.
+   Re-onboarding starts with new measurements and review artifacts.
 5. **Admission remains the unsealed library-hot path.** Fail closed on
    recipe, image, geometry, topology, capacity, security, ownership,
    lifecycle, occupancy, and (for brand-new unsealed homes) source-attested
@@ -58,9 +55,9 @@ later than keep dead dual-stack code.
    labels are `legacy-unsealed` and `unvalidated`. Leftover container
    `model-seal` / `validation-bundle` labels are untrusted observations,
    not a repair CLI (same class as leftover hot schema-1/2 after SIM-13).
-7. **No guided default in this change.** Dropping DeepSeek removes the
-   only `RECOMMENDED_SPEC=1` profile. Catalog and wizard still list every
-   fitting profile (ADR 0009). A later reviewed change may set a default.
+7. **No guided default in this change.** Catalog and wizard still list every
+   fitting serving profile (ADR 0009). A later reviewed change may set a
+   default.
 
 ## Consequences
 
@@ -72,9 +69,9 @@ later than keep dead dual-stack code.
   stop without a restore promise.
 - Unknown trees without a receipt still fail closed. They no longer have a
   seal-backed “reviewed expected manifest” fallback.
-- Prepared DeepSeek or Qwen 1.7B `match` hot views will not match a live
-  sealed profile because those profiles are gone. Ordinary stop/purge of
-  leftover services is site cleanup. No automatic privileged sweep.
+- Prepared `identity_status=match` views do not match a live profile. Ordinary
+  stop or purge of leftover services is site cleanup. No automatic privileged
+  sweep is performed.
 
 ## Implementation note — 2026-08-26
 
@@ -97,13 +94,12 @@ identity class that is not occupancy.
   kinds, different directories, different trust event (PR merge of
   registry objects vs seal files).
 - **Make `MODEL_SERVING_RELEASE_ID` a launch permission.** Conflicts with
-  ADR 0004 / 0009. Qwen3.8 already serves unbound-or-bound on the unsealed
-  path.
-- **Keep the sealed profiles as unbound recipes until re-onboarded.**
-  Operator chose to drop them from the live catalog now.
+  ADR 0004 / 0009.
+- **Carry old qualification claims onto unbound recipes.** An unbound recipe
+  retained for re-onboarding starts as `STATUS=untested`.
 
 ## Revisit triggers
 
-Re-onboard DeepSeek or Qwen 1.7B as ADR 0004 releases only with a new
-capture/issuance change. Restoring a seal-shaped live product requires a
-new ADR.
+Re-onboard a removed or retained draft recipe as an ADR 0004 Model Serving
+Release only with a new capture and reviewed publication change. Restoring a
+seal-shaped live product requires a new ADR.

@@ -477,7 +477,7 @@ assert_contains "$STATE/logs/output.log" 'preparation failed' \
   "preparation failure is visible"
 assert_empty "$STATE/logs/up.log" "preparation failure cannot launch"
 
-echo "=== confirmed two-rank GA restart retains prepared views ==="
+echo "=== confirmed two-rank restart retains prepared views ==="
 cp "$STATE/inventory.json.running-template" "$STATE/inventory.json.running"
 run_wizard healthy-active.json 0 0 $'2\n2\ny\n' \
   "$STATE/inventory.json.running"

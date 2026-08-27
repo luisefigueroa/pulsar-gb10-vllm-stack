@@ -54,16 +54,10 @@ used at prepare remain distinct data planes even when they involve the same mach
 
 ## What sets this stack apart
 
-1. **Multi-node is real, measured, and root-caused — not "wired but
-   untested".** DeepSeek-V4-Flash (284B; later dropped from the live catalog)
-   served TP=2 across the RoCE link at
-   48 tok/s single-stream on the 0731 DSpark benches (27 base; no 20 GB
-   tok/s re-run) with CUDA graphs on, soaked 150 min / 0 errors at 20 GB. The interconnect is characterized
-   to physics (PCIe-x4-capped ~21 GB/s, 25 µs all-reduce floor), the
-   official-image cross-node CUDA-graph hang that went unsolved for days in
-   prior art is root-caused with its workaround, and node-loss semantics
-   are documented (`/health` lies for ~5 minutes; recovery never happens —
-   teardown and relaunch).
+1. **Multi-node behavior is explicit and geometry-bound.** Confirmed
+   topology, separate control and data planes, lifecycle ownership, rank-local
+   files, and no-fallback preparation are enforced. Every exact model, image,
+   recipe, and geometry still needs its own qualification.
 2. **Claim hygiene: statuses are earned, and wrong turns stay visible.**
    Every number traces to a run with raw artifacts in `results/`; verdicts
    are IDENTICAL / FP-EQUIVALENT / DIVERGENT, not adjectives. When our own
@@ -194,7 +188,6 @@ curl -fsS http://127.0.0.1:8000/v1/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"nemotron-3-nano","prompt":"2+2=","max_tokens":4,"temperature":0}'
 # conf id ≠ API id: nemotron-3-nano-30b-nvfp4 → served name nemotron-3-nano
-# qwen3-1.7b → qwen3-1.7b
 ```
 
 ```bash
@@ -217,8 +210,8 @@ absolute-path catalog profiles were removed with the replicated path
 
 Harder path: confirm the RoCE topology, then stage the image and weights on
 every node required by the exact profile. Extra discovered capacity stays
-idle. `deepseek-v4-flash` is no longer a live catalog profile (ADR 0012);
-its two-node measurements remain history in `docs/VALIDATION.md`.
+idle. The example below uses an untested recipe shell and does not imply that
+the model has passed onboarding or qualification.
 
 ```bash
 # Read-only discovery preview. Differently named hosts are supported.
@@ -290,12 +283,8 @@ create a rank-local witness after full verification, use a metadata
 fast path for unchanged launch, and visibly rehash on drift before
 launching the exact snapshot. Live file identity is the receipt plus occupancy
 path (`identity_status=legacy-unsealed` after full verification). Lab
-expected-identity files are not a live product (ADR 0012). Historical
-`qwen3-1.7b` and `deepseek-v4-flash` JSON is archived; DeepSeek two-node
-library gates from 2026-08-16 remain evidence, not a live catalog row. The
-exact DeepSeek Model Serving Release failed strict same-boot determinism, so it cannot be
-called `Validated`; that result does not invalidate the distribution
-subsystem. One-rank library serving is supported by decision with its
+expected-identity files are not a live product (ADR 0012), and their
+model-specific history is not retained in this reset. One-rank library serving is supported by decision with its
 physical serving-integration evidence still pending (ADR 0006 records the
 accepted risk). Live NFS/RDMA serving is retired
 ([ADR 0005](docs/decisions/0005-reject-live-nfs-rdma-serving.md); history in
@@ -376,29 +365,7 @@ All servers speak the OpenAI API on :8000. Per-model flags live in
 
 | Image | What it is | Serves |
 |---|---|---|
-| `vllm/vllm-openai:v0.26.0` (runtime **tag**; digest pinned in `Dockerfile` and `qwen3-1.7b`) | Official multi-arch release — first arm64/CUDA-13 tag with native sm_121 kernels (12.0f family). No source build needed for these models (`docs/BUILD.md` has the decision record). | Qwen, Nemotron, Laguna, and small canaries |
-| `ghcr.io/luisefigueroa/pulsar-gb10-vllm-stack:pr41834-d64074e6f` | **Published arm64 source build of vLLM PR #41834 HEAD** (see below); immutable digest is pinned in model confs | Historical DeepSeek-V4-Flash and Inkling-Small-NVFP4 |
-
-### The PR #41834 image (the only "patch" in the stack)
-
-Stock release images **cannot** serve DeepSeek-V4 on GB10 — the
-`FLASHINFER_MLA_SPARSE_SM120` attention kernel livelocks under prefill load
-(upstream vllm#49026; reproduced here, probe series in VALIDATION.md). The
-fix is not merged upstream, so the published DeepSeek image is built from the
-**head of vLLM PR #41834** ("DeepSeek-V4-Flash on SM12x", pinned at commit
-`d64074e6f`) — built as the PR tree, not cherry-picked, because it is the
-community-validated lineage (188 commits) and includes:
-
-- working DSA/sparse-MLA attention for sm_121 (Triton path)
-- the long-context cooperative top-k shared-memory fix (`topk.cu`)
-- a fused DeepSeek-V4 qnorm+rope+KV-insert kernel
-- **GB10-specific tuned MoE/GEMM configs** (`device_name=NVIDIA_GB10` JSONs)
-- DSpark drafter rejection-sampling fixes
-
-Build provenance: `torch_cuda_arch_list='12.0'` (12.0f family = native sm_121 under
-CUDA 13.0.3), 1 h 40 min on the 20-core Grace. Full recipe in
-`docs/BUILD.md`. When PR #41834 merges upstream this collapses to a stock
-pin bump + revalidation.
+| `vllm/vllm-openai:v0.26.0` (runtime **tag**; profiles carry immutable digest pins) | Official multi-arch release with native sm_121 kernels (12.0f family). See `docs/BUILD.md` before changing image pins. | Current v0.26.0 Qwen and Nemotron profiles |
 
 The published container includes CUDA and other components under their own
 terms; it is not licensed solely under this repository's Apache-2.0 license.
@@ -417,16 +384,9 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
   produces wrong output on sm_121.
 - **FP8 checkpoints justified by control**: Qwen3.6-27B FP8 vs BF16 gsm8k
   0.615 vs 0.610 — quantization is free here.
-- **Speculative decoding — verdicts CORRECTED 2026-07-31** after we caught
-  our own harness under-metering it (SSE chunk counting divided spec
-  throughput by the accepted-block size; full story in TROUBLESHOOTING +
-  the VALIDATION retraction trail). With honest metering and natural
-  prompts: DSpark on DeepSeek-V4-Flash **+79%** (48.4 vs 27.1 tok/s c=1),
-  Nemotron-Super MTP **+47%**, Laguna DFlash +13% (marginal). Optional paths
-  use `--spec-decode`; that soak-proven DSpark path was default-on for DeepSeek
-  and rolls back with `--no-spec-decode`. Its k=5 equals the checkpoint's
-  `dspark_block_size` and is not a tuning knob. The spec-enabled 150-min soak
-  has PASSED twice. The one standing failure:
+- **Speculative decoding uses corrected token accounting.** With natural
+  prompts, Nemotron-Super MTP measured +47% and Laguna DFlash +13% (marginal).
+  Optional paths use `--spec-decode`. The standing failure is:
   ngram on GDN hybrids **corrupts output** — never enable it there.
 - **Deliberately OFF / not load-bearing, by measurement** (not vibes):
   MTU 9000, Ray (native `--nnodes` mp is the validated multi-node path).
@@ -437,7 +397,6 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
 
 | Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
-| **deepseek-v4-flash** (2-node TP=2, PR-41834; **0731, DSpark, 20 GB/rank KV → 652k**) | **27.15** base (68%) / **43–48** DSpark (**0731 benches**; no 20 GB tok/s re-run) | 104 @ c=8 (0731) | 0.935 (0731 battery; 20 GB gsm8k not re-run) | 3/3 @ **447K** (`results/needle-dsv4-20gb-447k.log`) | **150 min @ c=5, 3201 req, 0 err** (20 GB canonical) |
 | laguna-s-2.1-nvfp4 (historical; profile removed by ADR 0006) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K (ledger; no `results/` needle file) | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |
 | nemotron-3-nano-30b-nvfp4 | 61.9 (86%) | 399 @ c=16 | 0.830 | 3/3 @ 124K (ledger; no `results/` needle file) | 15 min clean |
@@ -464,7 +423,6 @@ no leaks, no thermal throttling anywhere).
 - GDN hybrids (e.g. Qwen3.6-27B) break three ways: cross-node TP (wrong
   output then hang), ngram spec decode (corrupted output), batch-invariant
   mode (refuses to start). Single-node plain serving is perfect.
-- DeepSeek-V4 on stock images: kernel livelock under prefill pressure.
 - `/health` lies for ~5 min after a node loss — monitor 2-node deployments
   with a real 1-token completion, never the health endpoint alone.
 - lm-eval client-side tokenization + broken tokenizer regex = falsely
@@ -472,23 +430,14 @@ no leaks, no thermal throttling anywhere).
 
 ## Upstream tracking
 
-- **vllm PR #41834** — DeepSeek image lineage; our pin IS the current PR
-  head. On merge: retire the published PR image for a stock pin, rerun the gates.
-- **vllm #49026 / #46253** — the two stock-image blockers we reproduced.
-- **Bump trigger: v0.26.1-final with arm64 images** (rc0 tagged upstream).
-  It bumps NCCL 2.28→2.30.7 — full REVALIDATE including fresh Step-0 NCCL
-  numbers. vllm #49731 (merged to main) absorbed the draft-head work that
-  the removed `patches/pr41834-dspark-opt/` A/B had ported.
-- Closed chapter: the fork's draft-path optimizations were ported and
-  measured **perf-neutral** — the fork's apparent spec-decode advantage was
-  our own metering bug, not missing code (VALIDATION retraction trail).
+- Any image bump creates a new runtime input. Follow `docs/REVALIDATE.md` and
+  record fresh evidence before updating a profile claim.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
-| `docs/archive/schema-1-expected-seal/` | archived lab expected-identity files and combined identity format; not a live product (ADR 0012) |
 | `models/model-serving-releases/` | tracked ADR 0004 descriptor / Validation Contract / run / evidence-bundle / decision registry; currently empty; read-only through `scripts/model-serving-release-registry.sh` |
 | `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture drafts; not in the trusted registry, starts nothing |
 | `scripts/model_identity.py` | live normalized-profile checksum format and snapshot file-list constants; lab expected-identity builders are retired |

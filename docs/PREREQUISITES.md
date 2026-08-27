@@ -19,17 +19,16 @@ recommendation label. It is advisory, not a serving gate, and is not the
 release-descriptor, frozen-contract, immutable run-record, evidence-bundle, and
 reviewed-decision schema version 1 contracts are implemented. Read-only
 persistence and verification of those objects is implemented under
-`models/model-serving-releases/`; it contains the reviewed Qwen3.8 lineage.
+`models/model-serving-releases/`; the tracked registry is empty.
 Local ADR 0004
 evidence-capture candidate persistence is implemented and remains
-draft. The catalog shows reviewed status for an
-explicitly bound release; `qwen3.8-27b-fp8` binds the first reviewed lineage
-and other current profiles remain unbound. Maintainer-only staging can propose registry objects; a
+draft. The catalog shows reviewed status only for an explicitly bound profile;
+no current profile sets `MODEL_SERVING_RELEASE_ID`. Maintainer-only staging can propose registry objects; a
 successful local command is not trusted until repository review and merge.
 Serving permission is status-independent. The corrected ADR 0004 schemas remain
 version 1 because no ADR 0004 object was issued or persisted before the
-correction; archived lab expected-identity files and raw evidence are
-untouched.
+correction. The retired lab expected-identity files are not retained in this
+reset.
 
 A Model Serving Release is the immutable combination of exact model identity,
 serving recipe, runtime/image identity, and supported hardware geometry. Any
@@ -112,8 +111,8 @@ Minimum to serve one model on the box where you run the script:
 2. **Container image present locally**
    - Default mainline: `vllm/vllm-openai:v0.26.0` (override with
      `VLLM_IMAGE_MAINLINE` in `.env`)
-   - DeepSeek-V4/Inkling: published, digest-pinned PR #41834 image — see
-     [BUILD.md](./BUILD.md) and the selected model conf's `IMAGE=`
+   - If the selected profile sets `IMAGE=`, stage that exact digest on every
+     rank; see [BUILD.md](./BUILD.md).
 3. **Weights on disk** (default `HF_HUB_OFFLINE=1` — no surprise downloads)
    - The `hf` CLI is required on this node only when downloading an uncached
      Hugging Face model; already-cached and NFS models do not need it.
@@ -157,7 +156,7 @@ curl -fsS http://127.0.0.1:8000/v1/models
 # ownership-proven containers.
 ```
 
-Cold load can take minutes (DeepSeek ~12–15 min). Watch `docker logs -f`
+Cold load can take minutes. Watch `docker logs -f`
 for `Loading weights took ...` before assuming a hang. Health start period
 in the tooling is 900 s for this reason.
 
@@ -278,11 +277,8 @@ creates the path when the selected workflow requires it.
 
 ```bash
 # The model library is the only acquisition path (ADR 0006).
-# Sealed profile: one reviewed durable home.
-scripts/model-library.sh home add <sealed-profile> --yes
-scripts/model-library.sh catalog refresh
-
-# Brand-new unsealed home: inspect first, then confirm the exact commit.
+# Inspect the Hugging Face file plan first, then confirm the exact commit
+# reported by that plan.
 scripts/model-library.sh home add <profile> \
   --revision <selector> --plan --json
 scripts/model-library.sh home add <profile> \
@@ -370,9 +366,7 @@ not permission to serve an unmeasured geometry.
 | [MODEL_SERVING_RELEASE_CAPTURE.md](./MODEL_SERVING_RELEASE_CAPTURE.md) | Maintainer-only ADR 0004 evidence-capture candidate persistence; no issuance and no runtime launch |
 | [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md) | Maintainer-only ADR 0004 issuance staging; local success is not repository review or serving authorization |
 | [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Pointer: lab expected-identity files are retired (ADR 0012); live identity is ADR 0004 capture and staging |
-| [archive/schema-1-expected-seal/README.md](./archive/schema-1-expected-seal/README.md) | Archived expected-seal and schema-1 bundles; not loaded |
-| [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) | Archived exploration / option history only |
-| [BUILD.md](./BUILD.md) | Published PR #41834 image, provenance, and source-build fallback |
+| [BUILD.md](./BUILD.md) | Image-pin policy, optional overlay, and source-build boundary |
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Offline node, missing `refs/main`, TCP fallback, cold load |
 | [REVALIDATE.md](./REVALIDATE.md) | After any image pin change |

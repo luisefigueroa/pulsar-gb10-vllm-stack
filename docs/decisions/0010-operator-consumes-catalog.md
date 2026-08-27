@@ -39,9 +39,7 @@ like a serving path.
    later only if a real experiment needs it; it is not an operator launch
    path (ADR 0009).
 
-Low-level `serve.sh` / `cluster/*` stay. The DSpark overlay under
-`patches/pr41834-dspark-opt/` was later removed ([SWI-752](https://linear.app/swiftsource/issue/SWI-752));
-that is not the DeepSeek checkpoint DSpark serving path.
+Low-level `serve.sh` / `cluster/*` stay.
 
 ## Consequences
 

@@ -462,12 +462,6 @@ runtime overrides.
   DSpark/Triton/block-FP8 JIT so the first real client is not the cold path.
   Skip with `--skip-warmup` (falls back to a single smoke completion).
   Manual: `python3 validate/warmup.py --url http://127.0.0.1:8000 --model <served>`.
-- **Historical DeepSeek defaults** (profile `deepseek-v4-flash` removed by ADR 0012) targeted
-  **few long agent sessions** (≤5 concurrent, 500K client cap, tools/code),
-  not high-QPS chat: 20 GB/rank KV, `max-num-seqs 5`, batch 16384, tool+
-  reasoning parsers. Before resizing KV on a similar two-node job: `drop_caches` on both exact serving ranks,
-  step only (never ≥27.5 GB/rank — known OOM), read boot "GPU KV cache size",
-  soak. Details in the conf header and docs/RECIPES.md / docs/MODELS.md.
 - One big model per node, ever. gpu-mem-util 0.85 leaves ~18 GiB for the OS
   on a 121 GiB shared pool; a second workload swaps the box.
   Before starting after other work: `sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`.
@@ -476,9 +470,7 @@ runtime overrides.
 
 | Model | Cold load to healthy |
 |---|---|
-| qwen3-1.7b | ~2 min |
 | qwen 27B / nano | ~4-9 min |
-| deepseek-v4-flash (167 GB, both nodes) | ~12-15 min |
 
 `--health-start-period` is 900 s for this reason. Watch
 `docker logs -f` for `Loading weights took ...` before suspecting a hang.
@@ -996,11 +988,9 @@ scripts/model-serving-release-registry.sh verify
 ```
 
 `home add` requires `--revision`. Prepare requires occupancy plus that receipt.
-Unknown trees without a receipt fail without fallback.
-Historical expected-identity JSON is archived under
-[docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md)
-and is not loaded. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the
-live catalog. `qwen3-1.7b-2node` stays as a tiny two-node test profile.
+Unknown trees without a receipt fail without fallback. Retired
+expected-identity JSON and its model-specific evidence are not retained in
+this reset. Retained draft recipe shells are unbound and untested.
 
 Preparation full-hashes every rank and atomically creates that rank's
 `<instance>/.pulsar/witness.json` before ready is published. Launch uses the
@@ -1132,46 +1122,20 @@ fails closed otherwise. Parallel copy currently supports a local endpoint on
 one side of the transfer. A remote-home to remote-target relay fails explicitly
 instead of silently reverting to one stream.
 
-An initial two-run test produced a promising but highly variable 16-stream
-result (46.42 s and 79.92 s), without proving physical source reads or
-accounting for destination writeback. A later six-run alternating test
-synchronized both filesystems and applied `POSIX_FADV_DONTNEED` before every
-trial. Block counters then proved a full ~155.45 GiB source read each time:
-
-- 8 streams: 75.60, 83.87, and 88.82 s (83.87 s median).
-- 16 streams: 81.03, 85.09, and 88.61 s (85.09 s median).
-
-The 1.4% median difference is below the observed run-order/storage variance, so
-16 streams has no demonstrated full-model advantage over 8. After the first
-trial, destination block-I/O busy time was 88-95% and source busy time was
-84-93%; aggregate CPU was only 27-32%. Treat 8 streams as the current
-experimental knee, and attribute the earlier 46-80 s spread mainly to
-cache/writeback state rather than RoCE or SSH scaling. The small Qwen profile
-also showed no benefit. Product defaults remain unchanged. See the
-[alternating 8-vs-16 artifact](../results/model-library/deepseek-v4-flash-parallel-rsync-roce-8v16-alternating-20260810.json)
-and the [earlier exploratory artifact](../results/model-library/deepseek-v4-flash-parallel-rsync-roce-16stream-20260810.json).
+The supported multi-rank preparation contract uses eight streams. Treat any
+other stream count as a new experiment and publish fresh evidence before
+changing the default.
 
 Report: `results/model-library/<profile>-ssh-roce-<tag>.json` with
 `verdict` (`ssh_roce_faster` | `control_faster` | `tie` | `inconclusive`),
 phase maps, and the RoCE IP map used. Use this before deciding whether to
 rethink one-shot `nfs-rdma` versus `ssh-roce` (copy over RoCE TCP).
 
-## Expected steady-state numbers (alert if far off)
-
-Flagship under load (DSpark default-on): ~27 tok/s rollback/base /
-**~43–48 tok/s** default single-stream on the **0731 benches** (no 20 GB
-throughput re-run in `results/`); ~105 tok/s aggregate at c=8 base path; node temps
-≤81–84 C, SM clock ≥2380 MHz. Memory
-available fluctuates ±2 GiB with page cache — only a monotonic decline over
-hours is a leak signal (none observed in 150-min soaks).
-
 ## Safety rails
 
 - Spec decode is **not** "try random methods": only use paths that have
   validated `SPEC_DECODE_ARGS` and a positive ledger entry
-  (docs/VALIDATION.md). Historical DeepSeek defaults used DSpark; use
-  `--no-spec-decode` as the operational rollback. Its k=5 is fixed by the
-  checkpoint, not tunable. **Do not** enable ngram on GDN hybrids (corrupts
+  (docs/VALIDATION.md). **Do not** enable ngram on GDN hybrids (corrupts
   output). Super MTP is opt-in; Laguna DFlash is marginal.
 - Launcher-created containers carry stack ownership, profile, rank, topology,
   and physical-node labels (`io.pulsar.gb10.managed`, `.conf`, `.rank`,
