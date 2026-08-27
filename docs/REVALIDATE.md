@@ -613,6 +613,19 @@ for explicit unpin and purge.
     - the result is catalog/artifact evidence only. Repeat physical relocation
       and subsequent preparation/serving integration before claiming that path
       on DGX hardware.
+17. Catalog refresh, receipt classification, or catalog persistence changes:
+    - scanned homes carry device, inode, and ctime for the repository directory;
+    - receipt and occupancy stores fail without fallback on malformed,
+      unexpected, or incompatible state;
+    - a replacement directory at the same node/path is classified
+      unbound-complete rather than inheriting occupancy;
+    - occupancy classification and primary-policy recomputation finish before
+      one atomic catalog write;
+    - `catalog refresh --json` is semantically identical to the saved catalog;
+    - the saved catalog remains mode `0600` under `umask 0002`; and
+    - a classification failure preserves the prior catalog byte-for-byte. This
+      is catalog/artifact control-plane evidence and makes no serving or Model
+      Serving Release claim.
 
 The historical lab expected-identity acquisition contract passed a three-node
 physical gate on 2026-08-13 using the then-live `qwen3-1.7b` profile. The run proved guarded removal

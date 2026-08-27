@@ -99,6 +99,8 @@ run "model library runtime-view materialization" \
   "$REPO_DIR/scripts/selftest-model-library-materialize.sh"
 run "model library persistent-primary contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_primary.py"
+run "model library atomic catalog transaction contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_catalog_transaction.py"
 run "model library hot-budget contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_hot_budget.py"
 run "model library health and legacy-repair contracts" \

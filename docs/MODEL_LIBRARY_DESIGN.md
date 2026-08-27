@@ -85,6 +85,13 @@ against the attached receipt. Unknown trees without a receipt fail without
 fallback. Neither path creates working copies or refreshes the catalog, so
 registration remains the operator's explicit next action.
 
+Catalog refresh has one catalog-schema-owned transaction. Rank scans include
+the live repository directory identity. The builder loads receipts and
+occupancy without fallback, classifies occupancy using node, path, device,
+inode, and ctime, recomputes primary policy, and only then atomically writes
+mode `0600` and emits the same final object. Failed classification does not
+replace the previous catalog.
+
 After occupancy attaches, the nonblocking cold job writes a byte-identical
 receipt replica under the private `pulsar-control/download-receipts/`
 namespace and separately archives model bytes under `pulsar-receipts/`.
@@ -1320,3 +1327,4 @@ rather than promotion blockers.
 | 2026-08-26 | **ADR 0013 accepted:** cold recovery stores the immutable receipt as a protected byte-identical control-state replica separate from the model archive. Last occupancy removal requires both parts. Receipt recovery is explicit; restore accepts exact receipt identity, uses receipt-sized admission, private same-filesystem staging, full verification, and atomic no-replace publication. Deterministic control-plane tests only; no physical NFS, controller-loss, remote-rank, or serving claim. |
 | 2026-08-26 | **ADR 0014 accepted / AUD-04 retired:** the operator owns whether `PULSAR_COLD_ROOT` is a suitable independent failure domain. Pulsar verifies path safety and recovery-set integrity but does not infer storage independence from devices, mounts, filesystems, exports, or topology. Same-device recovery sets no longer require a lab override. |
 | 2026-08-27 | **AUD-05 fixed:** `home relocate` validates an explicit profile before any catalog access or mutation. One-rank profiles may use any confirmed rank; multi-rank profiles stay within their exact serving ranks. Raw model identities require `--profile`, so shared bytes never guess a recipe or geometry. Deterministic control-plane tests only; no physical relocation or serving claim. |
+| 2026-08-27 | **AUD-06 fixed:** catalog refresh now builds, strictly classifies receipt occupancy with saved directory identity, recomputes primary policy, atomically writes mode `0600`, and emits one final object in one Python transaction. Corrupt receipt or occupancy state preserves the previous catalog. Deterministic control-plane tests only. |

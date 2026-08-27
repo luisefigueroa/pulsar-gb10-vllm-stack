@@ -2820,22 +2820,20 @@ def _classify_entry_occupancy(
         return
     if not revision or revision in {"missing", "unknown"}:
         return
-    try:
-        _validate_hf_model_id(model_id, label="catalog occupancy model_id")
-        _validate_commit(revision, label="catalog occupancy revision")
-    except SourceAttestedAcquisitionError:
-        return
-    try:
-        receipts = list_source_attested_receipts_for_revision(
-            library_dir, model_id=model_id, snapshot_revision=revision
-        )
-    except SourceAttestedAcquisitionError:
-        return
+    _validate_hf_model_id(model_id, label="catalog occupancy model_id")
+    _validate_commit(revision, label="catalog occupancy revision")
+    receipts = list_source_attested_receipts_for_revision(
+        library_dir, model_id=model_id, snapshot_revision=revision
+    )
     attachment = load_source_attested_home_attachment(
         library_dir, model_id=model_id, snapshot_revision=revision
     )
     if not receipts and attachment is None:
         return
+    if attachment is not None and not any(
+        receipt["receipt_id"] == attachment["receipt_id"] for receipt in receipts
+    ):
+        fail("catalog occupancy attachment references a missing download receipt")
     occupancy_count = 0
     for home in homes:
         if not isinstance(home, dict):
@@ -2844,11 +2842,16 @@ def _classify_entry_occupancy(
             home["occupancy"] = False
             home["home_class"] = str(home.get("state") or "partial")
             continue
-        matched = bool(
-            attachment is not None
-            and home.get("node_id") == attachment["node_id"]
-            and home.get("hub_path") == attachment["durable_home_path"]
-        )
+        matched = False
+        if attachment is not None:
+            home_identity = _validate_directory_identity(
+                home.get("directory_identity")
+            )
+            matched = bool(
+                home.get("node_id") == attachment["node_id"]
+                and home.get("hub_path") == attachment["durable_home_path"]
+                and home_identity == attachment["directory_identity"]
+            )
         home["occupancy"] = matched
         home["home_class"] = "occupancy" if matched else "unbound-complete"
         if matched:
@@ -3215,33 +3218,6 @@ def cmd_occupy_current_home(args: argparse.Namespace) -> int:
     return _write_json(result)
 
 
-def cmd_classify_catalog_occupancy(args: argparse.Namespace) -> int:
-    catalog_path = pathlib.Path(args.catalog)
-    catalog = _load_json_value(catalog_path.read_bytes(), label="catalog")
-    before = copy.deepcopy(catalog)
-    classify_catalog_occupancy(catalog, args.library_dir)
-    if catalog == before:
-        if args.json:
-            return _write_json(catalog)
-        return 0
-    raw = model_identity.pretty_json_bytes(catalog)
-    tmp_path = catalog_path.with_name(
-        f".{catalog_path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
-    )
-    try:
-        tmp_path.write_bytes(raw)
-        os.replace(tmp_path, catalog_path)
-    except Exception:
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
-        raise
-    if args.json:
-        return _write_json(catalog)
-    return 0
-
-
 def cmd_resolve_attached_receipt(args: argparse.Namespace) -> int:
     authority = resolve_attached_source_attested_receipt(
         args.library_dir,
@@ -3458,12 +3434,6 @@ def build_parser() -> argparse.ArgumentParser:
     occupy_home.add_argument("--durable-home-path", required=True)
     occupy_home.add_argument("--live-identity", required=True)
     occupy_home.set_defaults(func=cmd_occupy_current_home)
-
-    classify_occupancy = sub.add_parser("classify-catalog-occupancy")
-    classify_occupancy.add_argument("--library-dir", required=True)
-    classify_occupancy.add_argument("--catalog", required=True)
-    classify_occupancy.add_argument("--json", action="store_true")
-    classify_occupancy.set_defaults(func=cmd_classify_catalog_occupancy)
 
     resolve_attached = sub.add_parser("resolve-attached-receipt")
     resolve_attached.add_argument("--library-dir", required=True)

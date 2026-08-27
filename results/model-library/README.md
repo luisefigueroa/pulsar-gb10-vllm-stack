@@ -24,6 +24,11 @@ AUD-05 deterministic coverage now binds relocation to an explicit profile:
 one-rank profiles may select one confirmed rank, multi-rank profiles remain in
 their exact serving ranks, and raw model identities require `--profile`.
 Physical relocation and subsequent serving evidence remain pending.
+AUD-06 deterministic coverage establishes the one-writer catalog transaction:
+strict receipt/occupancy loading, directory-identity matching, recomputed
+primary policy, mode-`0600` persistence, JSON/file parity, and preservation of
+the previous catalog on classification failure. This is catalog/artifact
+control-plane evidence only.
 [ADR 0013](../../docs/decisions/0013-separate-receipt-control-replica.md)
 adds a protected receipt control-state replica separate from the model archive,
 explicit receipt recovery, receipt-ID restore, full-size admission, private

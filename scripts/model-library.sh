@@ -622,6 +622,7 @@ PY
     --topology-id "${CLUSTER_TOPOLOGY_ID}"
     --models-dir "$REPO_DIR/models"
     --homes-json "$tmp"
+    --library-dir "$LIBRARY_DIR"
     --output "$CATALOG_FILE"
   )
   if [ -f "$CATALOG_FILE" ]; then
@@ -631,9 +632,6 @@ PY
     build_args+=(--json)
   fi
   python3 "$PY_TOOL" "${build_args[@]}"
-  python3 "$SOURCE_ATTESTED_PY" classify-catalog-occupancy \
-    --library-dir "$LIBRARY_DIR" \
-    --catalog "$CATALOG_FILE"
 }
 
 cmd_catalog_list() {

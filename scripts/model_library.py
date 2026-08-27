@@ -474,6 +474,10 @@ def scan_hub_cache(
     for entry in entries:
         if not entry.is_dir():
             continue
+        try:
+            entry_metadata = entry.lstat()
+        except OSError:
+            continue
         model_id = hub_dirname_to_model_id(entry.name)
         if model_id is None:
             continue
@@ -502,6 +506,11 @@ def scan_hub_cache(
                     "ssh_host": ssh_host,
                     "cache_root": str(cache_root),
                     "hub_path": str(entry),
+                    "directory_identity": {
+                        "device": int(entry_metadata.st_dev),
+                        "inode": int(entry_metadata.st_ino),
+                        "ctime_ns": int(entry_metadata.st_ctime_ns),
+                    },
                     "state": state,
                     "active": revision is not None and revision == active_revision,
                     "bytes": repository_bytes if state == "complete" else 0,
@@ -1297,6 +1306,7 @@ def build_catalog(
                 "ssh_host": home.get("ssh_host") or "",
                 "cache_root": home["cache_root"],
                 "hub_path": home["hub_path"],
+                "directory_identity": home.get("directory_identity"),
                 "state": home["state"],
                 "active": bool(home.get("active")),
                 "bytes": home.get("bytes") or 0,
@@ -7483,6 +7493,16 @@ def cmd_build(args: argparse.Namespace) -> int:
         primary_overrides=primary,
         primary_selections=persistent_selections,
     )
+    if args.library_dir:
+        try:
+            from scripts import model_library_receipt as source_attested
+        except ModuleNotFoundError:
+            import model_library_receipt as source_attested  # type: ignore[no-redef]
+        try:
+            source_attested.classify_catalog_occupancy(catalog, args.library_dir)
+        except source_attested.SourceAttestedAcquisitionError as exc:
+            fail(f"catalog occupancy classification failed: {exc}")
+        _apply_catalog_primary_policies(catalog)
     if args.output:
         atomic_write_json(args.output, catalog)
     if args.json:
@@ -8612,6 +8632,11 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--models-dir", required=True)
     build.add_argument("--homes-json", help="JSON array of scanned homes")
     build.add_argument("--output", help="Write catalog.json here")
+    build.add_argument(
+        "--library-dir",
+        default="",
+        help="Strictly classify receipt occupancy before writing the catalog",
+    )
     build.add_argument(
         "--preserve-primary-from",
         default="",

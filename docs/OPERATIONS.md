@@ -865,6 +865,12 @@ a new sanitized health report. Missing/stale topology, unreachable ranks, or
 invalid scans fail without fallback; model files are not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
 or deletes a model, and it never runs automatically.
 
+Refresh builds and classifies one final catalog before publishing it. Receipt
+or occupancy-store errors abort without replacing the prior catalog. Occupancy
+must match the saved node, path, device, inode, and ctime; a different directory
+at the same path is unbound-complete. The saved file remains mode `0600`, and
+`catalog refresh --json` emits the same final state that was written.
+
 From an exact model detail, the labeled preparation option is a second separate
 default-no action. It is offered for serving-purpose profiles and
 delegates to the fixed eight-stream SSH-over-RoCE preparation command documented

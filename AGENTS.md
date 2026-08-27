@@ -706,6 +706,11 @@ this work; the skill is procedural and does not outrank these sources.
   Onboarding must explicitly refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.
+  Catalog refresh is one Python-owned transaction: build the catalog in memory,
+  load receipt and occupancy stores without fallback, match the saved
+  directory identity as well as node/path, recompute primary policy, atomically
+  write mode `0600`, then emit that same final object. A classification failure
+  preserves the previous catalog.
 - Only non-home ranks receive temporary or pinned working replicas
   (`runtime_source=working-copy`). The occupancy rank uses a symlink/view of the
   durable tree, not a second copy.

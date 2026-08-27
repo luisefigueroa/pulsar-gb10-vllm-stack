@@ -89,6 +89,10 @@ NVMe. vLLM never opens it (ADR 0005).
   validates the profile and destination geometry before catalog access,
   capacity inspection, copying, or occupancy mutation; raw model identities
   require `--profile`.
+- Catalog refresh performs strict receipt/occupancy classification before one
+  atomic mode-`0600` write and before JSON output. Occupancy matches the saved
+  node, path, device, inode, and ctime; classification errors preserve the
+  prior catalog.
 - Receipt-indexed `home archive status|run`, background enqueue after
   `home add`, `home restore`, and `--allow-unarchived-last-home` are
   implemented as catalog/artifact control plane. Archive workers take **no
