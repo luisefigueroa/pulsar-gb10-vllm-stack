@@ -16,8 +16,7 @@ Inspect at minimum, where present:
 
 - `AGENTS.md`, `README.md`, `PREREQUISITES.md`, and `MODELS.md`;
 - `pulsar`, `wizard.sh`, `serve.sh`, and operator help/output;
-- `models/*.conf` and `models/model-serving-releases/` (not archived
-  `docs/archive/schema-1-expected-seal/`);
+- `models/*.conf` and `models/model-serving-releases/`;
 - `scripts/`, `scripts/testlib/`, `cluster/`, `validate/`, and `bench/`;
 - `docs/`, especially accepted ADRs, current specifications, operations,
   revalidation, validation, and model/fabric design documents;
@@ -62,6 +61,8 @@ For public commands and subsystem APIs, compare:
 - control, inference, and weight-transfer plane separation;
 - explicit experimental gates and absence of silent fallback; and
 - privacy of JSON, logs, docs, and publishable evidence.
+- enforcement parity among `scripts/check_publishable_privacy.py`, staged
+  scanning, the tracked pre-commit hook, safe-commit skill, and full selftest;
 
 Sanitized contracts must not leak prohibited absolute paths, hostnames, IPs,
 node/topology IDs, filesystem identities, witness IDs, or repair IDs.

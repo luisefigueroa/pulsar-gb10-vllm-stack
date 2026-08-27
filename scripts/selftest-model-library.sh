@@ -535,32 +535,6 @@ assert_eq "adopt hub dest complete" \
   "$(printf '%s' "$adopt_hub" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dest_state"])')" \
   "complete"
 
-# stage-only cold → hot
-export PULSAR_HOT_BUDGET_BYTES=$((50 * 1024 * 1024))
-stage=$(python3 "$PY" plan-cold-stage \
-  --cold-root "$COLD" \
-  --profile demo-cold-only \
-  --topology-id topo-cold-001 \
-  --hot-root "$HOT" \
-  --catalog "$STATE/catalog-cold.json" \
-  --models-dir "$STATE/models" \
-  --execute)
-stage_action=$(printf '%s' "$stage" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-assert_eq "stage-only action" "$stage_action" "stage-only"
-stage_inst=$(printf '%s' "$stage" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-python3 "$PY" verify-hot --instance-dir "$stage_inst" --profile demo-cold-only --topology-id topo-cold-001 --models-dir "$STATE/models" >/dev/null \
-  && ok "verify-hot after cold stage-only" || not_ok "verify-hot after cold stage-only"
-
-stage2=$(python3 "$PY" plan-cold-stage \
-  --cold-root "$COLD" \
-  --profile demo-cold-only \
-  --topology-id topo-cold-001 \
-  --hot-root "$HOT" \
-  --catalog "$STATE/catalog-cold.json" \
-  --models-dir "$STATE/models")
-stage2_action=$(printf '%s' "$stage2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-assert_eq "stage-only skip when hot ready" "$stage2_action" "skip"
-
 # Preparation stays warm-only (the internal plan-prepare command rejects a cold-only profile)
 set +e
 python3 "$PY" plan-prepare \
@@ -574,9 +548,15 @@ python3 "$PY" plan-prepare \
 ac_rc=$?
 set -e
 assert_eq "plan-prepare refuses cold-only model" "$ac_rc" "1"
+assert_true "cold-only prepare names retired stage-only" \
+  grep -q 'cold stage-only is retired' "$STATE/activate-cold.err"
 
 assert_true "model-library.sh documents cold" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold'"
+assert_true "model-library.sh removes cold stage-only usage" \
+  bash -c "! '$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold stage-only <profile>'"
+assert_true "model-library.sh names cold stage-only retirement" \
+  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold stage-only is removed'"
 
 assert_true "prepare is the preferred CLI command" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'prepare <profile>'"

@@ -1136,7 +1136,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         cold_root = self.root / "cold"
         cold_root.mkdir()
         hub = self.root / "receipt-hub"
-        cold_archive.publish_verified_archive(cold_root, receipt, hub)
+        cold_archive.publish_verified_recovery_set(cold_root, receipt, hub)
         weight = (
             cold_root
             / "pulsar-receipts"
@@ -1147,10 +1147,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
             / "model.safetensors"
         )
         weight.write_bytes(b"truncated")
-        env = {
-            "PULSAR_COLD_ROOT": str(cold_root),
-            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
-        }
+        env = {"PULSAR_COLD_ROOT": str(cold_root)}
         with mock.patch.dict(os.environ, env, clear=False):
             plan = self._plan(library_dir=library_dir)
         self.assertEqual(plan["state"], "blocked")
@@ -1161,7 +1158,7 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
             )
         self.assertEqual(allowed["state"], "eligible")
 
-    def test_same_device_archive_blocks_without_lab_override(self) -> None:
+    def test_model_archive_without_receipt_replica_blocks_last_occupancy(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
         from scripts import model_library_receipt as source_attested
 
@@ -1172,15 +1169,14 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         cold_root.mkdir()
         hub = self.root / "receipt-hub"
         cold_archive.publish_verified_archive(cold_root, receipt, hub)
-        with mock.patch.dict(
-            os.environ, {"PULSAR_COLD_ROOT": str(cold_root)}, clear=False
-        ):
+        env = {"PULSAR_COLD_ROOT": str(cold_root)}
+        with mock.patch.dict(os.environ, env, clear=False):
             plan = self._plan(library_dir=library_dir)
         self.assertEqual(plan["state"], "blocked")
         self.assertIn("unarchived-last-home", self._kinds(plan))
-        self.assertIn("same device", plan["blockers"][0]["detail"])
+        self.assertIn("receipt", plan["blockers"][0]["detail"])
 
-    def test_verified_archive_with_lab_same_device_is_eligible(self) -> None:
+    def test_operator_selected_same_device_recovery_set_is_eligible(self) -> None:
         from scripts import model_library_cold_archive as cold_archive
         from scripts import model_library_receipt as source_attested
 
@@ -1190,12 +1186,10 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         cold_root = self.root / "cold"
         cold_root.mkdir()
         hub = self.root / "receipt-hub"
-        cold_archive.publish_verified_archive(cold_root, receipt, hub)
-        env = {
-            "PULSAR_COLD_ROOT": str(cold_root),
-            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
-        }
-        with mock.patch.dict(os.environ, env, clear=False):
+        cold_archive.publish_verified_recovery_set(cold_root, receipt, hub)
+        with mock.patch.dict(
+            os.environ, {"PULSAR_COLD_ROOT": str(cold_root)}, clear=False
+        ):
             plan = self._plan(library_dir=library_dir)
         self.assertEqual(plan["state"], "eligible")
         self.assertEqual(plan["blockers"], [])
@@ -1220,11 +1214,8 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         cold_root = self.root / "cold"
         cold_root.mkdir()
         hub = self.root / "receipt-hub"
-        cold_archive.publish_verified_archive(cold_root, receipt, hub)
-        env = {
-            "PULSAR_COLD_ROOT": str(cold_root),
-            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
-        }
+        cold_archive.publish_verified_recovery_set(cold_root, receipt, hub)
+        env = {"PULSAR_COLD_ROOT": str(cold_root)}
         with mock.patch.dict(os.environ, env, clear=False):
             plan = self._plan(library_dir=library_dir)
         self.assertEqual(plan["state"], "eligible")
@@ -1259,11 +1250,8 @@ class LastHomeArchiveGuard(HomeRemovalFixture, unittest.TestCase):
         cold_root = self.root / "cold"
         cold_root.mkdir()
         hub = self.root / "receipt-hub"
-        cold_archive.publish_verified_archive(cold_root, receipt, hub)
-        env = {
-            "PULSAR_COLD_ROOT": str(cold_root),
-            "PULSAR_COLD_ALLOW_SAME_DEVICE": "1",
-        }
+        cold_archive.publish_verified_recovery_set(cold_root, receipt, hub)
+        env = {"PULSAR_COLD_ROOT": str(cold_root)}
         with mock.patch.dict(os.environ, env, clear=False):
             plan = self._plan(library_dir=library_dir)
         receipt_path = (

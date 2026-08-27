@@ -1,5 +1,0 @@
-depth=0.05 trial=0 prompt_tokens=444237 PASS (got: '85822412')
-depth=0.50 trial=0 prompt_tokens=444237 PASS (got: '14942603')
-depth=0.95 trial=0 prompt_tokens=444237 PASS (got: '03356886')
-
-result: 3 pass / 0 fail

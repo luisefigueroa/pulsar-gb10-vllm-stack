@@ -1322,18 +1322,11 @@ class ModelValidationEvidenceSchemaTests(unittest.TestCase):
                 predecessor_registry=[cycled],
             )
 
-    def test_legacy_schema_one_artifacts_are_archived_not_loaded(self) -> None:
+    def test_legacy_schema_one_artifacts_are_not_retained_or_loaded(self) -> None:
         self.assertFalse((REPO_ROOT / "models" / "seals").exists())
         self.assertFalse((REPO_ROOT / "models" / "validation-bundles").exists())
         archive = REPO_ROOT / "docs" / "archive" / "schema-1-expected-seal"
-        for path in sorted((archive / "validation-bundles").glob("*.json")):
-            document = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(document["schema_version"], 1)
-            self.assertEqual(document["kind"], "pulsar-validation-bundle")
-        for path in sorted((archive / "seals").glob("*.json")):
-            document = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(document["schema_version"], 1)
-            self.assertEqual(document["kind"], "pulsar-expected-model-seal")
+        self.assertFalse(archive.exists())
 
 
 if __name__ == "__main__":

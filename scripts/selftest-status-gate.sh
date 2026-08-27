@@ -46,7 +46,7 @@ for pair in \
   "qwen3.8-27b-fp8:0" \
   "nemotron-3-nano-30b-nvfp4:1" \
   "qwen3.6-27b-fp8:1" \
-  "qwen3-1.7b-2node:1"
+  "qwen3-1.7b-2node:0"
 do
   name="${pair%%:*}"
   exp_tested="${pair##*:}"

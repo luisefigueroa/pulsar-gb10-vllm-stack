@@ -106,6 +106,5 @@ Public `scripts/model-library.sh hot legacy check|remove` parses then exits 2.
 Health still classifies leftover schema-1/2 as `metadata_status=legacy` and
 attention; it does not advertise a repair command. Internal Python repair
 planners are deleted. `--force-unpin` on `purge-hot` is unchanged. Topology
-schema 1 remains enroll bootstrap only. Historical
-`results/model-library/model-library-health-legacy-repair-gate-20260812.json`
-is retained.
+schema 1 remains enroll bootstrap only. The retired model-specific repair
+artifact is not retained in this reset.

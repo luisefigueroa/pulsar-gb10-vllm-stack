@@ -63,7 +63,11 @@ if contains_stable_lab_path \
 fi
 
 cd "$REPO_DIR"
-mapfile -d '' -t markdown_files < <(git ls-files -z -- '*.md')
+mapfile -d '' -t tracked_markdown_files < <(git ls-files -z -- '*.md')
+markdown_files=()
+for path in "${tracked_markdown_files[@]}"; do
+  [[ -f $path ]] && markdown_files+=("$path")
+done
 ((${#markdown_files[@]} > 0)) || fail "no versioned Markdown files found"
 
 if contains_stable_lab_path "${markdown_files[@]}"; then
@@ -82,4 +86,7 @@ if contains_stable_lab_name "${markdown_files[@]}"; then
   exit 1
 fi
 
-echo "documentation privacy selftest OK"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$REPO_DIR/scripts/check_publishable_privacy.py"
+
+echo "publishable privacy selftest OK"

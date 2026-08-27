@@ -198,8 +198,18 @@ language for new features without an explicit decision.
   that live directory. Occupancy may move with `home relocate --node` after
   that same live rehash; receipt `selected_rank` is Hub-download provenance
   only ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
-  A receipt-indexed cold archive is enqueued immediately after occupancy attach
-  and must not block prepare or launch.
+  A protected byte-identical receipt replica and a separate receipt-indexed
+  model archive are enqueued immediately after occupancy attach and must not
+  block prepare or launch. The receipt replica belongs under the private cold
+  control-state namespace, never inside the model archive. Last occupancy
+  removal verifies both. A missing controller receipt is recovered only by the
+  explicit confirmation-gated receipt recovery command; archived bytes and
+  `presence.json` cannot create or authorize a receipt
+  ([ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)). The
+  operator owns whether the configured cold root is a suitable independent
+  failure domain. Pulsar checks path safety and recovery-set integrity, not
+  device, mount, filesystem, export, or storage-domain independence
+  ([ADR 0014](docs/decisions/0014-operator-owns-cold-storage-failure-domain.md)).
   An unknown tree without a receipt fails without fallback (ADR 0012: there is
   no lab expected-identity fallback). The shallow catalog label and a
   self-observed file list are not that proof. The skill must never download
@@ -447,6 +457,16 @@ infrastructure unless that authority is explicitly part of the approved plan.
 - Management SSH must use the **confirmed control endpoint** (saved alias for identity/host keys is fine; transport host must not wander onto a RoCE data rail). Reuse shared resolvers; do not reimplement per script.
 - Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library preparation). Do not overload one path without saying so.
 - Site-local state (`.cluster-topology.json`, `.weight-fabric/`, `.model-library/`, hot roots) is gitignored; never commit hostnames, IPs, or node IDs into publishable docs/results without redaction/audit patterns already used for fabric artifacts.
+- `scripts/check_publishable_privacy.py` is the canonical privacy gate. Run it
+  on the working tree before publication and with `--staged` before commit;
+  staged mode reads index blobs so partial staging cannot hide committed bytes.
+  It must reject hostnames, addresses, SSH identity, durable node/topology
+  identity, user paths, and credential material without treating generic ranks,
+  `Node A` / `Node B`, loopback, or RFC documentation addresses as site
+  identity.
+- When asked to commit, use `skills/pulsar-safe-commit/`. The tracked
+  `.githooks/pre-commit` is optional local defense in depth; hooks are not CI
+  authority and must not replace the full selftest privacy gate.
 - In static hardware and measurement documentation, identify physical systems as
   `Node A`, `Node B`, and so on. Use generic rank labels such as `rank 0` and
   `rank 1` only when the runtime role itself matters; ranks are not durable
@@ -681,8 +701,11 @@ this work; the skill is procedural and does not outrank these sources.
   verification only when occupancy still names that live directory.
   `home relocate --node` moves occupancy after the same live rehash without a
   Hub download. The home must be one of the current profile's
-  serving ranks so active storage remains one home plus N−1 working replicas. Do not
-  silently choose another node,
+  serving ranks so active storage remains one home plus N−1 working replicas.
+  A one-rank profile may select any confirmed rank as its sole placement; a
+  multi-rank profile is limited to its exact serving ranks. Raw model/revision
+  relocation requires `--profile` so shared bytes never guess a recipe or
+  geometry. Do not silently choose another node,
   create a controller copy, refresh the catalog, prepare working copies, or launch.
   Guarded `home check` / `home remove --yes` may retire a recognized
   incomplete or refs-only Hugging Face hub occupancy that blocks
@@ -693,6 +716,11 @@ this work; the skill is procedural and does not outrank these sources.
   Onboarding must explicitly refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or profile-only
   resolution.
+  Catalog refresh is one Python-owned transaction: build the catalog in memory,
+  load receipt and occupancy stores without fallback, match the saved
+  directory identity as well as node/path, recompute primary policy, atomically
+  write mode `0600`, then emit that same final object. A classification failure
+  preserves the previous catalog.
 - Only non-home ranks receive temporary or pinned working replicas
   (`runtime_source=working-copy`). The occupancy rank uses a symlink/view of the
   durable tree, not a second copy.
@@ -701,10 +729,13 @@ this work; the skill is procedural and does not outrank these sources.
   drift causes visible full rehash against the receipt (or fails without
   fallback). Never treat drifted bytes as already-checked identity.
 - Warm-home pinning retains non-home working replicas but still requires the
-  durable occupancy. Home-loss recovery is occupy-in-place or restore from a
-  verified receipt-indexed cold archive
-  ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)), not
-  a second Spark durable home.
+  durable occupancy. Home-loss recovery is occupy-in-place or explicit receipt
+  recovery followed by restore from a verified protected receipt replica plus
+  its separate receipt-indexed model archive
+  ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md),
+  [ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)). The
+  operator, not Pulsar, decides whether that configured storage is a separate
+  failure domain (ADR 0014). It is not a second Spark durable home.
 - For multi-rank model preparation, use topology-bound `ssh-roce` copy with
   eight streams and no automatic fallback, as recorded in ADR 0003. The model
   library is the only weight-distribution mechanism

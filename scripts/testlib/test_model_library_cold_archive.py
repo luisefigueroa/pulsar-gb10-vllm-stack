@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Contracts for receipt-indexed cold archive jobs and presence."""
+"""Contracts for protected receipts and receipt-indexed model archives."""
 
 from __future__ import annotations
 
+import json
 import pathlib
+import stat
 import sys
 import tempfile
 import unittest
@@ -11,7 +13,7 @@ import unittest
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import model_library  # noqa: E402
+from scripts import model_identity, model_library  # noqa: E402
 from scripts import model_library_cold_archive as cold_archive  # noqa: E402
 from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
@@ -94,8 +96,26 @@ class ColdArchiveContracts(unittest.TestCase):
         receipt = self._receipt()
         source_attested.write_source_attested_receipt(self.library_dir, receipt)
         hub = self.root / "source-hub"
-        presence = cold_archive.publish_verified_archive(self.cold_root, receipt, hub)
+        presence = cold_archive.publish_verified_recovery_set(
+            self.cold_root, receipt, hub
+        )
         self.assertEqual(presence["state"], "complete")
+        replica_path = (
+            self.cold_root
+            / "pulsar-control"
+            / "download-receipts"
+            / f"{receipt['receipt_id']}.json"
+        )
+        self.assertTrue(replica_path.is_file())
+        self.assertEqual(stat.S_IMODE(replica_path.stat().st_mode), 0o600)
+        self.assertFalse(
+            (
+                self.cold_root
+                / "pulsar-receipts"
+                / str(receipt["receipt_id"])
+                / "receipt.json"
+            ).exists()
+        )
         self.assertTrue(
             cold_archive.archive_is_complete(
                 library_dir=self.library_dir,
@@ -105,14 +125,90 @@ class ColdArchiveContracts(unittest.TestCase):
         )
         loaded = cold_archive.verify_existing_archive(self.cold_root, receipt)
         self.assertEqual(loaded["receipt_id"], receipt["receipt_id"])
+        verified = cold_archive.verify_receipt_replica(self.cold_root, receipt)
+        self.assertEqual(verified["state"], "verified")
 
-    def test_nested_cold_root_is_not_a_distinct_replica(self) -> None:
+    def test_archive_layout_without_receipt_replica_is_incomplete(self) -> None:
+        receipt = self._receipt()
+        hub = self.root / "source-hub"
+        cold_archive.publish_verified_archive(self.cold_root, receipt, hub)
+        self.assertFalse(
+            cold_archive.archive_is_complete(
+                library_dir=self.library_dir,
+                receipt_id=str(receipt["receipt_id"]),
+                cold_root=str(self.cold_root),
+            )
+        )
+
+    def test_receipt_recovery_is_explicit_and_canonical(self) -> None:
+        receipt = self._receipt()
+        cold_archive.publish_receipt_replica(self.cold_root, receipt)
+        self.assertFalse((self.library_dir / "download-receipts").exists())
+        result = cold_archive.recover_receipt_replica(
+            self.cold_root,
+            self.library_dir,
+            str(receipt["receipt_id"]),
+        )
+        self.assertEqual(result["state"], "recovered")
+        recovered = source_attested.load_source_attested_receipt(
+            self.library_dir,
+            str(receipt["receipt_id"]),
+            require_canonical=True,
+        )
+        self.assertEqual(recovered, receipt)
+
+    def test_noncanonical_or_public_receipt_replica_is_refused(self) -> None:
+        receipt = self._receipt()
+        cold_archive.publish_receipt_replica(self.cold_root, receipt)
+        path = (
+            cold_archive.cold_receipt_replica_store(self.cold_root)
+            / f"{receipt['receipt_id']}.json"
+        )
+        path.write_text(
+            json.dumps(receipt, sort_keys=True),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+        with self.assertRaisesRegex(Exception, "canonical"):
+            cold_archive.load_receipt_replica(
+                self.cold_root, str(receipt["receipt_id"])
+            )
+        path.write_bytes(model_identity.pretty_json_bytes(receipt))
+        path.chmod(0o644)
+        with self.assertRaisesRegex(Exception, "private"):
+            cold_archive.load_receipt_replica(
+                self.cold_root, str(receipt["receipt_id"])
+            )
+
+    def test_nested_cold_root_is_not_a_safe_archive_location(self) -> None:
         hub = self.root / "source-hub"
         nested = hub / "nested-cold"
         nested.mkdir(parents=True)
-        ok, detail = cold_archive.cold_root_is_distinct_replica(nested, hub)
+        ok, detail = cold_archive.cold_root_is_safe_archive_location(
+            nested, hub, occupancy_is_local=True
+        )
         self.assertFalse(ok)
         self.assertIn("nested", detail)
+
+    def test_remote_path_string_is_not_used_for_nesting_inference(self) -> None:
+        remote_home_string = self.root / "remote-looking-home"
+        cold_root = remote_home_string / "controller-cold"
+        cold_root.mkdir(parents=True)
+        ok, detail = cold_archive.cold_root_is_safe_archive_location(
+            cold_root,
+            remote_home_string,
+            occupancy_is_local=False,
+        )
+        self.assertTrue(ok, detail)
+
+    def test_operator_selected_parent_root_is_not_domain_inference(self) -> None:
+        local_home = self.root / "source-hub"
+        ok, detail = cold_archive.cold_root_is_safe_archive_location(
+            self.root,
+            local_home,
+            occupancy_is_local=True,
+        )
+        self.assertTrue(ok, detail)
 
     def test_mismatch_refuses_publish(self) -> None:
         receipt = self._receipt()

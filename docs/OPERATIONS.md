@@ -462,12 +462,6 @@ runtime overrides.
   DSpark/Triton/block-FP8 JIT so the first real client is not the cold path.
   Skip with `--skip-warmup` (falls back to a single smoke completion).
   Manual: `python3 validate/warmup.py --url http://127.0.0.1:8000 --model <served>`.
-- **Historical DeepSeek defaults** (profile `deepseek-v4-flash` removed by ADR 0012) targeted
-  **few long agent sessions** (≤5 concurrent, 500K client cap, tools/code),
-  not high-QPS chat: 20 GB/rank KV, `max-num-seqs 5`, batch 16384, tool+
-  reasoning parsers. Before resizing KV on a similar two-node job: `drop_caches` on both exact serving ranks,
-  step only (never ≥27.5 GB/rank — known OOM), read boot "GPU KV cache size",
-  soak. Details in the conf header and docs/RECIPES.md / docs/MODELS.md.
 - One big model per node, ever. gpu-mem-util 0.85 leaves ~18 GiB for the OS
   on a 121 GiB shared pool; a second workload swaps the box.
   Before starting after other work: `sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`.
@@ -476,9 +470,7 @@ runtime overrides.
 
 | Model | Cold load to healthy |
 |---|---|
-| qwen3-1.7b | ~2 min |
 | qwen 27B / nano | ~4-9 min |
-| deepseek-v4-flash (167 GB, both nodes) | ~12-15 min |
 
 `--health-start-period` is 900 s for this reason. Watch
 `docker logs -f` for `Loading weights took ...` before suspecting a hang.
@@ -584,6 +576,7 @@ exits 2. They are not unknown-argument failures.
 | `list-models.sh --validated` | `--legacy-tested` (historical `STATUS=tested*`). Not ADR 0004 `Validated`. |
 | `model-library.sh catalog list --validated` | Drop the flag. `--reviewed-identity` is retired (ADR 0012). Not ADR 0004 `Validated`. |
 | `model-library.sh activate` | `prepare` |
+| `model-library.sh cold stage-only` | Use receipt-backed `home add --revision`, `home relocate`, or `home restore`, then `prepare`. Existing stage-only hot state is cleanup-only. |
 | `model-library.sh hot legacy check\|remove` | Removed. Leftover older working-copy metadata still cannot launch. Health remains read-only. |
 
 `--force-unpin` on `purge-hot` and older `detect-fabric`
@@ -716,27 +709,63 @@ Download crash and retry behavior:
   unbound-complete.
 - `home relocate --node` grants occupancy to a destination tree after a live
   rehash. Receipt `selected_rank` is Hub-download provenance and does not
-  block the move. Catalog refresh remains a separate next action.
-- After occupancy attach, `home archive` copies the receipt-indexed tree to
-  the cold root in the background. It is not a serving gate and takes **no occupancy
+  block the move. Relocation is bound to a serving profile before any catalog
+  access, capacity check, copy, or occupancy mutation. A one-rank profile may
+  use any confirmed rank; a multi-rank profile stays within its exact serving
+  ranks. Use the profile as the normal query. A raw `model_id` or exact
+  `model_id@revision` additionally requires `--profile <profile>` so Pulsar
+  never guesses among recipes that share the same bytes. Catalog refresh
+  remains a separate next action.
+- After occupancy attach, `home archive` copies the canonical receipt into the
+  private `pulsar-control/download-receipts/` namespace and separately copies
+  the receipt-indexed model tree to `pulsar-receipts/` in the background. The
+  receipt is not stored inside the model archive. This is not a serving gate and takes **no occupancy
   lifecycle lock** (exclusive would block prepare/launch; shared would block
   relocate for the whole copy). Last occupancy remove of a receipted identity
-  rehashes the cold archive on the controller (`home check`, and again after
-  `--yes` before occupancy detach). Rank 0 homes also require a distinct
-  device from occupancy. NFS, an external disk, or another mount can qualify.
-  Layout-only `presence.json` is not that proof. The occupancy rank only
+  verifies the protected receipt replica and rehashes the model archive on the
+  controller (`home check`, and again after `--yes` before occupancy detach).
+  Setting `PULSAR_COLD_ROOT` is the operator's assertion that the location
+  meets the site's recovery and failure-domain policy. Pulsar does not compare
+  devices, mounts, filesystem types, exports, or storage-domain identities.
+  It retains nested-path refusal where copying or deletion would be unsafe.
+  Layout-only `presence.json` and archived bytes without the protected receipt
+  replica are not that proof. The occupancy rank only
   deletes the inspected hub tree and does not reopen receipts. An in-flight
-  copy vs remove is fail-and-retry. Archive workers flock only their job file. `home restore --node`
-  copies from that archive, rehashes, and occupies. Last occupancy remove
-  without a verified distinct-failure-domain replica needs
+  copy vs remove is fail-and-retry. Archive workers flock only their job file.
+  `home restore --node` admits the full receipt byte count, copies into private
+  same-filesystem staging, rehashes, atomically publishes without replacement,
+  and occupies. Last occupancy remove
+  without a verified receipt replica plus model archive needs
   `--allow-unarchived-last-home`. Unbound-complete trees are not homes and do
-  not skip that flag. `cold scan` / `cold adopt` / `cold stage-only` stay
-  layout-inferred fill paths and do not mint receipts.
+  not skip that flag. `cold scan` and no-replace `cold adopt` remain
+  layout-inferred fill paths and do not mint receipts. `cold stage-only` is
+  removed because self-observed cold bytes are not receipt/occupancy identity.
 
-`pin` marks non-home hot content as purge-protected. Cold stage-only hot may
-be fully self-contained. Warm-home preparation is deliberately different: the
-home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
-cache, and only non-home ranks own working copies (`runtime_source=working-copy`). Home-rank hot
+Receipt control-state recovery is explicit and does not need a live catalog:
+
+```bash
+# Inspect or add the protected copy for an existing archive.
+scripts/model-library.sh home receipt status --receipt '<receipt_id>'
+scripts/model-library.sh home receipt backup --receipt '<receipt_id>' --yes
+
+# After controller receipt-store loss, restore authority first.
+scripts/model-library.sh home receipt recover --receipt '<receipt_id>' --yes
+
+# Restore model bytes by exact receipt identity; refresh remains separate.
+scripts/model-library.sh home restore '<receipt_id>' --node RANK --yes
+scripts/model-library.sh catalog refresh
+```
+
+`recover` accepts only the canonical receipt from the protected control-state
+namespace and writes it locally with atomic no-replace semantics. It never
+uses the model archive, `presence.json`, catalog, or old occupancy as authority.
+If the protected receipt replica is missing or invalid, recovery fails without
+fallback. Reconstructing a download receipt from archived bytes is not
+supported (ADR 0013).
+
+`pin` marks non-home hot content as purge-protected. Warm-home preparation uses
+a zero-copy symlink/runtime view of its authoritative durable HF cache on the
+home rank, and only non-home ranks own working copies (`runtime_source=working-copy`). Home-rank hot
 materialization is ruled out by
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 
@@ -744,7 +773,9 @@ A warm-home pin permits restart without cold storage, a transfer plane, or
 catalog refresh while the durable home remains. It does **not** claim survival
 after home loss. Do not remove or unmount the home while a running or pinned
 instance depends on it. Home-loss resilience requires an explicit durable
-replica on another failure domain and supported failover.
+recovery set and supported restore. The operator owns whether the configured
+cold root is an independent failure domain (ADR 0014); Pulsar verifies only
+path safety, receipt/archive integrity, and recovery mechanics.
 
 **What model-library checks prove:** interpret each operator surface in its own
 qualification scope:
@@ -825,6 +856,12 @@ same `catalog refresh` command shown above. A successful refresh is followed by
 a new sanitized health report. Missing/stale topology, unreachable ranks, or
 invalid scans fail without fallback; model files are not changed. Refresh never downloads, prepares, starts, pins, purges, repairs,
 or deletes a model, and it never runs automatically.
+
+Refresh builds and classifies one final catalog before publishing it. Receipt
+or occupancy-store errors abort without replacing the prior catalog. Occupancy
+must match the saved node, path, device, inode, and ctime; a different directory
+at the same path is unbound-complete. The saved file remains mode `0600`, and
+`catalog refresh --json` emits the same final state that was written.
 
 From an exact model detail, the labeled preparation option is a second separate
 default-no action. It is offered for serving-purpose profiles and
@@ -924,10 +961,10 @@ scripts/model-library.sh budget --json  # site-local automation; contains node/p
 The default preserves user-available filesystem space equal to
 `max(64 GiB, 5% of total capacity)` on each selected rank and has no arbitrary
 hard cap. A warm-home preparation charges zero new model bytes on the home rank
-and the exact manifest size on each non-home rank; cold stage-only charges every
-selected rank. Existing tracked, untracked, or malformed content below the hot
-root is counted. Preparation, pin, and cold stage-only display the all-rank plan
-and refuse before writes when any observation is missing or blocked.
+and the exact manifest size on each non-home rank. Existing tracked, untracked,
+or malformed content below the hot root is counted. Preparation and pin display
+the all-rank plan and refuse before writes when any observation is missing or
+blocked.
 
 `PULSAR_HOT_BUDGET_BYTES` adds an optional per-rank hard cap.
 `PULSAR_HOT_RESERVE_BYTES` explicitly replaces the default reserve (including
@@ -951,11 +988,9 @@ scripts/model-serving-release-registry.sh verify
 ```
 
 `home add` requires `--revision`. Prepare requires occupancy plus that receipt.
-Unknown trees without a receipt fail without fallback.
-Historical expected-identity JSON is archived under
-[docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md)
-and is not loaded. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the
-live catalog. `qwen3-1.7b-2node` stays as a tiny two-node test profile.
+Unknown trees without a receipt fail without fallback. Retired
+expected-identity JSON and its model-specific evidence are not retained in
+this reset. Retained draft recipe shells are unbound and untested.
 
 Preparation full-hashes every rank and atomically creates that rank's
 `<instance>/.pulsar/witness.json` before ready is published. Launch uses the
@@ -998,11 +1033,29 @@ scripts/model-library.sh resolve <profile> --json   # warm, else cold
 # grow the library (durable warm home on this node’s HF cache)
 scripts/model-library.sh cold adopt <org>/<name> --yes
 scripts/model-library.sh catalog refresh
-
-# or stage for this job only (cold remains sole durable copy)
-scripts/model-library.sh cold stage-only <profile> --yes
-scripts/up.sh <profile>
 ```
+
+`cold adopt` is no-replace. It refuses any existing repository at the target
+Hugging Face path, copies into private same-filesystem staging, verifies the
+complete layout, and atomically publishes only while that destination remains
+absent. It never deletes or overwrites a current home. The model-library
+lifecycle lock is exclusive for the operation, so supported preparation,
+launch, catalog mutation, relocation, and home removal cannot race the copy.
+The adopted tree still has no download receipt or occupancy; catalog refresh
+therefore treats it as an unbound fill-path tree, not serving identity.
+
+`cold stage-only` is removed (ADR 0012). It cannot turn an unreceipted cold
+tree into launchable hot state. Previously created stage-only state is rejected
+by readiness and launch checks but remains discoverable for explicit cleanup:
+
+```bash
+scripts/model-library.sh unpin <profile>       # when pinned
+scripts/model-library.sh purge-hot <profile> --yes --force-unpin
+```
+
+For serving, use `home add --revision` to create a new exact receipted home,
+or `home relocate` / `home restore` when an immutable receipt already exists;
+then refresh the catalog and run normal `prepare`.
 
 Unset/empty cold config skips the tier (no mount required). If cold is
 configured but unreadable, flows that **need** cold (warm miss, absolute-path
@@ -1069,46 +1122,20 @@ fails closed otherwise. Parallel copy currently supports a local endpoint on
 one side of the transfer. A remote-home to remote-target relay fails explicitly
 instead of silently reverting to one stream.
 
-An initial two-run test produced a promising but highly variable 16-stream
-result (46.42 s and 79.92 s), without proving physical source reads or
-accounting for destination writeback. A later six-run alternating test
-synchronized both filesystems and applied `POSIX_FADV_DONTNEED` before every
-trial. Block counters then proved a full ~155.45 GiB source read each time:
-
-- 8 streams: 75.60, 83.87, and 88.82 s (83.87 s median).
-- 16 streams: 81.03, 85.09, and 88.61 s (85.09 s median).
-
-The 1.4% median difference is below the observed run-order/storage variance, so
-16 streams has no demonstrated full-model advantage over 8. After the first
-trial, destination block-I/O busy time was 88-95% and source busy time was
-84-93%; aggregate CPU was only 27-32%. Treat 8 streams as the current
-experimental knee, and attribute the earlier 46-80 s spread mainly to
-cache/writeback state rather than RoCE or SSH scaling. The small Qwen profile
-also showed no benefit. Product defaults remain unchanged. See the
-[alternating 8-vs-16 artifact](../results/model-library/deepseek-v4-flash-parallel-rsync-roce-8v16-alternating-20260810.json)
-and the [earlier exploratory artifact](../results/model-library/deepseek-v4-flash-parallel-rsync-roce-16stream-20260810.json).
+The supported multi-rank preparation contract uses eight streams. Treat any
+other stream count as a new experiment and publish fresh evidence before
+changing the default.
 
 Report: `results/model-library/<profile>-ssh-roce-<tag>.json` with
 `verdict` (`ssh_roce_faster` | `control_faster` | `tie` | `inconclusive`),
 phase maps, and the RoCE IP map used. Use this before deciding whether to
 rethink one-shot `nfs-rdma` versus `ssh-roce` (copy over RoCE TCP).
 
-## Expected steady-state numbers (alert if far off)
-
-Flagship under load (DSpark default-on): ~27 tok/s rollback/base /
-**~43–48 tok/s** default single-stream on the **0731 benches** (no 20 GB
-throughput re-run in `results/`); ~105 tok/s aggregate at c=8 base path; node temps
-≤81–84 C, SM clock ≥2380 MHz. Memory
-available fluctuates ±2 GiB with page cache — only a monotonic decline over
-hours is a leak signal (none observed in 150-min soaks).
-
 ## Safety rails
 
 - Spec decode is **not** "try random methods": only use paths that have
   validated `SPEC_DECODE_ARGS` and a positive ledger entry
-  (docs/VALIDATION.md). Historical DeepSeek defaults used DSpark; use
-  `--no-spec-decode` as the operational rollback. Its k=5 is fixed by the
-  checkpoint, not tunable. **Do not** enable ngram on GDN hybrids (corrupts
+  (docs/VALIDATION.md). **Do not** enable ngram on GDN hybrids (corrupts
   output). Super MTP is opt-in; Laguna DFlash is marginal.
 - Launcher-created containers carry stack ownership, profile, rank, topology,
   and physical-node labels (`io.pulsar.gb10.managed`, `.conf`, `.rank`,

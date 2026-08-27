@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import hashlib
+import io
 import pathlib
 import sys
 import tempfile
@@ -101,6 +103,76 @@ class ModelLibraryIntegrityContracts(unittest.TestCase):
             ),
             self.instance,
         )
+
+    def test_retired_cold_stage_state_is_cleanup_only(self) -> None:
+        retired = copy.deepcopy(self.stamp)
+        retired.update(
+            {
+                "home_node_id": "cold",
+                "tier": "cold",
+                "mode": "stage-only",
+                "source_path": "/protected/cold/source",
+                "layout": "hub",
+                "source_content_digest": self.manifest["manifest_id"],
+            }
+        )
+        model_library.write_hot_stamp(self.instance, retired)
+
+        stderr = io.StringIO()
+        with (
+            contextlib.redirect_stderr(stderr),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            rc = model_library.main(
+                [
+                    "find-hot",
+                    "--profile",
+                    self.profile,
+                    "--topology-id",
+                    self.topology_id,
+                    "--hot-root",
+                    str(self.root / "hot"),
+                    "--for-launch",
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("retired cold stage-only", stderr.getvalue())
+
+        verify_stderr = io.StringIO()
+        with (
+            contextlib.redirect_stderr(verify_stderr),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            verify_rc = model_library.main(
+                [
+                    "verify-hot",
+                    "--instance-dir",
+                    str(self.instance),
+                    "--profile",
+                    self.profile,
+                    "--topology-id",
+                    self.topology_id,
+                    "--for-launch",
+                ]
+            )
+        self.assertEqual(verify_rc, 1)
+        self.assertIn("retired cold stage-only", verify_stderr.getvalue())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            cleanup_rc = model_library.main(
+                [
+                    "find-hot",
+                    "--profile",
+                    self.profile,
+                    "--topology-id",
+                    self.topology_id,
+                    "--hot-root",
+                    str(self.root / "hot"),
+                ]
+            )
+        self.assertEqual(cleanup_rc, 0)
+        model_library.purge_hot_instance(self.instance, force_unpin=True)
+        self.assertFalse(self.instance.exists())
 
     def test_same_size_byte_corruption_fails_full_verify(self) -> None:
         original = self.weight_blob.read_bytes()

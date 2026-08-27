@@ -12,12 +12,13 @@
   protection from unforced purge),
   [ADR 0011](./0011-portable-occupancy-and-cold-archive.md)
   (occupancy is portable after a live receipt rehash; NFS receipt-indexed
-  archive is the distinct-failure-domain replica; home-rank symlink is
-  unchanged),
-  and
+  archive is the recovery copy; home-rank symlink is unchanged),
   [ADR 0012](./0012-retire-expected-seal-and-schema-1-bundles.md)
   (expected-seal and schema-1 validation bundles are not a live product;
-  they are not replaced by a schema-2 of that format)
+  they are not replaced by a schema-2 of that format),
+  and [ADR 0014](./0014-operator-owns-cold-storage-failure-domain.md)
+  (the operator owns whether the configured cold root is a suitable
+  independent failure domain)
 
 ## Context
 
@@ -146,16 +147,8 @@ writes an immutable site-local receipt, publishes with an atomic no-replace
 rename, and binds that receipt to the exact published directory through a
 private current-home attachment. `home verify` performs the required later
 offline full rehash only when that attachment still matches the live home.
-Sealed `home add` remains compatible. Deterministic tests do not prove physical
-Hub or DGX behavior and none of the trust exclusions above changed.
-
-## Interpretation note — 2026-08-19
-
-The first reviewed ADR 0004 lineage is now stored and bound to
-`qwen3.8-27b-fp8`. Its advisory decision is `Testing incomplete`. This does
-not create an ADR 0001 expected seal, change legacy `STATUS`, authorize
-serving, or promote experimental one-rank `library-hot`; the expected-versus-
-observed content boundary in this decision remains unchanged.
+Deterministic tests do not prove physical Hub or DGX behavior and none of the
+trust exclusions above changed.
 
 ## Interpretation note — 2026-08-22 (SIM-03)
 
@@ -181,7 +174,7 @@ replicas (on-disk `sealed-hot` unchanged).
 ## Interpretation note — 2026-08-26 (ADR 0012)
 
 Decisions 4–5 and 7 no longer describe a live expected-seal or schema-1
-validation-bundle product. Those issued JSON files are archived and are
+validation-bundle product. Those model-specific files are not retained and are
 not loaded by `load_conf`, catalog, wizard, prepare, or launch. There is
 no schema-2 of that format. ADR 0004 Model Serving Release objects are a
 different kind and remain `schema_version: 1` of *that* schema.
@@ -193,5 +186,14 @@ release. `MODEL_SERVING_RELEASE_ID` remains advisory. Unknown trees without
 a receipt still fail closed; they no longer have a seal-backed reviewed
 expected-manifest fallback.
 
-`qwen3-1.7b` and `deepseek-v4-flash` are removed from the live catalog.
-Re-onboard them onto ADR 0004 only as a later explicit change.
+Any retained draft recipe is unbound and untested. Re-onboarding requires new
+ADR 0004 capture and reviewed publication.
+
+## Interpretation note — 2026-08-26 (ADR 0014)
+
+Decision 3 still requires an explicit durable recovery copy rather than a
+second Spark home. The operator owns whether the configured cold root is a
+suitable independent failure domain. Pulsar verifies path safety, the protected
+receipt replica, model-archive content, and restore mechanics; it does not
+infer storage independence from devices, mounts, filesystems, exports, or
+topology.

@@ -146,6 +146,9 @@ soak, review, and exclusion evidence reference is remapped exactly.
 
 Privacy handling:
 
+- Run `python3 scripts/check_publishable_privacy.py` before staging and
+  `python3 scripts/check_publishable_privacy.py --staged` after staging.
+  A declared privacy pass never overrides a scanner finding.
 - `privacy_review=passed` keeps the candidate visibility. A publishable
   artifact may be copied to its already-declared `results/` path only when
   the bytes match the declared digest.

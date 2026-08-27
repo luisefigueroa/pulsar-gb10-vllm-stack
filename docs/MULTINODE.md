@@ -147,6 +147,9 @@ one durable occupancy home, a symlink/view on that rank, and working copies
 only on non-home ranks. Occupancy may move with
 `home relocate` after a live receipt rehash
 ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+For multi-rank profiles, the destination must remain in the profile's exact
+serving ranks; extra confirmed nodes remain idle capacity. Raw model identities
+require `--profile` so relocation does not guess a geometry.
 It is not a live NFS/RDMA mount and there is no fallback.
 Typical CLI: enroll SSH trust, `scripts/model-library.sh home add` if no home
 exists, or `home relocate` for an unbound complete tree, `catalog refresh`,
@@ -163,11 +166,9 @@ host IPC, all GPUs, locked memory, and `/dev/infiniband`, and carry immutable
 ownership labels for profile, rank, world size, topology ID, and node ID.
 
 The native vLLM `--nnodes/--node-rank/--headless` path with the `mp` executor is
-the validated path here. Earlier Ray testing on this hardware served at
-concurrency 1 but hard-hung at concurrency 2 or above. Native TP=2 passed the
-small canary and the historical DeepSeek correctness, concurrency, long-context, and soak
-gates. It also avoids a second cluster-control system whose partial failure
-would complicate ownership and teardown.
+the supported launcher shape. It avoids a second cluster-control system whose
+partial failure would complicate ownership and teardown. Each exact model,
+image, recipe, and geometry still requires its own physical evidence.
 
 `cluster/preflight.sh <profile>` checks every node used by the profile: key-based SSH,
 pairwise RoCE rails in both directions, GB10, Docker/NVIDIA, RDMA devices,
@@ -178,22 +179,10 @@ the container on this node.
 
 ## What is actually validated today
 
-The measured production layout remains two-node TP=2. Decode on GB10 is
-memory-bandwidth-bound (~240 GB/s effective per node), while measured TP=2
-all-reduce latency at decode-sized messages is roughly 25–40 µs. For
-DeepSeek-V4-Flash, overlapping the per-node weight-read reduction outweighs the
-communication cost; the exact evidence and soaks are in `VALIDATION.md`.
-
-Cross-node layout is still decided per profile, not globally:
-
-- the published PR-41834 DeepSeek image was stable with CUDA graphs for that
-  historical two-node profile (removed from the live catalog, ADR 0012);
-- the official v0.26.0 image works for the tiny TP=2 test profile
-  `qwen3-1.7b-2node`;
-- real two-node models on the official image require their recorded workaround
-  (often `--enforce-eager`) and must retain the status earned by that exact
-  configuration;
-- GDN hybrids are not approved cross-node.
+Two-rank launcher and NCCL measurements do not qualify a model recipe. The
+retained `qwen3.8-27b-fp8-2node` and `qwen3-1.7b-2node` files are untested
+recipe shells. Cross-node behavior remains decided per exact profile; GDN
+hybrids are not approved cross-node.
 
 These two-node findings must not be extrapolated to three or more nodes. More
 rank pairs change collective behavior, failure surface, memory layout, and
@@ -222,9 +211,9 @@ recommendation changes.
 
 ```bash
 scripts/detect-fabric.sh --write-topology
-cluster/preflight.sh deepseek-v4-flash
-cluster/start-cluster.sh deepseek-v4-flash
-cluster/stop-cluster.sh deepseek-v4-flash
+cluster/preflight.sh <multi-rank-profile>
+cluster/start-cluster.sh <multi-rank-profile>
+cluster/stop-cluster.sh <multi-rank-profile>
 ```
 
 Live NFS/RDMA serving is retired (ADR 0005), and the whole weight-mode axis

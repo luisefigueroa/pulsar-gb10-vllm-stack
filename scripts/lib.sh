@@ -152,7 +152,7 @@ acquire_model_library_lifecycle_lock() {
   if [ "$mode" = exclusive ]; then
     flock -x -w "$timeout" "$lock_fd" || {
       exec {lock_fd}>&-
-      die "model library is busy; exclusive home-removal lock timed out"
+      die "model library is busy; exclusive model-library mutation lock timed out"
     }
   else
     flock -s -w "$timeout" "$lock_fd" || {
@@ -868,6 +868,7 @@ REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): d
 REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --legacy-tested (historical STATUS=tested*). It does not mean ADR 0004 Validated.'
 REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): drop the flag. --reviewed-identity is retired (ADR 0012). It does not mean ADR 0004 Validated.'
 REMOVED_ACTIVATE_MESSAGE='activate was removed (ADR 0008): use prepare.'
+REMOVED_COLD_STAGE_ONLY_MESSAGE='cold stage-only was removed (ADR 0012): a self-observed cold tree cannot create receipt/occupancy serving identity. Use home add --revision for a new exact Hugging Face home; use home relocate with an existing immutable receipt, or home restore with that receipt and its protected cold recovery set.'
 
 refuse_removed_force_flag() {
   die "$REMOVED_FORCE_MESSAGE" 2
@@ -887,6 +888,10 @@ refuse_removed_catalog_validated_flag() {
 
 refuse_removed_activate_command() {
   die "$REMOVED_ACTIVATE_MESSAGE" 2
+}
+
+refuse_removed_cold_stage_only_command() {
+  die "$REMOVED_COLD_STAGE_ONLY_MESSAGE" 2
 }
 
 REMOVED_HOT_LEGACY_MESSAGE='hot legacy check|remove was removed (SIM-13): leftover schema-1/2 hot repair is finished. Schema-1/2 hot metadata still cannot launch. Health remains read-only.'
@@ -1122,7 +1127,8 @@ library_hot_info_for_profile() {
     command=$(shell_join_q python3 - find-hot \
       --profile "$profile" \
       --topology-id "$topology_id" \
-      --hot-root "$PULSAR_HOT_ROOT")
+      --hot-root "$PULSAR_HOT_ROOT" \
+      --for-launch)
     rc=0
     info=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
     [ "$rc" -eq 0 ] || return "$rc"
@@ -1144,6 +1150,7 @@ library_hot_info_for_profile() {
       --profile "$profile" \
       --topology-id "$topology_id" \
       --expected-validation-json "$expected_validation_json" \
+      --for-launch \
       --serve-time-witness)
     rc=0
     ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
@@ -1156,7 +1163,8 @@ library_hot_info_for_profile() {
       --profile "$profile" \
       --topology-id "$topology_id" \
       --hot-root "$PULSAR_HOT_ROOT" \
-      --models-dir "$REPO_DIR/models") || return 1
+      --models-dir "$REPO_DIR/models" \
+      --for-launch) || return 1
     instance=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
       || return 1
@@ -1165,6 +1173,7 @@ library_hot_info_for_profile() {
       --profile "$profile" \
       --topology-id "$topology_id" \
       --models-dir "$REPO_DIR/models" \
+      --for-launch \
       --serve-time-witness >/dev/null || return 2
   fi
   printf '%s\n' "$info"

@@ -1310,12 +1310,21 @@ class SourceAttestedHomeAttachmentContracts(unittest.TestCase):
                             "rank": 1,
                             "node_id": self.node_id,
                             "hub_path": published["target_hub"],
+                            "directory_identity": {
+                                field: published["directory_identity"][field]
+                                for field in ("device", "inode", "ctime_ns")
+                            },
                             "state": "complete",
                         },
                         {
                             "rank": 0,
                             "node_id": "node-0",
                             "hub_path": str(extra),
+                            "directory_identity": {
+                                "device": extra.lstat().st_dev,
+                                "inode": extra.lstat().st_ino,
+                                "ctime_ns": extra.lstat().st_ctime_ns,
+                            },
                             "state": "complete",
                         },
                     ],

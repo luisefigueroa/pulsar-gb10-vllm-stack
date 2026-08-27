@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="$(git rev-parse --show-toplevel)"
+cd "$REPO_DIR"
+
+git diff --cached --check
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 scripts/check_publishable_privacy.py --staged

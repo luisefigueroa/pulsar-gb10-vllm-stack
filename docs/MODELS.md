@@ -1,8 +1,8 @@
-# Model support matrix — current legacy and ADR 0004 profiles (2026-08-19)
+# Model support matrix — current profiles
 
 This table reports the implementation's existing profile `STATUS=tested*` and
 live library contracts (local files on every rank). Lab expected-identity files
-and the archived combined identity format are not a live product
+and the retired combined identity format are not a live product
 ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)). It does **not** assign the Model Serving
 Release statuses accepted in
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). In
@@ -43,16 +43,14 @@ any status in the table.
 
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
 |---|---|---|---|---|---|---|---|
-| `qwen3-1.7b` — **profile removed by ADR 0012** (lab expected-identity JSON archived) | Qwen/Qwen3-1.7B | BF16 | 4 GB | 1 | 32K | — | historical one-node test profile; re-onboard onto ADR 0004 only as a later explicit change |
 | `qwen3.8-27b-fp8` | Qwen/Qwen3.8-27B-FP8 | FP8 | 29 GB | 1 | 131,072 configured; context not evaluated | — | draft; legacy **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; not recommended |
 | `qwen3.8-27b-fp8-2node` | same, TP=2 cross-node on official v0.27.1-aarch64 | FP8 | 29 GB | 2 / TP=2 | 131,072 configured; unevaluated | — | draft; legacy **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; graphs on; no spec decode; not recommended |
-| `qwen3-1.7b-2node` | same, TP=2 cross-node | BF16 | 4 GB | 2 / TP=2 | 32K | — | **tested diagnostic canary** — hidden from serving wizard |
+| `qwen3-1.7b-2node` | Qwen/Qwen3-1.7B, TP=2 cross-node | BF16 | 4 GB | 2 / TP=2 | 32K configured; unevaluated | — | draft diagnostic recipe; **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; hidden from serving wizard |
 | `qwen3.6-27b-fp8-2node` | 27B split TP=2 cross-node | FP8 | 29 GB | 2 / TP=2 | — | — | **DO NOT USE** — GDN hybrids hang cross-node (VALIDATION.md) |
 | `qwen3.6-27b-fp8` | Qwen/Qwen3.6-27B-FP8 (hybrid: 16 full-attn + 48 GDN layers) | FP8 block | 29 GB | 1 | 131,072 (needle 3/3 @121K; ledger only — no `results/` artifact) | ngram **FORBIDDEN** (corrupts) | **tested** |
 | `nemotron-3-nano-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 | NVFP4 | 19 GB | 1 | 131,072 (needle 3/3 @124K; ledger only — no `results/` artifact) | MTP not offered | **tested** — 62 tok/s c=1, 399 agg c=16, run-to-run IDENTICAL |
 | `nemotron-3-super-120b-nvfp4` | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 | NVFP4 | 75 GB | 1 | 32,768 tested (config allows 262K, untested) | MTP k=1 **opt-in +47%** (`--spec-decode`; triton draft) | **tested** — 16.2 tok/s c=1 base, 113 agg c=32, gsm8k 0.94 |
 | `laguna-s-2.1-nvfp4` — **profile removed by ADR 0006** (absolute-path catalog; measurements remain history) | poolside/Laguna-S-2.1-NVFP4 | NVFP4 + FP8 KV | 72 GB | 1 | **262,144 tested** (needle 3/3 @261K; ledger only — no `results/` artifact) | DFlash **marginal +13%** (off by default) | **tested** — 19.5 tok/s c=1, 66 agg c=4, gsm8k 0.82 strict |
-| `deepseek-v4-flash` — **profile removed by ADR 0012** (lab expected-identity JSON archived) | deepseek-ai/DeepSeek-V4-Flash-0731 | FP8+FP4 experts | 167 GB | 2 / TP=2 | historical 500K/20 GB soak | historical DSpark | historical two-node profile; re-onboard onto ADR 0004 only as a later explicit change |
 | `inkling-small-nvfp4` — **profile removed by ADR 0006** (absolute-path catalog; probe history remains) | Thinkingmachines/Inkling-Small-NVFP4 (added 07-31) | NVFP4 | 171 GB | 2 / TP=2 (would) | 131,072 in conf (checkpoint 1M; needle-gate first) | MTP-8 head ships | **BLOCKED upstream** — FA4-cute sm12x lacks paged KV (VALIDATION probe series) |
 | `laguna-s-2.1-2node` — **profile removed by ADR 0006** | Laguna TP=2 cross-node | NVFP4 | 72 GB | 2 / TP=2 | 262,144 | — | **do-not-use** — advisory measurement-only label; stock graphs hang without `--enforce-eager` (baked in conf). Do not `./pulsar start` it. |
 | (candidate) | nvidia/MiniMax-M2.7-NVFP4 (node2 cache only) | NVFP4 | 130 GB | 2 / TP=2 | — | — | not configured |
@@ -64,14 +62,13 @@ numbers). Nothing gets `tested` from arithmetic.
 
 **Model-content identity:** live serving identity is occupancy, rank-local
 verified views, and download receipts for brand-new homes. ADR 0004 Model
-Serving Release objects are display-only, not a serving gate. `qwen3-1.7b` and
-`deepseek-v4-flash` were the last lab expected-identity profiles; they are
-dropped from the live catalog and their JSON is archived. `qwen3-1.7b-2node`
-stays as a tiny two-node test profile. Live-mount serving is retired (ADR 0005)
+Serving Release objects are display-only, not a serving gate. Retired lab
+expected-identity files and their model-specific evidence are not retained in
+this reset. Retained draft recipes are unbound and untested. Live-mount serving is retired (ADR 0005)
 and the replicated path was removed (ADR 0006). Profile `STATUS=tested*` must
 not be interpreted as validating arbitrary bytes under the same repository ID.
-Do not invent a lab expected-identity file from a user cache; recover the
-historical artifact used for the run or revalidate the exact content. Library
+Do not invent a lab expected-identity file from a user cache; onboard the exact
+content through the current receipt and ADR 0004 workflows. Library
 preparation full-verifies before creating rank-local serve witnesses. Unchanged
 launch uses the applicable metadata fast path, while drift rehashes.
 
@@ -80,7 +77,6 @@ The ADR 0004 registry is empty. `qwen3.8-27b-fp8` is an unbound draft recipe.
 Maintainers can assemble draft Model Serving Release JSON with
 `scripts/model-serving-release-plan.sh`, but that alone does not change any
 row or issue a claim. See [MODEL_RELEASE.md](./MODEL_RELEASE.md),
-[docs/archive/schema-1-expected-seal/](./archive/schema-1-expected-seal/README.md),
 [MODEL_LIBRARY_DESIGN.md](./MODEL_LIBRARY_DESIGN.md),
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md),
 [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md),
@@ -120,32 +116,6 @@ headroom is not a deployment.
 
 ## Notes per family
 
-- **DeepSeek**: "DeepSeek V4 Flash" is real — `deepseek-ai/DeepSeek-V4-Flash`
-  (284B total / 13B active, 1M-token config, FP8 + FP4 experts, MTP head,
-  released 2026-04-22 alongside V4-Pro). Weights are in the HF cache on both
-  nodes, NOT in the NFS catalog (catalog has V4-Pro only). Since 2026-07-31
-  the lab served the **0731 refresh** (167 GB), which builds the DSpark
-  drafter INTO the checkpoint — the old separate `-DSpark` variant and its
-  conf are retired (git history), as is the superseded 04-22 checkpoint.
-  The live `deepseek-v4-flash` profile was later removed (ADR 0012).
-  Since 2026-07-30 that job ran on the published, digest-pinned
-  upstream-lineage image built from vLLM PR #41834 (stock release images remain
-  non-viable: kernel-level livelock, VALIDATION.md). Pull the image named by the
-  model conf; [BUILD.md](BUILD.md) retains the source-build fallback for
-  offline or independently reproduced deployments.
-  **Default geometry (2026-08-01) is optimized for few long agent sessions**,
-  not high-QPS short chat: ≤5 concurrent (Hermes + occasional sub-agents),
-  long tool/code/repo traces, client context capped at **500K** (official
-  useful max; recall drops beyond). Engine defaults in
-  `models/deepseek-v4-flash.conf`: `--max-model-len 500000`,
-  `--max-num-seqs 5`, `--max-num-batched-tokens 16384`,
-  `--kv-cache-memory-bytes 20000000000` (~20 GB/rank; boot-measured
-  **652,465-token** pool, 1.30x concurrency at 500K — not linear from the
-  old 10 GB figure), plus DeepSeek tool/reasoning parsers for agent clients.
-  Do **not** size toward 27.5 GB/rank (known node-2 OOM) or assume old
-  “~2M token” profiles from other geometries transfer. With explicit
-  `kv_cache_memory_bytes`, twiddling `gpu_memory_utilization` does not
-  grow KV. Prior soaked reference remains 10 GB → 577,640 tokens (VALIDATION.md).
 - **Qwen**: newest local are Qwen3.6-27B (hybrid GDN; FP8 and NVFP4 variants
   cached with full weights — the "BF16" cache entry was an empty stub,
   downloaded fresh 2026-07-28 for the quant-control eval) and
@@ -158,11 +128,9 @@ headroom is not a deployment.
   known sm_121 caveats (vllm#37030 first-token Marlin bug). Left out of the
   matrix until weights exist locally.
 - **KV cache reference** (BF16 bytes/token, from config.json): Laguna 24 KiB
-  (FP8, growth portion) · DeepSeek-V4 MLA ~69 KiB pre-compression · Qwen3.6-27B
-  dense GQA ~previous-gen typical · Nemotron-3 hybrids 6-8 KiB (+fixed Mamba
+  (FP8, growth portion) · Qwen3.6-27B dense GQA ~previous-gen typical ·
+  Nemotron-3 hybrids 6-8 KiB (+fixed Mamba
   state). Long-context feasibility is therefore model-specific; the needle
-  test in VALIDATION.md is the gate for any claimed context length.
-  **DSV4-0731 caveat: measured bytes/token is GEOMETRY-DEPENDENT** (~55 KB
-  effective at 131K max-model-len vs ~18 KB at 500K — length-scaled tail
-  compress_ratios). Never carry a per-token KV number across max-model-len
-  values; re-measure at the target geometry (VALIDATION.md 500K-KV section).
+  test in VALIDATION.md is the gate for any claimed context length. Never
+  carry a per-token KV number across geometries; re-measure at the target
+  configuration.

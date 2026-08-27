@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import pathlib
@@ -167,30 +168,27 @@ def write_topology(path: pathlib.Path, ranks: int = 2) -> dict[str, object]:
             }
             for rank in range(ranks)
         ],
-        "links": (
-            [
-                {
-                    "ranks": [0, 1],
-                    "rails": [
-                        {
-                            "network": "198.51.100.0/24",
-                            "a": {
-                                "hca": "roce0",
-                                "netdev": "fabric0",
-                                "ip": "198.51.100.10",
-                            },
-                            "b": {
-                                "hca": "roce0",
-                                "netdev": "fabric0",
-                                "ip": "198.51.100.11",
-                            },
-                        }
-                    ],
-                }
-            ]
-            if ranks == 2
-            else []
-        ),
+        "links": [
+            {
+                "ranks": [left, right],
+                "rails": [
+                    {
+                        "network": "198.51.100.0/24",
+                        "a": {
+                            "hca": "roce0",
+                            "netdev": "fabric0",
+                            "ip": f"198.51.100.{10 + left}",
+                        },
+                        "b": {
+                            "hca": "roce0",
+                            "netdev": "fabric0",
+                            "ip": f"198.51.100.{10 + right}",
+                        },
+                    }
+                ],
+            }
+            for left, right in itertools.combinations(range(ranks), 2)
+        ],
         "validation": {
             "class": "roce-full-mesh",
             "full_mesh": True,

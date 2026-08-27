@@ -1982,7 +1982,11 @@ def _iter_private_store_final_paths(
     return finals
 
 
-def _load_receipt_path(path: pathlib.Path) -> dict[str, Any]:
+def _load_receipt_path(
+    path: pathlib.Path,
+    *,
+    require_canonical: bool = False,
+) -> dict[str, Any]:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
@@ -2005,10 +2009,17 @@ def _load_receipt_path(path: pathlib.Path) -> dict[str, Any]:
     )
     if path.name != f"{receipt['receipt_id']}.json":
         fail("download-receipt receipt filename does not match its identity")
+    if require_canonical and raw != model_identity.pretty_json_bytes(receipt):
+        fail("download-receipt receipt does not use canonical JSON encoding")
     return receipt
 
 
-def _write_receipt_exclusive(path: pathlib.Path, receipt: dict[str, Any]) -> None:
+def _write_receipt_exclusive(
+    path: pathlib.Path,
+    receipt: dict[str, Any],
+    *,
+    operation: str,
+) -> None:
     raw = model_identity.pretty_json_bytes(receipt)
     store_fd = os.open(
         path.parent,
@@ -2041,7 +2052,7 @@ def _write_receipt_exclusive(path: pathlib.Path, receipt: dict[str, Any]) -> Non
                 follow_symlinks=False,
             )
         except FileExistsError:
-            fail("home add: a download-receipt receipt already exists")
+            fail(f"{operation}: a download-receipt receipt already exists")
         os.unlink(temp_name, dir_fd=store_fd)
         temp_created = False
         os.fsync(store_fd)
@@ -2057,6 +2068,8 @@ def _write_receipt_exclusive(path: pathlib.Path, receipt: dict[str, Any]) -> Non
 def write_source_attested_receipt(
     library_dir: str | pathlib.Path,
     receipt: dict[str, Any],
+    *,
+    operation: str = "home add",
 ) -> dict[str, Any]:
     receipt = validate_source_attested_acquisition_receipt(receipt)
     store = _ensure_receipt_store(library_dir)
@@ -2067,20 +2080,22 @@ def write_source_attested_receipt(
         snapshot_revision=receipt["snapshot_revision"],
     ):
         if not source_attested_receipts_are_content_compatible(existing, receipt):
-            fail("home add: an incompatible download-receipt receipt already exists")
+            fail(
+                f"{operation}: an incompatible download-receipt receipt already exists"
+            )
     if path.exists() or path.is_symlink():
         existing = load_source_attested_receipt(library_dir, receipt["receipt_id"])
         if existing != receipt:
-            fail("home add: a different download-receipt receipt already exists")
+            fail(f"{operation}: a different download-receipt receipt already exists")
         return existing
     try:
-        _write_receipt_exclusive(path, receipt)
+        _write_receipt_exclusive(path, receipt, operation=operation)
     except SourceAttestedAcquisitionError as exc:
         if "already exists" not in str(exc):
             raise
         existing = load_source_attested_receipt(library_dir, receipt["receipt_id"])
         if existing != receipt:
-            fail("home add: a different download-receipt receipt already exists")
+            fail(f"{operation}: a different download-receipt receipt already exists")
         return existing
     return receipt
 
@@ -2088,10 +2103,12 @@ def write_source_attested_receipt(
 def load_source_attested_receipt(
     library_dir: str | pathlib.Path,
     receipt_id: str,
+    *,
+    require_canonical: bool = False,
 ) -> dict[str, Any]:
     receipt_id = _validate_hex_id(receipt_id, label="receipt_id")
     path = source_attested_receipt_store(library_dir) / f"{receipt_id}.json"
-    return _load_receipt_path(path)
+    return _load_receipt_path(path, require_canonical=require_canonical)
 
 
 def source_attested_receipts_are_content_compatible(
@@ -2803,22 +2820,20 @@ def _classify_entry_occupancy(
         return
     if not revision or revision in {"missing", "unknown"}:
         return
-    try:
-        _validate_hf_model_id(model_id, label="catalog occupancy model_id")
-        _validate_commit(revision, label="catalog occupancy revision")
-    except SourceAttestedAcquisitionError:
-        return
-    try:
-        receipts = list_source_attested_receipts_for_revision(
-            library_dir, model_id=model_id, snapshot_revision=revision
-        )
-    except SourceAttestedAcquisitionError:
-        return
+    _validate_hf_model_id(model_id, label="catalog occupancy model_id")
+    _validate_commit(revision, label="catalog occupancy revision")
+    receipts = list_source_attested_receipts_for_revision(
+        library_dir, model_id=model_id, snapshot_revision=revision
+    )
     attachment = load_source_attested_home_attachment(
         library_dir, model_id=model_id, snapshot_revision=revision
     )
     if not receipts and attachment is None:
         return
+    if attachment is not None and not any(
+        receipt["receipt_id"] == attachment["receipt_id"] for receipt in receipts
+    ):
+        fail("catalog occupancy attachment references a missing download receipt")
     occupancy_count = 0
     for home in homes:
         if not isinstance(home, dict):
@@ -2827,11 +2842,16 @@ def _classify_entry_occupancy(
             home["occupancy"] = False
             home["home_class"] = str(home.get("state") or "partial")
             continue
-        matched = bool(
-            attachment is not None
-            and home.get("node_id") == attachment["node_id"]
-            and home.get("hub_path") == attachment["durable_home_path"]
-        )
+        matched = False
+        if attachment is not None:
+            home_identity = _validate_directory_identity(
+                home.get("directory_identity")
+            )
+            matched = bool(
+                home.get("node_id") == attachment["node_id"]
+                and home.get("hub_path") == attachment["durable_home_path"]
+                and home_identity == attachment["directory_identity"]
+            )
         home["occupancy"] = matched
         home["home_class"] = "occupancy" if matched else "unbound-complete"
         if matched:
@@ -3198,33 +3218,6 @@ def cmd_occupy_current_home(args: argparse.Namespace) -> int:
     return _write_json(result)
 
 
-def cmd_classify_catalog_occupancy(args: argparse.Namespace) -> int:
-    catalog_path = pathlib.Path(args.catalog)
-    catalog = _load_json_value(catalog_path.read_bytes(), label="catalog")
-    before = copy.deepcopy(catalog)
-    classify_catalog_occupancy(catalog, args.library_dir)
-    if catalog == before:
-        if args.json:
-            return _write_json(catalog)
-        return 0
-    raw = model_identity.pretty_json_bytes(catalog)
-    tmp_path = catalog_path.with_name(
-        f".{catalog_path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
-    )
-    try:
-        tmp_path.write_bytes(raw)
-        os.replace(tmp_path, catalog_path)
-    except Exception:
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
-        raise
-    if args.json:
-        return _write_json(catalog)
-    return 0
-
-
 def cmd_resolve_attached_receipt(args: argparse.Namespace) -> int:
     authority = resolve_attached_source_attested_receipt(
         args.library_dir,
@@ -3285,7 +3278,15 @@ def cmd_detach_current_home(args: argparse.Namespace) -> int:
 
 def cmd_find_receipt(args: argparse.Namespace) -> int:
     if args.receipt_id:
-        receipt = load_source_attested_receipt(args.library_dir, args.receipt_id)
+        receipt_path = source_attested_receipt_store(args.library_dir) / (
+            f"{_validate_hex_id(args.receipt_id, label='receipt_id')}.json"
+        )
+        if not receipt_path.exists() and not receipt_path.is_symlink():
+            if not args.allow_missing:
+                fail("download-receipt receipt not found")
+            receipt = None
+        else:
+            receipt = load_source_attested_receipt(args.library_dir, args.receipt_id)
     elif not args.model_id or not args.revision:
         fail("find-receipt requires --receipt-id or --model-id and --revision")
     else:
@@ -3433,12 +3434,6 @@ def build_parser() -> argparse.ArgumentParser:
     occupy_home.add_argument("--durable-home-path", required=True)
     occupy_home.add_argument("--live-identity", required=True)
     occupy_home.set_defaults(func=cmd_occupy_current_home)
-
-    classify_occupancy = sub.add_parser("classify-catalog-occupancy")
-    classify_occupancy.add_argument("--library-dir", required=True)
-    classify_occupancy.add_argument("--catalog", required=True)
-    classify_occupancy.add_argument("--json", action="store_true")
-    classify_occupancy.set_defaults(func=cmd_classify_catalog_occupancy)
 
     resolve_attached = sub.add_parser("resolve-attached-receipt")
     resolve_attached.add_argument("--library-dir", required=True)

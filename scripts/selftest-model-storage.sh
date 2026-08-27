@@ -166,7 +166,7 @@ run_view unprepared.json 0 $'1\n1\nn\n6\n' "$STATE/prepare-decline.out"
 [ "$VIEW_RC" -eq 0 ]
 [ ! -s "$PREPARE_LOG" ]
 assert_contains "$STATE/prepare-decline.out" 'PREPARE FOR TWO-RANK SERVING' \
-  "preparation shows the bounded two-rank GA scope before confirmation"
+  "preparation shows the two-rank serving scope before confirmation"
 assert_contains "$STATE/prepare-decline.out" 'SSH over confirmed RoCE.*8 streams' \
   "preparation preview exposes the fixed transfer policy"
 assert_contains "$STATE/prepare-decline.out" 'fallback[[:space:]]+none' \

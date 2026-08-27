@@ -1,176 +1,76 @@
-# ADR 0003: Transport policy for explicit reviewed model preparation
+# ADR 0003: Transport policy for multi-rank model preparation
 
-- Status: Accepted
-- Date: 2026-08-13
-- Amended by:
-  [ADR 0004](./0004-model-serving-release-validation.md)
-  and
-  [ADR 0005](./0005-reject-live-nfs-rdma-serving.md)
+- **Status:** Accepted
+- **Date:** 2026-08-13
+- **Amended by:**
+  [ADR 0004](./0004-model-serving-release-validation.md),
+  [ADR 0005](./0005-reject-live-nfs-rdma-serving.md), and
+  [ADR 0006](./0006-model-library-only-weight-distribution.md)
 
 ## Context
 
-Pulsar's model-library path keeps one durable home for an exact reviewed
-revision, presents that tree through a validated home-rank view, and creates
-sealed-hot copies only on non-home serving ranks. Physical trials showed that
-eight-stream SSH over a topology-confirmed RoCE endpoint materially beat the
-control-network copy for the full DeepSeek checkpoint, while sixteen streams
-did not improve the median. Topology-bound SSH identity, transfer integrity,
-capacity admission, exact-seal verification, interruption/retry, and the
-one-home lifecycle have applicable evidence.
-
-That catalog/artifact and serving-integration evidence was enough to choose a
-bounded transfer policy for an operator who explicitly opts into reviewed model
-preparation. At adoption it was not enough to make `library-hot` GA, replace the
-replicated guided default, or waive the failed DeepSeek strict-determinism gate
-and remaining release work. The 2026-08-16 implementation note records the
-later bounded two-rank GA closure without changing this transport choice.
-
-At the time of this decision, the implementation also had an important
-onboarding boundary: catalog refresh
-only inventories existing durable homes, and preparation requires an eligible
-primary home. Pulsar does not yet provide a general command that downloads one
-exact Hugging Face revision directly to one selected durable home. The existing
-`pull-weights.sh` workflow intentionally creates the replicated layout used by
-the guided path. The implementation note below records the later acquisition
-service without rewriting this decision's original context.
+The model library keeps one receipt-backed home for an exact revision. A
+multi-rank service needs local files on every serving rank, so non-home ranks
+receive working copies during `prepare`. The transfer path must be explicit,
+topology-bound, integrity-checked, and unable to fall back silently to the
+control network or a different storage policy.
 
 ## Decision
 
-When an operator explicitly selects reviewed multi-rank model preparation
-for an eligible reviewed profile, Pulsar uses this fixed policy:
+Multi-rank preparation uses this fixed policy:
 
-1. require confirmed topology with enrolled and verified schema-2 SSH trust;
-2. require an existing exact primary durable home and reviewed expected seal;
+1. require confirmed topology and enrolled, verified SSH trust;
+2. require an exact receipt-backed occupancy home;
 3. use the copy backend with topology-bound `ssh-roce` transport;
-4. use eight parallel copy streams for non-home sealed-hot materialization;
-5. full-verify every rank against the expected seal before publishing ready;
+4. use eight parallel copy streams for each non-home working copy;
+5. full-verify every rank against the receipt before publishing ready state;
    and
-6. fail closed without changing transport, storage policy, or replica count.
+6. fail without fallback if any identity, topology, capacity, transport, copy,
+   or verification condition cannot be proved.
 
-The corresponding command is:
+The operator command is:
 
 ```bash
-scripts/model-library.sh prepare <multi-rank-sealed-profile> \
+scripts/model-library.sh prepare <multi-rank-profile> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
 ```
 
-A reviewed single-rank profile has no non-home copy and is therefore outside
-this RoCE transfer policy. Its local durable-home runtime view is prepared with
-the copy backend's `ssh-control` path; no bulk SSH transfer occurs.
+A one-rank profile has no inter-rank model transfer. Its local home view is
+prepared and verified on the selected rank.
 
-`ssh-control` remains available for explicit diagnostics, comparison, and
-maintainer-directed experiments. One-shot `nfs-rdma` transfer and long-lived
-live NFS/RDMA mounts remain separate experiments. None is an automatic
-fallback for this policy.
+`ssh-control` remains available only for explicit diagnostics and experiments.
+Live NFS/RDMA serving is rejected by ADR 0005. No alternate transport is an
+automatic fallback.
 
-This decision fixes the policy used by the interactive explicit action. It
-does not change the low-level CLI's compatibility defaults, create a durable
-home, start a container, qualify a model, change profile status, or promote a
-storage path by itself. Replicated weights remain the guided serving and
-fresh-cluster default.
-
-## Rejected alternatives
-
-- **Treat catalog refresh as model acquisition.** Refresh is read-only with
-  respect to model bytes and cannot create the durable home preparation needs.
-- **Replace the fresh-cluster replicated quick start now.** At decision time,
-  that would have documented a workflow the implementation could not complete
-  from an empty cluster.
-- **Fall back automatically to control-network SSH.** This would hide the
-  selected data plane and invalidate the transfer claim.
-- **Use sixteen streams by default.** Alternating full-model trials showed no
-  median improvement over eight streams and added connection pressure.
-- **Call all RoCE-backed paths “fabric.”** SSH/TCP over RoCE, one-shot
-  NFS/RDMA, live NFS/RDMA, and NCCL inference have different dependencies and
-  failure semantics.
+This policy does not acquire model bytes, start a server, qualify a model,
+change profile status, or issue a Model Serving Release decision. Transport is
+run provenance after all serving ranks converge on the same verified local
+content.
 
 ## Consequences
 
-- The interactive preparation preview can state one exact, evidence-backed
-  transport and stream policy with no hidden picker or fallback.
-- Operators must enroll/check SSH trust and establish an eligible durable home
-  before preparation; failures remain actionable and closed.
-- The replicated quick start stays truthful for new clusters.
-- Catalog/artifact and serving-integration acceptance remain separate from the
-  failed DeepSeek strict-determinism result and combined release promotion.
-- Historical comparison artifacts retain their recorded status; this ADR
-  governs current interpretation rather than rewriting measurements.
+- Operators see one exact multi-rank preparation path and its prerequisites.
+- A missing or invalid receipt, occupancy attachment, topology, SSH identity,
+  RoCE endpoint, capacity check, or rank verification stops preparation.
+- Catalog/artifact evidence for transfer remains separate from serving
+  integration and model qualification.
+- Retained untested recipe shells require fresh onboarding and physical
+  evidence; this policy alone does not qualify them.
+
+## Rejected alternatives
+
+- **Automatic control-network fallback.** It would hide the selected data
+  plane and invalidate the transfer contract.
+- **Live NFS/RDMA under vLLM.** A rank cannot cold-start independently after
+  export loss; ADR 0005 rejects this runtime source.
+- **Sixteen streams by default.** A default change requires fresh,
+  counterbalanced evidence and a reviewed policy update.
+- **Treat transport as Model Serving Release identity.** Transfer is
+  preparation provenance, not one of the four release identity inputs.
 
 ## Revisit triggers
 
-Revisit this policy when new counterbalanced full-model evidence supports a
-different stream count or transport, or when remote-home-to-remote-target copy
-is supported. The one-home acquisition and bounded two-rank GA triggers have
-been satisfied without changing this transport policy.
-
-## Implementation note — 2026-08-13
-
-The first one-home acquisition service has landed as
-`scripts/model-library.sh home add <sealed-profile>`. It performs target-side
-exact-commit download, full expected-manifest verification, and atomic durable
-publication without preparing non-home ranks. Its three-node physical
-catalog/artifact gate subsequently passed remote interruption cleanup, explicit
-and automatic remote placement, full verification, atomic publication, and
-explicit registration. This satisfies the onboarding implementation and
-evidence trigger but does not change this ADR's preparation transport:
-acquisition has no inter-rank model copy, while subsequent multi-rank
-preparation still uses topology-bound eight-stream SSH-over-RoCE with no
-fallback. Model Serving Release qualification remains separate.
-
-The serving wizard consumed this fixed policy after a user explicitly chose
-**distributed catalog (experimental)** at this stage. The preparation action itself
-still starts nothing. After fresh health proves every exact runtime view ready,
-the wizard may pass `--weight-source library-hot` to the existing launcher only
-after its separate final start/replace confirmation. Replicated weights remain
-the first and recommended choice. One-node profiles run from their selected
-durable-home rank with no bulk transfer; this does not expand the ADR to a
-remote-home-to-non-home relay.
-
-The reviewed seal and ready-home requirements above are identity and
-preparation-integrity requirements for this particular distribution path, not
-a validation-status allowlist. Model Serving Release status never grants or
-denies serving; profiles that do not use this path remain available through
-another compatible weight source when its operational checks pass.
-
-## Implementation note — 2026-08-17
-
-The acquisition service also supports an absent brand-new unsealed Hugging
-Face home through a read-only source-attested plan and separately confirmed
-exact-commit execution. It verifies the complete upstream inventory and local
-bytes, writes an immutable receipt before atomic publication, attaches that
-receipt to the exact published directory, and requires the attachment to match
-before receipt-backed offline verification or exact prepare. This is
-catalog/artifact work on the selected rank; it does not copy a model between
-ranks and therefore does not change the preparation transport fixed by this
-ADR. Deterministic tests do not prove physical Hub/DGX behavior.
-
-## Interpretation note — 2026-08-14
-
-ADR 0004 separates distribution-subsystem maturity from Model Serving Release
-status. Transfer remains run provenance when it converges on the same exact
-verified `local-verified-readonly` runtime-access contract. The DeepSeek strict
-same-boot failure still blocks `Validated` for that exact release, but it is not
-a catalog/distribution failure and no longer blocks the separately scoped
-initial two-rank `library-hot` GA closure. Passing that closure will not make
-the path a guided default or waive release-specific qualification.
-
-## GA closure note — 2026-08-16
-
-The reviewed two-rank `library-hot` path completed the separate ADR 0004 GA
-closure. Exact home-symlink behavior, 30-minute serving, restart, forced launch
-failure, persisted recovery in a new wizard process, identity re-verification,
-owned cleanup, and one-home closeout passed. The fixed eight-stream
-SSH-over-RoCE policy above remains unchanged. The wizard now labels this exact
-scope **two-rank GA · explicit**. Remote one-rank and legacy-unsealed use remain
-experimental, replicated serving remains the guided default, and no Model
-Serving Release status changed.
-
-## Amendment — 2026-08-19
-
-[ADR 0005](./0005-reject-live-nfs-rdma-serving.md) rejects long-lived live
-NFS/RDMA under vLLM as a serving runtime source. The original sentence that
-kept live NFS/RDMA and one-shot `nfs-rdma` as “separate experiments” is
-amended only for the live-mount serving path. One-shot `nfs-rdma` prepare
-(`--backend fabric`) remains a separate experiment and is not decided here.
-This amendment does not change the eight-stream `ssh-roce` prepare policy,
-NCCL/RoCE inference, or topology discovery.
+Revisit when fresh evidence supports another stream count or explicit
+transport, or when remote-home-to-remote-target relay becomes a supported
+product path. Any alternative remains visible and opt-in; it must not become a
+fallback.

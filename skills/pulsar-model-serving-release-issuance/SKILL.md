@@ -12,9 +12,9 @@ objects trusted. Never invent a review
 outcome, mutate a capture candidate, assign `Validated` to skip missing
 criteria, authorize serving, promote a path, or claim physical behavior.
 
-Read `AGENTS.md`, [ADR 0004](../../../docs/decisions/0004-model-serving-release-validation.md)
+Read `AGENTS.md`, [ADR 0004](../../docs/decisions/0004-model-serving-release-validation.md)
 §6 and the 2026-08-25 extra-review-files note, and
-[MODEL_SERVING_RELEASE_ISSUANCE.md](../../../docs/MODEL_SERVING_RELEASE_ISSUANCE.md)
+[MODEL_SERVING_RELEASE_ISSUANCE.md](../../docs/MODEL_SERVING_RELEASE_ISSUANCE.md)
 before acting. Reuse `scripts/model-serving-release-capture.sh verify-candidate`
 and `scripts/model-serving-release-issue.sh`. Do not duplicate their schemas.
 
@@ -40,7 +40,7 @@ Review-file notes:
   staged lineage. `issue.sh` does not edit a profile.
 - Never auto-pass provenance/security components or privacy results.
 - Never treat health, warmup, or completion smoke as model qualification
-  ([ADR 0002](../../../docs/decisions/0002-subsystem-qualification-boundaries.md)).
+  ([ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md)).
 - Never set `FAMILY_RECOMMENDED` or `RECOMMENDED_SPEC` as part of first
   staging.
 - `expected_status` is an assertion. It must equal the status derived by
@@ -98,6 +98,9 @@ For every `evidence_artifacts[]` entry, record visibility, location, and an
 explicit `passed` / `failed` / `pending` privacy result. Scan publishable
 `results/` files for site paths, hosts, addresses, node IDs, and topology
 identifiers. A leak is `failed` or `pending`, not a silent `passed`.
+Run `python3 scripts/check_publishable_privacy.py` before `plan`; after
+staging, run `python3 scripts/check_publishable_privacy.py --staged`.
+A declared review result cannot override a scanner finding.
 `privacy_review=passed` on every artifact forces `evidence_privacy=pass`,
 which is conclusive and requires extra `release-promotion` review
 files. Incomplete staging with an empty extra-review-file list must keep

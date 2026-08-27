@@ -1,7 +1,7 @@
 # Review-declaration notes
 
 The closed schema lives in
-[MODEL_SERVING_RELEASE_ISSUANCE.md](../../../../docs/MODEL_SERVING_RELEASE_ISSUANCE.md).
+[MODEL_SERVING_RELEASE_ISSUANCE.md](../../../docs/MODEL_SERVING_RELEASE_ISSUANCE.md).
 Do not fork it here.
 
 ## Extract IDs from the candidate

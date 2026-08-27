@@ -22,11 +22,9 @@ creates two opposite errors:
 - a successful preparation and completion smoke can be overstated as model
   correctness, determinism, soak, or release qualification.
 
-The DeepSeek model-library work exposed this distinction directly. Exact
-sealed bytes, one-home placement, preparation, witnesses, read-only launch, and
-cleanup passed their catalog and integration gates. The selected runtime still
-has a separately tracked strict-determinism question and lacks the sustained
-soak required for storage-path promotion.
+The distinction matters whenever catalog mechanics pass but an exact
+model/runtime still has incomplete or failed qualification, or when a healthy
+completion is mistaken for correctness and stability.
 
 ## Decision
 
@@ -72,12 +70,11 @@ implemented frozen Validation Contract declares its gates. Implemented pure run
 records and evidence bundles bind observed evidence, and the implemented pure
 decision schema independently verifies an explicit reviewed status. Read-only
 persistence and verification of stored ADR 0004 objects is implemented.
-The 2026-08-19 Qwen3.8 lineage later filled that store (`Testing incomplete`);
-this sentence originally recorded an empty registry. Local evidence-capture
-candidate persistence is implemented and unreviewed. Advisory status
+The tracked store is currently empty. Local evidence-capture candidate
+persistence is implemented and unreviewed. Advisory status
 projection is implemented for profiles explicitly bound to a release ID.
-Existing schema-1 bundles remain immutable
-legacy artifacts.
+Retired schema-1 bundles and their model-specific history are not retained in
+this reset.
 Reusing generic catalog evidence does not carry an old bundle, release decision,
 or `STATUS=tested` claim onto changed runtime inputs; a new Model Serving Release
 still requires every applicable gate.

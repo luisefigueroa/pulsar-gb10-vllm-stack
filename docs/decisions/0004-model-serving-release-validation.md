@@ -11,15 +11,13 @@
   `live-remote-readonly` for new qualifying plans; schema version 1 is
   unchanged because the tracked registry is empty.
   2026-08-22 — SIM-01 keeps the five separately persisted object roles.
-  The registry now holds the reviewed Qwen3.8 lineage; it is no longer empty.
   2026-08-22 — [ADR 0009](./0009-no-launch-trust-mode-axis.md) rejects a
   separate launch-trust-mode axis; existing labels remain the trust contract.
   2026-08-25 — bundle `review_evidence_artifact_ids` are leftover non-run
   artifacts, not a parallel measurement class. An empty list is expected
   after measurement capture and is a legal decision citation when every
-  provenance/security component is `pending`. Schema version 1 is
-  unchanged. Issued Qwen3.8 objects are not migrated. The decision
-  builder implements this citation rule.
+  provenance/security component is `pending`. Schema version 1 is unchanged.
+  The decision builder implements this citation rule.
   2026-08-26 — [ADR 0012](./0012-retire-expected-seal-and-schema-1-bundles.md)
   retires expected-seal and schema-1 validation bundles as a live product.
   ADR 0004 object `schema_version: 1` is unchanged and is not a v2 of those
@@ -38,8 +36,7 @@
   explicitly bound profiles; supervised `pulsar-model-onboarding` skill
   implemented as control-plane orchestration; maintainer-only issuance
   staging implemented as an untrusted local proposal whose trust event is
-  repository review and merge; first reviewed Qwen3.8 lineage stored and bound
-  with advisory status `Testing incomplete`; leftover review-evidence
+  repository review and merge; leftover review-evidence
   citation rule implemented (empty list is legal when every provenance
   component is `pending`);
   status-independent serving policy implemented;
@@ -387,10 +384,9 @@ compatibility observations. A soak observation records `started_at`,
 `ended_at`, and canonical `duration_seconds`; the validator checks that the
 duration exactly equals the contained timestamp interval.
 
-Existing schema-1 validation bundles and expected-model seals remain
-byte-immutable historical artifacts. [ADR 0012](./0012-retire-expected-seal-and-schema-1-bundles.md)
-archives them; live loaders do not consume them, and they are not converted
-into ADR 0004 objects. They are not rehashed or rewritten. Stage 1 adds a separate release
+Schema-1 validation bundles and expected-model seals are retired and are not
+retained by the repository reset. Live loaders do not consume them, and they
+are not converted into ADR 0004 objects. Stage 1 adds a separate release
 descriptor and frozen Validation Contract; stage 2 adds run records, evidence
 bundles, validation decisions, and their cross-links. Both pure-schema stages
 are implemented. Read-only trusted persistence and verification for those
@@ -411,10 +407,9 @@ change. Existing `STATUS=tested*`,
 reviewed seals, and legacy-unsealed behavior retain their
 separate legacy meanings and recommendation order; none grants or denies
 serving. The `--validated` CLI alias is removed by
-[ADR 0008](./0008-breaking-compatibility-window.md). No existing profile is automatically relabeled `Validated`. The
-tracked ADR 0004 store contains the Qwen3.8 lineage, and
-`qwen3.8-27b-fp8` is bound to its `Testing incomplete` decision. Other current
-profiles remain unbound.
+[ADR 0008](./0008-breaking-compatibility-window.md). No existing profile is
+automatically relabeled `Validated`. The tracked ADR 0004 store is empty, and
+all current profiles are unbound.
 
 ### 5. Distribution is preparation provenance, not release status
 
@@ -510,10 +505,8 @@ therefore still requires cited leftover review artifacts.
 
 Schema version 1 is unchanged. The leftover list was already structurally
 allowed to be empty; this note corrects the over-constraint that every
-decision must cite at least one leftover artifact. The stored Qwen3.8
-one-rank decision remains valid and is not migrated; it cited a recaptured
-review document and recorded provenance as `pass`. Future incomplete
-issuances must not copy that workaround.
+decision must cite at least one leftover artifact. Future incomplete staged
+proposals must not invent a review document to make the list non-empty.
 
 This note does not add a versioned decision framework, extra provenance
 protocol parameters, or a required
@@ -582,27 +575,11 @@ Model Serving Release validation does not depend on how verified local bytes
 were distributed. Conversely, `library-hot` subsystem maturity does not depend
 on a particular model/runtime passing strict determinism.
 
-The initial `library-hot` GA scope is the reviewed two-rank path. Remote
-one-rank placement is outside that initial scope. The combined GA closure task
-completed on 2026-08-16:
-
-1. the home-rank reflink/copy fallback was removed, so preparation fails if the
-   exact durable-home symlink cannot be created and verified;
-2. sustained serving and exact restart passed physically;
-3. a forced replacement launch failure left a persisted stopped transaction,
-   and a new wizard process restored the exact captured contract;
-4. reviewed identity matched through preparation, serving, restart, recovery,
-   and final durable-home verification;
-5. owned cleanup removed the target service and unpinned hot views while
-   preserving one durable home; and
-6. sanitized catalog/artifact, serving-integration, and model-qualification
-   evidence for the bounded soak and stability observations was published at
-   `results/model-library/deepseek-v4-flash-library-hot-ga-closure-20260816.json`.
-
-The reviewed two-rank subsystem is therefore GA. It remains explicit and
-non-default. Remote one-rank and legacy-unsealed use remain experimental. This
-decision does not convert the DeepSeek strict-determinism failure into a pass;
-that failure belongs to the affected Model Serving Release.
+Model-library subsystem maturity remains separate from Model Serving Release
+status. The model library is the only distribution mechanism by ADR 0006, but
+that policy does not qualify any retained recipe shell. Current physical
+catalog/artifact evidence is bounded in `results/model-library/`; missing
+serving-integration or model-qualification evidence remains missing.
 
 ## Staged implementation
 
@@ -723,9 +700,7 @@ no-reviewed-decision state, never inferred `Untested`; multiple contract
 lineages or unsuperseded heads are ambiguous and fail closed when one
 reviewed status is requested. Catalog and operator surfaces consume this
 verified inspection only for profiles explicitly bound to a release ID. The
-tracked store contains the reviewed Qwen3.8 lineage; its missing stability,
-accuracy, serving-integration, and physical-geometry observations derive
-`Testing incomplete`, not `Validated`.
+tracked store is currently empty.
 
 Local ADR 0004 evidence-capture candidate persistence is implemented by
 `scripts/model_serving_release_capture.py` and
@@ -885,11 +860,9 @@ mandatory.
 ### Collapse the five objects into one Release Assessment (SIM-01)
 
 A single content-addressed assessment document would drop cross-object
-deduplication and make failed-attempt retention easier to get wrong. The
-ticket assumed an empty unused registry. That is no longer true: the
-reviewed Qwen3.8-27B-FP8 lineage is stored and bound. SIM-01 (2026-08-22)
-keeps the five object roles. Revisit only after a second issuance, or with
-a new ADR if a collapse can migrate that lineage without hiding attempts.
+deduplication and make failed-attempt retention easier to get wrong. SIM-01
+(2026-08-22) keeps the five object roles. Revisit only with a new ADR that
+preserves failed attempts and deterministic cross-object verification.
 
 ## Interpretation note — 2026-08-22 (SIM-01)
 

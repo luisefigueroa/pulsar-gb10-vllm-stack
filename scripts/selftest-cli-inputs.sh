@@ -42,6 +42,8 @@ expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy repair" \
   "$REPO_DIR/scripts/model-library.sh" hot legacy check unused --json
 expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy remove" \
   "$REPO_DIR/scripts/model-library.sh" hot legacy remove unused --yes
+expect_failure 2 "ADR 0012" "model-library refuses retired cold stage-only" \
+  "$REPO_DIR/scripts/model-library.sh" cold stage-only qwen3.8-27b-fp8 --yes
 
 expect_failure 2 "ADR 0008" "serve refuses removed --force" \
   "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --force
@@ -59,6 +61,8 @@ expect_failure 2 "Drop the flag" "python plan-prepare refuses --allow-unvalidate
   python3 "$REPO_DIR/scripts/model_library.py" plan-prepare --allow-unvalidated
 expect_failure 2 "retired (ADR 0012)" "python list refuses removed --validated" \
   python3 "$REPO_DIR/scripts/model_library.py" list --catalog /dev/null --validated
+expect_failure 2 "ADR 0012" "python refuses retired cold stage-only planner" \
+  python3 "$REPO_DIR/scripts/model_library.py" plan-cold-stage --execute
 
 grep -q '\[ "$DRY" != 1 \].*PULL_IMG' "$REPO_DIR/scripts/up.sh"
 echo "OK   up dry-run cannot enter image pull/sync branches"

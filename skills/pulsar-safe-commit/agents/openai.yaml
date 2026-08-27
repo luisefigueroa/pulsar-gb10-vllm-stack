@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pulsar Safe Commit"
+  short_description: "Commit Pulsar changes with privacy gates"
+  default_prompt: "Use $pulsar-safe-commit to review, test, privacy-scan, stage, and commit the intended Pulsar changes safely."

@@ -140,6 +140,7 @@ if [ "$NODES" -gt 1 ]; then
       --profile "$NAME" \
       --topology-id "$CLUSTER_TOPOLOGY_ID" \
       --expected-validation-json "$expected_validation_json" \
+      --for-launch \
       --serve-time-witness)
     verify_rc=0
     ssh_node "$verify_rank" "$verify_command" \

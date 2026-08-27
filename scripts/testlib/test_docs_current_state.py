@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AUD-03: active current-state docs must match the live catalog and fail-closed home views."""
+"""Current docs, profiles, evidence, and registry must describe one live state."""
 
 from __future__ import annotations
 
@@ -15,6 +15,26 @@ FORBIDDEN_CLAIMS = (
     "current working tree contains ten profiles",
     "physical gate below remains pending",
     "guided replicated path",
+    "scripts/model-library.sh cold stage-only <profile> --yes",
+    "docs/model_catalog_distribution_loading_spec.md",
+    "<sealed-profile>",
+    "reviewed qwen3.8 lineage",
+    "qwen3.8 lineage is the first reviewed",
+    "docs/archive/schema-1-expected-seal/",
+    "deepseek-v4-flash",
+)
+FORBIDDEN_ACTIVE_PATTERNS = (
+    re.compile(r"`qwen3-1[.]7b`"),
+)
+RESET_RECIPE_IDS = {
+    "qwen3-1.7b-2node",
+    "qwen3.8-27b-fp8",
+    "qwen3.8-27b-fp8-2node",
+}
+RETIRED_EVIDENCE_PATTERNS = (
+    re.compile(r"deepseek-v4-flash|dsv4", re.IGNORECASE),
+    re.compile(r"qwen1[.]7b|qwen3-1[.]7b|qwen17", re.IGNORECASE),
+    re.compile(r"qwen3[.]8", re.IGNORECASE),
 )
 ACTIVE_CURRENT_STATE = (
     REPO_ROOT / "README.md",
@@ -31,10 +51,32 @@ ACTIVE_CURRENT_STATE = (
 
 
 def _skill_markdown() -> list[pathlib.Path]:
-    skills = REPO_ROOT / "skills"
-    if not skills.is_dir():
-        return []
-    return sorted(path for path in skills.rglob("*.md") if path.is_file())
+    roots = (REPO_ROOT / "skills",)
+    return sorted(
+        path
+        for root in roots
+        if root.is_dir()
+        for path in root.rglob("*.md")
+        if path.is_file()
+    )
+
+
+def _active_markdown() -> list[pathlib.Path]:
+    docs = [
+        path
+        for path in (REPO_ROOT / "docs").rglob("*.md")
+        if "archive" not in path.relative_to(REPO_ROOT / "docs").parts
+    ]
+    return sorted(
+        {
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "AGENTS.md",
+            REPO_ROOT / "models" / "model-serving-releases" / "README.md",
+            *ACTIVE_CURRENT_STATE,
+            *_skill_markdown(),
+            *docs,
+        }
+    )
 
 
 def _live_models_md_ids() -> set[str]:
@@ -72,19 +114,53 @@ class CurrentStateDocsTests(unittest.TestCase):
         self.assertIn("Gate 14", revalidate)
         self.assertNotIn("physical gate below remains pending", revalidate)
 
-    def test_active_docs_do_not_repeat_aud03_false_current_claims(self) -> None:
+    def test_reset_recipe_shells_are_unbound_and_untested(self) -> None:
+        for profile_id in RESET_RECIPE_IDS:
+            with self.subTest(profile=profile_id):
+                text = (REPO_ROOT / "models" / f"{profile_id}.conf").read_text(
+                    encoding="utf-8"
+                )
+                self.assertRegex(text, r'(?m)^STATUS="untested"$')
+                self.assertNotRegex(text, r"(?m)^MODEL_SERVING_RELEASE_ID=")
+
+    def test_reviewed_registry_is_empty_and_profiles_are_unbound(self) -> None:
+        registry = REPO_ROOT / "models" / "model-serving-releases"
+        self.assertFalse(
+            list(registry.rglob("*.json")),
+            "reset registry must contain no reviewed objects",
+        )
+        for profile in (REPO_ROOT / "models").glob("*.conf"):
+            with self.subTest(profile=profile.name):
+                self.assertNotRegex(
+                    profile.read_text(encoding="utf-8"),
+                    r"(?m)^MODEL_SERVING_RELEASE_ID=",
+                )
+
+    def test_retired_model_specific_evidence_is_not_retained(self) -> None:
+        retired_archive = REPO_ROOT / "docs" / "archive" / "schema-1-expected-seal"
+        self.assertFalse(retired_archive.exists())
+        for path in (REPO_ROOT / "results").rglob("*"):
+            if not path.is_file() or path.name == "README.md":
+                continue
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            with self.subTest(path=relative):
+                for pattern in RETIRED_EVIDENCE_PATTERNS:
+                    self.assertIsNone(pattern.search(relative))
+
+    def test_active_docs_match_the_reset_current_state(self) -> None:
         spec = REPO_ROOT / "docs" / "MODEL_CATALOG_DISTRIBUTION_LOADING_SPEC.md"
         self.assertFalse(
             spec.exists(),
             "stale current-system spec must not remain an active document",
         )
-        files = list(ACTIVE_CURRENT_STATE) + _skill_markdown()
-        for path in files:
+        for path in _active_markdown():
             with self.subTest(path=str(path.relative_to(REPO_ROOT))):
                 self.assertTrue(path.is_file(), path)
                 text = path.read_text(encoding="utf-8").lower()
                 for claim in FORBIDDEN_CLAIMS:
                     self.assertNotIn(claim, text)
+                for pattern in FORBIDDEN_ACTIVE_PATTERNS:
+                    self.assertIsNone(pattern.search(text))
 
 
 if __name__ == "__main__":

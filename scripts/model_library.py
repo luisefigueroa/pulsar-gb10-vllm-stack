@@ -474,6 +474,10 @@ def scan_hub_cache(
     for entry in entries:
         if not entry.is_dir():
             continue
+        try:
+            entry_metadata = entry.lstat()
+        except OSError:
+            continue
         model_id = hub_dirname_to_model_id(entry.name)
         if model_id is None:
             continue
@@ -502,6 +506,11 @@ def scan_hub_cache(
                     "ssh_host": ssh_host,
                     "cache_root": str(cache_root),
                     "hub_path": str(entry),
+                    "directory_identity": {
+                        "device": int(entry_metadata.st_dev),
+                        "inode": int(entry_metadata.st_ino),
+                        "ctime_ns": int(entry_metadata.st_ctime_ns),
+                    },
                     "state": state,
                     "active": revision is not None and revision == active_revision,
                     "bytes": repository_bytes if state == "complete" else 0,
@@ -1046,6 +1055,21 @@ def require_activation_identity(
     return validation
 
 
+def require_launchable_hot_stamp(stamp: dict[str, Any]) -> None:
+    """Reject hot state produced by the retired cold stage-only path."""
+    if (
+        stamp.get("mode") == "stage-only"
+        or stamp.get("tier") == "cold"
+        or stamp.get("home_node_id") == "cold"
+    ):
+        fail(
+            "hot view was created by retired cold stage-only (ADR 0012); "
+            "it has no receipt/occupancy identity and cannot launch. Remove it "
+            "with purge-hot, then use home add --revision, home relocate, or "
+            "home restore before normal prepare"
+        )
+
+
 def _catalog_entry(
     model_id: str,
     revision: str | None,
@@ -1282,6 +1306,7 @@ def build_catalog(
                 "ssh_host": home.get("ssh_host") or "",
                 "cache_root": home["cache_root"],
                 "hub_path": home["hub_path"],
+                "directory_identity": home.get("directory_identity"),
                 "state": home["state"],
                 "active": bool(home.get("active")),
                 "bytes": home.get("bytes") or 0,
@@ -1894,7 +1919,8 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                     "select_commands": [
                         (
                             "scripts/model-library.sh home relocate "
-                            f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+                            f"{identity_arg} --profile PROFILE "
+                            f"--node {shlex.quote(str(home['rank']))} --yes"
                         )
                         for home in unbound
                     ],
@@ -1913,9 +1939,10 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                         for home in unbound
                     ],
                     "action": (
-                        "Occupy one complete tree with home relocate after a live "
-                        "receipt rehash, or remove unbound complete trees. They "
-                        "are not durable homes."
+                        "Choose a compatible serving profile, then occupy one "
+                        "complete tree with home relocate after a live receipt "
+                        "rehash, or remove unbound complete trees. They are not "
+                        "durable homes."
                     ),
                 }
             )
@@ -2084,8 +2111,16 @@ def plan_cold_adopt(
         fail(f"cold adopt: no complete cold tree for {target}")
 
     cache_root = pathlib.Path(cache_root).expanduser()
+    if not cache_root.is_absolute():
+        fail("cold adopt: cache root must be absolute")
     dest_hub = cache_root / "hub" / model_id_to_hub_dirname(entry["model_id"])
-    existing_state = hub_tree_state(dest_hub) if dest_hub.exists() else "missing"
+    dest_kind, _ = _lstat_kind(dest_hub)
+    if dest_kind != "missing":
+        fail(
+            "cold adopt: destination repository already exists; refusing to "
+            "replace durable content. Inspect the existing tree with catalog "
+            "refresh or home check before choosing a different action"
+        )
     return {
         "action": "adopt",
         "tier": "cold",
@@ -2097,10 +2132,11 @@ def plan_cold_adopt(
         "cache_root": str(cache_root),
         "dest_hub": str(dest_hub),
         "bytes": entry.get("bytes") or 0,
-        "existing_dest_state": existing_state,
+        "existing_dest_state": "missing",
         "note": (
-            "Copies cold archive into a durable warm HF hub home. "
-            "Run catalog refresh afterward to register the home."
+            "Copies the cold tree through private same-filesystem staging and "
+            "publishes only when the durable destination remains absent. "
+            "Run catalog refresh afterward to inspect the unbound tree."
         ),
     }
 
@@ -2109,213 +2145,68 @@ def execute_cold_adopt(plan: dict[str, Any]) -> dict[str, Any]:
     """Execute adopt plan on local filesystem (selftests / single-node)."""
     if plan.get("action") != "adopt":
         fail(f"execute_cold_adopt: unexpected action {plan.get('action')!r}")
-    result = materialize_hub_tree(
-        plan["source_path"],
-        plan["dest_hub"],
-        layout=plan.get("layout"),
-        revision=plan.get("revision"),
+    model_id = str(plan.get("model_id") or "")
+    if HF_MODEL_ID_RE.fullmatch(model_id) is None:
+        fail("cold adopt: model_id is invalid")
+    cache_root = pathlib.Path(str(plan.get("cache_root") or "")).expanduser()
+    if not cache_root.is_absolute():
+        fail("cold adopt: cache root must be absolute")
+    hub_root = cache_root / "hub"
+    dest_hub = pathlib.Path(str(plan.get("dest_hub") or ""))
+    expected_dest = hub_root / model_id_to_hub_dirname(model_id)
+    if not dest_hub.is_absolute() or dest_hub != expected_dest:
+        fail("cold adopt: destination differs from the managed Hugging Face root")
+    if _lstat_kind(dest_hub)[0] != "missing":
+        fail(
+            "cold adopt: destination repository appeared after planning; "
+            "existing durable content was not changed"
+        )
+
+    hub_root.mkdir(parents=True, exist_ok=True)
+    if _lstat_kind(hub_root)[0] != "directory":
+        fail("cold adopt: managed Hugging Face hub root is not an exact directory")
+    staging = pathlib.Path(
+        tempfile.mkdtemp(prefix=".pulsar-cold-adopt-", dir=str(hub_root))
     )
+    cleanup_state = "removed"
+    try:
+        staged_hub = staging / dest_hub.name
+        result = materialize_hub_tree(
+            plan["source_path"],
+            staged_hub,
+            layout=plan.get("layout"),
+            revision=plan.get("revision"),
+        )
+        if _lstat_kind(dest_hub)[0] != "missing":
+            fail(
+                "cold adopt: destination repository appeared before publication; "
+                "existing durable content was not changed"
+            )
+        _rename_directory_noreplace(
+            staged_hub,
+            dest_hub,
+            operation="cold adopt",
+        )
+    finally:
+        try:
+            if _lstat_kind(staging)[0] == "directory":
+                shutil.rmtree(staging)
+            parent_fd = os.open(hub_root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        except OSError:
+            cleanup_state = "incomplete"
     return {
         **plan,
         "executed": True,
         "revision": result["revision"],
         "dest_bytes": result["bytes"],
+        "staging_cleanup": cleanup_state,
         "dest_state": hub_snapshot_state(
-            pathlib.Path(plan["dest_hub"]),
+            dest_hub,
             result["revision"],
-        ),
-    }
-
-
-def plan_cold_stage(
-    *,
-    cold_root: str | None = None,
-    profile: str,
-    topology_id: str,
-    hot_root: str,
-    model_id: str | None = None,
-    absolute_path: str | None = None,
-    catalog_path: str | None = None,
-    models_dir: str | pathlib.Path | None = None,
-    allow_unvalidated: bool = False,
-    nodes: int | None = None,
-) -> dict[str, Any]:
-    """Plan stage-only: cold → hot (no durable warm home)."""
-    root = resolve_cold_root(cold_root) if cold_root else configured_cold_root()
-    if root is None:
-        fail("cold stage-only: cold root not configured (PULSAR_COLD_ROOT or MODELS_NFS)")
-
-    profile_data = None
-    if profile and models_dir:
-        conf = pathlib.Path(models_dir) / f"{profile}.conf"
-        profile_data = parse_profile_conf_any(conf) if conf.is_file() else None
-        if profile_data:
-            model_id = model_id or profile_data.get("model_id")
-            absolute_path = absolute_path or profile_data.get("absolute_path")
-
-    # Catalog may supply model_id for HF profiles, but never supplies trust.
-    catalog = load_catalog(catalog_path) if catalog_path else None
-    if catalog is not None:
-        warm_entry = find_model_entry(catalog, model_id=model_id, profile=profile)
-        if warm_entry:
-            model_id = model_id or warm_entry.get("model_id")
-
-    expected_revision = None
-    if profile_data and profile_data.get("expected_model_seal"):
-        expected_revision = profile_data["expected_model_seal"]["snapshot_revision"]
-    entry = find_cold_entry(
-        root,
-        model_id=model_id,
-        path=absolute_path,
-        revision=expected_revision,
-        require_complete=True,
-    )
-    if entry is None:
-        target = absolute_path or model_id or profile or "?"
-        fail(f"cold stage-only: no complete cold tree for {target}")
-
-    source = pathlib.Path(entry["path"])
-    layout = entry.get("layout") or detect_model_layout(source)
-    if layout == "hub":
-        revision = entry.get("revision")
-        if not revision or hub_snapshot_state(source, revision) != "complete":
-            fail(f"cold stage-only: selected source snapshot is incomplete: {source}")
-    else:
-        if flat_tree_state(source) != "complete":
-            fail(f"cold stage-only: source flat incomplete: {source}")
-    if layout == "hub":
-        integrity_manifest = build_snapshot_manifest(
-            source,
-            model_id=entry["model_id"],
-            revision=entry.get("revision"),
-        )
-    else:
-        revision = entry.get("revision")
-        if not revision:
-            fail("cold stage-only: flat source has no stable revision")
-        integrity_manifest = build_flat_snapshot_manifest(
-            source,
-            model_id=entry["model_id"],
-            revision=revision,
-        )
-    if profile_data is None:
-        fail("cold stage-only: model profile is required")
-    validation = require_activation_identity(
-        profile_data,
-        integrity_manifest,
-        allow_unvalidated=allow_unvalidated,
-    )
-    source_digest = integrity_manifest["manifest_id"]
-    # Instance path is keyed by the exact snapshot identity.
-    cid = hot_content_id(entry["identity_key"], source_digest, validation)
-    bytes_logical = integrity_manifest["total_bytes"]
-    instance = hot_instance_dir(hot_root, profile, topology_id, cid)
-    hub_dest = hot_hub_path(instance, entry["model_id"])
-    target_ranks = list(range(nodes if nodes is not None else 1))
-    hot_storage_requirements = build_hot_storage_requirements(
-        target_ranks=target_ranks,
-        bytes_logical=bytes_logical,
-        instance_dir=instance,
-        home_rank=None,
-    )
-
-    if hot_stamp_path(instance).is_file():
-        existing = load_hot_stamp(instance)
-        same_source = (
-            existing.get("source_content_digest") == source_digest
-            or (
-                layout == "hub"
-                and existing.get("content_digest") == source_digest
-            )
-        )
-        if (
-            same_source
-            and existing.get("identity_key") == entry["identity_key"]
-            and existing.get("validation") == validation
-            and existing.get("state") in {"ready", "pinned"}
-        ):
-            return {
-                "action": "skip",
-                "reason": "hot already ready with matching digest",
-                "mode": "stage-only",
-                "tier": "cold",
-                "profile": profile,
-                "model_id": entry["model_id"],
-                "identity_key": entry["identity_key"],
-                "revision": entry.get("revision"),
-                "layout": layout,
-                "source_path": str(source),
-                "hot_root": hot_root,
-                "instance_dir": str(instance),
-                "hub_dest": str(hub_dest),
-                "content_id": cid,
-                "content_digest": existing.get("content_digest") or source_digest,
-                "source_content_digest": source_digest,
-                "integrity_manifest": integrity_manifest,
-                "validation": validation,
-                "bytes_logical": bytes_logical,
-                "backend": "copy",
-                "hot_storage_requirements": hot_storage_requirements,
-                "stamp": existing,
-            }
-
-    # content_digest is finalized after materialize for flat→hub (paths change).
-    # Hub-layout cold sources keep source_digest as the verify digest.
-    provisional_digest = source_digest if layout == "hub" else source_digest
-    stamp = build_hot_stamp(
-        profile=profile,
-        model_id=entry["model_id"],
-        identity_key=entry["identity_key"],
-        revision=entry.get("revision"),
-        topology_id=topology_id,
-        home_node_id="cold",
-        content_id=cid,
-        content_digest=provisional_digest,
-        integrity_manifest=integrity_manifest,
-        validation=validation,
-        backend="copy",
-        bytes_logical=bytes_logical,
-    )
-    stamp["tier"] = "cold"
-    stamp["mode"] = "stage-only"
-    stamp["source_path"] = str(source)
-    stamp["layout"] = layout
-    stamp["source_content_digest"] = source_digest
-    return {
-        "action": "stage-only",
-        "mode": "stage-only",
-        "tier": "cold",
-        "profile": profile,
-        "model_id": entry["model_id"],
-        "identity_key": entry["identity_key"],
-        "revision": entry.get("revision"),
-        "layout": layout,
-        "source_path": str(source),
-        "home": {
-            "rank": -1,
-            "node_id": "cold",
-            "hub_path": str(source),
-            "state": entry["state"],
-            "primary": True,
-            "tier": "cold",
-            "layout": layout,
-        },
-        "hot_root": hot_root,
-        "instance_dir": str(instance),
-        "hub_dest": str(hub_dest),
-        "content_id": cid,
-        "content_digest": provisional_digest,
-        "source_content_digest": source_digest,
-        "integrity_manifest": integrity_manifest,
-        "validation": validation,
-        "bytes_logical": bytes_logical,
-        "backend": "copy",
-        "target_ranks": target_ranks,
-        "hot_storage_requirements": hot_storage_requirements,
-        "stamp": stamp,
-        "note": (
-            "Stages cold → hot only; no durable warm home. "
-            "Unpinned restart needs cold again unless you pin hot."
         ),
     }
 
@@ -2588,39 +2479,6 @@ def inspect_snapshot_blob_identities(
         "files": observed,
         "manifest": manifest,
     }
-
-
-def build_flat_snapshot_manifest(
-    source_path: str | pathlib.Path,
-    *,
-    model_id: str,
-    revision: str,
-) -> dict[str, Any]:
-    source = pathlib.Path(source_path)
-    if not source.is_dir():
-        fail(f"integrity: flat source is not a directory: {source}")
-    files: list[tuple[str, pathlib.Path]] = []
-    try:
-        candidates = sorted(source.rglob("*"))
-    except OSError as exc:
-        fail(f"integrity: cannot walk flat source {source}: {exc}")
-    for candidate in candidates:
-        try:
-            mode = candidate.lstat().st_mode
-        except OSError as exc:
-            fail(f"integrity: cannot inspect {candidate}: {exc}")
-        if stat.S_ISDIR(mode):
-            continue
-        if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
-            fail(f"integrity: unsupported flat entry type: {candidate}")
-        relative = candidate.relative_to(source).as_posix()
-        files.append((relative, _resolved_inside_file(candidate, source)))
-    return _build_manifest_from_files(
-        model_id=model_id,
-        revision=revision,
-        files=files,
-        lfs_blob_root=None,
-    )
 
 
 def validate_snapshot_manifest(manifest: Any) -> dict[str, Any]:
@@ -4248,7 +4106,8 @@ def plan_prepare(
             f"(catalog={catalog['topology_id'][:12]}… live={topology_id[:12]}…); "
             "run catalog refresh"
         )
-    # Preparation is warm-catalog only; cold uses adopt or stage-only.
+    # Preparation is receipt/occupancy warm-catalog only. Legacy cold fill
+    # paths do not create serving identity, and cold stage-only is retired.
     profile_data = load_hf_profile(models_dir, profile)
     resolved = resolve_entry(
         catalog,
@@ -4258,8 +4117,11 @@ def plan_prepare(
     )
     if resolved.get("tier") == "cold":
         fail(
-            "prepare: cold source requires "
-            "`cold adopt` (durable warm home) or `cold stage-only` (hot only)"
+            "prepare: a cold tree is not receipt/occupancy serving identity; "
+            "cold stage-only is retired. Use home add --revision for a new "
+            "exact Hugging Face home, home relocate with an existing immutable "
+            "receipt, or home restore with that receipt and its protected cold "
+            "recovery set; then refresh and prepare"
         )
     if resolved.get("model_id") != profile_data.get("model_id"):
         fail("prepare: catalog model differs from the live profile")
@@ -5098,13 +4960,13 @@ def _append_cold_archive_health_issues(
         if job["state"] in {"pending", "running"}:
             issues.append(_health_issue(
                 "cold-archive-pending",
-                "receipt-indexed cold archive is pending (not a serving gate)",
+                "receipt replica and model archive are pending (not a serving gate)",
                 command="scripts/model-library.sh home archive run --receipt <id> --yes",
             ))
         elif job["state"] == "failed":
             issues.append(_health_issue(
                 "cold-archive-failed",
-                job.get("detail") or "receipt-indexed cold archive failed",
+                job.get("detail") or "receipt replica or model archive failed",
                 command="scripts/model-library.sh home archive run --receipt <id> --yes",
             ))
         elif job["state"] == "unavailable":
@@ -5246,7 +5108,7 @@ def build_health_report(
             issues.append(_health_issue(
                 "unbound-complete",
                 "complete tree has no occupancy; relocate after a live receipt rehash",
-                command="scripts/model-library.sh home relocate <model> --node <rank> --yes",
+                command="scripts/model-library.sh home relocate <profile> --node <rank> --yes",
             ))
         if primary.get("status") == "stale":
             issues.append(_health_issue("primary-selection-stale", "selected primary is no longer a complete home", command="scripts/model-library.sh catalog primary clear <model>"))
@@ -5544,14 +5406,19 @@ def cleanup_owned_hub_staging(
     }
 
 
-def _rename_directory_noreplace(source: pathlib.Path, target: pathlib.Path) -> None:
+def _rename_directory_noreplace(
+    source: pathlib.Path,
+    target: pathlib.Path,
+    *,
+    operation: str = "home add",
+) -> None:
     """Atomically move one directory without replacing an existing target."""
     libc_name = ctypes.util.find_library("c")
     if libc_name is None:
-        fail("home add: exclusive durable-home publication is unavailable")
+        fail(f"{operation}: exclusive durable-home publication is unavailable")
     libc = ctypes.CDLL(libc_name, use_errno=True)
     if not hasattr(libc, "renameat2"):
-        fail("home add: exclusive durable-home publication requires renameat2")
+        fail(f"{operation}: exclusive durable-home publication requires renameat2")
     renameat2 = libc.renameat2
     renameat2.argtypes = [
         ctypes.c_int,
@@ -5581,8 +5448,8 @@ def _rename_directory_noreplace(source: pathlib.Path, target: pathlib.Path) -> N
             if result != 0:
                 error = ctypes.get_errno()
                 if error in {errno.EEXIST, errno.ENOTEMPTY}:
-                    fail("home add: durable repository appeared before publication")
-                fail("home add: exclusive durable-home publication failed")
+                    fail(f"{operation}: durable repository appeared before publication")
+                fail(f"{operation}: exclusive durable-home publication failed")
             os.fsync(source_fd)
             os.fsync(target_fd)
         finally:
@@ -6235,7 +6102,6 @@ def inspect_removable_home(
         "snapshot_entries": [],
         "ref_targets": [],
         "fingerprint": None,
-        "occupancy_device": None,
         "blockers": [],
     }
     blockers: list[dict[str, str]] = result["blockers"]
@@ -6254,7 +6120,6 @@ def inspect_removable_home(
         block("home-unavailable", f"cannot inspect durable home: {exc}")
         result["state"] = "blocked"
         return result
-    result["occupancy_device"] = int(hub_meta.st_dev)
     if stat.S_ISLNK(hub_meta.st_mode):
         block("home-is-symlink", "durable home repository root must not be a symlink")
     elif not stat.S_ISDIR(hub_meta.st_mode):
@@ -6983,7 +6848,6 @@ def plan_home_removal(
             snapshot_revision=target["revision"],
             occupancy_hub_path=str(home["hub_path"]),
             allow_unarchived=allow_unarchived_last_home,
-            occupancy_device=inspection.get("occupancy_device"),
             occupancy_rank=rank,
             expected_receipt_id=receipt_id,
         )
@@ -7629,6 +7493,16 @@ def cmd_build(args: argparse.Namespace) -> int:
         primary_overrides=primary,
         primary_selections=persistent_selections,
     )
+    if args.library_dir:
+        try:
+            from scripts import model_library_receipt as source_attested
+        except ModuleNotFoundError:
+            import model_library_receipt as source_attested  # type: ignore[no-redef]
+        try:
+            source_attested.classify_catalog_occupancy(catalog, args.library_dir)
+        except source_attested.SourceAttestedAcquisitionError as exc:
+            fail(f"catalog occupancy classification failed: {exc}")
+        _apply_catalog_primary_policies(catalog)
     if args.output:
         atomic_write_json(args.output, catalog)
     if args.json:
@@ -7794,66 +7668,6 @@ def cmd_plan_cold_adopt(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print(json.dumps(plan, indent=2, sort_keys=True))
-    return 0
-
-
-def cmd_plan_cold_stage(args: argparse.Namespace) -> int:
-    plan = plan_cold_stage(
-        cold_root=args.cold_root or None,
-        profile=args.profile,
-        topology_id=args.topology_id,
-        hot_root=args.hot_root or default_hot_root(),
-        model_id=args.model,
-        absolute_path=args.path,
-        catalog_path=args.catalog or None,
-        models_dir=args.models_dir or None,
-        nodes=args.nodes,
-    )
-    if args.execute and plan.get("action") == "stage-only":
-        admission = hot_budget_admission(
-            plan["hot_root"],
-            int(plan["bytes_logical"]),
-            replacing_path=plan["instance_dir"],
-            runtime_source="working-copy",
-            rank=0,
-            node_id="local-direct-execution",
-        )
-        if not admission["ok"]:
-            detail = "; ".join(
-                str(item.get("detail") or item.get("code"))
-                for item in admission["blockers"]
-            )
-            fail(f"cold stage-only: hot admission blocked: {detail}")
-        # Publish ready only after a stable full verify creates the local witness.
-        materialize_hub_tree(
-            plan["source_path"],
-            plan["hub_dest"],
-            layout=plan.get("layout"),
-            revision=plan.get("revision"),
-        )
-        stamp = dict(plan["stamp"])
-        stamp["source_content_digest"] = plan.get("source_content_digest") or stamp.get(
-            "source_content_digest"
-        )
-        provisional = dict(stamp)
-        provisional["state"] = "verifying"
-        write_hot_stamp(pathlib.Path(plan["instance_dir"]), provisional)
-        verify = verify_hot_ready(
-            plan["instance_dir"],
-            profile=args.profile,
-            topology_id=args.topology_id,
-            allow_verifying=True,
-            refresh_witness=True,
-        )
-        write_hot_stamp(pathlib.Path(plan["instance_dir"]), stamp)
-        verify["stamp"] = stamp
-        plan = {
-            **plan,
-            "executed": True,
-            "stamp": stamp,
-            "verify": verify,
-        }
-    print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
 
 
@@ -8052,6 +7866,8 @@ def cmd_write_hot_stamp(args: argparse.Namespace) -> int:
 
 def cmd_verify_hot(args: argparse.Namespace) -> int:
     stamp = load_hot_stamp(args.instance_dir)
+    if getattr(args, "for_launch", False):
+        require_launchable_hot_stamp(stamp)
     allowed_states = {"ready", "pinned"}
     if args.allow_verifying:
         allowed_states.add("verifying")
@@ -8121,6 +7937,8 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
     if path is None:
         fail(f"find-hot: no ready instance for profile {args.profile}")
     stamp = load_hot_stamp(path)
+    if getattr(args, "for_launch", False):
+        require_launchable_hot_stamp(stamp)
     if profile_data is not None:
         verify_hot_stamp_against_profile(stamp, profile_data)
     hub = hot_hub_path(path, stamp["model_id"])
@@ -8576,6 +8394,12 @@ REMOVED_REVIEWED_IDENTITY_MESSAGE = (
     "--reviewed-identity is retired (ADR 0012): lab expected-identity catalog "
     "filter is not a live product"
 )
+REMOVED_COLD_STAGE_ONLY_MESSAGE = (
+    "cold stage-only was removed (ADR 0012): a self-observed cold tree cannot "
+    "create receipt/occupancy serving identity. Use home add --revision for a "
+    "new exact Hugging Face home; use home relocate with an existing immutable "
+    "receipt, or home restore with that receipt and its protected cold recovery set"
+)
 
 
 class _RefuseRemovedFlag(argparse.Action):
@@ -8809,6 +8633,11 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--homes-json", help="JSON array of scanned homes")
     build.add_argument("--output", help="Write catalog.json here")
     build.add_argument(
+        "--library-dir",
+        default="",
+        help="Strictly classify receipt occupancy before writing the catalog",
+    )
+    build.add_argument(
         "--preserve-primary-from",
         default="",
         help="Carry exact primary selections forward from an existing catalog",
@@ -8906,33 +8735,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Copy into cache-root (local filesystem)",
     )
     adopt.set_defaults(func=cmd_plan_cold_adopt)
-
-    stage = sub.add_parser(
-        "plan-cold-stage",
-        help="Plan (or execute) cold → hot stage-only (no warm home)",
-    )
-    stage.add_argument("--cold-root", default="")
-    stage.add_argument("--profile", required=True)
-    stage.add_argument("--topology-id", required=True)
-    stage.add_argument("--hot-root", default="")
-    stage.add_argument("--model")
-    stage.add_argument("--path")
-    stage.add_argument("--catalog", default="")
-    stage.add_argument("--models-dir", default="")
-    stage.add_argument("--nodes", type=int, default=1)
-    stage.add_argument(
-        "--allow-unvalidated",
-        dest="_removed_allow_unvalidated",
-        action=_RefuseRemovedFlag,
-        message=REMOVED_ALLOW_UNVALIDATED_MESSAGE,
-        help=argparse.SUPPRESS,
-    )
-    stage.add_argument(
-        "--execute",
-        action="store_true",
-        help="Materialize hub into hot + write stamp (local)",
-    )
-    stage.set_defaults(func=cmd_plan_cold_stage)
 
     cleanup = sub.add_parser("cleanup-recommend", help="Recommend cleanup for duplicates")
     cleanup.add_argument("--catalog", required=True)
@@ -9047,6 +8849,7 @@ def build_parser() -> argparse.ArgumentParser:
     vh.add_argument("--profile")
     vh.add_argument("--topology-id")
     vh.add_argument("--models-dir", default="")
+    vh.add_argument("--for-launch", action="store_true", help=argparse.SUPPRESS)
     vh.add_argument("--expected-validation-json", default="", help=argparse.SUPPRESS)
     verify_mode = vh.add_mutually_exclusive_group()
     verify_mode.add_argument("--skip-digest", action="store_true")
@@ -9071,6 +8874,7 @@ def build_parser() -> argparse.ArgumentParser:
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")
     fh.add_argument("--models-dir", default="")
+    fh.add_argument("--for-launch", action="store_true", help=argparse.SUPPRESS)
     fh.set_defaults(func=cmd_find_hot)
 
     vhs = sub.add_parser(
@@ -9215,8 +9019,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+    if effective_argv and effective_argv[0] == "plan-cold-stage":
+        print(f"model-library: ERROR: {REMOVED_COLD_STAGE_ONLY_MESSAGE}", file=sys.stderr)
+        return 2
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(effective_argv)
     try:
         return int(args.func(args))
     except ModelLibraryError as exc:

@@ -27,7 +27,9 @@ run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
-run "publishable documentation privacy" \
+run "publishable privacy contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_publishable_privacy.py"
+run "publishable content privacy" \
   "$REPO_DIR/scripts/selftest-docs-privacy.sh"
 run "active current-state documentation drift (AUD-03)" \
   python3 "$REPO_DIR/scripts/testlib/test_docs_current_state.py"
@@ -75,6 +77,8 @@ run "Model Serving Release onboarding skill" \
   "$REPO_DIR/scripts/selftest-model-onboarding-skill.sh"
 run "Model Serving Release issuance skill" \
   "$REPO_DIR/scripts/selftest-model-serving-release-issuance-skill.sh"
+run "safe commit skill" \
+  "$REPO_DIR/scripts/selftest-pulsar-safe-commit-skill.sh"
 run "Model Serving Release onboarding journal" \
   python3 "$REPO_DIR/scripts/testlib/test_onboarding_journal.py"
 run "model library durable-home removal contracts" \
@@ -83,10 +87,14 @@ run "model library durable-home acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_home_acquisition.py"
 run "model library durable-home acquisition public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-acquisition.sh"
+run "model library relocation geometry contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_relocation.py"
 run "model library download-receipt acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_receipt.py"
-run "model library receipt-indexed cold archive contracts" \
+run "model library cold receipt and model-archive contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_archive.py"
+run "model library cold-adopt publication safety" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_adopt.py"
 run "model library Hugging Face source-inventory contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_hf_source_inventory.py"
 run "model library download-receipt acquisition public CLI" \
@@ -95,6 +103,8 @@ run "model library runtime-view materialization" \
   "$REPO_DIR/scripts/selftest-model-library-materialize.sh"
 run "model library persistent-primary contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_primary.py"
+run "model library atomic catalog transaction contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_catalog_transaction.py"
 run "model library hot-budget contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_hot_budget.py"
 run "model library health and legacy-repair contracts" \
@@ -121,13 +131,13 @@ run "workflow menu + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "model catalog scopes" bash -c '
   set -e
-  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --json)
-  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert \"qwen3-1.7b\" not in m; assert \"deepseek-v4-flash\" not in m; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\""
+  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --json)
+  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert \"qwen3-1.7b\" not in m; assert \"deepseek-v4-flash\" not in m; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\"; assert m[\"qwen3-1.7b-2node\"][\"status\"]==\"untested\""
 
   serving=$("'"$REPO_DIR"'/scripts/list-models.sh" --serving --json)
   echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x for x in m); assert not any(x[\"id\"]==\"qwen3-1.7b\" for x in m); assert \"deepseek-v4-flash\" not in {x[\"id\"] for x in m}; assert any(x[\"status\"]==\"do-not-use\" for x in m); assert not any(x.get(\"spec_default_enabled\") for x in m); assert all(x[\"reviewed_identity\"] is False for x in m); assert all((x[\"reviewed_model_id\"] is not None)==x[\"reviewed_identity\"] for x in m)"
 
-  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --legacy-tested --diagnostic --json)
+  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --diagnostic --json)
   echo "$diagnostic" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert {x[\"id\"] for x in m}=={\"qwen3-1.7b-2node\"}"
 '
 
