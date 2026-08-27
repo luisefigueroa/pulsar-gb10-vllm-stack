@@ -87,6 +87,8 @@ run "model library download-receipt acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_receipt.py"
 run "model library receipt-indexed cold archive contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_archive.py"
+run "model library cold-adopt publication safety" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_adopt.py"
 run "model library Hugging Face source-inventory contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_hf_source_inventory.py"
 run "model library download-receipt acquisition public CLI" \

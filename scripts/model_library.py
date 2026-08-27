@@ -2084,8 +2084,16 @@ def plan_cold_adopt(
         fail(f"cold adopt: no complete cold tree for {target}")
 
     cache_root = pathlib.Path(cache_root).expanduser()
+    if not cache_root.is_absolute():
+        fail("cold adopt: cache root must be absolute")
     dest_hub = cache_root / "hub" / model_id_to_hub_dirname(entry["model_id"])
-    existing_state = hub_tree_state(dest_hub) if dest_hub.exists() else "missing"
+    dest_kind, _ = _lstat_kind(dest_hub)
+    if dest_kind != "missing":
+        fail(
+            "cold adopt: destination repository already exists; refusing to "
+            "replace durable content. Inspect the existing tree with catalog "
+            "refresh or home check before choosing a different action"
+        )
     return {
         "action": "adopt",
         "tier": "cold",
@@ -2097,10 +2105,11 @@ def plan_cold_adopt(
         "cache_root": str(cache_root),
         "dest_hub": str(dest_hub),
         "bytes": entry.get("bytes") or 0,
-        "existing_dest_state": existing_state,
+        "existing_dest_state": "missing",
         "note": (
-            "Copies cold archive into a durable warm HF hub home. "
-            "Run catalog refresh afterward to register the home."
+            "Copies the cold tree through private same-filesystem staging and "
+            "publishes only when the durable destination remains absent. "
+            "Run catalog refresh afterward to inspect the unbound tree."
         ),
     }
 
@@ -2109,19 +2118,67 @@ def execute_cold_adopt(plan: dict[str, Any]) -> dict[str, Any]:
     """Execute adopt plan on local filesystem (selftests / single-node)."""
     if plan.get("action") != "adopt":
         fail(f"execute_cold_adopt: unexpected action {plan.get('action')!r}")
-    result = materialize_hub_tree(
-        plan["source_path"],
-        plan["dest_hub"],
-        layout=plan.get("layout"),
-        revision=plan.get("revision"),
+    model_id = str(plan.get("model_id") or "")
+    if HF_MODEL_ID_RE.fullmatch(model_id) is None:
+        fail("cold adopt: model_id is invalid")
+    cache_root = pathlib.Path(str(plan.get("cache_root") or "")).expanduser()
+    if not cache_root.is_absolute():
+        fail("cold adopt: cache root must be absolute")
+    hub_root = cache_root / "hub"
+    dest_hub = pathlib.Path(str(plan.get("dest_hub") or ""))
+    expected_dest = hub_root / model_id_to_hub_dirname(model_id)
+    if not dest_hub.is_absolute() or dest_hub != expected_dest:
+        fail("cold adopt: destination differs from the managed Hugging Face root")
+    if _lstat_kind(dest_hub)[0] != "missing":
+        fail(
+            "cold adopt: destination repository appeared after planning; "
+            "existing durable content was not changed"
+        )
+
+    hub_root.mkdir(parents=True, exist_ok=True)
+    if _lstat_kind(hub_root)[0] != "directory":
+        fail("cold adopt: managed Hugging Face hub root is not an exact directory")
+    staging = pathlib.Path(
+        tempfile.mkdtemp(prefix=".pulsar-cold-adopt-", dir=str(hub_root))
     )
+    cleanup_state = "removed"
+    try:
+        staged_hub = staging / dest_hub.name
+        result = materialize_hub_tree(
+            plan["source_path"],
+            staged_hub,
+            layout=plan.get("layout"),
+            revision=plan.get("revision"),
+        )
+        if _lstat_kind(dest_hub)[0] != "missing":
+            fail(
+                "cold adopt: destination repository appeared before publication; "
+                "existing durable content was not changed"
+            )
+        _rename_directory_noreplace(
+            staged_hub,
+            dest_hub,
+            operation="cold adopt",
+        )
+    finally:
+        try:
+            if _lstat_kind(staging)[0] == "directory":
+                shutil.rmtree(staging)
+            parent_fd = os.open(hub_root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        except OSError:
+            cleanup_state = "incomplete"
     return {
         **plan,
         "executed": True,
         "revision": result["revision"],
         "dest_bytes": result["bytes"],
+        "staging_cleanup": cleanup_state,
         "dest_state": hub_snapshot_state(
-            pathlib.Path(plan["dest_hub"]),
+            dest_hub,
             result["revision"],
         ),
     }
@@ -5544,14 +5601,19 @@ def cleanup_owned_hub_staging(
     }
 
 
-def _rename_directory_noreplace(source: pathlib.Path, target: pathlib.Path) -> None:
+def _rename_directory_noreplace(
+    source: pathlib.Path,
+    target: pathlib.Path,
+    *,
+    operation: str = "home add",
+) -> None:
     """Atomically move one directory without replacing an existing target."""
     libc_name = ctypes.util.find_library("c")
     if libc_name is None:
-        fail("home add: exclusive durable-home publication is unavailable")
+        fail(f"{operation}: exclusive durable-home publication is unavailable")
     libc = ctypes.CDLL(libc_name, use_errno=True)
     if not hasattr(libc, "renameat2"):
-        fail("home add: exclusive durable-home publication requires renameat2")
+        fail(f"{operation}: exclusive durable-home publication requires renameat2")
     renameat2 = libc.renameat2
     renameat2.argtypes = [
         ctypes.c_int,
@@ -5581,8 +5643,8 @@ def _rename_directory_noreplace(source: pathlib.Path, target: pathlib.Path) -> N
             if result != 0:
                 error = ctypes.get_errno()
                 if error in {errno.EEXIST, errno.ENOTEMPTY}:
-                    fail("home add: durable repository appeared before publication")
-                fail("home add: exclusive durable-home publication failed")
+                    fail(f"{operation}: durable repository appeared before publication")
+                fail(f"{operation}: exclusive durable-home publication failed")
             os.fsync(source_fd)
             os.fsync(target_fd)
         finally:

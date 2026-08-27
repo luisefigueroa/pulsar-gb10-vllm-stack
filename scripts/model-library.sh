@@ -81,8 +81,10 @@ Notes:
   • Scans default HF cache hubs on confirmed topology nodes (warm catalog).
   • Optional cold archive (PULSAR_COLD_ROOT or MODELS_NFS): Official Models/
     org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
-  • cold adopt imports into a durable warm HF home; cold stage-only fills hot
-    only (cold remains sole durable copy; pin still allows warm restart).
+  • cold adopt imports into an absent durable warm HF path through private
+    same-filesystem staging and atomic no-replace publication. It never deletes
+    or overwrites an existing repository. cold stage-only fills hot only (cold
+    remains sole durable copy; pin still allows warm restart).
   • Catalog identity labels are receipt/occupancy or
     unvalidated. Local bytes never create an ADR 0004 decision. --reviewed-identity
     and archived combined-identity verification are retired (ADR 0012). --validated
@@ -871,10 +873,18 @@ cmd_cold_adopt() {
   source: $source
   dest:   $dest
   bytes:  $bytes
+  safety: destination must remain absent; publication never replaces it
   After adopt, run: scripts/model-library.sh catalog refresh"
 
-  # Prefer Python materialize (handles flat→hub); works on controller filesystem.
-  python3 "$PY_TOOL" "${plan_args[@]}" --execute
+  # Python uses private same-filesystem staging and atomic no-replace publication.
+  local result cleanup_state
+  result=$(python3 "$PY_TOOL" "${plan_args[@]}" --execute)
+  printf '%s\n' "$result"
+  cleanup_state=$(printf '%s' "$result" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("staging_cleanup") or "unknown")')
+  if [ "$cleanup_state" != removed ]; then
+    log "warning: cold-adopt staging cleanup is incomplete; inspect the private .pulsar-cold-adopt-* directory"
+  fi
   log "adopted $model_id into $dest"
   log "next: scripts/model-library.sh catalog refresh"
 }
@@ -3825,7 +3835,7 @@ main() {
     home:verify:*|home:check:*)
       acquire_model_library_lifecycle_lock shared
       ;;
-    home:*|catalog:refresh:*|catalog:primary:set|catalog:primary:clear)
+    home:*|cold:adopt:*|catalog:refresh:*|catalog:primary:set|catalog:primary:clear)
       acquire_model_library_lifecycle_lock exclusive
       ;;
     *)

@@ -152,7 +152,7 @@ acquire_model_library_lifecycle_lock() {
   if [ "$mode" = exclusive ]; then
     flock -x -w "$timeout" "$lock_fd" || {
       exec {lock_fd}>&-
-      die "model library is busy; exclusive home-removal lock timed out"
+      die "model library is busy; exclusive model-library mutation lock timed out"
     }
   else
     flock -s -w "$timeout" "$lock_fd" || {

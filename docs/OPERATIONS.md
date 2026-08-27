@@ -1004,6 +1004,15 @@ scripts/model-library.sh cold stage-only <profile> --yes
 scripts/up.sh <profile>
 ```
 
+`cold adopt` is no-replace. It refuses any existing repository at the target
+Hugging Face path, copies into private same-filesystem staging, verifies the
+complete layout, and atomically publishes only while that destination remains
+absent. It never deletes or overwrites a current home. The model-library
+lifecycle lock is exclusive for the operation, so supported preparation,
+launch, catalog mutation, relocation, and home removal cannot race the copy.
+The adopted tree still has no download receipt or occupancy; catalog refresh
+therefore treats it as an unbound fill-path tree, not serving identity.
+
 Unset/empty cold config skips the tier (no mount required). If cold is
 configured but unreadable, flows that **need** cold (warm miss, absolute-path
 conf, explicit `cold *`) fail without fallback; pure warm-catalog hits never require it.

@@ -429,6 +429,11 @@ copy policy to topology-bound `ssh-roce` with eight streams and no fallback.
 Catalog refresh is not model acquisition; establish and verify the exact
 durable home separately before running preparation.
 
+When legacy `cold adopt` publication changes, deterministically verify that
+every pre-existing destination is preserved, the copy stays in private
+same-filesystem staging, an interrupted copy leaves no partial final
+repository, and a destination race loses to atomic no-replace publication.
+
 1. (historical) two-node replicated-local and fabric cold I/O/startup A/B;
 2. three-node concurrent loading and interface-counter proof;
 3. deterministic/correctness/long-context gates on the healthy fabric service;
