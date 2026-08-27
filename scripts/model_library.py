@@ -1909,7 +1909,8 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                     "select_commands": [
                         (
                             "scripts/model-library.sh home relocate "
-                            f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+                            f"{identity_arg} --profile PROFILE "
+                            f"--node {shlex.quote(str(home['rank']))} --yes"
                         )
                         for home in unbound
                     ],
@@ -1928,9 +1929,10 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                         for home in unbound
                     ],
                     "action": (
-                        "Occupy one complete tree with home relocate after a live "
-                        "receipt rehash, or remove unbound complete trees. They "
-                        "are not durable homes."
+                        "Choose a compatible serving profile, then occupy one "
+                        "complete tree with home relocate after a live receipt "
+                        "rehash, or remove unbound complete trees. They are not "
+                        "durable homes."
                     ),
                 }
             )
@@ -5096,7 +5098,7 @@ def build_health_report(
             issues.append(_health_issue(
                 "unbound-complete",
                 "complete tree has no occupancy; relocate after a live receipt rehash",
-                command="scripts/model-library.sh home relocate <model> --node <rank> --yes",
+                command="scripts/model-library.sh home relocate <profile> --node <rank> --yes",
             ))
         if primary.get("status") == "stale":
             issues.append(_health_issue("primary-selection-stale", "selected primary is no longer a complete home", command="scripts/model-library.sh catalog primary clear <model>"))
@@ -6090,7 +6092,6 @@ def inspect_removable_home(
         "snapshot_entries": [],
         "ref_targets": [],
         "fingerprint": None,
-        "occupancy_device": None,
         "blockers": [],
     }
     blockers: list[dict[str, str]] = result["blockers"]
@@ -6109,7 +6110,6 @@ def inspect_removable_home(
         block("home-unavailable", f"cannot inspect durable home: {exc}")
         result["state"] = "blocked"
         return result
-    result["occupancy_device"] = int(hub_meta.st_dev)
     if stat.S_ISLNK(hub_meta.st_mode):
         block("home-is-symlink", "durable home repository root must not be a symlink")
     elif not stat.S_ISDIR(hub_meta.st_mode):
@@ -6838,7 +6838,6 @@ def plan_home_removal(
             snapshot_revision=target["revision"],
             occupancy_hub_path=str(home["hub_path"]),
             allow_unarchived=allow_unarchived_last_home,
-            occupancy_device=inspection.get("occupancy_device"),
             occupancy_rank=rank,
             expected_receipt_id=receipt_id,
         )

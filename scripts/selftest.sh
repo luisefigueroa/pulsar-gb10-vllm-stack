@@ -83,6 +83,8 @@ run "model library durable-home acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_home_acquisition.py"
 run "model library durable-home acquisition public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-acquisition.sh"
+run "model library relocation geometry contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_relocation.py"
 run "model library download-receipt acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_receipt.py"
 run "model library cold receipt and model-archive contracts" \

@@ -20,12 +20,21 @@ archive. Relocate, occupancy classification, `home archive`, and `home restore`
 are control-plane implemented; physical relocate, NFS archive, and new-inode
 restore evidence are not in this directory yet and must not be inferred from
 Gate 14.
+AUD-05 deterministic coverage now binds relocation to an explicit profile:
+one-rank profiles may select one confirmed rank, multi-rank profiles remain in
+their exact serving ranks, and raw model identities require `--profile`.
+Physical relocation and subsequent serving evidence remain pending.
 [ADR 0013](../../docs/decisions/0013-separate-receipt-control-replica.md)
 adds a protected receipt control-state replica separate from the model archive,
 explicit receipt recovery, receipt-ID restore, full-size admission, private
 staging, and atomic no-replace publication. Deterministic tests cover those
 contracts. No physical NFS, controller-loss, remote-rank restore, or serving
 evidence is recorded here yet.
+[ADR 0014](../../docs/decisions/0014-operator-owns-cold-storage-failure-domain.md)
+makes cold-storage failure-domain suitability the operator's responsibility.
+Pulsar's deterministic and physical evidence may establish recovery-set
+integrity and functional restore behavior; it does not certify devices,
+mounts, exports, or storage independence.
 
 Every artifact has a qualification scope: catalog/artifact, serving integration,
 model qualification, or combined release/promotion. A result remains valid

@@ -180,13 +180,35 @@ class ColdArchiveContracts(unittest.TestCase):
                 self.cold_root, str(receipt["receipt_id"])
             )
 
-    def test_nested_cold_root_is_not_a_distinct_replica(self) -> None:
+    def test_nested_cold_root_is_not_a_safe_archive_location(self) -> None:
         hub = self.root / "source-hub"
         nested = hub / "nested-cold"
         nested.mkdir(parents=True)
-        ok, detail = cold_archive.cold_root_is_distinct_replica(nested, hub)
+        ok, detail = cold_archive.cold_root_is_safe_archive_location(
+            nested, hub, occupancy_is_local=True
+        )
         self.assertFalse(ok)
         self.assertIn("nested", detail)
+
+    def test_remote_path_string_is_not_used_for_nesting_inference(self) -> None:
+        remote_home_string = self.root / "remote-looking-home"
+        cold_root = remote_home_string / "controller-cold"
+        cold_root.mkdir(parents=True)
+        ok, detail = cold_archive.cold_root_is_safe_archive_location(
+            cold_root,
+            remote_home_string,
+            occupancy_is_local=False,
+        )
+        self.assertTrue(ok, detail)
+
+    def test_operator_selected_parent_root_is_not_domain_inference(self) -> None:
+        local_home = self.root / "source-hub"
+        ok, detail = cold_archive.cold_root_is_safe_archive_location(
+            self.root,
+            local_home,
+            occupancy_is_local=True,
+        )
+        self.assertTrue(ok, detail)
 
     def test_mismatch_refuses_publish(self) -> None:
         receipt = self._receipt()

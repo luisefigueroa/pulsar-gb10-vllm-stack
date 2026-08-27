@@ -12,6 +12,9 @@
   of both a verified model archive and a protected replica of the immutable
   receipt. The receipt replica is separate control state, not a file inside
   the model archive.
+- **Amended by:**
+  [ADR 0014](./0014-operator-owns-cold-storage-failure-domain.md) makes the
+  configured cold root's failure-domain suitability an operator responsibility.
 
 ## Context
 
@@ -46,9 +49,9 @@ the model archive may have a broader storage and access lifecycle.
 4. **Require both parts before last occupancy removal.** Without
    `--allow-unarchived-last-home`, the controller must verify the receipt
    replica is byte-for-byte equivalent to its canonical receipt, fully rehash
-   the model archive against that receipt, and retain the ADR 0011
-   distinct-failure-domain check. `home remove --yes` repeats those checks
-   before detaching occupancy.
+   the model archive against that receipt, and accept the configured cold root
+   as the operator's storage-policy assertion (ADR 0014). `home remove --yes`
+   repeats the receipt and archive checks before detaching occupancy.
 5. **Receipt recovery is explicit.** `home receipt recover --receipt <id>
    --yes` may restore a missing controller receipt only from the protected
    control-state namespace. It validates the existing receipt kind, canonical
@@ -106,6 +109,8 @@ the model archive may have a broader storage and access lifecycle.
   `home archive run`) before they satisfy the new last-home safety gate.
 - Last-home removal is slightly stricter, while prepare and launch remain
   independent of background archive completion.
+- The operator owns whether the configured cold root is a suitable independent
+  failure domain; receipt/archive verification makes no such claim.
 - Recovery remains possible after controller receipt-store loss without
   allowing archived weights to bless themselves.
 

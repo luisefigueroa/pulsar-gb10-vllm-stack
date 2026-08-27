@@ -41,10 +41,10 @@
 | Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles; ADR 0006 (2026-08-19) then removed the replicated and fabric paths and promoted every library scope to supported by decision, recording the open gates as accepted risks. ADR 0007 (2026-08-20) changed ordinary stop to retain unpinned prepared views. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16; library-only distribution accepted 2026-08-19 (ADR 0006); ordinary-stop retention accepted 2026-08-20 (ADR 0007) |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md); [ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md); [ADR 0013](./decisions/0013-separate-receipt-control-replica.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md); [ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md); [ADR 0013](./decisions/0013-separate-receipt-control-replica.md); [ADR 0014](./decisions/0014-operator-owns-cold-storage-failure-domain.md) |
 | Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current operator/catalog state | [OPERATIONS.md](./OPERATIONS.md), [MODELS.md](./MODELS.md) |
-| Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working copies (`runtime_source=working-copy`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), a separate protected cold receipt replica plus model archive (ADR 0013), fixed eight-stream SSH-over-RoCE preparation for multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working copies (ADR 0007) |
+| Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working copies (`runtime_source=working-copy`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), a separate protected cold receipt replica plus model archive (ADR 0013) at an operator-selected cold root whose failure-domain suitability Pulsar does not verify (ADR 0014), fixed eight-stream SSH-over-RoCE preparation for multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working copies (ADR 0007) |
 | Supported today | Local files on every rank for every live profile (ADR 0006/0012). Historical two-rank lab-identity gates remain in `results/`. Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
 | Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; Hugging Face `home add --revision` kept as core catalog/artifact ingress with remote-target / asymmetric-credentials as physical validation follow-ups; Hugging Face is the only current ingress format (local-directory import needs its own ADR); ADR 0011/0013 relocate and recovery-set control plane is implemented while physical NFS/controller-loss and remote-rank restore evidence remain pending; maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope |
 | Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails without fallback; historical `results/weight-fabric/` evidence is superseded and not promoted. |
@@ -93,6 +93,11 @@ requires both protected control state and a full model-archive rehash unless
 the operator explicitly accepts unarchived loss. A missing controller receipt
 is recovered only through `home receipt recover --receipt ... --yes`; archived
 bytes and `presence.json` cannot authorize that action (ADR 0013).
+Setting the cold root is the operator's assertion that the location meets the
+site's recovery and failure-domain policy. Pulsar checks path safety and the
+recovery set's integrity; it does not inspect devices, mounts, filesystem
+types, exports, or storage domains to prove or disprove that assertion
+(ADR 0014).
 
 `scripts/model_identity.py` is the single local owner of the live
 profile-contract schema and snapshot-manifest constants. Expected-seal and
@@ -501,7 +506,7 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   `home verify` later performs an offline full rehash against that receipt
   when occupancy still names the live directory. Occupancy may move with
   `home relocate --node` after the same live rehash; receipt `selected_rank`
-  is Hub-download provenance only ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)). Extra complete hub trees are unbound-complete, not homes. That download creates
+  is Hub-download provenance only ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)). Relocation is profile-bound before mutation: one-rank profiles may use any confirmed rank, multi-rank profiles stay within their exact serving ranks, and raw model identities require `--profile`. Extra complete hub trees are unbound-complete, not homes. That download creates
   observed/source identity and catalog-artifact evidence only; it does not
   create reviewed identity, a lab expected-identity file, status, serving permission, a Model
   Serving Release decision, or physical evidence. Catalog refresh, working-copy
@@ -661,11 +666,12 @@ The accepted warm-home claim is:
 
 Home-loss resilience is occupy-in-place after a live receipt rehash, or
 restore from a verified receipt control-state replica plus its separately
-verified receipt-indexed model archive, on a distinct failure domain
+verified receipt-indexed model archive at the operator-selected cold root
 ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md),
-[ADR 0013](./decisions/0013-separate-receipt-control-replica.md)).
-A second Spark durable home, and a second copy on the same rank/filesystem,
-are not that policy. In an exact multi-node geometry, losing the
+[ADR 0013](./decisions/0013-separate-receipt-control-replica.md)). The operator
+owns whether that root is a suitable independent failure domain; Pulsar does
+not verify the infrastructure assertion (ADR 0014). A second Spark durable
+home is not the automatic recovery policy. In an exact multi-node geometry, losing the
 home node also removes a required compute rank.
 
 ### 4.5 File identity and verification tiers
@@ -819,7 +825,8 @@ receipt replica and then fully rehashes the separate model archive. Confirmed
 removal repeats both checks before detaching occupancy. The occupancy rank does
 not open either receipt store. `--allow-unarchived-last-home` remains the
 explicit acknowledgement that this recovery set is absent or unusable
-(ADR 0013).
+(ADR 0013). The configured cold root is the operator's failure-domain choice;
+Pulsar makes no device or storage-independence inference (ADR 0014).
 
 A repository-local shared/exclusive lifecycle lock closes races among supported
 Pulsar catalog, preparation, launch, readiness, download, fabric, and removal
@@ -967,7 +974,8 @@ Pulsar's discovery boundary.
    the minimum installation.
 7. **Hot and pins are budgeted working sets**, not a replica farm.
 8. **Dependency modes are explicit** — warm-home pinning still needs its
-   durable home; home-loss resilience requires another failure domain.
+   durable home. Home-loss recovery uses the configured cold root; the
+   operator owns whether it is another failure domain (ADR 0014).
 9. **Prepare is first-class and measured** — end-to-end start-to-healthy,
    integrity, and recovery matter more than peak transport bandwidth.
 10. **Transport is not product identity** — distinguish `ssh-control`,
@@ -1193,7 +1201,8 @@ rather than promotion blockers.
   untouched
 - Physical controller-loss recovery using the separate receipt replica plus
   model archive. ADR 0013 implements deterministic control-plane recovery;
-  remote-rank and physical NFS/DGX evidence remain pending.
+  remote-rank and physical NFS/DGX functional evidence remain pending. Such
+  evidence does not certify the operator's failure-domain choice (ADR 0014).
 - Budget-based or last-N hot eviction; ADR 0007 keeps capacity recovery explicit
 - Rank-sharded checkpoints (`sharded_state`) as a later requirement-B lever
 - Dedicated storage-node topology for very large N
@@ -1309,3 +1318,5 @@ rather than promotion blockers.
 | 2026-08-26 | Live DESIGN, operator, revalidation, and skill text aligned with ADR 0012: current-implementation identity is receipt plus occupancy; unknown trees fail without fallback; wizard replacement does not use `identity_status=match`; `home add --revision` is the live acquisition path. Decision-log rows above stay as history. |
 | 2026-08-26 | Retired `cold stage-only`: self-observed cold bytes cannot create `receipt-occupancy` hot state. Public and internal commands fail without fallback; existing stage-only state cannot launch and remains cleanup-only. A future cold-only serving contract requires a new ADR and a non-occupancy identity class. |
 | 2026-08-26 | **ADR 0013 accepted:** cold recovery stores the immutable receipt as a protected byte-identical control-state replica separate from the model archive. Last occupancy removal requires both parts. Receipt recovery is explicit; restore accepts exact receipt identity, uses receipt-sized admission, private same-filesystem staging, full verification, and atomic no-replace publication. Deterministic control-plane tests only; no physical NFS, controller-loss, remote-rank, or serving claim. |
+| 2026-08-26 | **ADR 0014 accepted / AUD-04 retired:** the operator owns whether `PULSAR_COLD_ROOT` is a suitable independent failure domain. Pulsar verifies path safety and recovery-set integrity but does not infer storage independence from devices, mounts, filesystems, exports, or topology. Same-device recovery sets no longer require a lab override. |
+| 2026-08-27 | **AUD-05 fixed:** `home relocate` validates an explicit profile before any catalog access or mutation. One-rank profiles may use any confirmed rank; multi-rank profiles stay within their exact serving ranks. Raw model identities require `--profile`, so shared bytes never guess a recipe or geometry. Deterministic control-plane tests only; no physical relocation or serving claim. |

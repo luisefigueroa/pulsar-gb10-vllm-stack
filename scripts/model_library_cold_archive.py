@@ -459,9 +459,6 @@ def recover_receipt_replica(
     )
 
 
-COLD_ALLOW_SAME_DEVICE_ENV = "PULSAR_COLD_ALLOW_SAME_DEVICE"
-
-
 def archive_is_complete(
     *,
     library_dir: str | pathlib.Path,
@@ -472,7 +469,7 @@ def archive_is_complete(
 
     This is not last-home authority. Last occupancy delete must call
     ``verify_receipt_replica``, ``verify_existing_archive``, and
-    ``cold_root_is_distinct_replica``.
+    ``cold_root_is_safe_archive_location``.
     """
     _ = library_dir
     if cold_root is None:
@@ -487,29 +484,30 @@ def archive_is_complete(
     return hub.is_dir() and presence["receipt_id"] == receipt_id
 
 
-def cold_root_is_distinct_replica(
+def cold_root_is_safe_archive_location(
     cold_root: str | pathlib.Path,
     occupancy_hub_path: str | pathlib.Path,
     *,
-    occupancy_device: int | None = None,
-    compare_devices: bool = False,
+    occupancy_is_local: bool,
 ) -> tuple[bool, str]:
-    """Reject nested or same-host same-device cold roots. Does not claim NFS.
+    """Reject unusable or dangerously nested cold roots.
 
-    Path prefix is checked from path strings so a remote occupancy hub does
-    not have to exist on the controller. ``st_dev`` is compared only when
-    ``compare_devices`` is true (occupancy rank is the controller). Lab tests
-    may set PULSAR_COLD_ALLOW_SAME_DEVICE=1.
+    A cold root below a local occupancy tree would make archive copy recurse.
+    Remote paths live in another namespace and are not compared. The operator
+    owns failure-domain suitability (ADR 0014); this function makes no device
+    or storage-domain inference.
     """
     try:
         root = pathlib.Path(cold_root).expanduser().resolve()
     except OSError as exc:
         return False, f"cannot resolve cold root ({exc})"
-    occupancy = pathlib.Path(occupancy_hub_path).expanduser()
-    try:
-        occupancy = occupancy.resolve()
-    except OSError:
-        occupancy = pathlib.Path(os.path.abspath(occupancy))
+    occupancy: pathlib.Path | None = None
+    if occupancy_is_local:
+        occupancy = pathlib.Path(occupancy_hub_path).expanduser()
+        try:
+            occupancy = occupancy.resolve()
+        except OSError:
+            occupancy = pathlib.Path(os.path.abspath(occupancy))
     if not root.is_dir():
         return False, "cold root is not a directory"
     if not os.access(root, os.W_OK):
@@ -517,35 +515,12 @@ def cold_root_is_distinct_replica(
     receipts = root / "pulsar-receipts"
     if receipts.exists() and not os.access(receipts, os.W_OK):
         return False, "cold archive receipts directory is not writable"
-    try:
-        occupancy.relative_to(root)
-        return False, "cold root contains the occupancy tree"
-    except ValueError:
-        pass
-    try:
-        root.relative_to(occupancy)
-        return False, "cold root is nested under the occupancy tree"
-    except ValueError:
-        pass
-    if not compare_devices:
-        return True, ""
-    if occupancy_device is None:
-        return False, (
-            "occupancy device is unknown; cannot prove a "
-            "distinct-failure-domain cold archive"
-        )
-    try:
-        root_dev = root.stat().st_dev
-    except OSError as exc:
-        return False, f"cannot inspect cold root device ({exc})"
-    if int(occupancy_device) == int(root_dev) and os.environ.get(
-        COLD_ALLOW_SAME_DEVICE_ENV
-    ) != "1":
-        return False, (
-            "cold root is on the same device as occupancy; last occupancy "
-            "needs a distinct-failure-domain cold archive or "
-            "--allow-unarchived-last-home"
-        )
+    if occupancy is not None:
+        try:
+            root.relative_to(occupancy)
+            return False, "cold root is nested under the occupancy tree"
+        except ValueError:
+            pass
     return True, ""
 
 
@@ -581,7 +556,6 @@ def last_occupancy_cold_archive_blocker(
     snapshot_revision: str,
     occupancy_hub_path: str,
     allow_unarchived: bool,
-    occupancy_device: int | None = None,
     occupancy_rank: int = 0,
     expected_receipt_id: str | None = None,
 ) -> str | None:
@@ -619,15 +593,14 @@ def last_occupancy_cold_archive_blocker(
     cold_root = model_library.configured_cold_root()
     if cold_root is None:
         return (
-            "last occupancy has no distinct-failure-domain receipt recovery set; "
+            "last occupancy has no configured receipt recovery set; "
             "pass --allow-unarchived-last-home to acknowledge there is no "
             "protected receipt replica and model archive"
         )
-    ok, detail = cold_root_is_distinct_replica(
+    ok, detail = cold_root_is_safe_archive_location(
         cold_root,
         occupancy_hub_path,
-        occupancy_device=occupancy_device,
-        compare_devices=int(occupancy_rank) == 0,
+        occupancy_is_local=int(occupancy_rank) == 0,
     )
     if not ok:
         return detail
@@ -643,7 +616,7 @@ def last_occupancy_cold_archive_blocker(
             "last occupancy has no verified receipt control-state replica "
             "and receipt-indexed model archive "
             f"({exc}); pass --allow-unarchived-last-home to acknowledge "
-            "there is no distinct-failure-domain replica"
+            "there is no usable recovery set"
         )
     return None
 
@@ -676,7 +649,6 @@ def reverify_last_home_archive(
         snapshot_revision=revision,
         occupancy_hub_path=str(home["hub_path"]),
         allow_unarchived=False,
-        occupancy_device=(plan.get("inspection") or {}).get("occupancy_device"),
         occupancy_rank=int(home.get("rank", -1)),
         expected_receipt_id=plan.get("receipt_id") or target.get("receipt_id"),
     )

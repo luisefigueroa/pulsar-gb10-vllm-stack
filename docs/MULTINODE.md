@@ -147,6 +147,9 @@ one durable occupancy home, a symlink/view on that rank, and working copies
 only on non-home ranks. Occupancy may move with
 `home relocate` after a live receipt rehash
 ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+For multi-rank profiles, the destination must remain in the profile's exact
+serving ranks; extra confirmed nodes remain idle capacity. Raw model identities
+require `--profile` so relocation does not guess a geometry.
 It is not a live NFS/RDMA mount and there is no fallback.
 Typical CLI: enroll SSH trust, `scripts/model-library.sh home add` if no home
 exists, or `home relocate` for an unbound complete tree, `catalog refresh`,

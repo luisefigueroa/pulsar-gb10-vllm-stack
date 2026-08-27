@@ -717,7 +717,13 @@ Download crash and retry behavior:
   unbound-complete.
 - `home relocate --node` grants occupancy to a destination tree after a live
   rehash. Receipt `selected_rank` is Hub-download provenance and does not
-  block the move. Catalog refresh remains a separate next action.
+  block the move. Relocation is bound to a serving profile before any catalog
+  access, capacity check, copy, or occupancy mutation. A one-rank profile may
+  use any confirmed rank; a multi-rank profile stays within its exact serving
+  ranks. Use the profile as the normal query. A raw `model_id` or exact
+  `model_id@revision` additionally requires `--profile <profile>` so Pulsar
+  never guesses among recipes that share the same bytes. Catalog refresh
+  remains a separate next action.
 - After occupancy attach, `home archive` copies the canonical receipt into the
   private `pulsar-control/download-receipts/` namespace and separately copies
   the receipt-indexed model tree to `pulsar-receipts/` in the background. The
@@ -726,8 +732,10 @@ Download crash and retry behavior:
   relocate for the whole copy). Last occupancy remove of a receipted identity
   verifies the protected receipt replica and rehashes the model archive on the
   controller (`home check`, and again after `--yes` before occupancy detach).
-  Rank 0 homes also require a distinct
-  device from occupancy. NFS, an external disk, or another mount can qualify.
+  Setting `PULSAR_COLD_ROOT` is the operator's assertion that the location
+  meets the site's recovery and failure-domain policy. Pulsar does not compare
+  devices, mounts, filesystem types, exports, or storage-domain identities.
+  It retains nested-path refusal where copying or deletion would be unsafe.
   Layout-only `presence.json` and archived bytes without the protected receipt
   replica are not that proof. The occupancy rank only
   deletes the inspected hub tree and does not reopen receipts. An in-flight
@@ -735,7 +743,7 @@ Download crash and retry behavior:
   `home restore --node` admits the full receipt byte count, copies into private
   same-filesystem staging, rehashes, atomically publishes without replacement,
   and occupies. Last occupancy remove
-  without a verified distinct-failure-domain replica needs
+  without a verified receipt replica plus model archive needs
   `--allow-unarchived-last-home`. Unbound-complete trees are not homes and do
   not skip that flag. `cold scan` and no-replace `cold adopt` remain
   layout-inferred fill paths and do not mint receipts. `cold stage-only` is
@@ -773,7 +781,9 @@ A warm-home pin permits restart without cold storage, a transfer plane, or
 catalog refresh while the durable home remains. It does **not** claim survival
 after home loss. Do not remove or unmount the home while a running or pinned
 instance depends on it. Home-loss resilience requires an explicit durable
-replica on another failure domain and supported failover.
+recovery set and supported restore. The operator owns whether the configured
+cold root is an independent failure domain (ADR 0014); Pulsar verifies only
+path safety, receipt/archive integrity, and recovery mechanics.
 
 **What model-library checks prove:** interpret each operator surface in its own
 qualification scope:

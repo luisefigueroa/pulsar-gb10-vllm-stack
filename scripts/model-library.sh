@@ -51,7 +51,7 @@ Usage:
   scripts/model-library.sh home remove <profile|model_id|model_id@revision>
       [--node RANK|NODE_ID] [--allow-last-home] [--allow-unarchived-last-home] --yes
   scripts/model-library.sh home relocate <profile|model_id|model_id@revision>
-      --node RANK|NODE_ID --yes [--json]
+      [--profile PROFILE] --node RANK|NODE_ID --yes [--json]
   scripts/model-library.sh home archive status <profile|model_id@revision|receipt_id> [--json]
   scripts/model-library.sh home archive run --receipt RECEIPT_ID --yes [--json]
   scripts/model-library.sh home receipt status --receipt RECEIPT_ID [--json]
@@ -107,12 +107,13 @@ Notes:
     Removal is exact-repository-only, refuses multi-revision hub trees, and
     needs --allow-last-home before deleting the final durable copy or the last
     occupancy of an identity. Receipted last occupancy also needs a verified
-    receipt control-state replica plus receipt-indexed model archive on a
-    distinct device. Otherwise pass --allow-unarchived-last-home. home check
-    verifies the receipt replica and rehashes the model archive on the
-    controller. home remove --yes repeats
+    receipt control-state replica plus receipt-indexed model archive in the
+    configured cold root. If that recovery set is absent or invalid, pass
+    --allow-unarchived-last-home. home check verifies the receipt replica and
+    rehashes the model archive on the controller. home remove --yes repeats
     both checks before detaching occupancy; the occupancy rank only deletes
-    the inspected hub tree.
+    the inspected hub tree. The operator owns whether the configured cold root
+    is a separate failure domain; Pulsar does not inspect devices or mounts.
     A recognized incomplete or refs-only hub stub is
     inspectable and retireable through the same read-only check then confirmed
     remove --yes path so a later home add --revision can occupy that
@@ -143,12 +144,16 @@ Notes:
   • home relocate moves occupancy to --node after a live full rehash against
     the immutable receipt. If that rank already has matching bytes, no copy
     and no Hub download occur. Receipt selected_rank is download provenance
-    only and does not block the move. Catalog refresh is a separate next
-    action.
+    only and does not block the move. A one-rank profile may move to any
+    confirmed rank; a multi-rank profile stays within its exact serving ranks.
+    Raw model_id queries require --profile so geometry is never guessed.
+    Catalog refresh is a separate next action.
   • After a receipt is written, a receipt control-state replica and separate
     receipt-indexed model archive start in the background and are not a serving
     gate. The receipt is never placed inside the model archive. The cold root
-    may be NFS, an external disk, or another distinct-failure-domain mount.
+    may be NFS, an external disk, or another operator-selected path. Setting it
+    asserts the operator's failure-domain policy; Pulsar does not verify that
+    infrastructure choice.
     home archive status|run take no occupancy lifecycle lock, so they cannot
     block prepare, launch, or relocate; workers flock only their job file.
     home receipt recover explicitly restores a missing controller receipt from
@@ -1641,7 +1646,7 @@ sa.compare_observed_manifest_to_expected(
       --receipt "$tmp/receipt.json" \
       --publish-result "$tmp/publish.json" \
       --node-id "$selected_node" >"$tmp/attach.json"; then
-    die "home add: durable home published but occupancy was not attached. Remove it with a supported home remove, then re-add, or occupy it with home relocate --node after a live receipt rehash. Do not reconstruct occupancy without that rehash."
+    die "home add: durable home published but occupancy was not attached. Remove it with a supported home remove, then re-add, or occupy it with home relocate $profile --node RANK --yes after a live receipt rehash. Do not reconstruct occupancy without that rehash."
   fi
   local staging_cleanup
   staging_cleanup=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("staging_cleanup") or "removed")' \
@@ -1761,7 +1766,7 @@ cmd_home_verify() (
         --revision "$revision" \
         --allow-missing)
       if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
-        die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+        die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate <profile> --node RANK --yes after a live rehash. Raw model identities also require --profile. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
       fi
       die "home verify: could not resolve $query"
     fi
@@ -1807,7 +1812,7 @@ cmd_home_verify() (
     --revision "$revision" \
     --allow-missing)
   if [ "$receipt_lookup" != null ] && [ -n "$receipt_lookup" ]; then
-    die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate $query --node RANK --yes after a live rehash. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
+    die "home verify: occupancy is missing for a download receipt. Occupy the complete tree with scripts/model-library.sh home relocate <profile> --node RANK --yes after a live rehash. Raw model identities also require --profile. Do not Hub re-download. Do not reconstruct occupancy without that rehash."
   fi
   die "home verify: unknown or pre-existing home has no download receipt (ADR 0012: expected-manifest fallback is retired)"
 )
@@ -1829,12 +1834,19 @@ confirmed_rank_from_node_selector() {
 }
 
 cmd_home_relocate() {
-  local query="" node_selector="" yes=0 json=0 dest_rank dest_node
+  local query="" profile_arg="" node_selector="" yes=0 json=0 dest_rank dest_node
   local model_id revision receipt_json attachment_json dest_hub dest_state
   local cache_root hf_cli content_bytes tmp observed_json live_json
   local source_node source_path source_rank occupy_json
+  local profile profile_model profile_nodes geometry_text geometry_rank allowed
   while [ $# -gt 0 ]; do
     case "$1" in
+      --profile)
+        shift
+        [ $# -gt 0 ] || die "--profile needs a serving profile"
+        [ -z "$profile_arg" ] || die "--profile may be specified only once"
+        profile_arg="$1"
+        ;;
       --node)
         shift
         [ $# -gt 0 ] || die "--node needs a rank or node ID"
@@ -1848,22 +1860,53 @@ cmd_home_relocate() {
     shift
   done
   [ -n "$query" ] && [ -n "$node_selector" ] \
-    || die "usage: home relocate <profile|model_id|model_id@revision> --node RANK|NODE_ID --yes [--json]"
+    || die "usage: home relocate <profile|model_id|model_id@revision> [--profile PROFILE] --node RANK|NODE_ID --yes [--json]"
   [ "$yes" = 1 ] \
     || die "home relocate requires --yes after reviewing the destination rank"
   require_py
-  ensure_catalog
   load_cluster_topology >/dev/null \
     || die "home relocate: confirmed topology required"
   dest_rank=$(confirmed_rank_from_node_selector "$node_selector")
   dest_node="${CLUSTER_NODE_IDS[$dest_rank]:-}"
   [ -n "$dest_node" ] || die "home relocate: rank $dest_rank lacks a node ID"
 
-  local show_query="$query"
+  local show_query="$query" raw_model=""
   if [[ "$query" != */* ]] && [[ "$query" != *@* ]]; then
-    load_conf "$query"
-    show_query="${MODEL:-$query}"
+    [ -z "$profile_arg" ] \
+      || die "home relocate: --profile is only used with a raw model_id query"
+    profile="$query"
+  else
+    [ -n "$profile_arg" ] \
+      || die "home relocate: raw model_id queries require --profile PROFILE"
+    profile="$profile_arg"
+    raw_model="${query%@*}"
   fi
+  load_conf "$profile"
+  [ "$(model_source_kind)" = hf ] \
+    || die "home relocate: $profile is not a Hugging Face serving profile"
+  profile_model="$MODEL"
+  profile_nodes="$NODES"
+  if [ -n "$raw_model" ] && [ "$raw_model" != "$profile_model" ]; then
+    die "home relocate: $profile does not describe $raw_model"
+  fi
+  show_query="${raw_model:-$profile_model}"
+  [ -z "$raw_model" ] || show_query="$query"
+
+  geometry_text=$(python3 "$SOURCE_ATTESTED_PY" geometry-ranks \
+    --confirmed-count "$CLUSTER_TOPOLOGY_COUNT" \
+    --serving-nodes "$profile_nodes") \
+    || die "home relocate: $profile serving geometry is incompatible with the confirmed topology"
+  allowed=0
+  for geometry_rank in $geometry_text; do
+    if [ "$dest_rank" = "$geometry_rank" ]; then
+      allowed=1
+      break
+    fi
+  done
+  [ "$allowed" = 1 ] \
+    || die "home relocate: rank $dest_rank is outside $profile serving ranks ($geometry_text)"
+
+  ensure_catalog
   local entry
   entry=$(python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" "$show_query" --json) \
     || die "home relocate: catalog has no entry for $query; refresh, then retry"
@@ -1871,6 +1914,8 @@ cmd_home_relocate() {
     'import json,sys; print(json.load(sys.stdin)["model_id"])')
   revision=$(printf '%s' "$entry" | python3 -c \
     'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  [ "$model_id" = "$profile_model" ] \
+    || die "home relocate: catalog identity does not match $profile"
   [ -n "$revision" ] && [ "$revision" != unknown ] && [ "$revision" != missing ] \
     || die "home relocate: catalog entry lacks an exact snapshot revision"
 

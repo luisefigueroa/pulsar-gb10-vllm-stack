@@ -12,12 +12,13 @@
   protection from unforced purge),
   [ADR 0011](./0011-portable-occupancy-and-cold-archive.md)
   (occupancy is portable after a live receipt rehash; NFS receipt-indexed
-  archive is the distinct-failure-domain replica; home-rank symlink is
-  unchanged),
-  and
+  archive is the recovery copy; home-rank symlink is unchanged),
   [ADR 0012](./0012-retire-expected-seal-and-schema-1-bundles.md)
   (expected-seal and schema-1 validation bundles are not a live product;
-  they are not replaced by a schema-2 of that format)
+  they are not replaced by a schema-2 of that format),
+  and [ADR 0014](./0014-operator-owns-cold-storage-failure-domain.md)
+  (the operator owns whether the configured cold root is a suitable
+  independent failure domain)
 
 ## Context
 
@@ -195,3 +196,12 @@ expected-manifest fallback.
 
 `qwen3-1.7b` and `deepseek-v4-flash` are removed from the live catalog.
 Re-onboard them onto ADR 0004 only as a later explicit change.
+
+## Interpretation note — 2026-08-26 (ADR 0014)
+
+Decision 3 still requires an explicit durable recovery copy rather than a
+second Spark home. The operator owns whether the configured cold root is a
+suitable independent failure domain. Pulsar verifies path safety, the protected
+receipt replica, model-archive content, and restore mechanics; it does not
+infer storage independence from devices, mounts, filesystems, exports, or
+topology.

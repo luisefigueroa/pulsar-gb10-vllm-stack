@@ -581,6 +581,9 @@ for explicit unpin and purge.
     - a complete model archive without the protected receipt replica blocks
       last occupancy removal, and confirmed removal repeats both receipt and
       full model-archive verification before occupancy detach;
+    - a same-device recovery set is accepted without an override when its paths
+      are operationally safe and both parts verify; nested paths that can
+      recurse during copy or couple deletion remain blocked;
     - simulated controller receipt loss does not make restore import authority
       automatically; explicit `home receipt recover --receipt ... --yes`
       restores only the exact protected receipt;
@@ -593,7 +596,23 @@ for explicit unpin and purge.
       not bless archived bytes; and
     - the recovery result remains catalog/artifact evidence. Repeat physical
       NFS/controller-loss and remote-rank restore before claiming those
-      behaviors on DGX hardware.
+      functional behaviors on DGX hardware. Do not treat deterministic or
+      physical evidence as certification of the operator's failure-domain
+      choice (ADR 0014).
+16. `home relocate` profile or destination-geometry changes:
+    - on a topology with at least one idle confirmed rank, a two-rank profile
+      refuses relocation to that idle rank before catalog access, capacity
+      inspection, copying, or occupancy mutation;
+    - a one-rank profile may select any one confirmed rank as its sole serving
+      placement;
+    - raw `model_id` and exact `model_id@revision` queries require an explicit
+      `--profile`, and a profile for different model bytes is refused;
+    - the accepted destination is rehashed against the immutable receipt before
+      occupancy moves, and a failed request leaves the source occupancy and
+      destination unchanged; and
+    - the result is catalog/artifact evidence only. Repeat physical relocation
+      and subsequent preparation/serving integration before claiming that path
+      on DGX hardware.
 
 The historical lab expected-identity acquisition contract passed a three-node
 physical gate on 2026-08-13 using the then-live `qwen3-1.7b` profile. The run proved guarded removal

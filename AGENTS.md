@@ -205,7 +205,11 @@ language for new features without an explicit decision.
   removal verifies both. A missing controller receipt is recovered only by the
   explicit confirmation-gated receipt recovery command; archived bytes and
   `presence.json` cannot create or authorize a receipt
-  ([ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)).
+  ([ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)). The
+  operator owns whether the configured cold root is a suitable independent
+  failure domain. Pulsar checks path safety and recovery-set integrity, not
+  device, mount, filesystem, export, or storage-domain independence
+  ([ADR 0014](docs/decisions/0014-operator-owns-cold-storage-failure-domain.md)).
   An unknown tree without a receipt fails without fallback (ADR 0012: there is
   no lab expected-identity fallback). The shallow catalog label and a
   self-observed file list are not that proof. The skill must never download
@@ -687,8 +691,11 @@ this work; the skill is procedural and does not outrank these sources.
   verification only when occupancy still names that live directory.
   `home relocate --node` moves occupancy after the same live rehash without a
   Hub download. The home must be one of the current profile's
-  serving ranks so active storage remains one home plus N−1 working replicas. Do not
-  silently choose another node,
+  serving ranks so active storage remains one home plus N−1 working replicas.
+  A one-rank profile may select any confirmed rank as its sole placement; a
+  multi-rank profile is limited to its exact serving ranks. Raw model/revision
+  relocation requires `--profile` so shared bytes never guess a recipe or
+  geometry. Do not silently choose another node,
   create a controller copy, refresh the catalog, prepare working copies, or launch.
   Guarded `home check` / `home remove --yes` may retire a recognized
   incomplete or refs-only Hugging Face hub occupancy that blocks
@@ -711,8 +718,9 @@ this work; the skill is procedural and does not outrank these sources.
   recovery followed by restore from a verified protected receipt replica plus
   its separate receipt-indexed model archive
   ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md),
-  [ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)), not a
-  second Spark durable home.
+  [ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)). The
+  operator, not Pulsar, decides whether that configured storage is a separate
+  failure domain (ADR 0014). It is not a second Spark durable home.
 - For multi-rank model preparation, use topology-bound `ssh-roce` copy with
   eight streams and no automatic fallback, as recorded in ADR 0003. The model
   library is the only weight-distribution mechanism
