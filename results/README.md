@@ -17,3 +17,7 @@ model-specific repository reset.
 Do not infer a reviewed Model Serving Release from a raw result file. The
 tracked registry under `models/model-serving-releases/` is the authority for
 reviewed status, and it is currently empty.
+
+Before staging any result, run
+`PYTHONDONTWRITEBYTECODE=1 python3 scripts/check_publishable_privacy.py`.
+The full selftest and optional tracked pre-commit hook run the same scanner.

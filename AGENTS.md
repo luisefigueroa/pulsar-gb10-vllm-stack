@@ -457,6 +457,16 @@ infrastructure unless that authority is explicitly part of the approved plan.
 - Management SSH must use the **confirmed control endpoint** (saved alias for identity/host keys is fine; transport host must not wander onto a RoCE data rail). Reuse shared resolvers; do not reimplement per script.
 - Keep planes distinct in code and docs: **control** (SSH, rendezvous), **inference** (NCCL/RoCE), **weight transfer** (library preparation). Do not overload one path without saying so.
 - Site-local state (`.cluster-topology.json`, `.weight-fabric/`, `.model-library/`, hot roots) is gitignored; never commit hostnames, IPs, or node IDs into publishable docs/results without redaction/audit patterns already used for fabric artifacts.
+- `scripts/check_publishable_privacy.py` is the canonical privacy gate. Run it
+  on the working tree before publication and with `--staged` before commit;
+  staged mode reads index blobs so partial staging cannot hide committed bytes.
+  It must reject hostnames, addresses, SSH identity, durable node/topology
+  identity, user paths, and credential material without treating generic ranks,
+  `Node A` / `Node B`, loopback, or RFC documentation addresses as site
+  identity.
+- When asked to commit, use `skills/pulsar-safe-commit/`. The tracked
+  `.githooks/pre-commit` is optional local defense in depth; hooks are not CI
+  authority and must not replace the full selftest privacy gate.
 - In static hardware and measurement documentation, identify physical systems as
   `Node A`, `Node B`, and so on. Use generic rank labels such as `rank 0` and
   `rank 1` only when the runtime role itself matters; ranks are not durable

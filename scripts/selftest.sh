@@ -27,7 +27,9 @@ run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust
 run "managed container ownership" "$REPO_DIR/scripts/selftest-managed-containers.sh"
 run "spec-decode policy" "$REPO_DIR/scripts/selftest-spec-decode.sh"
 run "memory profiles" "$REPO_DIR/scripts/selftest-memory-profiles.sh"
-run "publishable documentation privacy" \
+run "publishable privacy contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_publishable_privacy.py"
+run "publishable content privacy" \
   "$REPO_DIR/scripts/selftest-docs-privacy.sh"
 run "active current-state documentation drift (AUD-03)" \
   python3 "$REPO_DIR/scripts/testlib/test_docs_current_state.py"
@@ -75,6 +77,8 @@ run "Model Serving Release onboarding skill" \
   "$REPO_DIR/scripts/selftest-model-onboarding-skill.sh"
 run "Model Serving Release issuance skill" \
   "$REPO_DIR/scripts/selftest-model-serving-release-issuance-skill.sh"
+run "safe commit skill" \
+  "$REPO_DIR/scripts/selftest-pulsar-safe-commit-skill.sh"
 run "Model Serving Release onboarding journal" \
   python3 "$REPO_DIR/scripts/testlib/test_onboarding_journal.py"
 run "model library durable-home removal contracts" \

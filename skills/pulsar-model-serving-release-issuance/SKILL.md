@@ -98,6 +98,9 @@ For every `evidence_artifacts[]` entry, record visibility, location, and an
 explicit `passed` / `failed` / `pending` privacy result. Scan publishable
 `results/` files for site paths, hosts, addresses, node IDs, and topology
 identifiers. A leak is `failed` or `pending`, not a silent `passed`.
+Run `python3 scripts/check_publishable_privacy.py` before `plan`; after
+staging, run `python3 scripts/check_publishable_privacy.py --staged`.
+A declared review result cannot override a scanner finding.
 `privacy_review=passed` on every artifact forces `evidence_privacy=pass`,
 which is conclusive and requires extra `release-promotion` review
 files. Incomplete staging with an empty extra-review-file list must keep

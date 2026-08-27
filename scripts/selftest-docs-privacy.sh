@@ -86,4 +86,7 @@ if contains_stable_lab_name "${markdown_files[@]}"; then
   exit 1
 fi
 
-echo "documentation privacy selftest OK"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$REPO_DIR/scripts/check_publishable_privacy.py"
+
+echo "publishable privacy selftest OK"

@@ -370,5 +370,6 @@ not permission to serve an unmeasured geometry.
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Offline node, missing `refs/main`, TCP fallback, cold load |
 | [REVALIDATE.md](./REVALIDATE.md) | After any image pin change |
+| [COMMIT_SAFETY.md](./COMMIT_SAFETY.md) | Publishable privacy scanner, safe-commit workflow, and optional local hook |
 | [MODELS.md](./MODELS.md) | What fits which node count |
 | [SECURITY.md](../SECURITY.md) | Do not expose `:8000` without auth |

@@ -9,8 +9,8 @@
 # nThread 1 nGpus 1 minBytes 1048576 maxBytes 536870912 step: 2(factor) warmup iters: 5 iters: 40 agg iters: 1 validation: 1 graph: 0 unalign: 0
 #
 # Using devices
-#  Rank  0 Group  0 Pid    144 on dgx-spark-1 device  0 [000f:01:00] NVIDIA GB10
-#  Rank  1 Group  0 Pid    100 on dgx-spark-2 device  0 [000f:01:00] NVIDIA GB10
+#  Rank  0 Group  0 Pid    144 on Node-A device  0 [000f:01:00] NVIDIA GB10
+#  Rank  1 Group  0 Pid    100 on Node-B device  0 [000f:01:00] NVIDIA GB10
 NCCL version 2.28.3+cuda13.0
 #
 #                                                              out-of-place                       in-place          
@@ -31,4 +31,3 @@ NCCL version 2.28.3+cuda13.0
 #
 # Collective test concluded: all_reduce_perf
 #
-

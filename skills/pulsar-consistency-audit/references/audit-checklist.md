@@ -61,6 +61,8 @@ For public commands and subsystem APIs, compare:
 - control, inference, and weight-transfer plane separation;
 - explicit experimental gates and absence of silent fallback; and
 - privacy of JSON, logs, docs, and publishable evidence.
+- enforcement parity among `scripts/check_publishable_privacy.py`, staged
+  scanning, the tracked pre-commit hook, safe-commit skill, and full selftest;
 
 Sanitized contracts must not leak prohibited absolute paths, hostnames, IPs,
 node/topology IDs, filesystem identities, witness IDs, or repair IDs.
