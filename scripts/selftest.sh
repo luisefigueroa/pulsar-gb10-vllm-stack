@@ -85,7 +85,7 @@ run "model library durable-home acquisition public CLI" \
   "$REPO_DIR/scripts/selftest-model-library-acquisition.sh"
 run "model library download-receipt acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_receipt.py"
-run "model library receipt-indexed cold archive contracts" \
+run "model library cold receipt and model-archive contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_archive.py"
 run "model library cold-adopt publication safety" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_adopt.py"

@@ -9,6 +9,10 @@
   [ADR 0004](./0004-model-serving-release-validation.md),
   [ADR 0005](./0005-reject-live-nfs-rdma-serving.md), and
   [ADR 0006](./0006-model-library-only-weight-distribution.md)
+- **Amended by:**
+  [ADR 0013](./0013-separate-receipt-control-replica.md) requires a separate
+  protected receipt replica alongside the model archive before last occupancy
+  removal. The receipt is not stored inside the model archive.
 - **Amends:** ADR 0001 home-loss replica/failover language; ADR 0006 accepted
   risk that durable-home loss is service loss until Hub re-acquisition; the
   source-attested “receipt is bound to one live inode and cannot move”
@@ -89,6 +93,11 @@ NVMe. vLLM never opens it (ADR 0005).
   no-replace `cold adopt` remain fill paths without receipt identity.
   `cold stage-only` is removed under ADR 0012 enforcement: a self-observed
   cold tree cannot create receipt/occupancy serving identity.
+- ADR 0013 adds a private, byte-identical receipt replica under the separate
+  cold control-state namespace. Last occupancy removal now verifies that
+  replica and the model archive. Explicit receipt recovery, receipt-ID restore,
+  receipt-sized admission, private staging, and atomic no-replace restore are
+  implemented as deterministic control plane only.
 
 ## Consequences
 

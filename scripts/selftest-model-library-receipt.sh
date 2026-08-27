@@ -399,6 +399,29 @@ presence = json.load(open(sys.argv[1], encoding="utf-8"))
 assert presence["state"] == "complete"
 assert presence["kind"] == "pulsar-model-library-cold-archive-presence"
 PY
+receipt_replica="$STATE/cold/pulsar-control/download-receipts/${receipt_id}.json"
+test -f "$receipt_replica"
+[ "$(stat -c '%a' "$STATE/cold/pulsar-control")" = 700 ]
+[ "$(stat -c '%a' "$STATE/cold/pulsar-control/download-receipts")" = 700 ]
+[ "$(stat -c '%a' "$receipt_replica")" = 600 ]
+test ! -e "$STATE/cold/pulsar-receipts/${receipt_id}/receipt.json"
+env "${ARCHIVE_ENV[@]}" "$LIBRARY" home receipt status \
+  --receipt "$receipt_id" --json >"$STATE/receipt-replica-status.json"
+python3 - "$STATE/receipt-replica-status.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "verified"
+PY
+COLUMNS=48 env "${ARCHIVE_ENV[@]}" "$LIBRARY" home receipt status \
+  --receipt "$receipt_id" >"$STATE/receipt-replica-status.txt"
+grep -q 'Receipt control-state replica  verified' \
+  "$STATE/receipt-replica-status.txt"
+python3 - "$STATE/receipt-replica-status.txt" <<'PY'
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+assert max(map(len, lines)) <= 48
+PY
 env "${ARCHIVE_ENV[@]}" "$LIBRARY" home archive status "$receipt_id" \
   >"$STATE/archive-status.json"
 python3 - "$STATE/archive-status.json" <<'PY'
@@ -408,7 +431,22 @@ assert job["state"] == "complete"
 PY
 rm -rf "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
 rm -f "$STATE/library/home-occupancy"/*.json
-env "${ARCHIVE_ENV[@]}" "$LIBRARY" home restore nemotron-3-nano-30b-nvfp4 --node 0 --yes --json \
+rm -f "$STATE/library/download-receipts/${receipt_id}.json"
+rm -f "$STATE/library/catalog.json"
+if env "${ARCHIVE_ENV[@]}" "$LIBRARY" home restore "$receipt_id" \
+    --node 0 --yes --json >"$STATE/restore-missing.json" 2>"$STATE/restore-missing.err"; then
+  echo "home restore recovered a missing controller receipt implicitly" >&2
+  exit 1
+fi
+grep -q 'home receipt recover' "$STATE/restore-missing.err"
+env "${ARCHIVE_ENV[@]}" "$LIBRARY" home receipt recover \
+  --receipt "$receipt_id" --yes --json >"$STATE/receipt-recover.json"
+python3 - "$STATE/receipt-recover.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["state"] == "recovered"
+PY
+env "${ARCHIVE_ENV[@]}" "$LIBRARY" home restore "$receipt_id" --node 0 --yes --json \
   >"$STATE/restore.json"
 python3 - "$STATE/restore.json" <<'PY'
 import json, sys
@@ -416,6 +454,11 @@ result = json.load(open(sys.argv[1], encoding="utf-8"))
 assert result["state"] == "attached"
 PY
 test -d "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4/snapshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+if find "$STATE/cache/hub" -maxdepth 1 -name '.pulsar-acquire-*' | grep -q .; then
+  echo "home restore left private staging behind" >&2
+  exit 1
+fi
+env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
 env "${ARCHIVE_ENV[@]}" "$LIBRARY" home verify \
   'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
   --json >"$STATE/restore-verify.json"
@@ -504,10 +547,12 @@ if [ "$ok" != 1 ]; then
   cat "$STATE/autostart/library/cold-archive-logs/"*.log 2>/dev/null || true
   exit 1
 fi
+test -f "$STATE/autostart/cold/pulsar-control/download-receipts/${autostart_receipt}.json"
 
 "$LIBRARY" --help | grep -q 'home add <profile>'
 "$LIBRARY" --help | grep -q 'home verify'
 "$LIBRARY" --help | grep -q 'home archive'
+"$LIBRARY" --help | grep -q 'home receipt recover'
 python3 - "$REPO_DIR/scripts/model-library.sh" <<'PY'
 from pathlib import Path
 import sys
@@ -517,5 +562,9 @@ body = text[text.index("cmd_home_verify()") : text.index("cmd_home_check()")]
 assert "EXPECTED_MODEL_SEAL" not in body
 assert "reviewed expected manifest" not in body
 assert "download receipt" in body
+assert "--required-content-bytes 1" not in body
+assert "create-owned-hub-staging" in body
+assert "recheck-home-acquisition-absence" in body
+assert "publish-owned-hub-staging" in body
 PY
 echo "model-library download-receipt CLI scenarios: PASS"

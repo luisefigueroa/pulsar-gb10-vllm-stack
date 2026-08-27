@@ -4107,8 +4107,9 @@ def plan_prepare(
         fail(
             "prepare: a cold tree is not receipt/occupancy serving identity; "
             "cold stage-only is retired. Use home add --revision for a new "
-            "exact Hugging Face home, or home relocate/home restore with an "
-            "existing immutable receipt, then refresh and prepare"
+            "exact Hugging Face home, home relocate with an existing immutable "
+            "receipt, or home restore with that receipt and its protected cold "
+            "recovery set; then refresh and prepare"
         )
     if resolved.get("model_id") != profile_data.get("model_id"):
         fail("prepare: catalog model differs from the live profile")
@@ -4947,13 +4948,13 @@ def _append_cold_archive_health_issues(
         if job["state"] in {"pending", "running"}:
             issues.append(_health_issue(
                 "cold-archive-pending",
-                "receipt-indexed cold archive is pending (not a serving gate)",
+                "receipt replica and model archive are pending (not a serving gate)",
                 command="scripts/model-library.sh home archive run --receipt <id> --yes",
             ))
         elif job["state"] == "failed":
             issues.append(_health_issue(
                 "cold-archive-failed",
-                job.get("detail") or "receipt-indexed cold archive failed",
+                job.get("detail") or "receipt replica or model archive failed",
                 command="scripts/model-library.sh home archive run --receipt <id> --yes",
             ))
         elif job["state"] == "unavailable":
@@ -8377,8 +8378,8 @@ REMOVED_REVIEWED_IDENTITY_MESSAGE = (
 REMOVED_COLD_STAGE_ONLY_MESSAGE = (
     "cold stage-only was removed (ADR 0012): a self-observed cold tree cannot "
     "create receipt/occupancy serving identity. Use home add --revision for a "
-    "new exact Hugging Face home; use home relocate or home restore only with "
-    "an existing immutable receipt"
+    "new exact Hugging Face home; use home relocate with an existing immutable "
+    "receipt, or home restore with that receipt and its protected cold recovery set"
 )
 
 

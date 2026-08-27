@@ -718,22 +718,50 @@ Download crash and retry behavior:
 - `home relocate --node` grants occupancy to a destination tree after a live
   rehash. Receipt `selected_rank` is Hub-download provenance and does not
   block the move. Catalog refresh remains a separate next action.
-- After occupancy attach, `home archive` copies the receipt-indexed tree to
-  the cold root in the background. It is not a serving gate and takes **no occupancy
+- After occupancy attach, `home archive` copies the canonical receipt into the
+  private `pulsar-control/download-receipts/` namespace and separately copies
+  the receipt-indexed model tree to `pulsar-receipts/` in the background. The
+  receipt is not stored inside the model archive. This is not a serving gate and takes **no occupancy
   lifecycle lock** (exclusive would block prepare/launch; shared would block
   relocate for the whole copy). Last occupancy remove of a receipted identity
-  rehashes the cold archive on the controller (`home check`, and again after
-  `--yes` before occupancy detach). Rank 0 homes also require a distinct
+  verifies the protected receipt replica and rehashes the model archive on the
+  controller (`home check`, and again after `--yes` before occupancy detach).
+  Rank 0 homes also require a distinct
   device from occupancy. NFS, an external disk, or another mount can qualify.
-  Layout-only `presence.json` is not that proof. The occupancy rank only
+  Layout-only `presence.json` and archived bytes without the protected receipt
+  replica are not that proof. The occupancy rank only
   deletes the inspected hub tree and does not reopen receipts. An in-flight
-  copy vs remove is fail-and-retry. Archive workers flock only their job file. `home restore --node`
-  copies from that archive, rehashes, and occupies. Last occupancy remove
+  copy vs remove is fail-and-retry. Archive workers flock only their job file.
+  `home restore --node` admits the full receipt byte count, copies into private
+  same-filesystem staging, rehashes, atomically publishes without replacement,
+  and occupies. Last occupancy remove
   without a verified distinct-failure-domain replica needs
   `--allow-unarchived-last-home`. Unbound-complete trees are not homes and do
   not skip that flag. `cold scan` and no-replace `cold adopt` remain
   layout-inferred fill paths and do not mint receipts. `cold stage-only` is
   removed because self-observed cold bytes are not receipt/occupancy identity.
+
+Receipt control-state recovery is explicit and does not need a live catalog:
+
+```bash
+# Inspect or add the protected copy for an existing archive.
+scripts/model-library.sh home receipt status --receipt '<receipt_id>'
+scripts/model-library.sh home receipt backup --receipt '<receipt_id>' --yes
+
+# After controller receipt-store loss, restore authority first.
+scripts/model-library.sh home receipt recover --receipt '<receipt_id>' --yes
+
+# Restore model bytes by exact receipt identity; refresh remains separate.
+scripts/model-library.sh home restore '<receipt_id>' --node RANK --yes
+scripts/model-library.sh catalog refresh
+```
+
+`recover` accepts only the canonical receipt from the protected control-state
+namespace and writes it locally with atomic no-replace semantics. It never
+uses the model archive, `presence.json`, catalog, or old occupancy as authority.
+If the protected receipt replica is missing or invalid, recovery fails without
+fallback. Reconstructing a download receipt from archived bytes is not
+supported (ADR 0013).
 
 `pin` marks non-home hot content as purge-protected. Warm-home preparation uses
 a zero-copy symlink/runtime view of its authoritative durable HF cache on the

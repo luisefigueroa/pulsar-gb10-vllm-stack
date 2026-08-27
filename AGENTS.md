@@ -198,8 +198,14 @@ language for new features without an explicit decision.
   that live directory. Occupancy may move with `home relocate --node` after
   that same live rehash; receipt `selected_rank` is Hub-download provenance
   only ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
-  A receipt-indexed cold archive is enqueued immediately after occupancy attach
-  and must not block prepare or launch.
+  A protected byte-identical receipt replica and a separate receipt-indexed
+  model archive are enqueued immediately after occupancy attach and must not
+  block prepare or launch. The receipt replica belongs under the private cold
+  control-state namespace, never inside the model archive. Last occupancy
+  removal verifies both. A missing controller receipt is recovered only by the
+  explicit confirmation-gated receipt recovery command; archived bytes and
+  `presence.json` cannot create or authorize a receipt
+  ([ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)).
   An unknown tree without a receipt fails without fallback (ADR 0012: there is
   no lab expected-identity fallback). The shallow catalog label and a
   self-observed file list are not that proof. The skill must never download
@@ -701,10 +707,12 @@ this work; the skill is procedural and does not outrank these sources.
   drift causes visible full rehash against the receipt (or fails without
   fallback). Never treat drifted bytes as already-checked identity.
 - Warm-home pinning retains non-home working replicas but still requires the
-  durable occupancy. Home-loss recovery is occupy-in-place or restore from a
-  verified receipt-indexed cold archive
-  ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)), not
-  a second Spark durable home.
+  durable occupancy. Home-loss recovery is occupy-in-place or explicit receipt
+  recovery followed by restore from a verified protected receipt replica plus
+  its separate receipt-indexed model archive
+  ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md),
+  [ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)), not a
+  second Spark durable home.
 - For multi-rank model preparation, use topology-bound `ssh-roce` copy with
   eight streams and no automatic fallback, as recorded in ADR 0003. The model
   library is the only weight-distribution mechanism

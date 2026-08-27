@@ -41,12 +41,12 @@
 | Status | Bounded two-rank GA completed 2026-08-16 for reviewed profiles; ADR 0006 (2026-08-19) then removed the replicated and fabric paths and promoted every library scope to supported by decision, recording the open gates as accepted risks. ADR 0007 (2026-08-20) changed ordinary stop to retain unpinned prepared views. The exact DeepSeek release's strict-determinism failure remains a Model Serving Release result, not a catalog/distribution invalidation. |
 | Settled | 2026-08-08; home-view and validation-identity policy revised 2026-08-10; first reviewed identity issued 2026-08-11; flagship identity issued and qualification boundaries revised 2026-08-12; Model Serving Release policy accepted 2026-08-14; bounded two-rank `library-hot` GA completed 2026-08-16; library-only distribution accepted 2026-08-19 (ADR 0006); ordinary-stop retention accepted 2026-08-20 (ADR 0007) |
 | Supersedes (exploration) | [archive/WEIGHT_MATERIALIZE_DESIGN.md](./archive/WEIGHT_MATERIALIZE_DESIGN.md) |
-| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md); [ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md) |
+| Accepted decisions | [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md); [ADR 0002](./decisions/0002-subsystem-qualification-boundaries.md); [ADR 0003](./decisions/0003-explicit-model-preparation-transport.md); [ADR 0004](./decisions/0004-model-serving-release-validation.md); [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); [ADR 0006](./decisions/0006-model-library-only-weight-distribution.md); [ADR 0007](./decisions/0007-ordinary-stop-retains-unpinned-hot-views.md); [ADR 0008](./decisions/0008-breaking-compatibility-window.md); [ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md); [ADR 0010](./decisions/0010-operator-consumes-catalog.md); [ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md); [ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md); [ADR 0013](./decisions/0013-separate-receipt-control-replica.md) |
 | Retired live NFS serving | [ADR 0005](./decisions/0005-reject-live-nfs-rdma-serving.md); historical notes in [WEIGHT_FABRIC.md](./WEIGHT_FABRIC.md) |
 | Current operator/catalog state | [OPERATIONS.md](./OPERATIONS.md), [MODELS.md](./MODELS.md) |
-| Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working copies (`runtime_source=working-copy`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), fixed eight-stream SSH-over-RoCE preparation for multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working copies (ADR 0007) |
+| Mechanism today | The model library, for every profile (ADR 0006): one exact durable occupancy home, exact home symlink, working copies (`runtime_source=working-copy`) on non-home ranks, portable occupancy via `home relocate` (ADR 0011), a separate protected cold receipt replica plus model archive (ADR 0013), fixed eight-stream SSH-over-RoCE preparation for multi-rank profiles, exact restart, persisted replacement recovery, owned cleanup, and ordinary-stop retain of unpinned working copies (ADR 0007) |
 | Supported today | Local files on every rank for every live profile (ADR 0006/0012). Historical two-rank lab-identity gates remain in `results/`. Current serving ingress is an exact Hugging Face `model_id@commit`; a local-directory import is a future ADR, not a launch token. |
-| Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; Hugging Face `home add --revision` kept as core catalog/artifact ingress with remote-target / asymmetric-credentials as physical validation follow-ups; Hugging Face is the only current ingress format (local-directory import needs its own ADR); occupancy loss recovers via ADR 0011 relocate/restore (receipt-indexed NFS archive implementation pending); maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope |
+| Accepted risks / pending (ADR 0006) | One-rank physical serving-integration evidence; Hugging Face `home add --revision` kept as core catalog/artifact ingress with remote-target / asymmetric-credentials as physical validation follow-ups; Hugging Face is the only current ingress format (local-directory import needs its own ADR); ADR 0011/0013 relocate and recovery-set control plane is implemented while physical NFS/controller-loss and remote-rank restore evidence remain pending; maintainer-only release planning/capture tooling and the supervised `pulsar-model-onboarding` skill remain maintainer scope |
 | Retired paths | Live `live-remote-readonly` serving (ADR 0005); the replicated per-node cache path and one-shot `nfs-rdma` prepare (ADR 0006). Launch fails without fallback; historical `results/weight-fabric/` evidence is superseded and not promoted. |
 
 **Current implementation integrity boundary:** lab expected-identity files and
@@ -84,6 +84,15 @@ downloading model bytes. `home verify` later performs an offline full rehash
 against the attached receipt. Unknown trees without a receipt fail without
 fallback. Neither path creates working copies or refreshes the catalog, so
 registration remains the operator's explicit next action.
+
+After occupancy attaches, the nonblocking cold job writes a byte-identical
+receipt replica under the private `pulsar-control/download-receipts/`
+namespace and separately archives model bytes under `pulsar-receipts/`.
+The receipt is never inserted into the model archive. Last occupancy removal
+requires both protected control state and a full model-archive rehash unless
+the operator explicitly accepts unarchived loss. A missing controller receipt
+is recovered only through `home receipt recover --receipt ... --yes`; archived
+bytes and `presence.json` cannot authorize that action (ADR 0013).
 
 `scripts/model_identity.py` is the single local owner of the live
 profile-contract schema and snapshot-manifest constants. Expected-seal and
@@ -500,6 +509,11 @@ Cold is **not** the default multi-node runtime filesystem. It is an optional
   must refresh the catalog and verify or prepare the exact
   `model_id@commit`; it must not rely on mutable `refs/main` or
   profile-only resolution.
+  The background recovery job separately copies the canonical receipt into a
+  private cold control-state namespace and archives the model tree. Neither
+  action blocks preparation or launch. Existing archives can add the missing
+  receipt replica with an idempotent `home archive run` or explicit
+  `home receipt backup` (ADR 0013).
 - Catalog entries are **labeled**:
 
 | Label | Meaning |
@@ -646,8 +660,10 @@ The accepted warm-home claim is:
 - occupancy loss is service loss until ADR 0011 recovery.
 
 Home-loss resilience is occupy-in-place after a live receipt rehash, or
-restore from a verified receipt-indexed cold archive, on a distinct failure
-domain ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+restore from a verified receipt control-state replica plus its separately
+verified receipt-indexed model archive, on a distinct failure domain
+([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md),
+[ADR 0013](./decisions/0013-separate-receipt-control-replica.md)).
 A second Spark durable home, and a second copy on the same rank/filesystem,
 are not that policy. In an exact multi-node geometry, losing the
 home node also removes a required compute rank.
@@ -657,7 +673,9 @@ home node also removes a required compute rank.
 Live serving identity is the download receipt plus occupancy plus hashed local
 views ([ADR 0012](./decisions/0012-retire-expected-seal-and-schema-1-bundles.md)).
 A **receipt** records the public Hugging Face file list and SHA-256 of every
-file at `home add --revision`. **Occupancy** records that this live directory
+file at `home add --revision`. Its protected cold copy is a byte-identical
+control-state replica, not a new receipt and not part of the archived model
+tree (ADR 0013). **Occupancy** records that this live directory
 is that home. Hashes of the files on disk must match the receipt; they cannot
 invent a reviewed Model Serving Release.
 
@@ -759,7 +777,7 @@ local durable-storage dependency, not a retained network copy plane.
 | Warm-home restart with pin | Durable home plus pinned non-home hot; no transfer/catalog refresh |
 | Warm-home restart with retained unpinned views | Durable home plus remaining working copies; no transfer/catalog refresh while witness and files remain valid |
 | Warm-home restart after explicit purge | Durable home plus preparation again |
-| Restart after durable-home loss | Occupy-in-place or restore from a verified receipt-indexed cold archive ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)); Hub re-download only when no receipt and no archive exist |
+| Restart after durable-home loss | Occupy-in-place, or explicitly recover the controller receipt if needed and restore from its verified protected receipt replica plus model archive ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md), [ADR 0013](./decisions/0013-separate-receipt-control-replica.md)); archived bytes alone are insufficient |
 
 Inventory and labels must surface home identity, per-rank runtime source,
 receipt/occupancy identity, witness status, pin state, and copy-plane teardown.
@@ -795,6 +813,13 @@ Before deletion, the home node repeats the shape inspection, compares a
 metadata fingerprint, atomically renames the repository to a plan-bound
 retirement path, removes that path without following managed hot views, and
 then refreshes the catalog.
+
+For the last receipted occupancy, the controller first verifies the protected
+receipt replica and then fully rehashes the separate model archive. Confirmed
+removal repeats both checks before detaching occupancy. The occupancy rank does
+not open either receipt store. `--allow-unarchived-last-home` remains the
+explicit acknowledgement that this recovery set is absent or unusable
+(ADR 0013).
 
 A repository-local shared/exclusive lifecycle lock closes races among supported
 Pulsar catalog, preparation, launch, readiness, download, fabric, and removal
@@ -933,6 +958,8 @@ Pulsar's discovery boundary.
    symlink or equivalent local view; only non-home ranks receive working copies.
 4. **Live file identity is the receipt plus occupancy** — observed user content cannot
    self-bless or inherit a Model Serving Release decision from a repository ID.
+   A cold receipt replica stays in a separate protected control namespace; it
+   is never authority merely because it is beside archived bytes (ADR 0013).
    Lab expected-identity files are archive-only (ADR 0012).
 5. **Full verification establishes trust; metadata witnesses preserve it** —
    drift visibly rehashes against the receipt or fails without fallback.
@@ -1164,8 +1191,9 @@ rather than promotion blockers.
 - (Closed by ADR 0006) The guided/default promotion matrix: the library was
   made the only mechanism by decision; release-specific validation gates are
   untouched
-- Durable-replica and failover policy on distinct failure domains
-  **(ADR 0006 accepted risk — home loss is now product-wide service loss)**
+- Physical controller-loss recovery using the separate receipt replica plus
+  model archive. ADR 0013 implements deterministic control-plane recovery;
+  remote-rank and physical NFS/DGX evidence remain pending.
 - Budget-based or last-N hot eviction; ADR 0007 keeps capacity recovery explicit
 - Rank-sharded checkpoints (`sharded_state`) as a later requirement-B lever
 - Dedicated storage-node topology for very large N
@@ -1280,3 +1308,4 @@ rather than promotion blockers.
 | 2026-08-26 | **ADR 0012 accepted:** expected-seal and schema-1 validation bundles are not a live product. There is no schema-2 of that format. ADR 0004 objects remain `schema_version: 1` of a different kind. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the live catalog. Historical JSON is archived. |
 | 2026-08-26 | Live DESIGN, operator, revalidation, and skill text aligned with ADR 0012: current-implementation identity is receipt plus occupancy; unknown trees fail without fallback; wizard replacement does not use `identity_status=match`; `home add --revision` is the live acquisition path. Decision-log rows above stay as history. |
 | 2026-08-26 | Retired `cold stage-only`: self-observed cold bytes cannot create `receipt-occupancy` hot state. Public and internal commands fail without fallback; existing stage-only state cannot launch and remains cleanup-only. A future cold-only serving contract requires a new ADR and a non-occupancy identity class. |
+| 2026-08-26 | **ADR 0013 accepted:** cold recovery stores the immutable receipt as a protected byte-identical control-state replica separate from the model archive. Last occupancy removal requires both parts. Receipt recovery is explicit; restore accepts exact receipt identity, uses receipt-sized admission, private same-filesystem staging, full verification, and atomic no-replace publication. Deterministic control-plane tests only; no physical NFS, controller-loss, remote-rank, or serving claim. |

@@ -572,6 +572,28 @@ for explicit unpin and purge.
       non-home durable repository or working copy created; and
     - the result states that catalog refresh, preparation, launch, model
       qualification, status, decision, and promotion did not occur.
+15. Receipt control-state replica, last-home recovery-set checks, or archive
+    restore changes (ADR 0013):
+    - archive publication writes the canonical receipt under the private cold
+      control-state namespace and never inserts it into the model archive;
+    - canonical encoding, receipt ID, filename, regular-file shape, private
+      permissions, stable read, and atomic no-replace behavior pass;
+    - a complete model archive without the protected receipt replica blocks
+      last occupancy removal, and confirmed removal repeats both receipt and
+      full model-archive verification before occupancy detach;
+    - simulated controller receipt loss does not make restore import authority
+      automatically; explicit `home receipt recover --receipt ... --yes`
+      restores only the exact protected receipt;
+    - restore by receipt ID works without a live catalog, uses the receipt's
+      complete byte count for admission, copies only into private
+      same-filesystem staging, fully rehashes before atomic no-replace
+      publication, and creates new occupancy from the published directory;
+    - collision, interruption, corrupt replica, corrupt archive, insufficient
+      capacity, and failed occupancy attachment preserve existing homes and do
+      not bless archived bytes; and
+    - the recovery result remains catalog/artifact evidence. Repeat physical
+      NFS/controller-loss and remote-rank restore before claiming those
+      behaviors on DGX hardware.
 
 The historical lab expected-identity acquisition contract passed a three-node
 physical gate on 2026-08-13 using the then-live `qwen3-1.7b` profile. The run proved guarded removal

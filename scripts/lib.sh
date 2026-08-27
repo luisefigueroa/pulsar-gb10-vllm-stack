@@ -868,7 +868,7 @@ REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): d
 REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --legacy-tested (historical STATUS=tested*). It does not mean ADR 0004 Validated.'
 REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): drop the flag. --reviewed-identity is retired (ADR 0012). It does not mean ADR 0004 Validated.'
 REMOVED_ACTIVATE_MESSAGE='activate was removed (ADR 0008): use prepare.'
-REMOVED_COLD_STAGE_ONLY_MESSAGE='cold stage-only was removed (ADR 0012): a self-observed cold tree cannot create receipt/occupancy serving identity. Use home add --revision for a new exact Hugging Face home; use home relocate or home restore only with an existing immutable receipt.'
+REMOVED_COLD_STAGE_ONLY_MESSAGE='cold stage-only was removed (ADR 0012): a self-observed cold tree cannot create receipt/occupancy serving identity. Use home add --revision for a new exact Hugging Face home; use home relocate with an existing immutable receipt, or home restore with that receipt and its protected cold recovery set.'
 
 refuse_removed_force_flag() {
   die "$REMOVED_FORCE_MESSAGE" 2

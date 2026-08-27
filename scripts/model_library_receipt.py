@@ -1982,7 +1982,11 @@ def _iter_private_store_final_paths(
     return finals
 
 
-def _load_receipt_path(path: pathlib.Path) -> dict[str, Any]:
+def _load_receipt_path(
+    path: pathlib.Path,
+    *,
+    require_canonical: bool = False,
+) -> dict[str, Any]:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
@@ -2005,10 +2009,17 @@ def _load_receipt_path(path: pathlib.Path) -> dict[str, Any]:
     )
     if path.name != f"{receipt['receipt_id']}.json":
         fail("download-receipt receipt filename does not match its identity")
+    if require_canonical and raw != model_identity.pretty_json_bytes(receipt):
+        fail("download-receipt receipt does not use canonical JSON encoding")
     return receipt
 
 
-def _write_receipt_exclusive(path: pathlib.Path, receipt: dict[str, Any]) -> None:
+def _write_receipt_exclusive(
+    path: pathlib.Path,
+    receipt: dict[str, Any],
+    *,
+    operation: str,
+) -> None:
     raw = model_identity.pretty_json_bytes(receipt)
     store_fd = os.open(
         path.parent,
@@ -2041,7 +2052,7 @@ def _write_receipt_exclusive(path: pathlib.Path, receipt: dict[str, Any]) -> Non
                 follow_symlinks=False,
             )
         except FileExistsError:
-            fail("home add: a download-receipt receipt already exists")
+            fail(f"{operation}: a download-receipt receipt already exists")
         os.unlink(temp_name, dir_fd=store_fd)
         temp_created = False
         os.fsync(store_fd)
@@ -2057,6 +2068,8 @@ def _write_receipt_exclusive(path: pathlib.Path, receipt: dict[str, Any]) -> Non
 def write_source_attested_receipt(
     library_dir: str | pathlib.Path,
     receipt: dict[str, Any],
+    *,
+    operation: str = "home add",
 ) -> dict[str, Any]:
     receipt = validate_source_attested_acquisition_receipt(receipt)
     store = _ensure_receipt_store(library_dir)
@@ -2067,20 +2080,22 @@ def write_source_attested_receipt(
         snapshot_revision=receipt["snapshot_revision"],
     ):
         if not source_attested_receipts_are_content_compatible(existing, receipt):
-            fail("home add: an incompatible download-receipt receipt already exists")
+            fail(
+                f"{operation}: an incompatible download-receipt receipt already exists"
+            )
     if path.exists() or path.is_symlink():
         existing = load_source_attested_receipt(library_dir, receipt["receipt_id"])
         if existing != receipt:
-            fail("home add: a different download-receipt receipt already exists")
+            fail(f"{operation}: a different download-receipt receipt already exists")
         return existing
     try:
-        _write_receipt_exclusive(path, receipt)
+        _write_receipt_exclusive(path, receipt, operation=operation)
     except SourceAttestedAcquisitionError as exc:
         if "already exists" not in str(exc):
             raise
         existing = load_source_attested_receipt(library_dir, receipt["receipt_id"])
         if existing != receipt:
-            fail("home add: a different download-receipt receipt already exists")
+            fail(f"{operation}: a different download-receipt receipt already exists")
         return existing
     return receipt
 
@@ -2088,10 +2103,12 @@ def write_source_attested_receipt(
 def load_source_attested_receipt(
     library_dir: str | pathlib.Path,
     receipt_id: str,
+    *,
+    require_canonical: bool = False,
 ) -> dict[str, Any]:
     receipt_id = _validate_hex_id(receipt_id, label="receipt_id")
     path = source_attested_receipt_store(library_dir) / f"{receipt_id}.json"
-    return _load_receipt_path(path)
+    return _load_receipt_path(path, require_canonical=require_canonical)
 
 
 def source_attested_receipts_are_content_compatible(
@@ -3285,7 +3302,15 @@ def cmd_detach_current_home(args: argparse.Namespace) -> int:
 
 def cmd_find_receipt(args: argparse.Namespace) -> int:
     if args.receipt_id:
-        receipt = load_source_attested_receipt(args.library_dir, args.receipt_id)
+        receipt_path = source_attested_receipt_store(args.library_dir) / (
+            f"{_validate_hex_id(args.receipt_id, label='receipt_id')}.json"
+        )
+        if not receipt_path.exists() and not receipt_path.is_symlink():
+            if not args.allow_missing:
+                fail("download-receipt receipt not found")
+            receipt = None
+        else:
+            receipt = load_source_attested_receipt(args.library_dir, args.receipt_id)
     elif not args.model_id or not args.revision:
         fail("find-receipt requires --receipt-id or --model-id and --revision")
     else:
