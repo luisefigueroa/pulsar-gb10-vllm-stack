@@ -539,29 +539,21 @@ If more than one home is registered for the **same model identity** (prefer
   exists. The operator must first select the intended survivor.
 - No automatic destructive delete without confirmation.
 
-### 3.4 Cold → cluster
+### 3.4 Cold fill paths
 
-Two operator options:
+Cold may use non-hub layouts such as `Official Models/…`. `cold scan`,
+`cold show`, and cold resolution inspect those layouts. No-replace
+`cold adopt` may copy one complete-looking tree through private
+same-filesystem staging into an absent Hugging Face path, but it creates no
+download receipt or occupancy. Catalog refresh therefore classifies that tree
+as unbound fill-path content, not a home or serving identity.
 
-| Mode | Durable warm home on a Spark? | Use |
-|---|---|---|
-| **Adopt** | Yes — import into a Spark HF home and register | Grows federated library |
-| **Stage-only** | No — cold → hot for this job only | Saves Spark disk; cold remains sole durable copy |
-
-Stage-only hot is fully materialized, so retaining or pinning it can allow a
-restart without cold. Warm-home preparation is different by design: its home
-rank uses a zero-copy symlink into the durable HF cache, so retaining that hot
-instance does not make it independent of the durable home.
-
-An atomic same-filesystem move is allowed only as an explicit **adopt** into a
-managed durable root after the observed content matches the download receipt
-(or a complete hashed file list). It is never a preparation shortcut into
-purgeable hot storage. Adoption must keep home removal and rollback behavior
-explicit.
-
-Cold may use non-hub layouts (e.g. “Official Models/…”). Import/mapping into
-hub-shaped warm form (or documented absolute-path confs) must be explicit and
-fail without fallback on incomplete trees.
+`cold stage-only` is removed under ADR 0012. It created hot state directly
+from self-observed cold bytes and mislabeled that state `receipt-occupancy`.
+Previously created stage-only state cannot launch and remains discoverable
+only for explicit unpin/purge cleanup. A future cold-only serving mode would
+need a new ADR, an exact source/receipt contract, and an identity class that is
+not occupancy.
 
 ### 3.5 Absolute-path / catalog confs
 
@@ -616,7 +608,6 @@ managed content, still count toward that rank's current owned-hot total.
 | Ordinary stop (unpinned retain) | Keep verified hot, still reclaimable | Reuse ready witness when identity and files match | **Still required** |
 | Explicit `--purge-hot` | Purged | Prepare again before restart | Required as preparation source |
 | **Pinned warm-home** | Keep verified hot, protected from unforced purge | No cold, transfer, or catalog refresh | **Still required** |
-| **Pinned cold stage-only** | Keep every staged rank | May be self-contained | No warm home exists |
 | Running warm-home | Working copies on non-home ranks | N/A | **Required on its rank** |
 
 Pins are bounded by a per-rank filesystem-backed hot policy, not unlimited
@@ -627,7 +618,7 @@ explicit hard cap with `PULSAR_HOT_BUDGET_BYTES` or replace the default reserve
 with `PULSAR_HOT_RESERVE_BYTES`; both values apply independently on every
 selected rank.
 
-Prepare, cold stage-only, pin, and budget inventory collect an exact
+Prepare, pin, and budget inventory collect an exact
 observation from every selected physical rank before mutation. A missing,
 duplicate, unreachable, or blocked rank fails the all-rank barrier before
 model bytes change. Accounting uses filesystem space available to the service
@@ -768,7 +759,6 @@ local durable-storage dependency, not a retained network copy plane.
 | Warm-home restart with pin | Durable home plus pinned non-home hot; no transfer/catalog refresh |
 | Warm-home restart with retained unpinned views | Durable home plus remaining working copies; no transfer/catalog refresh while witness and files remain valid |
 | Warm-home restart after explicit purge | Durable home plus preparation again |
-| Cold stage-only restart with complete pin | Pinned staged trees; cold may be unavailable |
 | Restart after durable-home loss | Occupy-in-place or restore from a verified receipt-indexed cold archive ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)); Hub re-download only when no receipt and no archive exist |
 
 Inventory and labels must surface home identity, per-rank runtime source,
@@ -1289,3 +1279,4 @@ rather than promotion blockers.
 | 2026-08-26 | Issued the two-rank TP=2 Qwen3.8-27B-FP8 Model Serving Release lineage (`2c653ea4…`). Exact same-boot, absolute throughput, and absolute latency passed; provenance/security is pending with an empty leftover review-evidence list; stability, accuracy, serving integration, and physical geometry remain unevaluated. Advisory decision is `Testing incomplete`. The profile is not bound. Legacy `STATUS`, recommendation/default policy, and serving permission are unchanged. |
 | 2026-08-26 | **ADR 0012 accepted:** expected-seal and schema-1 validation bundles are not a live product. There is no schema-2 of that format. ADR 0004 objects remain `schema_version: 1` of a different kind. `qwen3-1.7b` and `deepseek-v4-flash` are dropped from the live catalog. Historical JSON is archived. |
 | 2026-08-26 | Live DESIGN, operator, revalidation, and skill text aligned with ADR 0012: current-implementation identity is receipt plus occupancy; unknown trees fail without fallback; wizard replacement does not use `identity_status=match`; `home add --revision` is the live acquisition path. Decision-log rows above stay as history. |
+| 2026-08-26 | Retired `cold stage-only`: self-observed cold bytes cannot create `receipt-occupancy` hot state. Public and internal commands fail without fallback; existing stage-only state cannot launch and remains cleanup-only. A future cold-only serving contract requires a new ADR and a non-occupancy identity class. |

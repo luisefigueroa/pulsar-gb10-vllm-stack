@@ -85,8 +85,10 @@ NVMe. vLLM never opens it (ADR 0005).
   (`home check`, and again after `--yes`). Rank-local execute only deletes
   the inspected hub tree. Distinct-device proof is same-host (rank 0) only.
   Unbound-complete trees are not last-home alternates. Physical cold archive
-  and restore on DGX hardware are not claimed. Legacy `cold scan` /
-  `cold adopt` / `cold stage-only` remain fill paths without receipt identity.
+  and restore on DGX hardware are not claimed. Legacy `cold scan` and
+  no-replace `cold adopt` remain fill paths without receipt identity.
+  `cold stage-only` is removed under ADR 0012 enforcement: a self-observed
+  cold tree cannot create receipt/occupancy serving identity.
 
 ## Consequences
 

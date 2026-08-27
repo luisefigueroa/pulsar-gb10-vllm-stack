@@ -15,6 +15,7 @@ FORBIDDEN_CLAIMS = (
     "current working tree contains ten profiles",
     "physical gate below remains pending",
     "guided replicated path",
+    "scripts/model-library.sh cold stage-only <profile> --yes",
 )
 ACTIVE_CURRENT_STATE = (
     REPO_ROOT / "README.md",

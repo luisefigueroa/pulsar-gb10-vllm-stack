@@ -584,6 +584,7 @@ exits 2. They are not unknown-argument failures.
 | `list-models.sh --validated` | `--legacy-tested` (historical `STATUS=tested*`). Not ADR 0004 `Validated`. |
 | `model-library.sh catalog list --validated` | Drop the flag. `--reviewed-identity` is retired (ADR 0012). Not ADR 0004 `Validated`. |
 | `model-library.sh activate` | `prepare` |
+| `model-library.sh cold stage-only` | Use receipt-backed `home add --revision`, `home relocate`, or `home restore`, then `prepare`. Existing stage-only hot state is cleanup-only. |
 | `model-library.sh hot legacy check\|remove` | Removed. Leftover older working-copy metadata still cannot launch. Health remains read-only. |
 
 `--force-unpin` on `purge-hot` and older `detect-fabric`
@@ -730,13 +731,13 @@ Download crash and retry behavior:
   copies from that archive, rehashes, and occupies. Last occupancy remove
   without a verified distinct-failure-domain replica needs
   `--allow-unarchived-last-home`. Unbound-complete trees are not homes and do
-  not skip that flag. `cold scan` / `cold adopt` / `cold stage-only` stay
-  layout-inferred fill paths and do not mint receipts.
+  not skip that flag. `cold scan` and no-replace `cold adopt` remain
+  layout-inferred fill paths and do not mint receipts. `cold stage-only` is
+  removed because self-observed cold bytes are not receipt/occupancy identity.
 
-`pin` marks non-home hot content as purge-protected. Cold stage-only hot may
-be fully self-contained. Warm-home preparation is deliberately different: the
-home rank uses a zero-copy symlink/runtime view of its authoritative durable HF
-cache, and only non-home ranks own working copies (`runtime_source=working-copy`). Home-rank hot
+`pin` marks non-home hot content as purge-protected. Warm-home preparation uses
+a zero-copy symlink/runtime view of its authoritative durable HF cache on the
+home rank, and only non-home ranks own working copies (`runtime_source=working-copy`). Home-rank hot
 materialization is ruled out by
 [ADR 0001](./decisions/0001-model-library-home-view-and-validation-identity.md).
 
@@ -924,10 +925,10 @@ scripts/model-library.sh budget --json  # site-local automation; contains node/p
 The default preserves user-available filesystem space equal to
 `max(64 GiB, 5% of total capacity)` on each selected rank and has no arbitrary
 hard cap. A warm-home preparation charges zero new model bytes on the home rank
-and the exact manifest size on each non-home rank; cold stage-only charges every
-selected rank. Existing tracked, untracked, or malformed content below the hot
-root is counted. Preparation, pin, and cold stage-only display the all-rank plan
-and refuse before writes when any observation is missing or blocked.
+and the exact manifest size on each non-home rank. Existing tracked, untracked,
+or malformed content below the hot root is counted. Preparation and pin display
+the all-rank plan and refuse before writes when any observation is missing or
+blocked.
 
 `PULSAR_HOT_BUDGET_BYTES` adds an optional per-rank hard cap.
 `PULSAR_HOT_RESERVE_BYTES` explicitly replaces the default reserve (including
@@ -998,10 +999,6 @@ scripts/model-library.sh resolve <profile> --json   # warm, else cold
 # grow the library (durable warm home on this node’s HF cache)
 scripts/model-library.sh cold adopt <org>/<name> --yes
 scripts/model-library.sh catalog refresh
-
-# or stage for this job only (cold remains sole durable copy)
-scripts/model-library.sh cold stage-only <profile> --yes
-scripts/up.sh <profile>
 ```
 
 `cold adopt` is no-replace. It refuses any existing repository at the target
@@ -1012,6 +1009,19 @@ lifecycle lock is exclusive for the operation, so supported preparation,
 launch, catalog mutation, relocation, and home removal cannot race the copy.
 The adopted tree still has no download receipt or occupancy; catalog refresh
 therefore treats it as an unbound fill-path tree, not serving identity.
+
+`cold stage-only` is removed (ADR 0012). It cannot turn an unreceipted cold
+tree into launchable hot state. Previously created stage-only state is rejected
+by readiness and launch checks but remains discoverable for explicit cleanup:
+
+```bash
+scripts/model-library.sh unpin <profile>       # when pinned
+scripts/model-library.sh purge-hot <profile> --yes --force-unpin
+```
+
+For serving, use `home add --revision` to create a new exact receipted home,
+or `home relocate` / `home restore` when an immutable receipt already exists;
+then refresh the catalog and run normal `prepare`.
 
 Unset/empty cold config skips the tier (no mount required). If cold is
 configured but unreadable, flows that **need** cold (warm miss, absolute-path

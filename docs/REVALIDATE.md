@@ -434,6 +434,11 @@ every pre-existing destination is preserved, the copy stays in private
 same-filesystem staging, an interrupted copy leaves no partial final
 repository, and a destination race loses to atomic no-replace publication.
 
+`cold stage-only` is retired. Its public command and internal planner must
+exit 2 with receipt-backed migration guidance. Any previously created
+stage-only hot state must fail readiness/launch while remaining discoverable
+for explicit unpin and purge.
+
 1. (historical) two-node replicated-local and fabric cold I/O/startup A/B;
 2. three-node concurrent loading and interface-counter proof;
 3. deterministic/correctness/long-context gates on the healthy fabric service;
@@ -470,7 +475,7 @@ repository, and a destination race loses to atomic no-replace publication.
    - every selected rank is observed exactly once and unreachable/missing ranks
      fail without fallback;
    - warm-home charges zero model bytes on the home rank and exact file-list
-     bytes on each non-home rank; cold stage-only charges every rank;
+     bytes on each non-home rank;
    - a large-model dry-run preserves the default
      `max(64 GiB, 5% filesystem capacity)` reserve on every selected rank;
    - an explicit undersized hard cap blocks before mutation; and

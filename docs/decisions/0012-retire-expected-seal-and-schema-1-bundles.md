@@ -76,6 +76,19 @@ later than keep dead dual-stack code.
   sealed profile because those profiles are gone. Ordinary stop/purge of
   leftover services is site cleanup. No automatic privileged sweep.
 
+## Implementation note — 2026-08-26
+
+Legacy `cold stage-only` is removed. It built a manifest from the selected
+cold tree and then labeled the resulting hot state `receipt-occupancy` without
+an immutable receipt or live occupancy. That contradicted decision 5 and the
+unknown-tree consequence above. The public command and internal planner now
+fail without fallback and name receipt-backed acquisition or recovery.
+Previously created stage-only hot state is not launchable; it remains
+discoverable only so `unpin` / `purge-hot --force-unpin` can remove it.
+`cold scan`, `cold show`, and no-replace `cold adopt` remain non-authoritative
+fill-path tools. A future cold-only serving product requires a new ADR and an
+identity class that is not occupancy.
+
 ## Rejected alternatives
 
 - **Bump seals/bundles to schema 2.** That keeps a dual identity product

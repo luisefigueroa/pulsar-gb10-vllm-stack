@@ -59,8 +59,6 @@ Usage:
   scripts/model-library.sh cold show <model_id|/abs/path> [--json]
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
       [--cache-root PATH] [--yes]
-  scripts/model-library.sh cold stage-only <profile>
-      [--yes] [--nodes N]
   scripts/model-library.sh prepare <profile>
       [--transport ssh-control|ssh-roce]
       [--yes] [--interactive-sudo] [--time]
@@ -83,8 +81,10 @@ Notes:
     org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
   • cold adopt imports into an absent durable warm HF path through private
     same-filesystem staging and atomic no-replace publication. It never deletes
-    or overwrites an existing repository. cold stage-only fills hot only (cold
-    remains sole durable copy; pin still allows warm restart).
+    or overwrites an existing repository.
+  • cold stage-only is removed (ADR 0012): self-observed cold bytes cannot
+    create receipt/occupancy serving identity. Use receipt-backed home add,
+    relocate, or restore followed by normal prepare.
   • Catalog identity labels are receipt/occupancy or
     unvalidated. Local bytes never create an ADR 0004 decision. --reviewed-identity
     and archived combined-identity verification are retired (ADR 0012). --validated
@@ -145,9 +145,8 @@ Notes:
     external disk, or another distinct-failure-domain mount. home archive
     status|run take no occupancy lifecycle lock so they cannot block prepare,
     launch, or relocate; workers flock only their job file. home restore
-    occupy from that archive after a live rehash. vLLM never reads the cold
-    archive. Legacy cold scan/adopt/stage-only remain fill paths, not receipt
-    identity.
+    occupies from that archive after a live rehash. vLLM never reads the cold
+    archive. Legacy cold scan/adopt remain fill paths, not receipt identity.
   • prepare --transport ssh-control|ssh-roce selects rsync SSH over the
     confirmed management or RoCE path. RoCE is TCP/IP over the NIC, not RDMA.
     --copy-streams N size-balances HF blobs over independent SSH connections
@@ -168,13 +167,14 @@ Notes:
     A/B (no product default change). Requires current topology SSH enrollment
     and sshd on fabric IPs. Each report is one ordered pair; repeat both
     --order values before any fast-path decision.
-  • pin prevents purge. Cold stage-only hot is self-contained; warm-home
-    preparation currently keeps a home-rank symlink and still needs that home.
+  • pin prevents purge. Warm-home preparation keeps a home-rank symlink and
+    still needs that home. Retired cold stage-only state cannot launch but may
+    be removed with purge-hot (use --force-unpin when needed).
   • health is read-only: it uses the cached catalog, shallow metadata/witness
     observations, and managed-container labels without hashing model bytes.
     Schema-1/2 hot instances are untrusted and cannot launch. hot legacy
     check|remove is removed (SIM-13). Doctor never repairs automatically.
-  • prepare, cold stage-only, pin, and budget observe every selected rank.
+  • prepare, pin, and budget observe every selected rank.
     The default preserves max(64 GiB, 5% of filesystem capacity) as available
     space; PULSAR_HOT_BUDGET_BYTES optionally adds a hard cap and
     PULSAR_HOT_RESERVE_BYTES explicitly overrides the reserve. No auto-eviction
@@ -887,116 +887,6 @@ cmd_cold_adopt() {
   fi
   log "adopted $model_id into $dest"
   log "next: scripts/model-library.sh catalog refresh"
-}
-
-cmd_cold_stage_only() {
-  local profile="" yes=0 nodes=1 root=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --yes|-y) yes=1 ;;
-      --allow-unvalidated) refuse_removed_allow_unvalidated_flag ;;
-      --nodes)
-        shift
-        [ $# -gt 0 ] || die "--nodes needs a value"
-        nodes="$1"
-        ;;
-      --root)
-        shift
-        [ $# -gt 0 ] || die "--root needs a path"
-        root="$1"
-        ;;
-      -h|--help) usage; return 0 ;;
-      *)
-        [ -z "$profile" ] || die "unexpected arg: $1"
-        profile="$1"
-        ;;
-    esac
-    shift
-  done
-  [ -n "$profile" ] || die "usage: cold stage-only <profile> [--yes]"
-  require_py
-  load_cluster_topology >/dev/null \
-    || die "confirmed topology required (scripts/detect-fabric.sh --write-topology)"
-
-  local plan_args=(
-    plan-cold-stage
-    --profile "$profile"
-    --topology-id "${CLUSTER_TOPOLOGY_ID}"
-    --hot-root "$HOT_ROOT"
-    --models-dir "$REPO_DIR/models"
-    --nodes "$nodes"
-  )
-  if [ -f "$CATALOG_FILE" ]; then
-    plan_args+=(--catalog "$CATALOG_FILE")
-  fi
-  if [ -n "$root" ]; then
-    plan_args+=(--cold-root "$root")
-  else
-    # shellcheck disable=SC2207
-    plan_args+=($(cold_root_args))
-  fi
-
-
-  local plan action expected_validation_json rank budget_plan
-  plan=$(python3 "$PY_TOOL" "${plan_args[@]}")
-  action=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-  expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
-  budget_plan=$(build_hot_budget_plan_from_activation "$plan" cold-stage-only) \
-    || die "cold stage-only: all-rank hot admission failed"
-  render_hot_budget_plan_json "$budget_plan"
-  hot_budget_plan_is_eligible "$budget_plan" \
-    || die "cold stage-only: hot admission is blocked; no bytes were changed"
-  if [ "$action" = "skip" ]; then
-    log "hot already ready for $profile (stage-only skip) — verifying ranks"
-    for ((rank = 0; rank < nodes; rank++)); do
-      verify_hot_on_rank "$rank" \
-        "$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')" \
-        "$profile" "${CLUSTER_TOPOLOGY_ID}" 0 "$expected_validation_json" \
-        || die "rank $rank: stage-only hot verify failed"
-    done
-    printf '%s\n' "$plan"
-    return 0
-  fi
-
-  local model_id source hub_dest instance bytes
-  model_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
-  source=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_path"])')
-  hub_dest=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hub_dest"])')
-  instance=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  bytes=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("bytes_logical") or 0)')
-
-  library_confirm "$yes" \
-    "Stage-only cold → hot (no durable warm home)
-  profile: $profile
-  model:   $model_id
-  source:  $source
-  hot:     $hub_dest
-  bytes:   $bytes
-  Unpinned restart will need cold again."
-
-  # Local controller materialize + stamp (multi-rank stage-only copies hub_dest
-  # via the same rsync preparation path when nodes>1 — rank 0 first).
-  python3 "$PY_TOOL" "${plan_args[@]}" --execute >/dev/null
-
-  if [ "$nodes" -gt 1 ]; then
-    local stamp_json verifying_stamp_json
-    stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
-    verifying_stamp_json=$(printf '%s' "$stamp_json" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-d["state"]="verifying"
-print(json.dumps(d))
-')
-    for ((rank = 1; rank < nodes; rank++)); do
-      copy_hub_to_rank "$rank" "$hub_dest" "$hub_dest" 0
-      write_stamp_on_rank "$rank" "$instance" "$verifying_stamp_json"
-      verify_hot_on_rank "$rank" "$instance" "$profile" \
-        "${CLUSTER_TOPOLOGY_ID}" 1 "$expected_validation_json"
-      write_stamp_on_rank "$rank" "$instance" "$stamp_json"
-    done
-  fi
-  log "stage-only ready: $instance"
-  printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); d["executed"]=True; print(json.dumps(d, indent=2, sort_keys=True))'
 }
 
 cmd_cleanup_recommend() {
@@ -3298,19 +3188,24 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
 }
 
 hot_instance_for_profile_on_rank() {
-  local profile="${1:?}" rank="${2:?}" command info stamp
+  local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}"
+  local command info stamp
+  local -a launch_args=()
+  [ "$require_launchable" = 0 ] || launch_args+=(--for-launch)
   if [ "$rank" -eq 0 ]; then
     python3 "$PY_TOOL" find-hot \
       --profile "$profile" \
       --topology-id "${CLUSTER_TOPOLOGY_ID}" \
       --hot-root "$HOT_ROOT" \
-      --models-dir "$REPO_DIR/models"
+      --models-dir "$REPO_DIR/models" \
+      "${launch_args[@]}"
     return
   fi
   command=$(shell_join_q python3 - find-hot \
     --profile "$profile" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --hot-root "$HOT_ROOT")
+    --hot-root "$HOT_ROOT" \
+    "${launch_args[@]}")
   info=$(ssh_node "$rank" "$command" <"$PY_TOOL") || return 1
   stamp=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
@@ -3342,8 +3237,8 @@ resolve_hot_profile_targets() {
       rank="$home_rank"
       resolve_single_node_placement "$rank" || return 1
     else
-      # Cold stage-only and historical hot state may have no warm catalog home;
-      # those existing workflows use the profile's original rank-0 geometry.
+      # Historical hot state may have no warm catalog home. Retired cold
+      # stage-only state is discoverable for cleanup but cannot launch.
       rank=0
       resolve_single_node_placement "$rank" || return 1
     fi
@@ -3388,7 +3283,8 @@ cmd_pin() {
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
     || die "pin: cannot resolve exact local-files placement"
-  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
+  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}" 1) \
+    || die "pin: retired cold stage-only state is cleanup-only and cannot be pinned"
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$HOT_TARGET_RANKS_CSV") \
     || die "pin: all-rank hot budget observation failed"
@@ -3825,6 +3721,9 @@ main() {
   shift
   # Refuse before locks so the old public alias does not wait on a hot lock.
   [ "$cmd" = activate ] && refuse_removed_activate_command
+  if [ "$cmd" = cold ] && [ "${1:-}" = stage-only ]; then
+    refuse_removed_cold_stage_only_command
+  fi
   case "$cmd:${1:-}:${2:-}" in
     -h:*|--help:*|help:*) ;;
     home:archive:*)
@@ -3845,11 +3744,6 @@ main() {
   case "$cmd" in
     prepare|pin|unpin|purge-hot)
       acquire_model_library_hot_lock exclusive
-      ;;
-    cold)
-      if [ "${1:-}" = stage-only ]; then
-        acquire_model_library_hot_lock exclusive
-      fi
       ;;
     budget)
       acquire_model_library_hot_lock shared
@@ -3906,7 +3800,7 @@ main() {
         scan) cmd_cold_scan "$@" ;;
         show) cmd_cold_show "$@" ;;
         adopt) cmd_cold_adopt "$@" ;;
-        stage-only) cmd_cold_stage_only "$@" ;;
+        stage-only) refuse_removed_cold_stage_only_command ;;
         *) usage; exit 2 ;;
       esac
       ;;
