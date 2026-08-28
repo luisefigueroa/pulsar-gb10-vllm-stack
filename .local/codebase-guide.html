@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="no-referrer">
+  <title>Pulsar GB10 vLLM stack — codebase guide</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --bg-raised: #fffdf8;
+      --ink: #1c1915;
+      --muted: #5c564c;
+      --line: #d9d0c1;
+      --accent: #1f5c4d;
+      --accent-soft: #dceae4;
+      --warn: #8a4b12;
+      --warn-soft: #f3e4d0;
+      --code-bg: #ece6da;
+      --sidebar: #ebe4d7;
+      --shadow: 0 1px 0 rgba(28, 25, 21, 0.06);
+      --mono: "IBM Plex Mono", "ui-monospace", "SFMono-Regular", Menlo, Consolas, monospace;
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --sans: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    }
+    [data-theme="dark"] {
+      --bg: #161411;
+      --bg-raised: #1f1b16;
+      --ink: #f0eadf;
+      --muted: #b3aa9b;
+      --line: #3a342b;
+      --accent: #7dbaa6;
+      --accent-soft: #24352f;
+      --warn: #e0b07a;
+      --warn-soft: #3a2c1c;
+      --code-bg: #2a251e;
+      --sidebar: #1a1713;
+      --shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: var(--sans);
+      font-size: 17px;
+      line-height: 1.55;
+    }
+    a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+    a:hover { text-decoration-thickness: 2px; }
+    .app {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line);
+      padding: 1.25rem 1rem 2rem;
+    }
+    aside h1 {
+      font-family: var(--serif);
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin: 0 0 0.25rem;
+      line-height: 1.3;
+    }
+    aside .meta {
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-bottom: 1rem;
+    }
+    nav a {
+      display: block;
+      color: var(--ink);
+      text-decoration: none;
+      padding: 0.28rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.86rem;
+    }
+    nav a:hover, nav a:focus { background: var(--accent-soft); }
+    nav .sub { padding-left: 0.95rem; color: var(--muted); }
+    .tools {
+      display: flex;
+      gap: 0.4rem;
+      margin: 0.75rem 0 1rem;
+    }
+    button {
+      font: inherit;
+      font-size: 0.78rem;
+      border: 1px solid var(--line);
+      background: var(--bg-raised);
+      color: var(--ink);
+      border-radius: 4px;
+      padding: 0.25rem 0.5rem;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    main {
+      max-width: 46rem;
+      padding: 2rem 2.25rem 5rem;
+    }
+    header.hero {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    header.hero p.kicker {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin: 0 0 0.4rem;
+    }
+    header.hero h1 {
+      font-family: var(--serif);
+      font-size: 2.05rem;
+      line-height: 1.15;
+      margin: 0 0 0.7rem;
+      font-weight: 650;
+    }
+    .lede { font-size: 1.12rem; color: var(--muted); margin: 0; }
+    .callout {
+      background: var(--warn-soft);
+      border-left: 3px solid var(--warn);
+      padding: 0.75rem 1rem;
+      margin: 1.25rem 0;
+      font-size: 0.95rem;
+    }
+    .note {
+      background: var(--accent-soft);
+      border-left: 3px solid var(--accent);
+      padding: 0.75rem 1rem;
+      margin: 1.25rem 0;
+    }
+    h2 {
+      font-family: var(--serif);
+      font-size: 1.55rem;
+      margin: 2.4rem 0 0.7rem;
+      scroll-margin-top: 1rem;
+    }
+    h3 {
+      font-size: 1.12rem;
+      margin: 1.6rem 0 0.5rem;
+      scroll-margin-top: 1rem;
+    }
+    p { margin: 0.7rem 0; }
+    ul, ol { padding-left: 1.25rem; }
+    li { margin: 0.28rem 0; }
+    code, kbd {
+      font-family: var(--mono);
+      font-size: 0.86em;
+      background: var(--code-bg);
+      padding: 0.08em 0.32em;
+      border-radius: 3px;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      overflow: auto;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+    pre code { background: none; padding: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      margin: 0.9rem 0 1.2rem;
+      background: var(--bg-raised);
+      box-shadow: var(--shadow);
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 0.45rem 0.55rem;
+    }
+    th { font-size: 0.78rem; letter-spacing: 0.02em; color: var(--muted); font-weight: 650; }
+    .diagram {
+      background: var(--bg-raised);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin: 1rem 0;
+      overflow: auto;
+    }
+    .diagram svg { display: block; width: 100%; height: auto; }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    @media (max-width: 860px) {
+      .app { grid-template-columns: 1fr; }
+      aside {
+        position: relative;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      main { padding: 1.25rem 1rem 4rem; }
+    }
+    @media print {
+      aside, .tools { display: none; }
+      .app { display: block; }
+      body { background: #fff; color: #111; }
+      main { max-width: none; padding: 0; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <h1>Pulsar GB10 stack</h1>
+      <p class="meta">Local private reading copy<br>2026-08-13 · not committed</p>
+      <div class="tools">
+        <button type="button" id="theme-toggle">Toggle theme</button>
+      </div>
+      <nav>
+        <a href="#what">What it is</a>
+        <a href="#problem">The problem</a>
+        <a href="#pieces">How the pieces fit</a>
+        <a href="#start">A start, end to end</a>
+        <a href="#profiles">Profiles</a>
+        <a class="sub" href="#ship-set">Ship set</a>
+        <a href="#hardware">Why the code looks like this</a>
+        <a href="#planes">Planes and weight paths</a>
+        <a class="sub" href="#replicated">Replicated</a>
+        <a class="sub" href="#library">Model library</a>
+        <a class="sub" href="#fabric">Weight fabric</a>
+        <a href="#validation">Validation</a>
+        <a href="#language">Language and ownership</a>
+        <a href="#map">Directory map</a>
+        <a href="#daily">Day to day</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <p class="kicker">Codebase guide</p>
+        <h1>Pulsar GB10 vLLM stack</h1>
+        <p class="lede">An operations and evidence control plane for running vLLM on NVIDIA DGX Spark (GB10) machines. Not a vLLM fork. Not a host-native Python server.</p>
+      </header>
+
+      <div class="callout">
+        <strong>Private by construction.</strong> This file lives under <code>.local/</code>, which is gitignored. It uses no CDNs, fonts, analytics, or remote images. Open it as <code>file://</code> on this machine. Do not commit it, gist it, or push it to GitHub Pages if you want the notes to stay private.
+      </div>
+
+      <h2 id="what">What it is</h2>
+      <p>Pulsar launches <strong>digest-pinned Docker images</strong>. Every launch is gated by an <strong>exact model profile</strong> whose status had to be earned on this hardware.</p>
+      <p>The product priority is explicit: <strong>stability &gt; accuracy &gt; throughput &gt; latency</strong>. Extra discovered Sparks are idle capacity, not permission to invent a new tensor-parallel geometry.</p>
+
+      <h2 id="problem">What problem it solves</h2>
+      <p>A GB10 Spark is a Grace–Blackwell box with <strong>121&nbsp;GiB unified LPDDR5X</strong> (no discrete VRAM) and <strong>sm_121</strong> kernels. Two of them talk over <strong>dual-rail 200GbE RoCE</strong>, not NVLink. Decode is memory-bandwidth bound at about <strong>240&nbsp;GB/s</strong> read. Cross-node all-reduce tops out around <strong>21&nbsp;GB/s</strong> because each NIC sits on PCIe Gen5 x4.</p>
+      <p>Serving that hardware well is not “pick a model and <code>docker run</code>.” Kernel choices, quantization backends, speculative decode, CUDA graphs, and even <code>/health</code> all have GB10-specific failure modes that were measured here. Pulsar is the stack that:</p>
+      <ol>
+        <li>Encodes those measured recipes as <code>models/*.conf</code></li>
+        <li>Refuses to launch anything that has not earned <code>STATUS=tested*</code></li>
+        <li>Discovers and confirms cluster membership separately from serving geometry</li>
+        <li>Starts, stops, and inventories only containers it can <strong>prove it owns</strong></li>
+        <li>Keeps a ledger (<code>docs/VALIDATION.md</code> + <code>results/</code>) so every number traces to a run</li>
+      </ol>
+
+      <h2 id="pieces">How the pieces fit</h2>
+      <div class="diagram" aria-label="Subsystem map">
+        <svg viewBox="0 0 860 420" role="img">
+          <defs>
+            <style>
+              .box { fill: #fffdf8; stroke: #1f5c4d; stroke-width: 1.25; }
+              .dash { fill: #fffdf8; stroke: #1f5c4d; stroke-width: 1.25; stroke-dasharray: 5 4; }
+              .lab { font: 13px ui-sans-serif, system-ui, sans-serif; fill: #1c1915; }
+              .small { font: 11px ui-sans-serif, system-ui, sans-serif; fill: #5c564c; }
+              .arr { stroke: #1f5c4d; stroke-width: 1.4; fill: none; marker-end: url(#m); }
+              .arrd { stroke: #1f5c4d; stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; marker-end: url(#m); }
+            </style>
+            <marker id="m" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#1f5c4d"/>
+            </marker>
+          </defs>
+          <rect class="box" x="20" y="170" width="110" height="48" rx="6"/>
+          <text class="lab" x="75" y="199" text-anchor="middle">Operator</text>
+          <rect class="box" x="180" y="156" width="170" height="76" rx="6"/>
+          <text class="lab" x="265" y="186" text-anchor="middle">pulsar · wizard</text>
+          <text class="small" x="265" y="206" text-anchor="middle">home.sh</text>
+          <rect class="box" x="400" y="156" width="170" height="76" rx="6"/>
+          <text class="lab" x="485" y="186" text-anchor="middle">up / down / status</text>
+          <text class="small" x="485" y="206" text-anchor="middle">lifecycle</text>
+          <rect class="box" x="400" y="20" width="170" height="52" rx="6"/>
+          <text class="lab" x="485" y="51" text-anchor="middle">models/*.conf</text>
+          <rect class="box" x="400" y="84" width="170" height="52" rx="6"/>
+          <text class="lab" x="485" y="115" text-anchor="middle">topology · doctor</text>
+          <rect class="box" x="400" y="252" width="170" height="52" rx="6"/>
+          <text class="lab" x="485" y="283" text-anchor="middle">image · mem · weights</text>
+          <rect class="box" x="620" y="84" width="210" height="52" rx="6"/>
+          <text class="lab" x="725" y="115" text-anchor="middle">serve.sh (1 node)</text>
+          <rect class="box" x="620" y="156" width="210" height="52" rx="6"/>
+          <text class="lab" x="725" y="187" text-anchor="middle">start-cluster.sh (N)</text>
+          <rect class="box" x="620" y="228" width="210" height="52" rx="6"/>
+          <text class="lab" x="725" y="259" text-anchor="middle">vLLM containers :8000</text>
+          <rect class="box" x="620" y="300" width="210" height="44" rx="6"/>
+          <text class="lab" x="725" y="327" text-anchor="middle">validate / results</text>
+          <rect class="dash" x="180" y="340" width="170" height="52" rx="6"/>
+          <text class="lab" x="265" y="371" text-anchor="middle">library · fabric</text>
+          <path class="arr" d="M130,194 H180"/>
+          <path class="arr" d="M350,194 H400"/>
+          <path class="arr" d="M485,72 V156"/>
+          <path class="arr" d="M485,136 V156"/>
+          <path class="arr" d="M485,232 V252"/>
+          <path class="arr" d="M570,176 H620"/>
+          <path class="arr" d="M570,194 C590,194 590,110 620,110"/>
+          <path class="arr" d="M725,136 V156"/>
+          <path class="arr" d="M725,208 V228"/>
+          <path class="arr" d="M725,280 V300"/>
+          <path class="arrd" d="M265,340 V232 H400"/>
+        </svg>
+      </div>
+      <p>Solid arrows are the shipped path. Dashed arrows are <strong>explicit experimental</strong> weight paths. The wizard never silently picks them.</p>
+      <p><code>./pulsar</code> is only a dispatcher:</p>
+      <table>
+        <thead><tr><th>Command</th><th>Goes to</th></tr></thead>
+        <tbody>
+          <tr><td><code>./pulsar</code> (no args)</td><td><code>scripts/home.sh</code> — read-only menu until you pick a workflow</td></tr>
+          <tr><td><code>./pulsar wizard</code></td><td><code>wizard.sh</code> — doctor + guided serve/switch</td></tr>
+          <tr><td><code>./pulsar start/stop/status</code></td><td><code>scripts/up.sh</code> / <code>down.sh</code> / <code>status.sh</code></td></tr>
+          <tr><td><code>./pulsar models</code></td><td>experimental catalog browser</td></tr>
+          <tr><td><code>./pulsar inventory</code> / <code>doctor</code></td><td>read-only probes</td></tr>
+          <tr><td><code>./pulsar weight-fabric</code></td><td>experimental NFS/RDMA path</td></tr>
+        </tbody>
+      </table>
+      <p>There is no third runtime. <code>docker-compose.yml</code> is a convenience for one long-lived local server. It does <strong>not</strong> apply ownership labels, per-model flag arrays, seals, or the status gate. Multi-node never goes through Compose.</p>
+
+      <h2 id="start">A start, end to end</h2>
+      <p><code>./pulsar start deepseek-v4-flash</code> (or <code>scripts/up.sh deepseek-v4-flash</code>) does this:</p>
+      <ol>
+        <li>Take a <strong>shared flock</strong> so a concurrent “delete the durable home” cannot race a launch.</li>
+        <li><code>load_conf</code> sources <code>models/deepseek-v4-flash.conf</code> into the shell, then checks the <strong>profile contract</strong>: <code>TP × PP</code> must equal <code>NODES</code>, multi-node must use <code>--distributed-executor-backend mp</code> and a RoCE full mesh.</li>
+        <li><strong>Status gate.</strong> Only <code>STATUS=tested*</code> launches without <code>--force</code>. <code>do-not-use</code> and <code>blocked-upstream</code> stay parked.</li>
+        <li>For <code>NODES=2</code>, require a confirmed topology (<code>.cluster-topology.json</code>) with enough ranks and rails. Extra confirmed nodes stay idle.</li>
+        <li>Gates, in order: image on every required rank → weights → memory → <code>cluster/preflight.sh</code>.</li>
+        <li>Launch:
+          <ul>
+            <li><code>NODES=1</code> → <code>serve.sh</code> → <code>docker run</code> named <code>vllm-&lt;profile&gt;</code></li>
+            <li><code>NODES&gt;1</code> → <code>cluster/start-cluster.sh</code> → remote <strong>headless</strong> ranks first, then local rank 0 with the API</li>
+          </ul>
+        </li>
+        <li>Wait on <code>/health</code> (DeepSeek cold load is ~10 minutes), then a real completion smoke. Cluster start also runs <code>validate/warmup.py</code> so the first client does not pay JIT.</li>
+      </ol>
+      <p><code>serve.sh</code> / <code>start-cluster.sh</code> can be called directly. That bypasses <code>up.sh</code>’s image/weights/memory/preflight gates, but still loads the conf and still enforces status + <code>NODES</code> routing.</p>
+      <p>Stop is the inverse discipline: <code>down.sh</code> only removes containers labeled <code>io.pulsar.gb10.managed=true</code> with a conf/rank/node placement that maps back to a repo profile. Unlabeled <code>vllm-*</code> names are reported and refused.</p>
+
+      <h2 id="profiles">Profiles are the policy unit</h2>
+      <p>A profile is a bash file under <code>models/</code>, not JSON. <code>scripts/lib.sh</code> <code>load_conf</code> is the loader. Typical fields:</p>
+      <ul>
+        <li><code>MODEL</code> — Hugging Face id, or an absolute NFS path (<code>/mnt/Models/...</code>)</li>
+        <li><code>SERVED_NAME</code> — the OpenAI API id (often <strong>not</strong> the filename)</li>
+        <li><code>IMAGE</code> — usually digest-pinned</li>
+        <li><code>NODES</code>, <code>ENGINE_ARGS=(…)</code>, <code>CONTAINER_ENV=(…)</code></li>
+        <li><code>SPEC_DECODE_ARGS</code> + <code>RECOMMENDED_SPEC</code> — DeepSeek’s DSpark is default-on; Super MTP is opt-in; Qwen GDN has none on purpose</li>
+        <li><code>STATUS</code>, <code>PROFILE_PURPOSE</code> (<code>serving</code> vs <code>diagnostic</code>)</li>
+        <li>Memory budgets used by <code>check-memory.sh</code></li>
+        <li>Optional <code>EXPECTED_MODEL_SEAL</code> — a reviewed identity file under <code>models/seals/</code></li>
+      </ul>
+      <p>Conf filename ≠ API name. Example: <code>nemotron-3-nano-30b-nvfp4</code> serves as <code>nemotron-3-nano</code>.</p>
+
+      <h3 id="ship-set">What is actually shippable today</h3>
+      <table>
+        <thead><tr><th>Profile</th><th>Role</th><th>Nodes</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><code>deepseek-v4-flash</code></td><td>Flagship. PR #41834 image. DSpark k=5 default. 500K context, 20&nbsp;GB/rank KV</td><td>2</td><td><code>tested</code></td></tr>
+          <tr><td><code>laguna-s-2.1-nvfp4</code></td><td>Primary single-node. Lives on NFS, not Hugging Face</td><td>1</td><td><code>tested</code></td></tr>
+          <tr><td><code>nemotron-3-nano-30b-nvfp4</code></td><td>Fast first-run model</td><td>1</td><td><code>tested</code></td></tr>
+          <tr><td><code>nemotron-3-super-120b-nvfp4</code></td><td>Large single-node. MTP opt-in</td><td>1</td><td><code>tested</code></td></tr>
+          <tr><td><code>qwen3.6-27b-fp8</code></td><td>Reasoning. Never ngram spec, never 2-node</td><td>1</td><td><code>tested</code></td></tr>
+          <tr><td><code>qwen3-1.7b</code></td><td>Hidden diagnostic canary. First lab-sealed identity</td><td>1</td><td><code>tested</code></td></tr>
+          <tr><td><code>qwen3-1.7b-2node</code></td><td>Hidden multi-node plumbing canary</td><td>2</td><td><code>tested</code></td></tr>
+          <tr><td><code>laguna-s-2.1-2node</code> / <code>qwen3.6-27b-fp8-2node</code></td><td>Regression / measurement only</td><td>2</td><td><code>do-not-use</code></td></tr>
+          <tr><td><code>inkling-small-nvfp4</code></td><td>Fits TP=2 arithmetically; FA4 paged-KV missing on SM12.x</td><td>2</td><td><code>blocked-upstream</code></td></tr>
+        </tbody>
+      </table>
+      <p>The wizard only offers <code>STATUS=tested*</code> <strong>and</strong> <code>PROFILE_PURPOSE=serving</code> <strong>and</strong> <code>NODES</code> ≤ confirmed capacity. The Qwen 1.7B canaries are tested and still hidden.</p>
+      <p>Two images:</p>
+      <ul>
+        <li>Official <code>vllm/vllm-openai:v0.26.0</code> (digest-pinned) for Qwen, Nemotron, Laguna</li>
+        <li>A published arm64 <strong>source build of vLLM PR #41834</strong> for DeepSeek-V4-Flash. Stock 0.26.0 livelocks the sparse-MLA kernel on this GPU.</li>
+      </ul>
+      <p><code>patches/pr41834-dspark-opt/</code> is <strong>deprecated archaeology</strong>. After a metering bug was fixed, those draft-path patches were perf-neutral; upstream absorbed them in vLLM #49731.</p>
+
+      <h2 id="hardware">Hardware is why the code looks like this</h2>
+      <p>Several “weird” defaults are measured, not taste:</p>
+      <ul>
+        <li><strong><code>--moe-backend marlin</code></strong> on NVFP4 MoE. CUTLASS FP4 is silently wrong on sm_121.</li>
+        <li><strong>CUDA graphs on</strong> except official-image <strong>cross-node TP=2</strong>, which hangs. Workaround is <code>--enforce-eager</code> (Laguna 2-node). The PR-41834 image does not need that for DeepSeek.</li>
+        <li><strong>Never ngram spec on GDN hybrids</strong> (Qwen3.6-27B). It corrupts output.</li>
+        <li><strong>Never GDN cross-node.</strong> Wrong output, then hang. That is why <code>qwen3.6-27b-fp8-2node</code> is <code>do-not-use</code>.</li>
+        <li><strong>DSpark <code>k=5</code> is a checkpoint invariant</strong>, not a knob. It equals <code>dspark_block_size</code>.</li>
+        <li><strong><code>/health</code> lies for ~5 minutes after a worker dies.</strong> Honest liveness is a 1-token completion. Node loss is teardown + relaunch, not heal-in-place.</li>
+        <li><strong>Ray is not the multi-node path.</strong> Validated path is vLLM native <code>--nnodes</code> / <code>--node-rank</code> / <code>--headless</code> with the <code>mp</code> executor over RoCE.</li>
+        <li>MTU 9000, GPUDirect RDMA, and jumbo frames were measured and are <strong>not</strong> load-bearing.</li>
+      </ul>
+      <p>Memory math is first-class. Unified memory means weights + KV + OS fight for the same 121&nbsp;GiB. <code>check-memory.sh</code> uses the profile’s <code>WEIGHTS_RAM_GIB</code> / <code>KV_GIB</code> / <code>OVERHEAD_GIB</code>, adds a launch spike for cold start, and <strong>never</strong> treats a hard FAIL as “continue anyway.”</p>
+
+      <h2 id="planes">Three data planes, three weight paths</h2>
+      <p>Even when they touch the same machines, the code treats these as distinct:</p>
+      <ol>
+        <li><strong>Control</strong> — SSH, Docker, Gloo rendezvous, wizard</li>
+        <li><strong>Inference</strong> — NCCL over recorded RoCE HCAs (<code>NCCL_NET=IB</code>; no silent fallback to the admin LAN)</li>
+        <li><strong>Weight transfer</strong> — whichever storage policy you chose</li>
+      </ol>
+      <p>Membership lives in gitignored <code>.cluster-topology.json</code>, written by <code>scripts/detect-fabric.sh --write-topology</code>. Schema 2 adds enrolled host keys and <code>.cluster-ssh-config</code>. Hostnames are labels; identity is machine-id + host key. <code>HEAD_IP</code> / <code>WORKER_IP</code> are leftover two-node compatibility only.</p>
+
+      <h3 id="replicated">1. Replicated local caches — shipped default</h3>
+      <p><code>scripts/pull-weights.sh</code> downloads the HF tree (exact commit if the profile is sealed), rsyncs it to every serving rank, and <code>up.sh</code> mounts it. Laguna/Inkling are NFS catalog paths; Pulsar will not download those.</p>
+      <p>This is what the wizard and the README quick start use.</p>
+
+      <h3 id="library">2. Model library / <code>library-hot</code> — implemented, not promoted</h3>
+      <p>One <strong>durable home</strong> per exact revision. The home rank serves through a <strong>symlink</strong> (no second full copy). Only non-home ranks get sealed-hot copies under <code>/var/tmp/pulsar-hot</code>. After an unpinned stop you are back to one copy.</p>
+      <p>Identity is lab-issued, not “whatever is in the local cache”:</p>
+      <ul>
+        <li><code>models/seals/*.json</code> — expected seal (model id, commit, SHA-256 snapshot manifest, provenance)</li>
+        <li><code>models/validation-bundles/&lt;id&gt;.json</code> — binds image digest, engine args, geometry, evidence</li>
+        <li>A local <strong>observed</strong> seal may <strong>match</strong>. It cannot <strong>issue</strong> a claim.</li>
+      </ul>
+      <p>At launch, a rank-local <strong>witness</strong> (inode/mtime metadata) can skip rehashing an unchanged tree. Drift causes a visible full SHA-256, or a fail-closed abort. It never auto-reseals.</p>
+      <p>Preparation (<code>scripts/model-library.sh prepare</code>) moves and verifies bytes. It does <strong>not</strong> start a container and does <strong>not</strong> qualify the model. For a reviewed multi-rank profile the fixed experimental policy is <strong>8-stream SSH-over-RoCE, no fallback</strong> (ADR 0003). <code>home add</code> creates exactly one sealed durable home; catalog refresh only inventories existing homes.</p>
+      <p>Why it is not the default: catalog + serving-integration gates passed for DeepSeek; <strong>strict determinism on that storage path failed</strong>, and soak was not run after that blocker. Replicated remains the guided path.</p>
+
+      <h3 id="fabric">3. Weight fabric — separate experiment</h3>
+      <p>Long-lived <strong>single-copy NFSv4.2/RDMA</strong> mount (<code>scripts/weight-fabric.sh</code>). One owner exports; clients hard-mount <code>ro,vers=4.2,proto=rdma</code> with <strong>no TCP fallback</strong>. The wizard never selects this. Physical promotion matrix is still pending.</p>
+      <p>Do not call every RoCE-backed thing “fabric.” SSH/TCP over a RoCE IP, one-shot NFS copy, live NFS/RDMA, and NCCL inference are four different systems.</p>
+
+      <h2 id="validation">Validation is a product surface</h2>
+      <p><code>validate/</code> is not a unit-test folder. It is how a profile earns the right to exist.</p>
+      <table>
+        <thead><tr><th>Tool</th><th>Job</th></tr></thead>
+        <tbody>
+          <tr><td><code>validate/run-gates.sh</code></td><td>Already-running server: two greedy captures, optional baseline, bench sweep, optional needle</td></tr>
+          <tr><td><code>greedy_capture.py</code> / <code>compare_captures.py</code></td><td>Verdicts are <strong>IDENTICAL / FP-EQUIVALENT / DIVERGENT</strong>, not adjectives</td></tr>
+          <tr><td><code>bench_serve.py</code></td><td>Throughput from <code>usage</code> tokens. An earlier SSE-chunk counter under-metered speculative decode by ~3.46×; that retraction is kept in the ledger</td></tr>
+          <tr><td><code>needle.py</code></td><td>Long-context recall at claimed length</td></tr>
+          <tr><td><code>soak.py</code></td><td>Closed-loop load; flagship bar is 150 min / 0 errors</td></tr>
+          <tr><td><code>warmup.py</code></td><td>Paid by cluster start so JIT is not the first user request</td></tr>
+          <tr><td><code>hf_reference.py</code></td><td>vLLM vs Hugging Face transformers</td></tr>
+        </tbody>
+      </table>
+      <p>ADR 0002 splits evidence so one kind of success cannot launder another:</p>
+      <table>
+        <thead><tr><th>Scope</th><th>What it proves</th></tr></thead>
+        <tbody>
+          <tr><td>Catalog / artifact</td><td>Exact bytes, placement, transfer, cleanup</td></tr>
+          <tr><td>Serving integration</td><td>Mount, load, health, warmup, completion smoke</td></tr>
+          <tr><td>Model qualification</td><td>Accuracy, determinism, throughput, context, soak</td></tr>
+          <tr><td>Release / promotion</td><td>Conjunction of the above for <code>STATUS</code>, wizard, or a default</td></tr>
+        </tbody>
+      </table>
+      <p>A healthy <code>/v1/models</code> is integration, not qualification. Library-hot can pass catalog + smoke and still be blocked as a default. That is the current DeepSeek library-hot situation.</p>
+      <p>Control-plane tests (<code>scripts/selftest.sh</code> + <code>scripts/testlib/</code>) run without Docker and prove locks, ownership, seals, wizard classification, etc. They <strong>do not</strong> replace physical gates in <code>docs/REVALIDATE.md</code>.</p>
+
+      <h2 id="language">Language split and ownership rules</h2>
+      <p>The repo is intentionally hybrid:</p>
+      <ul>
+        <li><strong>Bash</strong> at the operator boundary: CLIs, SSH, <code>docker</code> argv, topology, <code>load_conf</code></li>
+        <li><strong>Python</strong> for schemas, catalogs, digests, budgets, identity, JSON, rendering</li>
+      </ul>
+      <p>Paired modules follow <code>weight-fabric.sh</code> + <code>weight_fabric.py</code>, <code>model-library.sh</code> + <code>model_library.py</code>. Shared kernel is <code>scripts/lib.sh</code>.</p>
+      <p>Fail-closed is a hard rule. No silent fallback from RoCE to the control LAN, from fabric to a full replica pull, or from “we discovered 3 machines” to TP=3. Destructive ops are confirmation-gated. Privileged sudo never stores a password.</p>
+
+      <h2 id="map">Directory map</h2>
+      <table>
+        <thead><tr><th>Path</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td><code>pulsar</code>, <code>wizard.sh</code>, <code>serve.sh</code></td><td>Operator entry + low-level 1-node launcher</td></tr>
+          <tr><td><code>scripts/</code></td><td>Lifecycle, inventory, doctor, topology, library, fabric, selftests</td></tr>
+          <tr><td><code>cluster/</code></td><td>N-rank start/stop/preflight + topology loader + NCCL ship set</td></tr>
+          <tr><td><code>models/</code></td><td>Profiles, seals, validation bundles</td></tr>
+          <tr><td><code>validate/</code></td><td>Gates against a running server</td></tr>
+          <tr><td><code>docs/</code></td><td>Prerequisites, hardware, models, operations, validation ledger, ADRs</td></tr>
+          <tr><td><code>results/</code></td><td>Raw evidence; <code>results/README.md</code> is the index</td></tr>
+          <tr><td><code>bench/</code></td><td>Step-0 microbenchmarks (memory bandwidth, NCCL)</td></tr>
+          <tr><td><code>skills/</code></td><td>Agent workflows for library changes and functional review</td></tr>
+          <tr><td><code>images/</code></td><td>Release wrapper + Trivy ignore for the PR-41834 image</td></tr>
+          <tr><td><code>third_party/gum/</code></td><td>Vendored ARM64 TUI for menus</td></tr>
+        </tbody>
+      </table>
+      <p>Site-local state is gitignored: <code>.env</code>, <code>.cluster-topology.json</code>, <code>.cluster-ssh-config</code>, <code>.model-library/</code>, <code>.weight-fabric/</code>.</p>
+
+      <h2 id="daily">How to think about it day to day</h2>
+      <p>On a Spark head node, the normal loop is:</p>
+<pre><code>scripts/doctor.sh
+scripts/list-models.sh --validated --serving
+./pulsar                          # or ./pulsar wizard
+./pulsar start &lt;profile&gt;          # gates + launch
+./pulsar status &lt;profile&gt;         # real completion, not just /health
+./pulsar stop &lt;profile&gt;
+</code></pre>
+      <p>For two-node DeepSeek, confirm topology first (<code>detect-fabric.sh --write-topology</code>), sync the PR-41834 image and weights to both ranks, then start. One-node profiles can be placed on any confirmed idle node with <code>--node &lt;node_id&gt;</code> from <code>inventory --json</code>.</p>
+      <p>If you later change serving behavior, <code>docs/REVALIDATE.md</code> is the contract: canary, gates, gsm8k, needle, soak, then update the ledger. Selftests cover the control plane only.</p>
+      <div class="note">
+        The design thesis of the whole tree is: <strong>an exact recipe on measured hardware, with a paper trail, and no silent “make it work.”</strong>
+      </div>
+
+      <footer>
+        Generated as a local reading copy from a full-tree walkthrough on 2026-08-13.
+        Path: <code>.local/codebase-guide.html</code>. Mode 0600. No network resources.
+      </footer>
+    </main>
+  </div>
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var key = "pulsar-guide-theme";
+      function apply(theme) {
+        if (theme === "dark") root.setAttribute("data-theme", "dark");
+        else root.removeAttribute("data-theme");
+      }
+      try { apply(localStorage.getItem(key)); } catch (e) {}
+      document.getElementById("theme-toggle").addEventListener("click", function () {
+        var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        apply(next);
+        try { localStorage.setItem(key, next); } catch (e) {}
+      });
+    })();
+  </script>
+</body>
+</html>
