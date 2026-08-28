@@ -43,6 +43,7 @@ any status in the table.
 
 | Config name (`models/*.conf`) | Model | Quant | Disk | Nodes / parallel | Max ctx (validated) | Spec decode | Status |
 |---|---|---|---|---|---|---|---|
+| `nemotron-3.5-lightning-30b-nvfp4` | nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 | NVFP4 | 22 GB | 1 | 131,072 configured; NVIDIA publishes 1M, unevaluated by Pulsar | — | draft; legacy **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; not recommended |
 | `qwen3.8-27b-fp8` | Qwen/Qwen3.8-27B-FP8 | FP8 | 29 GB | 1 | 131,072 configured; context not evaluated | — | draft; legacy **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; not recommended |
 | `qwen3.8-27b-fp8-2node` | same, TP=2 cross-node on official v0.27.1-aarch64 | FP8 | 29 GB | 2 / TP=2 | 131,072 configured; unevaluated | — | draft; legacy **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; graphs on; no spec decode; not recommended |
 | `qwen3-1.7b-2node` | Qwen/Qwen3-1.7B, TP=2 cross-node | BF16 | 4 GB | 2 / TP=2 | 32K configured; unevaluated | — | draft diagnostic recipe; **`STATUS=untested`**; no `MODEL_SERVING_RELEASE_ID`; hidden from serving wizard |
