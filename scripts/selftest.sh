@@ -33,10 +33,10 @@ run "publishable content privacy" \
   "$REPO_DIR/scripts/selftest-docs-privacy.sh"
 run "active current-state documentation drift (AUD-03)" \
   python3 "$REPO_DIR/scripts/testlib/test_docs_current_state.py"
+run "canonical public skill layout" \
+  "$REPO_DIR/scripts/selftest-skill-layout.sh"
 run "Grok sanitized review-tree contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_grok_review_tree.py"
-run "Grok review skill isolation" \
-  "$REPO_DIR/scripts/selftest-grok-review-tree.sh"
 run "vendored Gum" "$REPO_DIR/scripts/selftest-vendored-gum.sh"
 run "terminal formatting" "$REPO_DIR/scripts/selftest-terminal-format.sh"
 run "CLI malformed input" "$REPO_DIR/scripts/selftest-cli-inputs.sh"

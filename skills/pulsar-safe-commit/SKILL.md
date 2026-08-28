@@ -1,6 +1,6 @@
 ---
 name: pulsar-safe-commit
-description: Review, test, privacy-scan, stage, and commit changes in the Pulsar GB10 vLLM Stack. Use whenever a user asks Codex to commit, create a Git commit, stage work for commit, or verify that a Pulsar commit is safe. Protects publishable documentation and evidence from hostnames, IP addresses, SSH identity, durable node or topology identity, user paths, and credential material.
+description: Review, test, privacy-scan, stage, and commit changes in the Pulsar GB10 vLLM Stack. Use whenever the user asks an agent to commit, create a Git commit, stage work for commit, or verify that a Pulsar commit is safe. Protects publishable documentation and evidence from hostnames, IP addresses, SSH identity, durable node or topology identity, user paths, and credential material.
 ---
 
 # Pulsar Safe Commit
