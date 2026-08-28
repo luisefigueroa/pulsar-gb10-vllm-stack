@@ -20,7 +20,9 @@ GEMINI.md
 COPILOT.md
 .cursorrules
 .cursor/
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 .codex/
 .gemini/
 .github/copilot-instructions.md
@@ -36,10 +38,14 @@ COPILOT.md
 .grok/
 .ai/
 .agent/
-.agents/
+.agents/*
+!.agents/skills
 PROMPT.md
 .hermes/
 
 # Repository-owned agent workflows are product documentation and stay tracked.
 !/skills/
 !/skills/**
+
+# Generated caches remain local even inside tracked skill packages.
+**/__pycache__/

@@ -38,8 +38,13 @@ Identify the request before acting:
 
 - **Explain or review:** inspect and report; do not mutate merely because a
   change seems useful.
-- **Experiment:** keep the path explicit and opt-in, define the hypothesis and
-  comparison, and avoid changing promoted defaults or claims.
+- **Experiment:** keep the path explicit and opt-in. Define the hypothesis,
+  comparison, stop and cleanup conditions, and evidence to capture. Before a
+  state-changing or physical lab experiment, obtain explicit operator approval
+  and record the agreed scope in the active work item or workflow journal. A
+  Linear issue may track the work, but it is not evidence or architectural
+  authority. Read-only analysis and deterministic local tests do not require
+  an issue. Avoid changing promoted defaults or claims.
 - **Implement within accepted design:** state the affected contracts and make
   the smallest complete change with proportionate verification.
 - **Reconsider accepted design:** follow the proposal and approval protocol

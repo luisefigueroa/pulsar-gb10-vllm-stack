@@ -18,8 +18,8 @@ fail() {
 
 grep -Fq 'name: pulsar-safe-commit' "$skill" \
   || fail "skill frontmatter name is wrong"
-grep -Fq 'asks Codex to commit' "$skill" \
-  || fail "description must trigger on commit requests"
+grep -Fq 'asks an agent to commit' "$skill" \
+  || fail "description must trigger on cross-harness commit requests"
 grep -Fq 'display_name: "Pulsar Safe Commit"' "$agent_yaml" \
   || fail "generated display name is missing"
 grep -Fq 'git status --short --branch' "$skill" \

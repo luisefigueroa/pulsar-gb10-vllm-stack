@@ -424,14 +424,15 @@ rather than additional parallel SSH/local state machines.
 
 These rules exist because silent fallbacks, wrong networks, and unowned cleanup have caused real multi-node failures. Prefer failing loudly over “making it work.”
 
-### Independent Grok review and approved implementation
+### Independent external review and approved implementation
 
-When a user requests a Grok review or delegated implementation, use
-`skills/grok-subagent/SKILL.md`. The first pass stays read-only against a
+When a user requests an independent external review or delegated
+implementation, use a locally installed reviewer skill when one is available.
+The first pass stays read-only against a
 privacy-cleared root: a tracked-files-only tree for review-only work, or a clean
 dedicated feature worktree when approved implementation is anticipated.
 Reconcile its findings against repository authority and obtain explicit
-agreement before editing. After approval, Grok may resume the same session in
+agreement before editing. After approval, the reviewer may resume the same session in
 the same preflighted worktree with implementation permissions, and may run
 in-scope local tests or bounded subagents. Use a fresh compact handoff instead
 when the review is large, the head or scope changed, or review used a temporary
@@ -440,9 +441,10 @@ authoritative test results without needlessly reimplementing the change, and
 retains commit and publication responsibility. A temporary worktree branch may
 be pushed by normal refspec to the original remote PR branch; never force a
 concurrent update, and fast-forward the original local worktree afterward only
-when its tracked state is clean. Grok must not receive secrets or site-local
-state, expand policy or scope without approval, or operate external/privileged
-infrastructure unless that authority is explicitly part of the approved plan.
+when its tracked state is clean. The reviewer must not receive secrets or
+site-local state, expand policy or scope without approval, or operate
+external/privileged infrastructure unless that authority is explicitly part of
+the approved plan.
 
 ### Fail without fallback; no silent policy changes
 
