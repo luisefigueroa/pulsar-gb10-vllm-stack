@@ -85,7 +85,6 @@ if [ "$SKIP_PREFLIGHT" = 0 ]; then
 fi
 
 CONTAINER="$(container_name_for "$MODEL_NAME" "$NODES")"
-MODELS_NFS="${MODELS_NFS:-/mnt/Models}"
 MASTER_ADDR="${CLUSTER_NODE_CONTROL_IPS[0]}"
 PLAN_FILE=$(mktemp "${TMPDIR:-/tmp}/pulsar-launch-plan.XXXXXX")
 # shellcheck disable=SC2064

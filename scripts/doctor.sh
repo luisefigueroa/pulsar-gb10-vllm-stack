@@ -194,10 +194,25 @@ else
   record ok hf_cache "HF_CACHE ready · ${hf_cache_free} GiB free ($HF_CACHE)"
 fi
 
-if [ -d "$MODELS_NFS" ]; then
-  record ok nfs "$MODELS_NFS present"
+if [ -n "${PULSAR_COLD_ROOT+x}" ]; then
+  if [ -z "${PULSAR_COLD_ROOT}" ]; then
+    record ok cold_storage "cold recovery storage is disabled"
+  elif [ -L "${PULSAR_COLD_ROOT}" ]; then
+    record fail cold_storage "cold recovery path must not be a symlink"
+  elif [ ! -d "${PULSAR_COLD_ROOT}" ]; then
+    record fail cold_storage "cold recovery path is missing or not a directory"
+  elif [ ! -r "${PULSAR_COLD_ROOT}" ] || [ ! -x "${PULSAR_COLD_ROOT}" ]; then
+    record fail cold_storage \
+      "cold recovery path is not readable and searchable"
+  elif [ ! -w "${PULSAR_COLD_ROOT}" ]; then
+    record warn cold_storage \
+      "cold recovery storage is configured · current write access unavailable"
+  else
+    record ok cold_storage "cold recovery storage is configured"
+  fi
 else
-  record warn nfs "$MODELS_NFS not mounted (only needed for NFS catalog confs)"
+  record warn cold_storage \
+    "cold recovery storage is not configured (explicit PULSAR_COLD_ROOT required)"
 fi
 
 avail=$(mem_available_gib_local)

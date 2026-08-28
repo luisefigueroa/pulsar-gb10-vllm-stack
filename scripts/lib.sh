@@ -11,19 +11,53 @@ _scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$_scripts_dir/.." && pwd)"
 cd "$REPO_DIR"
 
-if [ -f "$REPO_DIR/.env" ]; then
+_pulsar_cold_root_process_defined=0
+_pulsar_cold_root_process_value=""
+if [ -n "${PULSAR_COLD_ROOT+x}" ]; then
+  _pulsar_cold_root_process_defined=1
+  _pulsar_cold_root_process_value="${PULSAR_COLD_ROOT}"
+fi
+_pulsar_env_file="$REPO_DIR/.env"
+if [ "${PULSAR_SELFTEST:-0}" = 1 ] \
+    && [ -n "${PULSAR_COLD_STORAGE_TEST_DOTENV:-}" ]; then
+  case "$PULSAR_COLD_STORAGE_TEST_DOTENV" in
+    /*) _pulsar_env_file="$PULSAR_COLD_STORAGE_TEST_DOTENV" ;;
+    *)
+      printf '[%s] ERROR: PULSAR_COLD_STORAGE_TEST_DOTENV must be absolute\n' \
+        "${SCRIPT_NAME:-pulsar}" >&2
+      return 1 2>/dev/null || exit 1
+      ;;
+  esac
+fi
+if [ -e "$_pulsar_env_file" ] || [ -L "$_pulsar_env_file" ]; then
+  if [ -L "$_pulsar_env_file" ]; then
+    printf '[%s] ERROR: .env must not be a symlink\n' "${SCRIPT_NAME:-pulsar}" >&2
+    unset _pulsar_cold_root_process_defined _pulsar_cold_root_process_value
+    return 1 2>/dev/null || exit 1
+  fi
+  if [ ! -f "$_pulsar_env_file" ]; then
+    printf '[%s] ERROR: .env is not a regular file\n' "${SCRIPT_NAME:-pulsar}" >&2
+    unset _pulsar_cold_root_process_defined _pulsar_cold_root_process_value
+    return 1 2>/dev/null || exit 1
+  fi
   set -a
   # shellcheck disable=SC1091
-  . "$REPO_DIR/.env"
+  . "$_pulsar_env_file"
   set +a
 fi
+if [ "$_pulsar_cold_root_process_defined" = 1 ]; then
+  PULSAR_COLD_ROOT="$_pulsar_cold_root_process_value"
+  export PULSAR_COLD_ROOT
+fi
+# Keep the two non-exported origin markers for long-lived callers such as
+# home.sh. They let child configuration commands discard a value that came
+# from .env while preserving a genuine process override, including empty.
 
 # shellcheck disable=SC1091
 . "$REPO_DIR/cluster/cluster-env.sh"
 
 VLLM_IMAGE_MAINLINE="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai:v0.26.0}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
-MODELS_NFS="${MODELS_NFS:-/mnt/Models}"
 
 # Memory policy defaults (GB10 unified memory)
 MIN_OS_BUFFER_GIB="${MIN_OS_BUFFER_GIB:-8}"
@@ -350,7 +384,6 @@ loaded_launch_contract_id() {
     "--vllm-extra-args=${VLLM_EXTRA_ARGS:-}"
     "--hf-cache=${HF_CACHE:-}"
     "--master-port=${MASTER_PORT:-29500}"
-    "--models-nfs=${MODELS_NFS:-}"
     "--hf-hub-offline=${HF_HUB_OFFLINE:-1}"
     "--vllm-logging-level=${VLLM_LOGGING_LEVEL:-INFO}"
     "--restart-policy=${RESTART_POLICY:-no}"
@@ -1423,7 +1456,6 @@ facts = {
         "nccl_ib_qps": os.environ.get("NCCL_IB_QPS_PER_CONNECTION") or "4",
         "nccl_debug": os.environ.get("NCCL_DEBUG") or "WARN",
         "master_port": int(os.environ.get("MASTER_PORT") or "29500"),
-        "models_nfs": os.environ.get("MODELS_NFS") or "/mnt/Models",
     },
     "memory": {"advisory": True, "result": os.environ.get("PULSAR_PLAN_MEMORY_RESULT") or "unchecked"},
 }

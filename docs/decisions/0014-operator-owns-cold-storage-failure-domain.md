@@ -10,6 +10,11 @@
 - **Amends:** ADR 0011 decision 5 and ADR 0013 decision 4. The operator, not
   Pulsar, decides whether the configured cold root is a suitable independent
   failure domain.
+- **Amended by:**
+  [ADR 0015](./0015-explicit-cold-recovery-root.md) removes the live
+  `MODELS_NFS` alias and implicit `/mnt/Models` default from cold-recovery
+  configuration. Setting explicit `PULSAR_COLD_ROOT` remains the operator's
+  failure-domain assertion.
 
 ## Context
 

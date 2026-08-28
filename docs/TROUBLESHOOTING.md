@@ -54,6 +54,30 @@ path. Set `GUM=0` for plain numbered menus. `NO_COLOR`, `TERM=dumb`, or `PULSAR_
 fall back to Charm pink/purple). `GUM_BIN` overrides the binary when color is
 enabled.
 
+## Cold recovery configuration is unavailable or blocked
+
+Start with `./pulsar configure cold-storage show` (or `--json`). An unset
+choice is `not-configured`; an explicit empty `PULSAR_COLD_ROOT` is
+`disabled`; a different process value is shown separately as
+`environment-override`.
+
+- `plan --path` requires an existing absolute directory and refuses a final
+  symlink or unsafe nesting with Pulsar-managed roots. It never creates or
+  mounts the directory.
+- Current writability is a health observation, not a configuration gate or a
+  mount-policy prescription. Archive mutations report their own write result.
+- `change-blocked` means a root switch or disable could strand a known job,
+  receipt replica, or model archive. There is no force or migration command;
+  inspect `archive-jobs` and keep the current root until a separately reviewed
+  migration workflow exists.
+- Duplicate, dynamic, permissive, symlink, or non-regular repository `.env`
+  state fails without fallback. Fix the file itself rather than asking Pulsar
+  to guess around ambiguous configuration.
+
+Bare `./pulsar configure cold-storage` and Home **Configuration → Cold
+recovery storage** use the same Gum/plain workflow. Direct `show`, `plan`, and
+`archive-jobs` remain read-only.
+
 ## Port 8000 in use (host network)
 
 **Hit:** doctor warns port 8000 is listening; `docker ps` shows no published
@@ -168,7 +192,8 @@ Large models can spend several minutes loading from page-cold local NVMe. The
 `/health` endpoint appears only after engine
 init, and `--health-start-period` in our tooling is 900 s for this reason.
 Watch `docker logs -f` (`Loading weights took ...` line) before assuming a
-hang. NFS-hosted models (Laguna from /mnt/Models) add the 10 GbE ceiling.
+hang. Current launch plans mount only the verified local Hugging Face home or
+working-copy view; removed absolute-path/NFS profiles are not a live fallback.
 
 ## GPU memory numbers make no sense
 

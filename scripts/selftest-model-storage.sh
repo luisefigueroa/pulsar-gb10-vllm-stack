@@ -363,6 +363,7 @@ printf '4\n6\n7\n' | env \
   HOME_INVENTORY_CMD=/bin/false \
   HOME_QUICK_STATUS_CMD=/bin/false \
   HOME_WIZARD_CMD=/bin/false \
+  HOME_COLD_STORAGE_CMD=/bin/true \
   "$REPO_DIR/scripts/home.sh" >"$STATE/home.out" 2>&1
 assert_contains "$STATE/home.out" 'Models & storage'   "operator home exposes the model-storage subsystem"
 assert_contains "$STATE/home.out" 'only weight mechanism'   "home route preserves serving-policy context"

@@ -278,11 +278,13 @@ without a confirmed manifest. Confirm membership with `--write-topology`.
 |------|------|
 | `$HOME/.cache/huggingface` | Default root for receipt-backed Hugging Face homes; arbitrary cache presence is not serving identity |
 | `.weight-fabric/` | Gitignored leftover dir if a site still has one; not an operator command (SIM-12) |
-| `/mnt/Models` | Conventional optional cold/archive root and compatibility mount; never a live serving source |
+| `/mnt/Models` | Conventional later operator-chosen directory; never an implicit live recovery root and never a live serving source |
 | Docker image store | Multi‑GB images on **each** node that will run a container |
 
-Copy `.env.example` to override `HF_CACHE`, `MODELS_NFS`, image pins,
-auth, or discovery candidate hints. Confirmed membership is not stored there.
+Copy `.env.example` to override `HF_CACHE`, image pins,
+auth, or discovery candidate hints. Set cold recovery storage with
+`./pulsar configure cold-storage` (`PULSAR_COLD_ROOT` only; empty disables;
+unset means not-configured). Confirmed membership is not stored there.
 Doctor only inspects `HF_CACHE`; it never creates or modifies the path. A
 missing cache is reported as a warning, while model download or preparation
 creates the path when the selected workflow requires it.

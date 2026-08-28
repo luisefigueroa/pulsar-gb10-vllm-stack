@@ -86,7 +86,6 @@ DEFAULT_RUNTIME = {
     "nccl_ib_qps": "4",
     "nccl_debug": "WARN",
     "master_port": 29500,
-    "models_nfs": "/mnt/Models",
 }
 
 LABEL_MANAGED = "io.pulsar.gb10.managed"
@@ -237,10 +236,6 @@ def _validate_runtime(runtime: Any) -> dict[str, Any]:
             "runtime.master_port",
             1,
             65535,
-        ),
-        "models_nfs": require_text(
-            runtime.get("models_nfs", DEFAULT_RUNTIME["models_nfs"]),
-            "runtime.models_nfs",
         ),
     }
     extra = set(runtime) - set(cleaned)
@@ -571,12 +566,7 @@ def rank_container_spec(plan: dict[str, Any], rank: int) -> dict[str, Any]:
             "source": storage["hub_path"],
             "target": f"/root/.cache/huggingface/hub/{hub_name}",
             "mode": "ro",
-        },
-        {
-            "source": plan["runtime"]["models_nfs"],
-            "target": "/mnt/Models",
-            "mode": "ro",
-        },
+        }
     ]
     if nodes == 1:
         network = {
@@ -680,8 +670,6 @@ def rank_docker_argv(
                 f"{plan['port']}:{plan['port']}",
                 "-v",
                 f"{spec['mounts'][0]['source']}:{spec['mounts'][0]['target']}:ro",
-                "-v",
-                f"{spec['mounts'][1]['source']}:{spec['mounts'][1]['target']}:ro",
                 "-e",
                 f"HF_TOKEN={os.environ.get('HF_TOKEN', '')}",
                 "-e",
@@ -732,8 +720,6 @@ def rank_docker_argv(
                 "/dev/infiniband",
                 "-v",
                 f"{spec['mounts'][0]['source']}:{spec['mounts'][0]['target']}:ro",
-                "-v",
-                f"{spec['mounts'][1]['source']}:{spec['mounts'][1]['target']}:ro",
                 "-e",
                 f"HF_HUB_OFFLINE={runtime['hf_hub_offline']}",
                 "-e",

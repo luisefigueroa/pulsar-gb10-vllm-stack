@@ -24,14 +24,12 @@ def main() -> int:
     bins = target / "bin"
     scripts.mkdir(parents=True)
     bins.mkdir()
-    (target / "models-nfs").mkdir()
     shutil.copy2(source_doctor, scripts / "doctor.sh")
 
     (scripts / "lib.sh").write_text(
         r'''#!/usr/bin/env bash
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HF_CACHE="${HF_CACHE:?fixture HF_CACHE required}"
-MODELS_NFS="${MODELS_NFS:?fixture MODELS_NFS required}"
 HARD_FLOOR_AVAILABLE_GIB=4
 PULSAR_SSH=/bin/false
 PULSAR_SSH_OPTS=()

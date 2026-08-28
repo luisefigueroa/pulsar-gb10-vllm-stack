@@ -38,6 +38,10 @@ expect_failure 2 "ADR 0006" "serve rejects the removed weight-mode axis" \
   "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --weight-source library-hot
 expect_failure 2 "SIM-12" "pulsar refuses removed weight-fabric helper" \
   "$REPO_DIR/pulsar" weight-fabric show qwen3.8-27b-fp8-2node
+expect_failure 2 "configure cold-storage" "pulsar configure without a topic is usage" \
+  "$REPO_DIR/pulsar" configure
+expect_failure 2 "configure cold-storage" "pulsar configure rejects an unsupported topic" \
+  "$REPO_DIR/pulsar" configure networking
 expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy repair" \
   "$REPO_DIR/scripts/model-library.sh" hot legacy check unused --json
 expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy remove" \

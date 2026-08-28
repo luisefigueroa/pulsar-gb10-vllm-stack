@@ -145,7 +145,10 @@ scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
 
 **Workflow menu (`./pulsar`):** Current system status (default),
 Serve or switch a model, Stop a serving model, Models & storage, Maintenance,
-Diagnostics, Exit. Models & storage browses cached exact identity,
+Configuration, Diagnostics, Exit. If cold recovery storage has no persisted
+choice, first-use offers configure, disable, or not now before the main menu.
+Configuration → Cold recovery storage delegates to
+`./pulsar configure cold-storage`. Models & storage browses cached exact identity,
 durable-home/runtime placement, and findings. Browsing and health rechecks
 are read-only. A separate, confirmation-gated refresh can rescan confirmed
 ranks and update only the cached catalog; it never runs automatically. A
@@ -348,6 +351,7 @@ objects trusted or promote a claim and is not exposed through `pulsar`.
 | `./pulsar models` | Cached distributed model identity, placement, findings, and explicit catalog refresh |
 | `./pulsar inventory` | Read-only managed service + memory inventory |
 | `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
+| `./pulsar configure cold-storage` | Explicit cold recovery storage configuration |
 | `./pulsar start` / `stop` / `status` | Route to `up.sh` / `down.sh` / `status.sh` |
 | `scripts/model-library.sh health [--json]` | Sanitized cached-catalog and rank-local hot metadata health |
 | `scripts/list-models.sh` | Conf catalog |

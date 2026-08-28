@@ -210,6 +210,15 @@ language for new features without an explicit decision.
   failure domain. Pulsar checks path safety and recovery-set integrity, not
   device, mount, filesystem, export, or storage-domain independence
   ([ADR 0014](docs/decisions/0014-operator-owns-cold-storage-failure-domain.md)).
+  Live recovery configuration is explicit `PULSAR_COLD_ROOT` only: process,
+  then persisted repository `.env`, then `not-configured`. Empty disables.
+  There is no live `MODELS_NFS` alias and no implicit `/mnt/Models`
+  fallback
+  ([ADR 0015](docs/decisions/0015-explicit-cold-recovery-root.md)).
+  Operators configure that path through `./pulsar configure cold-storage`.
+  The selected directory must already exist; Pulsar does not create, mount,
+  or administer it. Existing non-Pulsar content stays untouched. The cold root
+  is not a launch-plan field and is never mounted into a serving container.
   An unknown tree without a receipt fails without fallback (ADR 0012: there is
   no lab expected-identity fallback). The shallow catalog label and a
   self-observed file list are not that proof. The skill must never download

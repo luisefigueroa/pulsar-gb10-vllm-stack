@@ -117,8 +117,10 @@ the confirmed manifest.
 
 ## Storage
 
-- `/mnt/Models` — typical NFS (or local) mount for an official-weights catalog
-  under `Official Models/` (see MODELS.md for surveyed catalog and fit arithmetic).
+- `/mnt/Models` — typical NFS (or local) mount that an operator may later
+  choose as `PULSAR_COLD_ROOT`. It is not an implicit live recovery root
+  ([ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)). See MODELS.md
+  for surveyed catalog and fit arithmetic.
 - Weights over a 1 GbE-class admin link are slow on cold load; keep HF cache /
   local copies for hot models.
 - The three confirmed systems expose Linux NFSv4.2 client/server and
