@@ -5173,7 +5173,7 @@ def home_acquisition_required_bytes(content_bytes: int) -> int:
 
 
 def valid_home_acquisition_hf_cli(value: Any) -> bool:
-    if value in {"hf", "huggingface-cli", ""}:
+    if value in {"hf", ""}:
         return True
     if (
         not isinstance(value, str)
@@ -5242,7 +5242,7 @@ def inspect_home_acquisition_target(
         and available >= required
     )
     if target_state == "absent" and not hf_cli:
-        detail = "Hugging Face CLI is not installed on this rank"
+        detail = "modern hf CLI is not installed on this rank"
     elif target_state == "absent" and not writable:
         detail = "Hugging Face cache filesystem is not writable"
     elif target_state == "absent" and available < required:

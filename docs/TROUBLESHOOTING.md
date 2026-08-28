@@ -95,19 +95,28 @@ resolves a selector at acquisition time only.
 **Cause:** `hf download --cache-dir` takes the exact Hub cache directory.
 Passing Pulsar's Hugging Face home (`$HF_CACHE`) writes
 `models--ORG--NAME` one level above Pulsar's canonical `hub/` directory.
-**Fix:** use `scripts/model-library.sh home add <profile>` (ADR 0006). It
-stages into same-filesystem private staging under `$HF_CACHE`, fully
-verifies, and atomically publishes the durable home; conflicting copies fail
-without fallback.
+**Fix:** inspect the plan, then execute the exact commit and rank it reports:
+
+```bash
+scripts/model-library.sh home add <profile> \
+  --revision <selector> --plan --json
+scripts/model-library.sh home add <profile> \
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes --json
+```
+
+This path uses modern `hf`, stages under `$HF_CACHE` on the selected rank,
+fully verifies, and atomically publishes the durable home; conflicting copies
+fail without fallback (ADR 0006).
 
 ## Another cluster node has no internet route
 
 **Hit:** the second node could reach this node and LAN NFS, but direct HF and
 registry downloads failed. This is common on isolated compute fabrics.
-**Fix:** acquire the durable home once on a connected rank
-(`scripts/model-library.sh home add <profile>`), then
-`scripts/model-library.sh prepare <profile> --yes` transfers only non-home
-bytes to the other ranks over confirmed links. Use
+**Fix:** run the same plan and exact-commit acquisition on a connected eligible
+rank, refresh the catalog, then run
+`scripts/model-library.sh prepare <profile> --yes`. Preparation transfers only
+non-home bytes to the other ranks over confirmed links. Use
 `scripts/sync-image.sh <profile> --pull --yes` for images; it streams missing
 images over the control LAN and repairs digest references when needed.
 

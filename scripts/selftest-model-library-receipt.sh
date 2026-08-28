@@ -27,7 +27,58 @@ if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
   exit 1
 fi
 grep -q -- '--revision' "$STATE/no-revision.err"
+grep -q -- 'modern hf' "$STATE/no-revision.err"
 [ ! -s "$STATE/hf.log" ]
+
+# The deprecated huggingface-cli command is never an acquisition candidate.
+# A managed modern-hf installation remains usable even when the legacy command
+# is present on PATH.
+LEGACY_STATE="$STATE/legacy-cli"
+LEGACY_USER_ROOT="$LEGACY_STATE/operator-root"
+python3 "$REPO_DIR/scripts/testlib/model_library_receipt_fixture.py" "$LEGACY_STATE"
+mv "$LEGACY_STATE/bin/hf" "$LEGACY_STATE/managed-hf"
+cat >"$LEGACY_STATE/bin/huggingface-cli" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' invoked >>"$MOCK_LEGACY_HF_LOG"
+exit 99
+SH
+chmod +x "$LEGACY_STATE/bin/huggingface-cli"
+touch "$LEGACY_STATE/legacy-hf.log"
+LEGACY_ENV=(
+  "PATH=$LEGACY_STATE/bin:/usr/bin:/bin"
+  "HOME=$LEGACY_USER_ROOT"
+  "CLUSTER_TOPOLOGY_FILE=$LEGACY_STATE/topology.json"
+  "HF_CACHE=$LEGACY_STATE/cache"
+  "MODEL_LIBRARY_DIR=$LEGACY_STATE/library"
+  "MODEL_LIBRARY_CATALOG=$LEGACY_STATE/library/catalog.json"
+  "MOCK_HF_LOG=$LEGACY_STATE/hf.log"
+  "MOCK_LEGACY_HF_LOG=$LEGACY_STATE/legacy-hf.log"
+  "PULSAR_HF_SOURCE_INVENTORY_PY=$LEGACY_STATE/bin/hf-source-inventory.py"
+  "PULSAR_COLD_ROOT="
+  "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
+)
+if env "${LEGACY_ENV[@]}" "$LIBRARY" home add \
+    nemotron-3-nano-30b-nvfp4 --revision main --plan --json \
+    >"$LEGACY_STATE/legacy-only.out" 2>"$LEGACY_STATE/legacy-only.err"; then
+  echo "home add accepted deprecated huggingface-cli" >&2
+  exit 1
+fi
+grep -q 'no eligible serving rank has modern hf' "$LEGACY_STATE/legacy-only.err"
+[ ! -s "$LEGACY_STATE/legacy-hf.log" ]
+
+mkdir -p "$LEGACY_USER_ROOT/.hf-cli/venv/bin"
+mv "$LEGACY_STATE/managed-hf" "$LEGACY_USER_ROOT/.hf-cli/venv/bin/hf"
+env "${LEGACY_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+  --revision main --plan --json >"$LEGACY_STATE/managed-modern-plan.json"
+python3 - "$LEGACY_STATE/managed-modern-plan.json" <<'PY'
+import json
+import sys
+
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+assert plan["kind"] == "pulsar-model-library-download-plan"
+assert plan["approval"]["selected_rank"] == 0
+PY
+[ ! -s "$LEGACY_STATE/legacy-hf.log" ]
 
 # An explicit --node resolves source metadata only on that reviewed rank
 # before the read-only plan is shown. This exercises the streamed metadata
@@ -550,6 +601,9 @@ fi
 test -f "$STATE/autostart/cold/pulsar-control/download-receipts/${autostart_receipt}.json"
 
 "$LIBRARY" --help | grep -q 'home add <profile>'
+"$LIBRARY" --help | grep -q -- '--revision SELECTOR \[--node RANK|NODE_ID\]'
+"$LIBRARY" --help | grep -q 'target-local modern hf'
+! "$LIBRARY" --help | grep -q 'huggingface-cli'
 "$LIBRARY" --help | grep -q 'home verify'
 "$LIBRARY" --help | grep -q 'home archive'
 "$LIBRARY" --help | grep -q 'home receipt recover'
