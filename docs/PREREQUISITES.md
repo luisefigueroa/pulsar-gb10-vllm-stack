@@ -53,10 +53,10 @@ screened, but trusted capture and publication privacy review remain required.
 
 ## Quick checks
 
-| Mode | Gate command |
+| Mode | Minimum path |
 |------|----------------|
-| Single-node | `./serve.sh --list` then `./serve.sh <model> --dry-run` |
-| Multi-node | `scripts/detect-fabric.sh --write-topology`, then `cluster/preflight.sh <exact-profile>` |
+| One rank | Confirm membership with `scripts/detect-fabric.sh --write-topology`, acquire and prepare the exact model as described in §2, then run `scripts/up.sh <exact-profile> --dry-run` |
+| Multiple ranks | Confirm membership and enroll SSH identity as described in §3, acquire and prepare the exact model as described in §4, then run `cluster/preflight.sh <exact-profile>` |
 
 `cluster/preflight.sh` exits non-zero if confirmed capacity, pairwise RoCE,
 SSH, GPU, Docker, images, weights, memory, control bindings, or stale
@@ -100,61 +100,75 @@ after `./`) runs the directory `./` and fails with `Is a directory`.
 
 ---
 
-## 2. Single-node (`./serve.sh`)
+## 2. First one-rank serve
 
-Minimum to serve one model on the box where you run the script:
+Every serving profile, including a one-rank profile, needs confirmed cluster
+membership and model files prepared by the model library. A cache directory or
+NFS path by itself is not model identity and cannot be launched.
 
-1. **Docker flags the launcher uses** (must be allowed by the host):
-   - `--gpus all`
-   - `--ipc=host` (large SHM; workers die opaquely without it)
-   - `--ulimit memlock=-1` and stack ulimit
-2. **Container image present locally**
+Minimum requirements:
+
+1. **Docker and NVIDIA access**
+   - The host must permit `--gpus all`, `--ipc=host`, the memlock/stack
+     ulimits, and the NVIDIA runtime.
+2. **Confirmed membership**
+   - Run `scripts/detect-fabric.sh --write-topology`. One machine is a valid
+     confirmed topology; Pulsar does not synthesize standalone membership.
+3. **The selected image**
    - Default mainline: `vllm/vllm-openai:v0.26.0` (override with
-     `VLLM_IMAGE_MAINLINE` in `.env`)
-   - If the selected profile sets `IMAGE=`, stage that exact digest on every
-     rank; see [BUILD.md](./BUILD.md).
-3. **Weights on disk** (default `HF_HUB_OFFLINE=1` — no surprise downloads)
-   - The `hf` CLI is required on this node only when downloading an uncached
-     Hugging Face model; already-cached and NFS models do not need it.
-     Experimental distributed-library `home add` instead requires the CLI,
-     upstream access, and any repository authentication on its selected target
-     rank; it never transports credentials from the controller. Acquisition
-     discovers `hf`, `huggingface-cli`, or Pulsar's managed
-     `$HOME/.hf-cli/venv/bin/hf` installation on that target for sealed
-     acquisition. Source-attested unsealed planning requires modern `hf` or
-     the managed `hf` because it resolves the complete upstream Git/LFS
-     inventory through that Python environment. It accepts no token argument.
-   - Hugging Face cache under `$HF_CACHE/hub/models--ORG--NAME`
-     (default `HF_CACHE=$HOME/.cache/huggingface`); the model library keeps
-     each durable home inside this layout
-   - Use `scripts/model-library.sh home add <profile>` for downloads
-     ([ADR 0006](./decisions/0006-model-library-only-weight-distribution.md));
-     it fully verifies the staged copy before atomic publication
-   - If you rsync HF caches for offline Hugging Face loading, ensure
-     `refs/main` names the intended commit or unsealed selection fails with
-     `LocalEntryNotFoundError`. A sealed profile does not trust that ref, but
-     it does require the exact commit directory from its reviewed seal (see
-     [TROUBLESHOOTING.md](./TROUBLESHOOTING.md))
-4. **Paths mounted into the container**
-   - `HF_CACHE` → `/root/.cache/huggingface`
-   - `MODELS_NFS` (default `/mnt/Models`) → `/mnt/Models:ro`  
-     Mount is always requested; only NFS-catalog models need content there.
-5. **Optional `.env`**
-   - Copy `.env.example` → `.env`. Set `HF_TOKEN` only if you pull online.
-   - Defaults for paths/images are conservative. Confirmed topology is kept
-     outside `.env`; candidate hints may be placed there.
+     `VLLM_IMAGE_MAINLINE` in `.env`).
+   - If the profile sets `IMAGE=`, stage that exact digest; see
+     [BUILD.md](./BUILD.md).
+4. **One receipt-backed home for the exact revision**
+   - A **home** is the one complete on-disk copy of that revision. Pulsar also
+     requires the recorded download file list and hashes (the **receipt**) plus
+     the private record naming that exact live directory (**occupancy**).
+   - If no home exists, the selected rank needs upstream access, its own
+     Hugging Face authentication when required, and the modern `hf` CLI. Pulsar
+     accepts `hf` on `PATH` or its managed `$HOME/.hf-cli/venv/bin/hf`;
+     older Hugging Face CLI commands are not supported.
+   - `home add --revision ... --plan` is the definitive read-only dependency
+     check. It resolves the complete upstream Git/LFS file list through the
+     modern CLI's Python environment and accepts no token argument.
+5. **A prepared runtime view**
+   - Run catalog refresh, then `prepare`. Preparation verifies the receipt and
+     creates the exact read-only runtime view; it does not start the server.
+6. **Optional `.env`**
+   - Copy `.env.example` only for path, image, API-auth, or discovery-candidate
+     overrides. Confirmed membership is never stored there. Pulsar does not
+     move Hugging Face credentials between ranks.
+
+For a new home, use the exact commit and rank printed by the plan:
 
 ```bash
-cp .env.example .env   # optional for single-node path overrides
-./serve.sh --list
-./serve.sh nemotron-3-nano-30b-nvfp4 -d    # detach; API on :8000
-# Preferred equivalent: ./pulsar start nemotron-3-nano-30b-nvfp4
-# Lab network only — do not expose :8000 without auth (SECURITY.md)
-curl -fsS http://127.0.0.1:8000/v1/models
-./pulsar stop nemotron-3-nano-30b-nvfp4
-# Do not docker rm -f by name; home/wizard/down.sh only stop labeled,
-# ownership-proven containers.
+cp .env.example .env   # optional overrides only
+scripts/doctor.sh
+scripts/detect-fabric.sh --write-topology
+scripts/list-models.sh --serving
+
+scripts/model-library.sh home add <profile> \
+  --revision <selector> --plan --json
+scripts/model-library.sh home add <profile> \
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes --json
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh prepare <profile> --yes
+
+scripts/up.sh <profile> --dry-run
+./pulsar start <profile>
+./pulsar status <profile>
+./pulsar stop <profile>
 ```
+
+When a compatible receipt-backed home already exists, do not download it
+again. Refresh the catalog, verify or prepare the exact profile, and start.
+`./serve.sh <profile> -d` remains the supported low-level one-rank launcher,
+but it consumes the same confirmed topology and prepared runtime view.
+
+Do not expose `:8000` outside the trusted lab network without authentication;
+see [SECURITY.md](../SECURITY.md). Stop through `./pulsar stop` or
+`scripts/down.sh`, which revalidate ownership instead of deleting a container
+by name.
 
 Cold load can take minutes. Watch `docker logs -f`
 for `Loading weights took ...` before assuming a hang. Health start period
@@ -234,7 +248,7 @@ traffic is kept on verified RoCE instead of silently falling back to that LAN.
 | Key-based SSH from this node | Required to every other active cluster node |
 | Docker + NVIDIA support | Required independently on every node used by the profile |
 | Same image | `scripts/sync-image.sh <profile> --pull --yes` stages every required node |
-| Complete weights | `scripts/model-library.sh home add` + `prepare` publish exact verified views on every node used by the profile (ADR 0006) |
+| Complete model files | `home add --revision` plan + exact-commit execution, catalog refresh, and `prepare` publish verified views on every rank used by the profile (ADR 0006) |
 | Retired live NFS serving | Not a serving path (ADR 0005). The leftover teardown helper is removed (SIM-12). History: `WEIGHT_FABRIC.md`. |
 | No stale managed container | A leftover container can retain rendezvous/RDMA state; stop the exact profile before relaunch |
 
@@ -262,9 +276,9 @@ without a confirmed manifest. Confirm membership with `--write-topology`.
 
 | Path | Role |
 |------|------|
-| `$HOME/.cache/huggingface` | Default HF hub cache (mounted into containers) |
+| `$HOME/.cache/huggingface` | Default root for receipt-backed Hugging Face homes; arbitrary cache presence is not serving identity |
 | `.weight-fabric/` | Gitignored leftover dir if a site still has one; not an operator command (SIM-12) |
-| `/mnt/Models` | Optional NFS catalog (`Official Models/…`); required only for confs that point there |
+| `/mnt/Models` | Conventional optional cold/archive root and compatibility mount; never a live serving source |
 | Docker image store | Multi‑GB images on **each** node that will run a container |
 
 Copy `.env.example` to override `HF_CACHE`, `MODELS_NFS`, image pins,
@@ -288,18 +302,19 @@ scripts/model-library.sh catalog refresh
 scripts/model-library.sh home verify <model_id@exact-commit> --json
 ```
 
-The normal view uses width-aware Pulsar sections instead of streaming
-third-party progress renderers. `PULSAR_VERBOSE=1` is intended for diagnosis.
+The selected rank needs the modern `hf` CLI, upstream access, and its own
+Hugging Face authentication when the repository is gated. The normal view uses
+width-aware Pulsar sections instead of streaming third-party progress
+renderers. `PULSAR_VERBOSE=1` is intended for diagnosis.
 For a one-node profile, `home add` defaults to the eligible confirmed rank with
 the most free space and `--node RANK|NODE_ID` may select any exact confirmed
 rank. Multi-node profiles remain limited to their exact serving geometry. An
 explicit override never falls back. The command uses
 same-filesystem private staging and full verification before atomic
-publication. Sealed acquisition uses the reviewed expected manifest.
-Source-attested acquisition verifies the complete upstream inventory and
-every file, writes an immutable receipt, and requires receipt-backed offline
-verification for reuse. It creates no seal, validation decision, or physical
-claim.
+publication. Acquisition verifies the complete upstream inventory and every
+file, writes an immutable receipt, and requires receipt-backed offline
+verification for later reuse. It creates no Model Serving Release decision,
+serving permission, or physical claim.
 
 After acquisition, `scripts/model-library.sh prepare <profile> --yes`
 publishes the exact runtime views the launch checks require.
@@ -329,10 +344,13 @@ not permission to serve an unmeasured geometry.
 ```text
 [ ] nvidia-smi → NVIDIA GB10
 [ ] docker + nvidia runtime; docker run --gpus all works
-[ ] image present for the conf you want (mainline or published PR-41834 image)
-[ ] weights in HF cache or MODELS_NFS path (refs/main if rsynced)
+[ ] one-node .cluster-topology.json explicitly confirmed
+[ ] exact image present for the selected profile
+[ ] modern hf available on the selected rank when a new home is required
+[ ] receipt-backed home registered by catalog refresh
+[ ] exact profile prepared by the model library
 [ ] ~100 GiB free; no second heavy GPU workload
-[ ] ./serve.sh --list works
+[ ] scripts/up.sh <profile> --dry-run passes
 ```
 
 **Multi-node (add)**
@@ -368,7 +386,7 @@ not permission to serve an unmeasured geometry.
 | [MODEL_RELEASE.md](./MODEL_RELEASE.md) | Pointer: lab expected-identity files are retired (ADR 0012); live identity is ADR 0004 capture and staging |
 | [BUILD.md](./BUILD.md) | Image-pin policy, optional overlay, and source-build boundary |
 | [OPERATIONS.md](./OPERATIONS.md) | Start/stop, monitoring, staging every exact rank |
-| [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Offline node, missing `refs/main`, TCP fallback, cold load |
+| [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Missing receipt/occupancy, offline node, TCP fallback, cold load |
 | [REVALIDATE.md](./REVALIDATE.md) | After any image pin change |
 | [COMMIT_SAFETY.md](./COMMIT_SAFETY.md) | Publishable privacy scanner, safe-commit workflow, and optional local hook |
 | [MODELS.md](./MODELS.md) | What fits which node count |

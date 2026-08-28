@@ -88,9 +88,11 @@ used at prepare remain distinct data planes even when they involve the same mach
 
 **Run these on a DGX Spark (head node), not a laptop.**  
 Stack needs Docker + NVIDIA Container Toolkit on GB10 (aarch64).
-`scripts/model-library.sh home add` also needs `hf` or `huggingface-cli`
-on PATH before it can download a Hugging Face repository into the model
-library. Full host checklist:
+`scripts/model-library.sh home add --revision` needs the modern `hf` CLI on
+the selected rank (either on `PATH` or at Pulsar's managed
+`$HOME/.hf-cli/venv/bin/hf` path). Older Hugging Face CLI commands are not
+sufficient because acquisition resolves the complete upstream Git/LFS file
+list through the modern CLI's Python environment. Full host checklist:
 [docs/PREREQUISITES.md](docs/PREREQUISITES.md).
 
 ### Single-node quick start — first token
@@ -111,13 +113,14 @@ scripts/detect-fabric.sh --write-topology
 scripts/list-models.sh --serving
 
 # First serving model: acquire one durable home, prepare exact runtime
-# views, then serve. Requires hf or huggingface-cli on PATH. Inspect a
+# views, then serve. Requires modern hf on the selected rank. Inspect a
 # read-only Hugging Face plan (recorded file list), then confirm the exact
-# commit that plan reported.
+# commit and rank that plan reported.
 scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
   --revision main --plan --json
 scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
-  --revision <exact-commit-from-plan> --yes
+  --revision <exact-commit-from-plan> \
+  --node <selected-rank-from-plan> --yes
 scripts/model-library.sh catalog refresh
 scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
 ./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh

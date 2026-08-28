@@ -87,6 +87,21 @@ class SourceAttestedAcquisitionContracts(unittest.TestCase):
         registry_fixture.write_release(registry_root, release)
         return repo
 
+    def test_home_acquisition_accepts_only_modern_hf_cli(self) -> None:
+        self.assertTrue(model_library.valid_home_acquisition_hf_cli("hf"))
+        self.assertTrue(
+            model_library.valid_home_acquisition_hf_cli(
+                "/srv/operator/.hf-cli/venv/bin/hf"
+            )
+        )
+        self.assertTrue(model_library.valid_home_acquisition_hf_cli(""))
+        self.assertFalse(
+            model_library.valid_home_acquisition_hf_cli("huggingface-cli")
+        )
+        self.assertFalse(
+            model_library.valid_home_acquisition_hf_cli("/usr/local/bin/hf")
+        )
+
     def test_source_inventory_and_digests_are_canonical(self) -> None:
         first = self._source(inventory=[self._lfs_entry(), self._git_entry()])
         second = self._source(inventory=[self._git_entry(), self._lfs_entry()])

@@ -43,7 +43,7 @@ Usage:
   scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
   scripts/model-library.sh cleanup-recommend [--json]
   scripts/model-library.sh home add <profile>
-      [--revision SELECTOR] [--node RANK|NODE_ID] [--plan] [--yes] [--json]
+      --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]
   scripts/model-library.sh home verify <profile|model_id|model_id@revision>
       [--json]
   scripts/model-library.sh home check <profile|model_id|model_id@revision>
@@ -131,7 +131,9 @@ Notes:
     no --node override, the eligible serving rank with the most free space is
     selected. Eligibility includes target-local metadata access; an explicit
     --node resolves metadata only on that rank. Download uses private
-    same-filesystem staging and target-local modern hf. It creates no hot
+    same-filesystem staging and target-local modern hf. Modern hf on PATH or
+    Pulsar's managed $HOME/.hf-cli/venv/bin/hf is required; older Hugging Face
+    CLI commands are not supported. It creates no hot
     copies, starts nothing, never refreshes the catalog, and does not create
     a lab expected-identity file or status.
   • home verify rehashes a receipt-created home against the receipt when
@@ -1223,8 +1225,6 @@ home_acquisition_rank_environment() {
     local hf_cli=""
     if command -v hf >/dev/null 2>&1; then
       hf_cli=hf
-    elif command -v huggingface-cli >/dev/null 2>&1; then
-      hf_cli=huggingface-cli
     elif [ -x "$HOME/.hf-cli/venv/bin/hf" ]; then
       hf_cli="$HOME/.hf-cli/venv/bin/hf"
     fi
@@ -1235,8 +1235,7 @@ home_acquisition_rank_environment() {
   # shellcheck disable=SC2016
   command='cache_root=${HF_CACHE:-$HOME/.cache/huggingface}; hf_cli=""; '
   command+='if command -v hf >/dev/null 2>&1; then hf_cli=hf; '
-  command+='elif command -v huggingface-cli >/dev/null 2>&1; then hf_cli=huggingface-cli; fi; '
-  command+='if [ -z "$hf_cli" ] && [ -x "$HOME/.hf-cli/venv/bin/hf" ]; '
+  command+='elif [ -x "$HOME/.hf-cli/venv/bin/hf" ]; '
   command+='then hf_cli="$HOME/.hf-cli/venv/bin/hf"; fi; '
   # shellcheck disable=SC2016
   command+='printf "%s\t%s\n" "$cache_root" "$hf_cli"'
@@ -1458,7 +1457,7 @@ cmd_home_add_source_attested() (
       fi
     done
     [ "${#metadata_ranks[@]}" -gt 0 ] \
-      || die "home add: no eligible rank could resolve Hugging Face source metadata"
+      || die "home add: no eligible serving rank has modern hf with Hugging Face source metadata access"
     source_json=$(python3 "$SOURCE_ATTESTED_PY" unique-source \
       --sources-dir "$tmp/sources") \
       || die "home add: candidate ranks resolved disagreeing Hugging Face source metadata"
@@ -1690,10 +1689,10 @@ cmd_home_add() (
     shift
   done
   [ -n "$profile" ] \
-    || die "usage: home add <profile> [--revision SELECTOR] [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
+    || die "usage: home add <profile> --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
   load_conf "$profile"
   [ -n "$revision_selector" ] \
-    || die "home add: pass --revision SELECTOR (ADR 0012: expected-seal exact-commit home add is retired)"
+    || die "home add: pass --revision SELECTOR; acquisition requires modern hf and one exact Hugging Face revision (ADR 0012)"
   cmd_home_add_source_attested \
     "$profile" "$revision_selector" "$node_selector" \
     "$plan_only" "$yes" "$json"

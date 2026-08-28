@@ -22,6 +22,8 @@ FORBIDDEN_CLAIMS = (
     "qwen3.8 lineage is the first reviewed",
     "docs/archive/schema-1-expected-seal/",
     "deepseek-v4-flash",
+    "huggingface-cli",
+    "weights in hf cache or models_nfs path",
 )
 FORBIDDEN_ACTIVE_PATTERNS = (
     re.compile(r"`qwen3-1[.]7b`"),
@@ -95,6 +97,26 @@ def _conf_ids() -> set[str]:
 
 
 class CurrentStateDocsTests(unittest.TestCase):
+    def test_single_node_onboarding_establishes_required_state(self) -> None:
+        prerequisites = (REPO_ROOT / "docs" / "PREREQUISITES.md").read_text(
+            encoding="utf-8"
+        )
+        single_node = prerequisites.split("## 2. ", 1)[1].split("## 3. ", 1)[0]
+        required_steps = (
+            "scripts/detect-fabric.sh --write-topology",
+            "--revision <selector> --plan --json",
+            "--revision <exact-commit-from-plan>",
+            "scripts/model-library.sh catalog refresh",
+            "scripts/model-library.sh prepare <profile> --yes",
+            "scripts/up.sh <profile> --dry-run",
+            "./pulsar start <profile>",
+        )
+        positions = [single_node.index(step) for step in required_steps]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("modern `hf`", single_node)
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("modern `hf`", readme)
+
     def test_models_md_live_rows_match_conf_files(self) -> None:
         self.assertTrue(_conf_ids(), "expected models/*.conf")
         self.assertEqual(_live_models_md_ids(), _conf_ids())

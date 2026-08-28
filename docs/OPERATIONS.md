@@ -682,10 +682,11 @@ free-space eligible rank is selected. Multi-node placement remains limited to
 the profile's exact serving ranks so preparation retains the one-home plus N−1
 working-copy contract. The chosen rank needs upstream access and
 its own Hugging Face authentication when the repository is gated. Pulsar checks
-the target's PATH and its managed `$HOME/.hf-cli/venv/bin/hf` installation. It
-downloads the exact commit into a private directory on the destination
-filesystem, repeats the cluster-wide duplicate check, and performs the
-applicable receipt full verification before atomically
+for the modern `hf` CLI on the target's PATH or at its managed
+`$HOME/.hf-cli/venv/bin/hf` installation. Older Hugging Face CLI commands are
+not supported. Pulsar downloads the exact commit into a private directory on
+the destination filesystem, repeats the cluster-wide duplicate check, and
+performs the applicable receipt full verification before atomically
 publishing one durable HF repository. It never copies
 through the controller, chooses a second node after failure, creates hot data,
 prepares a view, launches, or changes validation status. Download/verification
