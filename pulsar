@@ -33,6 +33,10 @@ Usage:
   ./pulsar status [model] [--node ID]
                                 Probe containers + API (may run a completion)
   ./pulsar doctor [--json]     Read-only host, cluster, and library diagnostics
+  ./pulsar configure cold-storage
+                                Interactive cold recovery storage workflow
+  ./pulsar configure cold-storage show|plan|set|disable|archive-jobs
+                                Direct cold recovery storage commands
   ./pulsar help                 This message
 
 Inventory options (passed through):
@@ -100,6 +104,21 @@ case "$cmd" in
     ;;
   doctor)
     exec "$DOCTOR_SCRIPT" "$@"
+    ;;
+  configure)
+    topic="${1:-}"
+    if [ $# -gt 0 ]; then
+      shift
+    fi
+    case "$topic" in
+      cold-storage)
+        exec "$REPO_DIR/scripts/configure-cold-storage.sh" "$@"
+        ;;
+      *)
+        echo "usage: ./pulsar configure cold-storage [show|plan|set|disable|archive-jobs]" >&2
+        exit 2
+        ;;
+    esac
     ;;
   weight-fabric)
     echo "./pulsar weight-fabric was removed (SIM-12): leftover live-NFS teardown is finished. Live NFS serving stays refused (ADR 0005). Historical notes: docs/WEIGHT_FABRIC.md" >&2

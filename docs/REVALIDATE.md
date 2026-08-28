@@ -149,6 +149,13 @@ The operator decides whether the configured cold root is an independent
 failure domain. Pulsar verifies path safety and the receipt/archive recovery
 set; it does not verify the operator's storage architecture.
 
+After removal of the legacy `/mnt/Models` container mount, rerun one-rank and
+multi-rank serving integration before making a current launch claim. Confirm
+the container has only the verified local model-view mount, loads the exact
+receipt-backed snapshot, passes health/warmup/completion smoke, and stops
+through owned cleanup. This does not require rerunning unrelated catalog
+mechanics or imply model qualification.
+
 ## 8. Close out
 
 Before publication:

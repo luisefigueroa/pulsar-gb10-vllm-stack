@@ -93,6 +93,10 @@ run "model library download-receipt acquisition contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_receipt.py"
 run "model library cold receipt and model-archive contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_archive.py"
+run "model library cold recovery storage contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_storage.py"
+run "model library cold recovery storage public CLI" \
+  "$REPO_DIR/scripts/selftest-cold-storage.sh"
 run "model library cold-adopt publication safety" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_cold_adopt.py"
 run "model library Hugging Face source-inventory contracts" \

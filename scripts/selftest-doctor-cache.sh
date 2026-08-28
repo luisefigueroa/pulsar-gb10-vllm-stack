@@ -11,7 +11,6 @@ python3 "$REPO_DIR/scripts/testlib/doctor_cache_fixture.py" \
 DOCTOR="$STATE/fixture/scripts/doctor.sh"
 BASE_ENV=(
   "PATH=$STATE/fixture/bin:/usr/bin:/bin"
-  "MODELS_NFS=$STATE/fixture/models-nfs"
   "GUM=0"
   "NO_COLOR=1"
   "TERM=dumb"
@@ -91,7 +90,32 @@ mkdir "$ready"
 run_json "$ready" "$STATE/ready.json" 0
 assert_cache_row "$STATE/ready.json" ok "GiB free"
 assert_check_row "$STATE/ready.json" topology ok "confirmed topology · 1 node"
+assert_check_row "$STATE/ready.json" cold_storage warn \
+  "cold recovery storage is not configured"
 [ -d "$ready" ]
+
+env "${BASE_ENV[@]}" HF_CACHE="$ready" PULSAR_COLD_ROOT= \
+  "$DOCTOR" --json >"$STATE/cold-disabled.json"
+assert_check_row "$STATE/cold-disabled.json" cold_storage ok \
+  "cold recovery storage is disabled"
+
+cold_ready="$STATE/cold-ready"
+mkdir "$cold_ready"
+env "${BASE_ENV[@]}" HF_CACHE="$ready" PULSAR_COLD_ROOT="$cold_ready" \
+  "$DOCTOR" --json >"$STATE/cold-ready.json"
+assert_check_row "$STATE/cold-ready.json" cold_storage ok \
+  "cold recovery storage is configured"
+
+cold_read_only="$STATE/cold-read-only"
+mkdir "$cold_read_only"
+chmod 500 "$cold_read_only"
+if [ ! -w "$cold_read_only" ]; then
+  env "${BASE_ENV[@]}" HF_CACHE="$ready" PULSAR_COLD_ROOT="$cold_read_only" \
+    "$DOCTOR" --json >"$STATE/cold-read-only.json"
+  assert_check_row "$STATE/cold-read-only.json" cold_storage warn \
+    "current write access unavailable"
+fi
+chmod 700 "$cold_read_only"
 
 missing_topology_rc=0
 env "${BASE_ENV[@]}" PULSAR_TEST_TOPOLOGY_COUNT=0 HF_CACHE="$ready" \

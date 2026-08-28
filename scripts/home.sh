@@ -10,6 +10,7 @@
 #   HOME_WIZARD_CMD / HOME_MODELS_CMD / HOME_QUICK_STATUS_CMD
 #   HOME_INVENTORY_CMD
 #   HOME_DOWN_CMD / HOME_DOCTOR_CMD / HOME_STATUS_CMD
+#   HOME_COLD_STORAGE_CMD
 #   HOME_INVENTORY_JSON / HOME_INVENTORY_CMD  (for stop/maintenance lists)
 #   HOME_STOP_HOT_GIB  (optional proven non-home restage GiB for stop disclosure)
 #   QUICK_STATUS_* forwarded when invoking quick-status
@@ -22,6 +23,14 @@ cd "$REPO_DIR"
 SCRIPT_NAME=home
 # shellcheck disable=SC1091
 . "$REPO_DIR/scripts/ui.sh"
+
+# home.sh is long-lived. Do not retain a dotenv-derived cold root in its
+# exported environment: configuration may change while the menu remains open,
+# and every child should source the current .env. A genuine process override
+# remains present and continues to win.
+if [ "${_pulsar_cold_root_process_defined:-0}" != 1 ]; then
+  unset PULSAR_COLD_ROOT
+fi
 
 # ---------------------------------------------------------------------------
 # Injectable commands
@@ -118,6 +127,21 @@ cmd_status_smoke() {
     "$HOME_STATUS_CMD" "$@"
   else
     "$REPO_DIR/scripts/status.sh" "$@"
+  fi
+}
+
+cmd_cold_storage() {
+  export PULSAR_COLD_STORAGE_INTERACTIVE=1
+  local -a command=()
+  if [ -n "${HOME_COLD_STORAGE_CMD:-}" ]; then
+    command=("$HOME_COLD_STORAGE_CMD" "$@")
+  else
+    command=("$REPO_DIR/scripts/configure-cold-storage.sh" "$@")
+  fi
+  if [ "${_pulsar_cold_root_process_defined:-0}" = 1 ]; then
+    PULSAR_COLD_ROOT="${_pulsar_cold_root_process_value-}" "${command[@]}"
+  else
+    env -u PULSAR_COLD_ROOT "${command[@]}"
   fi
 }
 
@@ -501,6 +525,54 @@ workflow_diagnostics() {
   esac
 }
 
+workflow_cold_storage() {
+  local pick
+  while true; do
+    if ! pick=$(choose "Cold recovery storage" \
+      "Show configuration and health" \
+      "Set or change storage path" \
+      "Disable cold recovery storage" \
+      "Inspect archive jobs" \
+      "Back"); then
+      return 0
+    fi
+    case "$pick" in
+      Show*)
+        cmd_cold_storage show || true
+        ;;
+      Set*)
+        cmd_cold_storage set || true
+        ;;
+      Disable*)
+        cmd_cold_storage disable || true
+        ;;
+      Inspect*)
+        cmd_cold_storage inspect || true
+        ;;
+      Back*|*)
+        return 0
+        ;;
+    esac
+  done
+}
+
+workflow_configuration() {
+  local pick
+  if ! pick=$(choose "Configuration" \
+    "Cold recovery storage" \
+    "Back"); then
+    return 0
+  fi
+  case "$pick" in
+    Cold*)
+      workflow_cold_storage
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # Main home loop
 # ---------------------------------------------------------------------------
@@ -512,6 +584,8 @@ fi
 
 log "read-only by default; mutations require confirmation and proven stack ownership"
 
+cmd_cold_storage first-use || true
+
 while true; do
   echo
   pick=""
@@ -521,6 +595,7 @@ while true; do
     "Stop a serving model" \
     "Models & storage" \
     "Maintenance" \
+    "Configuration" \
     "Diagnostics" \
     "Exit"); then
     log "cancelled; exiting menu (no containers changed)"
@@ -550,6 +625,9 @@ while true; do
       ;;
     "Maintenance")
       workflow_maintenance
+      ;;
+    "Configuration")
+      workflow_configuration
       ;;
     "Diagnostics")
       workflow_diagnostics

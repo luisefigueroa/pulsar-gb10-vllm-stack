@@ -261,20 +261,20 @@ class LaunchPlanContracts(unittest.TestCase):
         self.assertIn("-p", argv1)
         self.assertIn("--network", argv2_head)
 
-    def test_rank_spec_honors_models_nfs_override(self) -> None:
+    def test_rank_spec_has_no_legacy_nfs_mount_or_runtime_field(self) -> None:
         document = facts(nodes=2)
         document["runtime"] = {
             **plan.DEFAULT_RUNTIME,
             "models_nfs": "/data/Models",
         }
-        built = plan.build_launch_plan(document)
+        with self.assertRaisesRegex(plan.LaunchPlanError, "unsupported fields"):
+            plan.build_launch_plan(document)
+        built = plan.build_launch_plan(facts(nodes=2))
         spec = plan.rank_container_spec(built, 0)
-        self.assertEqual(
-            spec["mounts"][1],
-            {"source": "/data/Models", "target": "/mnt/Models", "mode": "ro"},
-        )
+        self.assertEqual(len(spec["mounts"]), 1)
+        self.assertNotIn("models_nfs", built["runtime"])
         argv = plan.rank_docker_argv(built, 0)
-        self.assertIn("/data/Models:/mnt/Models:ro", argv)
+        self.assertFalse(any("/mnt/Models" in item for item in argv))
 
     def test_cli_build_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

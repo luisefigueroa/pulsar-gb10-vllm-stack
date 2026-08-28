@@ -14,7 +14,10 @@
   protected receipt replica alongside the model archive before last occupancy
   removal. The receipt is not stored inside the model archive;
   [ADR 0014](./0014-operator-owns-cold-storage-failure-domain.md) makes cold-
-  storage failure-domain suitability the operator's responsibility.
+  storage failure-domain suitability the operator's responsibility;
+  [ADR 0015](./0015-explicit-cold-recovery-root.md) makes live recovery
+  configuration explicit `PULSAR_COLD_ROOT` only, with no `MODELS_NFS`
+  alias and no implicit `/mnt/Models` fallback.
 - **Amends:** ADR 0001 home-loss replica/failover language; ADR 0006 accepted
   risk that durable-home loss is service loss until Hub re-acquisition; the
   source-attested “receipt is bound to one live inode and cannot move”

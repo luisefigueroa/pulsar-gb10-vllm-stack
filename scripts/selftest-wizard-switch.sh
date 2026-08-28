@@ -75,6 +75,8 @@ STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard-selftest.XXXXXX")
 trap 'rm -rf "$STATE"' EXIT
 SHIM="$STATE/bin"
 mkdir -p "$SHIM" "$STATE/inv" "$STATE/mem" "$STATE/logs" "$STATE/mem_by_node"
+python3 "$REPO_DIR/scripts/testlib/topology_manifest_fixture.py" \
+  "$STATE/confirmed-topology.json"
 
 MODELS_JSON='{
   "models": [
@@ -549,7 +551,7 @@ wizard_env() {
   if [ -n "${TEST_CLUSTER_TOPOLOGY_FILE:-}" ]; then
     export CLUSTER_TOPOLOGY_FILE="$TEST_CLUSTER_TOPOLOGY_FILE"
   else
-    unset CLUSTER_TOPOLOGY_FILE
+    export CLUSTER_TOPOLOGY_FILE="$STATE/confirmed-topology.json"
   fi
   export WIZARD_LIST_MODELS_JSON="$STATE/models.json"
   export WIZARD_INVENTORY_CMD="$SHIM/inv-cmd"

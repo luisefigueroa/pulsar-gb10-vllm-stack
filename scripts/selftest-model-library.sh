@@ -438,9 +438,6 @@ python3 "$PY" build \
   --homes-json "$STATE/homes.json" \
   --output "$STATE/catalog-cold.json" >/dev/null 2>&1
 
-export PULSAR_COLD_ROOT="$COLD"
-unset MODELS_NFS || true
-
 scan_cold=$(python3 "$PY" scan-cold --cold-root "$COLD" --json)
 cold_count=$(printf '%s' "$scan_cold" | python3 -c 'import json,sys; print(json.load(sys.stdin)["count"])')
 assert_eq "scan-cold finds 3 trees" "$cold_count" "3"
@@ -459,7 +456,7 @@ hub_layout=$(printf '%s' "$find_hub" | python3 -c 'import json,sys; print(json.l
 assert_eq "find-cold hub layout" "$hub_layout" "hub"
 
 # warm miss → cold hit
-resolve_cold=$(PULSAR_COLD_ROOT="$COLD" python3 "$PY" resolve \
+resolve_cold=$(python3 "$PY" resolve \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
   --cold-root "$COLD" \
@@ -470,7 +467,7 @@ src=$(printf '%s' "$resolve_cold" | python3 -c 'import json,sys; print(json.load
 assert_true "resolve cold source is flat complete" test -f "$src/config.json"
 
 # warm hit prefers warm (no cold needed)
-resolve_warm=$(PULSAR_COLD_ROOT="$COLD" python3 "$PY" resolve \
+resolve_warm=$(python3 "$PY" resolve \
   --catalog "$STATE/catalog2.json" \
   --models-dir "$STATE/models" \
   --cold-root "$COLD" \
@@ -480,7 +477,7 @@ assert_eq "resolve prefers warm when present" "$tier_w" "warm"
 
 # cold disabled → warm miss fails without cold
 set +e
-PULSAR_COLD_ROOT='' python3 "$PY" resolve \
+python3 "$PY" resolve \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
   --no-cold \
@@ -548,8 +545,8 @@ python3 "$PY" plan-prepare \
 ac_rc=$?
 set -e
 assert_eq "plan-prepare refuses cold-only model" "$ac_rc" "1"
-assert_true "cold-only prepare names retired stage-only" \
-  grep -q 'cold stage-only is retired' "$STATE/activate-cold.err"
+assert_true "cold-only prepare names the required warm receipt-backed path" \
+  grep -qiE 'receipt|home add|no complete warm home' "$STATE/activate-cold.err"
 
 assert_true "model-library.sh documents cold" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold'"

@@ -21,6 +21,12 @@ authorities substitutes for another.
 The older profile `STATUS=tested*` class remains a recommendation input. It is
 not the ADR 0004 decision `Validated` and does not authorize serving.
 
+The current launch-plan implementation no longer carries `MODELS_NFS` or
+bind-mounts `/mnt/Models`; deterministic tests verify that only the exact local
+model view is mounted. Physical one- and multi-rank serving integration after
+that container-argument change has not been rerun. No model-qualification or
+promotion claim is created by the deterministic change.
+
 ## Qualification scopes
 
 | Scope | What evidence can establish |
@@ -74,6 +80,7 @@ The following are implementation checks, not physical DGX claims:
 | Status projection | Unique reviewed decision, neutral unbound profile, unavailable/ambiguous registry, runtime-access mismatch, launch independence, JSON separation from `STATUS`, and narrow human output |
 | Hugging Face home acquisition | Exact selector resolution, complete inventory, privacy-safe plan, target eligibility, private staging, full hashes, all-rank absence checks, immutable receipt, atomic no-replace publication, and offline `home verify` |
 | Cold recovery set | Separate receipt replica, model archive verification, explicit receipt recovery, receipt-ID restore, full-size admission, private staging, full rehash, and atomic publication |
+| Cold recovery configuration | Explicit process/persisted/disabled precedence, byte-preserving private `.env` writes, Gum/plain first-use and maintenance menus, path and stranded-state guards, health-only writability, archive-job inspection, and exact single-job retry delegation |
 | Operator-owned cold failure domain | Same-device recovery sets are accepted when content verifies; nested path hazards remain refused; Pulsar makes no storage-independence claim |
 | Profile-bound relocation | Multi-rank profiles stay within their exact ranks; raw model identities require an explicit matching profile; geometry is checked before destination inspection or mutation |
 | Atomic catalog refresh | Strict receipt/occupancy classification, directory identity, recomputed primary policy, one atomic mode-`0600` write, JSON/file parity, and prior-catalog preservation on invalid control state |

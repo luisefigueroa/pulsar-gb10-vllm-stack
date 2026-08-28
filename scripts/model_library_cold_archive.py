@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import shutil
 import stat
 import sys
@@ -258,10 +259,71 @@ def build_cold_archive_job(
     )
 
 
-def _job_path(library_dir: str | pathlib.Path, receipt_id: str) -> pathlib.Path:
+_JOB_NAME_RE = re.compile(r"^[0-9a-f]{64}\.json$")
+_JOB_TEMP_RE = re.compile(r"^\.[0-9a-f]{64}\.json\.")
+
+
+def cold_archive_job_path(
+    library_dir: str | pathlib.Path, receipt_id: str
+) -> pathlib.Path:
+    return cold_archive_job_store(library_dir) / f"{receipt_id}.json"
+
+
+def _ensure_job_store(library_dir: str | pathlib.Path) -> pathlib.Path:
     store = cold_archive_job_store(library_dir)
     store.mkdir(parents=True, exist_ok=True)
-    return store / f"{receipt_id}.json"
+    return store
+
+
+def _job_path(library_dir: str | pathlib.Path, receipt_id: str) -> pathlib.Path:
+    _ensure_job_store(library_dir)
+    return cold_archive_job_path(library_dir, receipt_id)
+
+
+def _read_job_bytes(path: pathlib.Path) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        fail(f"cold-archive job is unreadable: {exc}")
+    try:
+        before = os.fstat(fd)
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            fail("cold-archive job is not a regular file")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        if (
+            before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+            or before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+        ):
+            fail("cold-archive job changed during read")
+        data = b"".join(chunks)
+        if after.st_size != len(data):
+            fail("cold-archive job changed during read")
+        return data
+    finally:
+        os.close(fd)
+
+
+def _load_job_file(path: pathlib.Path) -> dict[str, Any]:
+    try:
+        raw = _read_job_bytes(path)
+    except FileNotFoundError:
+        fail("cold-archive job is missing")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail(f"cold-archive job is malformed: {exc}")
+    return validate_cold_archive_job(value)
 
 
 def write_cold_archive_job(
@@ -276,10 +338,64 @@ def write_cold_archive_job(
 def load_cold_archive_job(
     library_dir: str | pathlib.Path, receipt_id: str
 ) -> dict[str, Any] | None:
-    path = _job_path(library_dir, receipt_id)
-    if not path.is_file():
+    store = cold_archive_job_store(library_dir)
+    try:
+        store_info = store.lstat()
+    except FileNotFoundError:
         return None
-    return validate_cold_archive_job(model_library.load_json(path))
+    except OSError as exc:
+        fail(f"cold-archive job store is unavailable: {exc}")
+    if stat.S_ISLNK(store_info.st_mode) or not stat.S_ISDIR(store_info.st_mode):
+        fail("cold-archive job store is not a regular directory")
+    path = cold_archive_job_path(library_dir, receipt_id)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        fail(f"cold-archive job is unreadable: {exc}")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        fail("cold-archive job is not a regular file")
+    return _load_job_file(path)
+
+
+def list_cold_archive_jobs(
+    library_dir: str | pathlib.Path,
+) -> list[dict[str, Any]]:
+    """Return stored jobs. Missing stores are empty. Never creates directories."""
+    store = cold_archive_job_store(library_dir)
+    try:
+        info = store.lstat()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        fail(f"cold-archive job store is unavailable: {exc}")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("cold-archive job store is not a regular directory")
+    try:
+        names = sorted(os.listdir(store))
+    except OSError as exc:
+        fail(f"cold-archive job store is unreadable: {exc}")
+    jobs: list[dict[str, Any]] = []
+    for name in names:
+        path = store / name
+        try:
+            entry = path.lstat()
+        except OSError as exc:
+            fail(f"cold-archive job store entry is unreadable: {exc}")
+        if _JOB_TEMP_RE.match(name) is not None:
+            if not stat.S_ISREG(entry.st_mode):
+                fail("cold-archive job store contains a non-regular writer temp")
+            continue
+        if _JOB_NAME_RE.fullmatch(name) is None:
+            fail(f"cold-archive job store contains an unexpected entry: {name}")
+        if stat.S_ISLNK(entry.st_mode) or not stat.S_ISREG(entry.st_mode):
+            fail("cold-archive job is not a regular file")
+        job = _load_job_file(path)
+        if path.name != f"{job['receipt_id']}.json":
+            fail("cold-archive job filename does not match its identity")
+        jobs.append(job)
+    return jobs
 
 
 def enqueue_cold_archive_job(
@@ -316,9 +432,45 @@ def load_cold_archive_presence(
     cold_root: str | pathlib.Path, receipt_id: str
 ) -> dict[str, Any] | None:
     path = presence_path(cold_root, receipt_id)
-    if not path.is_file():
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
         return None
-    return validate_cold_archive_presence(model_library.load_json(path))
+    except OSError as exc:
+        fail(f"cold-archive presence is unavailable: {exc}")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        fail("cold-archive presence is not a regular file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        fail(f"cold-archive presence is unreadable: {exc}")
+    try:
+        before = os.fstat(fd)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        if (
+            before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+            or before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+        ):
+            fail("cold-archive presence changed during read")
+        raw = b"".join(chunks)
+        if after.st_size != len(raw):
+            fail("cold-archive presence changed during read")
+    finally:
+        os.close(fd)
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail(f"cold-archive presence is malformed: {exc}")
+    return validate_cold_archive_presence(value)
 
 
 def _require_private_directory(path: pathlib.Path, *, label: str) -> pathlib.Path:

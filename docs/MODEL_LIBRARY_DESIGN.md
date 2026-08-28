@@ -191,6 +191,18 @@ receipt-sized admission, all-rank absence, private same-filesystem staging, a
 complete rehash, another absence check, and atomic no-replace publication. New
 occupancy is derived from the new live directory; catalog refresh is separate.
 
+Live recovery configuration is explicit `PULSAR_COLD_ROOT` only
+([ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)). Process,
+then persisted repository `.env`, then `not-configured`. Empty disables.
+There is no live `MODELS_NFS` alias and no implicit `/mnt/Models`
+fallback. Operators set, disable, inspect, and retry one eligible archive
+job through `./pulsar configure cold-storage`. The selected directory must
+already exist. Pulsar never creates, mounts, or administers it. Existing
+non-Pulsar content stays untouched. Receipt-backed jobs own only
+`pulsar-control` and `pulsar-receipts` under that root. Root changes do
+not migrate; disable does not delete. The cold root is not part of the launch
+plan and is never mounted into a serving container.
+
 The operator owns whether the configured cold root is a suitable independent
 failure domain. Pulsar checks path safety and recovery-set integrity. It does
 not compare devices, mounts, filesystems, exports, or topology to prove or
@@ -263,6 +275,8 @@ evidence or transfer a prior status onto changed inputs.
   incomplete.
 - Physical cold archive, controller-loss receipt recovery, and remote-rank
   restore are not claimed by deterministic tests.
+- Explicit cold recovery configuration is control-plane only; deterministic
+  tests make no physical NFS or archive-durability claim.
 - Retained Qwen recipe shells require complete re-onboarding.
 - The model library does not certify the operator's storage failure domains.
 

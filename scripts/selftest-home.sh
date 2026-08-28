@@ -486,6 +486,15 @@ home_env() {
   export QUICK_STATUS_INVENTORY_JSON="$STATE/inv_current"
   export QUICK_STATUS_API_CMD="$SHIM/api-ok"
   export STATE_DIR="$STATE"
+  export PULSAR_SELFTEST=1
+  export PULSAR_COLD_STORAGE_TEST_DOTENV="$STATE/cold.env"
+  export MODEL_LIBRARY_DIR="$STATE/library"
+  export PULSAR_HOT_ROOT="$STATE/hot"
+  mkdir -p "$STATE/library" "$STATE/hot"
+  if [ ! -f "$STATE/cold.env" ]; then
+    printf "PULSAR_COLD_ROOT=''\n" >"$STATE/cold.env"
+    chmod 600 "$STATE/cold.env"
+  fi
   # Ensure doctor/inventory not auto-run: leave real paths unused via hooks
   unset HOME_QUICK_STATUS_CMD HOME_INVENTORY_CMD HOME_INVENTORY_JSON_CMD 2>/dev/null || true
 }
@@ -505,7 +514,8 @@ run_home() {
 # 1) Dispatcher: no-arg home vs wizard; direct command compatibility
 # ---------------------------------------------------------------------------
 echo "=== dispatcher routing ==="
-chmod +x "$REPO_DIR/pulsar" "$REPO_DIR/scripts/home.sh" "$REPO_DIR/scripts/quick-status.sh"
+chmod +x "$REPO_DIR/pulsar" "$REPO_DIR/scripts/home.sh" \
+  "$REPO_DIR/scripts/quick-status.sh" "$REPO_DIR/scripts/configure-cold-storage.sh"
 
 # Help
 out=$("$REPO_DIR/pulsar" help 2>&1)
@@ -545,8 +555,8 @@ assert_eq "$rc" "0" "pulsar inventory --help → 0"
 echo "=== home no preflight before first choice ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-# Exit immediately (menu item 7)
-run_home $'7\n'
+# Exit immediately (menu item 8)
+run_home $'8\n'
 assert_eq "$LAST_RC" "0" "home exit 0"
 assert_false "no doctor before/on exit" bash -c "test -s '$STATE/logs/doctor.log'"
 assert_false "no inventory before exit-only" bash -c "test -s '$STATE/logs/inventory.log'"
@@ -562,7 +572,7 @@ echo "=== home workflows plain mode ==="
 # Status → Back → Exit
 reset_logs
 seed_inv "$STATE/inv_current" 80 "$(svc_managed qwen3.8-27b-fp8 running True True)"
-run_home $'1\n4\n7\n'
+run_home $'1\n4\n8\n'
 assert_eq "$LAST_RC" "0" "status then exit"
 assert_file_contains "$STATE/logs/home.combined" "quick-status|managed|read-only" "status showed overview"
 assert_false "status path: no down" bash -c "test -s '$STATE/logs/down.log'"
@@ -572,7 +582,7 @@ assert_false "status path: no full smoke status" bash -c "test -s '$STATE/logs/s
 # Serve/switch → wizard shim → Exit
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-run_home $'2\n7\n'
+run_home $'2\n8\n'
 assert_file_contains "$STATE/logs/wizard.log" "wizard" "serve entered wizard shim"
 assert_false "serve path: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -580,7 +590,7 @@ assert_false "serve path: no down" bash -c "test -s '$STATE/logs/down.log'"
 # exit status in the normal operator view.
 reset_logs
 export WIZARD_FIXTURE_RC=1
-run_home $'2\n7\n'
+run_home $'2\n8\n'
 unset WIZARD_FIXTURE_RC
 assert_file_not_contains "$STATE/logs/home.combined" "wizard exited with status" \
   "home hides technical wizard exit status by default"
@@ -588,8 +598,8 @@ assert_file_not_contains "$STATE/logs/home.combined" "wizard exited with status"
 # Diagnostics doctor → Exit
 reset_logs
 seed_inv "$STATE/inv_current" 100 ""
-# 6 Diagnostics, 1 Run doctor, 7 Exit (after return)
-run_home $'6\n1\n7\n'
+# 7 Diagnostics, 1 Run doctor, 8 Exit (after return)
+run_home $'7\n1\n8\n'
 assert_file_contains "$STATE/logs/doctor.log" "doctor" "diagnostics ran doctor"
 assert_false "diagnostics: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -600,6 +610,16 @@ run_home ''
 assert_eq "$LAST_RC" "0" "EOF cancel exits cleanly"
 assert_false "EOF: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "cancelled|goodbye|exiting" "EOF messaging"
+
+# Configuration delegates to the same CLI; first-use is skipped when persisted.
+reset_logs
+seed_inv "$STATE/inv_current" 100 ""
+run_home $'6\n1\n1\n5\n8\n'
+assert_eq "$LAST_RC" "0" "configuration menu exits 0"
+assert_file_contains "$STATE/logs/home.combined" "Cold recovery storage|not-configured|disabled|PULSAR_COLD_ROOT" \
+  "configuration show uses cold-storage implementation"
+assert_false "configuration path: no down" bash -c "test -s '$STATE/logs/down.log'"
+assert_false "configuration path: no wizard" bash -c "test -s '$STATE/logs/wizard.log'"
 
 # ---------------------------------------------------------------------------
 # 4) Quick status fields + no completion
@@ -700,7 +720,7 @@ with open("$STATE/inv_current", "w") as f:
 PY
 
 # Stop: 3, select first (only good-model), decline confirm n, exit 7
-run_home $'3\n1\nn\n7\n'
+run_home $'3\n1\nn\n8\n'
 assert_file_contains "$STATE/logs/home.combined" "good-model" "stop lists managed safe"
 assert_file_contains "$STATE/logs/home.combined" "good-model · RUNNING · nodes 1/1" \
   "stop choice is compact and human-readable"
@@ -712,7 +732,7 @@ assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed
 # Confirm stop routes only through down shim
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_managed good-model running True True)"
-run_home $'3\n1\ny\n7\n'
+run_home $'3\n1\ny\n8\n'
 assert_file_contains "$STATE/logs/down.log" "good-model" "confirmed stop → down shim"
 assert_file_not_contains "$STATE/logs/down.log" "docker" "down log has no docker"
 assert_eq "$(grep -c . "$STATE/logs/down.log" || true)" "1" "single down call"
@@ -720,21 +740,21 @@ assert_eq "$(grep -c . "$STATE/logs/down.log" || true)" "1" "single down call"
 # Empty stop list
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_unknown)"
-run_home $'3\n7\n'
+run_home $'3\n8\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "empty stop list message"
 assert_false "empty stop: no down" bash -c "test -s '$STATE/logs/down.log'"
 
 # Incomplete partial excluded
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_partial_2node qwen3.8-27b-fp8-2node True)" ok
-run_home $'3\n7\n'
+run_home $'3\n8\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "partial incomplete excluded"
 assert_false "partial: no down" bash -c "test -s '$STATE/logs/down.log'"
 
 # Worker unreachable 2-node complete excluded
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True)" unreachable
-run_home $'3\n7\n'
+run_home $'3\n8\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible" "worker-unreach 2-node excluded"
 assert_false "unreach: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -743,7 +763,7 @@ assert_false "unreach: no down" bash -c "test -s '$STATE/logs/down.log'"
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True)" unreachable
 mark_idle_rank2_unreachable "$STATE/inv_current"
-run_home $'3\n1\ny\n7\n'
+run_home $'3\n1\ny\n8\n'
 assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node" \
   "idle rank 2 does not hide exact 2-node stop"
 assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
@@ -752,7 +772,7 @@ assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
 # local-files stop discloses restage cost from the profile WEIGHTS_GIB
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
-run_home $'3\n1\n1\ny\n7\n'
+run_home $'3\n1\n1\ny\n8\n'
 assert_file_contains "$STATE/logs/home.combined" "free ~29 GiB now" \
   "stop discloses restage bytes for local-files"
 assert_file_contains "$STATE/logs/home.combined" "Keep prepared views" \
@@ -764,13 +784,13 @@ assert_file_not_contains "$STATE/logs/down.log" "estimated_footprint" \
 
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
-run_home $'3\n1\n2\ny\n7\n'
+run_home $'3\n1\n2\ny\n8\n'
 assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node --purge-hot" \
   "home free choice passes --purge-hot"
 
 reset_logs
 seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
-run_home $'3\n1\n1\nn\n7\n'
+run_home $'3\n1\n1\nn\n8\n'
 assert_false "local-files decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" \
   "local-files stop still requires final confirmation"
@@ -781,8 +801,8 @@ assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed
 echo "=== stale maintenance ==="
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed stale-qwen stale True True)"
-# 5 Maintenance, 1 Clean stale, 1 select conf, n decline, 7 exit
-run_home $'5\n1\n1\nn\n7\n'
+# 5 Maintenance, 1 Clean stale, 1 select conf, n decline, 8 exit
+run_home $'5\n1\n1\nn\n8\n'
 assert_false "stale decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" "stale decline"
 assert_file_contains "$STATE/logs/home.combined" "stale-qwen · STALE · safe_to_stop" \
@@ -790,14 +810,14 @@ assert_file_contains "$STATE/logs/home.combined" "stale-qwen · STALE · safe_to
 
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed stale-qwen stale True True)"
-run_home $'5\n1\n1\ny\n7\n'
+run_home $'5\n1\n1\ny\n8\n'
 assert_file_contains "$STATE/logs/down.log" "stale-qwen" "stale confirm → down"
 assert_file_contains "$STATE/logs/home.combined" "no model memory|nonblocking" "stale messaging"
 
 # Unsafe stale excluded
 reset_logs
 seed_inv "$STATE/inv_current" 100 "$(svc_managed bad-stale stale True False)"
-run_home $'5\n1\n7\n'
+run_home $'5\n1\n8\n'
 assert_file_contains "$STATE/logs/home.combined" "no eligible stale" "unsafe stale excluded"
 assert_false "unsafe stale: no down" bash -c "test -s '$STATE/logs/down.log'"
 
@@ -807,7 +827,7 @@ assert_false "unsafe stale: no down" bash -c "test -s '$STATE/logs/down.log'"
 echo "=== inventory observability failures ==="
 reset_logs
 printf '%s\n' 'not-json' >"$STATE/inv_current"
-run_home $'3\n7\n'
+run_home $'3\n8\n'
 assert_eq "$LAST_RC" "0" "home recovers to menu after malformed inventory"
 assert_false "malformed home inventory: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "inventory returned invalid data.*no action was taken" \
@@ -1028,6 +1048,12 @@ assert_false "stop restage GiB does not walk expected seals" \
 assert_true "quick-status never curls completions" bash -c \
   "! grep -E 'curl.*completions|/v1/completions[\"'\'']' '$REPO_DIR/scripts/quick-status.sh' | grep -v never | grep -q ."
 assert_true "quick-status only probes /v1/models" grep -q '/v1/models' "$REPO_DIR/scripts/quick-status.sh"
+assert_true "home offers Configuration beside Maintenance" \
+  grep -q '"Configuration"' "$REPO_DIR/scripts/home.sh"
+assert_true "home first-use delegates to configure-cold-storage" \
+  grep -q 'cmd_cold_storage first-use' "$REPO_DIR/scripts/home.sh"
+assert_true "home cold-storage actions delegate to the CLI" \
+  grep -q 'cmd_cold_storage show' "$REPO_DIR/scripts/home.sh"
 
 # ---------------------------------------------------------------------------
 echo "=============================="

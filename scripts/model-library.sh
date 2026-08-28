@@ -11,21 +11,54 @@ SCRIPT_NAME=model-library
 PY_TOOL="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
 SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library_receipt.py}"
 COLD_ARCHIVE_PY="${PULSAR_COLD_ARCHIVE_PY:-$REPO_DIR/scripts/model_library_cold_archive.py}"
+COLD_STORAGE_CONFIG_PY="${PULSAR_COLD_STORAGE_CONFIG_PY:-$REPO_DIR/scripts/model_library_cold_storage.py}"
 HF_SOURCE_INVENTORY_PY="${PULSAR_HF_SOURCE_INVENTORY_PY:-$REPO_DIR/scripts/hf_source_inventory.py}"
 LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
 CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-$LIBRARY_DIR/catalog.json}"
 HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
-# Optional cold archive (site NFS). Empty PULSAR_COLD_ROOT disables cold.
-# When unset, MODELS_NFS (default /mnt/Models from lib.sh) is used.
-COLD_ROOT="${PULSAR_COLD_ROOT-}"
-if [ -z "${PULSAR_COLD_ROOT+x}" ]; then
-  COLD_ROOT="${MODELS_NFS:-}"
-fi
+# Receipt-backed cold recovery is explicit PULSAR_COLD_ROOT only (ADR 0015).
+# Legacy fill commands accept only an invocation-local --cold-root.
 LIBRARY_SUDO_MODE="${LIBRARY_SUDO_MODE:-passwordless}"
 case "$LIBRARY_SUDO_MODE" in
   passwordless|interactive) ;;
   *) die "LIBRARY_SUDO_MODE must be passwordless or interactive" ;;
 esac
+
+acquire_cold_storage_shared_lock() {
+  local lock_path="$REPO_DIR/.env.pulsar-cold-storage.lock"
+  if [ "${PULSAR_SELFTEST:-0}" = 1 ] \
+      && [ -n "${PULSAR_COLD_STORAGE_TEST_DOTENV:-}" ]; then
+    local test_env_dir test_env_name
+    test_env_dir=$(dirname "$PULSAR_COLD_STORAGE_TEST_DOTENV")
+    test_env_name=$(basename "$PULSAR_COLD_STORAGE_TEST_DOTENV")
+    lock_path="$test_env_dir/.${test_env_name}.pulsar-cold-storage.lock"
+  fi
+  if [[ "${PULSAR_COLD_STORAGE_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  if [ -L "$lock_path" ]; then
+    die "cold recovery configuration lock must not be a symlink"
+  fi
+  if [ -e "$lock_path" ] && [ ! -f "$lock_path" ]; then
+    die "cold recovery configuration lock is not a regular file"
+  fi
+  exec {PULSAR_COLD_STORAGE_LOCK_FD}>"$lock_path" \
+    || die "cold recovery configuration lock is unavailable"
+  chmod 0600 "$lock_path" \
+    || die "cold recovery configuration lock permissions cannot be set"
+  flock -s "$PULSAR_COLD_STORAGE_LOCK_FD" \
+    || die "cold recovery configuration lock cannot be acquired"
+  _fd_cloexec "$PULSAR_COLD_STORAGE_LOCK_FD"
+  export PULSAR_COLD_STORAGE_LOCK_FD
+}
+
+release_cold_storage_shared_lock() {
+  if [[ "${PULSAR_COLD_STORAGE_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+    flock -u "$PULSAR_COLD_STORAGE_LOCK_FD" || true
+    eval "exec ${PULSAR_COLD_STORAGE_LOCK_FD}>&-"
+  fi
+  unset PULSAR_COLD_STORAGE_LOCK_FD
+}
 
 usage() {
   cat <<'EOF'
@@ -40,7 +73,8 @@ Usage:
       --node RANK|NODE_ID [--json]
   scripts/model-library.sh catalog primary clear <profile|model_id|model_id@revision>
       [--json]
-  scripts/model-library.sh resolve <profile|model_id|/abs/path> [--json] [--no-cold]
+  scripts/model-library.sh resolve <profile|model_id|/abs/path>
+      [--json] [--cold-root PATH]
   scripts/model-library.sh cleanup-recommend [--json]
   scripts/model-library.sh home add <profile>
       --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]
@@ -59,10 +93,10 @@ Usage:
   scripts/model-library.sh home receipt recover --receipt RECEIPT_ID --yes [--json]
   scripts/model-library.sh home restore <profile|model_id@revision|receipt_id>
       --node RANK --yes [--json]
-  scripts/model-library.sh cold scan [--json] [--complete-only] [--root PATH]
-  scripts/model-library.sh cold show <model_id|/abs/path> [--json]
+  scripts/model-library.sh cold scan --cold-root PATH [--json] [--complete-only]
+  scripts/model-library.sh cold show <model_id|/abs/path> --cold-root PATH [--json]
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
-      [--cache-root PATH] [--yes]
+      [--cache-root PATH] [--cold-root PATH] [--yes]
   scripts/model-library.sh prepare <profile>
       [--transport ssh-control|ssh-roce]
       [--yes] [--interactive-sudo] [--time]
@@ -81,9 +115,11 @@ Usage:
 
 Notes:
   • Scans default HF cache hubs on confirmed topology nodes (warm catalog).
-  • Optional cold archive (PULSAR_COLD_ROOT or MODELS_NFS): Official Models/
-    org/name flat trees and hub/models--* layouts. Resolve: warm → cold.
-  • cold adopt imports into an absent durable warm HF path through private
+  • Receipt-backed recovery uses explicit PULSAR_COLD_ROOT only and owns only
+    pulsar-control/ plus pulsar-receipts/. Legacy Official Models/ and hub-layout
+    fill inspection requires --cold-root on that exact scan/show/adopt/resolve.
+  • cold adopt imports from its explicit --cold-root into an absent durable
+    warm HF path through private
     same-filesystem staging and atomic no-replace publication. It never deletes
     or overwrites an existing repository.
   • cold stage-only is removed (ADR 0012): self-observed cold bytes cannot
@@ -157,7 +193,8 @@ Notes:
     asserts the operator's failure-domain policy; Pulsar does not verify that
     infrastructure choice.
     home archive status|run take no occupancy lifecycle lock, so they cannot
-    block prepare, launch, or relocate; workers flock only their job file.
+    block prepare, launch, or relocate; archive mutation holds the shared
+    cold-storage configuration lock plus the exact job lock.
     home receipt recover explicitly restores a missing controller receipt from
     the protected control-state replica; archive bytes never authorize that
     recovery. home restore uses the controller receipt, private same-filesystem
@@ -233,12 +270,6 @@ validate_copy_stream_settings() {
 }
 
 validate_copy_stream_settings
-
-cold_root_args() {
-  if [ -n "${COLD_ROOT:-}" ]; then
-    printf '%s\n' --cold-root "$COLD_ROOT"
-  fi
-}
 
 require_py() {
   [ -f "$PY_TOOL" ] || die "missing $PY_TOOL"
@@ -732,16 +763,16 @@ cmd_catalog_primary() {
 }
 
 cmd_resolve() {
-  local query="" json=0 no_cold=0
+  local query="" json=0 root=""
   local args=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json=1 ;;
-      --no-cold) no_cold=1 ;;
+      --no-cold) die "--no-cold is unnecessary; cold fill requires explicit --cold-root" ;;
       --cold-root)
         shift
         [ $# -gt 0 ] || die "--cold-root needs a path"
-        COLD_ROOT="$1"
+        root="$1"
         ;;
       -h|--help) usage; return 0 ;;
       *)
@@ -751,7 +782,7 @@ cmd_resolve() {
     esac
     shift
   done
-  [ -n "$query" ] || die "usage: resolve <profile|model_id|/abs/path> [--json] [--no-cold]"
+  [ -n "$query" ] || die "usage: resolve <profile|model_id|/abs/path> [--json] [--cold-root PATH]"
   require_py
   args=(resolve --models-dir "$REPO_DIR/models")
   if [ -f "$CATALOG_FILE" ]; then
@@ -759,11 +790,10 @@ cmd_resolve() {
   else
     args+=(--allow-missing-catalog)
   fi
-  if [ "$no_cold" = 1 ]; then
-    args+=(--no-cold)
+  if [ -n "$root" ]; then
+    args+=(--cold-root "$root")
   else
-    # shellcheck disable=SC2207
-    args+=($(cold_root_args))
+    args+=(--no-cold)
   fi
   if [ "$json" = 1 ]; then
     args+=(--json)
@@ -778,9 +808,9 @@ cmd_cold_scan() {
     case "$1" in
       --json) json=1 ;;
       --complete-only) complete_only=1 ;;
-      --root)
+      --cold-root)
         shift
-        [ $# -gt 0 ] || die "--root needs a path"
+        [ $# -gt 0 ] || die "--cold-root needs a path"
         root="$1"
         ;;
       -h|--help) usage; return 0 ;;
@@ -788,14 +818,9 @@ cmd_cold_scan() {
     esac
     shift
   done
+  [ -n "$root" ] || die "cold scan requires explicit --cold-root PATH"
   require_py
-  args=(scan-cold)
-  if [ -n "$root" ]; then
-    args+=(--cold-root "$root")
-  else
-    # shellcheck disable=SC2207
-    args+=($(cold_root_args))
-  fi
+  args=(scan-cold --cold-root "$root")
   [ "$complete_only" = 1 ] && args+=(--complete-only)
   [ "$json" = 1 ] && args+=(--json)
   python3 "$PY_TOOL" "${args[@]}"
@@ -805,9 +830,9 @@ cmd_cold_show() {
   local query="" root=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --root)
+      --cold-root)
         shift
-        [ $# -gt 0 ] || die "--root needs a path"
+        [ $# -gt 0 ] || die "--cold-root needs a path"
         root="$1"
         ;;
       --json) ;; # always JSON object
@@ -820,14 +845,9 @@ cmd_cold_show() {
     shift
   done
   [ -n "$query" ] || die "usage: cold show <model_id|/abs/path>"
+  [ -n "$root" ] || die "cold show requires explicit --cold-root PATH"
   require_py
-  local args=(find-cold)
-  if [ -n "$root" ]; then
-    args+=(--cold-root "$root")
-  else
-    # shellcheck disable=SC2207
-    args+=($(cold_root_args))
-  fi
+  local args=(find-cold --cold-root "$root")
   args+=("$query")
   python3 "$PY_TOOL" "${args[@]}"
 }
@@ -843,9 +863,9 @@ cmd_cold_adopt() {
         [ $# -gt 0 ] || die "--cache-root needs a path"
         cache_root="$1"
         ;;
-      --root)
+      --cold-root)
         shift
-        [ $# -gt 0 ] || die "--root needs a path"
+        [ $# -gt 0 ] || die "--cold-root needs a path"
         root="$1"
         ;;
       -h|--help) usage; return 0 ;;
@@ -856,16 +876,11 @@ cmd_cold_adopt() {
     esac
     shift
   done
-  [ -n "$query" ] || die "usage: cold adopt <model_id|profile|/abs/path> [--cache-root PATH] [--yes]"
+  [ -n "$query" ] || die "usage: cold adopt <model_id|profile|/abs/path> [--cache-root PATH] [--cold-root PATH] [--yes]"
+  [ -n "$root" ] || die "cold adopt requires explicit --cold-root PATH"
   require_py
 
-  local plan_args=(plan-cold-adopt --cache-root "$cache_root" --models-dir "$REPO_DIR/models")
-  if [ -n "$root" ]; then
-    plan_args+=(--cold-root "$root")
-  else
-    # shellcheck disable=SC2207
-    plan_args+=($(cold_root_args))
-  fi
+  local plan_args=(plan-cold-adopt --cache-root "$cache_root" --models-dir "$REPO_DIR/models" --cold-root "$root")
   if [[ "$query" == /* ]]; then
     plan_args+=(--path "$query")
   elif [[ "$query" == */* ]]; then
@@ -2049,10 +2064,11 @@ cmd_home_relocate() {
 
 start_cold_archive_after_receipt() {
   local receipt_file="${1:?}" json="${2:-0}" job_json state receipt_id autostart
+  acquire_cold_storage_shared_lock
   job_json=$(python3 "$COLD_ARCHIVE_PY" enqueue \
     --library-dir "$LIBRARY_DIR" \
     --receipt "$receipt_file") \
-    || return 0
+    || { release_cold_storage_shared_lock; return 0; }
   state=$(printf '%s' "$job_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
   receipt_id=$(printf '%s' "$job_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["receipt_id"])')
   if [ "$json" != 1 ]; then
@@ -2074,20 +2090,18 @@ start_cold_archive_after_receipt() {
       fi
       unset PULSAR_MODEL_LIBRARY_LOCK_FD PULSAR_MODEL_LIBRARY_LOCK_MODE
       unset PULSAR_MODEL_LIBRARY_HOT_LOCK_FD PULSAR_MODEL_LIBRARY_HOT_LOCK_MODE
+      unset PULSAR_COLD_STORAGE_LOCK_FD
       exec setsid nohup env \
         PULSAR_COLD_ARCHIVE_AUTOSTART=0 \
         "$REPO_DIR/scripts/model-library.sh" home archive run --receipt "$receipt_id" --yes \
         >>"$LIBRARY_DIR/cold-archive-logs/${receipt_id}.log" 2>&1 < /dev/null
     ) &
   fi
+  release_cold_storage_shared_lock
 }
 
 configured_cold_root_value() {
-  if [ -n "${PULSAR_COLD_ROOT+x}" ]; then
-    printf '%s\n' "${PULSAR_COLD_ROOT-}"
-  else
-    printf '%s\n' "${MODELS_NFS:-}"
-  fi
+  python3 "$COLD_STORAGE_CONFIG_PY" effective-path
 }
 
 cmd_home_receipt() {
@@ -2117,6 +2131,7 @@ cmd_home_receipt() {
   [ "$action" = status ] || [ "$yes" = 1 ] \
     || die "home receipt $action requires --yes"
   require_py
+  acquire_cold_storage_shared_lock
   cold_root=$(configured_cold_root_value)
   [ -n "$cold_root" ] || die "home receipt $action: cold root is not configured"
   case "$action" in
@@ -2224,6 +2239,7 @@ cmd_home_archive_run() {
   [ -n "$receipt_id" ] || die "usage: home archive run --receipt RECEIPT_ID --yes"
   [ "$yes" = 1 ] || die "home archive run requires --yes"
   require_py
+  acquire_cold_storage_shared_lock
   receipt_file="$LIBRARY_DIR/download-receipts/${receipt_id}.json"
   receipt_json=$(python3 "$SOURCE_ATTESTED_PY" find-receipt \
     --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id") \
@@ -2309,6 +2325,7 @@ cmd_home_archive_run() {
 }
 
 cmd_home_restore() (
+  acquire_cold_storage_shared_lock
   set -euo pipefail
   local query="" node_selector="" yes=0 json=0 dest_rank dest_node
   local model_id revision receipt_json receipt_id cold_root
@@ -2529,6 +2546,7 @@ cmd_home_restore() (
 )
 
 cmd_home_check() {
+  acquire_cold_storage_shared_lock
   local query="" node_selector="" allow_last_home=0 allow_unarchived=0 json=0 plan state
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -2559,6 +2577,7 @@ cmd_home_check() {
 }
 
 cmd_home_remove() {
+  acquire_cold_storage_shared_lock
   local query="" node_selector="" allow_last_home=0 allow_unarchived=0 yes=0 plan state
   local result_file
   while [ $# -gt 0 ]; do

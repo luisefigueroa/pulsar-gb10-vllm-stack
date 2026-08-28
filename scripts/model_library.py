@@ -523,20 +523,21 @@ def scan_hub_cache(
 
 
 def configured_cold_root() -> str | None:
-    """Return configured cold root, or None if cold tier is disabled.
+    """Return the explicit cold root, or None if unset or disabled.
 
-    Precedence:
-      1. PULSAR_COLD_ROOT — empty string disables cold explicitly
-      2. MODELS_NFS — site default (often /mnt/Models)
+    Live recovery configuration is ``PULSAR_COLD_ROOT`` only (ADR 0015).
+    An explicit empty value disables cold recovery. Absent means
+    not-configured. ``MODELS_NFS`` and ``/mnt/Models`` are not aliases.
     """
-    if "PULSAR_COLD_ROOT" in os.environ:
-        raw = os.environ["PULSAR_COLD_ROOT"].strip()
-        if raw == "":
-            return None
-        return raw
-    raw = os.environ.get("MODELS_NFS", "").strip()
+    if "PULSAR_COLD_ROOT" not in os.environ:
+        return None
+    raw = os.environ["PULSAR_COLD_ROOT"]
     if raw == "":
         return None
+    if raw != raw.strip() or not pathlib.Path(raw).is_absolute():
+        fail("PULSAR_COLD_ROOT must be an absolute path without surrounding whitespace")
+    if any(ord(char) < 32 or ord(char) == 127 for char in raw):
+        fail("PULSAR_COLD_ROOT contains a disallowed control character")
     return raw
 
 
@@ -557,7 +558,7 @@ def cold_root_status(root: str | pathlib.Path | None) -> dict[str, Any]:
             "configured": False,
             "available": False,
             "root": None,
-            "reason": "cold tier disabled (PULSAR_COLD_ROOT empty or MODELS_NFS unset)",
+            "reason": "cold recovery storage is not configured or is disabled",
         }
     path = pathlib.Path(root).expanduser()
     if not path.exists():
@@ -1703,7 +1704,7 @@ def resolve_entry(
     """Resolve warm primary home, then optional cold archive.
 
     cold_root:
-      Ellipsis (default) — use configured env (PULSAR_COLD_ROOT / MODELS_NFS)
+      Ellipsis (default) — disable legacy cold fall-through
       None / "" / "none" — disable cold fall-through
       str — explicit cold root
     """
@@ -1793,7 +1794,7 @@ def resolve_entry(
 
     # --- cold fall-through ---
     if cold_root is ...:
-        root = configured_cold_root()
+        root = None
     else:
         root = resolve_cold_root(None if cold_root is None else str(cold_root))
 
@@ -1804,7 +1805,7 @@ def resolve_entry(
         if absolute_path:
             fail(
                 f"resolve: absolute path {absolute_path} needs cold root "
-                "(set PULSAR_COLD_ROOT or MODELS_NFS)"
+                "(pass explicit --cold-root)"
             )
         fail(f"resolve: {target}: not in warm catalog; cold tier not configured")
 
@@ -2083,9 +2084,9 @@ def plan_cold_adopt(
     catalog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Plan adopt: cold complete tree → durable warm HF hub home."""
-    root = resolve_cold_root(cold_root) if cold_root else configured_cold_root()
+    root = resolve_cold_root(cold_root) if cold_root else None
     if root is None:
-        fail("cold adopt: cold root not configured (PULSAR_COLD_ROOT or MODELS_NFS)")
+        fail("cold adopt: explicit --cold-root is required")
 
     expected_revision = None
     if profile and models_dir:
@@ -7606,9 +7607,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_scan_cold(args: argparse.Namespace) -> int:
-    root = args.cold_root or configured_cold_root()
-    if root is None:
-        fail("scan-cold: cold root not configured (pass --cold-root or set MODELS_NFS)")
+    root = args.cold_root
+    if not root:
+        fail("scan-cold: explicit --cold-root is required")
     entries = scan_cold_archive(root)
     if args.complete_only:
         entries = [e for e in entries if e.get("state") == "complete"]
@@ -7632,9 +7633,9 @@ def cmd_scan_cold(args: argparse.Namespace) -> int:
 
 
 def cmd_find_cold(args: argparse.Namespace) -> int:
-    root = args.cold_root or configured_cold_root()
-    if root is None:
-        fail("find-cold: cold root not configured")
+    root = args.cold_root
+    if not root:
+        fail("find-cold: explicit --cold-root is required")
     path = args.path
     model_id = args.model
     if args.query:
@@ -8682,7 +8683,7 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument(
         "--cold-root",
         default="",
-        help="Cold archive root (default: PULSAR_COLD_ROOT or MODELS_NFS)",
+        help="Explicit legacy fill root for this resolve invocation",
     )
     resolve.add_argument(
         "--no-cold",

@@ -40,6 +40,8 @@ the trusted registry remain maintainer tooling (`docs/MODEL_RELEASE.md`,
 | `./pulsar stop <model\|--all> [--node ID]` | → `scripts/down.sh` (ownership-gated) |
 | `./pulsar status [model] [--node ID]` | → `scripts/status.sh` (may submit a completion) |
 | `./pulsar doctor [--json]` | Read-only host, cluster, and model-library diagnostics |
+| `./pulsar configure cold-storage` | Interactive cold recovery storage workflow |
+| `./pulsar configure cold-storage show\|plan\|set\|disable\|archive-jobs` | Direct cold recovery storage commands |
 | `./pulsar help` | Concise usage |
 
 ### Model Serving Release policy versus current commands
@@ -160,12 +162,43 @@ Menu (default cursor: status):
    (browsing is read-only; refresh/preparation are explicit; the model library
    is the only weight mechanism)
 5. **Maintenance** — optional clean of **stale** `safe_to_stop` managed containers
-6. **Diagnostics** — run doctor, detailed inventory (read-only)
-7. **Exit**
+6. **Configuration** — cold recovery storage (delegates to
+   `./pulsar configure cold-storage`)
+7. **Diagnostics** — run doctor, detailed inventory (read-only)
+8. **Exit**
+
+If there is no explicit persisted `PULSAR_COLD_ROOT` choice, first-use offers
+Configure existing path / Disable / Not now before the main menu. Not now
+changes nothing. Cancel/EOF on that prompt also changes nothing and continues
+to the main menu.
 
 Read-only actions and cancelled subflows return home. Gum Escape/cancel and EOF
 exit cleanly without mutations. `--all` is not offered in interactive stop or
 maintenance; there is no automatic cleanup on doctor or startup.
+
+### Cold recovery storage
+
+Live configuration is explicit `PULSAR_COLD_ROOT` only. Direct commands:
+
+```bash
+./pulsar configure cold-storage
+./pulsar configure cold-storage show [--json]
+./pulsar configure cold-storage plan --path PATH [--json]
+./pulsar configure cold-storage set --path PATH --yes [--json]
+./pulsar configure cold-storage disable --yes [--json]
+./pulsar configure cold-storage archive-jobs [--json]
+```
+
+Bare `./pulsar configure cold-storage` opens the interactive workflow.
+`show`, `plan`, and `archive-jobs` are read-only. `set` and `disable` print
+the exact preview, require confirmation, recheck immediately, then write.
+Noninteractive mutation requires `--yes`. The selected directory must
+already exist. Changing roots does not migrate; disabling does not delete.
+Current writability is reported as health only; it does not override the
+operator's mount policy or block configuration. Archive jobs report their own
+write outcome. The cold root is not added to serving-container mounts.
+Interactive inspect may retry exactly one eligible job by delegating to
+`scripts/model-library.sh home archive run --receipt ID --yes`.
 
 ### Models & storage semantics
 
@@ -725,14 +758,21 @@ Download crash and retry behavior:
   relocate for the whole copy). Last occupancy remove of a receipted identity
   verifies the protected receipt replica and rehashes the model archive on the
   controller (`home check`, and again after `--yes` before occupancy detach).
-  Setting `PULSAR_COLD_ROOT` is the operator's assertion that the location
-  meets the site's recovery and failure-domain policy. Pulsar does not compare
+  Setting explicit `PULSAR_COLD_ROOT` is the operator's assertion that the
+  location meets the site's recovery and failure-domain policy
+  ([ADR 0014](./decisions/0014-operator-owns-cold-storage-failure-domain.md),
+  [ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)). There is no
+  live `MODELS_NFS` alias and no implicit `/mnt/Models` fallback. Configure
+  it with `./pulsar configure cold-storage` rather than hand-editing `.env`.
+  Pulsar does not compare
   devices, mounts, filesystem types, exports, or storage-domain identities.
   It retains nested-path refusal where copying or deletion would be unsafe.
   Layout-only `presence.json` and archived bytes without the protected receipt
   replica are not that proof. The occupancy rank only
   deletes the inspected hub tree and does not reopen receipts. An in-flight
-  copy vs remove is fail-and-retry. Archive workers flock only their job file.
+  copy vs remove is fail-and-retry. Archive workers hold a shared cold-storage
+  configuration lock plus their exact job lock; a configuration change takes
+  the exclusive side so its recovery-state recheck cannot race publication.
   `home restore --node` admits the full receipt byte count, copies into private
   same-filesystem staging, rehashes, atomically publishes without replacement,
   and occupies. Last occupancy remove
@@ -1010,29 +1050,40 @@ prepare each required profile again. Current working-copy records created before
 support remain readable: the first model-library readiness check visibly
 full-verifies and creates the missing rank-local witness. Live profiles
 do not need a validation-status override.
+Containers started before ADR 0015 may still carry the old `/mnt/Models`
+bind mount and prior launch-contract ID. Pulsar does not rewrite a running
+container. Its next owned stop/start uses the new local-model-only mount set
+and a newly derived launch contract.
 Do not hand-edit or relabel old site-local state into the current records.
 
-**Optional cold archive:** shared/local fill tier (conventionally
-`MODELS_NFS=/mnt/Models`, overridable with `PULSAR_COLD_ROOT`; empty
-`PULSAR_COLD_ROOT` disables cold). Layouts scanned:
+**Optional cold archive:** explicit `PULSAR_COLD_ROOT` only. Process,
+then persisted repository `.env`, then `not-configured`. Empty disables.
+`./pulsar configure cold-storage` sets, disables, inspects, and can retry
+one eligible archive job. The directory must already exist; Pulsar does
+not create it. Existing non-Pulsar content stays untouched. Receipt-backed
+jobs own only `pulsar-control` and `pulsar-receipts` under that root.
+Legacy fill inspection is separate from the live recovery root. These commands
+scan only a root supplied on that exact invocation; they never infer
+`PULSAR_COLD_ROOT`:
 
 - `Official Models/<org>/<name>/` (and `Community Models/…`) — flat trees
 - `hub/models--org--name/` or `.cache/huggingface/hub/…` — HF hub trees
 
-Resolve order is **warm complete home → cold (if configured) → fail without fallback**.
-Cold is preferred over a fresh Hugging Face download when warm misses; it is
-**not** the multi-node runtime filesystem. A Hugging Face home can
+Ordinary resolve checks the warm catalog only. An explicitly supplied legacy
+fill root may be inspected after a warm miss; it is **not** the multi-node
+runtime filesystem or the receipt-backed recovery namespace. A Hugging Face home can
 stage only from a source preserving the expected commit and complete file list;
 a flat archive with an inferred local revision will not match that receipt.
 
 ```bash
 # inventory
-scripts/model-library.sh cold scan --json
-scripts/model-library.sh cold show <org>/<name>
-scripts/model-library.sh resolve <profile> --json   # warm, else cold
+scripts/model-library.sh cold scan --cold-root /path/to/legacy-archive --json
+scripts/model-library.sh cold show <org>/<name> --cold-root /path/to/legacy-archive
+scripts/model-library.sh resolve <profile> --cold-root /path/to/legacy-archive --json
 
 # grow the library (durable warm home on this node’s HF cache)
-scripts/model-library.sh cold adopt <org>/<name> --yes
+scripts/model-library.sh cold adopt <org>/<name> \
+  --cold-root /path/to/legacy-archive --yes
 scripts/model-library.sh catalog refresh
 ```
 
