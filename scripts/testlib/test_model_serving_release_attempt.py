@@ -27,6 +27,7 @@ from scripts.testlib import (  # noqa: E402
     model_serving_release_attempt_fixture as fixture,
 )
 from scripts.testlib import model_serving_release_fixture as release_fixture  # noqa: E402
+import validator_measurement  # noqa: E402
 
 
 CLI = REPO_ROOT / "scripts" / "model-serving-release-attempt.sh"
@@ -187,6 +188,89 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             [{"metric": "ttft_p95", "unit": "milliseconds", "value": "88"}],
         )
         self.assertNotEqual(by_id["latency-ttft"]["metrics"][0]["value"], "20")
+
+    def test_resource_diagnostic_is_run_evidence_not_criterion_or_review(self) -> None:
+        inputs = fixture.prepare_compose_inputs(self.repo)
+        spec = self.load_specs(self.compose(inputs))["benchmark-serving"]
+        self.assertEqual(
+            spec["run_diagnostic_source_keys"],
+            ["resource-benchmark-serving"],
+        )
+        self.assertEqual(spec["review_source_keys"], [])
+        observation_keys = {
+            key
+            for observation in spec["criterion_observations"]
+            for key in observation["evidence_source_keys"]
+        }
+        self.assertNotIn("resource-benchmark-serving", observation_keys)
+        self.assertIn(
+            "scripts/model-serving-experiment-monitor.sh",
+            [item["program"] for item in spec["commands"]],
+        )
+
+    def test_incomplete_resource_diagnostic_does_not_rewrite_criterion_result(self) -> None:
+        inputs = fixture.prepare_compose_inputs(self.repo)
+        resource_path = self.repo.joinpath(
+            *pathlib.PurePosixPath(fixture.BENCH_RESOURCE_RESULT).parts
+        )
+        unavailable_rank = {
+            "rank": "single",
+            "collection_status": "unavailable",
+            "sample_count": 0,
+            "workload_sample_count": 0,
+            "mem_available_min_bytes": None,
+            "swap_used_max_bytes": None,
+            "node_memory_pressure_some_total_delta_us": None,
+            "workload_memory_current_max_bytes": None,
+            "workload_memory_peak_start_bytes": None,
+            "workload_memory_peak_end_bytes": None,
+            "workload_swap_current_max_bytes": None,
+            "oom_delta": None,
+            "oom_kill_delta": None,
+        }
+        fixture.write_json(
+            resource_path,
+            validator_measurement.build_resource_measurement(
+                completion="incomplete",
+                reason="no-samples",
+                payload={
+                    "started_at": "2026-08-14T12:05:00Z",
+                    "ended_at": "2026-08-14T12:15:00Z",
+                    "duration_seconds": "600",
+                    "qualification_scope": "model-qualification",
+                    "sample_interval_seconds": "1",
+                    "expected_rank_count": 1,
+                    "observed_rank_count": 0,
+                    "sample_count": 0,
+                    "ranks": [unavailable_rank],
+                },
+            ),
+        )
+        spec = self.load_specs(self.compose(inputs))["benchmark-serving"]
+        self.assertEqual(spec["attempt"]["completion"], "completed")
+
+    def test_missing_resource_diagnostic_is_an_explicit_capture_gap(self) -> None:
+        inputs = fixture.prepare_compose_inputs(self.repo)
+        self.repo.joinpath(
+            *pathlib.PurePosixPath(fixture.BENCH_RESOURCE_RESULT).parts
+        ).unlink()
+        code, _stdout, stderr = self.run_main(
+            [
+                "compose",
+                "--release-plan",
+                str(inputs["plan_dir"]),
+                "--context",
+                str(inputs["context_path"]),
+                "--compare-measurement",
+                str(inputs["compare_path"]),
+                "--benchmark-measurement",
+                str(inputs["bench_path"]),
+                "--output-dir",
+                str(self.compose_dir()),
+            ]
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("resource diagnostic is missing", stderr)
 
     def test_missing_corrupt_short_unsupported_mismatch_interrupt(self) -> None:
         inputs = fixture.prepare_compose_inputs(

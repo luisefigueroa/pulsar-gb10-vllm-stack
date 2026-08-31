@@ -14,7 +14,7 @@ acting. ADR 0004 section 7 and staged item 4 govern this skill. Reuse
 `scripts/model-serving-release-plan.sh`,
 `scripts/model-serving-release-attempt.sh`,
 `scripts/model-serving-release-capture.sh`, `scripts/model-library.sh`,
-`scripts/up.sh`, the normal stop path, and
+`scripts/model-serving-experiment-monitor.sh`, `scripts/up.sh`, the normal stop path, and
 `validate/{greedy_capture.py,compare_captures.py,bench_serve.py}`. Do not
 duplicate their schemas or bypass the model-library acquisition service.
 
@@ -41,6 +41,16 @@ template is [references/handoff-template.md](references/handoff-template.md).
   before exact all-rank verification leaves qualification unstarted.
 - The journal is orchestration recovery state, not a sixth ADR object and
   not evidence.
+- Resource monitoring is experiment-only. Never add it to `pulsar`, the
+  wizard, launchers, status/inventory, catalog projection, or ordinary serving
+  after issuance.
+- A resource diagnostic is run evidence only. Never use it to satisfy a
+  criterion, change attempt completion or status, or populate
+  `review_evidence_artifact_ids`. Preserve an incomplete diagnostic; if no
+  closed summary exists, record a capture gap.
+- On refusal, launch failure, interruption, or another hard stop after monitor
+  start, stop only the owned monitor processes and retain their private raw
+  samples. Never leave the experiment monitor running in the background.
 
 ## Collaboration
 
@@ -234,12 +244,26 @@ Do not duplicate its transfer, retention, or cleanup logic.
 
 Verify the exact all-rank runtime-access barrier before qualification. A
 failure here is failed preparation: qualification did not start. Then
-require a separate **launch** confirmation and invoke the normal launcher
+start the experiment resource monitor in the workflow's private directory.
+Use the same selected `--node` for a one-rank remote placement. The monitor
+samples each exact rank once per second and does not start the model:
+
+```text
+scripts/model-serving-experiment-monitor.sh start <profile> \
+  --state-dir experiments/model-onboarding/workflows/<workflow-id>/resources \
+  [--node <selected-rank>]
+```
+
+Then require a separate **launch** confirmation and invoke the normal launcher
 (the model library is the only weight mechanism — ADR 0006):
 
 ```text
 scripts/up.sh <profile>
 ```
+
+If confirmation is refused or launch fails, retain any launch-window resource
+diagnostic in the journal/handoff, stop the monitor, and do not invent an ADR
+run record.
 
 ### 9. Same-boot identities
 
@@ -261,11 +285,12 @@ existing programs sequentially:
    `scripts/model-serving-release-attempt.sh plan-invocation --release-plan
    <dir> --output <invocation-plan.json>`. Confirm that the non-empty prompt
    set has the plan's exact compare sample size.
-2. Reobserve `launch_id` / `server_boot_id`.
+2. Reobserve `launch_id` / `server_boot_id`, then record compare
+   `started_at` before the first request-generating capture.
 3. `python3 validate/greedy_capture.py --model <served-name> --out <runA>`
 4. `python3 validate/greedy_capture.py --model <served-name> --out <runB>`
 5. Reobserve identities.
-6. Record compare wall-clock UTC `started_at`, then run
+6. Run
    `python3 validate/compare_captures.py <runA> <runB> --require-identical
    --result-json <results/.../compare.json>`, then record compare `ended_at`.
 7. Reobserve identities.
@@ -286,6 +311,30 @@ Never fabricate a missing validator measurement. Closed measurement documents
 used by the attempt composer must live at privacy-reviewed repository-relative
 `results/` paths.
 
+After compare and benchmark, summarize each matching window before
+composition:
+
+```text
+scripts/model-serving-experiment-monitor.sh summarize \
+  --state-dir experiments/model-onboarding/workflows/<workflow-id>/resources \
+  --started-at <attempt-start-utc> --ended-at <attempt-end-utc> \
+  --qualification-scope model-qualification \
+  --result-json results/<tag>/<operation>-resources.json
+```
+
+Each summary must use the exact attempt timestamps. Add it to the attempt
+context's `resource_diagnostic_sources` for that operation. Complete, partial,
+and unavailable summaries are status-neutral; absence of a closed summary is a
+capture gap.
+
+After the final owned model stop, stop the monitor. This stops only the monitor
+processes and retains private raw samples:
+
+```text
+scripts/model-serving-experiment-monitor.sh stop \
+  --state-dir experiments/model-onboarding/workflows/<workflow-id>/resources
+```
+
 ### 11. Attempt, capture, verify
 
 If a signal prevents the validator from writing its closed measurement,
@@ -297,12 +346,16 @@ Otherwise compose attempt specs through
 through `scripts/model-serving-release-capture.sh capture-run`, assemble
 compatible runs, and verify the draft candidate. Capture immediately
 after compose. Do not persist a planner path or planner candidate ID.
+Each generated attempt spec must contain exactly one
+`run_diagnostic_source_keys` entry for its resource summary. That source is
+same-scope run evidence, not criterion or review evidence.
 
 ### 12. Handoff
 
 Follow [references/handoff-template.md](references/handoff-template.md).
 List completed evidence, missing criteria, failures/inconclusive results,
-candidate locations, and that no reviewed status or authority was produced.
+resource diagnostic summaries or gaps, candidate locations, and that no
+reviewed status or authority was produced.
 Do not run `scripts/model-serving-release-issue.sh`; that maintainer
 workflow is a later, separate merge. Use
 `skills/pulsar-model-serving-release-issuance/` after this handoff.

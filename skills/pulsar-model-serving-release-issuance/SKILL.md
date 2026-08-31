@@ -21,6 +21,9 @@ and `scripts/model-serving-release-issue.sh`. Do not duplicate their schemas.
 `pulsar-model-onboarding` stops at handoff and must not run `issue.sh`.
 This skill is that later maintainer workflow. Extra measurements that were
 not in the frozen contract stay extra.
+Captured `observe-resources` summaries are different: they are already
+same-scope run diagnostic evidence, not criteria or extra review files, and
+must be preserved with their run.
 
 There is no orchestration journal. Recovery is the verified candidate
 directory, the review file, and `plan` / `stage`.
@@ -49,6 +52,9 @@ Review-file notes:
 - Never recapture a maintainer essay to populate
   `review_evidence_artifact_ids`. That list of extra review files is empty after
   compare/bench capture; empty is expected.
+- Never start, resume, or stop experiment resource monitoring during issuance.
+  Monitoring belongs only to supervised physical onboarding and is not part of
+  catalog serving or staging.
 
 ## Collaboration
 
@@ -85,6 +91,11 @@ Relative performance stays N/A unless a reviewed comparable predecessor was
 in the frozen contract. Empty `review_evidence_artifact_ids` after
 compose/capture of compare and bench is expected; those files are already
 run evidence.
+For every run, inventory the `observe-resources` diagnostic among its
+`evidence_artifact_ids` and report its completion/reason. A partial or
+unavailable diagnostic is preserved and does not change the derived status.
+An absent diagnostic in a candidate produced by the current composer is a
+candidate defect; do not collect or fabricate one during issuance.
 
 State the likely derived status **before** drafting `expected_status`.
 Incomplete required gates typically derive `testing-incomplete`. Reviews
@@ -198,5 +209,6 @@ missing lineage.
 ## Handoff
 
 List the candidate directory, review file (gitignored), staged object IDs,
-derived status, unevaluated criteria, whether the profile was bound, the
-PR, and that no serving permission or physical claim was produced.
+derived status, unevaluated criteria, run diagnostic coverage, whether the
+profile was bound, the PR, and that no serving permission or physical claim
+was produced.

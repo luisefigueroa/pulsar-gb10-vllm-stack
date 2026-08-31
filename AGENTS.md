@@ -158,7 +158,20 @@ language for new features without an explicit decision.
   tests make no physical DGX claim.
   `validate/validator_measurement.py` owns the closed, versioned, status-neutral
   measurement documents emitted by `validate/compare_captures.py` and
-  `validate/bench_serve.py`. `scripts/model_serving_release_attempt.py` owns the
+  `validate/bench_serve.py`. It also owns the `observe-resources` diagnostic
+  emitted by the experiment-only
+  `scripts/model-serving-experiment-monitor.sh` boundary. That monitor samples
+  each exact serving rank only during supervised physical onboarding: after
+  the all-rank verification barrier, before qualifying launch, through the
+  final owned stop. Raw samples stay under gitignored
+  `experiments/model-onboarding/workflows/`; privacy-safe per-attempt summaries
+  under `results/` are run evidence only. They do not satisfy criteria, change
+  attempt completion or status, populate `review_evidence_artifact_ids`, or
+  enter Model Serving Release identity. A missing closed summary is an
+  explicit capture gap. Never call this monitor from `pulsar`, `wizard.sh`,
+  `up.sh`, `serve.sh`, `cluster/*`, status/inventory, catalog projection, or
+  ordinary serving after issuance.
+  `scripts/model_serving_release_attempt.py` owns the
   closed attempt context and invocation-plan schemas plus mapping of those
   measurements into existing attempt-only specs. It may consume only the
   supported publishable `results/` measurement files in this slice, must
@@ -170,6 +183,11 @@ language for new features without an explicit decision.
   status, authorize serving, or claim physical behavior. Later capture must
   independently re-read the evidence and derive its digest; regenerate the
   attempt specs if that file changes between commands.
+  Each supervised compare and benchmark attempt also requires one closed
+  `observe-resources` summary with the exact attempt window and scope. The
+  attempt-only spec lists that source in `run_diagnostic_source_keys`; capture
+  binds it into the run's existing evidence set, never a criterion observation
+  or review-evidence list.
   `skills/pulsar-model-onboarding/` is the ADR 0004 stage-4 supervised
   onboarding skill. It composes those existing CLIs for a brand-new model and
   collaborates at material decisions. It never writes a lab expected-identity

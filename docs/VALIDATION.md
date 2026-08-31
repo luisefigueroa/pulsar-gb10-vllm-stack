@@ -78,6 +78,7 @@ The following are implementation checks, not physical DGX claims:
 |---|---|
 | Model Serving Release schemas and registry | Closed release, Validation Contract, run-record, evidence-bundle, decision, supersession, filesystem-layout, content-ID, and graph verification tests |
 | Status projection | Unique reviewed decision, neutral unbound profile, unavailable/ambiguous registry, runtime-access mismatch, launch independence, JSON separation from `STATUS`, and narrow human output |
+| Closed measurements and attempt composition | Strict same-boot and absolute throughput/latency measurements plus status-neutral per-attempt resource diagnostics map into capture-validated attempt specs without issuing status or making a physical claim from deterministic tests |
 | Hugging Face home acquisition | Exact selector resolution, complete inventory, privacy-safe plan, target eligibility, private staging, full hashes, all-rank absence checks, immutable receipt, atomic no-replace publication, and offline `home verify` |
 | Cold recovery set | Separate receipt replica, model archive verification, explicit receipt recovery, receipt-ID restore, full-size admission, private staging, full rehash, and atomic publication |
 | Cold recovery configuration | Explicit process/persisted/disabled precedence, byte-preserving private `.env` writes, Gum/plain first-use and maintenance menus, path and stranded-state guards, health-only writability, archive-job inspection, and exact single-job retry delegation |

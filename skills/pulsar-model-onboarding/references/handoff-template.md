@@ -26,6 +26,8 @@ List only artifacts that actually exist. Use repository-relative paths.
 - Serving integration:
 - Strict same-boot compare measurement:
 - Absolute throughput/latency benchmark:
+- Per-attempt resource diagnostic summaries (complete/partial/unavailable):
+- Private raw resource trace: workflow-relative location only; not publication evidence
 - Draft attempt specs:
 - Draft capture candidates:
 - Assembled bundle candidate:
@@ -56,6 +58,7 @@ Preserve failed and partial work. Do not rewrite a failure as a pass.
 - Interrupted measurements (capture gap, no invented ADR run):
 - Inconclusive compare/benchmark documents:
 - Identity changes that prevented combining measurements:
+- Resource diagnostic gaps or monitor interruptions:
 
 ## Candidate locations
 

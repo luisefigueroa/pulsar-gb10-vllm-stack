@@ -42,7 +42,8 @@ or planner candidate ID.
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only verification of reviewed objects under `models/model-serving-releases/`; this tool never writes it |
 | Staging (`scripts/model-serving-release-issue.sh`) | Separate maintainer workflow that can stage an untrusted proposal from a verified capture directory; capture still never writes the registry |
 | Validator measurements (`validate/compare_captures.py`, `validate/bench_serve.py`) | Optional closed measurement documents for `compare-captures` and `benchmark-serving`. Exit zero or a selftest is not a criterion pass. |
-| Attempt composition (`scripts/model-serving-release-attempt.sh`) | Maps verified release-plan criteria plus caller context and validator measurements into existing attempt-only specs. This slice requires publishable `results/` files: the supplied measurement path and evidence `repository_path` must name the same stably read file. Generated specs are capture-validated against those current bytes, then published as one exclusive two-file directory under `experiments/model-serving-release-attempts/` or a safe explicit outside path. The attempt spec carries no precomputed publishable digest; later capture independently re-reads the file and derives the digest. Emits metrics and completion only. |
+| Experiment resource monitor (`scripts/model-serving-experiment-monitor.sh`) | Onboarding-only per-rank unified-memory and cgroup sampling. Raw samples remain private; one closed `observe-resources` summary per attempt is status-neutral run evidence. It is not called by catalog serving. |
+| Attempt composition (`scripts/model-serving-release-attempt.sh`) | Maps verified release-plan criteria plus caller context, validator measurements, and one resource diagnostic per physical attempt into existing attempt-only specs. This slice requires publishable `results/` files: each source path must name the same stably read file consumed by the composer. Generated specs are capture-validated against those current bytes, then published as one exclusive two-file directory under `experiments/model-serving-release-attempts/` or a safe explicit outside path. The attempt spec carries no precomputed publishable digest; later capture independently re-reads the file and derives the digest. Emits metrics and completion only. |
 
 The Bash entrypoint is the operator boundary. Python owns attempt-spec
 loading, verified release-plan composition, derivation, filesystem-safe
@@ -92,6 +93,10 @@ composer validates it but does not discover topology, launch a server, infer
 attempt timestamps, or create missing validator output. The skill records
 separate wall-clock UTC start/end timestamps for compare and benchmark and
 must not invent a missing validator measurement.
+The context also supplies one publishable `observe-resources` summary for each
+attempt. Its window and qualification scope must match that attempt exactly.
+An incomplete or unavailable diagnostic is accepted and does not rewrite the
+criterion result; an absent closed diagnostic is a capture gap.
 
 If `validate/run-gates.sh` receives SIGINT or SIGTERM, it stops before starting
 another gate and exits with the signal-compatible status. Any validator output
@@ -139,6 +144,7 @@ against the verified planner objects. Closed top-level fields are:
 | `commands` | Allowlisted program, typed arguments, classified environment, and `repository-root`; no program version |
 | `criterion_observations` | Measurements that reference evidence by `source_key`, not by precomputed artifact IDs. Nested context and soak sources are part of the run artifact set. |
 | `evidence_sources` | Publishable `results/` files or protected digest locators |
+| `run_diagnostic_source_keys` | Sorted sources for status-neutral run diagnostics. They enter the run's existing evidence set, must use the attempt scope, and cannot satisfy a criterion or appear as review evidence. Supervised compare/benchmark composition emits one resource diagnostic key. |
 | `review_source_keys` | Explicit, sorted source keys reserved for extra review files (files that are not run measurements). Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` (provenance and geometry review). Attempt composition for compare and bench emits `[]`. Capture copies that list into evidence-bundle `review_evidence_artifact_ids` and does not invent sources. Empty is expected. |
 
 The loader rejects duplicate JSON keys, invalid UTF-8, `NaN`/`Infinity`,
@@ -190,6 +196,10 @@ persisted.
 |---|---|---|
 | Publishable | Sanitized regular file under tracked `results/`, excluding every `results/**/raw/` subtree | Content-addressed copy plus a repository-relative location |
 | Protected | Opaque SHA-256 digest and approved non-sensitive metadata | Digest locator only; never a source path or bytes |
+
+Experiment resource time series are never publishable capture inputs; they stay
+below gitignored `experiments/model-onboarding/workflows/`. Only the distilled,
+privacy-safe per-attempt summary under `results/` is eligible as run evidence.
 
 Symlinks and non-regular files are rejected. Dot-dot traversal is
 rejected, and output locations are compared as normalized absolute
@@ -292,6 +302,8 @@ existing candidate or any existing ancestor that contains
   `scripts/model-serving-release-attempt.sh`
 - Claim physical DGX, model-download, container, or remote behavior
 - Route through `./pulsar` or the wizard
+- Enable resource monitoring for ordinary catalog serving or modify the normal
+  launcher to collect it
 
 Capture still does not issue a decision. Maintainer staging is a
 separate workflow in
@@ -319,6 +331,9 @@ Focused contracts live in
 `scripts/testlib/test_model_serving_release_attempt.py`; all are wired into
 `scripts/selftest.sh`. They prove control-plane measurement, composition,
 capture, persistence, and verification behavior only.
+`scripts/testlib/test_model_serving_experiment_monitor.py` covers private
+sampling, summary derivation, explicit unavailable results, and publication
+privacy without making a physical claim.
 The supervised `pulsar-model-onboarding` skill composes these commands and
 has its own control-plane tests; those tests make no physical DGX claim and
 create no release decision. Issuance of a verified candidate is a later

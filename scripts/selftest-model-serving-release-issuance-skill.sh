@@ -72,6 +72,16 @@ grep -Fq 'Empty `review_evidence_artifact_ids`' "$skill" \
   || fail "skill must treat empty leftover review IDs as expected"
 grep -Fq 'Do not invent review evidence' "$skill" \
   || fail "skill must not invent review evidence to make plan succeed"
+grep -Fq 'observe-resources' "$skill" \
+  || fail "issuance must inventory onboarding resource diagnostics"
+grep -Fq 'Never start, resume, or stop experiment resource monitoring' "$skill" \
+  || fail "issuance must not collect resource telemetry"
+grep -Fq 'ordinary run artifacts' "$phases" \
+  || fail "issuance phases must privacy-review resource summaries as run artifacts"
+grep -Fq 'status-neutral run diagnostic evidence' "$notes" \
+  || fail "review notes must distinguish resource diagnostics from extras"
+grep -Fq 'without collecting telemetry' "$agent_yaml" \
+  || fail "issuance agent prompt must preserve diagnostics without collection"
 
 grep -Fq 'scripts/model-serving-release-capture.sh verify-candidate' "$skill" \
   || fail "skill must re-verify the capture candidate"

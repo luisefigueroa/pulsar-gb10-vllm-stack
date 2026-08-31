@@ -1002,6 +1002,63 @@ class ModelServingReleaseCaptureTests(unittest.TestCase):
         self.assertEqual(review["qualification_scope"], "release-promotion")
         self.assertEqual(review["privacy_review"], "pending")
 
+    def test_run_diagnostic_is_preserved_without_satisfying_a_criterion(self) -> None:
+        inputs = fixture.passing_criterion_spec(
+            "throughput-serving", repo_root=self.repo
+        )
+        diagnostic_path = "results/capture-fixture/throughput-resources.json"
+        fixture.write_publishable_file(
+            self.repo,
+            diagnostic_path,
+            {"kind": "pulsar-validator-measurement", "operation": "observe-resources"},
+        )
+        inputs.attempt["evidence_sources"].append(
+            {
+                "source_key": "resource-throughput",
+                "class": "publishable",
+                "qualification_scope": "model-qualification",
+                "media_type": "application/json",
+                "repository_path": diagnostic_path,
+            }
+        )
+        inputs.attempt["evidence_sources"].sort(
+            key=lambda item: item["source_key"]
+        )
+        inputs.attempt["run_diagnostic_source_keys"] = ["resource-throughput"]
+        spec_path = fixture.write_spec(self.repo, "run-diagnostic", inputs.attempt)
+        code, stdout, stderr = self.run_main(
+            [
+                "capture-run",
+                *self.capture_flags(inputs, attempt_path=spec_path),
+                "--json",
+            ]
+        )
+        self.assertEqual(code, 0, stderr)
+        dest = self.capture_dest(json.loads(stdout))
+        record_path = next((dest / "run-records").glob("*.json"))
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        bundle = json.loads((dest / "evidence-bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(record["evidence_artifact_ids"]), 2)
+        self.assertEqual(
+            len(record["criterion_observations"][0]["evidence_artifact_ids"]),
+            1,
+        )
+        self.assertEqual(bundle["review_evidence_artifact_ids"], [])
+
+        bad = json.loads(json.dumps(inputs.attempt))
+        diagnostic = next(
+            item
+            for item in bad["evidence_sources"]
+            if item["source_key"] == "resource-throughput"
+        )
+        diagnostic["qualification_scope"] = "serving-integration"
+        bad_path = fixture.write_spec(self.repo, "run-diagnostic-bad-scope", bad)
+        code, stdout, stderr = self.run_main(
+            ["plan", *self.capture_flags(inputs, attempt_path=bad_path), "--json"]
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("run diagnostic scope must match", stdout + stderr)
+
     def test_hostile_raw_location_fails_independent_verify(self) -> None:
         from scripts import model_validation_evidence as evidence
 
