@@ -1,4 +1,4 @@
 interface:
   display_name: "Pulsar Model Serving Release Issuance"
   short_description: "Stage an untrusted ADR 0004 issuance proposal"
-  default_prompt: "Use $pulsar-model-serving-release-issuance to stage one independently verified unreviewed Model Serving Release capture candidate through issue.sh plan then confirmed stage, with explicit privacy and provenance review, honest expected_status, optional same-PR MODEL_SERVING_RELEASE_ID binding, and a ready-for-review PR. Local stage is not trust."
+  default_prompt: "Use $pulsar-model-serving-release-issuance to stage one independently verified unreviewed Model Serving Release capture candidate through issue.sh plan then confirmed stage, preserving and privacy-reviewing run resource diagnostics without collecting telemetry, with honest expected_status, optional same-PR MODEL_SERVING_RELEASE_ID binding, and a ready-for-review PR. Local stage is not trust."

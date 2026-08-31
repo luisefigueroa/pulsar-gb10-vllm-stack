@@ -709,5 +709,79 @@ class ValidatorMeasurementTests(unittest.TestCase):
             measurement.write_measurement(out, json.loads(out.read_text(encoding="utf-8")))
 
 
+    def test_resource_diagnostic_is_status_neutral_and_rank_complete(self) -> None:
+        rank = {
+            "rank": "single",
+            "collection_status": "complete",
+            "sample_count": 2,
+            "workload_sample_count": 2,
+            "mem_available_min_bytes": 1000,
+            "swap_used_max_bytes": 0,
+            "node_memory_pressure_some_total_delta_us": 1,
+            "workload_memory_current_max_bytes": 900,
+            "workload_memory_peak_start_bytes": 800,
+            "workload_memory_peak_end_bytes": 900,
+            "workload_swap_current_max_bytes": 0,
+            "oom_delta": 0,
+            "oom_kill_delta": 0,
+        }
+        document = measurement.build_resource_measurement(
+            completion="complete",
+            reason="completed",
+            payload={
+                "started_at": "2026-08-14T12:00:00Z",
+                "ended_at": "2026-08-14T12:00:02Z",
+                "duration_seconds": "2",
+                "qualification_scope": "model-qualification",
+                "sample_interval_seconds": "1",
+                "expected_rank_count": 1,
+                "observed_rank_count": 1,
+                "sample_count": 2,
+                "ranks": [rank],
+            },
+        )
+        self.assertEqual(document["operation"], "observe-resources")
+        self.assertNotIn("status", document)
+        invalid = json.loads(json.dumps(document))
+        invalid["observe-resources"]["ranks"][0]["oom_kill_delta"] = -1
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(invalid)
+
+    def test_incomplete_resource_diagnostic_preserves_unavailable_rank(self) -> None:
+        document = measurement.build_resource_measurement(
+            completion="incomplete",
+            reason="no-samples",
+            payload={
+                "started_at": "2026-08-14T12:00:00Z",
+                "ended_at": "2026-08-14T12:00:01Z",
+                "duration_seconds": "1",
+                "qualification_scope": "model-qualification",
+                "sample_interval_seconds": "1",
+                "expected_rank_count": 1,
+                "observed_rank_count": 0,
+                "sample_count": 0,
+                "ranks": [
+                    {
+                        "rank": "single",
+                        "collection_status": "unavailable",
+                        "sample_count": 0,
+                        "workload_sample_count": 0,
+                        "mem_available_min_bytes": None,
+                        "swap_used_max_bytes": None,
+                        "node_memory_pressure_some_total_delta_us": None,
+                        "workload_memory_current_max_bytes": None,
+                        "workload_memory_peak_start_bytes": None,
+                        "workload_memory_peak_end_bytes": None,
+                        "workload_swap_current_max_bytes": None,
+                        "oom_delta": None,
+                        "oom_kill_delta": None,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(document["completion"], "incomplete")
+        self.assertEqual(document["reason"], "no-samples")
+
+
 if __name__ == "__main__":
     unittest.main()

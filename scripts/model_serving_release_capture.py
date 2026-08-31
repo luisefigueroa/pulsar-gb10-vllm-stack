@@ -84,6 +84,7 @@ SPEC_TOP_FIELDS = {
     "commands",
     "criterion_observations",
     "evidence_sources",
+    "run_diagnostic_source_keys",
     "review_source_keys",
 }
 SPEC_TOP_ID_FIELDS = {"release_id", "contract_id"}
@@ -767,6 +768,21 @@ def _load_review_source_keys(
         keys.append(item)
     if keys != sorted(keys) or len(keys) != len(set(keys)):
         fail("spec.review_source_keys must be sorted and unique")
+    return keys
+
+
+def _load_run_diagnostic_source_keys(
+    value: Any, *, source_keys: set[str]
+) -> list[str]:
+    if not isinstance(value, list):
+        fail("spec.run_diagnostic_source_keys must be a list")
+    keys: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or item not in source_keys:
+            fail(f"spec.run_diagnostic_source_keys[{index}] is unknown")
+        keys.append(item)
+    if keys != sorted(keys) or len(keys) != len(set(keys)):
+        fail("spec.run_diagnostic_source_keys must be sorted and unique")
     return keys
 
 
@@ -1576,18 +1592,33 @@ def build_capture_from_spec(
         for index, item in enumerate(raw_observations)
     ]
     used_keys = _used_source_keys(raw_observations)
+    all_source_keys = {item["source_key"] for item in sources}
+    diagnostic_keys = _load_run_diagnostic_source_keys(
+        document["run_diagnostic_source_keys"],
+        source_keys=all_source_keys,
+    )
     review_keys = _load_review_source_keys(
         document["review_source_keys"],
-        source_keys={item["source_key"] for item in sources},
+        source_keys=all_source_keys,
     )
-    overlap = used_keys.intersection(review_keys)
-    if overlap:
-        fail("review_source_keys must not repeat run evidence sources")
-    all_source_keys = {item["source_key"] for item in sources}
+    if used_keys.intersection(diagnostic_keys):
+        fail("run diagnostics must not repeat criterion evidence sources")
+    if used_keys.intersection(review_keys):
+        fail("review_source_keys must not repeat criterion evidence sources")
+    if set(diagnostic_keys).intersection(review_keys):
+        fail("run diagnostics must not repeat review evidence sources")
     if raw_observations:
-        missing = all_source_keys - used_keys - set(review_keys)
+        missing = (
+            all_source_keys
+            - used_keys
+            - set(diagnostic_keys)
+            - set(review_keys)
+        )
         if missing:
-            fail("every evidence source must be used by the run or listed in review_source_keys")
+            fail(
+                "every evidence source must be criterion evidence, a run "
+                "diagnostic, or review evidence"
+            )
         extra_review = set(review_keys) - all_source_keys
         if extra_review:
             fail("spec.review_source_keys contains an unknown source")
@@ -1597,6 +1628,7 @@ def build_capture_from_spec(
                 for observation in observations
                 for artifact_id in _observation_artifact_ids(observation)
             }
+            | {source_ids[key] for key in diagnostic_keys}
         )
     else:
         implicit_run = all_source_keys - set(review_keys)
@@ -1605,6 +1637,10 @@ def build_capture_from_spec(
         run_artifact_ids = sorted(source_ids[key] for key in implicit_run)
     review_ids: list[str] = []
     sources_by_key = {item["source_key"]: item for item in sources}
+    for key in diagnostic_keys:
+        source = sources_by_key[key]
+        if source["qualification_scope"] != attempt["qualification_scope"]:
+            fail("run diagnostic scope must match the attempt scope")
     for key in review_keys:
         source = sources_by_key[key]
         if source["qualification_scope"] != "release-promotion":

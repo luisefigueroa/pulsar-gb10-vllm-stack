@@ -27,6 +27,9 @@ Do not mutate the candidate.
 - Name missing required criteria as unevaluated/incomplete.
 - Empty `review_evidence_artifact_ids` after compare/bench capture is
   expected. Do not recapture a maintainer essay to fill it.
+- Inventory one `observe-resources` run diagnostic for every current-composer
+  run. Report complete, partial, unavailable, or missing without changing
+  criterion coverage or derived status. Do not collect telemetry here.
 - Extra measurements outside the frozen contract stay extra.
 - State the likely derived status before asserting `expected_status`.
 
@@ -34,6 +37,8 @@ Do not mutate the candidate.
 
 For each `evidence_artifacts[]` row: visibility, repository path or
 protected locator, explicit `passed` / `failed` / `pending`.
+Resource summaries are ordinary run artifacts and receive the same privacy
+review; they are never added to `review_evidence_artifact_ids`.
 Scan publishable `results/` files for site identity. Leaks fail without fallback.
 All-passed privacy makes `evidence_privacy` pass and requires extra
 review files. Empty extra-review-file lists need all five provenance

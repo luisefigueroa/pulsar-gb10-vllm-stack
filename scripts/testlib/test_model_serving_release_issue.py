@@ -186,6 +186,55 @@ class ModelServingReleaseIssueTests(unittest.TestCase):
         self.assertNotEqual(unknown.returncode, 0)
         self.assertIn("unknown model-serving-release-issue command", unknown.stderr)
 
+    def test_run_diagnostic_artifact_survives_review_rematerialization(self) -> None:
+        inputs = capture_fixture.passing_criterion_spec(
+            "throughput-serving", repo_root=self.repo
+        )
+        diagnostic_path = "results/capture-fixture/throughput-resources.json"
+        capture_fixture.write_publishable_file(
+            self.repo,
+            diagnostic_path,
+            {"kind": "pulsar-validator-measurement", "operation": "observe-resources"},
+        )
+        inputs.attempt["evidence_sources"].append(
+            {
+                "source_key": "resource-throughput",
+                "class": "publishable",
+                "qualification_scope": "model-qualification",
+                "media_type": "application/json",
+                "repository_path": diagnostic_path,
+            }
+        )
+        inputs.attempt["evidence_sources"].sort(
+            key=lambda item: item["source_key"]
+        )
+        inputs.attempt["run_diagnostic_source_keys"] = ["resource-throughput"]
+        dest, candidate = fixture.persist_capture(inputs, self.repo)
+        review = fixture.review_declaration(
+            candidate,
+            expected_status="testing-incomplete",
+            privacy="pending",
+            provenance_overrides={
+                "artifact_identity": "pending",
+                "runtime_identity": "pending",
+                "contract_frozen_before_testing": "pending",
+                "evidence_privacy": "pending",
+                "security": "pending",
+            },
+        )
+        plan = issue.build_issue_plan(
+            repo_root=self.repo,
+            candidate_dir=dest,
+            review=issue.validate_review_declaration(review),
+        )
+        self.assertEqual(len(candidate.run_records[0]["evidence_artifact_ids"]), 2)
+        self.assertEqual(len(plan.run_records[0]["evidence_artifact_ids"]), 2)
+        self.assertEqual(
+            len(plan.run_records[0]["criterion_observations"][0]["evidence_artifact_ids"]),
+            1,
+        )
+        self.assertEqual(plan.bundle["review_evidence_artifact_ids"], [])
+
     def test_public_cli_plans_and_stages_json(self) -> None:
         dest, candidate = fixture.capture_prebarrier(self.repo)
         review_path, _review = fixture.write_review(

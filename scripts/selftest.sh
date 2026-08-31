@@ -71,6 +71,8 @@ run "Model Serving Release issuance public CLI" \
   "$REPO_DIR/scripts/selftest-model-serving-release-issue.sh"
 run "validator measurement contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_validator_measurement.py"
+run "model-serving experiment resource monitor" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_serving_experiment_monitor.py"
 run "Model Serving Release attempt composition" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_attempt.py"
 run "Model Serving Release onboarding skill" \

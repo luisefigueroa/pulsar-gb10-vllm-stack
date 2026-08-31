@@ -20,7 +20,7 @@ recommendation order.
 
 | Subsystem | Responsibility |
 |---|---|
-| Capture candidate (`scripts/model-serving-release-capture.sh`) | Independently verified draft input. The issuer never mutates it. |
+| Capture candidate (`scripts/model-serving-release-capture.sh`) | Independently verified draft input, including status-neutral run diagnostics already bound during onboarding. The issuer never mutates it. |
 | Issue review declaration (this document) | Closed maintainer input. It is not a sixth ADR object, not evidence, and not status authority. |
 | ADR 0004 release/contract schema (`scripts/model_serving_release.py`) | Owns release-descriptor and frozen Validation Contract schema version 1 |
 | ADR 0004 evidence schema (`scripts/model_validation_evidence.py`) | Owns evidence artifacts, run records, bundles, decisions, status derivation, exclusions, and supersession |
@@ -143,6 +143,9 @@ through the existing pure builders. Attempt IDs, timestamps, measurements,
 commands, environment observations, completion facts, and evidence content
 digests are preserved. Every top-level and nested criterion, context,
 soak, review, and exclusion evidence reference is remapped exactly.
+Run-level `observe-resources` artifacts are remapped with every other run
+artifact. They remain diagnostic: they do not satisfy criteria, affect status,
+or enter `review_evidence_artifact_ids`.
 
 Privacy handling:
 
@@ -209,6 +212,8 @@ dry-run display checks verify that separate edit.
 - Validation status is display-only.
 - Deterministic selftests prove lifecycle-script contracts only.
 - This workflow makes no physical DGX claim.
+- This workflow never starts resource monitoring. Monitoring is confined to
+  supervised physical onboarding and is absent from ordinary catalog serving.
 - After repository merge, verify with
   `scripts/model-serving-release-registry.sh verify`. Schema-1
   `validation-bundle verify` is a different command and fails on live

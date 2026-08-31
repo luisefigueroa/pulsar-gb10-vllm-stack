@@ -217,6 +217,7 @@ def attempt_from_run(
         "commands": commands_for_spec(record["commands"]),
         "criterion_observations": observations,
         "evidence_sources": sources,
+        "run_diagnostic_source_keys": [],
         "review_source_keys": review_source_keys,
     }
 
@@ -281,6 +282,7 @@ def legacy_embedded_spec(
                 "repository_path": repository_path,
             }
         ],
+        "run_diagnostic_source_keys": [],
         "review_source_keys": [],
     }
 

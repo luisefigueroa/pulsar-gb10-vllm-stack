@@ -168,6 +168,29 @@ grep -Fq 'Never share one enclosing timestamp' "$skill" \
   || fail "skill must not share one enclosing timestamp"
 grep -Fq 'Never fabricate a missing validator measurement' "$skill" \
   || fail "skill must not invent missing validator output"
+grep -Fq 'scripts/model-serving-experiment-monitor.sh start' "$skill" \
+  || fail "skill must start experiment-only resource monitoring before launch"
+grep -Fq 'scripts/model-serving-experiment-monitor.sh summarize' "$skill" \
+  || fail "skill must produce a per-attempt resource summary"
+grep -Fq 'scripts/model-serving-experiment-monitor.sh stop' "$skill" \
+  || fail "skill must stop resource monitoring after owned cleanup"
+grep -Fq 'resource_diagnostic_sources' "$skill" \
+  || fail "skill must bind resource summaries through the attempt context"
+grep -Fq 'run_diagnostic_source_keys' "$skill" \
+  || fail "skill must keep resource summaries as run diagnostics"
+grep -Fq 'ordinary serving' "$skill" \
+  || fail "skill must exclude monitoring from ordinary catalog serving"
+grep -Fq 'resource diagnostic summaries' "$handoff" \
+  || fail "handoff must list resource diagnostics and gaps"
+grep -Fq 'experiment-only resource monitoring' "$agent_yaml" \
+  || fail "agent prompt must include onboarding resource monitoring"
+
+for entrypoint in pulsar wizard.sh scripts/up.sh serve.sh cluster/start-cluster.sh \
+  scripts/status.sh scripts/inventory.sh; do
+  if grep -Fq 'model-serving-experiment-monitor' "$REPO_DIR/$entrypoint"; then
+    fail "catalog-serving entrypoint must not invoke experiment monitoring: $entrypoint"
+  fi
+done
 
 grep -Fq 'Never use the workflow-journal' "$skill" \
   || fail "skill must name the workflow-journal ID as forbidden identity input"

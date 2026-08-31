@@ -64,6 +64,7 @@ INVOCATION_PLAN_KIND = "pulsar-model-serving-release-invocation-plan"
 OUTPUT_SCHEMA_VERSION = 1
 COMPARE_OPERATION = "compare-captures"
 BENCHMARK_OPERATION = "benchmark-serving"
+RESOURCE_OPERATION = "observe-resources"
 STARTED_OPERATIONS = (COMPARE_OPERATION, BENCHMARK_OPERATION)
 COMPARE_DIMENSIONS = {"strict-same-boot"}
 BENCHMARK_DIMENSIONS = {"throughput", "latency"}
@@ -86,6 +87,7 @@ CONTEXT_FIELDS = {
     "command_environment",
     "command_site_options",
     "evidence_sources",
+    "resource_diagnostic_sources",
 }
 OPERATION_ATTEMPT_FIELDS = {"attempt_id", "started_at", "ended_at"}
 INVOCATION_COMPARE_FIELDS = {"program", "operation", "sample_size"}
@@ -442,8 +444,10 @@ def _load_operation_attempt(value: Any, *, operation: str) -> dict[str, Any]:
     }
 
 
-def _load_evidence_source(value: Any, *, operation: str) -> dict[str, Any]:
-    label = f"attempt context evidence_sources.{operation}"
+def _load_evidence_source(
+    value: Any, *, operation: str, source_field: str = "evidence_sources"
+) -> dict[str, Any]:
+    label = f"attempt context {source_field}.{operation}"
     if not isinstance(value, dict):
         fail(f"{label} must be an object")
     source_class = value.get("class")
@@ -509,6 +513,14 @@ def load_attempt_context(path: Path) -> dict[str, Any]:
             "attempt context evidence_sources must name compare-captures and "
             "benchmark-serving"
         )
+    resource_sources = document.get("resource_diagnostic_sources")
+    if not isinstance(resource_sources, dict) or set(resource_sources) != set(
+        STARTED_OPERATIONS
+    ):
+        fail(
+            "attempt context resource_diagnostic_sources must name "
+            "compare-captures and benchmark-serving"
+        )
     environment = document.get("command_environment")
     if not isinstance(environment, list):
         fail("attempt context command_environment must be a list")
@@ -536,6 +548,14 @@ def load_attempt_context(path: Path) -> dict[str, Any]:
             )
             for operation in STARTED_OPERATIONS
         },
+        "resource_diagnostic_sources": {
+            operation: _load_evidence_source(
+                resource_sources[operation],
+                operation=operation,
+                source_field="resource_diagnostic_sources",
+            )
+            for operation in STARTED_OPERATIONS
+        },
     }
     _screen_context(loaded, label="attempt context")
     attempt_ids = [
@@ -544,6 +564,15 @@ def load_attempt_context(path: Path) -> dict[str, Any]:
     ]
     if len(set(attempt_ids)) != len(attempt_ids):
         fail("attempt context attempt_id values must be unique")
+    source_keys = [
+        source["source_key"]
+        for source in loaded["evidence_sources"].values()
+    ] + [
+        source["source_key"]
+        for source in loaded["resource_diagnostic_sources"].values()
+    ]
+    if len(source_keys) != len(set(source_keys)):
+        fail("attempt context evidence source_key values must be unique")
     return loaded
 
 
@@ -819,7 +848,7 @@ def _commands(
         copy.deepcopy(context["command_environment"]),
         key=lambda item: str(item.get("name", "")),
     )
-    return [
+    commands = [
         {
             "program": OPERATION_PROGRAMS[operation],
             "arguments": arguments,
@@ -827,6 +856,15 @@ def _commands(
             "working_directory": "repository-root",
         }
     ]
+    commands.append(
+        {
+            "program": "scripts/model-serving-experiment-monitor.sh",
+            "arguments": [{"kind": "operation", "value": RESOURCE_OPERATION}],
+            "environment": copy.deepcopy(environment),
+            "working_directory": "repository-root",
+        }
+    )
+    return commands
 
 
 def load_bound_measurement(
@@ -869,6 +907,45 @@ def load_bound_measurement(
     return document, document["reason"], sha256_bytes(data)
 
 
+def load_bound_resource_diagnostic(
+    *, operation: str, context: dict[str, Any], repo_root: Path
+) -> tuple[dict[str, Any], str]:
+    source = context["resource_diagnostic_sources"][operation]
+    evidence_path = resolve_publishable_evidence(
+        source["repository_path"],
+        repo_root=repo_root,
+        label=f"{operation} resource diagnostic source",
+    )
+    try:
+        data = read_stable_bytes(
+            evidence_path, label=f"{operation} resource diagnostic"
+        )
+    except ValidatorMeasurementMissing:
+        fail(
+            f"{operation} resource diagnostic is missing; preserve a closed "
+            "incomplete observe-resources measurement when collection is unavailable"
+        )
+    except ValidatorMeasurementError:
+        fail(f"{operation} resource diagnostic cannot be read safely")
+    try:
+        document = load_measurement_bytes(data)
+    except ValidatorMeasurementError:
+        fail(f"{operation} resource diagnostic is corrupt")
+    if document["operation"] != RESOURCE_OPERATION:
+        fail(
+            f"{operation} resource diagnostic operation is {document['operation']}"
+        )
+    payload = document[RESOURCE_OPERATION]
+    attempt = context["attempts"][operation]
+    if payload["started_at"] != attempt["started_at"]:
+        fail(f"{operation} resource diagnostic started_at differs from attempt")
+    if payload["ended_at"] != attempt["ended_at"]:
+        fail(f"{operation} resource diagnostic ended_at differs from attempt")
+    if payload["qualification_scope"] != source["qualification_scope"]:
+        fail(f"{operation} resource diagnostic qualification scope differs")
+    return document, sha256_bytes(data)
+
+
 def compose_attempt_spec(
     *,
     release: dict[str, Any],
@@ -899,6 +976,7 @@ def compose_attempt_spec(
                 item["ok"] = False
     attempt = context["attempts"][operation]
     source = context["evidence_sources"][operation]
+    resource_source = context["resource_diagnostic_sources"][operation]
     criterion_ids = [item["criterion_id"] for item in criteria]
     observations = [
         _observation(
@@ -932,7 +1010,11 @@ def compose_attempt_spec(
             context=context,
         ),
         "criterion_observations": observations,
-        "evidence_sources": [copy.deepcopy(source)],
+        "evidence_sources": sorted(
+            [copy.deepcopy(source), copy.deepcopy(resource_source)],
+            key=lambda item: item["source_key"],
+        ),
+        "run_diagnostic_source_keys": [resource_source["source_key"]],
         "review_source_keys": [],
     }
 
@@ -944,7 +1026,7 @@ def compose_attempt_specs(
     compare_measurement_path: Path | None,
     benchmark_measurement_path: Path | None,
     repo_root: Path,
-) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
     release, contract = load_verified_release_and_contract(release_plan_dir)
     compare_measurement, compare_state, compare_digest = load_bound_measurement(
         compare_measurement_path,
@@ -957,6 +1039,12 @@ def compose_attempt_specs(
         operation=BENCHMARK_OPERATION,
         context=context,
         repo_root=repo_root,
+    )
+    _compare_resource, compare_resource_digest = load_bound_resource_diagnostic(
+        operation=COMPARE_OPERATION, context=context, repo_root=repo_root
+    )
+    _bench_resource, bench_resource_digest = load_bound_resource_diagnostic(
+        operation=BENCHMARK_OPERATION, context=context, repo_root=repo_root
     )
     specs = {
         COMPARE_OPERATION: compose_attempt_spec(
@@ -977,8 +1065,18 @@ def compose_attempt_specs(
         ),
     }
     return specs, {
-        COMPARE_OPERATION: compare_digest,
-        BENCHMARK_OPERATION: bench_digest,
+        COMPARE_OPERATION: {
+            context["evidence_sources"][COMPARE_OPERATION]["source_key"]: compare_digest,
+            context["resource_diagnostic_sources"][COMPARE_OPERATION][
+                "source_key"
+            ]: compare_resource_digest,
+        },
+        BENCHMARK_OPERATION: {
+            context["evidence_sources"][BENCHMARK_OPERATION]["source_key"]: bench_digest,
+            context["resource_diagnostic_sources"][BENCHMARK_OPERATION][
+                "source_key"
+            ]: bench_resource_digest,
+        },
     }
 
 
@@ -1258,17 +1356,19 @@ def render_invocation(payload: dict[str, Any]) -> None:
     writer.emit("This plan does not launch a server or change default run-gates.")
 
 
-def _evidence_content_digest(
+def _evidence_content_digests(
     spec: dict[str, Any], *, repo_root: Path
-) -> str:
-    source = spec["evidence_sources"][0]
-    path = resolve_publishable_evidence(
-        source["repository_path"],
-        repo_root=repo_root,
-        label="evidence source",
-    )
-    data = read_stable_bytes(path, label="evidence source")
-    return sha256_bytes(data)
+) -> dict[str, str]:
+    digests: dict[str, str] = {}
+    for source in spec["evidence_sources"]:
+        path = resolve_publishable_evidence(
+            source["repository_path"],
+            repo_root=repo_root,
+            label="evidence source",
+        )
+        data = read_stable_bytes(path, label="evidence source")
+        digests[source["source_key"]] = sha256_bytes(data)
+    return digests
 
 
 def _validate_generated_spec(
@@ -1313,9 +1413,10 @@ def cmd_compose(args: argparse.Namespace) -> int:
             repo_root=repo_root,
         )
     for operation, spec in specs.items():
-        if _evidence_content_digest(spec, repo_root=repo_root) != measurement_digests[
-            operation
-        ]:
+        if (
+            _evidence_content_digests(spec, repo_root=repo_root)
+            != measurement_digests[operation]
+        ):
             fail(
                 "evidence changed during composition; regenerate measurements "
                 "and compose again"
@@ -1412,6 +1513,9 @@ def cmd_help(_args: argparse.Namespace) -> int:
         "the repository are allowed; models/, .git, and the repository root",
         "are refused. Evidence sources in this slice must be publishable",
         "results/ files naming the same stably read measurement file.",
+        "Each physical attempt context must also bind one closed",
+        "observe-resources summary with the exact attempt window and scope.",
+        "It is run diagnostic evidence and never a criterion or review file.",
         "The attempt spec has no precomputed digest; later capture re-reads.",
         "Missing validator output is refused; this tool does not invent it.",
         "It emits attempt-only specs. It does not capture evidence, issue a",

@@ -62,3 +62,9 @@ sweep) are not staging inputs unless they were in the frozen contract
 and captured into that candidate. They still fail `stage` if left
 untracked in the worktree. Park them. Candidate `results/` measurement
 files must still exist so `plan`/`stage` can hash them.
+
+An `observe-resources` summary already named by a run's
+`evidence_artifact_ids` is not an uncaptured extra measurement. It is
+status-neutral run diagnostic evidence. Preserve and privacy-review it with
+the run; do not move it into `review_evidence_artifact_ids`, infer a criterion
+result from it, or start monitoring during issuance.

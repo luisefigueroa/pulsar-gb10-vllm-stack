@@ -153,8 +153,15 @@ The runtime envelope and geometry checks are structural, not physical proof.
    serving rank.
 3. If that barrier fails, qualification did not start. Do not record a
    model-criterion failure.
-4. Obtain a separate launch confirmation.
-5. `scripts/up.sh <profile>`.
+4. Start `scripts/model-serving-experiment-monitor.sh` in the private workflow
+   directory, using the selected one-rank placement when applicable.
+5. Obtain a separate launch confirmation.
+6. `scripts/up.sh <profile>`.
+
+The monitor is onboarding-only. Never call it from normal catalog-serving
+entrypoints or leave it running after the final owned stop. If launch is
+refused, fails, or the workflow stops early, retain the private samples, stop
+the monitor, and record the gap without inventing a run record.
 
 ## 9. Identities and measurements
 
@@ -169,12 +176,21 @@ Never combine measurements when either identity changes.
 Sequential only:
 
 1. persist the frozen invocation plan and match its compare sample size
-2. two `validate/greedy_capture.py` runs
+2. record compare `started_at`, then run two `validate/greedy_capture.py` runs
 3. `validate/compare_captures.py --require-identical --result-json` with its
-   own wall-clock UTC start/end
+   own `ended_at`
 4. load `bench-argv` into an array without `eval`
 5. `validate/bench_serve.py --result-json` with the frozen invocation plan
    and its own wall-clock UTC start/end
+
+After each attempt, run `model-serving-experiment-monitor.sh summarize` with
+that exact window and `model-qualification` scope. Store the privacy-safe
+summary in `results/`, add it to `resource_diagnostic_sources`, and journal the
+reference. Complete, partial, and unavailable summaries are status-neutral;
+missing summary output is a capture gap. Raw samples remain private.
+
+After the final owned model stop, stop the experiment monitor. Monitor stop is
+not a second model stop.
 
 Do not use `validate/run-gates.sh` as the ADR attempt wrapper. Stop after
 an interruption. Preserve a complete closed failed measurement even when the
@@ -203,6 +219,8 @@ scripts/model-serving-release-capture.sh verify-candidate \
 
 Capture immediately after compose. Empty `review_evidence_artifact_ids`
 is expected; do not add a review source.
+Every composed attempt contains one `run_diagnostic_source_keys` entry. It is
+same-scope run evidence, not a criterion source or review evidence.
 
 ## 11. Cleanup
 

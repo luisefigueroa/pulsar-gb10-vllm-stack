@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Closed validator-measurement documents for compare and serving benchmarks.
+"""Closed validator-measurement documents for qualification and diagnostics.
 
 This module owns the versioned measurement contract emitted by
-``validate/compare_captures.py`` and ``validate/bench_serve.py``. It records
-measured facts and completion/reason only. It does not evaluate ADR 0004
-status, issue a decision, or grant serving permission.
+``validate/compare_captures.py``, ``validate/bench_serve.py``, and the
+experiment-only resource monitor. It records measured facts and
+completion/reason only. It does not evaluate ADR 0004 status, issue a decision,
+or grant serving permission.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import errno
 import hashlib
 import os
 import sys
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,7 @@ MEASUREMENT_KIND = "pulsar-validator-measurement"
 PROGRAM_OPERATIONS = {
     "validate/compare_captures.py": "compare-captures",
     "validate/bench_serve.py": "benchmark-serving",
+    "scripts/model-serving-experiment-monitor.sh": "observe-resources",
 }
 OPERATION_PROGRAMS = {value: key for key, value in PROGRAM_OPERATIONS.items()}
 
@@ -47,6 +50,15 @@ BENCHMARK_REASONS = {
     "completed",
     "warmup-failed",
     "measured-incomplete",
+    "interrupted",
+    "corrupt-document",
+    "missing-measurement",
+}
+RESOURCE_REASONS = {
+    "completed",
+    "no-samples",
+    "missing-ranks",
+    "workload-unobserved",
     "interrupted",
     "corrupt-document",
     "missing-measurement",
@@ -75,6 +87,7 @@ COMMON_FIELDS = {
 }
 COMPARE_FIELDS = COMMON_FIELDS | {"compare-captures"}
 BENCHMARK_FIELDS = COMMON_FIELDS | {"benchmark-serving"}
+RESOURCE_FIELDS = COMMON_FIELDS | {"observe-resources"}
 COMPARE_PAYLOAD_FIELDS = {
     "sample_count",
     "identical_record_count",
@@ -105,6 +118,38 @@ LEVEL_FIELDS = {
     "decode_tps_p50",
     "aggregate_tps",
     "wall_s",
+}
+RESOURCE_PAYLOAD_FIELDS = {
+    "started_at",
+    "ended_at",
+    "duration_seconds",
+    "qualification_scope",
+    "sample_interval_seconds",
+    "expected_rank_count",
+    "observed_rank_count",
+    "sample_count",
+    "ranks",
+}
+RESOURCE_RANK_FIELDS = {
+    "rank",
+    "collection_status",
+    "sample_count",
+    "workload_sample_count",
+    "mem_available_min_bytes",
+    "swap_used_max_bytes",
+    "node_memory_pressure_some_total_delta_us",
+    "workload_memory_current_max_bytes",
+    "workload_memory_peak_start_bytes",
+    "workload_memory_peak_end_bytes",
+    "workload_swap_current_max_bytes",
+    "oom_delta",
+    "oom_kill_delta",
+}
+RESOURCE_COLLECTION_STATUSES = {"complete", "pool-only", "unavailable"}
+RESOURCE_QUALIFICATION_SCOPES = {
+    "model-qualification",
+    "serving-integration",
+    "release-promotion",
 }
 FORBIDDEN_FIELDS = {
     "adapter",
@@ -309,10 +354,28 @@ def _nonnegative_int(value: Any, *, label: str) -> int:
     return value
 
 
+def _optional_nonnegative_int(value: Any, *, label: str) -> int | None:
+    if value is None:
+        return None
+    return _nonnegative_int(value, label=label)
+
+
 def _positive_int(value: Any, *, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         fail(f"{label} must be a positive integer")
     return value
+
+
+def _parse_utc(value: Any, *, label: str) -> datetime:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        fail(f"{label} must be RFC3339 UTC")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        fail(f"{label} must be RFC3339 UTC")
+    if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
+        fail(f"{label} must be RFC3339 UTC")
+    return parsed
 
 
 def _validate_source_digests(value: Any) -> dict[str, str | None]:
@@ -540,6 +603,125 @@ def _validate_benchmark_payload(value: Any, *, completion: str) -> dict[str, Any
     }
 
 
+def _validate_resource_rank(value: Any, *, index: int) -> dict[str, Any]:
+    label = f"observe-resources.ranks[{index}]"
+    document = _require_fields(value, RESOURCE_RANK_FIELDS, label=label)
+    rank = document.get("rank")
+    if not isinstance(rank, str) or not (
+        rank == "single" or rank.isdigit() and str(int(rank)) == rank
+    ):
+        fail(f"{label}.rank must be 'single' or a canonical non-negative integer")
+    status = document.get("collection_status")
+    if status not in RESOURCE_COLLECTION_STATUSES:
+        fail(f"{label}.collection_status is unsupported")
+    sample_count = _nonnegative_int(
+        document.get("sample_count"), label=f"{label}.sample_count"
+    )
+    workload_sample_count = _nonnegative_int(
+        document.get("workload_sample_count"),
+        label=f"{label}.workload_sample_count",
+    )
+    if workload_sample_count > sample_count:
+        fail(f"{label}.workload_sample_count exceeds sample_count")
+    optional = {
+        field: _optional_nonnegative_int(
+            document.get(field), label=f"{label}.{field}"
+        )
+        for field in RESOURCE_RANK_FIELDS
+        - {"rank", "collection_status", "sample_count", "workload_sample_count"}
+    }
+    if status == "complete" and (sample_count < 1 or workload_sample_count < 1):
+        fail(f"{label} complete collection requires pool and workload samples")
+    if status == "pool-only" and (
+        sample_count < 1 or workload_sample_count != 0
+    ):
+        fail(f"{label} pool-only collection has invalid sample counts")
+    if status == "unavailable" and sample_count != 0:
+        fail(f"{label} unavailable collection must have zero samples")
+    return {
+        "rank": rank,
+        "collection_status": status,
+        "sample_count": sample_count,
+        "workload_sample_count": workload_sample_count,
+        **optional,
+    }
+
+
+def _validate_resource_payload(value: Any, *, completion: str) -> dict[str, Any]:
+    payload = _require_fields(value, RESOURCE_PAYLOAD_FIELDS, label="observe-resources")
+    started_at = payload.get("started_at")
+    ended_at = payload.get("ended_at")
+    started = _parse_utc(started_at, label="observe-resources.started_at")
+    ended = _parse_utc(ended_at, label="observe-resources.ended_at")
+    if ended < started:
+        fail("observe-resources.ended_at precedes started_at")
+    delta = ended - started
+    elapsed = Decimal(delta.days * 86400 + delta.seconds) + (
+        Decimal(delta.microseconds) / Decimal(1_000_000)
+    )
+    duration = canonical_decimal(
+        payload.get("duration_seconds"), label="observe-resources.duration_seconds"
+    )
+    if duration != canonical_decimal(
+        elapsed, label="observe-resources elapsed", require_canonical=False
+    ):
+        fail("observe-resources.duration_seconds differs from its timestamp interval")
+    scope = payload.get("qualification_scope")
+    if scope not in RESOURCE_QUALIFICATION_SCOPES:
+        fail("observe-resources.qualification_scope is unsupported")
+    interval = canonical_decimal(
+        payload.get("sample_interval_seconds"),
+        label="observe-resources.sample_interval_seconds",
+    )
+    if Decimal(interval) < Decimal("0.1") or Decimal(interval) > Decimal(60):
+        fail("observe-resources.sample_interval_seconds is outside the supported range")
+    expected_rank_count = _positive_int(
+        payload.get("expected_rank_count"),
+        label="observe-resources.expected_rank_count",
+    )
+    observed_rank_count = _nonnegative_int(
+        payload.get("observed_rank_count"),
+        label="observe-resources.observed_rank_count",
+    )
+    if observed_rank_count > expected_rank_count:
+        fail("observe-resources.observed_rank_count exceeds expected_rank_count")
+    sample_count = _nonnegative_int(
+        payload.get("sample_count"), label="observe-resources.sample_count"
+    )
+    ranks = payload.get("ranks")
+    if not isinstance(ranks, list) or len(ranks) != expected_rank_count:
+        fail("observe-resources.ranks must cover every expected rank")
+    validated_ranks = [
+        _validate_resource_rank(item, index=index) for index, item in enumerate(ranks)
+    ]
+    rank_labels = [item["rank"] for item in validated_ranks]
+    if rank_labels != sorted(
+        rank_labels,
+        key=lambda item: (item != "single", int(item) if item.isdigit() else -1),
+    ) or len(rank_labels) != len(set(rank_labels)):
+        fail("observe-resources.ranks must be sorted and unique")
+    if sum(item["sample_count"] for item in validated_ranks) != sample_count:
+        fail("observe-resources.sample_count differs from rank sample counts")
+    observed = sum(item["sample_count"] > 0 for item in validated_ranks)
+    if observed != observed_rank_count:
+        fail("observe-resources.observed_rank_count differs from rank observations")
+    if completion == "complete" and any(
+        item["collection_status"] != "complete" for item in validated_ranks
+    ):
+        fail("complete observe-resources requires complete collection on every rank")
+    return {
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "duration_seconds": duration,
+        "qualification_scope": scope,
+        "sample_interval_seconds": interval,
+        "expected_rank_count": expected_rank_count,
+        "observed_rank_count": observed_rank_count,
+        "sample_count": sample_count,
+        "ranks": validated_ranks,
+    }
+
+
 def validate_measurement(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         fail("validator measurement must be an object")
@@ -550,6 +732,10 @@ def validate_measurement(value: Any) -> dict[str, Any]:
     elif operation == "benchmark-serving":
         document = _require_fields(
             value, BENCHMARK_FIELDS, label="validator measurement"
+        )
+    elif operation == "observe-resources":
+        document = _require_fields(
+            value, RESOURCE_FIELDS, label="validator measurement"
         )
     else:
         fail("validator measurement operation is unsupported")
@@ -566,9 +752,11 @@ def validate_measurement(value: Any) -> dict[str, Any]:
     if completion not in COMPLETIONS:
         fail("validator measurement completion is unsupported")
     reason = document.get("reason")
-    allowed_reasons = (
-        COMPARE_REASONS if operation == "compare-captures" else BENCHMARK_REASONS
-    )
+    allowed_reasons = {
+        "compare-captures": COMPARE_REASONS,
+        "benchmark-serving": BENCHMARK_REASONS,
+        "observe-resources": RESOURCE_REASONS,
+    }[operation]
     if reason not in allowed_reasons:
         fail("validator measurement reason is unsupported")
     if completion == "complete" and reason != "completed":
@@ -588,7 +776,7 @@ def validate_measurement(value: Any) -> dict[str, Any]:
             "reason": reason,
             "compare-captures": payload,
         }
-    else:
+    elif operation == "benchmark-serving":
         payload = _validate_benchmark_payload(
             document.get("benchmark-serving"), completion=completion
         )
@@ -600,6 +788,19 @@ def validate_measurement(value: Any) -> dict[str, Any]:
             "completion": completion,
             "reason": reason,
             "benchmark-serving": payload,
+        }
+    else:
+        payload = _validate_resource_payload(
+            document.get("observe-resources"), completion=completion
+        )
+        validated = {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": program,
+            "operation": operation,
+            "completion": completion,
+            "reason": reason,
+            "observe-resources": payload,
         }
     _screen_measurement_json(validated, label="validator measurement")
     return validated
@@ -795,3 +996,19 @@ def build_benchmark_measurement(
         },
     }
     return validate_measurement(document)
+
+
+def build_resource_measurement(
+    *, completion: str, reason: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    return validate_measurement(
+        {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": "scripts/model-serving-experiment-monitor.sh",
+            "operation": "observe-resources",
+            "completion": completion,
+            "reason": reason,
+            "observe-resources": payload,
+        }
+    )

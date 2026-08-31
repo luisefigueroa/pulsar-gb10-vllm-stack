@@ -90,6 +90,22 @@ It must not fall back to another transport, geometry, or source.
 
 ## 4. Prove serving integration
 
+For supervised onboarding only, start the experiment resource monitor after
+the exact all-rank preparation barrier and immediately before the qualifying
+launch. Use the workflow's gitignored state directory and the same one-rank
+placement, when applicable:
+
+```bash
+scripts/model-serving-experiment-monitor.sh start <profile> \
+  --state-dir experiments/model-onboarding/workflows/<workflow>/resources \
+  [--node <selected-rank>]
+```
+
+The default one-second sampler runs locally on each exact serving rank. Raw
+time-series data remains private in that directory. The monitor is not part of
+`pulsar`, the wizard, `up.sh`, cluster launch, status, inventory, or ordinary
+catalog serving after issuance.
+
 Use the profile's actual launcher:
 
 ```bash
@@ -120,6 +136,31 @@ validate/run-gates.sh <served-name> --tag <candidate-tag>
 Add the contract's required accuracy, context, concurrency, and soak commands.
 Do not invent missing output or relax a threshold after seeing results. Strict
 same-boot reproducibility is exact; floating-point similarity is diagnostic.
+
+For each compare and benchmark attempt window, distill one privacy-safe,
+status-neutral summary under `results/`:
+
+```bash
+scripts/model-serving-experiment-monitor.sh summarize \
+  --state-dir experiments/model-onboarding/workflows/<workflow>/resources \
+  --started-at <attempt-start-utc> --ended-at <attempt-end-utc> \
+  --qualification-scope model-qualification \
+  --result-json results/<tag>/<operation>-resources.json
+```
+
+Attempt composition requires that summary as run diagnostic evidence. It may
+honestly report complete, partial, or unavailable collection; it never changes
+the criterion result or Model Serving Release status. If no closed summary
+exists, record a capture gap rather than inventing one. Its window must equal
+the attempt timestamps.
+
+After the final owned model stop, stop the experiment monitor. This stops only
+monitor processes and retains private raw samples:
+
+```bash
+scripts/model-serving-experiment-monitor.sh stop \
+  --state-dir experiments/model-onboarding/workflows/<workflow>/resources
+```
 
 The retained recipes have no carried-forward evidence. For example, running
 either Qwen3.8 recipe or the Qwen3 1.7B two-rank draft begins a new onboarding

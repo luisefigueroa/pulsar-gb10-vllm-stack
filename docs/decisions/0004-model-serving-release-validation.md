@@ -22,6 +22,10 @@
   retires expected-seal and schema-1 validation bundles as a live product.
   ADR 0004 object `schema_version: 1` is unchanged and is not a v2 of those
   legacy kinds.
+  2026-08-31 — supervised physical onboarding attempts include one
+  status-neutral resource diagnostic as run evidence. It is not criterion,
+  review, release-identity, or serving evidence by itself and is never
+  collected by ordinary catalog serving.
 - **Implementation status:** Policy accepted; release-descriptor, frozen
   Validation Contract, immutable run-record, evidence-bundle, and reviewed
   validation-decision schemas implemented; read-only trusted persistence
@@ -383,6 +387,27 @@ while `observed_environment.ranks[]` records per-rank architecture and runtime
 compatibility observations. A soak observation records `started_at`,
 `ended_at`, and canonical `duration_seconds`; the validator checks that the
 duration exactly equals the contained timestamp interval.
+
+#### Run-bound resource diagnostics
+
+During supervised physical onboarding, a lightweight experiment monitor
+records unified-memory pressure and the managed workload's cgroup counters on
+each exact serving rank. One privacy-safe summary is bound to each attempt as
+ordinary run evidence. The private time series remains under the gitignored
+workflow tree.
+
+The summary does not satisfy a Validation Contract criterion and is not listed
+in `review_evidence_artifact_ids`. A complete, partial, or unavailable
+diagnostic does not change the criterion observation, attempt completion, or
+derived status. If the supervised composer has no closed resource diagnostic,
+it records a capture gap instead of inventing one. Final run records use their
+existing `evidence_artifact_ids`; no sixth ADR object or schema role is added.
+
+Monitoring starts only after the exact all-rank preparation barrier and before
+the qualifying launch, and ends after ownership-safe stop. It is not called by
+`pulsar`, the wizard, launchers, status, inventory, catalog display, or ordinary
+serving after a Model Serving Release is issued. Deterministic monitor tests
+make no physical DGX or qualification claim.
 
 Schema-1 validation bundles and expected-model seals are retired and are not
 retained by the repository reset. Live loaders do not consume them, and they

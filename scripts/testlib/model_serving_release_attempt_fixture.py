@@ -20,15 +20,19 @@ if str(REPO_ROOT / "validate") not in sys.path:
 from validator_measurement import (  # noqa: E402
     build_benchmark_measurement,
     build_compare_measurement,
+    build_resource_measurement,
     empty_benchmark_level,
 )
 ATTEMPT_PROGRAMS = (
     "validate/compare_captures.py",
     "validate/bench_serve.py",
+    "scripts/model-serving-experiment-monitor.sh",
     "validate/validator_measurement.py",
 )
 COMPARE_RESULT = "results/attempt-fixture/compare-captures.json"
 BENCH_RESULT = "results/attempt-fixture/benchmark-serving.json"
+COMPARE_RESOURCE_RESULT = "results/attempt-fixture/compare-resources.json"
+BENCH_RESOURCE_RESULT = "results/attempt-fixture/benchmark-resources.json"
 
 
 def seed_attempt_repo(repo_root: Path) -> Path:
@@ -99,7 +103,63 @@ def attempt_context(
                 "repository_path": bench_path,
             },
         },
+        "resource_diagnostic_sources": {
+            "compare-captures": {
+                "source_key": "resource-compare-captures",
+                "class": "publishable",
+                "qualification_scope": "model-qualification",
+                "media_type": "application/json",
+                "repository_path": COMPARE_RESOURCE_RESULT,
+            },
+            "benchmark-serving": {
+                "source_key": "resource-benchmark-serving",
+                "class": "publishable",
+                "qualification_scope": "model-qualification",
+                "media_type": "application/json",
+                "repository_path": BENCH_RESOURCE_RESULT,
+            },
+        },
     }
+
+
+def resource_measurement(
+    *, release: dict[str, Any], started_at: str, ended_at: str, duration: str
+) -> dict[str, Any]:
+    node_count = release["supported_hardware_geometry"]["node_count"]
+    labels = ["single"] if node_count == 1 else [str(item) for item in range(node_count)]
+    ranks = [
+        {
+            "rank": rank,
+            "collection_status": "complete",
+            "sample_count": 2,
+            "workload_sample_count": 2,
+            "mem_available_min_bytes": 1000000000,
+            "swap_used_max_bytes": 0,
+            "node_memory_pressure_some_total_delta_us": 0,
+            "workload_memory_current_max_bytes": 500000000,
+            "workload_memory_peak_start_bytes": 400000000,
+            "workload_memory_peak_end_bytes": 500000000,
+            "workload_swap_current_max_bytes": 0,
+            "oom_delta": 0,
+            "oom_kill_delta": 0,
+        }
+        for rank in labels
+    ]
+    return build_resource_measurement(
+        completion="complete",
+        reason="completed",
+        payload={
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "duration_seconds": duration,
+            "qualification_scope": "model-qualification",
+            "sample_interval_seconds": "1",
+            "expected_rank_count": node_count,
+            "observed_rank_count": node_count,
+            "sample_count": 2 * node_count,
+            "ranks": ranks,
+        },
+    )
 
 
 def complete_compare_measurement(
@@ -209,6 +269,25 @@ def write_default_measurements(
     bench_path = repo_root.joinpath(*Path(BENCH_RESULT).parts)
     write_json(compare_path, compare or complete_compare_measurement())
     write_json(bench_path, bench or complete_bench_measurement())
+    release = release_fixture.build_release()
+    write_json(
+        repo_root.joinpath(*Path(COMPARE_RESOURCE_RESULT).parts),
+        resource_measurement(
+            release=release,
+            started_at="2026-08-14T12:00:00Z",
+            ended_at="2026-08-14T12:05:00Z",
+            duration="300",
+        ),
+    )
+    write_json(
+        repo_root.joinpath(*Path(BENCH_RESOURCE_RESULT).parts),
+        resource_measurement(
+            release=release,
+            started_at="2026-08-14T12:05:00Z",
+            ended_at="2026-08-14T12:15:00Z",
+            duration="600",
+        ),
+    )
     return compare_path, bench_path
 
 
@@ -231,6 +310,24 @@ def prepare_compose_inputs(
         write_json(compare_path, compare or complete_compare_measurement())
     if write_bench:
         write_json(bench_path, bench or complete_bench_measurement())
+    write_json(
+        repo_root.joinpath(*Path(COMPARE_RESOURCE_RESULT).parts),
+        resource_measurement(
+            release=release,
+            started_at="2026-08-14T12:00:00Z",
+            ended_at="2026-08-14T12:05:00Z",
+            duration="300",
+        ),
+    )
+    write_json(
+        repo_root.joinpath(*Path(BENCH_RESOURCE_RESULT).parts),
+        resource_measurement(
+            release=release,
+            started_at="2026-08-14T12:05:00Z",
+            ended_at="2026-08-14T12:15:00Z",
+            duration="600",
+        ),
+    )
     context = attempt_context(release=release)
     context_path = repo_root / "attempt-context.json"
     write_json(context_path, context)
