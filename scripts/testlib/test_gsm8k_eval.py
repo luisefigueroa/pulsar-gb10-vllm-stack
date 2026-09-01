@@ -109,6 +109,37 @@ class Gsm8kEvalTests(unittest.TestCase):
         self.assertEqual(document["completion"], "incomplete")
         self.assertEqual(document["reason"], "dataset-invalid")
 
+    def test_digest_reader_failure_writes_closed_incomplete_measurement(self) -> None:
+        dataset = self.root / "test.json"
+        dataset.write_text("[]", encoding="utf-8")
+        output = self.root / "measurement.json"
+        with mock.patch.object(
+            gsm8k_eval,
+            "file_digest",
+            side_effect=RuntimeError("digest source unreadable"),
+        ):
+            code = gsm8k_eval.main(
+                [
+                    "--model",
+                    "fixture",
+                    "--dataset",
+                    str(dataset),
+                    "--dataset-id",
+                    "openai/gsm8k",
+                    "--dataset-revision",
+                    "a" * 40,
+                    "--sample-size",
+                    "2",
+                    "--result-json",
+                    str(output),
+                ]
+            )
+        self.assertEqual(code, 2)
+        document = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(document["completion"], "incomplete")
+        self.assertEqual(document["reason"], "dataset-invalid")
+        self.assertIsNone(document["evaluate-gsm8k"]["dataset_file_sha256"])
+
 
 if __name__ == "__main__":
     unittest.main()

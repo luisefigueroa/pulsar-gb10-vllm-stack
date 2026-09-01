@@ -163,7 +163,8 @@ scripts/model-serving-experiment-monitor.sh stop \
 ```
 
 For closed GSM8K and soak measurements, use the frozen dataset revision,
-sample selection, reasoning mode, duration, and concurrency from the contract:
+dataset file SHA-256, sample selection, reasoning mode, duration, and
+concurrency from the contract:
 
 ```bash
 python3 validate/gsm8k_eval.py --model <served-name> \
@@ -174,6 +175,10 @@ python3 validate/soak.py --model <served-name> \
   --minutes <minutes> --concurrency <count> \
   --result-json results/<tag>/stability-soak.json
 ```
+
+The GSM8K workload parameters must freeze `dataset_file_sha256` to the digest
+recorded by the measurement; a public revision label alone does not prove the
+local dataset bytes.
 
 Compose each with `model-serving-release-attempt.sh compose-extra`; this does
 not evaluate thresholds, issue status, or substitute for context, integration,

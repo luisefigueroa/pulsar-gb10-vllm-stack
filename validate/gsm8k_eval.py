@@ -180,8 +180,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--max-completion-tokens must be positive")
 
     dataset_path = pathlib.Path(args.dataset)
-    digest = file_digest(dataset_path)
+    digest = None
     try:
+        digest = file_digest(dataset_path)
         selected = select_rows(_load_rows(dataset_path), args.sample_size)
     except Exception as exc:
         document = build_accuracy_measurement(

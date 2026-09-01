@@ -867,6 +867,7 @@ def _map_accuracy_criterion(
             for key in (
                 "dataset_id",
                 "dataset_revision",
+                "dataset_file_sha256",
                 "subset",
                 "split",
                 "selection",
@@ -954,6 +955,13 @@ def _map_soak_criterion(
         return {
             "ok": False,
             "reason": "protocol-mismatch",
+            "sample_size": payload["completed_requests"],
+            "metrics": [],
+        }
+    if payload["completed_requests"] < criterion["sample_size"]:
+        return {
+            "ok": False,
+            "reason": "short-sample",
             "sample_size": payload["completed_requests"],
             "metrics": [],
         }

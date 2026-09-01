@@ -376,6 +376,7 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         accuracy["workload"]["parameters"] = {
             "dataset_id": "openai/gsm8k",
             "dataset_revision": "a" * 40,
+            "dataset_file_sha256": "b" * 64,
             "subset": "main",
             "split": "test",
             "selection": "sha256-order-first-100",
@@ -411,6 +412,9 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             [{"metric": "accuracy", "unit": "ratio", "value": "0.85"}],
         )
         variants = []
+        wrong_digest = copy.deepcopy(accuracy)
+        wrong_digest["workload"]["parameters"]["dataset_file_sha256"] = "c" * 64
+        variants.append(("dataset-digest", wrong_digest))
         for component in ("workload", "protocol"):
             changed_name = copy.deepcopy(accuracy)
             changed_name[component]["name"] += "-variant"
@@ -428,6 +432,38 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
                 )
                 self.assertFalse(mapped["ok"])
                 self.assertEqual(mapped["reason"], "protocol-mismatch")
+
+    def test_short_soak_attempt_is_preserved_as_inconclusive(self) -> None:
+        release = release_fixture.build_release()
+        criteria = release_fixture.criteria()
+        stability = next(item for item in criteria if item["dimension"] == "stability")
+        contract = release_fixture.build_contract(
+            release=release, release_criteria=criteria
+        )
+        measurement = validator_measurement.build_soak_measurement(
+            completion="complete",
+            reason="completed",
+            payload={
+                "started_at": "2026-08-14T12:00:00Z",
+                "ended_at": "2026-08-14T14:30:00Z",
+                "duration_seconds": "9000",
+                "concurrency": 5,
+                "completed_requests": 499,
+                "request_error_count": 0,
+            },
+        )
+        spec = self.compose_extra(
+            release=release,
+            contract=contract,
+            operation="validate-soak",
+            measurement=measurement,
+            evidence_path="results/extra/short-soak.json",
+        )
+        self.assertEqual(spec["attempt"]["completion"], "inconclusive")
+        observation = spec["criterion_observations"][0]
+        self.assertEqual(observation["completion"], "inconclusive")
+        self.assertEqual(observation["reason"], "short-sample")
+        self.assertEqual(observation["sample_size"], 499)
 
     def test_soak_extra_attempt_maps_nested_requirement(self) -> None:
         release = release_fixture.build_release()

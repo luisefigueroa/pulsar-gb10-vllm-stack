@@ -303,7 +303,7 @@ existing programs sequentially:
    "${bench_args[@]}" --result-json <results/.../bench.json>`, then record
    benchmark `ended_at`.
 10. Reobserve identities, record the accuracy attempt start, and run the
-    frozen GSM8K dataset revision and sample through
+    frozen GSM8K dataset revision, file SHA-256, and sample through
     `python3 validate/gsm8k_eval.py ... --result-json
     <results/.../accuracy.json>`. Record the accuracy attempt end.
 11. Reobserve identities, record the soak attempt start, and run the frozen
