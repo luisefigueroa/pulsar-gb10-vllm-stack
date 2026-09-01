@@ -623,7 +623,7 @@ def criteria_for_operation(
         ):
             selected.append(criterion)
     selected.sort(key=lambda item: item["criterion_id"])
-    if measurement is not None and measurement.get("completion") == "complete":
+    if measurement is not None:
         payload = measurement[operation]
         matcher = {
             ACCURACY_OPERATION: _accuracy_contract_matches,
@@ -668,32 +668,36 @@ def _contract_component_matches(
 def _accuracy_contract_matches(
     criterion: dict[str, Any], payload: dict[str, Any]
 ) -> bool:
-    return _contract_component_matches(
-        criterion["workload"],
-        name=ACCURACY_WORKLOAD_NAME,
-        parameters={
-            key: payload[key]
-            for key in (
-                "dataset_id",
-                "dataset_revision",
-                "dataset_file_sha256",
-                "subset",
-                "split",
-                "selection",
-            )
-        },
-    ) and _contract_component_matches(
-        criterion["protocol"],
-        name=ACCURACY_PROTOCOL_NAME,
-        parameters={
-            key: payload[key]
-            for key in (
-                "answer_normalization",
-                "max_completion_tokens",
-                "reasoning_mode",
-                "temperature",
-            )
-        },
+    return (
+        criterion["sample_size"] == payload["requested_sample_count"]
+        and _contract_component_matches(
+            criterion["workload"],
+            name=ACCURACY_WORKLOAD_NAME,
+            parameters={
+                key: payload[key]
+                for key in (
+                    "dataset_id",
+                    "dataset_revision",
+                    "dataset_file_sha256",
+                    "subset",
+                    "split",
+                    "selection",
+                )
+            },
+        )
+        and _contract_component_matches(
+            criterion["protocol"],
+            name=ACCURACY_PROTOCOL_NAME,
+            parameters={
+                key: payload[key]
+                for key in (
+                    "answer_normalization",
+                    "max_completion_tokens",
+                    "reasoning_mode",
+                    "temperature",
+                )
+            },
+        )
     )
 
 

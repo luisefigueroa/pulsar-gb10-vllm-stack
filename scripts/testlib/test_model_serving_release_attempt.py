@@ -386,6 +386,10 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         sibling["workload"]["parameters"]["dataset_revision"] = "c" * 40
         sibling["workload"]["parameters"]["dataset_file_sha256"] = "d" * 64
         criteria.append(sibling)
+        sample_sibling = copy.deepcopy(accuracy)
+        sample_sibling["criterion_id"] = "accuracy-sample-secondary"
+        sample_sibling["sample_size"] = 50
+        criteria.append(sample_sibling)
         contract = release_fixture.build_contract(
             release=release, release_criteria=criteria
         )
@@ -413,6 +417,30 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         observation = spec["criterion_observations"][0]
         self.assertEqual(
             spec["attempt"]["attempted_criterion_ids"], ["accuracy-gsm8k"]
+        )
+        incomplete = validator_measurement.build_accuracy_measurement(
+            completion="incomplete",
+            reason="request-failed",
+            payload={
+                **accuracy["workload"]["parameters"],
+                **accuracy["protocol"]["parameters"],
+                "requested_sample_count": 100,
+                "measured_sample_count": 99,
+                "correct_count": 84,
+                "request_error_count": 1,
+                "accuracy": None,
+            },
+        )
+        self.assertEqual(
+            [
+                item["criterion_id"]
+                for item in attempt.criteria_for_operation(
+                    contract,
+                    "evaluate-gsm8k",
+                    measurement=incomplete,
+                )
+            ],
+            ["accuracy-gsm8k"],
         )
         self.assertEqual(observation["criterion_id"], "accuracy-gsm8k")
         self.assertEqual(
@@ -489,6 +517,10 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         secondary = copy.deepcopy(stability)
         secondary["criterion_id"] = "stability-secondary"
         criteria.append(secondary)
+        different = copy.deepcopy(stability)
+        different["criterion_id"] = "stability-different"
+        different["protocol"]["parameters"]["concurrency"] = 4
+        criteria.append(different)
         contract = release_fixture.build_contract(
             release=release, release_criteria=criteria
         )
@@ -530,6 +562,29 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         )
         self.assertIsNone(
             observations["stability-secondary"]["contract_requirements"]["soak"]
+        )
+        incomplete = validator_measurement.build_soak_measurement(
+            completion="incomplete",
+            reason="zero-completions",
+            payload={
+                "started_at": "2026-08-14T12:00:00Z",
+                "ended_at": "2026-08-14T12:00:00Z",
+                "duration_seconds": "0",
+                "concurrency": 5,
+                "completed_requests": 0,
+                "request_error_count": 0,
+            },
+        )
+        self.assertEqual(
+            [
+                item["criterion_id"]
+                for item in attempt.criteria_for_operation(
+                    contract,
+                    "validate-soak",
+                    measurement=incomplete,
+                )
+            ],
+            ["stability-secondary", "stability-soak"],
         )
         variants = []
         for component in ("workload", "protocol"):
