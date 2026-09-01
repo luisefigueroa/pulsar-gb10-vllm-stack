@@ -20,8 +20,12 @@ Work from the repository root. Before evaluating or changing behavior:
    `docs/decisions/`, especially ADR 0001 for home views and validation
    identity, [ADR 0011](../../docs/decisions/0011-portable-occupancy-and-cold-archive.md)
    for portable occupancy, relocate, and receipt-indexed NFS archive, and
+   [ADR 0016](../../docs/decisions/0016-operator-owns-cold-storage-access-control.md)
+   for operator-owned inherited cold-storage permissions, and
    [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md)
-   for qualification scope and causal invalidation.
+   for qualification scope and causal invalidation. Controller-local state
+   remains private; do not reapply that mode policy to the configured cold
+   root.
 4. Read `docs/OPERATIONS.md` and `docs/MODELS.md` when current operator
    behavior, the live profile catalog, or implementation gaps matter. Schema
    owners live with the Python modules named in `AGENTS.md`.

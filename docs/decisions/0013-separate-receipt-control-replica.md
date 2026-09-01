@@ -14,7 +14,10 @@
   the model archive.
 - **Amended by:**
   [ADR 0014](./0014-operator-owns-cold-storage-failure-domain.md) makes the
-  configured cold root's failure-domain suitability an operator responsibility.
+  configured cold root's failure-domain suitability an operator responsibility;
+  [ADR 0016](./0016-operator-owns-cold-storage-access-control.md) makes access
+  control on that configured root an operator responsibility and removes exact
+  Unix-mode enforcement there.
 
 ## Context
 
@@ -81,7 +84,7 @@ the model archive may have a broader storage and access lifecycle.
   backup, verification, recovery, and recovery-set checks while
   `model_library_receipt.py` remains the receipt schema owner.
 - `home archive run` is idempotent for an already verified model archive and
-  can add the missing protected receipt replica without replacing either
+  can add the missing receipt control-state replica without replacing either
   object.
 - `home receipt status|backup|recover` exposes explicit operator control.
 - `home restore` accepts a receipt ID, no longer requires the catalog for
@@ -120,3 +123,13 @@ Revisit if the receipt store gains an external authenticated ledger, cold
 storage cannot preserve private Unix permissions, or Pulsar adopts a reviewed
 re-attestation process. Do not weaken the separate authority boundary merely
 to make an incomplete archive restorable.
+
+## Interpretation note — 2026-08-28 (ADR 0016)
+
+ADR 0016 supersedes the cold-root permission portions of decisions 2, 4, 5,
+and 6. The configured storage inherits its operator-managed access policy;
+Pulsar does not require or apply `0700`/`0600` there. Receipt separation,
+canonical encoding, stable no-follow reads, filename-to-ID validation, exact
+comparison with the controller receipt, and complete model-archive hashing
+remain required. Controller-local `.model-library` receipt state remains
+private.

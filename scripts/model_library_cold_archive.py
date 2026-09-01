@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Receipt control replicas and receipt-indexed model archives (ADR 0011/0013).
 
-NFS/cold is recovery storage only. The protected receipt replica stays outside
-the model archive. Presence has no receipt or occupancy authority. vLLM never
+NFS/cold is recovery storage only. The receipt control-state replica stays
+outside the model archive and inherits the operator-selected storage's access
+policy (ADR 0016). Presence has no receipt or occupancy authority. vLLM never
 opens these paths. This module does not scan Official Models/ layouts.
 """
 
@@ -261,6 +262,7 @@ def build_cold_archive_job(
 
 _JOB_NAME_RE = re.compile(r"^[0-9a-f]{64}\.json$")
 _JOB_TEMP_RE = re.compile(r"^\.[0-9a-f]{64}\.json\.")
+_JOB_LOCK_RE = re.compile(r"^[0-9a-f]{64}\.lock$")
 
 
 def cold_archive_job_path(
@@ -387,6 +389,10 @@ def list_cold_archive_jobs(
             if not stat.S_ISREG(entry.st_mode):
                 fail("cold-archive job store contains a non-regular writer temp")
             continue
+        if _JOB_LOCK_RE.fullmatch(name) is not None:
+            if stat.S_ISLNK(entry.st_mode) or not stat.S_ISREG(entry.st_mode):
+                fail("cold-archive job store contains a non-regular job lock")
+            continue
         if _JOB_NAME_RE.fullmatch(name) is None:
             fail(f"cold-archive job store contains an unexpected entry: {name}")
         if stat.S_ISLNK(entry.st_mode) or not stat.S_ISREG(entry.st_mode):
@@ -473,7 +479,7 @@ def load_cold_archive_presence(
     return validate_cold_archive_presence(value)
 
 
-def _require_private_directory(path: pathlib.Path, *, label: str) -> pathlib.Path:
+def _require_regular_directory(path: pathlib.Path, *, label: str) -> pathlib.Path:
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -482,15 +488,13 @@ def _require_private_directory(path: pathlib.Path, *, label: str) -> pathlib.Pat
         fail(f"{label} is unavailable: {exc}")
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
         fail(f"{label} is not a regular directory")
-    if stat.S_IMODE(info.st_mode) & 0o077:
-        fail(f"{label} permissions are not private")
     return path
 
 
 def _existing_cold_receipt_control_root(
     cold_root: str | pathlib.Path,
 ) -> pathlib.Path:
-    return _require_private_directory(
+    return _require_regular_directory(
         cold_receipt_control_root(cold_root),
         label="cold receipt control root",
     )
@@ -499,11 +503,14 @@ def _existing_cold_receipt_control_root(
 def _ensure_cold_receipt_control_root(
     cold_root: str | pathlib.Path,
 ) -> pathlib.Path:
-    return source_attested._ensure_private_store(
-        cold_root,
-        "pulsar-control",
-        label="cold receipt control root",
-    )
+    control = cold_receipt_control_root(cold_root)
+    try:
+        os.mkdir(control, 0o700)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        fail(f"cold receipt control root cannot be created: {exc}")
+    return _require_regular_directory(control, label="cold receipt control root")
 
 
 def load_receipt_replica(
@@ -524,7 +531,7 @@ def load_receipt_replica(
         if allow_missing:
             return None
         fail("cold receipt replica store is missing")
-    _require_private_directory(store, label="cold receipt replica store")
+    _require_regular_directory(store, label="cold receipt replica store")
     source_attested._iter_private_store_final_paths(
         store,
         label="cold receipt replica store",
@@ -538,8 +545,8 @@ def load_receipt_replica(
         info = path.lstat()
     except OSError as exc:
         fail(f"cold receipt replica is unavailable: {exc}")
-    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
-        fail("cold receipt replica is not a private regular file")
+    if not stat.S_ISREG(info.st_mode):
+        fail("cold receipt replica is not a regular file")
     return source_attested.load_source_attested_receipt(
         control,
         receipt_id,
@@ -557,14 +564,8 @@ def publish_receipt_replica(
         control,
         receipt,
         operation="cold receipt backup",
+        inherit_access_permissions=True,
     )
-    path = source_attested.source_attested_receipt_store(control) / (
-        f"{receipt['receipt_id']}.json"
-    )
-    try:
-        os.chmod(path, 0o600, follow_symlinks=False)
-    except OSError as exc:
-        fail(f"cold receipt replica permissions cannot be set: {exc}")
     loaded = load_receipt_replica(cold_root, receipt["receipt_id"])
     if loaded != stored:
         fail("cold receipt replica differs after publication")
@@ -747,7 +748,7 @@ def last_occupancy_cold_archive_blocker(
         return (
             "last occupancy has no configured receipt recovery set; "
             "pass --allow-unarchived-last-home to acknowledge there is no "
-            "protected receipt replica and model archive"
+            "receipt control-state replica and model archive"
         )
     ok, detail = cold_root_is_safe_archive_location(
         cold_root,

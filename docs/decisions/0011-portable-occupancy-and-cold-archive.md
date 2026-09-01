@@ -17,7 +17,9 @@
   storage failure-domain suitability the operator's responsibility;
   [ADR 0015](./0015-explicit-cold-recovery-root.md) makes live recovery
   configuration explicit `PULSAR_COLD_ROOT` only, with no `MODELS_NFS`
-  alias and no implicit `/mnt/Models` fallback.
+  alias and no implicit `/mnt/Models` fallback;
+  [ADR 0016](./0016-operator-owns-cold-storage-access-control.md) assigns
+  access control on the configured root to the operator.
 - **Amends:** ADR 0001 home-loss replica/failover language; ADR 0006 accepted
   risk that durable-home loss is service loss until Hub re-acquisition; the
   source-attested “receipt is bound to one live inode and cannot move”
@@ -110,8 +112,9 @@ NVMe. vLLM never opens it (ADR 0005).
   no-replace `cold adopt` remain fill paths without receipt identity.
   `cold stage-only` is removed under ADR 0012 enforcement: a self-observed
   cold tree cannot create receipt/occupancy serving identity.
-- ADR 0013 adds a private, byte-identical receipt replica under the separate
-  cold control-state namespace. Last occupancy removal now verifies that
+- ADR 0013 adds a byte-identical receipt replica under the separate cold
+  control-state namespace. Under ADR 0016 its access permissions are inherited
+  from operator-selected storage. Last occupancy removal verifies that
   replica and the model archive. Explicit receipt recovery, receipt-ID restore,
   receipt-sized admission, private staging, and atomic no-replace restore are
   implemented as deterministic control plane only.

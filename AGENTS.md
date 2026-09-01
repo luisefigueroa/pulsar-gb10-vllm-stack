@@ -216,10 +216,14 @@ language for new features without an explicit decision.
   that live directory. Occupancy may move with `home relocate --node` after
   that same live rehash; receipt `selected_rank` is Hub-download provenance
   only ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md)).
-  A protected byte-identical receipt replica and a separate receipt-indexed
+  A byte-identical receipt replica and a separate receipt-indexed
   model archive are enqueued immediately after occupancy attach and must not
-  block prepare or launch. The receipt replica belongs under the private cold
-  control-state namespace, never inside the model archive. Last occupancy
+  block prepare or launch. The receipt replica belongs under the separate cold
+  control-state namespace, never inside the model archive. The configured cold
+  root inherits the operator's access-control policy; Pulsar does not enforce
+  ownership, modes, or ACLs there
+  ([ADR 0016](docs/decisions/0016-operator-owns-cold-storage-access-control.md)).
+  Last occupancy
   removal verifies both. A missing controller receipt is recovered only by the
   explicit confirmation-gated receipt recovery command; archived bytes and
   `presence.json` cannot create or authorize a receipt
@@ -756,12 +760,15 @@ this work; the skill is procedural and does not outrank these sources.
   fallback). Never treat drifted bytes as already-checked identity.
 - Warm-home pinning retains non-home working replicas but still requires the
   durable occupancy. Home-loss recovery is occupy-in-place or explicit receipt
-  recovery followed by restore from a verified protected receipt replica plus
+  recovery followed by restore from a verified receipt replica plus
   its separate receipt-indexed model archive
   ([ADR 0011](docs/decisions/0011-portable-occupancy-and-cold-archive.md),
   [ADR 0013](docs/decisions/0013-separate-receipt-control-replica.md)). The
   operator, not Pulsar, decides whether that configured storage is a separate
-  failure domain (ADR 0014). It is not a second Spark durable home.
+  failure domain and owns its access-control policy
+  ([ADR 0014](docs/decisions/0014-operator-owns-cold-storage-failure-domain.md),
+  [ADR 0016](docs/decisions/0016-operator-owns-cold-storage-access-control.md)).
+  It is not a second Spark durable home.
 - For multi-rank model preparation, use topology-bound `ssh-roce` copy with
   eight streams and no automatic fallback, as recorded in ADR 0003. The model
   library is the only weight-distribution mechanism

@@ -190,13 +190,14 @@ Notes:
     receipt-indexed model archive start in the background and are not a serving
     gate. The receipt is never placed inside the model archive. The cold root
     may be NFS, an external disk, or another operator-selected path. Setting it
-    asserts the operator's failure-domain policy; Pulsar does not verify that
-    infrastructure choice.
+    asserts the operator's failure-domain and access-control policy; Pulsar does
+    not verify that infrastructure choice or enforce ownership, modes, or ACLs
+    under the cold root.
     home archive status|run take no occupancy lifecycle lock, so they cannot
     block prepare, launch, or relocate; archive mutation holds the shared
     cold-storage configuration lock plus the exact job lock.
     home receipt recover explicitly restores a missing controller receipt from
-    the protected control-state replica; archive bytes never authorize that
+    the receipt control-state replica; archive bytes never authorize that
     recovery. home restore uses the controller receipt, private same-filesystem
     staging, a full rehash, and atomic no-replace publication before occupancy.
     vLLM never reads the cold archive. Legacy cold scan/adopt remain fill paths,
@@ -2143,7 +2144,7 @@ cmd_home_receipt() {
       result=$(python3 "$COLD_ARCHIVE_PY" backup-receipt \
         --library-dir "$LIBRARY_DIR" --cold-root "$cold_root" \
         --receipt-id "$receipt_id") \
-        || die "home receipt backup: protected replica was not written"
+        || die "home receipt backup: control-state replica was not written"
       ;;
     recover)
       result=$(python3 "$COLD_ARCHIVE_PY" recover-receipt \
@@ -2425,7 +2426,7 @@ cmd_home_restore() (
   python3 "$COLD_ARCHIVE_PY" verify-receipt-replica \
     --library-dir "$LIBRARY_DIR" --receipt-id "$receipt_id" \
     --cold-root "$cold_root" >/dev/null \
-    || die "home restore: controller receipt and protected replica differ or are invalid"
+    || die "home restore: controller receipt and control-state replica differ or are invalid"
   python3 "$COLD_ARCHIVE_PY" verify-presence \
     --receipt "$tmp/receipt.json" --cold-root "$cold_root" >/dev/null \
     || die "home restore: verified receipt-indexed archive is missing"

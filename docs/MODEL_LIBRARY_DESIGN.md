@@ -173,7 +173,7 @@ requirements before detaching occupancy.
 
 After occupancy attachment, a nonblocking job publishes two separate objects:
 
-1. a byte-identical receipt replica in the private
+1. a byte-identical receipt replica in the separate
    `pulsar-control/download-receipts/` namespace; and
 2. the receipt-indexed model archive under `pulsar-receipts/`.
 
@@ -182,7 +182,7 @@ archive. Archived bytes and `presence.json` cannot create or authorize a
 receipt.
 
 Unless the operator explicitly accepts unarchived loss, last occupancy removal
-requires the canonical receipt, its protected replica, and a complete rehash of
+requires the canonical receipt, its control-state replica, and a complete rehash of
 the separate model archive.
 
 A missing controller receipt is recovered only through explicit,
@@ -204,10 +204,13 @@ not migrate; disable does not delete. The cold root is not part of the launch
 plan and is never mounted into a serving container.
 
 The operator owns whether the configured cold root is a suitable independent
-failure domain. Pulsar checks path safety and recovery-set integrity. It does
-not compare devices, mounts, filesystems, exports, or topology to prove or
-disprove storage independence
-([ADR 0014](./decisions/0014-operator-owns-cold-storage-failure-domain.md)).
+failure domain and owns its access-control policy. Pulsar accepts inherited
+ownership, modes, and ACLs under the cold root. It checks operational access,
+path safety, canonical receipt identity and equality, and recovery-set content;
+it does not compare devices, mounts, filesystems, exports, or topology to prove
+storage independence, and it does not enforce Unix access modes there
+([ADR 0014](./decisions/0014-operator-owns-cold-storage-failure-domain.md),
+[ADR 0016](./decisions/0016-operator-owns-cold-storage-access-control.md)).
 
 ## 10. Model Serving Release boundary
 

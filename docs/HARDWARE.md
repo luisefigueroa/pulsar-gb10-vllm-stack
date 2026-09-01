@@ -119,8 +119,11 @@ the confirmed manifest.
 
 - `/mnt/Models` — typical NFS (or local) mount that an operator may later
   choose as `PULSAR_COLD_ROOT`. It is not an implicit live recovery root
-  ([ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)). See MODELS.md
-  for surveyed catalog and fit arithmetic.
+  ([ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)). The operator
+  owns the selected root's access-control policy; Pulsar accepts inherited
+  ownership, modes, and ACLs there
+  ([ADR 0016](./decisions/0016-operator-owns-cold-storage-access-control.md)).
+  See MODELS.md for surveyed catalog and fit arithmetic.
 - Weights over a 1 GbE-class admin link are slow on cold load; keep HF cache /
   local copies for hot models.
 - The three confirmed systems expose Linux NFSv4.2 client/server and

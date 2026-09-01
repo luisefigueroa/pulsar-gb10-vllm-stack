@@ -92,6 +92,34 @@ class ColdArchiveContracts(unittest.TestCase):
         )
         self.assertEqual(job["state"], "unavailable")
 
+    def test_receipt_replica_does_not_create_the_selected_cold_root(self) -> None:
+        missing = self.root / "missing-cold-root"
+        with self.assertRaisesRegex(Exception, "cannot be created"):
+            cold_archive.publish_receipt_replica(missing, self._receipt())
+        self.assertFalse(missing.exists())
+
+    def test_job_listing_accepts_owned_lock_and_rejects_lock_symlink(self) -> None:
+        receipt = self._receipt()
+        job = cold_archive.build_cold_archive_job(
+            receipt,
+            state="complete",
+            detail="fixture complete",
+        )
+        cold_archive.write_cold_archive_job(self.library_dir, job)
+        store = cold_archive.cold_archive_job_store(self.library_dir)
+        lock = store / f"{receipt['receipt_id']}.lock"
+        lock.touch()
+
+        self.assertEqual(
+            cold_archive.list_cold_archive_jobs(self.library_dir),
+            [job],
+        )
+
+        lock.unlink()
+        lock.symlink_to(store / f"{receipt['receipt_id']}.json")
+        with self.assertRaisesRegex(Exception, "non-regular job lock"):
+            cold_archive.list_cold_archive_jobs(self.library_dir)
+
     def test_publish_and_complete(self) -> None:
         receipt = self._receipt()
         source_attested.write_source_attested_receipt(self.library_dir, receipt)
@@ -107,7 +135,6 @@ class ColdArchiveContracts(unittest.TestCase):
             / f"{receipt['receipt_id']}.json"
         )
         self.assertTrue(replica_path.is_file())
-        self.assertEqual(stat.S_IMODE(replica_path.stat().st_mode), 0o600)
         self.assertFalse(
             (
                 self.cold_root
@@ -157,7 +184,7 @@ class ColdArchiveContracts(unittest.TestCase):
         )
         self.assertEqual(recovered, receipt)
 
-    def test_noncanonical_or_public_receipt_replica_is_refused(self) -> None:
+    def test_noncanonical_receipt_replica_is_refused(self) -> None:
         receipt = self._receipt()
         cold_archive.publish_receipt_replica(self.cold_root, receipt)
         path = (
@@ -173,12 +200,29 @@ class ColdArchiveContracts(unittest.TestCase):
             cold_archive.load_receipt_replica(
                 self.cold_root, str(receipt["receipt_id"])
             )
-        path.write_bytes(model_identity.pretty_json_bytes(receipt))
-        path.chmod(0o644)
-        with self.assertRaisesRegex(Exception, "private"):
+
+    def test_inherited_cold_access_permissions_are_accepted_and_preserved(self) -> None:
+        receipt = self._receipt()
+        cold_archive.publish_receipt_replica(self.cold_root, receipt)
+        control = cold_archive.cold_receipt_control_root(self.cold_root)
+        store = cold_archive.cold_receipt_replica_store(self.cold_root)
+        path = store / f"{receipt['receipt_id']}.json"
+
+        control.chmod(0o770)
+        store.chmod(0o770)
+        path.chmod(0o660)
+
+        result = cold_archive.publish_receipt_replica(self.cold_root, receipt)
+        self.assertEqual(result["state"], "backed-up")
+        self.assertEqual(stat.S_IMODE(control.stat().st_mode), 0o770)
+        self.assertEqual(stat.S_IMODE(store.stat().st_mode), 0o770)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o660)
+        self.assertEqual(
             cold_archive.load_receipt_replica(
                 self.cold_root, str(receipt["receipt_id"])
-            )
+            ),
+            receipt,
+        )
 
     def test_nested_cold_root_is_not_a_safe_archive_location(self) -> None:
         hub = self.root / "source-hub"
