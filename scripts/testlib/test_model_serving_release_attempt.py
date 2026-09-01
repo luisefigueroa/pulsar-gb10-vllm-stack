@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
 import os
@@ -409,16 +410,30 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             observation["metrics"],
             [{"metric": "accuracy", "unit": "ratio", "value": "0.85"}],
         )
+        variants = []
+        for component in ("workload", "protocol"):
+            changed_name = copy.deepcopy(accuracy)
+            changed_name[component]["name"] += "-variant"
+            variants.append((f"{component}-name", changed_name))
+            extra = copy.deepcopy(accuracy)
+            extra[component]["parameters"]["unsupported"] = True
+            variants.append((f"{component}-parameter", extra))
+            changed_version = copy.deepcopy(accuracy)
+            changed_version[component]["version"] = "2"
+            variants.append((f"{component}-version", changed_version))
+        for label, variant in variants:
+            with self.subTest(label=label):
+                mapped = attempt._map_accuracy_criterion(
+                    variant, measurement, source_state="completed"
+                )
+                self.assertFalse(mapped["ok"])
+                self.assertEqual(mapped["reason"], "protocol-mismatch")
 
     def test_soak_extra_attempt_maps_nested_requirement(self) -> None:
         release = release_fixture.build_release()
         criteria = release_fixture.criteria()
         stability = next(item for item in criteria if item["dimension"] == "stability")
-        stability["protocol"]["parameters"] = {
-            "concurrency": 5,
-            "minimum_completed_requests": 500,
-            "minimum_duration_seconds": 9000,
-        }
+        stability["protocol"]["parameters"] = {"concurrency": 5}
         contract = release_fixture.build_contract(
             release=release, release_criteria=criteria
         )
@@ -455,6 +470,24 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             spec["run_diagnostic_source_keys"],
             ["resource-validate-soak"],
         )
+        variants = []
+        for component in ("workload", "protocol"):
+            changed_name = copy.deepcopy(stability)
+            changed_name[component]["name"] += "-variant"
+            variants.append((f"{component}-name", changed_name))
+            extra = copy.deepcopy(stability)
+            extra[component]["parameters"]["unsupported"] = True
+            variants.append((f"{component}-parameter", extra))
+            changed_version = copy.deepcopy(stability)
+            changed_version[component]["version"] = "2"
+            variants.append((f"{component}-version", changed_version))
+        for label, variant in variants:
+            with self.subTest(label=label):
+                mapped = attempt._map_soak_criterion(
+                    variant, measurement, source_state="completed"
+                )
+                self.assertFalse(mapped["ok"])
+                self.assertEqual(mapped["reason"], "protocol-mismatch")
 
     def test_missing_corrupt_short_unsupported_mismatch_interrupt(self) -> None:
         inputs = fixture.prepare_compose_inputs(

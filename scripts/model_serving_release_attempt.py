@@ -75,6 +75,8 @@ BENCHMARK_PROTOCOL_NAME = "pulsar-bench-serve"
 COMPARE_PROTOCOL_NAME = "strict-same-boot"
 ACCURACY_PROTOCOL_NAME = "pulsar-gsm8k-exact-answer"
 SOAK_PROTOCOL_NAME = "pulsar-soak"
+ACCURACY_WORKLOAD_NAME = "gsm8k"
+SOAK_WORKLOAD_NAME = "openai-completions-soak"
 COMPARE_PROTOCOL_PARAMETERS = {
     "comparison": "exact",
     "fp_equivalent_satisfies": False,
@@ -637,6 +639,19 @@ def _sample_reason(measured: int, required: int) -> str:
     return "protocol-mismatch"
 
 
+def _contract_component_matches(
+    value: Any,
+    *,
+    name: str,
+    parameters: dict[str, Any],
+) -> bool:
+    return value == {
+        "name": name,
+        "version": "1",
+        "parameters": parameters,
+    }
+
+
 def _compare_protocol_matches(criterion: dict[str, Any]) -> bool:
     protocol = criterion.get("protocol") or {}
     if protocol.get("name") != COMPARE_PROTOCOL_NAME:
@@ -844,20 +859,32 @@ def _map_accuracy_criterion(
             "metrics": [],
         }
     payload = measurement[ACCURACY_OPERATION]
-    expected_workload = criterion["workload"]["parameters"]
-    expected_protocol = criterion["protocol"]["parameters"]
-    workload_matches = all(
-        payload.get(key) == expected_workload.get(key)
-        for key in ("dataset_id", "dataset_revision", "subset", "split", "selection")
+    workload_matches = _contract_component_matches(
+        criterion["workload"],
+        name=ACCURACY_WORKLOAD_NAME,
+        parameters={
+            key: payload[key]
+            for key in (
+                "dataset_id",
+                "dataset_revision",
+                "subset",
+                "split",
+                "selection",
+            )
+        },
     )
-    protocol_matches = all(
-        payload.get(key) == expected_protocol.get(key)
-        for key in (
-            "answer_normalization",
-            "max_completion_tokens",
-            "reasoning_mode",
-            "temperature",
-        )
+    protocol_matches = _contract_component_matches(
+        criterion["protocol"],
+        name=ACCURACY_PROTOCOL_NAME,
+        parameters={
+            key: payload[key]
+            for key in (
+                "answer_normalization",
+                "max_completion_tokens",
+                "reasoning_mode",
+                "temperature",
+            )
+        },
     )
     if not workload_matches or not protocol_matches:
         return {
@@ -913,8 +940,17 @@ def _map_soak_criterion(
             "metrics": [],
         }
     payload = measurement[SOAK_OPERATION]
-    parameters = criterion["protocol"]["parameters"]
-    if payload["concurrency"] != parameters.get("concurrency"):
+    workload_matches = _contract_component_matches(
+        criterion["workload"],
+        name=SOAK_WORKLOAD_NAME,
+        parameters={},
+    )
+    protocol_matches = _contract_component_matches(
+        criterion["protocol"],
+        name=SOAK_PROTOCOL_NAME,
+        parameters={"concurrency": payload["concurrency"]},
+    )
+    if not workload_matches or not protocol_matches:
         return {
             "ok": False,
             "reason": "protocol-mismatch",

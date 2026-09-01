@@ -79,6 +79,36 @@ class Gsm8kEvalTests(unittest.TestCase):
         self.assertEqual(payload["request_error_count"], 0)
         self.assertNotIn(str(dataset), json.dumps(document))
 
+    def test_parquet_loader_failure_writes_closed_incomplete_measurement(self) -> None:
+        dataset = self.root / "test.parquet"
+        dataset.write_bytes(b"not parquet")
+        output = self.root / "measurement.json"
+        with mock.patch.object(
+            gsm8k_eval,
+            "_load_rows",
+            side_effect=RuntimeError("parquet columns are invalid"),
+        ):
+            code = gsm8k_eval.main(
+                [
+                    "--model",
+                    "fixture",
+                    "--dataset",
+                    str(dataset),
+                    "--dataset-id",
+                    "openai/gsm8k",
+                    "--dataset-revision",
+                    "a" * 40,
+                    "--sample-size",
+                    "2",
+                    "--result-json",
+                    str(output),
+                ]
+            )
+        self.assertEqual(code, 2)
+        document = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(document["completion"], "incomplete")
+        self.assertEqual(document["reason"], "dataset-invalid")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -160,8 +160,12 @@ def main():
             flush=True,
         )
         time.sleep(30)
-    ended_at = datetime.now(timezone.utc)
-    STOP = True
+    with LOCK:
+        STOP = True
+        ended_at = datetime.now(timezone.utc)
+        n_done = COMPLETED[0]
+        errors_snapshot = list(ERRORS)
+        n_err = len(errors_snapshot)
     time.sleep(5)
 
     mem = [s["mem_avail_gib"] for s in samples if "mem_avail_gib" in s]
@@ -174,9 +178,6 @@ def main():
     )
     temps = [s["gpu_temp"] for s in samples if "gpu_temp" in s]
     clocks = [s["sm_mhz"] for s in samples if "sm_mhz" in s]
-    n_err = len(ERRORS)
-    n_done = COMPLETED[0]
-
     mem_shrink_pct = None
     mem_finding = False
     if growth is not None and start_decile and start_decile > 0:
@@ -188,7 +189,7 @@ def main():
         "minutes": a.minutes,
         "concurrency": a.concurrency,
         "completed": n_done,
-        "errors": ERRORS,
+        "errors": errors_snapshot,
         "error_count": n_err,
         "max_errors": a.max_errors,
         "mem_avail_start_gib": mem[0] if mem else None,

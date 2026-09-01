@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     digest = file_digest(dataset_path)
     try:
         selected = select_rows(_load_rows(dataset_path), args.sample_size)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+    except Exception as exc:
         document = build_accuracy_measurement(
             completion="incomplete",
             reason="dataset-invalid",

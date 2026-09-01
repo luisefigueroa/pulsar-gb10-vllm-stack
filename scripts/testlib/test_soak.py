@@ -77,6 +77,14 @@ class SoakWorkerStartupTests(unittest.TestCase):
         soak.STOP = False
         soak.ERRORS.clear()
         soak.COMPLETED[0] = 0
+
+        def late_activity(seconds: float) -> None:
+            if seconds == 5:
+                self.assertTrue(soak.STOP)
+                with soak.LOCK:
+                    soak.COMPLETED[0] += 1
+                    soak.ERRORS.append("late activity outside the interval")
+
         argv = [
             "soak.py",
             "--model",
@@ -91,7 +99,7 @@ class SoakWorkerStartupTests(unittest.TestCase):
         with (
             mock.patch.object(sys, "argv", argv),
             mock.patch.object(soak.threading, "Thread", BoundThread),
-            mock.patch.object(soak.time, "sleep", return_value=None),
+            mock.patch.object(soak.time, "sleep", side_effect=late_activity),
             contextlib.redirect_stdout(io.StringIO()),
             self.assertRaises(SystemExit) as exit_result,
         ):
@@ -100,6 +108,8 @@ class SoakWorkerStartupTests(unittest.TestCase):
         document = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(document["completion"], "incomplete")
         self.assertEqual(document["reason"], "zero-completions")
+        self.assertEqual(document["validate-soak"]["completed_requests"], 0)
+        self.assertEqual(document["validate-soak"]["request_error_count"], 0)
 
 
 if __name__ == "__main__":
