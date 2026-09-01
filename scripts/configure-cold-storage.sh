@@ -39,7 +39,8 @@ directory must already exist. Pulsar never creates, mounts, or
 administers it. Existing non-Pulsar content stays untouched.
 
 Pulsar can verify path safety and recovery-set integrity. You assert
-that this storage location meets your recovery and failure-domain policy.
+that this storage location meets your recovery and failure-domain policy,
+including access control.
 EOF
 }
 

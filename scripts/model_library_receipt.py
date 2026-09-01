@@ -1895,11 +1895,12 @@ def source_attested_home_attachment_store(
     return pathlib.Path(library_dir) / "home-occupancy"
 
 
-def _ensure_private_store(
+def _ensure_store(
     library_dir: str | pathlib.Path,
     store_name: str,
     *,
     label: str,
+    inherit_access_permissions: bool,
 ) -> pathlib.Path:
     library = pathlib.Path(library_dir)
     library.mkdir(parents=True, exist_ok=True)
@@ -1922,18 +1923,38 @@ def _ensure_private_store(
         fail(f"{label} is unavailable: {exc}")
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
         fail(f"{label} is not a regular directory")
-    try:
-        os.chmod(store, 0o700, follow_symlinks=False)
-    except OSError as exc:
-        fail(f"{label} permissions cannot be set: {exc}")
+    if not inherit_access_permissions:
+        try:
+            os.chmod(store, 0o700, follow_symlinks=False)
+        except OSError as exc:
+            fail(f"{label} permissions cannot be set: {exc}")
     return store
 
 
-def _ensure_receipt_store(library_dir: str | pathlib.Path) -> pathlib.Path:
-    return _ensure_private_store(
+def _ensure_private_store(
+    library_dir: str | pathlib.Path,
+    store_name: str,
+    *,
+    label: str,
+) -> pathlib.Path:
+    return _ensure_store(
+        library_dir,
+        store_name,
+        label=label,
+        inherit_access_permissions=False,
+    )
+
+
+def _ensure_receipt_store(
+    library_dir: str | pathlib.Path,
+    *,
+    inherit_access_permissions: bool = False,
+) -> pathlib.Path:
+    return _ensure_store(
         library_dir,
         "download-receipts",
         label="download-receipt receipt store",
+        inherit_access_permissions=inherit_access_permissions,
     )
 
 
@@ -2070,9 +2091,18 @@ def write_source_attested_receipt(
     receipt: dict[str, Any],
     *,
     operation: str = "home add",
+    inherit_access_permissions: bool = False,
 ) -> dict[str, Any]:
+    """Write one receipt without replacement.
+
+    ``inherit_access_permissions`` is reserved for a configured cold-storage
+    replica. Controller-local callers keep the private default.
+    """
     receipt = validate_source_attested_acquisition_receipt(receipt)
-    store = _ensure_receipt_store(library_dir)
+    store = _ensure_receipt_store(
+        library_dir,
+        inherit_access_permissions=inherit_access_permissions,
+    )
     path = store / f"{receipt['receipt_id']}.json"
     for existing in list_source_attested_receipts_for_revision(
         library_dir,

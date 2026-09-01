@@ -1,9 +1,11 @@
 # Cold recovery storage configuration requirements
 
 Accepted live policy is **explicit `PULSAR_COLD_ROOT` only**
-([ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)). This document
-is the current feature contract for operator configuration, persistence,
-guards, and tests.
+([ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)), with inherited
+access permissions owned by the operator
+([ADR 0016](./decisions/0016-operator-owns-cold-storage-access-control.md)).
+This document is the current feature contract for operator configuration,
+persistence, guards, and tests.
 
 Deterministic tests make no physical NFS, DGX, archive durability, serving,
 qualification, or promotion claim.
@@ -29,7 +31,10 @@ byte-for-byte untouched and is not migrated, deleted, rewritten, blessed, or
 treated as recovery authority. Once explicitly configured, receipt-backed
 jobs own only `$PULSAR_COLD_ROOT/pulsar-control` and
 `$PULSAR_COLD_ROOT/pulsar-receipts`. The cold root is not carried in launch
-plans and is never mounted into serving containers.
+plans and is never mounted into serving containers. Ownership, modes, ACLs,
+exports, and administrator access under that root are the operator's policy;
+Pulsar accepts the inherited permissions and does not use exact access modes
+as recovery admission.
 
 ## Live states
 
@@ -126,7 +131,8 @@ by change, action `set-new` / `keep` / `change-blocked`, and the exact
 ADR 0014 assertion:
 
 > Pulsar can verify path safety and recovery-set integrity. You assert that
-> this storage location meets your recovery and failure-domain policy.
+> this storage location meets your recovery and failure-domain policy,
+> including access control.
 
 The selected root must already exist. Do not infer NFS or failure-domain
 suitability or prescribe mount options. Current writability is reported as
@@ -149,8 +155,10 @@ Changing roots does not migrate; disabling does not delete.
 - no force, migration, byte copy, receipt rewrite, schema `cold_root`
   addition, or deletion.
 
-Archive job load/list never mkdir. Missing stores are empty. Use no-follow
-stable reads and fail without fallback rather than skipping malformed files.
+Archive job load/list never mkdir. Missing stores are empty. Exact regular
+`<receipt-id>.lock` files created by the owning archive command are recognized
+but are not jobs; symlink/non-regular locks and unrelated entries fail without
+fallback. Use no-follow stable reads rather than skipping malformed files.
 
 `show` reports persisted/effective state/source, private local path, path
 health, shallow counts of receipt replicas/model archives/archive jobs,
@@ -213,8 +221,9 @@ Dedicated `scripts/testlib/test_model_library_cold_storage.py` and
 integration. Existing home selftests use temp explicit state and never the
 operator `.env`.
 
-Coverage includes parser/writer byte preservation, permissions, dotenv
-shapes, process override including empty, no `MODELS_NFS` or implicit
+Coverage includes parser/writer byte preservation, private controller-local
+configuration permissions, inherited cold receipt permissions, dotenv shapes,
+process override including empty, no `MODELS_NFS` or implicit
 `/mnt/Models` live fallback, show/plan/set/disable/archive-jobs human and
 closed JSON, stable plan ID, TOCTOU and lock, exits 0/1/2, path guards,
 stranded jobs/recovery objects, malformed stores, first-use and menus,

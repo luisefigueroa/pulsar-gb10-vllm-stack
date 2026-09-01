@@ -187,8 +187,10 @@ paths, capture the missing physical cases without extending Gate 14 beyond its
 recorded scope.
 
 The operator decides whether the configured cold root is an independent
-failure domain. Pulsar verifies path safety and the receipt/archive recovery
-set; it does not verify the operator's storage architecture.
+failure domain and owns its access-control policy. Pulsar accepts inherited
+ownership, modes, and ACLs while verifying operational access, path safety,
+and the receipt/archive recovery set; it does not verify the operator's
+storage architecture or access policy.
 
 After removal of the legacy `/mnt/Models` container mount, rerun one-rank and
 multi-rank serving integration before making a current launch claim. Confirm

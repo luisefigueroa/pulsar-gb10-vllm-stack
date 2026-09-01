@@ -14,7 +14,9 @@
   [ADR 0015](./0015-explicit-cold-recovery-root.md) removes the live
   `MODELS_NFS` alias and implicit `/mnt/Models` default from cold-recovery
   configuration. Setting explicit `PULSAR_COLD_ROOT` remains the operator's
-  failure-domain assertion.
+  failure-domain assertion;
+  [ADR 0016](./0016-operator-owns-cold-storage-access-control.md) also makes
+  access control on the configured cold root the operator's responsibility.
 
 ## Context
 
@@ -101,3 +103,10 @@ is a different question from whether its physical storage is independent.
 Revisit only if operators request an optional infrastructure-audit product with
 a separately defined authority source. Do not reintroduce implicit storage-
 domain inference into ordinary model-library admission or removal.
+
+## Interpretation note — 2026-08-28 (ADR 0016)
+
+The same operator-ownership boundary now covers access control. Pulsar accepts
+the configured cold root's inherited ownership, modes, and ACLs. It continues
+to verify operational usability, path safety, canonical receipt identity,
+exact receipt equality, and archived model content.

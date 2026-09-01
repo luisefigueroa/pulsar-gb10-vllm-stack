@@ -51,7 +51,8 @@ TEST_DOTENV_ENV = "PULSAR_COLD_STORAGE_TEST_DOTENV"
 SELFTEST_ENV = "PULSAR_SELFTEST"
 AUTHORITY_ASSERTION = (
     "Pulsar can verify path safety and recovery-set integrity. You assert "
-    "that this storage location meets your recovery and failure-domain policy."
+    "that this storage location meets your recovery and failure-domain policy, "
+    "including access control."
 )
 
 STATES = (

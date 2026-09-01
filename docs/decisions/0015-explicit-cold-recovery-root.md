@@ -12,6 +12,9 @@
   explicit `PULSAR_COLD_ROOT` only. This does not reopen ADR 0011 archive
   layout, ADR 0013 separate receipt replicas, or ADR 0014 operator
   ownership of failure-domain suitability.
+- **Amended by:**
+  [ADR 0016](./0016-operator-owns-cold-storage-access-control.md) assigns the
+  explicit root's access-control policy to the operator.
 
 ## Context
 

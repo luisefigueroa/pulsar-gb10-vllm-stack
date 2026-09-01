@@ -751,24 +751,31 @@ Download crash and retry behavior:
   never guesses among recipes that share the same bytes. Catalog refresh
   remains a separate next action.
 - After occupancy attach, `home archive` copies the canonical receipt into the
-  private `pulsar-control/download-receipts/` namespace and separately copies
+  separate `pulsar-control/download-receipts/` namespace and separately copies
   the receipt-indexed model tree to `pulsar-receipts/` in the background. The
   receipt is not stored inside the model archive. This is not a serving gate and takes **no occupancy
   lifecycle lock** (exclusive would block prepare/launch; shared would block
   relocate for the whole copy). Last occupancy remove of a receipted identity
-  verifies the protected receipt replica and rehashes the model archive on the
-  controller (`home check`, and again after `--yes` before occupancy detach).
+  verifies the receipt control-state replica and rehashes the model archive on
+  the controller (`home check`, and again after `--yes` before occupancy
+  detach).
   Setting explicit `PULSAR_COLD_ROOT` is the operator's assertion that the
   location meets the site's recovery and failure-domain policy
   ([ADR 0014](./decisions/0014-operator-owns-cold-storage-failure-domain.md),
   [ADR 0015](./decisions/0015-explicit-cold-recovery-root.md)). There is no
   live `MODELS_NFS` alias and no implicit `/mnt/Models` fallback. Configure
   it with `./pulsar configure cold-storage` rather than hand-editing `.env`.
+  The operator also owns access control on the selected root. Pulsar accepts
+  inherited ownership, modes, and ACLs there; it does not require exact modes
+  or reject recovery objects based on access bits. It still requires current
+  operational access and verifies object type, canonical receipt identity,
+  exact receipt equality, and archived model hashes
+  ([ADR 0016](./decisions/0016-operator-owns-cold-storage-access-control.md)).
   Pulsar does not compare
   devices, mounts, filesystem types, exports, or storage-domain identities.
   It retains nested-path refusal where copying or deletion would be unsafe.
-  Layout-only `presence.json` and archived bytes without the protected receipt
-  replica are not that proof. The occupancy rank only
+  Layout-only `presence.json` and archived bytes without the receipt
+  control-state replica are not that proof. The occupancy rank only
   deletes the inspected hub tree and does not reopen receipts. An in-flight
   copy vs remove is fail-and-retry. Archive workers hold a shared cold-storage
   configuration lock plus their exact job lock; a configuration change takes
@@ -785,7 +792,7 @@ Download crash and retry behavior:
 Receipt control-state recovery is explicit and does not need a live catalog:
 
 ```bash
-# Inspect or add the protected copy for an existing archive.
+# Inspect or add the control-state copy for an existing archive.
 scripts/model-library.sh home receipt status --receipt '<receipt_id>'
 scripts/model-library.sh home receipt backup --receipt '<receipt_id>' --yes
 
@@ -797,11 +804,13 @@ scripts/model-library.sh home restore '<receipt_id>' --node RANK --yes
 scripts/model-library.sh catalog refresh
 ```
 
-`recover` accepts only the canonical receipt from the protected control-state
-namespace and writes it locally with atomic no-replace semantics. It never
+`recover` accepts only the canonical receipt from the separate control-state
+namespace and writes it locally with atomic no-replace semantics. The operator
+owns that namespace's access policy; Pulsar does not enforce its ownership,
+modes, or ACLs. It never
 uses the model archive, `presence.json`, catalog, or old occupancy as authority.
-If the protected receipt replica is missing or invalid, recovery fails without
-fallback. Reconstructing a download receipt from archived bytes is not
+If the receipt control-state replica is missing or invalid, recovery fails
+without fallback. Reconstructing a download receipt from archived bytes is not
 supported (ADR 0013).
 
 `pin` marks non-home hot content as purge-protected. Warm-home preparation uses
@@ -815,8 +824,11 @@ catalog refresh while the durable home remains. It does **not** claim survival
 after home loss. Do not remove or unmount the home while a running or pinned
 instance depends on it. Home-loss resilience requires an explicit durable
 recovery set and supported restore. The operator owns whether the configured
-cold root is an independent failure domain (ADR 0014); Pulsar verifies only
-path safety, receipt/archive integrity, and recovery mechanics.
+cold root is an independent failure domain and owns its access-control policy
+([ADR 0014](./decisions/0014-operator-owns-cold-storage-failure-domain.md),
+[ADR 0016](./decisions/0016-operator-owns-cold-storage-access-control.md));
+Pulsar verifies only operational access, path safety, receipt/archive
+integrity, and recovery mechanics.
 
 **What model-library checks prove:** interpret each operator surface in its own
 qualification scope:
