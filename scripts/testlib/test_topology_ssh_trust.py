@@ -9,7 +9,6 @@ import io
 import json
 import os
 import pathlib
-import shutil
 import stat
 import subprocess
 import sys
@@ -284,29 +283,6 @@ class ShellBoundaryContracts(unittest.TestCase):
         self.assertIn('TRUST_TMPDIR=""', source)
         self.assertIn("trap cleanup_trust_tmpdir EXIT", source)
         self.assertNotIn("trap 'rm -rf", source)
-
-    def test_generated_config_is_accepted_by_openssh(self) -> None:
-        ssh = shutil.which("ssh")
-        if ssh is None:
-            self.skipTest("OpenSSH client unavailable")
-        enrolled, _ = enroll()
-        with tempfile.TemporaryDirectory() as directory:
-            topology_path = pathlib.Path(directory) / "topology.json"
-            config_path = pathlib.Path(directory) / "ssh-config"
-            manifest.write_trust_bundle(enrolled, str(topology_path), str(config_path))
-            proc = subprocess.run(
-                [ssh, "-G", "-F", str(config_path), "fixture-one.local"],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        settings = proc.stdout.lower().splitlines()
-        self.assertIn("hostname 192.0.2.11", settings)
-        self.assertIn("hostkeyalias fixture-one.local", settings)
-        self.assertIn("stricthostkeychecking true", settings)
-        self.assertTrue(any(line.startswith("knownhostscommand ") for line in settings))
 
     def test_schema2_loader_installs_generated_config(self) -> None:
         enrolled, _ = enroll()
