@@ -379,22 +379,19 @@ could mean either the feature or the tracking item.
 
 ## Testing Guidelines
 
-Deterministic tests use three tiers (target split, 2026-08-22):
+Use this testing cadence:
 
-- **quick** — syntax, core schemas, documentation privacy, and critical
-  identity/topology/ownership checks that fail without fallback.
-- **affected** — suites for the subsystems the change actually touches.
-- **full** — `scripts/selftest.sh`, required in CI and before publication.
+1. During iteration: run only directly affected tests.
+2. After completing a coherent change: run relevant subsystem suites.
+3. Before commit/publication: run the full selftest once.
 
-Until separate **quick** and **affected** entrypoints exist, run
-`scripts/selftest.sh` for every script, config, or agent-guidance change.
-Do not skip **full**. The three-tier split is the target, not a current
-local shortcut. Changes affecting serving behavior
+The full suite is `scripts/selftest.sh` and remains required in CI. Directly
+affected tests and relevant subsystem suites may be invoked individually until
+dedicated aggregate entrypoints exist. Changes affecting serving behavior
 must also follow `docs/REVALIDATE.md`; record reproducible outputs under
 `results/` and update `docs/VALIDATION.md`. There is no percentage coverage
 target: promotion depends on correctness, determinism, benchmark, long-context,
-and soak evidence appropriate to the change. The current `scripts/selftest.sh`
-entrypoint is the **full** suite.
+and soak evidence appropriate to the change.
 
 ### Selftest structure (avoid spaghetti mocks)
 
