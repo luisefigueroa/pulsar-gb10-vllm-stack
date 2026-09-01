@@ -708,6 +708,51 @@ class ValidatorMeasurementTests(unittest.TestCase):
         with self.assertRaises(measurement.ValidatorMeasurementError):
             measurement.write_measurement(out, json.loads(out.read_text(encoding="utf-8")))
 
+    def test_accuracy_measurement_binds_counts_and_dataset(self) -> None:
+        document = measurement.build_accuracy_measurement(
+            completion="complete",
+            reason="completed",
+            payload={
+                "dataset_id": "openai/gsm8k",
+                "dataset_revision": "a" * 40,
+                "dataset_file_sha256": "b" * 64,
+                "subset": "main",
+                "split": "test",
+                "selection": "sha256-order-first-100",
+                "answer_normalization": "gsm8k-final-number-v1",
+                "max_completion_tokens": 4096,
+                "reasoning_mode": "enabled",
+                "temperature": "0",
+                "requested_sample_count": 100,
+                "measured_sample_count": 100,
+                "correct_count": 85,
+                "request_error_count": 0,
+                "accuracy": "0.85",
+            },
+        )
+        self.assertEqual(document["evaluate-gsm8k"]["accuracy"], "0.85")
+        document["evaluate-gsm8k"]["correct_count"] = 84
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(document)
+
+    def test_soak_measurement_binds_timestamp_interval(self) -> None:
+        document = measurement.build_soak_measurement(
+            completion="complete",
+            reason="completed",
+            payload={
+                "started_at": "2026-08-29T00:00:00Z",
+                "ended_at": "2026-08-29T00:30:00Z",
+                "duration_seconds": "1800",
+                "concurrency": 8,
+                "completed_requests": 500,
+                "request_error_count": 0,
+            },
+        )
+        self.assertEqual(document["validate-soak"]["duration_seconds"], "1800")
+        document["validate-soak"]["duration_seconds"] = "1799"
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(document)
+
 
     def test_resource_diagnostic_is_status_neutral_and_rank_complete(self) -> None:
         rank = {

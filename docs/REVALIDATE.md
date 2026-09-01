@@ -137,7 +137,7 @@ Add the contract's required accuracy, context, concurrency, and soak commands.
 Do not invent missing output or relax a threshold after seeing results. Strict
 same-boot reproducibility is exact; floating-point similarity is diagnostic.
 
-For each compare and benchmark attempt window, distill one privacy-safe,
+For each qualifying measurement attempt window, distill one privacy-safe,
 status-neutral summary under `results/`:
 
 ```bash
@@ -161,6 +161,24 @@ monitor processes and retains private raw samples:
 scripts/model-serving-experiment-monitor.sh stop \
   --state-dir experiments/model-onboarding/workflows/<workflow>/resources
 ```
+
+For closed GSM8K and soak measurements, use the frozen dataset revision,
+sample selection, reasoning mode, duration, and concurrency from the contract:
+
+```bash
+python3 validate/gsm8k_eval.py --model <served-name> \
+  --dataset <private-exact-dataset-file> --dataset-id openai/gsm8k \
+  --dataset-revision <exact-commit> --sample-size <count> \
+  --result-json results/<tag>/accuracy-gsm8k.json
+python3 validate/soak.py --model <served-name> \
+  --minutes <minutes> --concurrency <count> \
+  --result-json results/<tag>/stability-soak.json
+```
+
+Compose each with `model-serving-release-attempt.sh compose-extra`; this does
+not evaluate thresholds, issue status, or substitute for context, integration,
+geometry, or provenance evidence. Each extra-attempt context must name the
+matching `observe-resources` summary for the same timestamps and scope.
 
 The retained recipes have no carried-forward evidence. For example, running
 either Qwen3.8 recipe or the Qwen3 1.7B two-rank draft begins a new onboarding

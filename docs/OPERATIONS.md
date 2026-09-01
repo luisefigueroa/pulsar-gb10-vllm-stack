@@ -126,8 +126,10 @@ available artifact reuse, distribution, verification, launch, test, evidence,
 and cleanup subsystems, including explicitly selected Experimental ones. It is
 orchestration only: it never writes a lab expected-identity file or a validation decision, assigns
 status, points a profile at a Model Serving Release, writes the trusted registry, promotes a
-path, or claims physical behavior. Current automated mapping covers only
-strict same-boot and absolute throughput/latency. A live profile serves
+path, or claims physical behavior. Automated mapping covers strict same-boot,
+absolute throughput/latency, GSM8K accuracy, and soak stability. Context,
+serving-integration, and physical-geometry evidence still require separate
+capture. A live profile serves
 with receipt/occupancy identity (`identity_status=receipt-occupancy`) but is not an exact ADR 0004
 qualification attempt. For an absent brand-new Hugging Face
 repository, the skill may plan and, after a separate confirmation, run

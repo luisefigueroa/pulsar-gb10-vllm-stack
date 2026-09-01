@@ -41,9 +41,9 @@ or planner candidate ID.
 | Capture persistence (`scripts/model-serving-release-capture.sh`) | Plans, captures, assembles, and verifies draft directories under a gitignored output boundary |
 | Tracked registry (`scripts/model-serving-release-registry.sh`) | Read-only verification of reviewed objects under `models/model-serving-releases/`; this tool never writes it |
 | Staging (`scripts/model-serving-release-issue.sh`) | Separate maintainer workflow that can stage an untrusted proposal from a verified capture directory; capture still never writes the registry |
-| Validator measurements (`validate/compare_captures.py`, `validate/bench_serve.py`) | Optional closed measurement documents for `compare-captures` and `benchmark-serving`. Exit zero or a selftest is not a criterion pass. |
+| Validator measurements (`validate/compare_captures.py`, `validate/bench_serve.py`, `validate/gsm8k_eval.py`, `validate/soak.py`) | Closed measurement documents for strict same-boot, benchmark, GSM8K accuracy, and soak stability observations. Exit zero or a selftest is not a criterion pass. |
 | Experiment resource monitor (`scripts/model-serving-experiment-monitor.sh`) | Onboarding-only per-rank unified-memory and cgroup sampling. Raw samples remain private; one closed `observe-resources` summary per attempt is status-neutral run evidence. It is not called by catalog serving. |
-| Attempt composition (`scripts/model-serving-release-attempt.sh`) | Maps verified release-plan criteria plus caller context, validator measurements, and one resource diagnostic per physical attempt into existing attempt-only specs. This slice requires publishable `results/` files: each source path must name the same stably read file consumed by the composer. Generated specs are capture-validated against those current bytes, then published as one exclusive two-file directory under `experiments/model-serving-release-attempts/` or a safe explicit outside path. The attempt spec carries no precomputed publishable digest; later capture independently re-reads the file and derives the digest. Emits metrics and completion only. |
+| Attempt composition (`scripts/model-serving-release-attempt.sh`) | Maps verified release-plan criteria plus caller context, validator measurements, and one resource diagnostic per physical attempt into existing attempt-only specs. Publishable `results/` files must match the evidence `repository_path`. Generated specs are capture-validated against those current bytes, then published as an exclusive two-file compare/benchmark directory or one-file `compose-extra` directory under `experiments/model-serving-release-attempts/` (or a safe explicit outside path). The attempt spec carries no precomputed publishable digest; later capture independently re-reads the file and derives it. Emits metrics and completion only. |
 
 The Bash entrypoint is the operator boundary. Python owns attempt-spec
 loading, verified release-plan composition, derivation, filesystem-safe
@@ -59,6 +59,10 @@ scripts/model-serving-release-attempt.sh plan-invocation
 scripts/model-serving-release-attempt.sh compose
     --release-plan DIR --context FILE --output-dir DIR
     [--compare-measurement FILE] [--benchmark-measurement FILE] [--json]
+scripts/model-serving-release-attempt.sh compose-extra
+    --release-plan DIR --context FILE
+    --operation evaluate-gsm8k|validate-soak --measurement FILE
+    --output-dir DIR [--json]
 scripts/model-serving-release-attempt.sh bench-argv --invocation-plan FILE
 
 scripts/model-serving-release-capture.sh plan --release-plan DIR --attempt-spec FILE [--json]
@@ -91,10 +95,14 @@ the same files supplied on the measurement flags. This low-level context is
 assembled by the supervised `pulsar-model-onboarding` skill; the
 composer validates it but does not discover topology, launch a server, infer
 attempt timestamps, or create missing validator output. The skill records
-separate wall-clock UTC start/end timestamps for compare and benchmark and
-must not invent a missing validator measurement.
+separate wall-clock UTC start/end timestamps for compare, benchmark, accuracy,
+and soak, and must not invent a missing validator measurement.
+`compose-extra` uses the same closed context shape narrowed to exactly one
+accuracy or soak operation, its measurement source, and its matching resource
+diagnostic source.
 The context also supplies one publishable `observe-resources` summary for each
-attempt. Its window and qualification scope must match that attempt exactly.
+measurement attempt, including `compose-extra`. Its window and qualification
+scope must match that attempt exactly.
 An incomplete or unavailable diagnostic is accepted and does not rewrite the
 criterion result; an absent closed diagnostic is a capture gap.
 
@@ -105,8 +113,9 @@ later capture or benchmark.
 
 Each emitted file is an ordinary attempt-only spec accepted by the capture
 commands below. Run capture immediately after composition. The output
-directory is an exclusive draft two-file directory; an existing target or
-partial validation failure leaves it untouched.
+directory is exclusive: `compose` writes two specs, while `compose-extra`
+writes one. An existing target or partial validation failure leaves it
+untouched.
 
 `plan` and `capture-run` require both `--release-plan DIR` and
 `--attempt-spec FILE`. The old `--spec` flag and the old kind
@@ -144,8 +153,8 @@ against the verified planner objects. Closed top-level fields are:
 | `commands` | Allowlisted program, typed arguments, classified environment, and `repository-root`; no program version |
 | `criterion_observations` | Measurements that reference evidence by `source_key`, not by precomputed artifact IDs. Nested context and soak sources are part of the run artifact set. |
 | `evidence_sources` | Publishable `results/` files or protected digest locators |
-| `run_diagnostic_source_keys` | Sorted sources for status-neutral run diagnostics. They enter the run's existing evidence set, must use the attempt scope, and cannot satisfy a criterion or appear as review evidence. Supervised compare/benchmark composition emits one resource diagnostic key. |
-| `review_source_keys` | Explicit, sorted source keys reserved for extra review files (files that are not run measurements). Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` (provenance and geometry review). Attempt composition for compare and bench emits `[]`. Capture copies that list into evidence-bundle `review_evidence_artifact_ids` and does not invent sources. Empty is expected. |
+| `run_diagnostic_source_keys` | Sorted sources for status-neutral run diagnostics. They enter the run's existing evidence set, must use the attempt scope, and cannot satisfy a criterion or appear as review evidence. Every supervised measurement composition emits one resource diagnostic key. |
+| `review_source_keys` | Explicit, sorted source keys reserved for extra review files (files that are not run measurements). Every source must be used by the run (including nested context/soak) or listed here. Review sources must use `release-promotion` (provenance and geometry review). Measurement attempt composition emits `[]`. Capture copies that list into evidence-bundle `review_evidence_artifact_ids` and does not invent sources. Empty is expected. |
 
 The loader rejects duplicate JSON keys, invalid UTF-8, `NaN`/`Infinity`,
 unknown fields, embedded release or contract objects, precomputed derived
@@ -310,8 +319,9 @@ separate workflow in
 [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md);
 a successful local issue command is not trusted until repository review and
 merge.
-The attempt composer covers only strict same-boot plus absolute
-throughput/latency in this slice. Protected digest locators are not accepted
+The attempt composer covers strict same-boot, absolute throughput/latency,
+GSM8K accuracy, and soak stability. Context, serving-integration, and physical
+geometry remain separate capture work. Protected digest locators are not accepted
 as measurement evidence here. Composition proves the measurement and evidence
 paths name the same current file and rechecks that digest around capture
 validation; it does not create an immutable binding. A mutation after compose

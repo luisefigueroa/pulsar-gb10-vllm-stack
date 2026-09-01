@@ -23,7 +23,7 @@ command="$1"
 shift
 
 case "$command" in
-  compose|plan-invocation|bench-argv|check-measurement-dir) ;;
+  compose|compose-extra|plan-invocation|bench-argv|check-measurement-dir) ;;
   *)
     die "unknown model-serving-release-attempt command: $command"
     ;;
@@ -34,6 +34,8 @@ release_plan=""
 context=""
 compare_measurement=""
 benchmark_measurement=""
+extra_operation=""
+measurement=""
 output_dir=""
 output=""
 invocation_plan=""
@@ -63,6 +65,16 @@ while [ "$#" -gt 0 ]; do
     --benchmark-measurement)
       [ "$#" -ge 2 ] || die "--benchmark-measurement requires a value"
       benchmark_measurement="$2"
+      shift
+      ;;
+    --operation)
+      [ "$#" -ge 2 ] || die "--operation requires a value"
+      extra_operation="$2"
+      shift
+      ;;
+    --measurement)
+      [ "$#" -ge 2 ] || die "--measurement requires a value"
+      measurement="$2"
       shift
       ;;
     --output-dir)
@@ -109,6 +121,11 @@ case "$command" in
     [ -n "$release_plan" ] && [ -n "$context" ] && [ -n "$output_dir" ] || die \
       "usage: model-serving-release-attempt.sh compose --release-plan DIR --context FILE --output-dir DIR [--compare-measurement FILE] [--benchmark-measurement FILE] [--json]"
     ;;
+  compose-extra)
+    [ -n "$release_plan" ] && [ -n "$context" ] && [ -n "$output_dir" ] \
+      && [ -n "$extra_operation" ] && [ -n "$measurement" ] || die \
+      "usage: model-serving-release-attempt.sh compose-extra --release-plan DIR --context FILE --operation evaluate-gsm8k|validate-soak --measurement FILE --output-dir DIR [--json]"
+    ;;
   plan-invocation)
     [ -n "$release_plan" ] || die \
       "usage: model-serving-release-attempt.sh plan-invocation --release-plan DIR [--output FILE] [--json]"
@@ -143,6 +160,12 @@ if [ -n "$compare_measurement" ]; then
 fi
 if [ -n "$benchmark_measurement" ]; then
   args+=(--benchmark-measurement "$benchmark_measurement")
+fi
+if [ -n "$extra_operation" ]; then
+  args+=(--operation "$extra_operation")
+fi
+if [ -n "$measurement" ]; then
+  args+=(--measurement "$measurement")
 fi
 if [ -n "$output_dir" ]; then
   args+=(--output-dir "$output_dir")

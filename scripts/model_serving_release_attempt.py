@@ -2,10 +2,10 @@
 """Compose ADR 0004 attempt-only specs from validator measurements.
 
 This maintainer service consumes a verified release-plan candidate, a closed
-caller context, and closed validator measurement documents. It emits one
-attempt-only spec for compare-captures and a separate spec for
-benchmark-serving. It does not capture evidence, hash programs, issue a
-decision, write the tracked registry, or grant serving permission.
+caller context, and closed validator measurement documents. It emits
+attempt-only specs for the supported qualification measurements. It does not
+capture evidence, hash programs, issue a decision, write the tracked registry,
+or grant serving permission.
 """
 
 from __future__ import annotations
@@ -65,11 +65,16 @@ OUTPUT_SCHEMA_VERSION = 1
 COMPARE_OPERATION = "compare-captures"
 BENCHMARK_OPERATION = "benchmark-serving"
 RESOURCE_OPERATION = "observe-resources"
+ACCURACY_OPERATION = "evaluate-gsm8k"
+SOAK_OPERATION = "validate-soak"
 STARTED_OPERATIONS = (COMPARE_OPERATION, BENCHMARK_OPERATION)
+EXTRA_OPERATIONS = (ACCURACY_OPERATION, SOAK_OPERATION)
 COMPARE_DIMENSIONS = {"strict-same-boot"}
 BENCHMARK_DIMENSIONS = {"throughput", "latency"}
 BENCHMARK_PROTOCOL_NAME = "pulsar-bench-serve"
 COMPARE_PROTOCOL_NAME = "strict-same-boot"
+ACCURACY_PROTOCOL_NAME = "pulsar-gsm8k-exact-answer"
+SOAK_PROTOCOL_NAME = "pulsar-soak"
 COMPARE_PROTOCOL_PARAMETERS = {
     "comparison": "exact",
     "fp_equivalent_satisfies": False,
@@ -113,6 +118,8 @@ BENCH_METRIC_FIELDS = {
 ATTEMPT_SPEC_NAMES = {
     COMPARE_OPERATION: "compare-captures.attempt-spec.json",
     BENCHMARK_OPERATION: "benchmark-serving.attempt-spec.json",
+    ACCURACY_OPERATION: "evaluate-gsm8k.attempt-spec.json",
+    SOAK_OPERATION: "validate-soak.attempt-spec.json",
 }
 
 FORBIDDEN_FIELDS = {
@@ -488,7 +495,11 @@ def _load_evidence_source(
     return record
 
 
-def load_attempt_context(path: Path) -> dict[str, Any]:
+def load_attempt_context(
+    path: Path,
+    *,
+    expected_operations: tuple[str, ...] = STARTED_OPERATIONS,
+) -> dict[str, Any]:
     try:
         data = read_stable_bytes(path, label="attempt context")
     except (OSError, ValidatorMeasurementError):
@@ -503,23 +514,26 @@ def load_attempt_context(path: Path) -> dict[str, Any]:
     if document.get("kind") != ATTEMPT_CONTEXT_KIND:
         fail("attempt context kind is invalid")
     attempts = document.get("attempts")
-    if not isinstance(attempts, dict) or set(attempts) != set(STARTED_OPERATIONS):
-        fail("attempt context attempts must name compare-captures and benchmark-serving")
+    if not isinstance(attempts, dict) or set(attempts) != set(expected_operations):
+        fail(
+            "attempt context attempts must name exactly: "
+            + ", ".join(expected_operations)
+        )
     evidence_sources = document.get("evidence_sources")
     if not isinstance(evidence_sources, dict) or set(evidence_sources) != set(
-        STARTED_OPERATIONS
+        expected_operations
     ):
         fail(
-            "attempt context evidence_sources must name compare-captures and "
-            "benchmark-serving"
+            "attempt context evidence_sources must name exactly: "
+            + ", ".join(expected_operations)
         )
     resource_sources = document.get("resource_diagnostic_sources")
     if not isinstance(resource_sources, dict) or set(resource_sources) != set(
-        STARTED_OPERATIONS
+        expected_operations
     ):
         fail(
-            "attempt context resource_diagnostic_sources must name "
-            "compare-captures and benchmark-serving"
+            "attempt context resource_diagnostic_sources must name exactly: "
+            + ", ".join(expected_operations)
         )
     environment = document.get("command_environment")
     if not isinstance(environment, list):
@@ -538,7 +552,7 @@ def load_attempt_context(path: Path) -> dict[str, Any]:
             operation: _load_operation_attempt(
                 attempts[operation], operation=operation
             )
-            for operation in STARTED_OPERATIONS
+            for operation in expected_operations
         },
         "command_environment": copy.deepcopy(environment),
         "command_site_options": copy.deepcopy(site_options),
@@ -546,7 +560,7 @@ def load_attempt_context(path: Path) -> dict[str, Any]:
             operation: _load_evidence_source(
                 evidence_sources[operation], operation=operation
             )
-            for operation in STARTED_OPERATIONS
+            for operation in expected_operations
         },
         "resource_diagnostic_sources": {
             operation: _load_evidence_source(
@@ -554,13 +568,13 @@ def load_attempt_context(path: Path) -> dict[str, Any]:
                 operation=operation,
                 source_field="resource_diagnostic_sources",
             )
-            for operation in STARTED_OPERATIONS
+            for operation in expected_operations
         },
     }
     _screen_context(loaded, label="attempt context")
     attempt_ids = [
         loaded["attempts"][operation]["attempt_id"]
-        for operation in STARTED_OPERATIONS
+        for operation in expected_operations
     ]
     if len(set(attempt_ids)) != len(attempt_ids):
         fail("attempt context attempt_id values must be unique")
@@ -589,6 +603,18 @@ def criteria_for_operation(
             operation == BENCHMARK_OPERATION
             and dimension in BENCHMARK_DIMENSIONS
             and protocol_name == BENCHMARK_PROTOCOL_NAME
+        ):
+            selected.append(criterion)
+        elif (
+            operation == ACCURACY_OPERATION
+            and dimension == "accuracy"
+            and protocol_name == ACCURACY_PROTOCOL_NAME
+        ):
+            selected.append(criterion)
+        elif (
+            operation == SOAK_OPERATION
+            and dimension == "stability"
+            and protocol_name == SOAK_PROTOCOL_NAME
         ):
             selected.append(criterion)
     selected.sort(key=lambda item: item["criterion_id"])
@@ -800,6 +826,134 @@ def _map_bench_criterion(
     }
 
 
+def _map_accuracy_criterion(
+    criterion: dict[str, Any],
+    measurement: dict[str, Any] | None,
+    *,
+    source_state: str,
+) -> dict[str, Any]:
+    if measurement is None or measurement.get("completion") != "complete":
+        return {
+            "ok": False,
+            "reason": (
+                source_state
+                if measurement is None
+                else measurement.get("reason") or source_state
+            ),
+            "sample_size": 0,
+            "metrics": [],
+        }
+    payload = measurement[ACCURACY_OPERATION]
+    expected_workload = criterion["workload"]["parameters"]
+    expected_protocol = criterion["protocol"]["parameters"]
+    workload_matches = all(
+        payload.get(key) == expected_workload.get(key)
+        for key in ("dataset_id", "dataset_revision", "subset", "split", "selection")
+    )
+    protocol_matches = all(
+        payload.get(key) == expected_protocol.get(key)
+        for key in (
+            "answer_normalization",
+            "max_completion_tokens",
+            "reasoning_mode",
+            "temperature",
+        )
+    )
+    if not workload_matches or not protocol_matches:
+        return {
+            "ok": False,
+            "reason": "protocol-mismatch",
+            "sample_size": payload["measured_sample_count"],
+            "metrics": [],
+        }
+    if payload["measured_sample_count"] != criterion["sample_size"]:
+        return {
+            "ok": False,
+            "reason": _sample_reason(
+                payload["measured_sample_count"], criterion["sample_size"]
+            ),
+            "sample_size": payload["measured_sample_count"],
+            "metrics": [],
+        }
+    required = {
+        (item["metric"], item["unit"]) for item in criterion["thresholds"]
+    }
+    if required != {("accuracy", "ratio")} or payload.get("accuracy") is None:
+        return {
+            "ok": False,
+            "reason": "unsupported-metric",
+            "sample_size": payload["measured_sample_count"],
+            "metrics": [],
+        }
+    return {
+        "ok": True,
+        "reason": "completed",
+        "sample_size": payload["measured_sample_count"],
+        "metrics": [
+            {"metric": "accuracy", "value": payload["accuracy"], "unit": "ratio"}
+        ],
+    }
+
+
+def _map_soak_criterion(
+    criterion: dict[str, Any],
+    measurement: dict[str, Any] | None,
+    *,
+    source_state: str,
+) -> dict[str, Any]:
+    if measurement is None or measurement.get("completion") != "complete":
+        return {
+            "ok": False,
+            "reason": (
+                source_state
+                if measurement is None
+                else measurement.get("reason") or source_state
+            ),
+            "sample_size": 0,
+            "metrics": [],
+        }
+    payload = measurement[SOAK_OPERATION]
+    parameters = criterion["protocol"]["parameters"]
+    if payload["concurrency"] != parameters.get("concurrency"):
+        return {
+            "ok": False,
+            "reason": "protocol-mismatch",
+            "sample_size": payload["completed_requests"],
+            "metrics": [],
+        }
+    required = {
+        (item["metric"], item["unit"]) for item in criterion["thresholds"]
+    }
+    if required != {("request_error_count", "count")}:
+        return {
+            "ok": False,
+            "reason": "unsupported-metric",
+            "sample_size": payload["completed_requests"],
+            "metrics": [],
+        }
+    return {
+        "ok": True,
+        "reason": "completed",
+        "sample_size": payload["completed_requests"],
+        "metrics": [
+            {
+                "metric": "request_error_count",
+                "value": str(payload["request_error_count"]),
+                "unit": "count",
+            }
+        ],
+        "soak": {
+            "completion": "complete",
+            "started_at": payload["started_at"],
+            "ended_at": payload["ended_at"],
+            "duration_seconds": payload["duration_seconds"],
+            "concurrency": payload["concurrency"],
+            "request_errors": payload["request_error_count"],
+            "reason": "completed",
+        },
+    }
+
+
 def _attempt_completion(source_state: str, mapped: list[dict[str, Any]]) -> str:
     if source_state == "interrupted" or any(
         item["reason"] == "interrupted" for item in mapped
@@ -819,13 +973,16 @@ def _observation(
     source_key: str,
     complete: bool,
 ) -> dict[str, Any]:
+    soak = copy.deepcopy(mapped.get("soak"))
+    if isinstance(soak, dict):
+        soak["evidence_source_keys"] = [source_key]
     return {
         "criterion_id": criterion["criterion_id"],
         "completion": "complete" if complete else "inconclusive",
         "sample_size": mapped["sample_size"],
         "metrics": copy.deepcopy(mapped["metrics"]) if complete else [],
         "evidence_source_keys": [source_key],
-        "contract_requirements": {"context": None, "soak": None},
+        "contract_requirements": {"context": None, "soak": soak},
         "reason": "completed" if complete else mapped["reason"],
     }
 
@@ -958,11 +1115,14 @@ def compose_attempt_spec(
     criteria = criteria_for_operation(contract, operation)
     if not criteria:
         fail(f"release contract has no {operation} criteria to declare")
-    mapper = (
-        _map_compare_criterion
-        if operation == COMPARE_OPERATION
-        else _map_bench_criterion
-    )
+    mapper = {
+        COMPARE_OPERATION: _map_compare_criterion,
+        BENCHMARK_OPERATION: _map_bench_criterion,
+        ACCURACY_OPERATION: _map_accuracy_criterion,
+        SOAK_OPERATION: _map_soak_criterion,
+    }.get(operation)
+    if mapper is None:
+        fail(f"unsupported attempt operation: {operation}")
     mapped = [
         mapper(criterion, measurement, source_state=source_state)
         for criterion in criteria
@@ -1077,6 +1237,42 @@ def compose_attempt_specs(
                 "source_key"
             ]: bench_resource_digest,
         },
+    }
+
+
+def compose_extra_attempt_spec(
+    *,
+    release_plan_dir: Path,
+    context: dict[str, Any],
+    operation: str,
+    measurement_path: Path | None,
+    repo_root: Path,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    if operation not in EXTRA_OPERATIONS:
+        fail("extra attempt operation is unsupported")
+    release, contract = load_verified_release_and_contract(release_plan_dir)
+    measurement, source_state, digest = load_bound_measurement(
+        measurement_path,
+        operation=operation,
+        context=context,
+        repo_root=repo_root,
+    )
+    _resource, resource_digest = load_bound_resource_diagnostic(
+        operation=operation, context=context, repo_root=repo_root
+    )
+    spec = compose_attempt_spec(
+        release=release,
+        contract=contract,
+        context=context,
+        operation=operation,
+        measurement=measurement,
+        source_state=source_state,
+    )
+    return spec, {
+        context["evidence_sources"][operation]["source_key"]: digest,
+        context["resource_diagnostic_sources"][operation][
+            "source_key"
+        ]: resource_digest,
     }
 
 
@@ -1460,6 +1656,70 @@ def cmd_compose(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_compose_extra(args: argparse.Namespace) -> int:
+    if not args.release_plan or not args.context or not args.measurement or not args.output_dir:
+        fail(
+            "compose-extra requires --release-plan DIR --context FILE "
+            "--operation NAME --measurement FILE --output-dir DIR"
+        )
+    if args.operation not in EXTRA_OPERATIONS:
+        fail("compose-extra operation is unsupported")
+    repo_root = _repo_root(Path(args.repo_root))
+    context = load_attempt_context(
+        Path(args.context), expected_operations=(args.operation,)
+    )
+    spec, evidence_digests = compose_extra_attempt_spec(
+        release_plan_dir=Path(args.release_plan),
+        context=context,
+        operation=args.operation,
+        measurement_path=Path(args.measurement),
+        repo_root=repo_root,
+    )
+    output_dir = validate_attempt_output_dir(Path(args.output_dir), repo_root=repo_root)
+    _validate_generated_spec(
+        spec, release_plan_dir=Path(args.release_plan), repo_root=repo_root
+    )
+    if _evidence_content_digests(spec, repo_root=repo_root) != evidence_digests:
+        fail(
+            "evidence changed during composition; regenerate measurements "
+            "and compose again"
+        )
+    output_name = ATTEMPT_SPEC_NAMES[args.operation]
+    try:
+        model_serving_release_capture.publish_candidate_tree(
+            output_dir, {output_name: model_identity.pretty_json_bytes(spec)}
+        )
+    except model_serving_release_capture.ModelServingReleaseCaptureError as exc:
+        fail(str(exc))
+    payload = {
+        "schema_version": OUTPUT_SCHEMA_VERSION,
+        "ok": True,
+        "command": "compose-extra",
+        "authority": "none",
+        "privacy_review": "pending",
+        "promotion_authorized": False,
+        "release_id": spec["release_id"],
+        "contract_id": spec["contract_id"],
+        "attempts": [
+            {
+                "operation": args.operation,
+                "attempt_id": spec["attempt"]["attempt_id"],
+                "completion": spec["attempt"]["completion"],
+                "attempted_criterion_ids": list(
+                    spec["attempt"]["attempted_criterion_ids"]
+                ),
+                "output": output_name,
+            }
+        ],
+        "notes": list(PERSISTENCE_NOTES),
+    }
+    if args.json:
+        emit_json(payload)
+    else:
+        render_compose(payload)
+    return 0
+
+
 def cmd_plan_invocation(args: argparse.Namespace) -> int:
     if not args.release_plan:
         fail("plan-invocation requires --release-plan DIR")
@@ -1505,6 +1765,7 @@ def cmd_help(_args: argparse.Namespace) -> int:
         "",
         "Usage:",
         "scripts/model-serving-release-attempt.sh compose --release-plan DIR --context FILE --output-dir DIR [--compare-measurement FILE] [--benchmark-measurement FILE] [--json]",
+        "scripts/model-serving-release-attempt.sh compose-extra --release-plan DIR --context FILE --operation evaluate-gsm8k|validate-soak --measurement FILE --output-dir DIR [--json]",
         "scripts/model-serving-release-attempt.sh plan-invocation --release-plan DIR [--output FILE] [--json]",
         "scripts/model-serving-release-attempt.sh bench-argv --invocation-plan FILE",
         "",
@@ -1548,6 +1809,17 @@ def build_parser() -> argparse.ArgumentParser:
     compose.add_argument("--output-dir")
     compose.add_argument("--json", action="store_true")
     compose.set_defaults(func=cmd_compose)
+
+    compose_extra = subparsers.add_parser(
+        "compose-extra", help="Compose one accuracy or stability attempt-only spec"
+    )
+    compose_extra.add_argument("--release-plan")
+    compose_extra.add_argument("--context")
+    compose_extra.add_argument("--operation", choices=EXTRA_OPERATIONS)
+    compose_extra.add_argument("--measurement")
+    compose_extra.add_argument("--output-dir")
+    compose_extra.add_argument("--json", action="store_true")
+    compose_extra.set_defaults(func=cmd_compose_extra)
 
     plan = subparsers.add_parser(
         "plan-invocation",

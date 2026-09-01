@@ -20,6 +20,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import (  # noqa: E402
+    model_serving_release,
     model_serving_release_attempt as attempt,
     model_serving_release_capture as capture,
 )
@@ -143,6 +144,91 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         self.assertEqual(planned["state"], "draft")
         self.assertEqual(planned["authority"], "none")
         return code
+
+    def compose_extra(
+        self,
+        *,
+        release: dict[str, object],
+        contract: dict[str, object],
+        operation: str,
+        measurement: dict[str, object],
+        evidence_path: str,
+    ) -> dict[str, object]:
+        plan_dir, _candidate = fixture.capture_fixture.write_release_plan_candidate(
+            self.repo, release, contract
+        )
+        measurement_path = self.repo.joinpath(*pathlib.PurePosixPath(evidence_path).parts)
+        fixture.write_json(measurement_path, measurement)
+        context = fixture.attempt_context(release=release)
+        context["attempts"] = {
+            operation: {
+                "attempt_id": ("d" if operation == "evaluate-gsm8k" else "e") * 64,
+                "started_at": "2026-08-14T12:00:00Z",
+                "ended_at": (
+                    "2026-08-14T14:30:00Z"
+                    if operation == "validate-soak"
+                    else "2026-08-14T12:30:00Z"
+                ),
+            }
+        }
+        ended_at = context["attempts"][operation]["ended_at"]
+        duration = "9000" if operation == "validate-soak" else "1800"
+        context["evidence_sources"] = {
+            operation: {
+                "source_key": operation,
+                "class": "publishable",
+                "qualification_scope": "model-qualification",
+                "media_type": "application/json",
+                "repository_path": evidence_path,
+            }
+        }
+        resource_path = f"results/extra/{operation}-resources.json"
+        context["resource_diagnostic_sources"] = {
+            operation: {
+                "source_key": f"resource-{operation}",
+                "class": "publishable",
+                "qualification_scope": "model-qualification",
+                "media_type": "application/json",
+                "repository_path": resource_path,
+            }
+        }
+        fixture.write_json(
+            self.repo.joinpath(*pathlib.PurePosixPath(resource_path).parts),
+            fixture.resource_measurement(
+                release=release,
+                started_at="2026-08-14T12:00:00Z",
+                ended_at=ended_at,
+                duration=duration,
+            ),
+        )
+        context_path = self.repo / f"{operation}-context.json"
+        fixture.write_json(context_path, context)
+        output_dir = self.compose_dir(operation)
+        code, stdout, stderr = self.run_main(
+            [
+                "compose-extra",
+                "--release-plan",
+                str(plan_dir),
+                "--context",
+                str(context_path),
+                "--operation",
+                operation,
+                "--measurement",
+                str(measurement_path),
+                "--output-dir",
+                str(output_dir),
+                "--json",
+            ]
+        )
+        self.assertEqual(code, 0, stderr)
+        payload = json.loads(stdout)
+        spec = json.loads(
+            (output_dir / attempt.ATTEMPT_SPEC_NAMES[operation]).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.plan_capture({"plan_dir": plan_dir}, spec)
+        return spec
 
     def test_strict_mapping_uses_identical_record_rate(self) -> None:
         compare = fixture.complete_compare_measurement(
@@ -271,6 +357,104 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         )
         self.assertNotEqual(code, 0)
         self.assertIn("resource diagnostic is missing", stderr)
+
+    def test_accuracy_extra_attempt_maps_closed_measurement(self) -> None:
+        release = release_fixture.build_release()
+        criteria = release_fixture.criteria()
+        accuracy = next(item for item in criteria if item["dimension"] == "accuracy")
+        accuracy["protocol"] = {
+            "name": "pulsar-gsm8k-exact-answer",
+            "version": "1",
+            "parameters": {
+                "answer_normalization": "gsm8k-final-number-v1",
+                "max_completion_tokens": 4096,
+                "reasoning_mode": "enabled",
+                "temperature": "0",
+            },
+        }
+        accuracy["workload"]["parameters"] = {
+            "dataset_id": "openai/gsm8k",
+            "dataset_revision": "a" * 40,
+            "subset": "main",
+            "split": "test",
+            "selection": "sha256-order-first-100",
+        }
+        contract = release_fixture.build_contract(
+            release=release, release_criteria=criteria
+        )
+        measurement = validator_measurement.build_accuracy_measurement(
+            completion="complete",
+            reason="completed",
+            payload={
+                **accuracy["workload"]["parameters"],
+                **accuracy["protocol"]["parameters"],
+                "dataset_file_sha256": "b" * 64,
+                "requested_sample_count": 100,
+                "measured_sample_count": 100,
+                "correct_count": 85,
+                "request_error_count": 0,
+                "accuracy": "0.85",
+            },
+        )
+        spec = self.compose_extra(
+            release=release,
+            contract=contract,
+            operation="evaluate-gsm8k",
+            measurement=measurement,
+            evidence_path="results/extra/accuracy.json",
+        )
+        observation = spec["criterion_observations"][0]
+        self.assertEqual(observation["criterion_id"], "accuracy-gsm8k")
+        self.assertEqual(
+            observation["metrics"],
+            [{"metric": "accuracy", "unit": "ratio", "value": "0.85"}],
+        )
+
+    def test_soak_extra_attempt_maps_nested_requirement(self) -> None:
+        release = release_fixture.build_release()
+        criteria = release_fixture.criteria()
+        stability = next(item for item in criteria if item["dimension"] == "stability")
+        stability["protocol"]["parameters"] = {
+            "concurrency": 5,
+            "minimum_completed_requests": 500,
+            "minimum_duration_seconds": 9000,
+        }
+        contract = release_fixture.build_contract(
+            release=release, release_criteria=criteria
+        )
+        measurement = validator_measurement.build_soak_measurement(
+            completion="complete",
+            reason="completed",
+            payload={
+                "started_at": "2026-08-14T12:00:00Z",
+                "ended_at": "2026-08-14T14:30:00Z",
+                "duration_seconds": "9000",
+                "concurrency": 5,
+                "completed_requests": 500,
+                "request_error_count": 0,
+            },
+        )
+        spec = self.compose_extra(
+            release=release,
+            contract=contract,
+            operation="validate-soak",
+            measurement=measurement,
+            evidence_path="results/extra/soak.json",
+        )
+        observation = spec["criterion_observations"][0]
+        self.assertEqual(observation["criterion_id"], "stability-soak")
+        self.assertEqual(
+            observation["metrics"],
+            [{"metric": "request_error_count", "unit": "count", "value": "0"}],
+        )
+        self.assertEqual(
+            observation["contract_requirements"]["soak"]["duration_seconds"],
+            "9000",
+        )
+        self.assertEqual(
+            spec["run_diagnostic_source_keys"],
+            ["resource-validate-soak"],
+        )
 
     def test_missing_corrupt_short_unsupported_mismatch_interrupt(self) -> None:
         inputs = fixture.prepare_compose_inputs(

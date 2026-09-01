@@ -23,8 +23,14 @@ import sys
 import threading
 import time
 import urllib.request
+from datetime import datetime, timezone
 
 from http_auth import api_headers, resolve_api_key
+from validator_measurement import (
+    build_soak_measurement,
+    decimal_from_number,
+    write_measurement,
+)
 
 STOP = False
 ERRORS = []
@@ -104,6 +110,11 @@ def main():
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--out", default=None)
     ap.add_argument(
+        "--result-json",
+        default=None,
+        help="write a closed status-neutral stability measurement",
+    )
+    ap.add_argument(
         "--max-errors",
         type=int,
         default=0,
@@ -122,6 +133,8 @@ def main():
     )
     a = ap.parse_args()
     api_key = resolve_api_key(a.api_key)
+
+    started_at = datetime.now(timezone.utc)
 
     threads = [
         threading.Thread(
@@ -147,6 +160,7 @@ def main():
             flush=True,
         )
         time.sleep(30)
+    ended_at = datetime.now(timezone.utc)
     STOP = True
     time.sleep(5)
 
@@ -193,6 +207,26 @@ def main():
     if a.out:
         json.dump(report, open(a.out, "w"), indent=1)
         print(f"wrote {a.out}")
+
+    if a.result_json:
+        completed_measurement = n_done > 0
+        duration_seconds = decimal_from_number(
+            (ended_at - started_at).total_seconds()
+        )
+        measurement = build_soak_measurement(
+            completion="complete" if completed_measurement else "incomplete",
+            reason="completed" if completed_measurement else "zero-completions",
+            payload={
+                "started_at": started_at.isoformat().replace("+00:00", "Z"),
+                "ended_at": ended_at.isoformat().replace("+00:00", "Z"),
+                "duration_seconds": duration_seconds,
+                "concurrency": a.concurrency,
+                "completed_requests": n_done,
+                "request_error_count": n_err,
+            },
+        )
+        write_measurement(a.result_json, measurement)
+        print(f"wrote {a.result_json}")
 
     # --- verdict ---
     reasons = []

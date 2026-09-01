@@ -2,10 +2,11 @@
 """Closed validator-measurement documents for qualification and diagnostics.
 
 This module owns the versioned measurement contract emitted by
-``validate/compare_captures.py``, ``validate/bench_serve.py``, and the
-experiment-only resource monitor. It records measured facts and
-completion/reason only. It does not evaluate ADR 0004 status, issue a decision,
-or grant serving permission.
+``validate/compare_captures.py``, ``validate/bench_serve.py``,
+``validate/gsm8k_eval.py``, ``validate/soak.py``, and the experiment-only
+resource monitor. It records measured facts and completion/reason only. It
+does not evaluate ADR 0004 status, issue a decision, or grant serving
+permission.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ MEASUREMENT_KIND = "pulsar-validator-measurement"
 PROGRAM_OPERATIONS = {
     "validate/compare_captures.py": "compare-captures",
     "validate/bench_serve.py": "benchmark-serving",
+    "validate/gsm8k_eval.py": "evaluate-gsm8k",
+    "validate/soak.py": "validate-soak",
     "scripts/model-serving-experiment-monitor.sh": "observe-resources",
 }
 OPERATION_PROGRAMS = {value: key for key, value in PROGRAM_OPERATIONS.items()}
@@ -63,6 +66,23 @@ RESOURCE_REASONS = {
     "corrupt-document",
     "missing-measurement",
 }
+ACCURACY_REASONS = {
+    "completed",
+    "dataset-invalid",
+    "request-failed",
+    "measured-incomplete",
+    "interrupted",
+    "corrupt-document",
+    "missing-measurement",
+}
+SOAK_REASONS = {
+    "completed",
+    "zero-completions",
+    "request-errors",
+    "interrupted",
+    "corrupt-document",
+    "missing-measurement",
+}
 LEVEL_REASONS = {
     "completed",
     "warmup-failed",
@@ -88,6 +108,8 @@ COMMON_FIELDS = {
 COMPARE_FIELDS = COMMON_FIELDS | {"compare-captures"}
 BENCHMARK_FIELDS = COMMON_FIELDS | {"benchmark-serving"}
 RESOURCE_FIELDS = COMMON_FIELDS | {"observe-resources"}
+ACCURACY_FIELDS = COMMON_FIELDS | {"evaluate-gsm8k"}
+SOAK_FIELDS = COMMON_FIELDS | {"validate-soak"}
 COMPARE_PAYLOAD_FIELDS = {
     "sample_count",
     "identical_record_count",
@@ -150,6 +172,31 @@ RESOURCE_QUALIFICATION_SCOPES = {
     "model-qualification",
     "serving-integration",
     "release-promotion",
+}
+ACCURACY_PAYLOAD_FIELDS = {
+    "dataset_id",
+    "dataset_revision",
+    "dataset_file_sha256",
+    "subset",
+    "split",
+    "selection",
+    "answer_normalization",
+    "max_completion_tokens",
+    "reasoning_mode",
+    "temperature",
+    "requested_sample_count",
+    "measured_sample_count",
+    "correct_count",
+    "request_error_count",
+    "accuracy",
+}
+SOAK_PAYLOAD_FIELDS = {
+    "started_at",
+    "ended_at",
+    "duration_seconds",
+    "concurrency",
+    "completed_requests",
+    "request_error_count",
 }
 FORBIDDEN_FIELDS = {
     "adapter",
@@ -722,6 +769,115 @@ def _validate_resource_payload(value: Any, *, completion: str) -> dict[str, Any]
     }
 
 
+def _validate_accuracy_payload(value: Any, *, completion: str) -> dict[str, Any]:
+    payload = _require_fields(value, ACCURACY_PAYLOAD_FIELDS, label="evaluate-gsm8k")
+    requested = _positive_int(
+        payload.get("requested_sample_count"),
+        label="evaluate-gsm8k.requested_sample_count",
+    )
+    measured = _nonnegative_int(
+        payload.get("measured_sample_count"),
+        label="evaluate-gsm8k.measured_sample_count",
+    )
+    correct = _nonnegative_int(
+        payload.get("correct_count"), label="evaluate-gsm8k.correct_count"
+    )
+    errors = _nonnegative_int(
+        payload.get("request_error_count"),
+        label="evaluate-gsm8k.request_error_count",
+    )
+    if measured > requested:
+        fail("evaluate-gsm8k.measured_sample_count exceeds requested_sample_count")
+    if correct > measured:
+        fail("evaluate-gsm8k.correct_count exceeds measured_sample_count")
+    accuracy = _optional_ratio(payload.get("accuracy"), label="evaluate-gsm8k.accuracy")
+    digest = _optional_digest(
+        payload.get("dataset_file_sha256"),
+        label="evaluate-gsm8k.dataset_file_sha256",
+    )
+    if payload.get("reasoning_mode") not in {"enabled", "disabled"}:
+        fail("evaluate-gsm8k.reasoning_mode is unsupported")
+    temperature = canonical_decimal(
+        payload.get("temperature"), label="evaluate-gsm8k.temperature"
+    )
+    if Decimal(temperature) < 0:
+        fail("evaluate-gsm8k.temperature must be non-negative")
+    if completion == "complete":
+        if measured != requested or errors != 0:
+            fail("complete evaluate-gsm8k requires every request to succeed")
+        if digest is None or accuracy is None:
+            fail("complete evaluate-gsm8k requires dataset and accuracy digests")
+        expected = canonical_decimal(
+            Decimal(correct) / Decimal(measured),
+            label="evaluate-gsm8k expected accuracy",
+            require_canonical=False,
+        )
+        if accuracy != expected:
+            fail("evaluate-gsm8k accuracy differs from correct/sample count")
+    return {
+        "dataset_id": payload.get("dataset_id"),
+        "dataset_revision": payload.get("dataset_revision"),
+        "dataset_file_sha256": digest,
+        "subset": payload.get("subset"),
+        "split": payload.get("split"),
+        "selection": payload.get("selection"),
+        "answer_normalization": payload.get("answer_normalization"),
+        "max_completion_tokens": _positive_int(
+            payload.get("max_completion_tokens"),
+            label="evaluate-gsm8k.max_completion_tokens",
+        ),
+        "reasoning_mode": payload.get("reasoning_mode"),
+        "temperature": temperature,
+        "requested_sample_count": requested,
+        "measured_sample_count": measured,
+        "correct_count": correct,
+        "request_error_count": errors,
+        "accuracy": accuracy,
+    }
+
+
+def _validate_soak_payload(value: Any, *, completion: str) -> dict[str, Any]:
+    payload = _require_fields(value, SOAK_PAYLOAD_FIELDS, label="validate-soak")
+    started_at = payload.get("started_at")
+    ended_at = payload.get("ended_at")
+    started = _parse_utc(started_at, label="validate-soak.started_at")
+    ended = _parse_utc(ended_at, label="validate-soak.ended_at")
+    if ended < started:
+        fail("validate-soak.ended_at precedes started_at")
+    delta = ended - started
+    elapsed = Decimal(delta.days * 86400 + delta.seconds) + (
+        Decimal(delta.microseconds) / Decimal(1_000_000)
+    )
+    duration = canonical_decimal(
+        payload.get("duration_seconds"), label="validate-soak.duration_seconds"
+    )
+    if duration != canonical_decimal(
+        elapsed, label="validate-soak elapsed", require_canonical=False
+    ):
+        fail("validate-soak.duration_seconds differs from its timestamp interval")
+    concurrency = _positive_int(
+        payload.get("concurrency"), label="validate-soak.concurrency"
+    )
+    completed = _nonnegative_int(
+        payload.get("completed_requests"),
+        label="validate-soak.completed_requests",
+    )
+    errors = _nonnegative_int(
+        payload.get("request_error_count"),
+        label="validate-soak.request_error_count",
+    )
+    if completion == "complete" and completed < 1:
+        fail("complete validate-soak requires at least one completed request")
+    return {
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "duration_seconds": duration,
+        "concurrency": concurrency,
+        "completed_requests": completed,
+        "request_error_count": errors,
+    }
+
+
 def validate_measurement(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         fail("validator measurement must be an object")
@@ -737,6 +893,10 @@ def validate_measurement(value: Any) -> dict[str, Any]:
         document = _require_fields(
             value, RESOURCE_FIELDS, label="validator measurement"
         )
+    elif operation == "evaluate-gsm8k":
+        document = _require_fields(value, ACCURACY_FIELDS, label="validator measurement")
+    elif operation == "validate-soak":
+        document = _require_fields(value, SOAK_FIELDS, label="validator measurement")
     else:
         fail("validator measurement operation is unsupported")
     if document.get("schema_version") != MEASUREMENT_SCHEMA_VERSION:
@@ -756,6 +916,8 @@ def validate_measurement(value: Any) -> dict[str, Any]:
         "compare-captures": COMPARE_REASONS,
         "benchmark-serving": BENCHMARK_REASONS,
         "observe-resources": RESOURCE_REASONS,
+        "evaluate-gsm8k": ACCURACY_REASONS,
+        "validate-soak": SOAK_REASONS,
     }[operation]
     if reason not in allowed_reasons:
         fail("validator measurement reason is unsupported")
@@ -789,7 +951,7 @@ def validate_measurement(value: Any) -> dict[str, Any]:
             "reason": reason,
             "benchmark-serving": payload,
         }
-    else:
+    elif operation == "observe-resources":
         payload = _validate_resource_payload(
             document.get("observe-resources"), completion=completion
         )
@@ -801,6 +963,32 @@ def validate_measurement(value: Any) -> dict[str, Any]:
             "completion": completion,
             "reason": reason,
             "observe-resources": payload,
+        }
+    elif operation == "evaluate-gsm8k":
+        payload = _validate_accuracy_payload(
+            document.get("evaluate-gsm8k"), completion=completion
+        )
+        validated = {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": program,
+            "operation": operation,
+            "completion": completion,
+            "reason": reason,
+            "evaluate-gsm8k": payload,
+        }
+    else:
+        payload = _validate_soak_payload(
+            document.get("validate-soak"), completion=completion
+        )
+        validated = {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": program,
+            "operation": operation,
+            "completion": completion,
+            "reason": reason,
+            "validate-soak": payload,
         }
     _screen_measurement_json(validated, label="validator measurement")
     return validated
@@ -1010,5 +1198,37 @@ def build_resource_measurement(
             "completion": completion,
             "reason": reason,
             "observe-resources": payload,
+        }
+    )
+
+
+def build_accuracy_measurement(
+    *, completion: str, reason: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    return validate_measurement(
+        {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": "validate/gsm8k_eval.py",
+            "operation": "evaluate-gsm8k",
+            "completion": completion,
+            "reason": reason,
+            "evaluate-gsm8k": payload,
+        }
+    )
+
+
+def build_soak_measurement(
+    *, completion: str, reason: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    return validate_measurement(
+        {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": "validate/soak.py",
+            "operation": "validate-soak",
+            "completion": completion,
+            "reason": reason,
+            "validate-soak": payload,
         }
     )

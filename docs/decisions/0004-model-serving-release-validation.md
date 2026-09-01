@@ -35,7 +35,8 @@
   local source-neutral release-plan candidate persistence implemented with
   a public verified loader;
   closed validator-measurement documents and attempt-only spec composition
-  implemented for strict same-boot and absolute throughput/latency;
+  implemented for strict same-boot, absolute throughput/latency, GSM8K
+  accuracy, and soak stability;
   advisory catalog/operator ADR 0004 status projection implemented for
   explicitly bound profiles; supervised `pulsar-model-onboarding` skill
   implemented as control-plane orchestration; maintainer-only issuance
@@ -494,7 +495,8 @@ other run observations. Run `evidence_artifact_ids` already cite the
 measurements.
 
 Measurement capture has no review-source producer. Attempt composition for
-strict same-boot and absolute throughput/latency emits
+strict same-boot, absolute throughput/latency, GSM8K accuracy, and soak
+stability emits
 `review_source_keys: []`. Capture copies those keys into
 `review_evidence_artifact_ids` and does not invent sources. An empty
 leftover list after onboarding capture is expected and is not a candidate
@@ -586,10 +588,11 @@ confirmation before large acquisition, launch, and destructive cleanup. It has
 no authority to issue seals, assign `Validated`, or promote a serving path;
 those remain reviewed repository decisions. Reusable product behavior belongs
 in Pulsar subsystems, while the skill supervises and composes those subsystems.
-Current automated measurement mapping covers only strict same-boot and
-absolute throughput/latency. The default unsealed replicated path may be
-served with its honest label but is not an exact ADR 0004 qualification
-attempt. The skill-local journal is isolated under
+Automated measurement mapping covers strict same-boot, absolute
+throughput/latency, GSM8K accuracy, and soak stability. Context, serving
+integration, and physical geometry remain separate capture work. The default
+unsealed replicated path may be served with its honest label but is not an
+exact ADR 0004 qualification attempt. The skill-local journal is isolated under
 `experiments/model-onboarding/workflows/`; it is orchestration recovery state,
 not a sixth ADR object. Deterministic skill and journal tests make no physical
 DGX claim and create no release decision.
@@ -746,8 +749,9 @@ qualification did not start; absence of a reviewed decision stays
 neutral. It is not a `validate/*` measurement adapter, a reviewed
 decision, or a physical DGX claim. Closed validator-measurement documents
 and `scripts/model-serving-release-attempt.sh` now compose attempt-only
-specs for strict same-boot and absolute throughput/latency; capture still
-consumes those specs and derives program versions and evidence digests.
+specs for strict same-boot, absolute throughput/latency, GSM8K accuracy, and
+soak stability; capture still consumes those specs and derives program
+versions and evidence digests.
 See
 [MODEL_SERVING_RELEASE_CAPTURE.md](../MODEL_SERVING_RELEASE_CAPTURE.md).
 
@@ -790,8 +794,10 @@ Implement this decision in focused, reviewable units:
    skill is control-plane orchestration only: it never issues a seal or
    validation decision, assigns status, binds a profile to a release,
    writes the trusted registry, promotes a path, or claims physical
-   behavior. Current automated mapping covers only strict same-boot and
-   absolute throughput/latency. The default unsealed replicated path is
+   behavior. Automated mapping covers strict same-boot, absolute
+   throughput/latency, GSM8K accuracy, and soak stability. Context, serving
+   integration, and physical geometry remain separate capture work. The
+   default unsealed replicated path is
    not an exact ADR 0004 qualification attempt. The skill may compose the
    source-attested service for an absent exact Hugging Face home, but that
    acquisition remains catalog/artifact evidence and creates no validation

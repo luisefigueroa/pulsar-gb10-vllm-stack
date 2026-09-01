@@ -37,9 +37,10 @@ List only artifacts that actually exist. Use repository-relative paths.
 
 ## Missing criteria
 
-Current automated mapping covers only strict same-boot, absolute
-throughput, and absolute latency. Name every other frozen criterion as
-unevaluated/incomplete unless separately captured.
+Automated mapping covers strict same-boot, absolute throughput/latency, GSM8K
+accuracy, and soak stability. Name context, serving integration, physical
+geometry, and provenance/security as unevaluated/incomplete unless separately
+captured or reviewed.
 
 - Stability:
 - Accuracy:

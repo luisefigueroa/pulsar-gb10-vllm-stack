@@ -46,10 +46,10 @@ Confirm the complete ADR 0004 contract before testing:
 - relative performance: N/A unless a valid reviewed comparable predecessor
   is explicitly supplied
 
-State that current automated mapping covers only strict same-boot, absolute
-throughput, and absolute latency. Other required criteria remain
-unevaluated/incomplete until separately captured. Provenance/security is
-review-derived and is not a compose output.
+State that automated mapping covers strict same-boot, absolute throughput,
+absolute latency, GSM8K accuracy, and soak stability. Context,
+serving-integration, and physical geometry remain separate capture work.
+Provenance/security is review-derived and is not a compose output.
 
 Agree and record this complete input before testing. The Validation Contract
 is not frozen until the planner later combines it with the exact artifact
