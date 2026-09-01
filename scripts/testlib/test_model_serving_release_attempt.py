@@ -381,6 +381,11 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             "split": "test",
             "selection": "sha256-order-first-100",
         }
+        sibling = copy.deepcopy(accuracy)
+        sibling["criterion_id"] = "accuracy-secondary"
+        sibling["workload"]["parameters"]["dataset_revision"] = "c" * 40
+        sibling["workload"]["parameters"]["dataset_file_sha256"] = "d" * 64
+        criteria.append(sibling)
         contract = release_fixture.build_contract(
             release=release, release_criteria=criteria
         )
@@ -406,6 +411,9 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             evidence_path="results/extra/accuracy.json",
         )
         observation = spec["criterion_observations"][0]
+        self.assertEqual(
+            spec["attempt"]["attempted_criterion_ids"], ["accuracy-gsm8k"]
+        )
         self.assertEqual(observation["criterion_id"], "accuracy-gsm8k")
         self.assertEqual(
             observation["metrics"],
@@ -445,11 +453,11 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             reason="completed",
             payload={
                 "started_at": "2026-08-14T12:00:00Z",
-                "ended_at": "2026-08-14T14:30:00Z",
-                "duration_seconds": "9000",
+                "ended_at": "2026-08-14T14:13:20Z",
+                "duration_seconds": "8000",
                 "concurrency": 5,
                 "completed_requests": 499,
-                "request_error_count": 0,
+                "request_error_count": 1,
             },
         )
         spec = self.compose_extra(
@@ -464,12 +472,23 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         self.assertEqual(observation["completion"], "inconclusive")
         self.assertEqual(observation["reason"], "short-sample")
         self.assertEqual(observation["sample_size"], 499)
+        self.assertEqual(
+            observation["contract_requirements"]["soak"]["duration_seconds"],
+            "8000",
+        )
+        self.assertEqual(
+            observation["contract_requirements"]["soak"]["request_errors"],
+            1,
+        )
 
     def test_soak_extra_attempt_maps_nested_requirement(self) -> None:
         release = release_fixture.build_release()
         criteria = release_fixture.criteria()
         stability = next(item for item in criteria if item["dimension"] == "stability")
         stability["protocol"]["parameters"] = {"concurrency": 5}
+        secondary = copy.deepcopy(stability)
+        secondary["criterion_id"] = "stability-secondary"
+        criteria.append(secondary)
         contract = release_fixture.build_contract(
             release=release, release_criteria=criteria
         )
@@ -492,7 +511,10 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
             measurement=measurement,
             evidence_path="results/extra/soak.json",
         )
-        observation = spec["criterion_observations"][0]
+        observations = {
+            item["criterion_id"]: item for item in spec["criterion_observations"]
+        }
+        observation = observations["stability-soak"]
         self.assertEqual(observation["criterion_id"], "stability-soak")
         self.assertEqual(
             observation["metrics"],
@@ -505,6 +527,9 @@ class ModelServingReleaseAttemptTests(unittest.TestCase):
         self.assertEqual(
             spec["run_diagnostic_source_keys"],
             ["resource-validate-soak"],
+        )
+        self.assertIsNone(
+            observations["stability-secondary"]["contract_requirements"]["soak"]
         )
         variants = []
         for component in ("workload", "protocol"):

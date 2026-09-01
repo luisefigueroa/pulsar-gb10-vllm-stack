@@ -109,13 +109,13 @@ class Gsm8kEvalTests(unittest.TestCase):
         self.assertEqual(document["completion"], "incomplete")
         self.assertEqual(document["reason"], "dataset-invalid")
 
-    def test_digest_reader_failure_writes_closed_incomplete_measurement(self) -> None:
+    def test_dataset_reader_failure_writes_closed_incomplete_measurement(self) -> None:
         dataset = self.root / "test.json"
         dataset.write_text("[]", encoding="utf-8")
         output = self.root / "measurement.json"
         with mock.patch.object(
             gsm8k_eval,
-            "file_digest",
+            "read_stable_bytes",
             side_effect=RuntimeError("digest source unreadable"),
         ):
             code = gsm8k_eval.main(
@@ -139,6 +139,18 @@ class Gsm8kEvalTests(unittest.TestCase):
         self.assertEqual(document["completion"], "incomplete")
         self.assertEqual(document["reason"], "dataset-invalid")
         self.assertIsNone(document["evaluate-gsm8k"]["dataset_file_sha256"])
+
+    def test_row_parser_uses_the_hashed_byte_snapshot(self) -> None:
+        dataset = self.root / "test.json"
+        dataset.write_text(
+            json.dumps([{"question": "new", "answer": "#### 2"}]),
+            encoding="utf-8",
+        )
+        snapshot = json.dumps(
+            [{"question": "frozen", "answer": "#### 1"}]
+        ).encode("utf-8")
+        rows = gsm8k_eval._load_rows(dataset, snapshot)
+        self.assertEqual(rows, [{"question": "frozen", "answer": "#### 1"}])
 
 
 if __name__ == "__main__":

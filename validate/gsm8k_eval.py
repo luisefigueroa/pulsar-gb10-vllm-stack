@@ -23,7 +23,8 @@ from http_auth import api_headers, resolve_api_key
 from validator_measurement import (
     build_accuracy_measurement,
     canonical_decimal,
-    file_digest,
+    read_stable_bytes,
+    sha256_bytes,
     write_measurement,
 )
 
@@ -32,15 +33,18 @@ NUMBER_RE = re.compile(r"[-+]?(?:\d[\d,]*)(?:\.\d+)?")
 NORMALIZATION = "gsm8k-final-number-v1"
 
 
-def _load_rows(path: pathlib.Path) -> list[dict[str, str]]:
+def _load_rows(path: pathlib.Path, data: bytes) -> list[dict[str, str]]:
     if path.suffix == ".parquet":
         try:
+            import pyarrow as pa
             import pyarrow.parquet as pq
         except ImportError as exc:  # pragma: no cover - environment-specific
             raise ValueError("pyarrow is required for a parquet dataset") from exc
-        values = pq.read_table(path, columns=["question", "answer"]).to_pylist()
+        values = pq.read_table(
+            pa.BufferReader(data), columns=["question", "answer"]
+        ).to_pylist()
     else:
-        text = path.read_text(encoding="utf-8")
+        text = data.decode("utf-8")
         if path.suffix == ".jsonl":
             values = [json.loads(line) for line in text.splitlines() if line.strip()]
         else:
@@ -182,8 +186,11 @@ def main(argv: list[str] | None = None) -> int:
     dataset_path = pathlib.Path(args.dataset)
     digest = None
     try:
-        digest = file_digest(dataset_path)
-        selected = select_rows(_load_rows(dataset_path), args.sample_size)
+        dataset_bytes = read_stable_bytes(dataset_path, label="GSM8K dataset")
+        digest = sha256_bytes(dataset_bytes)
+        selected = select_rows(
+            _load_rows(dataset_path, dataset_bytes), args.sample_size
+        )
     except Exception as exc:
         document = build_accuracy_measurement(
             completion="incomplete",

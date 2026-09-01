@@ -593,7 +593,10 @@ def load_attempt_context(
 
 
 def criteria_for_operation(
-    contract: dict[str, Any], operation: str
+    contract: dict[str, Any],
+    operation: str,
+    *,
+    measurement: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     for criterion in contract["release_criteria"]["criteria"]:
@@ -620,6 +623,16 @@ def criteria_for_operation(
         ):
             selected.append(criterion)
     selected.sort(key=lambda item: item["criterion_id"])
+    if measurement is not None and measurement.get("completion") == "complete":
+        payload = measurement[operation]
+        matcher = {
+            ACCURACY_OPERATION: _accuracy_contract_matches,
+            SOAK_OPERATION: _soak_contract_matches,
+        }.get(operation)
+        if matcher is not None:
+            exact = [item for item in selected if matcher(item, payload)]
+            if exact:
+                selected = exact
     return selected
 
 
@@ -650,6 +663,52 @@ def _contract_component_matches(
         "version": "1",
         "parameters": parameters,
     }
+
+
+def _accuracy_contract_matches(
+    criterion: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    return _contract_component_matches(
+        criterion["workload"],
+        name=ACCURACY_WORKLOAD_NAME,
+        parameters={
+            key: payload[key]
+            for key in (
+                "dataset_id",
+                "dataset_revision",
+                "dataset_file_sha256",
+                "subset",
+                "split",
+                "selection",
+            )
+        },
+    ) and _contract_component_matches(
+        criterion["protocol"],
+        name=ACCURACY_PROTOCOL_NAME,
+        parameters={
+            key: payload[key]
+            for key in (
+                "answer_normalization",
+                "max_completion_tokens",
+                "reasoning_mode",
+                "temperature",
+            )
+        },
+    )
+
+
+def _soak_contract_matches(
+    criterion: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    return _contract_component_matches(
+        criterion["workload"],
+        name=SOAK_WORKLOAD_NAME,
+        parameters={},
+    ) and _contract_component_matches(
+        criterion["protocol"],
+        name=SOAK_PROTOCOL_NAME,
+        parameters={"concurrency": payload["concurrency"]},
+    )
 
 
 def _compare_protocol_matches(criterion: dict[str, Any]) -> bool:
@@ -859,35 +918,7 @@ def _map_accuracy_criterion(
             "metrics": [],
         }
     payload = measurement[ACCURACY_OPERATION]
-    workload_matches = _contract_component_matches(
-        criterion["workload"],
-        name=ACCURACY_WORKLOAD_NAME,
-        parameters={
-            key: payload[key]
-            for key in (
-                "dataset_id",
-                "dataset_revision",
-                "dataset_file_sha256",
-                "subset",
-                "split",
-                "selection",
-            )
-        },
-    )
-    protocol_matches = _contract_component_matches(
-        criterion["protocol"],
-        name=ACCURACY_PROTOCOL_NAME,
-        parameters={
-            key: payload[key]
-            for key in (
-                "answer_normalization",
-                "max_completion_tokens",
-                "reasoning_mode",
-                "temperature",
-            )
-        },
-    )
-    if not workload_matches or not protocol_matches:
+    if not _accuracy_contract_matches(criterion, payload):
         return {
             "ok": False,
             "reason": "protocol-mismatch",
@@ -928,6 +959,7 @@ def _map_soak_criterion(
     measurement: dict[str, Any] | None,
     *,
     source_state: str,
+    include_soak_requirement: bool = False,
 ) -> dict[str, Any]:
     if measurement is None or measurement.get("completion") != "complete":
         return {
@@ -941,29 +973,33 @@ def _map_soak_criterion(
             "metrics": [],
         }
     payload = measurement[SOAK_OPERATION]
-    workload_matches = _contract_component_matches(
-        criterion["workload"],
-        name=SOAK_WORKLOAD_NAME,
-        parameters={},
-    )
-    protocol_matches = _contract_component_matches(
-        criterion["protocol"],
-        name=SOAK_PROTOCOL_NAME,
-        parameters={"concurrency": payload["concurrency"]},
-    )
-    if not workload_matches or not protocol_matches:
+    if not _soak_contract_matches(criterion, payload):
         return {
             "ok": False,
             "reason": "protocol-mismatch",
             "sample_size": payload["completed_requests"],
             "metrics": [],
         }
+    soak = (
+        {
+            "completion": "complete",
+            "started_at": payload["started_at"],
+            "ended_at": payload["ended_at"],
+            "duration_seconds": payload["duration_seconds"],
+            "concurrency": payload["concurrency"],
+            "request_errors": payload["request_error_count"],
+            "reason": "completed",
+        }
+        if include_soak_requirement
+        else None
+    )
     if payload["completed_requests"] < criterion["sample_size"]:
         return {
             "ok": False,
             "reason": "short-sample",
             "sample_size": payload["completed_requests"],
             "metrics": [],
+            "soak": soak,
         }
     required = {
         (item["metric"], item["unit"]) for item in criterion["thresholds"]
@@ -974,6 +1010,7 @@ def _map_soak_criterion(
             "reason": "unsupported-metric",
             "sample_size": payload["completed_requests"],
             "metrics": [],
+            "soak": soak,
         }
     return {
         "ok": True,
@@ -986,15 +1023,7 @@ def _map_soak_criterion(
                 "unit": "count",
             }
         ],
-        "soak": {
-            "completion": "complete",
-            "started_at": payload["started_at"],
-            "ended_at": payload["ended_at"],
-            "duration_seconds": payload["duration_seconds"],
-            "concurrency": payload["concurrency"],
-            "request_errors": payload["request_error_count"],
-            "reason": "completed",
-        },
+        "soak": soak,
     }
 
 
@@ -1156,7 +1185,9 @@ def compose_attempt_spec(
     measurement: dict[str, Any] | None,
     source_state: str,
 ) -> dict[str, Any]:
-    criteria = criteria_for_operation(contract, operation)
+    criteria = criteria_for_operation(
+        contract, operation, measurement=measurement
+    )
     if not criteria:
         fail(f"release contract has no {operation} criteria to declare")
     mapper = {
@@ -1167,10 +1198,26 @@ def compose_attempt_spec(
     }.get(operation)
     if mapper is None:
         fail(f"unsupported attempt operation: {operation}")
-    mapped = [
-        mapper(criterion, measurement, source_state=source_state)
-        for criterion in criteria
-    ]
+    soak_requirement = contract["release_criteria"]["soak_requirement"]
+    mapped = []
+    for criterion in criteria:
+        if operation == SOAK_OPERATION:
+            mapped.append(
+                _map_soak_criterion(
+                    criterion,
+                    measurement,
+                    source_state=source_state,
+                    include_soak_requirement=(
+                        soak_requirement.get("status") == "required"
+                        and soak_requirement.get("criterion_id")
+                        == criterion["criterion_id"]
+                    ),
+                )
+            )
+        else:
+            mapped.append(
+                mapper(criterion, measurement, source_state=source_state)
+            )
     completion = _attempt_completion(source_state, mapped)
     observations_complete = completion == "completed"
     if not observations_complete:
