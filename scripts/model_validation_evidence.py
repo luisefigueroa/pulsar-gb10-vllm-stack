@@ -135,6 +135,7 @@ COMMAND_PROGRAM_OPERATIONS = {
     "validate/bench_serve.py": {"benchmark-serving"},
     "validate/compare_captures.py": {"compare-captures"},
     "validate/greedy_capture.py": {"capture-determinism"},
+    "validate/gsm8k_eval.py": {"evaluate-gsm8k"},
     "validate/hf_reference.py": {"capture-reference"},
     "validate/needle.py": {"validate-context"},
     "validate/run-gates.sh": {"run-validation-gates"},

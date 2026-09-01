@@ -35,7 +35,7 @@ template is [references/handoff-template.md](references/handoff-template.md).
 - Do not mutate `refs/main` to manufacture identity.
 - Do not use `validate/run-gates.sh` as the ADR attempt wrapper.
 - Do not invent a missing validator measurement or share one enclosing
-  timestamp across compare and benchmark.
+  timestamp across distinct measurement attempts.
 - Do not represent a receipt/occupancy (`identity_status=receipt-occupancy`) launch as an exact ADR 0004 qualification attempt.
 - Distribution transport is run provenance, not release identity. A failure
   before exact all-rank verification leaves qualification unstarted.
@@ -116,11 +116,12 @@ chain.
 Ask for or confirm release-specific criteria **before testing**. Freeze the
 criteria input before any measurement, but do not claim that a Validation
 Contract exists yet: the planner also needs the exact artifact manifest and
-selected runtime-access contract. State clearly that current automated mapping
-covers only **strict same-boot**, **absolute throughput**, and **absolute
-latency**. Other required criteria remain unevaluated/incomplete until
-separately captured. Relative performance is **N/A** unless a valid reviewed
-comparable predecessor is explicitly supplied.
+selected runtime-access contract. Automated mapping covers **strict
+same-boot**, **absolute throughput**, **absolute latency**, **GSM8K accuracy**,
+and **soak stability**. Context, serving integration, physical geometry, and
+provenance/security remain unevaluated/incomplete until separately captured or
+reviewed. Relative performance is **N/A** unless a valid reviewed comparable
+predecessor is explicitly supplied.
 
 ### 4. Exact-home assessment and safe reuse
 
@@ -301,17 +302,24 @@ existing programs sequentially:
    `python3 validate/bench_serve.py --model <served-name>
    "${bench_args[@]}" --result-json <results/.../bench.json>`, then record
    benchmark `ended_at`.
-10. Reobserve identities.
+10. Reobserve identities, record the accuracy attempt start, and run the
+    frozen GSM8K dataset revision, file SHA-256, and sample through
+    `python3 validate/gsm8k_eval.py ... --result-json
+    <results/.../accuracy.json>`. Record the accuracy attempt end.
+11. Reobserve identities, record the soak attempt start, and run the frozen
+    duration and concurrency through `python3 validate/soak.py ...
+    --result-json <results/.../soak.json>`. Record the soak attempt end.
+12. Reobserve identities.
 
-Use separate wall-clock UTC start/end timestamps for compare and
-benchmark. Never share one enclosing timestamp. Stop after an
+Use separate wall-clock UTC start/end timestamps for compare, benchmark,
+accuracy, and soak. Never share one enclosing timestamp. Stop after an
 interruption. A nonzero validator exit with a complete closed measurement is
 failed evidence and must be preserved, not rewritten or discarded.
 Never fabricate a missing validator measurement. Closed measurement documents
 used by the attempt composer must live at privacy-reviewed repository-relative
 `results/` paths.
 
-After compare and benchmark, summarize each matching window before
+After the measurements, summarize each matching attempt window before
 composition:
 
 ```text
@@ -341,11 +349,12 @@ If a signal prevents the validator from writing its closed measurement,
 retain the journal event and report the current capture gap rather than
 inventing an ADR run.
 
-Otherwise compose attempt specs through
-`scripts/model-serving-release-attempt.sh compose`, capture each immediately
-through `scripts/model-serving-release-capture.sh capture-run`, assemble
-compatible runs, and verify the draft candidate. Capture immediately
-after compose. Do not persist a planner path or planner candidate ID.
+Otherwise compose compare and benchmark through
+`scripts/model-serving-release-attempt.sh compose`, then compose accuracy and
+soak separately through `compose-extra`. Capture every emitted attempt spec
+immediately through `scripts/model-serving-release-capture.sh capture-run`,
+assemble compatible runs, and verify the draft candidate. Capture immediately
+after each compose. Do not persist a planner path or planner candidate ID.
 Each generated attempt spec must contain exactly one
 `run_diagnostic_source_keys` entry for its resource summary. That source is
 same-scope run evidence, not criterion or review evidence.
@@ -359,7 +368,7 @@ reviewed status or authority was produced.
 Do not run `scripts/model-serving-release-issue.sh`; that maintainer
 workflow is a later, separate merge. Use
 `skills/pulsar-model-serving-release-issuance/` after this handoff.
-Compose/capture of compare and bench leaves
+Composition and capture of measurement attempts leave
 `review_evidence_artifact_ids` empty; that is expected. This skill does
 not produce extra review files for provenance.
 

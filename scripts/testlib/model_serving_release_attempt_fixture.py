@@ -27,6 +27,8 @@ ATTEMPT_PROGRAMS = (
     "validate/compare_captures.py",
     "validate/bench_serve.py",
     "scripts/model-serving-experiment-monitor.sh",
+    "validate/gsm8k_eval.py",
+    "validate/soak.py",
     "validate/validator_measurement.py",
 )
 COMPARE_RESULT = "results/attempt-fixture/compare-captures.json"

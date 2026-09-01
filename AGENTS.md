@@ -157,8 +157,9 @@ language for new features without an explicit decision.
   separately confirmed edit in the same publication PR. Deterministic skill
   tests make no physical DGX claim.
   `validate/validator_measurement.py` owns the closed, versioned, status-neutral
-  measurement documents emitted by `validate/compare_captures.py` and
-  `validate/bench_serve.py`. It also owns the `observe-resources` diagnostic
+  measurement documents emitted by `validate/compare_captures.py`,
+  `validate/bench_serve.py`, `validate/gsm8k_eval.py`, and `validate/soak.py`.
+  It also owns the `observe-resources` diagnostic
   emitted by the experiment-only
   `scripts/model-serving-experiment-monitor.sh` boundary. That monitor samples
   each exact serving rank only during supervised physical onboarding: after
@@ -175,15 +176,15 @@ language for new features without an explicit decision.
   closed attempt context and invocation-plan schemas plus mapping of those
   measurements into existing attempt-only specs. It may consume only the
   supported publishable `results/` measurement files in this slice, must
-  validate both generated specs through the capture contract, and may publish
-  only one exclusive draft two-file directory under
+  validate every generated spec through the capture contract, and may publish
+  only one exclusive draft directory under
   `experiments/model-serving-release-attempts/` (or an explicit safe path
   outside the repository). It must not invent missing validator output, persist
   a publishable evidence digest in the attempt spec, issue a decision, change
   status, authorize serving, or claim physical behavior. Later capture must
   independently re-read the evidence and derive its digest; regenerate the
   attempt specs if that file changes between commands.
-  Each supervised compare and benchmark attempt also requires one closed
+  Each supervised measurement attempt also requires one closed
   `observe-resources` summary with the exact attempt window and scope. The
   attempt-only spec lists that source in `run_diagnostic_source_keys`; capture
   binds it into the run's existing evidence set, never a criterion observation
@@ -676,10 +677,11 @@ this work; the skill is procedural and does not outrank these sources.
   not set `MODEL_SERVING_RELEASE_ID`. Caller-supplied predecessor and decision
   registries remain validation input, not trusted persistence. Local
   evidence-capture drafts and source-neutral release-plan drafts are
-  implemented and are not in the trusted registry. Closed compare/benchmark
-  measurements and draft-only attempt composition are implemented for strict
-  same-boot and absolute throughput/latency; they do not issue status or prove
-  physical behavior. The catalog can show a reviewed decision for a profile
+  implemented and are not in the trusted registry. Closed compare, benchmark,
+  GSM8K accuracy, and soak measurements plus draft-only attempt composition
+  are implemented for strict same-boot, absolute throughput/latency, accuracy,
+  and stability. They do not issue status or prove physical behavior. The
+  catalog can show a reviewed decision for a profile
   that sets `MODEL_SERVING_RELEASE_ID`; maintainer-only staging can propose
   registry objects, but a local command is not what makes them trusted. The
   supervised `pulsar-model-onboarding` skill orchestrates capture CLIs; it
