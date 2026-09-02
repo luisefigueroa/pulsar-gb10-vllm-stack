@@ -3,6 +3,7 @@
 #   scripts/doctor.sh [--json]
 # exit 0 when no blocking issue is found
 set -euo pipefail
+# shellcheck disable=SC2034  # read by lib.sh log/warn/die
 SCRIPT_NAME=doctor
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -60,10 +61,21 @@ doctor_ready_line() {
 [ "$JSON" = 1 ] || echo "[doctor] this node"
 
 arch=$(uname -m)
-case "$arch" in
-  aarch64|arm64) record ok arch "arch=$arch" ;;
-  *) record warn arch "arch=$arch (validated stack expects aarch64 GB10)" ;;
-esac
+arch_ok=0
+# shellcheck disable=SC2086 # architectures are safe identifier tokens
+for expected_arch in $PULSAR_ARCHITECTURES; do
+  if [ "$arch" = "$expected_arch" ]; then
+    arch_ok=1
+    break
+  fi
+done
+if [ "$arch_ok" = 1 ]; then
+  record ok arch "arch=$arch"
+else
+  primary_arch="${PULSAR_ARCHITECTURES%% *}"
+  record warn arch \
+    "arch=$arch (validated stack expects ${primary_arch} ${PULSAR_PLATFORM_DISPLAY_NAME})"
+fi
 
 if [ ! -r /proc/meminfo ]; then
   record warn host "not a Linux serve host (/proc/meminfo missing) — doctor is informational here"
@@ -71,10 +83,10 @@ fi
 
 if command -v nvidia-smi >/dev/null 2>&1; then
   gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | sed 's/^ *//')
-  if [ "$gpu" = "NVIDIA GB10" ]; then
+  if [ "$gpu" = "$PULSAR_GPU_NAME" ]; then
     record ok gpu "GPU $gpu"
   else
-    record fail gpu "GPU '$gpu' (want NVIDIA GB10)"
+    record fail gpu "GPU '$gpu' (want ${PULSAR_GPU_NAME})"
   fi
 else
   record fail gpu "nvidia-smi missing"
@@ -244,7 +256,7 @@ PY
   if [[ "$fabric_nodes" =~ ^[1-9][0-9]*$ ]]; then
     fabric_system_word=system
     [ "$fabric_nodes" = 1 ] || fabric_system_word=systems
-    record ok fabric "GB10 cluster network check passed · $fabric_nodes GB10 $fabric_system_word discovered"
+    record ok fabric "${PULSAR_PLATFORM_DISPLAY_NAME} cluster network check passed · $fabric_nodes ${PULSAR_PLATFORM_DISPLAY_NAME} $fabric_system_word discovered"
   else
     record warn fabric "cluster discovery returned unreadable results"
   fi
@@ -295,10 +307,11 @@ elif [ "$CLUSTER_TOPOLOGY_COUNT" -gt 1 ]; then
       if probe_node_json_for_rank "$rank" >"$rank_probe" 2>/dev/null; then
         rank_gpu=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("gpu") or "")' "$rank_probe")
         rank_nvidia=$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1])).get("docker_nvidia") else "0")' "$rank_probe")
-        if [ "$rank_gpu" = "NVIDIA GB10" ]; then
+        if [ "$rank_gpu" = "$PULSAR_GPU_NAME" ]; then
           record ok "rank_${rank}_gpu" "$node_label · GPU $rank_gpu"
         else
-          record fail "rank_${rank}_gpu" "$node_label · GPU '$rank_gpu' (want NVIDIA GB10)"
+          record fail "rank_${rank}_gpu" \
+            "$node_label · GPU '$rank_gpu' (want ${PULSAR_GPU_NAME})"
         fi
         if [ "$rank_nvidia" = 1 ]; then
           record ok "rank_${rank}_docker_nvidia" "$node_label · Docker NVIDIA ready"
@@ -317,7 +330,7 @@ elif [ "$CLUSTER_TOPOLOGY_COUNT" -eq 1 ]; then
   # A confirmed one-node manifest is valid serving membership (ADR 0006).
   record ok topology "confirmed topology · 1 node"
 elif [[ "$fabric_nodes" =~ ^[1-9][0-9]*$ ]] && [ "$fabric_nodes" -gt 1 ]; then
-  topology_message="$fabric_nodes GB10 systems discovered, but cluster membership is not confirmed."
+  topology_message="$fabric_nodes ${PULSAR_PLATFORM_DISPLAY_NAME} systems discovered, but cluster membership is not confirmed."
   topology_message+=$'\n'
   topology_message+="Next: run ./pulsar wizard and confirm cluster discovery to enable multi-node models."
   record warn topology "$topology_message"
@@ -358,7 +371,7 @@ result=pass
 
 if [ "$JSON" = 1 ]; then
   python3 - "$result" "$FAIL" "$WARN" "$arch" "$avail" "$port" "${CLUSTER_TOPOLOGY_COUNT:-0}" "${CHECKS[@]}" <<'PY'
-import json, sys
+import json, os, sys
 result, fail, warn, arch, avail, port, confirmed = sys.argv[1:8]
 checks = []
 for item in sys.argv[8:]:
@@ -372,6 +385,7 @@ print(json.dumps({
     "mem_available_gib": float(avail) if avail not in ("", "n/a") else None,
     "port": int(port) if str(port).isdigit() else port,
     "worker_confirmed": int(confirmed) >= 2,
+    "platform_id": os.environ.get("PULSAR_PLATFORM_ID") or "",
     "checks": checks,
 }, indent=2))
 PY

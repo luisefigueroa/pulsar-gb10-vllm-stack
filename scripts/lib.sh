@@ -59,11 +59,31 @@ fi
 VLLM_IMAGE_MAINLINE="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai:v0.26.0}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 
-# Memory policy defaults (GB10 unified memory)
-MIN_OS_BUFFER_GIB="${MIN_OS_BUFFER_GIB:-8}"
-HARD_FLOOR_AVAILABLE_GIB="${HARD_FLOOR_AVAILABLE_GIB:-4}"
-LAUNCH_SPIKE_GIB="${LAUNCH_SPIKE_GIB:-3}"
-OVERHEAD_GIB_DEFAULT="${OVERHEAD_GIB_DEFAULT:-10}"
+_platform_shell=$(python3 "$REPO_DIR/scripts/platform_reference.py" export-shell) || {
+  printf '[%s] ERROR: platform reference is unavailable\n' \
+    "${SCRIPT_NAME:-pulsar}" >&2
+  unset _platform_shell
+  return 1 2>/dev/null || exit 1
+}
+eval "$_platform_shell"
+unset _platform_shell
+[ -n "${PULSAR_PLATFORM_ID:-}" ] \
+  && [ -n "${PULSAR_GPU_NAME:-}" ] \
+  && [ -n "${PULSAR_PLATFORM_DISPLAY_NAME:-}" ] \
+  && [ -n "${PULSAR_ARCHITECTURES:-}" ] \
+  && [ -n "${PULSAR_RDMA_VERBS_DEVICE:-}" ] \
+  && [ -n "${PULSAR_COLD_START_FOOTPRINT_SLACK:-}" ] \
+  || {
+    printf '[%s] ERROR: platform reference export is incomplete\n' \
+      "${SCRIPT_NAME:-pulsar}" >&2
+    return 1 2>/dev/null || exit 1
+  }
+
+# Memory policy defaults from the selected platform; process/.env overrides win.
+MIN_OS_BUFFER_GIB="${MIN_OS_BUFFER_GIB:-$PULSAR_MIN_OS_BUFFER_GIB}"
+HARD_FLOOR_AVAILABLE_GIB="${HARD_FLOOR_AVAILABLE_GIB:-$PULSAR_HARD_FLOOR_AVAILABLE_GIB}"
+LAUNCH_SPIKE_GIB="${LAUNCH_SPIKE_GIB:-$PULSAR_LAUNCH_SPIKE_GIB}"
+OVERHEAD_GIB_DEFAULT="${OVERHEAD_GIB_DEFAULT:-$PULSAR_OVERHEAD_GIB_DEFAULT}"
 
 log()  { printf '[%s] %s\n' "${SCRIPT_NAME:-pulsar}" "$*"; }
 warn() { printf '[%s] warn: %s\n' "${SCRIPT_NAME:-pulsar}" "$*" >&2; }
@@ -1298,20 +1318,48 @@ json_encode_strings() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[3:], ensure_ascii=False))' _ -- "$@"
 }
 
+# Flags probe-node.py needs so remote stdin runs do not import this repo.
+append_probe_node_platform_args() {
+  local -n _pulsar_probe_args="$1"
+  local arch
+  _pulsar_probe_args+=(--expected-gpu "$PULSAR_GPU_NAME")
+  _pulsar_probe_args+=(--min-active-rdma "$PULSAR_RDMA_MIN_ACTIVE_LINKS")
+  # shellcheck disable=SC2086 # architectures are safe identifier tokens
+  for arch in $PULSAR_ARCHITECTURES; do
+    [ -n "$arch" ] || continue
+    _pulsar_probe_args+=(--expected-arch "$arch")
+  done
+}
+
+probe_node_remote_python_command() {
+  local ssh_host="${1:?ssh host required}"
+  local -a flags=()
+  local flag
+  append_probe_node_platform_args flags
+  printf 'python3 - --ssh-host %q' "$ssh_host"
+  for flag in "${flags[@]}"; do
+    printf ' %q' "$flag"
+  done
+  printf '\n'
+}
+
 # Run probe-node.py on a confirmed rank. Rank 0 is local; other ranks receive
 # the probe over SSH stdin so the remote host does not need a repo checkout.
 probe_node_json_for_rank() {
   local rank="${1:?rank required}"
   local host
+  local -a flags=()
+  append_probe_node_platform_args flags
   if [ "$rank" = 0 ]; then
-    python3 "$REPO_DIR/scripts/probe-node.py" --local --ssh-host local
+    python3 "$REPO_DIR/scripts/probe-node.py" --local --ssh-host local \
+      "${flags[@]}"
     return
   fi
   require_cluster_nodes "$((rank + 1))" \
     || die "rank $rank is not present in the confirmed topology"
   host="${CLUSTER_NODE_SSH_HOSTS[$rank]}"
   "$PULSAR_SSH" "${PULSAR_SSH_OPTS[@]}" -- "$host" \
-    "python3 - --ssh-host $(printf '%q' "$host")" \
+    "$(probe_node_remote_python_command "$host")" \
     <"$REPO_DIR/scripts/probe-node.py"
 }
 

@@ -172,7 +172,16 @@ def main() -> int:
     parser.add_argument("--local", action="store_true")
     parser.add_argument("--include-ssh-host-keys", action="store_true")
     parser.add_argument("--identity-only", action="store_true")
+    parser.add_argument("--expected-gpu", default="NVIDIA GB10")
+    parser.add_argument("--expected-arch", action="append", default=None)
+    parser.add_argument("--min-active-rdma", type=int, default=1)
     args = parser.parse_args()
+    expected_arches = args.expected_arch if args.expected_arch else [
+        "aarch64",
+        "arm64",
+    ]
+    if args.min_active_rdma < 0:
+        raise SystemExit("probe-node: --min-active-rdma must be >= 0")
 
     hostname = socket.gethostname().split(".", 1)[0]
     if args.identity_only:
@@ -216,19 +225,29 @@ def main() -> int:
     rdma = rdma_links(addresses)
 
     reasons: list[str] = []
-    if arch not in ("aarch64", "arm64"):
-        reasons.append(f"arch is {arch or 'unknown'}, expected aarch64")
-    if gpu_name != "NVIDIA GB10":
-        reasons.append(f"GPU is {gpu_name or 'unavailable'}, expected NVIDIA GB10")
+    if arch not in expected_arches:
+        reasons.append(
+            f"arch is {arch or 'unknown'}, expected {expected_arches[0]}"
+        )
+    if gpu_name != args.expected_gpu:
+        reasons.append(
+            f"GPU is {gpu_name or 'unavailable'}, expected {args.expected_gpu}"
+        )
     if not docker_ok:
         reasons.append("Docker daemon unavailable")
     elif not docker_nvidia:
         reasons.append("Docker NVIDIA runtime/CDI unavailable")
     if not control_if or not control_ip:
         reasons.append("no IPv4 control-plane address")
-    if not rdma:
-        reasons.append("no active RDMA links")
-    elif not any(link.get("cidrs") for link in rdma):
+    if len(rdma) < args.min_active_rdma:
+        if not rdma:
+            reasons.append("no active RDMA links")
+        else:
+            reasons.append(
+                f"{len(rdma)} active RDMA links, expected at least "
+                f"{args.min_active_rdma}"
+            )
+    elif rdma and not any(link.get("cidrs") for link in rdma):
         reasons.append("active RDMA links have no IPv4 addresses")
 
     result = {

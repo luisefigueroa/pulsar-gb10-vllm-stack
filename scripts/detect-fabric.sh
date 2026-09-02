@@ -2,6 +2,7 @@
 # Discover hostname-agnostic GB10 peers, verify their RoCE mesh, and optionally
 # persist the user-confirmed membership in .cluster-topology.json.
 set -euo pipefail
+# shellcheck disable=SC2034  # read by lib.sh log/warn/die
 SCRIPT_NAME=detect-fabric
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -129,7 +130,10 @@ fi
 sort -u "$candidates_file" -o "$candidates_file"
 
 local_probe="$tmpdir/probe-0000.json"
-python3 "$PROBE" --local --ssh-host local >"$local_probe"
+local_probe_flags=()
+append_probe_node_platform_args local_probe_flags
+python3 "$PROBE" --local --ssh-host local "${local_probe_flags[@]}" \
+  >"$local_probe"
 declare -a probe_files=("$local_probe")
 declare -a probe_pids=()
 declare -a probe_outputs=()
@@ -146,7 +150,7 @@ while IFS= read -r candidate; do
   index=$((index + 1))
   output=$(printf '%s/probe-%04d.json' "$tmpdir" "$index")
   error_output=$(printf '%s/probe-%04d.err' "$tmpdir" "$index")
-  remote_command="python3 - --ssh-host $(printf '%q' "$candidate")"
+  remote_command=$(probe_node_remote_python_command "$candidate")
   (
     "$PULSAR_SSH" "${ssh_opts[@]}" -- "$candidate" "$remote_command" \
       <"$PROBE" >"$output" 2>"$error_output"

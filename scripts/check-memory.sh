@@ -7,6 +7,7 @@
 # Already serving this conf: only enforce hard floor + residual buffer (weights/KV
 # are already resident — free RAM is OS headroom, not cold capacity).
 set -euo pipefail
+# shellcheck disable=SC2034  # read by lib.sh log/warn/die
 SCRIPT_NAME=check-memory
 # shellcheck disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -113,11 +114,13 @@ check_node_cold() {
     reason="${reason}${label}: available ${avail} GiB < hard floor ${floor} GiB; "
     return
   fi
-  # Hard fail only when free is clearly below the footprint estimate (8% slack
-  # for WEIGHTS_GIB/overhead pad). require free >= footprint+spike was too
+  # Hard fail only when free is clearly below the footprint estimate (platform
+  # slack for WEIGHTS_GIB/overhead pad). require free >= footprint+spike was too
   # strict on 121 GiB Sparks (~118 need vs ~113 free while
   # the geometry is known to run with ~4 GiB residual).
-  if awk -v a="$avail" -v f="$need_footprint" 'BEGIN{exit !(a+0 < f*0.92)}'; then
+  if awk -v a="$avail" -v f="$need_footprint" \
+      -v s="${PULSAR_COLD_START_FOOTPRINT_SLACK}" \
+      'BEGIN{exit !(a+0 < f*s)}'; then
     result=fail
     reason="${reason}${label}: available ${avail} GiB << footprint ${need_footprint} GiB (cannot fit); "
     return

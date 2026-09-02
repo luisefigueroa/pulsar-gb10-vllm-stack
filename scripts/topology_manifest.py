@@ -24,6 +24,17 @@ try:
 except ModuleNotFoundError:
     from terminal_format import TerminalWriter
 
+try:
+    from scripts.platform_reference import (
+        PlatformReferenceError,
+        load_current_platform,
+    )
+except ModuleNotFoundError:
+    from platform_reference import (  # type: ignore[no-redef]
+        PlatformReferenceError,
+        load_current_platform,
+    )
+
 
 SCHEMA_VERSION = 2
 LEGACY_SCHEMA_VERSION = 1
@@ -487,6 +498,10 @@ def validate_manifest(
     node_ids: set[str] = set()
     control_ips: set[str] = set()
     host_key_owners: dict[str, int] = {}
+    try:
+        expected_gpu = load_current_platform()["gpu_name"]
+    except PlatformReferenceError as exc:
+        fail(str(exc))
     for rank, node in enumerate(nodes):
         node_id = clean_text(node.get("node_id"), f"nodes[{rank}].node_id")
         if node_id in node_ids:
@@ -521,8 +536,8 @@ def validate_manifest(
         if control_ip in control_ips:
             fail("duplicate control-plane IP")
         control_ips.add(control_ip)
-        if node.get("gpu") != "NVIDIA GB10":
-            fail(f"rank {rank}: not an NVIDIA GB10")
+        if node.get("gpu") != expected_gpu:
+            fail(f"rank {rank}: not an {expected_gpu}")
         for index, rdma in enumerate(node.get("rdma") or []):
             safe_interface(rdma.get("hca"), f"nodes[{rank}].rdma[{index}].hca")
             safe_interface(
@@ -623,7 +638,11 @@ def render(document: dict[str, Any], skipped_ssh: int = 0) -> None:
     check_count = sum(2 * len(link["rails"]) for link in topology["links"])
 
     term.emit("CLUSTER DISCOVERY")
-    field("Nodes", f"{len(nodes)} GB10 {node_word}")
+    try:
+        display_name = load_current_platform()["display_name"]
+    except PlatformReferenceError as exc:
+        fail(str(exc))
+    field("Nodes", f"{len(nodes)} {display_name} {node_word}")
     if len(nodes) == 1:
         field("Fabric", "single node · no cluster links required")
         field("Checks", "not needed · no other cluster nodes found")

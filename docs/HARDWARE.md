@@ -7,6 +7,8 @@ results must not be extrapolated to a larger rank count.
 
 ## Nodes
 
+Live operator probes take GPU name, architecture, RDMA verbs path, and memory-policy numbers from [PLATFORMS.md](./PLATFORMS.md).
+
 | | Node A | Node B |
 |---|---|---|
 | SoC | NVIDIA GB10 (Grace-Blackwell superchip) | identical |
