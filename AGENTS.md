@@ -90,7 +90,10 @@ language for new features without an explicit decision.
   files. Do not manufacture those files or the archived combined identity
   format. `scripts/model-release.sh` is removed.
   `scripts/model_serving_release.py` separately owns ADR 0004 Model Serving
-  Release and Validation Contract objects. `scripts/model-serving-release-plan.sh`
+  Release and Validation Contract objects. `release_spec/` (stdlib-only,
+  importable from the repo root) owns the ADR 0017 release spec document,
+  its `spec_id`, and its verifier; it imports nothing from `scripts/`.
+  `scripts/model-serving-release-plan.sh`
   may source a profile and assemble/verify only draft release/contract JSON
   that is not in the trusted registry, under gitignored
   `experiments/model-onboarding/` (or an explicit path outside the repo). It

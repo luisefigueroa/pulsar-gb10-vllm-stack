@@ -73,7 +73,11 @@ scripts.
    `dgx-spark-gb10` carries the GB10 capacity class. A future Spark SKU is
    a new platform file and new specs. One file per identity under
    `releases/`. Git history of that file is identity lineage, not status.
-   Lifecycle is `review.status`.
+   Lifecycle is `review.status`. Clarified at Stage 1: engine arguments and container
+   environment are free-form token lists in `identity`, hashed in order after
+   shell splitting and `--flag=value` splitting; tensor and pipeline
+   parallelism belong to geometry and may not appear in the token list. No
+   vLLM flag is promoted to a schema field.
 
 3. **Spec sections.** identity; launch_contract (stack version plus argv);
    measurements (per-criterion results with the thresholds they were
