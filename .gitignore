@@ -1,5 +1,6 @@
 .env
 .env.pulsar-cold-storage.lock
+.pulsar-overlay.json
 .cluster-topology.json
 .cluster-ssh-config
 .weight-fabric/

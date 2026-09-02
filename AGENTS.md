@@ -93,6 +93,8 @@ language for new features without an explicit decision.
   Release and Validation Contract objects. `release_spec/` (stdlib-only,
   importable from the repo root) owns the ADR 0017 release spec document,
   its `spec_id`, and its verifier; it imports nothing from `scripts/`.
+  `scripts/release_consumer.py` owns the stack-side releases index, the
+  deployment overlay schema, and the launch-contract projector and comparison.
   `scripts/model-serving-release-plan.sh`
   may source a profile and assemble/verify only draft release/contract JSON
   that is not in the trusted registry, under gitignored
