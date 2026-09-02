@@ -39,8 +39,18 @@ from release_spec.schema import (  # noqa: E402
 
 try:
     from scripts.model_identity import IMAGE_DIGEST_RE
+    from scripts.model_library_receipt import (
+        SourceAttestedAcquisitionError,
+        validate_source_attested_acquisition_receipt,
+    )
 except ModuleNotFoundError:  # pragma: no cover - direct script invocation
     from model_identity import IMAGE_DIGEST_RE  # type: ignore[no-redef]
+    from model_library_receipt import (  # type: ignore[no-redef]
+        SourceAttestedAcquisitionError,
+        validate_source_attested_acquisition_receipt,
+    )
+
+TRUSTED_OUTPUT_DIRS = ("releases", "models")
 
 
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -307,129 +317,46 @@ def _forbidden_flag(token: str) -> str | None:
 def _load_receipt_identity(
     receipt_path: str | pathlib.Path | None,
 ) -> tuple[str | None, str | None, list[dict[str, Any]] | None, list[dict[str, str]]]:
-    blocking: list[dict[str, str]] = []
-    if receipt_path is None:
-        blocking.append(
+    """Return (model_id, snapshot_revision, files, blocking_gaps) from a receipt.
+
+    The receipt must pass the schema owner's full validation
+    (`model_library_receipt.validate_source_attested_acquisition_receipt`):
+    kind, source inventory, identity and approval links, and `receipt_id`.
+    A bare file list is not a receipt and never becomes a spec manifest.
+    """
+
+    def blocked(reason: str, *, field: str = "snapshot_manifest") -> tuple[None, None, None, list[dict[str, str]]]:
+        return None, None, None, [
             _gap(
                 class_name="blocking",
                 section="identity",
-                field="snapshot_manifest",
+                field=field,
                 source="receipt",
-                reason=(
-                    "download receipt is required; refusing to synthesize a "
-                    "snapshot manifest"
-                ),
+                reason=reason,
             )
-        )
-        return None, None, None, blocking
+        ]
+
+    missing = "download receipt is required; refusing to synthesize a snapshot manifest"
+    if receipt_path is None:
+        return blocked(missing)
     path = pathlib.Path(receipt_path)
     if not path.is_file() or path.is_symlink():
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="snapshot_manifest",
-                source="receipt",
-                reason=(
-                    "download receipt is required; refusing to synthesize a "
-                    "snapshot manifest"
-                ),
-            )
-        )
-        return None, None, None, blocking
+        return blocked(missing)
     try:
         document = load_json(path)
     except ReleaseSpecGenerateError as exc:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="snapshot_manifest",
-                source="receipt",
-                reason=str(exc),
-            )
+        return blocked(str(exc))
+    try:
+        receipt = validate_source_attested_acquisition_receipt(document)
+    except SourceAttestedAcquisitionError as exc:
+        return blocked(f"download receipt failed validation: {exc}")
+    revision = receipt["snapshot_revision"]
+    if COMMIT_RE.fullmatch(revision) is None:
+        return blocked(
+            "receipt snapshot_revision must be a 40-character lowercase hex commit",
+            field="snapshot_revision",
         )
-        return None, None, None, blocking
-    if not isinstance(document, dict):
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="snapshot_manifest",
-                source="receipt",
-                reason="download receipt must be a JSON object",
-            )
-        )
-        return None, None, None, blocking
-    observed = document.get("observed_manifest")
-    if not isinstance(observed, dict):
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="snapshot_manifest",
-                source="receipt",
-                reason="receipt observed_manifest is required",
-            )
-        )
-        return None, None, None, blocking
-    files = observed.get("files")
-    if not isinstance(files, list):
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="snapshot_manifest",
-                source="receipt",
-                reason="receipt observed_manifest.files is required",
-            )
-        )
-        return None, None, None, blocking
-    receipt_model = document.get("model_id")
-    if receipt_model is None:
-        receipt_model = observed.get("model_id")
-    revision = document.get("snapshot_revision")
-    if revision is None:
-        revision = observed.get("snapshot_revision")
-    if not isinstance(receipt_model, str) or not receipt_model:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="model_id",
-                source="receipt",
-                reason="receipt model_id is required",
-            )
-        )
-        receipt_model = None
-    if not isinstance(revision, str) or COMMIT_RE.fullmatch(revision) is None:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="snapshot_revision",
-                source="receipt",
-                reason="receipt snapshot_revision must be a 40-character lowercase hex commit",
-            )
-        )
-        revision = None
-    observed_model = observed.get("model_id")
-    if (
-        isinstance(observed_model, str)
-        and observed_model
-        and receipt_model is not None
-        and observed_model != receipt_model
-    ):
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="model_id",
-                source="receipt",
-                reason="receipt observed_manifest.model_id differs from receipt model_id",
-            )
-        )
-    return receipt_model, revision, files, blocking
+    return receipt["model_id"], revision, list(receipt["observed_manifest"]["files"]), []
 
 
 def build_spec_from_profile(
@@ -781,9 +708,47 @@ def _write_json(path: pathlib.Path, value: Any) -> None:
     path.write_bytes(pretty_json_bytes(value))
 
 
+def _within(path: pathlib.Path, root: pathlib.Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_output_locations(
+    *,
+    repo_root: pathlib.Path,
+    out: pathlib.Path | None,
+    gap_report: pathlib.Path | None,
+) -> None:
+    """Refuse drafts aimed at trusted registry directories or at each other.
+
+    AGENTS.md: a deterministic draft has no authority; draft tools must fail
+    when output targets trusted directories. `releases/` (ADR 0017 specs) and
+    `models/` (profiles and the ADR 0004 registry) are trusted.
+    """
+    root = repo_root.resolve(strict=False)
+    resolved: dict[str, pathlib.Path] = {}
+    for label, candidate in (("--out", out), ("--gap-report", gap_report)):
+        if candidate is None:
+            continue
+        target = candidate.resolve(strict=False)
+        resolved[label] = target
+        for name in TRUSTED_OUTPUT_DIRS:
+            trusted = (root / name).resolve(strict=False)
+            if target == trusted or _within(target, trusted):
+                fail(f"{label} must not target the trusted {name}/ directory")
+    if len(resolved) == 2 and resolved["--out"] == resolved["--gap-report"]:
+        fail("--out and --gap-report must be different files")
+
+
 def cmd_from_profile(args: argparse.Namespace) -> int:
     out_path = pathlib.Path(args.out) if args.out else None
     gap_path = pathlib.Path(args.gap_report) if args.gap_report else None
+    validate_output_locations(
+        repo_root=pathlib.Path(args.repo_root), out=out_path, gap_report=gap_path
+    )
     existing_out = out_path is not None and (out_path.exists() or out_path.is_symlink())
 
     spec, report = build_spec_from_profile(

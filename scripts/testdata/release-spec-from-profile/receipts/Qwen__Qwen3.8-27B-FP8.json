@@ -1,25 +1,140 @@
 {
+  "approval": {
+    "adapter": {
+      "kind": "huggingface-v1",
+      "version": 1
+    },
+    "approval_id": "cd63f350638f063bfa4f9a6e32d519cf7dbe88ee9f162b22379af404fdf3a416",
+    "content_bytes": 36,
+    "expected_manifest_id": null,
+    "file_count": 3,
+    "identity_class": "download-receipt",
+    "inventory_digest": "e3554f4f35fd2d2ad1fc24a05d238b7bc940aee310206e3157d8518c81ec310a",
+    "kind": "pulsar-model-library-download-approval",
+    "model_id": "Qwen/Qwen3.8-27B-FP8",
+    "model_serving_release_id": null,
+    "policy": {
+      "operations": [
+        "exact-commit-target-side-download",
+        "no-mutable-selector-fallback",
+        "no-controller-byte-ferry",
+        "target-local-authentication",
+        "complete-upstream-inventory-set-check",
+        "hf-cache-verify-missing-extra",
+        "complete-pulsar-sha256",
+        "optional-reviewed-manifest-or-manifest-id-comparison",
+        "all-rank-absence-recheck",
+        "receipt-before-atomic-home-publication",
+        "no-catalog-refresh",
+        "no-prepare",
+        "no-launch",
+        "no-status",
+        "no-promotion"
+      ],
+      "version": 1
+    },
+    "profile": "qwen3.8-27b-fp8-2node",
+    "required_content_bytes": 36,
+    "required_free_bytes": 5368709156,
+    "schema_version": 1,
+    "seal_id": null,
+    "selected_rank": 0,
+    "selection": "most-free-space",
+    "selector": "main",
+    "serving_ranks": [
+      0
+    ],
+    "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_digest": "e778d6d4b59969d6a25c643d1b01112c404c2d2e9907ceb12b9c365479e62a38",
+    "validation_bundle_id": null
+  },
+  "identity": {
+    "content_bytes": 36,
+    "execution_contract": "download-receipt-complete-hash",
+    "expected_manifest_id": null,
+    "file_count": 3,
+    "identity_class": "download-receipt",
+    "inventory_digest": "e3554f4f35fd2d2ad1fc24a05d238b7bc940aee310206e3157d8518c81ec310a",
+    "kind": "pulsar-model-library-acquisition-identity",
+    "model_id": "Qwen/Qwen3.8-27B-FP8",
+    "model_serving_release_id": null,
+    "profile": "qwen3.8-27b-fp8-2node",
+    "schema_version": 1,
+    "seal_id": null,
+    "selector": "main",
+    "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_digest": "e778d6d4b59969d6a25c643d1b01112c404c2d2e9907ceb12b9c365479e62a38",
+    "validation_bundle_id": null
+  },
+  "kind": "pulsar-model-library-download-receipt",
   "model_id": "Qwen/Qwen3.8-27B-FP8",
   "observed_manifest": {
-    "file_count": 2,
+    "file_count": 3,
     "files": [
       {
         "path": "config.json",
-        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "sha256": "e5f1eb4d806641698a35efe20e098efd20d7d57a9b90ee69079d5bb650920726",
         "size": 12
       },
       {
+        "path": "empty.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 0
+      },
+      {
         "path": "model.safetensors",
-        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
-        "size": 8
+        "sha256": "ad2bccdb31abe979eea8174a850de38bd8f1c4638c77b0c46511aea6b78c6f70",
+        "size": 24
       }
     ],
     "kind": "model-library-snapshot-manifest",
-    "manifest_id": "1288a2567cef455295a9f74b34510681ddc44aab2cc98b3c2ac375a714da7f6a",
+    "manifest_id": "0fc19ceb9799c27861518845df75d98c4d23f150e471456b00a2f8b724d53804",
     "model_id": "Qwen/Qwen3.8-27B-FP8",
     "schema_version": 1,
     "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "total_bytes": 20
+    "total_bytes": 36
   },
-  "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  "receipt_id": "c75bea716e28930b4b9022e10eb8864462012bc882beed2ec6469619b1006de9",
+  "schema_version": 1,
+  "selected_rank": 0,
+  "serving_ranks": [
+    0
+  ],
+  "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source": {
+    "adapter": {
+      "kind": "huggingface-v1",
+      "version": 1
+    },
+    "content_bytes": 36,
+    "file_count": 3,
+    "inventory": [
+      {
+        "blob_kind": "git-blob",
+        "git_oid": "31bc455f9ac760b644a6afae1be19e4392a79094",
+        "path": "config.json",
+        "size": 12
+      },
+      {
+        "blob_kind": "git-blob",
+        "git_oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+        "path": "empty.txt",
+        "size": 0
+      },
+      {
+        "blob_kind": "lfs-object",
+        "path": "model.safetensors",
+        "sha256": "ad2bccdb31abe979eea8174a850de38bd8f1c4638c77b0c46511aea6b78c6f70",
+        "size": 24
+      }
+    ],
+    "inventory_digest": "e3554f4f35fd2d2ad1fc24a05d238b7bc940aee310206e3157d8518c81ec310a",
+    "kind": "pulsar-model-library-huggingface-v1-acquisition-source",
+    "model_id": "Qwen/Qwen3.8-27B-FP8",
+    "revision_kind": "huggingface-commit",
+    "schema_version": 1,
+    "selector": "main",
+    "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_digest": "e778d6d4b59969d6a25c643d1b01112c404c2d2e9907ceb12b9c365479e62a38"
+  }
 }

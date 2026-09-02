@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from release_spec import pretty_json_bytes, spec_id_for, verify_spec  # noqa: E402
 from scripts import release_spec_generate as generate  # noqa: E402
+from scripts.testlib import release_spec_generate_fixture as receipt_fixture  # noqa: E402
 
 CLI = ROOT / "scripts" / "release-spec.sh"
 FIXTURES = ROOT / "scripts" / "testdata" / "release-spec-from-profile"
@@ -339,6 +340,88 @@ class ReleaseSpecGenerateTests(unittest.TestCase):
             self.assertFalse(out.exists())
             bash_report = json.loads(gap.read_text(encoding="utf-8"))
             self.assertFalse(bash_report["generated"])
+
+    def test_committed_receipts_are_valid_and_regenerable(self) -> None:
+        mapping = receipt_fixture.profile_model_ids()
+        self.assertEqual(
+            sorted(path.name for path in RECEIPTS.glob("*.json")),
+            sorted(receipt_fixture.receipt_path(m).name for m in mapping),
+        )
+        for model_id, profile in mapping.items():
+            rebuilt = receipt_fixture.build_fixture_receipt(model_id, profile=profile)
+            self.assertEqual(
+                receipt_fixture.receipt_path(model_id).read_bytes(),
+                receipt_fixture.receipt_bytes(rebuilt),
+                model_id,
+            )
+
+    def test_bare_file_list_is_not_a_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bare = pathlib.Path(raw) / "bare.json"
+            valid = json.loads(receipt_for(model_id_for(NANO)).read_text(encoding="utf-8"))
+            bare.write_text(
+                json.dumps(
+                    {
+                        "model_id": valid["model_id"],
+                        "snapshot_revision": valid["snapshot_revision"],
+                        "observed_manifest": valid["observed_manifest"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            spec, report = generate.build_spec_from_profile(
+                **nano_kwargs(receipt_path=bare)  # type: ignore[arg-type]
+            )
+        self.assertIsNone(spec)
+        self.assertTrue(
+            any(
+                item["class"] == "blocking"
+                and item["field"] == "snapshot_manifest"
+                and "failed validation" in item["reason"]
+                for item in report["gaps"]
+            )
+        )
+        tampered = json.loads(receipt_for(model_id_for(NANO)).read_text(encoding="utf-8"))
+        tampered["observed_manifest"]["files"][0]["sha256"] = "f" * 64
+        with tempfile.TemporaryDirectory() as raw:
+            path = pathlib.Path(raw) / "tampered.json"
+            path.write_text(json.dumps(tampered), encoding="utf-8")
+            spec, report = generate.build_spec_from_profile(
+                **nano_kwargs(receipt_path=path)  # type: ignore[arg-type]
+            )
+        self.assertIsNone(spec)
+        self.assertFalse(report["generated"])
+
+    def test_trusted_output_directories_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = pathlib.Path(raw)
+            for target in (
+                ROOT / "releases" / "draft.json",
+                ROOT / "models" / "draft.json",
+                ROOT / "models" / "model-serving-releases" / "x" / "draft.json",
+            ):
+                with self.assertRaisesRegex(generate.ReleaseSpecGenerateError, "trusted"):
+                    generate.validate_output_locations(
+                        repo_root=ROOT, out=target, gap_report=tmp / "gap.json"
+                    )
+                with self.assertRaisesRegex(generate.ReleaseSpecGenerateError, "trusted"):
+                    generate.validate_output_locations(
+                        repo_root=ROOT, out=tmp / "spec.json", gap_report=target
+                    )
+                self.assertFalse(target.exists())
+            with self.assertRaisesRegex(generate.ReleaseSpecGenerateError, "different files"):
+                generate.validate_output_locations(
+                    repo_root=ROOT, out=tmp / "same.json", gap_report=tmp / "./same.json"
+                )
+            generate.validate_output_locations(
+                repo_root=ROOT, out=tmp / "spec.json", gap_report=tmp / "gap.json"
+            )
+            args, out, gap = from_profile_args(NANO, tmp=tmp)
+            aliased = [item if item != str(gap) else str(out) for item in args]
+            result = run_cli(aliased)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("different files", result.stderr)
+            self.assertFalse(out.exists())
 
     def test_receipt_model_mismatch(self) -> None:
         spec, report = generate.build_spec_from_profile(
