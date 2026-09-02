@@ -170,15 +170,6 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
         label_width=10,
     )
     term.blank()
-PY
-
-python3 - "$REPO_DIR" <<'PY'
-import sys
-
-sys.path.insert(0, sys.argv[1])
-from scripts.terminal_format import TerminalWriter
-
-term = TerminalWriter()
 term.emit("Columns:")
 term.field("ID", "conf name for scripts/up.sh <ID>", indent=2, label_width=16)
 term.field(

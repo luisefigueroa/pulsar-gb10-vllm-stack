@@ -214,6 +214,28 @@ class PrimarySelectionContracts(unittest.TestCase):
         )
         self.assertEqual(resolved["home"]["node_id"], "node-a")
 
+    def test_set_rejects_unbound_complete_node(self) -> None:
+        catalog = self._build()
+        entry = self._entry(catalog)
+        entry["homes"][0]["home_class"] = "occupancy"
+        entry["homes"][0]["occupancy"] = True
+        entry["homes"][1]["home_class"] = "unbound-complete"
+        entry["homes"][1]["occupancy"] = False
+        model_library._apply_entry_primary_policy(entry, None)
+        self._write(catalog)
+        before = self.catalog_path.read_bytes()
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "must match exactly one complete home",
+        ):
+            model_library.set_catalog_primary(
+                self.catalog_path,
+                self.identity,
+                "node-b",
+                topology_id="topology-fixture",
+            )
+        self.assertEqual(self.catalog_path.read_bytes(), before)
+
     def test_unbound_complete_without_occupancy_fails_closed(self) -> None:
         catalog = self._build()
         entry = self._entry(catalog)

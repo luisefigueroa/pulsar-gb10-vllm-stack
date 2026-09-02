@@ -42,6 +42,8 @@ SCRIPT_NAME=wizard
 
 WIZARD_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard.XXXXXX")
 trap 'rm -rf "$WIZARD_WORK_DIR"' EXIT INT TERM
+LIBRARY_HEALTH_FILE="$WIZARD_WORK_DIR/library-health.json"
+LIBRARY_PROFILES_FILE="$WIZARD_WORK_DIR/library-profiles.json"
 MODEL_STORAGE_RENDERER="$REPO_DIR/scripts/model_storage.py"
 REPLACEMENT_TRANSACTION_TOOL="$REPO_DIR/scripts/replacement_transaction.py"
 REPLACEMENT_TRANSACTION_FILE="${WIZARD_REPLACEMENT_TRANSACTION_FILE:-$REPO_DIR/.model-library/replacement-transactions/wizard.json}"
@@ -228,14 +230,23 @@ library_scope_label() {
   fi
 }
 
-collect_library_serving_check() {
-  local health_file="$WIZARD_WORK_DIR/library-health.json"
-  local profiles_file="$WIZARD_WORK_DIR/library-profiles.json"
-  local health_rc=0
+library_serving_renderer() {
+  local subcommand="$1"
   local -a target_args=()
-  : >"$health_file"
+  if [ "$NODES" -eq 1 ]; then
+    target_args=(--target-rank "$SINGLE_NODE_INDEX")
+  fi
+  python3 "$MODEL_STORAGE_RENDERER" \
+    --report-file "$LIBRARY_HEALTH_FILE" \
+    --profiles-file "$LIBRARY_PROFILES_FILE" \
+    "$subcommand" --profile "$NAME" "${target_args[@]}"
+}
+
+collect_library_serving_check() {
+  local health_rc=0
+  : >"$LIBRARY_HEALTH_FILE"
   set +e
-  cmd_model_library_health >"$health_file"
+  cmd_model_library_health >"$LIBRARY_HEALTH_FILE"
   health_rc=$?
   set -e
   case "$health_rc" in
@@ -245,26 +256,19 @@ collect_library_serving_check() {
       return 1
       ;;
   esac
-  cmd_list_models_json >"$profiles_file" \
-    || { warn "serving-profile metadata is unavailable"; return 1; }
-  if [ "$NODES" -eq 1 ]; then
-    target_args=(--target-rank "$SINGLE_NODE_INDEX")
+  if [ ! -e "$LIBRARY_PROFILES_FILE" ]; then
+    cmd_list_models_json >"$LIBRARY_PROFILES_FILE" \
+      || {
+        rm -f "$LIBRARY_PROFILES_FILE"
+        warn "serving-profile metadata is unavailable"
+        return 1
+      }
   fi
-  LIBRARY_CHECK_JSON=$(python3 "$MODEL_STORAGE_RENDERER" \
-    --report-file "$health_file" \
-    --profiles-file "$profiles_file" \
-    serving-check --profile "$NAME" "${target_args[@]}") || return 1
+  LIBRARY_CHECK_JSON=$(library_serving_renderer serving-check) || return 1
 }
 
 render_library_serving_check() {
-  local health_file="$WIZARD_WORK_DIR/library-health.json"
-  local profiles_file="$WIZARD_WORK_DIR/library-profiles.json"
-  local -a target_args=()
-  [ "$NODES" -ne 1 ] || target_args=(--target-rank "$SINGLE_NODE_INDEX")
-  python3 "$MODEL_STORAGE_RENDERER" \
-    --report-file "$health_file" \
-    --profiles-file "$profiles_file" \
-    serving-preview --profile "$NAME" "${target_args[@]}"
+  library_serving_renderer serving-preview
 }
 
 choose_leave() {
@@ -343,9 +347,9 @@ refresh_library_serving_check() {
 # Admission uses local files on every rank (ADR 0012). Acquisition remains
 # home add --revision, not wizard home add.
 confirm_library_serving() {
-  local state transport streams home_rank home_json placement_index
+  local state transport streams placement_index
   local scope_label identity_label prepare_rc=0
-  local -a node_args=() transport_args=()
+  local -a node_args=()
   LIBRARY_CHECK_JSON=""
   [ "$(model_source_kind)" = hf ] \
     || die "non-HF model profiles are not servable (ADR 0006)"
@@ -376,17 +380,14 @@ confirm_library_serving() {
       refresh_library_serving_check "changing placement"
       state=$(json_field "$LIBRARY_CHECK_JSON" state)
     fi
-  fi
-  if [ "$state" = blocked ] \
-      && printf '%s' "$LIBRARY_CHECK_JSON" \
-        | grep -q "no current primary durable home"; then
-    offer_library_home_add || true
-    choose_leave
-    return $?
-  fi
-  if [ "$state" = blocked ]; then
-    choose_leave
-    return $?
+    if [ "$state" = blocked ]; then
+      if printf '%s' "$LIBRARY_CHECK_JSON" \
+           | grep -q "no current primary durable home"; then
+        offer_library_home_add || true
+      fi
+      choose_leave
+      return $?
+    fi
   fi
   if [ "$state" = needs-preparation ]; then
     transport=$(json_field "$LIBRARY_CHECK_JSON" prepare_transport)

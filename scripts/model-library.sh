@@ -13,8 +13,8 @@ SOURCE_ATTESTED_PY="${PULSAR_SOURCE_ATTESTED_PY:-$REPO_DIR/scripts/model_library
 COLD_ARCHIVE_PY="${PULSAR_COLD_ARCHIVE_PY:-$REPO_DIR/scripts/model_library_cold_archive.py}"
 COLD_STORAGE_CONFIG_PY="${PULSAR_COLD_STORAGE_CONFIG_PY:-$REPO_DIR/scripts/model_library_cold_storage.py}"
 HF_SOURCE_INVENTORY_PY="${PULSAR_HF_SOURCE_INVENTORY_PY:-$REPO_DIR/scripts/hf_source_inventory.py}"
-LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
-CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-$LIBRARY_DIR/catalog.json}"
+LIBRARY_DIR="$PULSAR_MODEL_LIBRARY_DIR"
+CATALOG_FILE="$PULSAR_MODEL_LIBRARY_CATALOG"
 HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
 # Receipt-backed cold recovery is explicit PULSAR_COLD_ROOT only (ADR 0015).
 # Legacy fill commands accept only an invocation-local --cold-root.
@@ -277,10 +277,6 @@ require_py() {
   command -v python3 >/dev/null 2>&1 || die "python3 required"
 }
 
-catalog_path_args() {
-  printf '%s\n' --catalog "$CATALOG_FILE"
-}
-
 ensure_catalog() {
   [ -f "$CATALOG_FILE" ] || die "no catalog at $CATALOG_FILE — run: scripts/model-library.sh catalog refresh"
 }
@@ -288,6 +284,7 @@ ensure_catalog() {
 inspect_catalog_home() {
   local profile="${1:?profile required}" resolved home_rank hub_path node_id
   local expected_node command out model_id revision
+  local -a fields=()
   resolved=$(
     python3 "$PY_TOOL" resolve \
       --catalog "$CATALOG_FILE" \
@@ -296,11 +293,11 @@ inspect_catalog_home() {
       --no-cold \
       --json
   ) || return 1
-  home_rank=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["rank"])')
-  hub_path=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["hub_path"])')
-  node_id=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"]["node_id"])')
-  model_id=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model_id"])')
-  revision=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
+  mapfile -t fields < <(json_fields "$resolved" \
+    home.rank home.hub_path home.node_id model_id revision)
+  [ "${#fields[@]}" -eq 5 ] || die "prepare: catalog resolution is unreadable"
+  home_rank="${fields[0]}" hub_path="${fields[1]}" node_id="${fields[2]}"
+  model_id="${fields[3]}" revision="${fields[4]}"
   [ -n "$revision" ] \
     || die "prepare: catalog entry lacks an exact snapshot revision"
   if ! [[ "$home_rank" =~ ^[0-9]+$ ]] \
@@ -375,18 +372,13 @@ library_plan_prepare() {
   shift
   local home_inventory model_id revision receipt_json manifest_json receipt_lookup
   local home_rank node_id hub_path tmp
+  local -a fields=() extra=()
   home_inventory=$(inspect_catalog_home "$profile") || return 1
-  model_id=$(printf '%s' "$home_inventory" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["model_id"])')
-  revision=$(printf '%s' "$home_inventory" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin).get("revision") or "")')
-  home_rank=$(printf '%s' "$home_inventory" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["rank"])')
-  node_id=$(printf '%s' "$home_inventory" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["node_id"])')
-  hub_path=$(printf '%s' "$home_inventory" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["hub_path"])')
-  local -a extra=()
+  mapfile -t fields < <(json_fields "$home_inventory" \
+    model_id revision rank node_id hub_path)
+  [ "${#fields[@]}" -eq 5 ] || die "prepare: home inventory is unreadable"
+  model_id="${fields[0]}" revision="${fields[1]}" home_rank="${fields[2]}"
+  node_id="${fields[3]}" hub_path="${fields[4]}"
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-prepare-receipt.XXXXXX")
   if ! receipt_json=$(resolve_attached_source_attested_receipt \
       "$model_id" "$revision" "$home_rank" "$node_id" "$hub_path" \
@@ -608,7 +600,8 @@ validate_catalog_profile_contracts() {
 }
 
 cmd_catalog_refresh() {
-  local json=0 local_only=0 tmp all_homes rank homes_piece
+  local json=0 local_only=0 scan_dir tmp rank
+  local -a scan_files=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json=1 ;;
@@ -623,33 +616,39 @@ cmd_catalog_refresh() {
   load_cluster_topology >/dev/null \
     || die "confirmed topology required (scripts/detect-fabric.sh --write-topology)"
 
-  tmp=$(mktemp "${TMPDIR:-/tmp}/pulsar-library-homes.XXXXXX")
+  scan_dir=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-library-homes.XXXXXX")
   # shellcheck disable=SC2064
-  trap "rm -f '$tmp'" RETURN
+  trap "rm -rf '$scan_dir'" RETURN
+  tmp="$scan_dir/homes.json"
 
-  all_homes="[]"
+  # One scan document per rank, merged once below.
   if [ "$local_only" = 1 ]; then
-    all_homes=$(python3 "$PY_TOOL" scan-hub \
+    python3 "$PY_TOOL" scan-hub \
       --cache-root "${HF_CACHE:-$HOME/.cache/huggingface}" \
       --rank 0 \
       --node-id "${CLUSTER_NODE_IDS[0]:-local}" \
       --hostname "${CLUSTER_NODE_HOSTNAMES[0]:-$(hostname -s 2>/dev/null || echo local)}" \
-      --ssh-host local)
+      --ssh-host local >"$scan_dir/rank-0.json"
+    scan_files=("$scan_dir/rank-0.json")
   else
     for ((rank = 0; rank < CLUSTER_TOPOLOGY_COUNT; rank++)); do
-      homes_piece=$(scan_rank_homes "$rank") || die "scan failed on rank $rank"
-      all_homes=$(HOMES_A="$all_homes" HOMES_B="$homes_piece" python3 - <<'PY'
-import json, os
-a = json.loads(os.environ["HOMES_A"])
-b = json.loads(os.environ["HOMES_B"])
-if not isinstance(a, list) or not isinstance(b, list):
-    raise SystemExit("homes must be lists")
-print(json.dumps(a + b))
-PY
-)
+      scan_rank_homes "$rank" >"$scan_dir/rank-$rank.json" \
+        || die "scan failed on rank $rank"
+      scan_files+=("$scan_dir/rank-$rank.json")
     done
   fi
-  printf '%s\n' "$all_homes" >"$tmp"
+  python3 - "$tmp" "${scan_files[@]}" <<'PY'
+import json, sys
+homes = []
+for path in sys.argv[2:]:
+    with open(path, encoding="utf-8") as handle:
+        piece = json.load(handle)
+    if not isinstance(piece, list):
+        raise SystemExit("homes must be lists")
+    homes.extend(piece)
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(homes, handle)
+PY
   mkdir -p "$LIBRARY_DIR"
   local build_args=(
     build
@@ -703,11 +702,10 @@ cmd_catalog_show() {
   [ -n "$query" ] || die "usage: catalog show <model_id|profile> [--json]"
   require_py
   ensure_catalog
-  if [ "$json" = 1 ]; then
-    python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" --json "$query"
-  else
-    python3 "$PY_TOOL" show --catalog "$CATALOG_FILE" "$query"
-  fi
+  local -a args=(show --catalog "$CATALOG_FILE")
+  [ "$json" = 0 ] || args+=(--json)
+  args+=("$query")
+  python3 "$PY_TOOL" "${args[@]}"
 }
 
 cmd_catalog_primary() {

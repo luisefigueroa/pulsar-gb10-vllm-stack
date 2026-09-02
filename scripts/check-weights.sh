@@ -48,7 +48,7 @@ fi
 load_cluster_topology >/dev/null 2>&1 && [ -n "${CLUSTER_TOPOLOGY_ID:-}" ] \
   || die "serving requires a confirmed topology manifest (one machine is fine): run scripts/detect-fabric.sh --write-topology"
 
-CATALOG_FILE="${MODEL_LIBRARY_CATALOG:-${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}/catalog.json}"
+CATALOG_FILE="$PULSAR_MODEL_LIBRARY_CATALOG"
 
 emit_weights_gap() {
   local reason="$1" remediation="$2" detail="${3:-}" failed_rank="${4:-}"
@@ -114,26 +114,21 @@ if [ "$hot_rc" -ne 0 ]; then
     fi
   fi
   gap=$(python3 "$PULSAR_MODEL_LIBRARY_PY" classify-library-readiness \
-    "${classify_args[@]}") || gap=""
-  if [ -n "$gap" ]; then
-    reason=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "views-missing")')
-    remediation=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("remediation") or "")')
-    detail=$(printf '%s' "$gap" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("detail") or "model files are not prepared")')
-  else
-    reason="views-missing"
-    remediation="scripts/model-library.sh prepare $NAME --yes"
-    detail="model files are not prepared"
-  fi
+    "${classify_args[@]}") || gap="{}"
+  mapfile -t gap_fields < <(json_fields "$gap" reason remediation detail)
+  reason="${gap_fields[0]:-views-missing}"
+  remediation="${gap_fields[1]:-scripts/model-library.sh prepare $NAME --yes}"
+  detail="${gap_fields[2]:-model files are not prepared}"
   emit_weights_gap "$reason" "$remediation" "$detail" "$one_node_rank"
   exit 1
 fi
-instance=$(printf '%s' "$hot_info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+mapfile -t hot_fields < <(json_fields "$hot_info" instance_dir stamp.validation)
+instance="${hot_fields[0]:-}"
+expected_validation_json="${hot_fields[1]:-null}"
 
 # Readiness is an all-rank claim: the local resolution above proves rank 0
 # only, so verify every remote serving rank's view before reporting ok.
 if [ "$NODES" -gt 1 ]; then
-  expected_validation_json=$(printf '%s' "$hot_info" | python3 -c \
-    'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
   for ((verify_rank = 1; verify_rank < NODES; verify_rank++)); do
     verify_command=$(shell_join_q python3 - verify-hot \
       --instance-dir "$instance" \

@@ -848,39 +848,9 @@ def _infer_model_id_from_cold_path(
     return None
 
 
-def model_id_from_profile_or_path(
-    *,
-    profile: str | None = None,
-    model_id: str | None = None,
-    models_dir: str | pathlib.Path | None = None,
-    query: str | None = None,
-) -> tuple[str | None, str | None, str | None]:
-    """Return (model_id, profile, absolute_path) from resolve inputs."""
-    abs_path: str | None = None
-    if query:
-        if query.startswith("/"):
-            abs_path = query
-        elif "/" in query:
-            model_id = model_id or query
-        else:
-            profile = profile or query
-    if profile and models_dir:
-        conf = pathlib.Path(models_dir) / f"{profile}.conf"
-        if conf.is_file():
-            parsed = parse_profile_conf_any(conf)
-            if parsed:
-                if parsed.get("absolute_path"):
-                    abs_path = parsed["absolute_path"]
-                    model_id = model_id or parsed.get("model_id")
-                else:
-                    model_id = model_id or parsed.get("model_id")
-    if model_id and model_id.startswith("/"):
-        abs_path = model_id
-        model_id = None
-    return model_id, profile, abs_path
-
-
-def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
+def parse_profile_conf_any(
+    path: pathlib.Path, *, hf_only: bool = False
+) -> dict[str, Any] | None:
     """Parse conf for MODEL/STATUS/NODES; includes absolute-path models."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -909,6 +879,8 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
     if not model:
         return None
     absolute = model.startswith("/")
+    if hf_only and absolute:
+        return None
     model_id = None
     if absolute:
         # Infer org/name from Official Models/... when possible.
@@ -940,56 +912,15 @@ def parse_profile_conf_any(path: pathlib.Path) -> dict[str, Any] | None:
     }
 
 
-def parse_profile_conf(path: pathlib.Path) -> dict[str, Any] | None:
-    """Minimal shell conf parse for MODEL / STATUS / NODES (HF profiles only)."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    model = None
-    status = "?"
-    nodes = 1
-    expected_seal_ref = None
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("MODEL="):
-            value = line.split("=", 1)[1].strip().strip("\"'")
-            model = value
-        elif line.startswith("STATUS="):
-            status = line.split("=", 1)[1].strip().strip("\"'")
-        elif line.startswith("NODES="):
-            try:
-                nodes = int(line.split("=", 1)[1].strip())
-            except ValueError:
-                nodes = 1
-        elif line.startswith("EXPECTED_MODEL_SEAL="):
-            expected_seal_ref = line.split("=", 1)[1].strip().strip("\"'") or None
-    if not model or model.startswith("/"):
-        return None
-    _refuse_expected_model_seal(path.stem, expected_seal_ref)
-    tested = bool(STATUS_TESTED.match(status))
-    return {
-        "profile": path.stem,
-        "model_id": model,
-        "status": status,
-        "nodes": nodes,
-        "validated": tested,
-        "expected_model_seal_ref": None,
-        "expected_model_seal": None,
-        "validation_bundle": None,
-    }
-
-
 def load_hf_profiles(models_dir: str | pathlib.Path) -> list[dict[str, Any]]:
     models_dir = pathlib.Path(models_dir)
     profiles: list[dict[str, Any]] = []
     if not models_dir.is_dir():
         return profiles
     for path in sorted(models_dir.glob("*.conf")):
-        parsed = parse_profile_conf(path)
+        parsed = parse_profile_conf_any(path, hf_only=True)
         if parsed is not None:
+            parsed.pop("absolute_path", None)
             profiles.append(parsed)
     return profiles
 
@@ -999,9 +930,10 @@ def load_hf_profile(
     profile: str,
 ) -> dict[str, Any]:
     path = pathlib.Path(models_dir) / f"{profile}.conf"
-    parsed = parse_profile_conf(path)
+    parsed = parse_profile_conf_any(path, hf_only=True)
     if parsed is None:
         fail(f"{profile}: expected a Hugging Face model profile")
+    parsed.pop("absolute_path", None)
     return parsed
 
 
@@ -1088,14 +1020,12 @@ def _catalog_entry(
     }
 
 
-def _profile_catalog_status(
-    profile: dict[str, Any],
-    *,
-    present: bool,
-) -> str:
-    if not present:
-        return "missing"
-    return "receipt-occupancy"
+def _is_exact_revision(revision: Any) -> bool:
+    return (
+        isinstance(revision, str)
+        and SAFE_REV.fullmatch(revision) is not None
+        and revision not in {"missing", "unknown"}
+    )
 
 
 def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
@@ -1125,10 +1055,8 @@ def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
                 f"catalog: primary_selections[{index}] needs an exact identity_key"
             )
         model_id, revision = identity.rsplit("@", 1)
-        if (
-            HF_MODEL_ID_RE.fullmatch(model_id) is None
-            or SAFE_REV.fullmatch(revision) is None
-            or revision in {"missing", "unknown"}
+        if HF_MODEL_ID_RE.fullmatch(model_id) is None or not _is_exact_revision(
+            revision
         ):
             fail(
                 f"catalog: primary_selections[{index}] identity is not an exact "
@@ -1185,25 +1113,6 @@ def unbound_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
         for home in (entry.get("homes") or [])
         if isinstance(home, dict) and home.get("home_class") == "unbound-complete"
     ]
-
-
-def catalog_homes_are_classified(homes: list[dict[str, Any]]) -> bool:
-    return any(
-        isinstance(home, dict)
-        and home.get("home_class") in {"occupancy", "unbound-complete"}
-        for home in homes
-    )
-
-
-def catalog_home_is_occupancy(
-    home: dict[str, Any], *, classified: bool
-) -> bool:
-    """Occupancy-class complete homes, or legacy complete trees when unclassified."""
-    if not isinstance(home, dict) or home.get("state") != "complete":
-        return False
-    if classified:
-        return home.get("home_class") == "occupancy"
-    return True
 
 
 def _catalog_home_identity(home: dict[str, Any]) -> tuple[int, str, str]:
@@ -1317,48 +1226,38 @@ def build_catalog(
 
     for profile in profiles:
         model_id = profile["model_id"]
-        expected_revision = None
         model_targets = [
             entry for entry in by_identity.values() if entry["model_id"] == model_id
         ]
-        if expected_revision is not None:
-            targets = [
-                entry
-                for entry in model_targets
-                if entry.get("revision") == expected_revision
-            ]
-        else:
-            # Preserve the legacy experimental interpretation of refs/main when
-            # it is unambiguous. Sealed profiles never enter this branch.
-            targets = [
+        # Preserve the legacy experimental interpretation of refs/main when
+        # it is unambiguous. Sealed profiles never enter this branch.
+        targets = [
+            entry
+            for entry in model_targets
+            if any(
+                home.get("active") and home.get("state") == "complete"
+                for home in entry.get("homes") or []
+            )
+        ]
+        if not targets:
+            complete_targets = [
                 entry
                 for entry in model_targets
                 if any(
-                    home.get("active") and home.get("state") == "complete"
+                    home.get("state") == "complete"
                     for home in entry.get("homes") or []
                 )
             ]
-            if not targets:
-                complete_targets = [
-                    entry
-                    for entry in model_targets
-                    if any(
-                        home.get("state") == "complete"
-                        for home in entry.get("homes") or []
-                    )
-                ]
-                targets = (
-                    complete_targets
-                    if len(complete_targets) == 1
-                    else model_targets
-                )
+            targets = (
+                complete_targets
+                if len(complete_targets) == 1
+                else model_targets
+            )
         if not targets:
-            revision = expected_revision
-            suffix = revision or "missing"
-            identity = f"{model_id}@{suffix}"
+            identity = f"{model_id}@missing"
             entry = by_identity.setdefault(
                 identity,
-                _catalog_entry(model_id, revision, identity),
+                _catalog_entry(model_id, None, identity),
             )
             targets = [entry]
 
@@ -1366,7 +1265,7 @@ def build_catalog(
             complete_present = any(
                 home.get("state") == "complete" for home in entry.get("homes") or []
             )
-            status = _profile_catalog_status(profile, present=complete_present)
+            status = "receipt-occupancy" if complete_present else "missing"
             profile_state: dict[str, Any] = {
                 "profile": profile["profile"],
                 "profile_status": profile["status"],
@@ -1381,7 +1280,6 @@ def build_catalog(
     precedence = (
         "receipt-occupancy",
         "missing",
-        "unvalidated",
     )
     models_out: list[dict[str, Any]] = []
     for identity in sorted(by_identity):
@@ -1390,7 +1288,6 @@ def build_catalog(
         partial_homes = [h for h in entry["homes"] if h["state"] != "complete"]
         entry["homes"] = complete_homes + partial_homes
         entry["on_disk"] = bool(complete_homes)
-        entry["duplicate"] = len(policy_complete_homes(entry)) > 1
         statuses = {
             item.get("identity_status") for item in entry["profile_validation"]
         }
@@ -1577,17 +1474,9 @@ def set_catalog_primary(
         fail("catalog primary: catalog topology is stale; run catalog refresh")
     entry = find_catalog_query_entry(catalog, query, operation="catalog primary")
     revision = entry.get("revision")
-    if (
-        not isinstance(revision, str)
-        or SAFE_REV.fullmatch(revision) is None
-        or revision in {"missing", "unknown"}
-    ):
+    if not _is_exact_revision(revision):
         fail("catalog primary: entry lacks an exact snapshot revision")
-    complete = [
-        home
-        for home in entry.get("homes") or []
-        if home.get("state") == "complete"
-    ]
+    complete = policy_complete_homes(entry)
     matches = [
         home
         for home in complete
@@ -1709,7 +1598,6 @@ def resolve_entry(
       str — explicit cold root
     """
     # Profile conf supplies model identity and, when reviewed, the exact commit.
-    profile_expected_revision = None
     if profile and models_dir:
         conf = pathlib.Path(models_dir) / f"{profile}.conf"
         if conf.is_file():
@@ -1818,33 +1706,27 @@ def resolve_entry(
         )
 
     cold: dict[str, Any] | None = None
-    try:
-        if absolute_path:
+    if absolute_path:
+        cold = find_cold_entry(
+            root,
+            path=absolute_path,
+            require_complete=True,
+        )
+    elif model_id:
+        cold = find_cold_entry(
+            root,
+            model_id=model_id,
+            require_complete=True,
+        )
+    elif profile and catalog is not None:
+        # Profile known but no model_id — already tried warm via profile.
+        entry = find_model_entry(catalog, profile=profile)
+        if entry and entry.get("model_id"):
             cold = find_cold_entry(
                 root,
-                path=absolute_path,
-                revision=profile_expected_revision,
+                model_id=entry["model_id"],
                 require_complete=True,
             )
-        elif model_id:
-            cold = find_cold_entry(
-                root,
-                model_id=model_id,
-                revision=profile_expected_revision,
-                require_complete=True,
-            )
-        elif profile and catalog is not None:
-            # Profile known but no model_id — already tried warm via profile.
-            entry = find_model_entry(catalog, profile=profile)
-            if entry and entry.get("model_id"):
-                cold = find_cold_entry(
-                    root,
-                    model_id=entry["model_id"],
-                    revision=profile_expected_revision,
-                    require_complete=True,
-                )
-    except ModelLibraryError:
-        raise
 
     if cold is None:
         if warm_error:
@@ -1892,6 +1774,58 @@ def resolve_entry(
     }
 
 
+def _cleanup_home_removal_commands(
+    identity_arg: str, homes: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "rank": home["rank"],
+            "check": (
+                "scripts/model-library.sh home check "
+                f"{identity_arg} --node {shlex.quote(str(home['rank']))}"
+            ),
+            "remove": (
+                "scripts/model-library.sh home remove "
+                f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
+            ),
+        }
+        for home in homes
+    ]
+
+
+def _cleanup_recommendation(
+    entry: dict[str, Any],
+    homes: list[dict[str, Any]],
+    *,
+    select_commands: list[str],
+    removal_commands: list[dict[str, Any]],
+    action: str,
+    home_class: str | None = None,
+) -> dict[str, Any]:
+    projected: list[dict[str, Any]] = []
+    for home in homes:
+        record: dict[str, Any] = {
+            "rank": home["rank"],
+            "node_id": home["node_id"],
+            "hostname": home.get("hostname") or "",
+            "bytes": home.get("bytes") or 0,
+            "hub_path": home.get("hub_path") or "",
+            "primary": False if home_class is not None else bool(home.get("primary")),
+        }
+        if home_class is not None:
+            record["home_class"] = home_class
+        projected.append(record)
+    return {
+        "model_id": entry["model_id"],
+        "identity_key": entry["identity_key"],
+        "homes": projected,
+        "selection_status": (entry.get("primary_selection") or {}).get("status"),
+        "select_commands": select_commands,
+        "removal_commands": removal_commands,
+        "action": action,
+    }
+
+
 def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     recommendations: list[dict[str, Any]] = []
     for entry in catalog.get("models") or []:
@@ -1899,25 +1833,10 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
         if unbound and not entry.get("duplicate"):
             identity_arg = shlex.quote(entry["identity_key"])
             recommendations.append(
-                {
-                    "model_id": entry["model_id"],
-                    "identity_key": entry["identity_key"],
-                    "homes": [
-                        {
-                            "rank": home["rank"],
-                            "node_id": home["node_id"],
-                            "hostname": home.get("hostname") or "",
-                            "bytes": home.get("bytes") or 0,
-                            "hub_path": home.get("hub_path") or "",
-                            "primary": False,
-                            "home_class": "unbound-complete",
-                        }
-                        for home in unbound
-                    ],
-                    "selection_status": (
-                        entry.get("primary_selection") or {}
-                    ).get("status"),
-                    "select_commands": [
+                _cleanup_recommendation(
+                    entry,
+                    unbound,
+                    select_commands=[
                         (
                             "scripts/model-library.sh home relocate "
                             f"{identity_arg} --profile PROFILE "
@@ -1925,27 +1844,17 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                         )
                         for home in unbound
                     ],
-                    "removal_commands": [
-                        {
-                            "rank": home["rank"],
-                            "check": (
-                                "scripts/model-library.sh home check "
-                                f"{identity_arg} --node {shlex.quote(str(home['rank']))}"
-                            ),
-                            "remove": (
-                                "scripts/model-library.sh home remove "
-                                f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
-                            ),
-                        }
-                        for home in unbound
-                    ],
-                    "action": (
+                    removal_commands=_cleanup_home_removal_commands(
+                        identity_arg, unbound
+                    ),
+                    action=(
                         "Choose a compatible serving profile, then occupy one "
                         "complete tree with home relocate after a live receipt "
                         "rehash, or remove unbound complete trees. They are not "
                         "durable homes."
                     ),
-                }
+                    home_class="unbound-complete",
+                )
             )
             continue
         if not entry.get("duplicate"):
@@ -1963,49 +1872,24 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                 for home in complete
             ]
         removal_commands = (
-            [
-                {
-                    "rank": home["rank"],
-                    "check": (
-                        "scripts/model-library.sh home check "
-                        f"{identity_arg} --node {shlex.quote(str(home['rank']))}"
-                    ),
-                    "remove": (
-                        "scripts/model-library.sh home remove "
-                        f"{identity_arg} --node {shlex.quote(str(home['rank']))} --yes"
-                    ),
-                }
-                for home in complete
-                if not home.get("primary")
-            ]
+            _cleanup_home_removal_commands(
+                identity_arg,
+                [home for home in complete if not home.get("primary")],
+            )
             if primary is not None
             else []
         )
         recommendations.append(
-            {
-                "model_id": entry["model_id"],
-                "identity_key": entry["identity_key"],
-                "homes": [
-                    {
-                        "rank": h["rank"],
-                        "node_id": h["node_id"],
-                        "hostname": h.get("hostname") or "",
-                        "bytes": h.get("bytes") or 0,
-                        "hub_path": h.get("hub_path") or "",
-                        "primary": bool(h.get("primary")),
-                    }
-                    for h in complete
-                ],
-                "selection_status": (
-                    entry.get("primary_selection") or {}
-                ).get("status"),
-                "select_commands": select_commands,
-                "removal_commands": removal_commands,
-                "action": (
+            _cleanup_recommendation(
+                entry,
+                complete,
+                select_commands=select_commands,
+                removal_commands=removal_commands,
+                action=(
                     "Explicitly select one primary home. Inspect each non-primary "
                     "home, then remove it only with the separate confirmed command."
                 ),
-            }
+            )
         )
     return recommendations
 
@@ -2088,7 +1972,6 @@ def plan_cold_adopt(
     if root is None:
         fail("cold adopt: explicit --cold-root is required")
 
-    expected_revision = None
     if profile and models_dir:
         conf = pathlib.Path(models_dir) / f"{profile}.conf"
         parsed = parse_profile_conf_any(conf) if conf.is_file() else None
@@ -2104,7 +1987,6 @@ def plan_cold_adopt(
         root,
         model_id=model_id,
         path=path,
-        revision=expected_revision,
         require_complete=True,
     )
     if entry is None:
@@ -5963,12 +5845,14 @@ def select_home_removal_target(
     else:
         identity_key = str(entry.get("identity_key") or f"{entry['model_id']}@{revision}")
 
-    classified = catalog_homes_are_classified(homes)
+    occupancy_ids = {
+        _catalog_home_identity(h) for h in policy_complete_homes(entry)
+    }
     selected_identity = _catalog_home_identity(selected)
     occupancy_alternates = [
         home
         for home in complete
-        if catalog_home_is_occupancy(home, classified=classified)
+        if _catalog_home_identity(home) in occupancy_ids
         and _catalog_home_identity(home) != selected_identity
     ]
     other_incomplete = [
@@ -5976,9 +5860,7 @@ def select_home_removal_target(
         for home in incomplete
         if _catalog_home_identity(home) != selected_identity
     ]
-    selected_is_occupancy = catalog_home_is_occupancy(
-        selected, classified=classified
-    )
+    selected_is_occupancy = selected_identity in occupancy_ids
     if occupancy_class == COMPLETE_HOME_OCCUPANCY:
         last_durable_home = selected_is_occupancy and not occupancy_alternates
     else:
@@ -7533,20 +7415,8 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     catalog = load_catalog(args.catalog)
-    entry = find_model_entry(
-        catalog,
-        model_id=args.query if "/" in args.query else None,
-        profile=args.query if "/" not in args.query else None,
-        identity_key=args.query if "@" in args.query else None,
-    )
-    if entry is None and "/" not in args.query and "@" not in args.query:
-        entry = find_model_entry(catalog, profile=args.query)
-    if entry is None:
-        fail(f"show: no entry matching {args.query!r}")
-    if args.json:
-        print(json.dumps(entry, indent=2, sort_keys=True))
-    else:
-        print(json.dumps(entry, indent=2, sort_keys=True))
+    entry = find_catalog_query_entry(catalog, args.query, operation="show")
+    print(json.dumps(entry, indent=2, sort_keys=True))
     return 0
 
 

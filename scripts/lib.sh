@@ -176,7 +176,7 @@ acquire_model_library_lifecycle_lock() {
   timeout="${PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS:-30}"
   [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ ]] \
     || die "PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS must be numeric"
-  lock_dir="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
+  lock_dir="$PULSAR_MODEL_LIBRARY_DIR"
   lock_path="${PULSAR_MODEL_LIBRARY_LOCK_FILE:-$lock_dir/lifecycle.lock}"
   lock_parent=$(dirname -- "$lock_path")
   mkdir -p "$lock_parent" \
@@ -218,7 +218,7 @@ acquire_model_library_hot_lock() {
   timeout="${PULSAR_MODEL_LIBRARY_HOT_LOCK_TIMEOUT_SECONDS:-${PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS:-30}}"
   [[ "$timeout" =~ ^[0-9]+([.][0-9]+)?$ ]] \
     || die "PULSAR_MODEL_LIBRARY_HOT_LOCK_TIMEOUT_SECONDS must be numeric"
-  lock_dir="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
+  lock_dir="$PULSAR_MODEL_LIBRARY_DIR"
   lock_path="${PULSAR_MODEL_LIBRARY_HOT_LOCK_FILE:-$lock_dir/hot.lock}"
   lock_parent=$(dirname -- "$lock_path")
   mkdir -p "$lock_parent" \
@@ -774,6 +774,36 @@ json_escape() {
     || printf '"%s"' "${1//\"/\\\"}"
 }
 
+# Extract several fields from one JSON object with a single python3 start.
+# Paths are dotted (home.rank). One line per path: scalars as text, null or
+# missing as empty, booleans as true/false, objects and arrays as compact
+# sorted JSON. Consume with: mapfile -t vals < <(json_fields "$json" a b.c)
+json_fields() {
+  local json="$1"
+  shift
+  printf '%s' "$json" | python3 -c '
+import json, sys
+doc = json.load(sys.stdin)
+for path in sys.argv[1:]:
+    value = doc
+    for part in path.split("."):
+        value = value.get(part) if isinstance(value, dict) else None
+    if value is None:
+        print("")
+    elif isinstance(value, bool):
+        print("true" if value else "false")
+    elif isinstance(value, (dict, list)):
+        print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+    else:
+        print(value)
+' "$@"
+}
+
+# One JSON field (stringified) from a JSON object string.
+json_field() {
+  json_fields "$1" "$2"
+}
+
 # Validate the stable inventory JSON boundary before callers make lifecycle
 # decisions from it. Empty, malformed, or structurally incomplete output is an
 # observability failure, never an empty-machine state.
@@ -933,6 +963,11 @@ refuse_removed_hot_legacy_command() {
   die "$REMOVED_HOT_LEGACY_MESSAGE" 2
 }
 PULSAR_MODEL_LIBRARY_PY="${PULSAR_MODEL_LIBRARY_PY:-$REPO_DIR/scripts/model_library.py}"
+# Controller-local library state and its catalog: the single default for every
+# operator script (MODEL_LIBRARY_DIR / MODEL_LIBRARY_CATALOG override).
+PULSAR_MODEL_LIBRARY_DIR="${MODEL_LIBRARY_DIR:-$REPO_DIR/.model-library}"
+# shellcheck disable=SC2034  # consumed by model-library.sh and check-weights.sh
+PULSAR_MODEL_LIBRARY_CATALOG="${MODEL_LIBRARY_CATALOG:-$PULSAR_MODEL_LIBRARY_DIR/catalog.json}"
 PULSAR_HOT_ROOT="${PULSAR_HOT_ROOT:-/var/tmp/pulsar-hot}"
 PULSAR_SSH_CONNECT_TIMEOUT="${PULSAR_SSH_CONNECT_TIMEOUT:-8}"
 PULSAR_SSH_OPTS=(
@@ -1226,32 +1261,27 @@ resolve_library_hot_for_profile() {
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || die "missing $PULSAR_MODEL_LIBRARY_PY"
   info=$(library_hot_info_for_profile "$profile") \
     || die "model files are not ready on the selected rank for $profile — run scripts/check-weights.sh $profile"
-  LIBRARY_VIEW_INSTANCE_DIR=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  LIBRARY_VIEW_HUB_PATH=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["hub_path"])')
-  LIBRARY_VIEW_HOME_NODE_ID=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")')
-  LIBRARY_VIEW_CONTENT_ID=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
-  LIBRARY_VIEW_CONTENT_DIGEST=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_digest") or "")')
-  LIBRARY_VIEW_TRANSPORT=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["stamp"].get("transport") or "")')
-  LIBRARY_VIEW_INTEGRITY_SCHEME=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print((json.load(sys.stdin)["stamp"].get("integrity") or {}).get("scheme") or "")')
-  LIBRARY_VIEW_MODEL_ID=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["stamp"].get("model_id") or "")')
-  LIBRARY_VIEW_REVISION=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["stamp"].get("revision") or "")')
-  LIBRARY_VIEW_CONTAINER_MODEL_PATH=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin).get("container_model_path") or "")')
-  LIBRARY_VIEW_IDENTITY_STATUS=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print((json.load(sys.stdin)["stamp"].get("validation") or {}).get("identity_status") or "")')
-  LIBRARY_VIEW_VALIDATION_JSON=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"].get("validation"), sort_keys=True, separators=(",", ":")))')
-  LIBRARY_VIEW_PINNED=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print("1" if json.load(sys.stdin)["stamp"].get("pinned") else "0")')
+  local -a view=()
+  mapfile -t view < <(json_fields "$info" \
+    instance_dir hub_path stamp.home_node_id stamp.content_id \
+    stamp.content_digest stamp.transport stamp.integrity.scheme \
+    stamp.model_id stamp.revision container_model_path \
+    stamp.validation.identity_status stamp.validation stamp.pinned)
+  [ "${#view[@]}" -eq 13 ] || die "prepared view record is unreadable for $profile"
+  LIBRARY_VIEW_INSTANCE_DIR="${view[0]}"
+  LIBRARY_VIEW_HUB_PATH="${view[1]}"
+  LIBRARY_VIEW_HOME_NODE_ID="${view[2]}"
+  LIBRARY_VIEW_CONTENT_ID="${view[3]}"
+  LIBRARY_VIEW_CONTENT_DIGEST="${view[4]}"
+  LIBRARY_VIEW_TRANSPORT="${view[5]}"
+  LIBRARY_VIEW_INTEGRITY_SCHEME="${view[6]}"
+  LIBRARY_VIEW_MODEL_ID="${view[7]}"
+  LIBRARY_VIEW_REVISION="${view[8]}"
+  LIBRARY_VIEW_CONTAINER_MODEL_PATH="${view[9]}"
+  LIBRARY_VIEW_IDENTITY_STATUS="${view[10]}"
+  LIBRARY_VIEW_VALIDATION_JSON="${view[11]}"
+  LIBRARY_VIEW_PINNED=0
+  [ "${view[12]}" != true ] || LIBRARY_VIEW_PINNED=1
   [ -n "$LIBRARY_VIEW_CONTENT_ID" ] \
     && [ -n "$LIBRARY_VIEW_CONTENT_DIGEST" ] \
     && [ -n "$LIBRARY_VIEW_TRANSPORT" ] \
