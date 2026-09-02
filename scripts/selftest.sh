@@ -25,6 +25,8 @@ run "platform reference schema" \
   python3 "$REPO_DIR/scripts/testlib/test_platform_reference.py"
 run "platform reference probe selection" \
   "$REPO_DIR/scripts/selftest-platform-reference.sh"
+run "release spec schema (ADR 0017 Stage 1)" \
+  python3 -m unittest discover -s "$REPO_DIR/release_spec/tests" -p 'test_*.py'
 run "launch-plan and serving-probe contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_launch_plan.py"
 run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust.sh"
