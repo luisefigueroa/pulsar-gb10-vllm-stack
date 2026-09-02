@@ -3,9 +3,12 @@
 
 This module owns the versioned measurement contract emitted by
 ``validate/compare_captures.py``, ``validate/bench_serve.py``,
-``validate/gsm8k_eval.py``, ``validate/soak.py``, and the experiment-only
-resource monitor. It records measured facts and completion/reason only. It
-does not evaluate ADR 0004 status, issue a decision, or grant serving
+``validate/gsm8k_eval.py``, ``validate/soak.py``, the experiment-only
+resource monitor, and the baseline-v1 identity and serving-smoke
+operations. Future producers ``validate/verify_snapshot_manifest.py`` and
+``validate/serve_smoke.py`` are declared here; they are not implemented in
+this unit. Documents record measured facts and completion/reason only. They
+do not evaluate ADR 0004 status, issue a decision, or grant serving
 permission.
 """
 
@@ -36,6 +39,8 @@ PROGRAM_OPERATIONS = {
     "validate/gsm8k_eval.py": "evaluate-gsm8k",
     "validate/soak.py": "validate-soak",
     "scripts/model-serving-experiment-monitor.sh": "observe-resources",
+    "validate/verify_snapshot_manifest.py": "verify-snapshot-manifest",
+    "validate/serve_smoke.py": "serve-smoke",
 }
 OPERATION_PROGRAMS = {value: key for key, value in PROGRAM_OPERATIONS.items()}
 
@@ -83,6 +88,28 @@ SOAK_REASONS = {
     "corrupt-document",
     "missing-measurement",
 }
+IDENTITY_REASONS = {
+    "completed",
+    "mismatch",
+    "interrupted",
+    "corrupt-document",
+    "missing-measurement",
+}
+SERVE_SMOKE_REASONS = {
+    "completed",
+    "health-failed",
+    "warmup-failed",
+    "completion-failed",
+    "interrupted",
+    "corrupt-document",
+    "missing-measurement",
+}
+SERVE_SMOKE_PHASE_REASONS = {
+    "completed",
+    "failed",
+    "interrupted",
+    "measured-incomplete",
+}
 LEVEL_REASONS = {
     "completed",
     "warmup-failed",
@@ -110,6 +137,8 @@ BENCHMARK_FIELDS = COMMON_FIELDS | {"benchmark-serving"}
 RESOURCE_FIELDS = COMMON_FIELDS | {"observe-resources"}
 ACCURACY_FIELDS = COMMON_FIELDS | {"evaluate-gsm8k"}
 SOAK_FIELDS = COMMON_FIELDS | {"validate-soak"}
+IDENTITY_FIELDS = COMMON_FIELDS | {"verify-snapshot-manifest"}
+SERVE_SMOKE_FIELDS = COMMON_FIELDS | {"serve-smoke"}
 COMPARE_PAYLOAD_FIELDS = {
     "sample_count",
     "identical_record_count",
@@ -197,6 +226,24 @@ SOAK_PAYLOAD_FIELDS = {
     "concurrency",
     "completed_requests",
     "request_error_count",
+}
+IDENTITY_PAYLOAD_FIELDS = {
+    "spec_id",
+    "manifest_id",
+    "expected_file_count",
+    "matched_file_count",
+    "mismatched_file_count",
+    "missing_file_count",
+    "extra_file_count",
+}
+SERVE_SMOKE_PAYLOAD_FIELDS = {
+    "health",
+    "warmup",
+    "completion",
+}
+SERVE_SMOKE_PHASE_FIELDS = {
+    "completion",
+    "reason",
 }
 FORBIDDEN_FIELDS = {
     "adapter",
@@ -878,27 +925,116 @@ def _validate_soak_payload(value: Any, *, completion: str) -> dict[str, Any]:
     }
 
 
+def _validate_identity_payload(value: Any, *, completion: str) -> dict[str, Any]:
+    payload = _require_fields(
+        value, IDENTITY_PAYLOAD_FIELDS, label="verify-snapshot-manifest"
+    )
+    spec_id = payload.get("spec_id")
+    if not isinstance(spec_id, str) or HEX64_RE.fullmatch(spec_id) is None:
+        fail("verify-snapshot-manifest.spec_id must be a SHA-256 digest")
+    manifest_id = payload.get("manifest_id")
+    if not isinstance(manifest_id, str) or HEX64_RE.fullmatch(manifest_id) is None:
+        fail("verify-snapshot-manifest.manifest_id must be a SHA-256 digest")
+    expected = _nonnegative_int(
+        payload.get("expected_file_count"),
+        label="verify-snapshot-manifest.expected_file_count",
+    )
+    matched = _nonnegative_int(
+        payload.get("matched_file_count"),
+        label="verify-snapshot-manifest.matched_file_count",
+    )
+    mismatched = _nonnegative_int(
+        payload.get("mismatched_file_count"),
+        label="verify-snapshot-manifest.mismatched_file_count",
+    )
+    missing = _nonnegative_int(
+        payload.get("missing_file_count"),
+        label="verify-snapshot-manifest.missing_file_count",
+    )
+    extra = _nonnegative_int(
+        payload.get("extra_file_count"),
+        label="verify-snapshot-manifest.extra_file_count",
+    )
+    accounted = matched + mismatched + missing
+    if accounted > expected:
+        fail(
+            "verify-snapshot-manifest matched, mismatched, and missing "
+            "counts exceed expected_file_count"
+        )
+    if completion == "complete" and accounted != expected:
+        fail(
+            "complete verify-snapshot-manifest requires matched, mismatched, "
+            "and missing counts to equal expected_file_count"
+        )
+    return {
+        "spec_id": spec_id,
+        "manifest_id": manifest_id,
+        "expected_file_count": expected,
+        "matched_file_count": matched,
+        "mismatched_file_count": mismatched,
+        "missing_file_count": missing,
+        "extra_file_count": extra,
+    }
+
+
+def _validate_serve_smoke_phase(value: Any, *, label: str) -> dict[str, str]:
+    phase = _require_fields(value, SERVE_SMOKE_PHASE_FIELDS, label=label)
+    completion = phase.get("completion")
+    if completion not in COMPLETIONS:
+        fail(f"{label}.completion is unsupported")
+    reason = phase.get("reason")
+    if reason not in SERVE_SMOKE_PHASE_REASONS:
+        fail(f"{label}.reason is unsupported")
+    if completion == "complete" and reason != "completed":
+        fail(f"{label} complete reason must be completed")
+    if completion == "incomplete" and reason == "completed":
+        fail(f"{label} incomplete reason must explain the gap")
+    return {"completion": completion, "reason": reason}
+
+
+def _validate_serve_smoke_payload(value: Any, *, completion: str) -> dict[str, Any]:
+    payload = _require_fields(value, SERVE_SMOKE_PAYLOAD_FIELDS, label="serve-smoke")
+    health = _validate_serve_smoke_phase(
+        payload.get("health"), label="serve-smoke.health"
+    )
+    warmup = _validate_serve_smoke_phase(
+        payload.get("warmup"), label="serve-smoke.warmup"
+    )
+    smoke = _validate_serve_smoke_phase(
+        payload.get("completion"), label="serve-smoke.completion"
+    )
+    phases = (health, warmup, smoke)
+    all_complete = all(item["completion"] == "complete" for item in phases)
+    if completion == "complete" and not all_complete:
+        fail("complete serve-smoke requires health, warmup, and completion to be complete")
+    if completion == "incomplete" and all_complete:
+        fail("incomplete serve-smoke cannot contain only complete phases")
+    return {
+        "health": health,
+        "warmup": warmup,
+        "completion": smoke,
+    }
+
+
 def validate_measurement(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         fail("validator measurement must be an object")
     _scan_forbidden_keys(value, label="validator measurement")
     operation = value.get("operation")
-    if operation == "compare-captures":
-        document = _require_fields(value, COMPARE_FIELDS, label="validator measurement")
-    elif operation == "benchmark-serving":
-        document = _require_fields(
-            value, BENCHMARK_FIELDS, label="validator measurement"
-        )
-    elif operation == "observe-resources":
-        document = _require_fields(
-            value, RESOURCE_FIELDS, label="validator measurement"
-        )
-    elif operation == "evaluate-gsm8k":
-        document = _require_fields(value, ACCURACY_FIELDS, label="validator measurement")
-    elif operation == "validate-soak":
-        document = _require_fields(value, SOAK_FIELDS, label="validator measurement")
-    else:
+    field_sets = {
+        "compare-captures": COMPARE_FIELDS,
+        "benchmark-serving": BENCHMARK_FIELDS,
+        "observe-resources": RESOURCE_FIELDS,
+        "evaluate-gsm8k": ACCURACY_FIELDS,
+        "validate-soak": SOAK_FIELDS,
+        "verify-snapshot-manifest": IDENTITY_FIELDS,
+        "serve-smoke": SERVE_SMOKE_FIELDS,
+    }
+    if operation not in field_sets:
         fail("validator measurement operation is unsupported")
+    document = _require_fields(
+        value, field_sets[operation], label="validator measurement"
+    )
     if document.get("schema_version") != MEASUREMENT_SCHEMA_VERSION:
         fail("validator measurement schema_version is unsupported")
     if document.get("kind") != MEASUREMENT_KIND:
@@ -918,6 +1054,8 @@ def validate_measurement(value: Any) -> dict[str, Any]:
         "observe-resources": RESOURCE_REASONS,
         "evaluate-gsm8k": ACCURACY_REASONS,
         "validate-soak": SOAK_REASONS,
+        "verify-snapshot-manifest": IDENTITY_REASONS,
+        "serve-smoke": SERVE_SMOKE_REASONS,
     }[operation]
     if reason not in allowed_reasons:
         fail("validator measurement reason is unsupported")
@@ -925,71 +1063,27 @@ def validate_measurement(value: Any) -> dict[str, Any]:
         fail("complete validator measurement reason must be completed")
     if completion == "incomplete" and reason == "completed":
         fail("incomplete validator measurement requires an explanatory reason")
-    if operation == "compare-captures":
-        payload = _validate_compare_payload(
-            document.get("compare-captures"), completion=completion
-        )
-        validated = {
-            "schema_version": MEASUREMENT_SCHEMA_VERSION,
-            "kind": MEASUREMENT_KIND,
-            "program": program,
-            "operation": operation,
-            "completion": completion,
-            "reason": reason,
-            "compare-captures": payload,
-        }
-    elif operation == "benchmark-serving":
-        payload = _validate_benchmark_payload(
-            document.get("benchmark-serving"), completion=completion
-        )
-        validated = {
-            "schema_version": MEASUREMENT_SCHEMA_VERSION,
-            "kind": MEASUREMENT_KIND,
-            "program": program,
-            "operation": operation,
-            "completion": completion,
-            "reason": reason,
-            "benchmark-serving": payload,
-        }
-    elif operation == "observe-resources":
-        payload = _validate_resource_payload(
-            document.get("observe-resources"), completion=completion
-        )
-        validated = {
-            "schema_version": MEASUREMENT_SCHEMA_VERSION,
-            "kind": MEASUREMENT_KIND,
-            "program": program,
-            "operation": operation,
-            "completion": completion,
-            "reason": reason,
-            "observe-resources": payload,
-        }
-    elif operation == "evaluate-gsm8k":
-        payload = _validate_accuracy_payload(
-            document.get("evaluate-gsm8k"), completion=completion
-        )
-        validated = {
-            "schema_version": MEASUREMENT_SCHEMA_VERSION,
-            "kind": MEASUREMENT_KIND,
-            "program": program,
-            "operation": operation,
-            "completion": completion,
-            "reason": reason,
-            "evaluate-gsm8k": payload,
-        }
-    else:
-        payload = _validate_soak_payload(
-            document.get("validate-soak"), completion=completion
-        )
-        validated = {
-            "schema_version": MEASUREMENT_SCHEMA_VERSION,
-            "kind": MEASUREMENT_KIND,
-            "program": program,
-            "operation": operation,
-            "completion": completion,
-            "reason": reason,
-            "validate-soak": payload,
-        }
+    payload_validators = {
+        "compare-captures": _validate_compare_payload,
+        "benchmark-serving": _validate_benchmark_payload,
+        "observe-resources": _validate_resource_payload,
+        "evaluate-gsm8k": _validate_accuracy_payload,
+        "validate-soak": _validate_soak_payload,
+        "verify-snapshot-manifest": _validate_identity_payload,
+        "serve-smoke": _validate_serve_smoke_payload,
+    }
+    payload = payload_validators[operation](
+        document.get(operation), completion=completion
+    )
+    validated = {
+        "schema_version": MEASUREMENT_SCHEMA_VERSION,
+        "kind": MEASUREMENT_KIND,
+        "program": program,
+        "operation": operation,
+        "completion": completion,
+        "reason": reason,
+        operation: payload,
+    }
     _screen_measurement_json(validated, label="validator measurement")
     return validated
 
@@ -1230,5 +1324,43 @@ def build_soak_measurement(
             "completion": completion,
             "reason": reason,
             "validate-soak": payload,
+        }
+    )
+
+
+def build_identity_measurement(
+    *, completion: str, reason: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    return validate_measurement(
+        {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": "validate/verify_snapshot_manifest.py",
+            "operation": "verify-snapshot-manifest",
+            "completion": completion,
+            "reason": reason,
+            "verify-snapshot-manifest": payload,
+        }
+    )
+
+
+def empty_serve_smoke_phase(
+    *, completion: str = "incomplete", reason: str = "measured-incomplete"
+) -> dict[str, str]:
+    return {"completion": completion, "reason": reason}
+
+
+def build_serve_smoke_measurement(
+    *, completion: str, reason: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    return validate_measurement(
+        {
+            "schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "kind": MEASUREMENT_KIND,
+            "program": "validate/serve_smoke.py",
+            "operation": "serve-smoke",
+            "completion": completion,
+            "reason": reason,
+            "serve-smoke": payload,
         }
     )

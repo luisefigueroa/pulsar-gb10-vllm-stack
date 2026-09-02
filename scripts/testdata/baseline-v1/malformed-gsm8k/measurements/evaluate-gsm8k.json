@@ -1,0 +1,26 @@
+{
+  "completion": "complete",
+  "evaluate-gsm8k": {
+    "accuracy": "0.85",
+    "answer_normalization": "gsm8k-final-number-v1",
+    "correct_count": 85,
+    "dataset_file_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "dataset_id": "openai/gsm8k",
+    "dataset_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "max_completion_tokens": 4096,
+    "measured_sample_count": 100,
+    "note": "extra",
+    "reasoning_mode": "enabled",
+    "request_error_count": 0,
+    "requested_sample_count": 100,
+    "selection": "sha256-order-first-100",
+    "split": "test",
+    "subset": "main",
+    "temperature": "0"
+  },
+  "kind": "pulsar-validator-measurement",
+  "operation": "evaluate-gsm8k",
+  "program": "validate/gsm8k_eval.py",
+  "reason": "completed",
+  "schema_version": 1
+}
