@@ -38,6 +38,11 @@ from release_spec.schema import (  # noqa: E402
     require_public_string,
 )
 
+try:
+    from scripts.terminal_format import TerminalWriter
+except ModuleNotFoundError:  # pragma: no cover - direct script invocation
+    from terminal_format import TerminalWriter  # type: ignore[no-redef]
+
 # Copied from scripts/model_identity.py (do not import it).
 IMAGE_PIN_RE = re.compile(r"@sha256:([0-9a-f]{64})$")
 
@@ -797,12 +802,13 @@ def overlay_for_spec(
     }
 
 
-def _format_review(status: str | None) -> str:
-    return status if status else "-"
-
-
-def _format_reviewed_at(value: str | None) -> str:
-    return value if value else "-"
+def _review_text(status: str | None, reviewed_at: str | None) -> str:
+    """Human review line: status plus its date, or a plain dash."""
+    if not status:
+        return "-"
+    if reviewed_at:
+        return f"{status} since {reviewed_at}"
+    return status
 
 
 def cmd_list(repo_root: pathlib.Path, *, as_json: bool) -> int:
@@ -810,12 +816,13 @@ def cmd_list(repo_root: pathlib.Path, *, as_json: bool) -> int:
     if as_json:
         sys.stdout.buffer.write(pretty_json_bytes({"releases": rows}))
         return 0
-    for row in rows:
-        print(
-            f"{row['spec_id']} {row['model_id']} "
-            f"{_format_review(row['review_status'])} "
-            f"{_format_reviewed_at(row['reviewed_at'])}"
-        )
+    term = TerminalWriter()
+    for index, row in enumerate(rows):
+        if index:
+            term.blank()
+        term.emit(row["spec_id"])
+        term.field("model", row["model_id"], indent=2)
+        term.field("review", _review_text(row["review_status"], row["reviewed_at"]), indent=2)
     return 0
 
 
@@ -834,10 +841,10 @@ def cmd_verify(repo_root: pathlib.Path, spec_id: str, *, as_json: bool) -> int:
             )
         )
         return 0
-    print(
-        f"spec_id={spec['spec_id']} state={spec['state']} "
-        f"review={_format_review(status)}"
-    )
+    term = TerminalWriter()
+    term.field("spec_id", spec["spec_id"])
+    term.field("state", spec["state"])
+    term.field("review", _review_text(status, reviewed_at))
     return 0
 
 

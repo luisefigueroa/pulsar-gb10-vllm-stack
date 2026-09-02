@@ -58,6 +58,15 @@ def _reject_json_float(value: str) -> None:
     fail("document must not contain JSON floats")
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    document: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in document:
+            fail(f"document contains duplicate key {key!r}")
+        document[key] = value
+    return document
+
+
 def _require_iso8601_utc_z(value: Any, *, path: str) -> str:
     if not isinstance(value, str) or not value.endswith("Z") or "T" not in value:
         fail(f"{path} must be ISO-8601 UTC ending in Z")
@@ -350,6 +359,7 @@ def load_spec(path: str | pathlib.Path) -> dict[str, Any]:
             text,
             parse_float=_reject_json_float,
             parse_constant=_reject_json_float,
+            object_pairs_hook=_reject_duplicate_keys,
         )
     except json.JSONDecodeError as exc:
         fail(f"invalid JSON: {exc}")

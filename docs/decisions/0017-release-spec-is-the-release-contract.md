@@ -151,7 +151,10 @@ scripts.
    6. If computed argv, image, or geometry differs from the spec
       `launch_contract`, do not display spec `review.status`; still list
       and allow the profile if operational checks pass
-      ([ADR 0009](./0009-no-launch-trust-mode-axis.md)).
+      ([ADR 0009](./0009-no-launch-trust-mode-axis.md)). Clarified at
+      Stage 3, consistent with decision 5: the container environment is
+      part of this comparison, so a computed container-environment
+      difference also hides `review.status`.
    7. Sentences that the registry is empty and no profile sets
       `MODEL_SERVING_RELEASE_ID` stay true and must not be deleted in
       this unit.
