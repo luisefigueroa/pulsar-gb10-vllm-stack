@@ -68,7 +68,8 @@ build_profile_catalog_json() {
   : >"$tmp"
   shopt -s nullglob
   for conf in "$REPO_DIR"/models/*.conf; do
-    name=$(basename "$conf" .conf)
+    name="${conf##*/}"
+    name="${name%.conf}"
     # Subshell isolates load_conf state between profiles.
     line=$(
       set -euo pipefail
