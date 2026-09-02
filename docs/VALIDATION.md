@@ -10,6 +10,7 @@ authorities substitutes for another.
   empty.
 - No current profile sets `MODEL_SERVING_RELEASE_ID`.
 - No current profile therefore has a reviewed Model Serving Release status.
+- Accepted target: one release spec is the contract ([ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)); this section remains the live implementation until that staged cutover.
 - Serving remains status-independent; concrete identity, recipe, topology,
   capacity, security, ownership, and lifecycle checks still fail without
   fallback.

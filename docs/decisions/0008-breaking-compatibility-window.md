@@ -9,6 +9,8 @@
   [ADR 0007](./0007-ordinary-stop-retains-unpinned-hot-views.md),
   [ADR 0009](./0009-no-launch-trust-mode-axis.md)
 
+> **Superseded in part by [ADR 0017](./0017-release-spec-is-the-release-contract.md) (2026-09-02), vocabulary only.** Executed flag removals (`--force`, `--allow-unvalidated`, `--validated`, public `activate`) stay. ADR 0017 replaces profile `STATUS` / `--legacy-tested` as the standing recommendation vocabulary once specs exist; this window does not come back.
+
 ## Context
 
 Pulsar still carries deprecated no-op flags, aliases, and leftover-state

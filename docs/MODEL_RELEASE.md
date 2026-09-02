@@ -14,6 +14,8 @@ decision):
 - [MODEL_SERVING_RELEASE_ISSUANCE.md](./MODEL_SERVING_RELEASE_ISSUANCE.md)
 - [ADR 0004](./decisions/0004-model-serving-release-validation.md)
 
+Accepted target: one release spec is the contract ([ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)); this section remains the live implementation until that staged cutover.
+
 `scripts/model-release.sh` is removed. Do not assemble those retired
 formats. Use `scripts/model-serving-release-plan.sh` for draft JSON that is
 not in the trusted registry.

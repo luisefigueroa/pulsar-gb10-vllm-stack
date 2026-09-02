@@ -521,6 +521,10 @@ the approved plan.
   [ADR 0004](docs/decisions/0004-model-serving-release-validation.md). Any
   change to one of those four parts creates a new release; validation does not
   transfer across release IDs.
+  Accepted target architecture for that subject is the one-document release spec
+  in [ADR 0017](docs/decisions/0017-release-spec-is-the-release-contract.md);
+  this file's object names, commands, and decision strings remain the live
+  implementation contract until that staged cutover.
 - Its primary artifact identity is source-neutral: use `huggingface-snapshot`
   for an exact Hugging Face commit and full manifest, or
   `content-addressed-model` for another complete model tree with a public

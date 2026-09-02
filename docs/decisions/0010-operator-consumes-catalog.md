@@ -9,6 +9,8 @@
   [ADR 0004](./0004-model-serving-release-validation.md),
   [ADR 0009](./0009-no-launch-trust-mode-axis.md)
 
+> **Superseded in part by [ADR 0017](./0017-release-spec-is-the-release-contract.md) (2026-09-02).** Decision 1's consume-surface of `models/*.conf` no longer applies after ADR 0017 Stage 3; the rest of this ADR stands.
+
 ## Context
 
 Pulsar has two jobs that can be confused:

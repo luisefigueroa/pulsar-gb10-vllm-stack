@@ -15,6 +15,7 @@ Contract checks and
 read-only verification of stored ADR 0004 objects exist. Catalog, wizard, and
 start output can show a reviewed decision only when a profile explicitly
 sets `MODEL_SERVING_RELEASE_ID`. No current profile sets that field.
+Accepted target: one release spec is the contract ([ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)); this section remains the live implementation until that staged cutover.
 Local evidence-capture drafts are not in the trusted registry and do
 not change this table. Maintainer-only staging can propose registry
 objects, but a local command is not trusted until repository review and merge;

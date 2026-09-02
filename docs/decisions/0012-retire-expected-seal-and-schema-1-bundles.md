@@ -14,6 +14,8 @@
   seals/bundles. Does **not** change ADR 0004 object `schema_version: 1`,
   topology schema 1 bootstrap, or library-hot schema 3.
 
+> **Superseded in part by [ADR 0017](./0017-release-spec-is-the-release-contract.md) (2026-09-02).** Decisions 1–4 stand: schema-1 expected-seals and combined bundles stay retired and are not revived as schema 2. Decision 5’s “no reviewed expected manifest” and the unknown-tree consequence that there is no expected-manifest fallback are replaced by the release spec’s file manifest. `MODEL_SERVING_RELEASE_ID` remains not a serving gate; ADR 0017 removes it as a product field at Stage 4.
+
 ## Context
 
 Pulsar previously loaded two products for reviewed identity:

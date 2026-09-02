@@ -14,6 +14,7 @@ results do not transfer automatically.
   onboarding, qualification, or Model Serving Release evidence.
 - Profile `STATUS=tested*` is the older recommendation class. It is not an
   ADR 0004 decision and does not authorize serving.
+- Accepted target: one release spec is the contract ([ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)); this section remains the live implementation until that staged cutover.
 
 ## Qualification scopes
 

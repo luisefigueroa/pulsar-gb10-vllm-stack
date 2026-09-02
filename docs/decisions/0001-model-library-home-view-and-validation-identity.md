@@ -20,6 +20,8 @@
   (the operator owns whether the configured cold root is a suitable
   independent failure domain)
 
+> **Superseded in part by [ADR 0017](./0017-release-spec-is-the-release-contract.md) (2026-09-02).** Decisions 4–5 and 7 no longer bind live expected identity to schema-1 seals; the rest of this ADR stands.
+
 ## Context
 
 Pulsar is intended to use aggregate Spark storage as a federated catalog. A
