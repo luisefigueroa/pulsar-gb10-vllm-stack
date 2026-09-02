@@ -519,6 +519,28 @@ class ReleaseSpecTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseSpecError, "spec_id"):
             verify_spec(document)
 
+    def test_duplicate_keys_are_rejected_on_load(self) -> None:
+        text = GOLDEN_MEASURED.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            top = pathlib.Path(tmp) / "dup-top.json"
+            # A second, valid "state" after the first: last-key-wins parsers accept it.
+            top.write_text(text.rstrip().rstrip("}") + ',\n  "state": "measured"\n}\n', encoding="utf-8")
+            with self.assertRaisesRegex(ReleaseSpecError, "duplicate key 'state'"):
+                load_spec(top)
+            nested = pathlib.Path(tmp) / "dup-nested.json"
+            nested.write_text(
+                text.replace('"fabric": "local",', '"fabric": "local",\n      "fabric": "local",', 1),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ReleaseSpecError, "duplicate key 'fabric'"):
+                load_spec(nested)
+            result = subprocess.run(
+                [sys.executable, "-m", "release_spec", "verify", str(top)],
+                cwd=str(REPO_ROOT), capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("duplicate key", result.stderr)
+
     def test_canonical_round_trip(self) -> None:
         spec = verify_spec(self.measured)
         again = verify_spec(json.loads(pretty_json_bytes(spec)))

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -49,17 +50,23 @@ def run_cli(
     args: list[str],
     *,
     repo: pathlib.Path | None = None,
+    env_extra: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, str(CLI)]
     if repo is not None:
         cmd.extend(["--repo-root", str(repo)])
     cmd.extend(args)
+    env = dict(os.environ)
+    env.pop("COLUMNS", None)
+    if env_extra:
+        env.update(env_extra)
     return subprocess.run(
         cmd,
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -174,9 +181,17 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertIn("stable", listed.stdout)
         verified = run_cli(["verify", spec["spec_id"]], repo=repo)
         self.assertEqual(verified.returncode, 0, msg=verified.stderr)
-        self.assertIn(f"spec_id={spec['spec_id']}", verified.stdout)
-        self.assertIn("state=released", verified.stdout)
-        self.assertIn("review=stable", verified.stdout)
+        self.assertIn(spec["spec_id"], verified.stdout)
+        self.assertRegex(verified.stdout, r"state\s+released")
+        self.assertRegex(verified.stdout, r"review\s+stable since ")
+        # Narrow terminals: no uncontrolled long lines (AGENTS.md CLI rule).
+        for args in (["list"], ["verify", spec["spec_id"]]):
+            narrow = run_cli(args, repo=repo, env_extra={"COLUMNS": "40"})
+            self.assertEqual(narrow.returncode, 0, msg=narrow.stderr)
+            lines = narrow.stdout.splitlines()
+            self.assertTrue(lines)
+            self.assertTrue(all(len(line) <= 40 for line in lines), narrow.stdout)
+            self.assertIn(spec["spec_id"], "".join(line.strip() for line in lines))
         shown = run_cli(["show", spec["spec_id"]], repo=repo)
         self.assertEqual(shown.returncode, 0, msg=shown.stderr)
         self.assertEqual(
