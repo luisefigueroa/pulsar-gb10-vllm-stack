@@ -1,0 +1,25 @@
+{
+  "accelerators_per_node": 1,
+  "architectures": [
+    "aarch64",
+    "x86_64"
+  ],
+  "display_name": "TESTGPU",
+  "gpu_name": "NVIDIA TESTGPU",
+  "kind": "pulsar-platform-reference",
+  "memory": {
+    "cold_start_footprint_slack": 0.92,
+    "hard_floor_available_gib": 50,
+    "launch_spike_gib": 3,
+    "min_os_buffer_gib": 8,
+    "model": "unified",
+    "overhead_gib_default": 10,
+    "preflight_warn_available_gib": 10
+  },
+  "platform_id": "test-other",
+  "rdma": {
+    "min_active_links_for_qualify": 1,
+    "verbs_device": "/dev/infiniband/uverbs9"
+  },
+  "schema_version": 1
+}

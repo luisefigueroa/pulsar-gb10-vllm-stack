@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import stat
 import sys
@@ -20,6 +21,8 @@ def main() -> int:
 
     target = Path(sys.argv[1])
     source_doctor = Path(sys.argv[2])
+    real_repo = source_doctor.resolve().parent.parent
+    platform_py = real_repo / "scripts" / "platform_reference.py"
     scripts = target / "scripts"
     bins = target / "bin"
     scripts.mkdir(parents=True)
@@ -27,22 +30,32 @@ def main() -> int:
     shutil.copy2(source_doctor, scripts / "doctor.sh")
 
     (scripts / "lib.sh").write_text(
-        r'''#!/usr/bin/env bash
+        """#!/usr/bin/env bash
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HF_CACHE="${HF_CACHE:?fixture HF_CACHE required}"
-HARD_FLOOR_AVAILABLE_GIB=4
+_platform_shell=$(python3 PLATFORM_PY export-shell) || {
+  printf '[%s] ERROR: platform reference is unavailable\\n' \\
+    "${SCRIPT_NAME:-pulsar}" >&2
+  return 1 2>/dev/null || exit 1
+}
+eval "$_platform_shell"
+unset _platform_shell
+MIN_OS_BUFFER_GIB="${MIN_OS_BUFFER_GIB:-$PULSAR_MIN_OS_BUFFER_GIB}"
+HARD_FLOOR_AVAILABLE_GIB="${HARD_FLOOR_AVAILABLE_GIB:-$PULSAR_HARD_FLOOR_AVAILABLE_GIB}"
+LAUNCH_SPIKE_GIB="${LAUNCH_SPIKE_GIB:-$PULSAR_LAUNCH_SPIKE_GIB}"
+OVERHEAD_GIB_DEFAULT="${OVERHEAD_GIB_DEFAULT:-$PULSAR_OVERHEAD_GIB_DEFAULT}"
 PULSAR_SSH=/bin/false
 PULSAR_SSH_OPTS=()
 CLUSTER_TOPOLOGY_COUNT="${PULSAR_TEST_TOPOLOGY_COUNT:-1}"
 CLUSTER_TOPOLOGY_SSH_TRUSTED=0
-print_hanging() { printf '%s%s\n' "$1" "$2"; }
+print_hanging() { printf '%s%s\\n' "$1" "$2"; }
 api_auth_curl_args() { local -n args_ref="$1"; args_ref=(); }
-mem_available_gib_local() { printf '16\n'; }
+mem_available_gib_local() { printf '16\\n'; }
 disk_free_gib() {
   df -BG "$1" | awk 'NR == 2 {gsub(/G/, "", $4); print $4}'
 }
 load_cluster_topology() { return 0; }
-''',
+""".replace("PLATFORM_PY", shlex.quote(str(platform_py))),
         encoding="utf-8",
     )
 

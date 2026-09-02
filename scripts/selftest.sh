@@ -21,6 +21,10 @@ run() {
 run "status advisory policy" "$REPO_DIR/scripts/selftest-status-gate.sh"
 run "container names" "$REPO_DIR/scripts/selftest-container-names.sh"
 run "N-node topology + exact profile subset" "$REPO_DIR/scripts/selftest-topology.sh"
+run "platform reference schema" \
+  python3 "$REPO_DIR/scripts/testlib/test_platform_reference.py"
+run "platform reference probe selection" \
+  "$REPO_DIR/scripts/selftest-platform-reference.sh"
 run "launch-plan and serving-probe contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_launch_plan.py"
 run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust.sh"
@@ -198,7 +202,8 @@ run "guided CLI uses plain node language" bash -c '
   grep -Fq "tput setaf 2" "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "NO_COLOR" "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "detect-fabric.sh\" --json" "'"$REPO_DIR"'/scripts/doctor.sh"
-  grep -Fq "GB10 systems discovered, but cluster membership is not confirmed." "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "PULSAR_PLATFORM_DISPLAY_NAME" "'"$REPO_DIR"'/scripts/doctor.sh"
+  grep -Fq "systems discovered, but cluster membership is not confirmed." "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "Next: run ./pulsar wizard and confirm cluster discovery" "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "no confirmed topology manifest" "'"$REPO_DIR"'/scripts/doctor.sh"
   grep -Fq "detect-fabric.sh --write-topology" "'"$REPO_DIR"'/scripts/doctor.sh"

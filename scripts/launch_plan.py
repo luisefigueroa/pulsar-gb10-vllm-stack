@@ -36,6 +36,17 @@ import re
 import sys
 from typing import Any
 
+try:
+    from scripts.platform_reference import (
+        PlatformReferenceError,
+        load_current_platform,
+    )
+except ModuleNotFoundError:
+    from platform_reference import (  # type: ignore[no-redef]
+        PlatformReferenceError,
+        load_current_platform,
+    )
+
 PLAN_SCHEMA_VERSION = 1
 PROBE_SCHEMA_VERSION = 1
 RANK_SPEC_SCHEMA_VERSION = 1
@@ -809,10 +820,14 @@ def serving_rank_probe_from_node_probe(
     def add(level: str, check_id: str, message: str) -> None:
         checks.append({"level": level, "id": check_id, "message": message})
 
-    if gpu == "NVIDIA GB10":
+    try:
+        expected_gpu = load_current_platform()["gpu_name"]
+    except PlatformReferenceError as exc:
+        fail(str(exc))
+    if gpu == expected_gpu:
         add("ok", "gpu", f"GPU {gpu}")
     else:
-        add("fail", "gpu", f"GPU '{gpu}' (want NVIDIA GB10)")
+        add("fail", "gpu", f"GPU '{gpu}' (want {expected_gpu})")
     if docker_ok and docker_nvidia:
         add("ok", "docker_nvidia", "Docker NVIDIA ready")
     elif docker_ok:

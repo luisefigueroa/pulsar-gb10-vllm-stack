@@ -71,7 +71,7 @@ confirm membership and do not construct topology.
 
 | Requirement | Notes |
 |-------------|--------|
-| **NVIDIA GB10** | `nvidia-smi --query-gpu=name --format=csv,noheader` → `NVIDIA GB10` (sm_121). Preflight enforces this on every exact active rank. |
+| **NVIDIA GB10** | `nvidia-smi --query-gpu=name --format=csv,noheader` → `NVIDIA GB10` (sm_121). Preflight enforces this on every exact active rank. Probe constants live in [PLATFORMS.md](./PLATFORMS.md). |
 | **Driver + CUDA 13 host stack** | Validated: driver **580.173.02**, CUDA **13.0** (host toolkit 13.0.3). |
 | **Docker + NVIDIA Container Toolkit** | `docker info` must show the **nvidia** runtime. Default host runtime can stay `runc`. |
 | **GPU containers work** | `docker run --rm --gpus all <cuda-image> nvidia-smi` |

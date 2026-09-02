@@ -106,9 +106,9 @@ check_node() {
       'import json,sys; print(json.load(sys.stdin).get("gpu") or "")')
     runtime=$(printf '%s' "$probe_json" | python3 -c \
       'import json,sys; p=json.load(sys.stdin); print("1" if p.get("docker_nvidia") else "0")')
-    [ "$gpu" = "NVIDIA GB10" ] \
+    [ "$gpu" = "$PULSAR_GPU_NAME" ] \
       && ok "rank $rank: GPU $gpu" \
-      || bad "rank $rank: GPU '$gpu' (want NVIDIA GB10)"
+      || bad "rank $rank: GPU '$gpu' (want ${PULSAR_GPU_NAME})"
     [ "$runtime" = 1 ] \
       && ok "rank $rank: Docker NVIDIA ready" \
       || bad "rank $rank: Docker NVIDIA runtime/CDI missing"
@@ -117,7 +117,8 @@ check_node() {
   fi
   rm -f "$probe_file"
 
-  node_exec "$rank" "test -e /dev/infiniband/uverbs0" 2>/dev/null \
+  node_exec "$rank" "test -e $(printf '%q' "$PULSAR_RDMA_VERBS_DEVICE")" \
+    2>/dev/null \
     && ok "rank $rank: /dev/infiniband present" \
     || bad "rank $rank: /dev/infiniband missing"
 
@@ -129,7 +130,9 @@ check_node() {
 
   avail_kb=$(node_exec "$rank" \
     "awk '/MemAvailable/{print \$2}' /proc/meminfo" 2>/dev/null || true)
-  if [ "${avail_kb:-0}" -ge 104857600 ]; then
+  warn_kb=$(awk -v g="${PULSAR_PREFLIGHT_WARN_AVAILABLE_GIB}" \
+    'BEGIN { printf "%.0f", g * 1048576 }')
+  if [ "${avail_kb:-0}" -ge "$warn_kb" ]; then
     ok "rank $rank: $((avail_kb / 1048576)) GiB available"
   else
     warn "rank $rank: only $(( ${avail_kb:-0} / 1048576)) GiB available"
