@@ -588,6 +588,8 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
                             "cache_root": str(self.root / "cache-0"),
                             "hub_path": str(hub),
                             "state": "complete",
+                            "home_class": "occupancy",
+                            "occupancy": True,
                             "bytes": inventory["manifest"]["total_bytes"],
                             "primary": True,
                         }
@@ -701,6 +703,8 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
                             "cache_root": str(self.root / "cache-0"),
                             "hub_path": str(hub),
                             "state": "complete",
+                            "home_class": "occupancy",
+                            "occupancy": True,
                             "bytes": inventory["manifest"]["total_bytes"],
                             "primary": True,
                         }

@@ -107,14 +107,14 @@ assert cat["schema_version"] == 2
 assert cat["topology_id"] == "topo-test-001"
 models = {m["model_id"]: m for m in cat["models"]}
 q = models["Qwen/Qwen3-1.7B"]
-assert q["validation"] == "receipt-occupancy", q
-assert q["duplicate"] is True
+assert q["validation"] == "unbound-complete", q
+assert q["duplicate"] is False
 assert q["has_primary"] is False
 assert "qwen3-1.7b-2node" in q["profiles"]
 nano = models["nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"]
 assert nano["validation"] == "unvalidated"
 assert nano["duplicate"] is False
-assert nano["has_primary"] is True
+assert nano["has_primary"] is False
 assert "/mnt/Models" not in json.dumps(cat)
 PY
 then
@@ -131,11 +131,23 @@ set -e
 assert_eq "resolve duplicate without primary fails" "$rc" "1"
 assert_true "resolve error mentions cleanup" grep -q "cleanup-recommend\|duplicate" "$STATE/resolve.err"
 
+# Explicit occupancy-class fixture for primary and hot-lifecycle tests below.
+python3 - <<PY
+import json
+from pathlib import Path
+homes = json.loads(Path("$STATE/homes.json").read_text())
+for home in homes:
+    if home.get("state") == "complete":
+        home["home_class"] = "occupancy"
+        home["occupancy"] = True
+Path("$STATE/authorized-homes.json").write_text(json.dumps(homes), encoding="utf-8")
+PY
+
 # with primary override
 python3 "$PY" build \
   --topology-id topo-test-001 \
   --models-dir "$STATE/models" \
-  --homes-json "$STATE/homes.json" \
+  --homes-json "$STATE/authorized-homes.json" \
   --primary "Qwen/Qwen3-1.7B=node-b" \
   --output "$STATE/catalog2.json" >/dev/null 2>&1
 
@@ -143,10 +155,14 @@ python3 "$PY" resolve --catalog "$STATE/catalog2.json" --json qwen3-1.7b-2node >
 home_node=$(python3 -c 'import json; print(json.load(open("'"$STATE/resolve.ok"'"))["home"]["node_id"])')
 assert_eq "resolve uses primary node-b" "$home_node" "node-b"
 
-# cleanup-recommend lists qwen
+# cleanup-recommend lists unbound raw trees with no false relocate command.
 recs=$(python3 "$PY" cleanup-recommend --catalog "$STATE/catalog.json" --json)
-python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["recommendations"]; assert d["recommendations"][0]["model_id"]=="Qwen/Qwen3-1.7B"' <<<"$recs" \
-  && ok "cleanup-recommend lists duplicate" || not_ok "cleanup-recommend lists duplicate"
+python3 -c 'import json,sys; d=json.load(sys.stdin); rows=d["recommendations"]; q=next(x for x in rows if x["model_id"]=="Qwen/Qwen3-1.7B"); assert not q["select_commands"]; assert q["reacquire_commands"]' <<<"$recs" \
+  && ok "cleanup-recommend lists unreceipted trees" || not_ok "cleanup-recommend lists unreceipted trees"
+
+duplicate_recs=$(python3 "$PY" cleanup-recommend --catalog "$STATE/catalog2.json" --json)
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert any(x["model_id"]=="Qwen/Qwen3-1.7B" for x in d["recommendations"])' <<<"$duplicate_recs" \
+  && ok "cleanup-recommend lists occupancy duplicates" || not_ok "cleanup-recommend lists occupancy duplicates"
 
 # CLI wrapper local-only path needs topology — skip full refresh; smoke --help
 assert_true "model-library.sh help" bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'Model library'"

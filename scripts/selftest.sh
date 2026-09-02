@@ -113,6 +113,8 @@ run "model library persistent-primary contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_primary.py"
 run "model library atomic catalog transaction contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_catalog_transaction.py"
+run "model library unbound-tree public admission contracts" \
+  python3 "$REPO_DIR/scripts/testlib/test_model_library_unbound_admission.py"
 run "model library hot-budget contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_model_library_hot_budget.py"
 run "model library health and legacy-repair contracts" \

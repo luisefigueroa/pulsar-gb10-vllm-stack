@@ -104,6 +104,7 @@ class ModelLibraryHealthContracts(unittest.TestCase):
         duplicate: bool = False,
         stale_primary: bool = False,
         selected_primary: bool = False,
+        unbound_reason: str | None = None,
     ) -> None:
         revision = "a" * 40
         homes = [{
@@ -114,6 +115,10 @@ class ModelLibraryHealthContracts(unittest.TestCase):
             "cache_root": "/private/cache-a",
             "hub_path": "/private/cache-a/hub/models--Fixture--Tiny",
             "state": "complete",
+            "home_class": (
+                "unbound-complete" if unbound_reason else "occupancy"
+            ),
+            "occupancy": unbound_reason is None,
             "active": True,
             "bytes": 8,
             "primary": False,
@@ -127,10 +132,14 @@ class ModelLibraryHealthContracts(unittest.TestCase):
                 "cache_root": "/private/cache-b",
                 "hub_path": "/private/cache-b/hub/models--Fixture--Tiny",
                 "state": "complete",
+                "home_class": "occupancy",
+                "occupancy": True,
                 "active": True,
                 "bytes": 8,
                 "primary": False,
             })
+        if unbound_reason:
+            homes[0]["unbound_reason"] = unbound_reason
         selections = []
         if selected_primary:
             selections = [{
@@ -155,8 +164,18 @@ class ModelLibraryHealthContracts(unittest.TestCase):
                 "identity_key": f"Fixture/Tiny@{revision}",
                 "homes": homes,
                 "profiles": ["tiny-profile"],
-                "profile_validation": [],
-                "validation": "receipt-occupancy",
+                "profile_validation": [{
+                    "profile": "tiny-profile",
+                    "profile_status": "untested",
+                    "identity_status": (
+                        "unbound-complete"
+                        if unbound_reason
+                        else "receipt-occupancy"
+                    ),
+                }],
+                "validation": (
+                    "unbound-complete" if unbound_reason else "receipt-occupancy"
+                ),
             }],
         }
         self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
@@ -222,6 +241,34 @@ class ModelLibraryHealthContracts(unittest.TestCase):
         self.write_catalog(stale_primary=True)
         report = self.health()
         self.assertIn("primary-selection-stale", {x["code"] for x in report["issues"]})
+
+    def test_unreceipted_complete_tree_is_visible_but_not_a_home(self) -> None:
+        self.write_scan({
+            "schema_version": 1,
+            "kind": model_library.HOT_HEALTH_SCAN_KIND,
+            "rank": 0,
+            "node_id": self.node_id,
+            "hot_root": str(self.hot_root),
+            "status": "ok",
+            "instances": [],
+            "errors": [],
+        })
+        self.write_catalog(unbound_reason="missing-receipt")
+        report = self.health()
+        model = report["models"][0]
+        self.assertEqual(model["validation"], "unbound-complete")
+        self.assertEqual(model["home_ranks"], [])
+        self.assertIsNone(model["primary"]["rank"])
+        issue = next(
+            item
+            for item in report["issues"]
+            if item["code"] == "unbound-complete-no-receipt"
+        )
+        self.assertIn("no download receipt", issue["detail"])
+        self.assertEqual(
+            issue["remediation"]["command"],
+            "scripts/model-library.sh cleanup-recommend",
+        )
 
     def test_invalid_and_topology_stale_catalogs_are_visible(self) -> None:
         self.write_scan({

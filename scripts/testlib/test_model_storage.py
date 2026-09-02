@@ -338,6 +338,39 @@ class ModelStorageContracts(unittest.TestCase):
         )
         self.assertEqual(mismatch["state"], "available")
 
+    def test_unbound_complete_tree_is_not_offered_for_preparation(self) -> None:
+        report = healthy_report()
+        report["state"] = "attention"
+        report["models"][0]["validation"] = "unbound-complete"
+        report["models"][0]["home_ranks"] = []
+        report["models"][0]["primary"] = {
+            "mode": "unavailable",
+            "status": "missing",
+            "rank": None,
+        }
+        report["hot_instances"] = []
+        report["issues"] = [{
+            "code": "unbound-complete-no-receipt",
+            "detail": "complete tree has no download receipt",
+            "remediation": {
+                "command": "scripts/model-library.sh cleanup-recommend",
+            },
+        }]
+
+        check = model_storage.preparation_check(report, serving_profiles(), 0)
+        self.assertEqual(check["state"], "blocked")
+        self.assertEqual(check["candidates"], [])
+        self.assertIn("no current primary", " ".join(check["blockers"]))
+        detail = capture(
+            model_storage.render_detail,
+            report,
+            serving_profiles(),
+            0,
+            width=56,
+        )
+        self.assertIn("complete files without receipt and occupancy", normalized(detail))
+        self.assertIn("Preparation blocked", detail)
+
     def test_preparation_preview_exposes_policy_and_claim_boundaries(self) -> None:
         output = capture(
             model_storage.render_preparation,
@@ -372,6 +405,45 @@ class ModelStorageContracts(unittest.TestCase):
             report, serving_profiles(), "qwen3.8-27b-fp8-2node"
         )
         self.assertEqual(missing["state"], "needs-preparation")
+
+    def test_multi_rank_home_outside_serving_ranks_blocks_with_exact_recovery(self) -> None:
+        report = healthy_report()
+        report["models"][0]["home_ranks"] = [2]
+        report["models"][0]["primary"]["rank"] = 2
+        report["hot_instances"] = []
+
+        check = model_storage.serving_preparation_check(
+            report, serving_profiles(), "qwen3.8-27b-fp8-2node"
+        )
+        self.assertEqual(check["state"], "blocked")
+        self.assertEqual(check["home_rank"], 2)
+        self.assertEqual(check["target_ranks"], [0, 1])
+        self.assertIn("outside", " ".join(check["blockers"]))
+        self.assertEqual(
+            check["relocation_options"],
+            [
+                "scripts/model-library.sh home relocate qwen3.8-27b-fp8-2node --node 0 --yes",
+                "scripts/model-library.sh home relocate qwen3.8-27b-fp8-2node --node 1 --yes",
+            ],
+        )
+        self.assertEqual(
+            check["remediation"],
+            [
+                "scripts/model-library.sh catalog refresh",
+                "scripts/model-library.sh prepare qwen3.8-27b-fp8-2node --backend copy --transport ssh-roce --copy-streams 8 --yes",
+            ],
+        )
+        self.assertNotIn("prepare_transport", check)
+        preview = capture(
+            model_storage.render_serving_preparation, check, width=56
+        )
+        prose = normalized(preview)
+        self.assertIn("Choose one relocation destination", prose)
+        self.assertIn("Then refresh and prepare", prose)
+        self.assertIn("relocate qwen3.8-27b-fp8-2node --node 0 --yes", prose)
+        self.assertIn("catalog refresh", prose)
+        self.assertIn("copy-streams 8 --yes", prose)
+        self.assertTrue(all(len(line) <= 56 for line in preview.splitlines()))
 
     def test_one_node_serving_check_requires_the_home_rank(self) -> None:
         profiles = serving_profiles()

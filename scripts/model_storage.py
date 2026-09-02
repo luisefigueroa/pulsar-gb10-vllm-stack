@@ -225,6 +225,7 @@ def _validation_label(value: object) -> str:
     labels = {
         "expected-unverified": "lab identity expected (retired)",
         "receipt-occupancy": "receipt and occupancy identity",
+        "unbound-complete": "complete files without receipt and occupancy",
         "unvalidated": "identity not checked",
         "missing": "not present",
         "match": "historical identity match",
@@ -272,6 +273,36 @@ def model_instances(
     )
 
 
+def multi_rank_home_geometry_blocker(
+    profile: str, home_rank: int, target_ranks: list[int]
+) -> str:
+    serving = ", ".join(str(rank) for rank in target_ranks)
+    return (
+        f"durable home rank {home_rank} is outside {profile} serving ranks "
+        f"({serving}); relocate the home before preparation"
+    )
+
+
+def multi_rank_home_geometry_relocation_options(
+    profile: str, target_ranks: list[int]
+) -> list[str]:
+    return [
+        (
+            "scripts/model-library.sh home relocate "
+            f"{profile} --node {rank} --yes"
+        )
+        for rank in target_ranks
+    ]
+
+
+def multi_rank_home_geometry_remediation(profile: str) -> list[str]:
+    return [
+        "scripts/model-library.sh catalog refresh",
+        "scripts/model-library.sh prepare "
+        f"{profile} --backend copy --transport ssh-roce --copy-streams 8 --yes",
+    ]
+
+
 def preparation_check(
     report: dict[str, Any],
     profiles: dict[str, Any],
@@ -291,11 +322,15 @@ def preparation_check(
     primary_current = primary.get("status") == "match" and isinstance(
         primary.get("rank"), int
     )
+    placement_current = report["catalog"].get("topology_compatible") is True
     if not primary_current:
         blockers.append("no current primary durable home is available")
 
     model_profiles = set(model.get("profiles") or [])
     candidates: list[dict[str, Any]] = []
+    geometry_blockers: list[str] = []
+    geometry_relocation_options: list[str] = []
+    geometry_remediation: list[str] = []
     identity_mismatch = False
     matched_serving_profile = False
     for profile in profiles.get("models") or []:
@@ -328,6 +363,26 @@ def preparation_check(
             blockers.append(
                 "one-node serving must use the durable-home node; "
                 "choose that node"
+            )
+            continue
+        if (
+            int(profile["nodes"]) > 1
+            and placement_current
+            and isinstance(primary.get("rank"), int)
+            and int(primary["rank"]) not in target_ranks
+        ):
+            geometry_blockers.append(
+                multi_rank_home_geometry_blocker(
+                    profile["id"], int(primary["rank"]), target_ranks
+                )
+            )
+            geometry_relocation_options.extend(
+                multi_rank_home_geometry_relocation_options(
+                    profile["id"], target_ranks
+                )
+            )
+            geometry_remediation.extend(
+                multi_rank_home_geometry_remediation(profile["id"])
             )
             continue
         candidate["target_ranks"] = target_ranks
@@ -369,6 +424,8 @@ def preparation_check(
             blockers.append(
                 "no serving profile is available for this catalog entry"
             )
+    if not candidates and geometry_blockers:
+        blockers.extend(geometry_blockers)
     if blockers:
         candidates = []
     return {
@@ -381,6 +438,12 @@ def preparation_check(
         "home_rank": primary.get("rank") if primary_current else None,
         "candidates": sorted(candidates, key=lambda item: item["profile"]),
         "blockers": blockers,
+        "relocation_options": (
+            geometry_relocation_options
+            if geometry_blockers and not candidates
+            else []
+        ),
+        "remediation": geometry_remediation if geometry_blockers and not candidates else [],
     }
 
 
@@ -429,10 +492,40 @@ def serving_preparation_check(
             "blockers": [
                 "the cached catalog does not contain one exact entry for this profile"
             ],
+            "relocation_options": [],
+            "remediation": [],
+        }
+    model = models[indexes[0]]
+    primary = model.get("primary") or {}
+    home_rank = primary.get("rank")
+    if (
+        nodes > 1
+        and report["catalog"].get("topology_compatible") is True
+        and primary.get("status") == "match"
+        and isinstance(home_rank, int)
+        and home_rank not in targets
+    ):
+        return {
+            "schema_version": 1,
+            "kind": "pulsar-model-serving-preparation-check",
+            "state": "blocked",
+            "profile": profile_id,
+            "model_id": model.get("model_id"),
+            "revision": model.get("revision"),
+            "expected_manifest": model.get("expected_manifest"),
+            "home_rank": home_rank,
+            "target_ranks": targets,
+            "blockers": [
+                multi_rank_home_geometry_blocker(profile_id, home_rank, targets)
+            ],
+            "relocation_options": multi_rank_home_geometry_relocation_options(
+                profile_id, targets
+            ),
+            "remediation": multi_rank_home_geometry_remediation(profile_id),
         }
     check = preparation_check(
         report,
-        profiles,
+        {"models": [profile]},
         indexes[0],
         target_ranks_by_profile={profile_id: targets},
     )
@@ -458,6 +551,8 @@ def serving_preparation_check(
             "blockers": check.get("blockers") or [
                 "distributed catalog preparation is unavailable"
             ],
+            "relocation_options": check.get("relocation_options") or [],
+            "remediation": check.get("remediation") or [],
         }
     return {
         "schema_version": 1,
@@ -474,6 +569,8 @@ def serving_preparation_check(
         "transfer": candidate["transfer"],
         "copy_streams": candidate["copy_streams"],
         "blockers": [],
+        "relocation_options": [],
+        "remediation": [],
     }
 
 
@@ -695,6 +792,26 @@ def render_detail(
                 initial_indent="  ",
                 subsequent_indent="  ",
             )
+        if check.get("relocation_options"):
+            term.emit(
+                "Choose one relocation destination:",
+                initial_indent="  ",
+                subsequent_indent="  ",
+            )
+            for command in check["relocation_options"]:
+                term.emit(
+                    command,
+                    initial_indent="    ",
+                    subsequent_indent="      ",
+                )
+        if check.get("remediation"):
+            term.emit("Then:", initial_indent="  ", subsequent_indent="  ")
+            for command in check["remediation"]:
+                term.emit(
+                    command,
+                    initial_indent="    ",
+                    subsequent_indent="      ",
+                )
 
 
 def render_findings(report: dict[str, Any], width: int | None = None) -> None:
@@ -877,6 +994,23 @@ def render_serving_preparation(
                 initial_indent="  ",
                 subsequent_indent="  ",
             )
+        if check.get("relocation_options"):
+            term.blank()
+            term.emit("Choose one relocation destination:")
+            for command in check["relocation_options"]:
+                term.emit(
+                    command,
+                    initial_indent="  ",
+                    subsequent_indent="    ",
+                )
+        if check.get("remediation"):
+            term.emit("Then refresh and prepare:")
+            for command in check["remediation"]:
+                term.emit(
+                    command,
+                    initial_indent="  ",
+                    subsequent_indent="    ",
+                )
         return
     if check.get("state") == "needs-preparation":
         term.emit(
