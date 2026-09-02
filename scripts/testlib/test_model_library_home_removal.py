@@ -636,6 +636,71 @@ class HomeRemovalContracts(HomeRemovalFixture, unittest.TestCase):
         )
         self.assertFalse(entry["on_disk"])
 
+    def test_public_cli_removes_unreceipted_synthetic_revision(self) -> None:
+        synthetic = "cold-123456789abc"
+        snapshot = self.hub / "snapshots" / self.revision
+        snapshot.rename(self.hub / "snapshots" / synthetic)
+        (self.hub / "refs" / "main").write_text(
+            synthetic + "\n",
+            encoding="utf-8",
+        )
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        catalog["primary_selections"] = []
+        entry = catalog["models"][0]
+        entry["revision"] = synthetic
+        entry["identity_key"] = f"{self.model_id}@{synthetic}"
+        entry["validation"] = "unbound-complete"
+        entry["duplicate"] = False
+        entry["has_primary"] = False
+        home = entry["homes"][0]
+        home["home_class"] = "unbound-complete"
+        home["occupancy"] = False
+        home["unbound_reason"] = "non-exact-revision"
+        home["primary"] = False
+        home["bytes"] = model_library.tree_bytes(self.hub)
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+        environment, _ids_file, _metadata_file = self._cli_environment()
+        removed = self._run_library_cli(
+            environment,
+            "home", "remove", "qwen3-1.7b", "--yes",
+        )
+
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertIn("durable home removal  REMOVED", removed.stdout)
+        self.assertFalse(self.hub.exists())
+
+    def test_unbound_complete_attachment_blocks_removal(self) -> None:
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        catalog["primary_selections"] = []
+        entry = catalog["models"][0]
+        entry["has_primary"] = False
+        home = entry["homes"][0]
+        home["home_class"] = "unbound-complete"
+        home["occupancy"] = False
+        home["unbound_reason"] = "missing-receipt"
+        home["primary"] = False
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        library_dir = self.root / "attached-unbound-library"
+        store = library_dir / "home-occupancy"
+        store.mkdir(parents=True)
+        (store / "fixture.json").write_text(
+            json.dumps(
+                {
+                    "model_id": self.model_id,
+                    "snapshot_revision": self.revision,
+                    "durable_home_path": str(self.hub),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        plan = self._plan(library_dir=library_dir)
+
+        self.assertEqual(plan["state"], "blocked")
+        self.assertIn("current-home-attached", self._kinds(plan))
+        self.assertTrue(self.hub.is_dir())
+
     def test_exclusive_removal_lock_blocks_supported_readers_and_launchers(self) -> None:
         environment, _ids_file, _metadata_file = self._cli_environment()
         lock_path = pathlib.Path(environment["MODEL_LIBRARY_DIR"]) / "lifecycle.lock"

@@ -134,6 +134,44 @@ esac
         self.assertIn("cleanup-recommend", prepare.stderr)
         self.assertIn("home add --revision", prepare.stderr)
 
+    def test_model_id_with_multiple_unbound_revisions_names_cleanup(self) -> None:
+        homes = []
+        for rank, revision in enumerate(("b" * 40, "c" * 40)):
+            homes.append(
+                {
+                    "model_id": self.model_id,
+                    "revision": revision,
+                    "identity_key": f"{self.model_id}@{revision}",
+                    "rank": rank,
+                    "node_id": f"node-{rank}",
+                    "hostname": f"fixture-{rank}",
+                    "ssh_host": "local",
+                    "cache_root": f"/cache/{rank}",
+                    "hub_path": f"/cache/{rank}/hub/model",
+                    "state": "complete",
+                    "home_class": "unbound-complete",
+                    "occupancy": False,
+                    "unbound_reason": "missing-receipt",
+                    "active": False,
+                    "bytes": 1,
+                }
+            )
+        catalog = model_library.build_catalog(
+            topology_id="d" * 64,
+            homes=homes,
+            profiles=[],
+        )
+
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            "multiple unbound complete revisions.*cleanup-recommend",
+        ):
+            model_library.resolve_entry(
+                catalog,
+                model_id=self.model_id,
+                cold_root=None,
+            )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

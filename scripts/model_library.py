@@ -1427,6 +1427,20 @@ def find_model_entry(
             )
         if complete:
             return complete[0]
+        unbound = [
+            entry
+            for entry in entries
+            if entry.get("model_id") == model_id
+            and unbound_complete_homes(entry)
+        ]
+        if len(unbound) > 1:
+            fail(
+                f"resolve: model {model_id} has multiple unbound complete "
+                "revisions; run scripts/model-library.sh cleanup-recommend, "
+                "then use an exact model_id@commit for recovery"
+            )
+        if unbound:
+            return unbound[0]
         missing = [entry for entry in entries if entry.get("model_id") == model_id]
         if len(missing) == 1:
             return missing[0]
@@ -2722,6 +2736,18 @@ def classify_library_readiness(
         if "duplicate complete homes without primary" in text:
             return {
                 "reason": "duplicate-home",
+                "remediation": cleanup,
+                "detail": text,
+            }
+        if "complete tree has no download receipt" in text:
+            return {
+                "reason": "unreceipted-tree",
+                "remediation": cleanup,
+                "detail": text,
+            }
+        if "multiple unbound complete revisions" in text:
+            return {
+                "reason": "unbound-revisions",
                 "remediation": cleanup,
                 "detail": text,
             }
@@ -5727,7 +5753,7 @@ def _recognized_incomplete_hub_occupancy(
     return "incomplete-snapshot", None
 
 
-def _incomplete_home_attachment_blockers(
+def _unbound_home_attachment_blockers(
     library_dir: str | pathlib.Path | None,
     *,
     hub_path: str,
@@ -5736,7 +5762,7 @@ def _incomplete_home_attachment_blockers(
     rank: int,
     node_id: str,
 ) -> list[dict[str, Any]]:
-    """Fail closed unless the live directory has no current-home attachment."""
+    """Fail without fallback unless an unbound tree has no attachment."""
     if library_dir in (None, ""):
         return [
             {
@@ -5744,7 +5770,7 @@ def _incomplete_home_attachment_blockers(
                 "rank": rank,
                 "node_id": node_id,
                 "detail": (
-                    "cannot prove this incomplete occupancy has no current-home "
+                    "cannot prove this unbound tree has no current-home "
                     "attachment; pass the site library directory to the planner"
                 ),
             }
@@ -5789,8 +5815,8 @@ def _incomplete_home_attachment_blockers(
                     "node_id": node_id,
                     "detail": (
                         "a current-home attachment still names this live "
-                        "directory; incomplete occupancy retirement refuses "
-                        "attached or receipt-bound homes"
+                        "directory; unbound-tree retirement refuses attached "
+                        "or receipt-bound homes"
                     ),
                 }
             )
@@ -6749,9 +6775,9 @@ def plan_home_removal(
                 "detail": item.get("detail"),
             }
         )
-    if occupancy_class == INCOMPLETE_HUB_OCCUPANCY:
+    if not target.get("selected_is_occupancy"):
         blockers.extend(
-            _incomplete_home_attachment_blockers(
+            _unbound_home_attachment_blockers(
                 library_dir,
                 hub_path=str(home["hub_path"]),
                 model_id=str(target["model_id"]),

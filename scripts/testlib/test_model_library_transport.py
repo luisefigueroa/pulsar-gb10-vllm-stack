@@ -221,6 +221,31 @@ class LibraryReadinessClassification(unittest.TestCase):
             "scripts/model-library.sh home add qwen3.8-27b-fp8 --yes",
         )
 
+    def test_unreceipted_tree_names_cleanup_instead_of_refresh(self) -> None:
+        profile_info = model_library.parse_profile_conf_any(
+            self.models_dir / f"{self.NEMOTRON}.conf"
+        )
+        assert profile_info is not None
+        home = self._home(profile_info, rank=0)
+        home["home_class"] = "unbound-complete"
+        home["occupancy"] = False
+        home["unbound_reason"] = "missing-receipt"
+        self._write(
+            model_library.build_catalog(
+                topology_id=self.topology_id,
+                homes=[home],
+                profiles=[profile_info],
+            )
+        )
+
+        report = self._classify(self.NEMOTRON)
+        self.assertEqual(report["reason"], "unreceipted-tree")
+        self.assertEqual(
+            report["remediation"],
+            "scripts/model-library.sh cleanup-recommend",
+        )
+        self.assertNotIn("catalog refresh", report["remediation"])
+
     def test_duplicate_homes_name_cleanup_recommend(self) -> None:
         profile_info = model_library.parse_profile_conf_any(
             self.models_dir / f"{self.NEMOTRON}.conf"

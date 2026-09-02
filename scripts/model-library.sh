@@ -2579,7 +2579,7 @@ cmd_home_check() {
 cmd_home_remove() {
   acquire_cold_storage_shared_lock
   local query="" node_selector="" allow_last_home=0 allow_unarchived=0 yes=0 plan state
-  local result_file
+  local detach_required result_file
   while [ $# -gt 0 ]; do
     case "$1" in
       --node)
@@ -2611,29 +2611,33 @@ cmd_home_remove() {
       --library-dir "$LIBRARY_DIR" \
     || die "home removal: cold archive re-verify failed; occupancy was not detached and the home was not removed"
 
-  local detach_model detach_revision detach_rank detach_node detach_path
-  detach_model=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["model_id"])')
-  detach_revision=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["revision"])')
-  if [ -z "$detach_revision" ] || [ "$detach_revision" = unknown ]; then
-    die "home removal: live inspection did not bind one exact revision; nothing was changed"
+  detach_required=$(printf '%s' "$plan" | python3 -c \
+    'import json,sys; print(1 if json.load(sys.stdin)["target"].get("selected_is_occupancy") else 0)')
+  if [ "$detach_required" = 1 ]; then
+    local detach_model detach_revision detach_rank detach_node detach_path
+    detach_model=$(printf '%s' "$plan" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["target"]["model_id"])')
+    detach_revision=$(printf '%s' "$plan" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["target"]["revision"])')
+    if [ -z "$detach_revision" ] || [ "$detach_revision" = unknown ]; then
+      die "home removal: live inspection did not bind one exact revision; nothing was changed"
+    fi
+    detach_rank=$(printf '%s' "$plan" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["target"]["home"]["rank"])')
+    detach_node=$(printf '%s' "$plan" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["target"]["home"]["node_id"])')
+    detach_path=$(printf '%s' "$plan" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["target"]["home"]["hub_path"])')
+    python3 "$SOURCE_ATTESTED_PY" detach-current-home \
+        --library-dir "$LIBRARY_DIR" \
+        --model-id "$detach_model" \
+        --revision "$detach_revision" \
+        --rank "$detach_rank" \
+        --node-id "$detach_node" \
+        --durable-home-path "$detach_path" \
+        >/dev/null \
+      || die "home removal: current-home attachment store is unusable; receipts were not changed and the home was not removed"
   fi
-  detach_rank=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["rank"])')
-  detach_node=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["node_id"])')
-  detach_path=$(printf '%s' "$plan" | python3 -c \
-    'import json,sys; print(json.load(sys.stdin)["target"]["home"]["hub_path"])')
-  python3 "$SOURCE_ATTESTED_PY" detach-current-home \
-      --library-dir "$LIBRARY_DIR" \
-      --model-id "$detach_model" \
-      --revision "$detach_revision" \
-      --rank "$detach_rank" \
-      --node-id "$detach_node" \
-      --durable-home-path "$detach_path" \
-      >/dev/null \
-    || die "home removal: current-home attachment store is unusable; receipts were not changed and the home was not removed"
 
   result_file=$(mktemp "${TMPDIR:-/tmp}/pulsar-home-removed.XXXXXX")
   trap 'rm -f "$result_file"' RETURN
