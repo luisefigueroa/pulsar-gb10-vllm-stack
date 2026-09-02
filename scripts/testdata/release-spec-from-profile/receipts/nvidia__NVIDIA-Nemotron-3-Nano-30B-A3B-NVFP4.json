@@ -1,0 +1,25 @@
+{
+  "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
+  "observed_manifest": {
+    "file_count": 2,
+    "files": [
+      {
+        "path": "config.json",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "size": 12
+      },
+      {
+        "path": "model.safetensors",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "size": 8
+      }
+    ],
+    "kind": "model-library-snapshot-manifest",
+    "manifest_id": "728b2fb745706af9a444c088e50be88000755096c81ff999c844e79215d23e72",
+    "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
+    "schema_version": 1,
+    "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "total_bytes": 20
+  },
+  "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

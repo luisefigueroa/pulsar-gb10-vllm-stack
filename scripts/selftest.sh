@@ -29,6 +29,8 @@ run "release spec schema (ADR 0017 Stage 1)" \
   python3 -m unittest discover -s "$REPO_DIR/release_spec/tests" -p 'test_*.py'
 run "baseline-v1 policy and evaluator" \
   python3 "$REPO_DIR/scripts/testlib/test_baseline_v1.py"
+run "release spec from-profile generator (ADR 0017 WP1.3)" \
+  python3 "$REPO_DIR/scripts/testlib/test_release_spec_generate.py"
 run "launch-plan and serving-probe contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_launch_plan.py"
 run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust.sh"

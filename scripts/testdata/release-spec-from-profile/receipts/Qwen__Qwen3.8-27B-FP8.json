@@ -1,0 +1,25 @@
+{
+  "model_id": "Qwen/Qwen3.8-27B-FP8",
+  "observed_manifest": {
+    "file_count": 2,
+    "files": [
+      {
+        "path": "config.json",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "size": 12
+      },
+      {
+        "path": "model.safetensors",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "size": 8
+      }
+    ],
+    "kind": "model-library-snapshot-manifest",
+    "manifest_id": "1288a2567cef455295a9f74b34510681ddc44aab2cc98b3c2ac375a714da7f6a",
+    "model_id": "Qwen/Qwen3.8-27B-FP8",
+    "schema_version": 1,
+    "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "total_bytes": 20
+  },
+  "snapshot_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

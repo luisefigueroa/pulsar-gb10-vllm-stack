@@ -1,0 +1,129 @@
+{
+  "gaps": [
+    {
+      "class": "expected",
+      "field": "baselines",
+      "reason": "WP1.3 generator emits empty baselines",
+      "section": "baselines",
+      "source": "none"
+    },
+    {
+      "class": "expected",
+      "field": "evidence",
+      "reason": "WP1.3 generator emits empty evidence",
+      "section": "evidence",
+      "source": "none"
+    },
+    {
+      "class": "expected",
+      "field": "measurements",
+      "reason": "WP1.3 generator emits empty measurements",
+      "section": "measurements",
+      "source": "none"
+    },
+    {
+      "class": "expected",
+      "field": "FAMILY_RECOMMENDED",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:FAMILY_RECOMMENDED"
+    },
+    {
+      "class": "expected",
+      "field": "FIRST_RUN_CANDIDATE",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:FIRST_RUN_CANDIDATE"
+    },
+    {
+      "class": "expected",
+      "field": "MODEL_SERVING_RELEASE_ID",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:MODEL_SERVING_RELEASE_ID"
+    },
+    {
+      "class": "expected",
+      "field": "NOTES",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:NOTES"
+    },
+    {
+      "class": "expected",
+      "field": "PORT",
+      "reason": "deployment overlay (ADR 0017 decision 5)",
+      "section": "profile",
+      "source": "conf:PORT"
+    },
+    {
+      "class": "expected",
+      "field": "PROFILE_FAMILY",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:PROFILE_FAMILY"
+    },
+    {
+      "class": "expected",
+      "field": "PROFILE_PURPOSE",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:PROFILE_PURPOSE"
+    },
+    {
+      "class": "expected",
+      "field": "RECOMMENDED_SPEC",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:RECOMMENDED_SPEC"
+    },
+    {
+      "class": "expected",
+      "field": "SERVED_NAME",
+      "reason": "deployment overlay (ADR 0017 decision 5)",
+      "section": "profile",
+      "source": "conf:SERVED_NAME"
+    },
+    {
+      "class": "expected",
+      "field": "STATUS",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:STATUS"
+    },
+    {
+      "class": "expected",
+      "field": "VARIANT_LABEL",
+      "reason": "display-only profile field; not spec review.status",
+      "section": "profile",
+      "source": "conf:VARIANT_LABEL"
+    },
+    {
+      "class": "expected",
+      "field": "review",
+      "reason": "measured specs carry an empty review object",
+      "section": "review",
+      "source": "none"
+    },
+    {
+      "class": "lossy",
+      "field": "MIN_RAILS_PER_PAIR",
+      "reason": "topology extra; spec geometry uses fabric, not this field",
+      "section": "profile",
+      "source": "conf:MIN_RAILS_PER_PAIR"
+    },
+    {
+      "class": "lossy",
+      "field": "TOPOLOGY_CLASS",
+      "reason": "topology extra; spec geometry uses fabric, not this field",
+      "section": "profile",
+      "source": "conf:TOPOLOGY_CLASS"
+    }
+  ],
+  "generated": true,
+  "kind": "pulsar-release-spec-gap-report",
+  "profile": "qwen3-1.7b-2node",
+  "schema_version": 1,
+  "spec_decode": false,
+  "spec_id": "7bee0830a246b4f583e0293ac55b5c8b11f867738bfe1f54bd683ef1b222cc57"
+}
