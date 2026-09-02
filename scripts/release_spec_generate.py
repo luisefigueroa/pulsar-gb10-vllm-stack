@@ -2,8 +2,10 @@
 """Build a measured ADR 0017 release spec from a current profile plus receipt.
 
 Bash sources the conf and passes the same projected fields as
-``append_loaded_profile_contract_args``. This module owns mapping, verification,
-and JSON output. It does not write ``releases/``, the catalog, or profile status.
+``append_loaded_profile_contract_args``. Profile-to-identity mapping lives in
+``scripts/release_consumer.py`` (lab imports stack). This module owns
+verification, gap reports, and JSON output. It does not write ``releases/``,
+the catalog, or profile status.
 """
 
 from __future__ import annotations
@@ -21,33 +23,31 @@ if str(_REPO_ROOT) not in sys.path:
 
 from release_spec import (  # noqa: E402
     ReleaseSpecError,
-    build_snapshot_manifest,
-    identity_block,
-    normalize_container_env,
-    normalize_engine_args,
     pretty_json_bytes,
     spec_id_for,
     verify_spec,
 )
-from release_spec.schema import (  # noqa: E402
-    FABRIC_LOCAL,
-    FABRIC_ROCE_V2,
-    FORBIDDEN_ENGINE_FLAGS,
-    KIND,
-    SCHEMA_VERSION,
-)
+from release_spec.schema import KIND, SCHEMA_VERSION  # noqa: E402
 
 try:
-    from scripts.model_identity import IMAGE_DIGEST_RE
     from scripts.model_library_receipt import (
         SourceAttestedAcquisitionError,
         validate_source_attested_acquisition_receipt,
     )
+    from scripts.release_consumer import (
+        ReleaseConsumerError,
+        argv_from_identity,
+        build_profile_identity,
+    )
 except ModuleNotFoundError:  # pragma: no cover - direct script invocation
-    from model_identity import IMAGE_DIGEST_RE  # type: ignore[no-redef]
     from model_library_receipt import (  # type: ignore[no-redef]
         SourceAttestedAcquisitionError,
         validate_source_attested_acquisition_receipt,
+    )
+    from release_consumer import (  # type: ignore[no-redef]
+        ReleaseConsumerError,
+        argv_from_identity,
+        build_profile_identity,
     )
 
 TRUSTED_OUTPUT_DIRS = ("releases", "models")
@@ -59,19 +59,6 @@ GAP_REPORT_KIND = "pulsar-release-spec-gap-report"
 GAP_REPORT_SCHEMA_VERSION = 1
 GAP_CLASSES = frozenset({"expected", "lossy", "blocking"})
 GAP_ENTRY_KEYS = ("class", "field", "reason", "section", "source")
-STRUCTURED_PROFILE_FLAGS = (
-    "--gpu-memory-utilization",
-    "--pipeline-parallel-size",
-    "--tensor-parallel-size",
-    "-pp",
-    "-tp",
-)
-PARALLELISM_CANONICAL = {
-    "--tensor-parallel-size": "--tensor-parallel-size",
-    "-tp": "--tensor-parallel-size",
-    "--pipeline-parallel-size": "--pipeline-parallel-size",
-    "-pp": "--pipeline-parallel-size",
-}
 EXPECTED_EMPTY_SECTIONS = (
     ("measurements", "WP1.3 generator emits empty measurements"),
     ("baselines", "WP1.3 generator emits empty baselines"),
@@ -139,14 +126,6 @@ def load_json(path: str | pathlib.Path) -> Any:
         raise
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         fail(f"{path}: {exc}")
-
-
-def profile_image_digest(image: str) -> str:
-    """Return ``sha256:<hex>`` from a conf IMAGE pin; fail if unpinned."""
-    match = IMAGE_DIGEST_RE.search(image or "")
-    if match is None:
-        fail("profile image must be pinned by @sha256 digest")
-    return "sha256:" + match.group(1)
 
 
 def _gap(
@@ -259,61 +238,6 @@ def build_gap_report(
     }
 
 
-def _flag_and_value(item: str, index: int, tokens: list[str]) -> tuple[str, str, int] | None:
-    for flag in STRUCTURED_PROFILE_FLAGS:
-        if item == flag:
-            if index + 1 >= len(tokens):
-                fail(f"profile {item} requires a value")
-            return flag, tokens[index + 1], index + 2
-        prefix = flag + "="
-        if item.startswith(prefix):
-            return flag, item[len(prefix) :], index + 1
-    return None
-
-
-def strip_profile_parallelism(engine_args: list[str]) -> tuple[int, int, list[str]]:
-    """Mirror ``_profile_parallelism``: tp/pp default 1; GPU_MEM_UTIL must not repeat."""
-    values = {"--tensor-parallel-size": 1, "--pipeline-parallel-size": 1}
-    seen: set[str] = set()
-    remaining: list[str] = []
-    index = 0
-    while index < len(engine_args):
-        item = engine_args[index]
-        matched = _flag_and_value(item, index, engine_args)
-        if matched is None:
-            remaining.append(item)
-            index += 1
-            continue
-        flag, raw, next_index = matched
-        canonical = PARALLELISM_CANONICAL.get(flag, flag)
-        if canonical in seen:
-            fail(f"profile repeats structured engine argument {canonical}")
-        seen.add(canonical)
-        if canonical in values:
-            try:
-                parsed = int(raw)
-            except ValueError:
-                fail(f"profile {item} must be an integer")
-            if parsed < 1:
-                fail(f"profile {item} must be positive")
-            values[canonical] = parsed
-        elif canonical == "--gpu-memory-utilization":
-            fail("profile engine_args duplicate GPU_MEM_UTIL")
-        index = next_index
-    return (
-        values["--tensor-parallel-size"],
-        values["--pipeline-parallel-size"],
-        remaining,
-    )
-
-
-def _forbidden_flag(token: str) -> str | None:
-    for flag in FORBIDDEN_ENGINE_FLAGS:
-        if token == flag or token.startswith(flag + "="):
-            return flag
-    return None
-
-
 def _load_receipt_identity(
     receipt_path: str | pathlib.Path | None,
 ) -> tuple[str | None, str | None, list[dict[str, Any]] | None, list[dict[str, str]]]:
@@ -384,205 +308,23 @@ def build_spec_from_profile(
         receipt_path
     )
     blocking.extend(receipt_blocking)
-    if receipt_model is not None and receipt_model != model_id:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="model_id",
-                source="receipt",
-                reason="receipt model_id differs from the profile MODEL",
-            )
-        )
-
-    digest: str | None = None
-    try:
-        digest = profile_image_digest(image)
-    except ReleaseSpecGenerateError as exc:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="image",
-                source="conf:IMAGE",
-                reason=str(exc),
-            )
-        )
-
-    if spec_decode and not spec_decode_args:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="engine_args",
-                source="conf:SPEC_DECODE_ARGS",
-                reason="profile has no SPEC_DECODE_ARGS; refusing --spec-decode",
-            )
-        )
-
-    remaining: list[str] | None = None
-    tensor_parallel = 1
-    pipeline_parallel = 1
-    try:
-        normalized = normalize_engine_args(list(engine_args), path="identity.engine_args")
-        tensor_parallel, pipeline_parallel, remaining = strip_profile_parallelism(
-            normalized
-        )
-    except (ReleaseSpecError, ReleaseSpecGenerateError) as exc:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="engine_args",
-                source="conf:ENGINE_ARGS",
-                reason=str(exc),
-            )
-        )
-        remaining = None
-
-    def _reject_forbidden(tokens: list[str]) -> str | None:
-        for token in tokens:
-            flag = _forbidden_flag(token)
-            if flag is not None:
-                return flag
-        return None
-
-    if remaining is not None:
-        forbidden = _reject_forbidden(remaining)
-        if forbidden is not None:
-            blocking.append(
-                _gap(
-                    class_name="blocking",
-                    section="identity",
-                    field="engine_args",
-                    source="conf:ENGINE_ARGS",
-                    reason=(
-                        f"profile ENGINE_ARGS must not include {forbidden} "
-                        "(geometry or deployment overlay owns this flag)"
-                    ),
-                )
-            )
-            remaining = None
-        elif any(
-            token == "--gpu-memory-utilization"
-            or token.startswith("--gpu-memory-utilization=")
-            for token in remaining
-        ):
-            blocking.append(
-                _gap(
-                    class_name="blocking",
-                    section="identity",
-                    field="engine_args",
-                    source="conf:ENGINE_ARGS",
-                    reason="profile engine_args duplicate GPU_MEM_UTIL",
-                )
-            )
-            remaining = None
-
-    if not isinstance(gpu_mem_util, str) or not gpu_mem_util:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="engine_args",
-                source="conf:GPU_MEM_UTIL",
-                reason="GPU_MEM_UTIL must be a non-empty string",
-            )
-        )
-        remaining = None
-
-    if remaining is not None:
-        remaining = [
-            *remaining,
-            "--gpu-memory-utilization",
-            gpu_mem_util,
-        ]
-        if spec_decode and spec_decode_args:
-            remaining.extend(list(spec_decode_args))
-        try:
-            remaining = normalize_engine_args(
-                remaining, path="identity.engine_args"
-            )
-        except ReleaseSpecError as exc:
-            blocking.append(
-                _gap(
-                    class_name="blocking",
-                    section="identity",
-                    field="engine_args",
-                    source="conf:ENGINE_ARGS",
-                    reason=str(exc),
-                )
-            )
-            remaining = None
-
-    if remaining is not None:
-        forbidden = _reject_forbidden(remaining)
-        if forbidden is not None:
-            blocking.append(
-                _gap(
-                    class_name="blocking",
-                    section="identity",
-                    field="engine_args",
-                    source="conf:ENGINE_ARGS",
-                    reason=(
-                        f"profile ENGINE_ARGS must not include {forbidden} "
-                        "(geometry or deployment overlay owns this flag)"
-                    ),
-                )
-            )
-            remaining = None
-
-    if remaining is not None and tensor_parallel * pipeline_parallel != nodes:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="geometry",
-                source="conf:NODES",
-                reason="tp * pp must equal nodes",
-            )
-        )
-
-    env_tokens: list[str] | None
-    try:
-        env_tokens = normalize_container_env(
-            list(container_env), path="identity.container_env"
-        )
-    except ReleaseSpecError as exc:
-        blocking.append(
-            _gap(
-                class_name="blocking",
-                section="identity",
-                field="container_env",
-                source="conf:CONTAINER_ENV",
-                reason=str(exc),
-            )
-        )
-        env_tokens = None
-
-    manifest: dict[str, Any] | None = None
-    if files is not None and revision is not None and not any(
-        item["field"] == "model_id" and item["class"] == "blocking" for item in blocking
-    ):
-        try:
-            manifest = build_snapshot_manifest(
-                model_id=model_id,
-                snapshot_revision=revision,
-                files=files,
-            )
-        except ReleaseSpecError as exc:
-            blocking.append(
-                _gap(
-                    class_name="blocking",
-                    section="identity",
-                    field="snapshot_manifest",
-                    source="receipt",
-                    reason=str(exc),
-                )
-            )
-
+    identity, identity_blocking = build_profile_identity(
+        model_id=model_id,
+        image=image,
+        nodes=nodes,
+        gpu_mem_util=gpu_mem_util,
+        engine_args=list(engine_args),
+        container_env=list(container_env),
+        spec_decode_args=list(spec_decode_args),
+        spec_decode=spec_decode,
+        platform_id=platform_id,
+        snapshot_revision=revision,
+        files=files,
+        receipt_model_id=receipt_model,
+    )
+    blocking.extend(identity_blocking)
     gaps.extend(blocking)
-    if blocking:
+    if identity is None:
         return None, build_gap_report(
             profile=profile,
             spec_decode=spec_decode,
@@ -590,37 +332,8 @@ def build_spec_from_profile(
             gaps=gaps,
         )
 
-    assert remaining is not None
-    assert env_tokens is not None
-    assert digest is not None
-    assert manifest is not None
-    assert revision is not None
-
-    identity = {
-        "model_id": model_id,
-        "snapshot_revision": revision,
-        "snapshot_manifest": manifest,
-        "engine_args": remaining,
-        "container_env": env_tokens,
-        "image": {"digest": digest},
-        "geometry": {
-            "platform_id": platform_id,
-            "nodes": nodes,
-            "tp": tensor_parallel,
-            "pp": pipeline_parallel,
-            "fabric": FABRIC_LOCAL if nodes == 1 else FABRIC_ROCE_V2,
-        },
-    }
     try:
-        identity = identity_block(identity)
         spec_id = spec_id_for(identity)
-        argv = [
-            *identity["engine_args"],
-            "--tensor-parallel-size",
-            str(identity["geometry"]["tp"]),
-            "--pipeline-parallel-size",
-            str(identity["geometry"]["pp"]),
-        ]
         document = {
             "schema_version": SCHEMA_VERSION,
             "kind": KIND,
@@ -629,7 +342,7 @@ def build_spec_from_profile(
             "identity": identity,
             "launch_contract": {
                 "stack_version": stack_version,
-                "argv": argv,
+                "argv": argv_from_identity(identity),
             },
             "measurements": [],
             "baselines": [],
@@ -637,7 +350,7 @@ def build_spec_from_profile(
             "review": {},
         }
         spec = verify_spec(document)
-    except ReleaseSpecError as exc:
+    except (ReleaseSpecError, ReleaseConsumerError) as exc:
         gaps.append(
             _gap(
                 class_name="blocking",

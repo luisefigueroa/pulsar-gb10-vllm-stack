@@ -8,6 +8,7 @@
 #   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
 #   ./pulsar status [model] [--node ID] → scripts/status.sh (optional completion)
 #   ./pulsar doctor [--json] → scripts/doctor.sh
+#   ./pulsar release …       → scripts/release.sh
 #   ./pulsar help
 #
 # Existing scripts under scripts/ remain the canonical implementations;
@@ -33,6 +34,8 @@ Usage:
   ./pulsar status [model] [--node ID]
                                 Probe containers + API (may run a completion)
   ./pulsar doctor [--json]     Read-only host, cluster, and library diagnostics
+  ./pulsar release verify|show|list [spec_id]
+                                Read released specs under releases/
   ./pulsar configure cold-storage
                                 Interactive cold recovery storage workflow
   ./pulsar configure cold-storage show|plan|set|disable|archive-jobs
@@ -104,6 +107,9 @@ case "$cmd" in
     ;;
   doctor)
     exec "$DOCTOR_SCRIPT" "$@"
+    ;;
+  release)
+    exec "$REPO_DIR/scripts/release.sh" "$@"
     ;;
   configure)
     topic="${1:-}"

@@ -104,7 +104,9 @@ scripts.
    If the stack's computed launch contract (argv, image, geometry)
    differs from the spec's `launch_contract`, the stack hides that spec's
    `review.status` only. The serving row stays listed and startable when
-   operational checks pass.
+   operational checks pass. Clarified at Stage 3: the computed launch
+   contract compared here also includes the container environment, because
+   the spec identity hashes it.
 
 6. **The spec manifest is the reviewed expected file list.** The model
    library verifies trees against it. This deliberately reverses ADR 0012
