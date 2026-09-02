@@ -10,6 +10,8 @@
 - **Amended by:**
   [ADR 0004](./0004-model-serving-release-validation.md)
 
+> **Superseded in part by [ADR 0017](./0017-release-spec-is-the-release-contract.md) (2026-09-02).** The object-model paragraph that names ADR 0004 objects as the issuance model no longer applies as target architecture; the rest of this ADR stands.
+
 ## Context
 
 The distributed model catalog, its serving integration, the model/runtime

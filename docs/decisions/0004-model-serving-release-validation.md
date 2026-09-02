@@ -56,6 +56,8 @@
   [ADR 0003](./0003-explicit-model-preparation-transport.md), and
   [ADR 0009](./0009-no-launch-trust-mode-axis.md)
 
+> **Superseded in part by [ADR 0017](./0017-release-spec-is-the-release-contract.md) (2026-09-02).** The five separately persisted object roles, the issuance/staging path, the supersession graph, the decision ladder (`Untested` … `Validated` / `Superseded`), and `MODEL_SERVING_RELEASE_ID` are accepted **target** no longer. They remain the **live implementation** until ADR 0017 Stage 4. Display-only status, the four-part subject, and fail-without-fallback admission are unchanged. This is the SIM-01 revisit this ADR invited.
+
 ## Context
 
 Pulsar currently uses profile `STATUS=tested*`, reviewed expected-model seals,

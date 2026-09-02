@@ -9,6 +9,8 @@
   [ADR 0008](./0008-breaking-compatibility-window.md),
   [ADR 0010](./0010-operator-consumes-catalog.md)
 
+> **Superseded in part by [ADR 0017](./0017-release-spec-is-the-release-contract.md) (2026-09-02).** Decision 2's operator-facing status names no longer apply (not the no-trust-mode rule); the rest of this ADR stands.
+
 ## Context
 
 SWI-728 proposed that operators explicitly choose a **reviewed/qualified** or

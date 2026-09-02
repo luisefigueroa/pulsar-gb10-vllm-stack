@@ -242,6 +242,8 @@ Profiles may set `MODEL_SERVING_RELEASE_ID` only when the complete reviewed
 object graph is published in the same change. Catalog display consumes the
 verified decision for that binding. Start does not use it as permission.
 
+Accepted target: one release spec is the contract ([ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)); this section remains the live implementation until that staged cutover.
+
 ## 11. Qualification scopes
 
 | Scope | Question |
