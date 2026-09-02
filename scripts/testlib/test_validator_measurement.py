@@ -827,6 +827,101 @@ class ValidatorMeasurementTests(unittest.TestCase):
         self.assertEqual(document["completion"], "incomplete")
         self.assertEqual(document["reason"], "no-samples")
 
+    def test_identity_measurement_requires_accounted_files_on_complete(self) -> None:
+        document = measurement.build_identity_measurement(
+            completion="complete",
+            reason="completed",
+            payload=fixture.complete_identity_payload(),
+        )
+        self.assertEqual(document["operation"], "verify-snapshot-manifest")
+        self.assertEqual(document["program"], "validate/verify_snapshot_manifest.py")
+        self.assertEqual(document["verify-snapshot-manifest"]["matched_file_count"], 2)
+        invalid = json.loads(json.dumps(document))
+        invalid["verify-snapshot-manifest"]["matched_file_count"] = 1
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(invalid)
+        extra = fixture.complete_identity_payload(extra_file_count=1)
+        extra_document = measurement.build_identity_measurement(
+            completion="complete",
+            reason="completed",
+            payload=extra,
+        )
+        self.assertEqual(extra_document["verify-snapshot-manifest"]["extra_file_count"], 1)
+        forbidden = json.loads(json.dumps(document))
+        forbidden["status"] = "pass"
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(forbidden)
+
+    def test_identity_measurement_rejects_float_and_extra_keys(self) -> None:
+        document = measurement.build_identity_measurement(
+            completion="incomplete",
+            reason="mismatch",
+            payload=fixture.complete_identity_payload(
+                matched_file_count=0,
+                mismatched_file_count=0,
+                missing_file_count=0,
+                extra_file_count=0,
+            ),
+        )
+        invalid = json.loads(json.dumps(document))
+        invalid["verify-snapshot-manifest"]["note"] = "extra"
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(invalid)
+        invalid = json.loads(json.dumps(document))
+        invalid["verify-snapshot-manifest"]["expected_file_count"] = 2.0
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(invalid)
+
+    def test_serve_smoke_complete_requires_every_phase(self) -> None:
+        document = measurement.build_serve_smoke_measurement(
+            completion="complete",
+            reason="completed",
+            payload=fixture.complete_serve_smoke_payload(),
+        )
+        self.assertEqual(document["operation"], "serve-smoke")
+        self.assertEqual(document["program"], "validate/serve_smoke.py")
+        self.assertEqual(document["serve-smoke"]["health"]["completion"], "complete")
+        invalid = json.loads(json.dumps(document))
+        invalid["serve-smoke"]["warmup"] = {
+            "completion": "incomplete",
+            "reason": "failed",
+        }
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(invalid)
+        incomplete = measurement.build_serve_smoke_measurement(
+            completion="incomplete",
+            reason="warmup-failed",
+            payload={
+                "health": dict(fixture.COMPLETE_PHASE),
+                "warmup": {"completion": "incomplete", "reason": "failed"},
+                "completion": dict(fixture.COMPLETE_PHASE),
+            },
+        )
+        self.assertEqual(incomplete["completion"], "incomplete")
+        all_complete = json.loads(json.dumps(incomplete))
+        all_complete["serve-smoke"]["warmup"] = dict(fixture.COMPLETE_PHASE)
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(all_complete)
+        forbidden = json.loads(json.dumps(document))
+        forbidden["decision"] = "pass"
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(forbidden)
+
+    def test_serve_smoke_rejects_unknown_reason_and_extra_phase_fields(self) -> None:
+        document = measurement.build_serve_smoke_measurement(
+            completion="complete",
+            reason="completed",
+            payload=fixture.complete_serve_smoke_payload(),
+        )
+        invalid = json.loads(json.dumps(document))
+        invalid["serve-smoke"]["health"]["reason"] = "not-a-reason"
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(invalid)
+        extra = json.loads(json.dumps(document))
+        extra["serve-smoke"]["health"]["detail"] = "x"
+        with self.assertRaises(measurement.ValidatorMeasurementError):
+            measurement.validate_measurement(extra)
+
 
 if __name__ == "__main__":
     unittest.main()
