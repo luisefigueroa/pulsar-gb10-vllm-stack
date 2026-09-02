@@ -16,6 +16,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
+from scripts import model_library_receipt  # noqa: E402
 
 
 class ColdAdoptSafetyTests(unittest.TestCase):
@@ -78,6 +79,27 @@ class ColdAdoptSafetyTests(unittest.TestCase):
         self.assertTrue(
             (self.dest / "snapshots" / revision / "model.safetensors").is_file()
         )
+        homes = model_library.scan_hub_cache(
+            self.cache_root,
+            rank=0,
+            node_id="node-0",
+            hostname="fixture-0",
+            ssh_host="local",
+        )
+        catalog = model_library.build_catalog(
+            topology_id="a" * 64,
+            homes=homes,
+            profiles=[],
+        )
+        model_library_receipt.classify_catalog_occupancy(
+            catalog, self.root / "library"
+        )
+        model_library.refresh_catalog_profile_identity(catalog)
+        model_library._apply_catalog_primary_policies(catalog)
+        home = catalog["models"][0]["homes"][0]
+        self.assertEqual(home["home_class"], "unbound-complete")
+        self.assertEqual(home["unbound_reason"], "non-exact-revision")
+        self.assertFalse(home["primary"])
         self.assert_no_staging()
 
     def test_plan_refuses_existing_destination_without_modification(self) -> None:

@@ -2824,9 +2824,9 @@ def classify_catalog_occupancy(
 ) -> dict[str, Any]:
     """Mark occupancy vs unbound-complete on scanned hub trees.
 
-    Sealed/legacy identities with no receipt or attachment are unchanged.
-    Download-receipt identities count only a matching occupancy attachment as
-    a resolve-home. Extra complete hub trees are unbound-complete.
+    Only a matching receipt plus occupancy attachment counts as a resolve-home.
+    Every other complete tree, including an externally populated tree or a
+    cold-adopted synthetic revision, is unbound-complete.
     """
     if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
         fail("catalog occupancy classification requires a catalog object")
@@ -2846,31 +2846,45 @@ def _classify_entry_occupancy(
     homes = entry.get("homes")
     if not isinstance(homes, list):
         return
-    if not isinstance(model_id, str) or not isinstance(revision, str):
-        return
-    if not revision or revision in {"missing", "unknown"}:
-        return
-    _validate_hf_model_id(model_id, label="catalog occupancy model_id")
-    _validate_commit(revision, label="catalog occupancy revision")
-    receipts = list_source_attested_receipts_for_revision(
-        library_dir, model_id=model_id, snapshot_revision=revision
-    )
-    attachment = load_source_attested_home_attachment(
-        library_dir, model_id=model_id, snapshot_revision=revision
-    )
-    if not receipts and attachment is None:
-        return
-    if attachment is not None and not any(
-        receipt["receipt_id"] == attachment["receipt_id"] for receipt in receipts
-    ):
-        fail("catalog occupancy attachment references a missing download receipt")
-    occupancy_count = 0
     for home in homes:
         if not isinstance(home, dict):
             fail("catalog occupancy classification requires home objects")
         if home.get("state") != "complete":
             home["occupancy"] = False
             home["home_class"] = str(home.get("state") or "partial")
+            home.pop("unbound_reason", None)
+    if not isinstance(model_id, str) or not model_id:
+        fail("catalog occupancy model_id is required")
+    _validate_hf_model_id(model_id, label="catalog occupancy model_id")
+    if (
+        not isinstance(revision, str)
+        or HF_V1_COMMIT_RE.fullmatch(revision) is None
+    ):
+        for home in homes:
+            if home.get("state") == "complete":
+                home["occupancy"] = False
+                home["home_class"] = "unbound-complete"
+                home["unbound_reason"] = "non-exact-revision"
+        return
+    receipts = list_source_attested_receipts_for_revision(
+        library_dir, model_id=model_id, snapshot_revision=revision
+    )
+    attachment = load_source_attested_home_attachment(
+        library_dir, model_id=model_id, snapshot_revision=revision
+    )
+    if attachment is not None and not any(
+        receipt["receipt_id"] == attachment["receipt_id"] for receipt in receipts
+    ):
+        fail("catalog occupancy attachment references a missing download receipt")
+    if not receipts:
+        unbound_reason = "missing-receipt"
+    elif attachment is None:
+        unbound_reason = "missing-occupancy"
+    else:
+        unbound_reason = "not-current-occupancy"
+    occupancy_count = 0
+    for home in homes:
+        if home.get("state") != "complete":
             continue
         matched = False
         if attachment is not None:
@@ -2885,7 +2899,10 @@ def _classify_entry_occupancy(
         home["occupancy"] = matched
         home["home_class"] = "occupancy" if matched else "unbound-complete"
         if matched:
+            home.pop("unbound_reason", None)
             occupancy_count += 1
+        else:
+            home["unbound_reason"] = unbound_reason
     if occupancy_count > 1:
         fail("catalog: multiple occupancy attachments resolved for one revision")
 

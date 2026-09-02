@@ -114,6 +114,11 @@ Multiple complete trees for the same identity are not alternate homes.
 Duplicate cleanup and primary selection are explicit operator actions. Catalog
 refresh never deletes bytes or silently changes placement.
 
+Every complete tree receives an explicit class. Only a tree whose receipt and
+occupancy attachment match the live directory counts as a home. An externally
+populated tree, a cold-adopted tree, or an old cached tree with no such
+authority is `unbound-complete`; there is no complete-tree fallback.
+
 ## 6. Preparation and runtime views
 
 **prepare** creates verified local files for an exact profile. It does not
@@ -135,6 +140,11 @@ endpoint, sufficient capacity, and the receipt-backed home. It fails without
 fallback; it does not switch to control-network copy, another rank set, another
 storage source, or another stream policy. One-rank preparation performs no
 bulk inter-rank transfer.
+
+Before capacity calculation or copying, multi-rank preparation verifies that
+the occupied home is one of the profile's exact serving ranks. If not, the
+operator relocates occupancy into those ranks, refreshes the catalog, and
+retries the same fixed preparation policy.
 
 ## 7. Verification and witnesses
 

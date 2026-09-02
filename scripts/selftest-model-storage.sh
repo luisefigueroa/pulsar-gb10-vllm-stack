@@ -179,6 +179,24 @@ assert_not_contains "$STATE/prepare-decline.out" 'experimental' \
   "preparation preview does not call the library experimental"
 echo "OK   declined confirmation leaves model files unchanged"
 
+run_view outside-geometry.json 0 $'1\n1\n6\n' "$STATE/outside-geometry.out"
+[ "$VIEW_RC" -eq 0 ]
+[ ! -s "$PREPARE_LOG" ]
+assert_contains "$STATE/outside-geometry.out" \
+  'durable home rank 2 is outside qwen3.8-27b-fp8-2node serving ranks' \
+  "out-of-geometry multi-rank home blocks preparation"
+assert_contains "$STATE/outside-geometry.out" \
+  'Choose one relocation destination' \
+  "blocked preparation labels relocation ranks as alternatives"
+assert_contains "$STATE/outside-geometry.out" \
+  'home relocate qwen3.8-27b-fp8-2node --node 0 --yes' \
+  "blocked preparation shows an exact relocation command"
+assert_contains "$STATE/outside-geometry.out" 'catalog refresh' \
+  "blocked preparation requires catalog refresh after relocation"
+assert_contains "$STATE/outside-geometry.out" 'copy-streams 8 --yes' \
+  "blocked preparation preserves the supported retry policy"
+echo "OK   invalid multi-rank home geometry never invokes prepare"
+
 run_view unprepared.json 0 $'1\n1\ny\n6\n' "$STATE/prepare-success.out" 0 "" 0 \
   "$STATE/reports/healthy.json"
 [ "$VIEW_RC" -eq 0 ]

@@ -131,6 +131,7 @@ class RelocationGeometryContracts(unittest.TestCase):
                             "state": "complete",
                             "home_class": "unbound-complete",
                             "occupancy": False,
+                            "unbound_reason": "missing-occupancy",
                         }
                     ],
                 }
@@ -141,6 +142,39 @@ class RelocationGeometryContracts(unittest.TestCase):
         command = recommendation["select_commands"][0]
         self.assertIn("--profile PROFILE", command)
         self.assertIn(identity, command)
+
+    def test_unreceipted_cleanup_requires_remove_then_reacquire(self) -> None:
+        identity = "Qwen/Qwen3.8-27B-FP8@" + fixture.COMMIT
+        catalog = {
+            "models": [
+                {
+                    "model_id": "Qwen/Qwen3.8-27B-FP8",
+                    "identity_key": identity,
+                    "revision": fixture.COMMIT,
+                    "profiles": ["qwen3.8-27b-fp8-2node"],
+                    "duplicate": False,
+                    "homes": [
+                        {
+                            "rank": 2,
+                            "node_id": "node-2",
+                            "state": "complete",
+                            "home_class": "unbound-complete",
+                            "occupancy": False,
+                            "unbound_reason": "missing-receipt",
+                        }
+                    ],
+                }
+            ]
+        }
+        recommendation = model_library.cleanup_recommend(catalog)[0]
+        self.assertEqual(recommendation["select_commands"], [])
+        self.assertEqual(len(recommendation["removal_commands"]), 1)
+        self.assertIn("home check", recommendation["removal_commands"][0]["check"])
+        self.assertIn("home remove", recommendation["removal_commands"][0]["remove"])
+        self.assertEqual(len(recommendation["reacquire_commands"]), 2)
+        self.assertIn("--revision <selector> --plan --json", recommendation["reacquire_commands"][0])
+        self.assertIn("<exact-commit-from-plan>", recommendation["reacquire_commands"][1])
+        self.assertNotIn("home relocate", " ".join(recommendation["reacquire_commands"]))
 
 
 if __name__ == "__main__":

@@ -102,6 +102,13 @@ class CatalogTransactionContracts(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _remove_receipt_and_occupancy(self) -> None:
+        for store_name in ("download-receipts", "home-occupancy"):
+            store = self.library_dir / store_name
+            if store.is_dir():
+                for item in store.iterdir():
+                    item.unlink()
+
     def _run_build(self) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
@@ -176,6 +183,82 @@ class CatalogTransactionContracts(unittest.TestCase):
         self.assertFalse(home["occupancy"])
         self.assertEqual(home["home_class"], "unbound-complete")
         self.assertFalse(home["primary"])
+
+    def test_complete_tree_without_receipt_is_unbound_and_not_primary(self) -> None:
+        self._remove_receipt_and_occupancy()
+        self._write_homes()
+        result = self._run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stored = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        entry = self._model_entry(stored)
+        home = entry["homes"][0]
+        self.assertEqual(home["home_class"], "unbound-complete")
+        self.assertEqual(home["unbound_reason"], "missing-receipt")
+        self.assertFalse(home["occupancy"])
+        self.assertFalse(home["primary"])
+        self.assertEqual(model_library.policy_complete_homes(entry), [])
+        self.assertEqual(entry["validation"], "unbound-complete")
+        self.assertEqual(
+            entry["profile_validation"][0]["identity_status"],
+            "unbound-complete",
+        )
+
+    def test_synthetic_cold_revision_is_visible_but_never_a_home(self) -> None:
+        self._remove_receipt_and_occupancy()
+        homes = self._scan_homes()
+        synthetic = "cold-123456789abc"
+        homes[0]["revision"] = synthetic
+        homes[0]["identity_key"] = f"{self.model_id}@{synthetic}"
+        self._write_homes(homes)
+        result = self._run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stored = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        entry = self._model_entry(stored)
+        home = entry["homes"][0]
+        self.assertEqual(entry["revision"], synthetic)
+        self.assertEqual(home["home_class"], "unbound-complete")
+        self.assertEqual(home["unbound_reason"], "non-exact-revision")
+        self.assertFalse(home["primary"])
+        self.assertEqual(entry["validation"], "unbound-complete")
+
+    def test_profile_prefers_unique_occupied_revision_over_active_unbound(self) -> None:
+        unbound_revision = "b" * 40
+        fixture.write_snapshot_hub(self.hub, revision=unbound_revision)
+        for attachment in (self.library_dir / "home-occupancy").glob("*.json"):
+            attachment.unlink()
+        observed = model_library.inspect_snapshot_blob_identities(
+            self.hub,
+            model_id=self.model_id,
+            revision=fixture.COMMIT,
+            allow_empty_files=True,
+        )
+        source_attested.occupy_source_attested_home(
+            self.library_dir,
+            receipt=self.receipt,
+            observed_manifest=observed["manifest"],
+            node_id=self.node_id,
+            durable_home_path=str(self.hub),
+            directory_identity=model_library.inspect_live_directory_identity(
+                self.hub
+            ),
+        )
+        self._write_homes()
+
+        result = self._run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stored = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        entries = {
+            entry["revision"]: entry
+            for entry in stored["models"]
+            if entry["model_id"] == self.model_id
+        }
+        occupied = entries[fixture.COMMIT]
+        unbound = entries[unbound_revision]
+        self.assertEqual(occupied["profiles"], [self.profile])
+        self.assertEqual(unbound["profiles"], [])
+        self.assertEqual(unbound["homes"][0]["home_class"], "unbound-complete")
+        resolved = model_library.find_model_entry(stored, profile=self.profile)
+        self.assertEqual(resolved["revision"], fixture.COMMIT)
 
     def test_corrupt_receipt_does_not_replace_prior_catalog(self) -> None:
         self._write_homes()

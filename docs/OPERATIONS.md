@@ -739,6 +739,10 @@ Download crash and retry behavior:
   receipt. Do not reconstruct occupancy without that rehash, and do not Hub
   re-download when the receipt still exists
   ([ADR 0011](./decisions/0011-portable-occupancy-and-cold-archive.md)).
+- A complete tree with no compatible receipt is also unbound-complete, but it
+  cannot be relocated into occupancy. Run `cleanup-recommend`, inspect and
+  explicitly remove the unknown tree, then use the read-only `home add
+  --revision ... --plan` and separately confirmed exact-commit acquisition.
 - Supported `home remove --yes` detaches occupancy before the
   directory mutation and keeps receipts. `home check` and a declined remove
   do not detach. If removal fails after detach, the surviving tree is
@@ -1109,6 +1113,9 @@ lifecycle lock is exclusive for the operation, so supported preparation,
 launch, catalog mutation, relocation, and home removal cannot race the copy.
 The adopted tree still has no download receipt or occupancy; catalog refresh
 therefore treats it as an unbound fill-path tree, not serving identity.
+This also applies to flat cold trees with a locally derived `cold-*` revision:
+refresh keeps them visible as unbound instead of treating that local name as a
+Hugging Face commit.
 
 `cold stage-only` is removed (ADR 0012). It cannot turn an unreceipted cold
 tree into launchable hot state. Previously created stage-only state is rejected
@@ -1187,6 +1194,18 @@ connection stagger must be at least 100 ms (the default is 150 ms); the command
 fails closed otherwise. Parallel copy currently supports a local endpoint on
 one side of the transfer. A remote-home to remote-target relay fails explicitly
 instead of silently reverting to one stream.
+
+The multi-rank home must already be one of that profile's serving ranks. Pulsar
+checks this before capacity calculation or copying. If a shared one-rank home
+is on an idle rank, move occupancy to one of the multi-rank profile's exact
+serving ranks, refresh, and retry:
+
+```bash
+scripts/model-library.sh home relocate <multi-rank-profile> --node <serving-rank> --yes
+scripts/model-library.sh catalog refresh
+scripts/model-library.sh prepare <multi-rank-profile> \
+  --backend copy --transport ssh-roce --copy-streams 8 --yes
+```
 
 The supported multi-rank preparation contract uses eight streams. Treat any
 other stream count as a new experiment and publish fresh evidence before

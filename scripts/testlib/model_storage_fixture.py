@@ -90,6 +90,11 @@ def main() -> int:
     unprepared["hot_instances"] = []
     write(root / "unprepared.json", unprepared)
 
+    outside_geometry = json.loads(json.dumps(unprepared))
+    outside_geometry["models"][0]["home_ranks"] = [2]
+    outside_geometry["models"][0]["primary"]["rank"] = 2
+    write(root / "outside-geometry.json", outside_geometry)
+
     refreshed = json.loads(json.dumps(base))
     refreshed["catalog"]["refreshed_at"] = "2026-08-12T13:00:00.000Z"
     write(root / "refreshed.json", refreshed)

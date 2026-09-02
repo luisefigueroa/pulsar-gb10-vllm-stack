@@ -125,9 +125,10 @@ Notes:
   • cold stage-only is removed (ADR 0012): self-observed cold bytes cannot
     create receipt/occupancy serving identity. Use receipt-backed home add,
     relocate, or restore followed by normal prepare.
-  • Catalog identity labels are receipt/occupancy or
-    unvalidated. Local bytes never create an ADR 0004 decision. --reviewed-identity
-    and archived combined-identity verification are retired (ADR 0012). --validated
+  • Catalog identity labels distinguish receipt/occupancy, unbound-complete,
+    and missing or unvalidated content. Local bytes never create an ADR 0004
+    decision. --reviewed-identity and archived combined-identity verification
+    are retired (ADR 0012). --validated
     is removed (ADR 0008). Status labels do not grant or deny start: prepare accepts
     fully verified receipt/occupancy content. --allow-unvalidated is removed
     (ADR 0008); drop the flag.
@@ -211,9 +212,9 @@ Notes:
     multi-rank profile requires explicit --transport ssh-control. Every library
     scope is supported.
   • prepare requires occupancy plus the download receipt file list. An unknown
-    tree without a receipt fails without fallback (ADR 0012). Use
-    home add --revision or home relocate; do not hash a self-observed tree as
-    identity.
+    tree without a receipt fails without fallback (ADR 0012). Inspect and remove
+    it before home add --revision. Use home relocate only when the compatible
+    receipt already exists; do not hash a self-observed tree as identity.
   • prepare full-verifies every rank and creates a rank-local serve witness.
     Unchanged launch checks metadata; drift visibly rehashes or fails without fallback.
   • Benchmark/probe commands are explicit experiments and permit receipt/occupancy

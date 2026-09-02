@@ -1028,6 +1028,16 @@ def _is_exact_revision(revision: Any) -> bool:
     )
 
 
+def _profile_catalog_status(
+    *, occupied: bool, unbound: bool,
+) -> str:
+    if occupied:
+        return "receipt-occupancy"
+    if unbound:
+        return "unbound-complete"
+    return "missing"
+
+
 def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
     """Validate persistent, exact-identity primary selections."""
     if value is None:
@@ -1086,33 +1096,51 @@ def normalize_primary_selections(value: Any) -> list[dict[str, str]]:
 
 
 def policy_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
-    """Homes that count for resolve/primary.
-
-    Download-receipt occupancy classification marks complete hub trees as
-    ``occupancy`` or ``unbound-complete``. Only occupancy counts as a durable
-    home. Unclassified entries keep the legacy complete-tree rule.
-    """
-    homes = [home for home in (entry.get("homes") or []) if isinstance(home, dict)]
-    classified = [
+    """Receipt-plus-occupancy homes that count for resolve and primary."""
+    return [
         home
-        for home in homes
-        if home.get("home_class") in {"occupancy", "unbound-complete"}
+        for home in (entry.get("homes") or [])
+        if isinstance(home, dict)
+        and home.get("state") == "complete"
+        and home.get("home_class") == "occupancy"
     ]
-    if classified:
-        return [
-            home
-            for home in classified
-            if home.get("home_class") == "occupancy" and home.get("state") == "complete"
-        ]
-    return [home for home in homes if home.get("state") == "complete"]
 
 
 def unbound_complete_homes(entry: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         home
         for home in (entry.get("homes") or [])
-        if isinstance(home, dict) and home.get("home_class") == "unbound-complete"
+        if isinstance(home, dict)
+        and home.get("state") == "complete"
+        and home.get("home_class") != "occupancy"
     ]
+
+
+def refresh_catalog_profile_identity(catalog: dict[str, Any]) -> None:
+    """Project receipt/occupancy classification into profile status labels."""
+    precedence = (
+        "receipt-occupancy",
+        "unbound-complete",
+        "missing",
+        "unvalidated",
+    )
+    for entry in catalog.get("models") or []:
+        occupied = bool(policy_complete_homes(entry))
+        unbound = bool(unbound_complete_homes(entry))
+        status = _profile_catalog_status(occupied=occupied, unbound=unbound)
+        profile_validation = entry.get("profile_validation") or []
+        for item in profile_validation:
+            if isinstance(item, dict):
+                item["identity_status"] = status
+        statuses = {
+            item.get("identity_status")
+            for item in profile_validation
+            if isinstance(item, dict)
+        }
+        entry["validation"] = next(
+            (candidate for candidate in precedence if candidate in statuses),
+            "unvalidated",
+        )
 
 
 def _catalog_home_identity(home: dict[str, Any]) -> tuple[int, str, str]:
@@ -1183,6 +1211,73 @@ def _apply_catalog_primary_policies(catalog: dict[str, Any]) -> None:
         _apply_entry_primary_policy(entry, selections.get(entry.get("identity_key")))
 
 
+def _profile_catalog_targets(
+    entries: list[dict[str, Any]], model_id: str
+) -> list[dict[str, Any]]:
+    model_targets = [
+        entry for entry in entries if entry.get("model_id") == model_id
+    ]
+    occupied_targets = [
+        entry for entry in model_targets if policy_complete_homes(entry)
+    ]
+    if occupied_targets:
+        # Unbound revisions must not freeze a profile whose receipt-backed
+        # home is known. Multiple occupied revisions remain explicit rather
+        # than being reduced through refs/main.
+        return occupied_targets
+    active_targets = [
+        entry
+        for entry in model_targets
+        if any(
+            home.get("active") and home.get("state") == "complete"
+            for home in entry.get("homes") or []
+        )
+    ]
+    if active_targets:
+        return active_targets
+    complete_targets = [
+        entry
+        for entry in model_targets
+        if any(
+            home.get("state") == "complete"
+            for home in entry.get("homes") or []
+        )
+    ]
+    if len(complete_targets) == 1:
+        return complete_targets
+    return model_targets
+
+
+def retarget_catalog_profiles(
+    catalog: dict[str, Any], profiles: list[dict[str, Any]]
+) -> None:
+    """Recompute profile membership from final receipt/occupancy classes."""
+    entries = catalog.get("models") or []
+    for entry in entries:
+        entry["profiles"] = []
+        entry["profile_validation"] = []
+    for profile in profiles:
+        targets = _profile_catalog_targets(entries, profile["model_id"])
+        if not targets:
+            fail(f"catalog: profile {profile['profile']} has no model entry")
+        for entry in targets:
+            entry["profiles"].append(profile["profile"])
+            entry["profile_validation"].append(
+                {
+                    "profile": profile["profile"],
+                    "profile_status": profile["status"],
+                    "identity_status": "unvalidated",
+                    "expected_model_seal_ref": None,
+                    "expected_model_seal": None,
+                    "validation_bundle": None,
+                }
+            )
+    for entry in entries:
+        entry["profiles"] = sorted(set(entry["profiles"]))
+        entry["profile_validation"].sort(key=lambda item: item["profile"])
+    refresh_catalog_profile_identity(catalog)
+
+
 def build_catalog(
     *,
     topology_id: str,
@@ -1218,6 +1313,9 @@ def build_catalog(
                 "hub_path": home["hub_path"],
                 "directory_identity": home.get("directory_identity"),
                 "state": home["state"],
+                "home_class": home.get("home_class"),
+                "occupancy": bool(home.get("occupancy")),
+                "unbound_reason": home.get("unbound_reason"),
                 "active": bool(home.get("active")),
                 "bytes": home.get("bytes") or 0,
                 "primary": False,
@@ -1226,61 +1324,15 @@ def build_catalog(
 
     for profile in profiles:
         model_id = profile["model_id"]
-        model_targets = [
-            entry for entry in by_identity.values() if entry["model_id"] == model_id
-        ]
-        # Preserve the legacy experimental interpretation of refs/main when
-        # it is unambiguous. Sealed profiles never enter this branch.
-        targets = [
-            entry
-            for entry in model_targets
-            if any(
-                home.get("active") and home.get("state") == "complete"
-                for home in entry.get("homes") or []
-            )
-        ]
-        if not targets:
-            complete_targets = [
-                entry
-                for entry in model_targets
-                if any(
-                    home.get("state") == "complete"
-                    for home in entry.get("homes") or []
-                )
-            ]
-            targets = (
-                complete_targets
-                if len(complete_targets) == 1
-                else model_targets
-            )
-        if not targets:
+        if not any(
+            entry["model_id"] == model_id for entry in by_identity.values()
+        ):
             identity = f"{model_id}@missing"
-            entry = by_identity.setdefault(
+            by_identity.setdefault(
                 identity,
                 _catalog_entry(model_id, None, identity),
             )
-            targets = [entry]
 
-        for entry in targets:
-            complete_present = any(
-                home.get("state") == "complete" for home in entry.get("homes") or []
-            )
-            status = "receipt-occupancy" if complete_present else "missing"
-            profile_state: dict[str, Any] = {
-                "profile": profile["profile"],
-                "profile_status": profile["status"],
-                "identity_status": status,
-                "expected_model_seal_ref": None,
-                "expected_model_seal": None,
-                "validation_bundle": None,
-            }
-            entry["profiles"].append(profile["profile"])
-            entry["profile_validation"].append(profile_state)
-
-    precedence = (
-        "receipt-occupancy",
-        "missing",
-    )
     models_out: list[dict[str, Any]] = []
     for identity in sorted(by_identity):
         entry = by_identity[identity]
@@ -1288,16 +1340,7 @@ def build_catalog(
         partial_homes = [h for h in entry["homes"] if h["state"] != "complete"]
         entry["homes"] = complete_homes + partial_homes
         entry["on_disk"] = bool(complete_homes)
-        statuses = {
-            item.get("identity_status") for item in entry["profile_validation"]
-        }
-        entry["validation"] = next(
-            (candidate for candidate in precedence if candidate in statuses),
-            "unvalidated",
-        )
-        entry["profiles"] = sorted(set(entry["profiles"]))
-        entry["profile_validation"].sort(key=lambda item: item["profile"])
-
+        entry["duplicate"] = len(policy_complete_homes(entry)) > 1
         override = primary_overrides.get(entry["identity_key"]) or primary_overrides.get(
             entry["model_id"]
         )
@@ -1320,7 +1363,7 @@ def build_catalog(
         _apply_entry_primary_policy(entry, selections.get(entry["identity_key"]))
         models_out.append(entry)
 
-    return {
+    catalog = {
         "schema_version": SCHEMA_VERSION,
         "refreshed_at": refreshed_at,
         "topology_id": topology_id,
@@ -1329,6 +1372,8 @@ def build_catalog(
         ),
         "models": models_out,
     }
+    retarget_catalog_profiles(catalog, profiles)
+    return catalog
 
 
 def load_catalog(path: str | pathlib.Path) -> dict[str, Any]:
@@ -1342,6 +1387,7 @@ def load_catalog(path: str | pathlib.Path) -> dict[str, Any]:
     )
     if not isinstance(data.get("models"), list):
         fail(f"{path}: models must be an array")
+    refresh_catalog_profile_identity(data)
     _apply_catalog_primary_policies(data)
     return data
 
@@ -1372,7 +1418,7 @@ def find_model_entry(
             entry
             for entry in entries
             if entry.get("model_id") == model_id
-            and any(h.get("state") == "complete" for h in entry.get("homes") or [])
+            and policy_complete_homes(entry)
         ]
         if len(complete) > 1:
             fail(
@@ -1410,11 +1456,12 @@ def catalog_primary_records(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     for entry in catalog.get("models") or []:
         identity = str(entry.get("identity_key") or "")
         present.add(identity)
+        complete = policy_complete_homes(entry)
         primary = next(
             (
                 home
-                for home in entry.get("homes") or []
-                if home.get("state") == "complete" and home.get("primary")
+                for home in complete
+                if home.get("primary")
             ),
             None,
         )
@@ -1423,11 +1470,8 @@ def catalog_primary_records(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                 "identity_key": identity,
                 "model_id": entry.get("model_id"),
                 "duplicate": bool(entry.get("duplicate")),
-                "complete_homes": sum(
-                    1
-                    for home in entry.get("homes") or []
-                    if home.get("state") == "complete"
-                ),
+                "complete_homes": len(complete),
+                "unbound_complete_trees": len(unbound_complete_homes(entry)),
                 "selection": entry.get("primary_selection") or {},
                 "primary_home": (
                     {
@@ -1449,6 +1493,7 @@ def catalog_primary_records(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                 "model_id": selection["identity_key"].rsplit("@", 1)[0],
                 "duplicate": False,
                 "complete_homes": 0,
+                "unbound_complete_trees": 0,
                 "selection": {
                     "mode": "explicit",
                     "status": "stale",
@@ -1631,7 +1676,26 @@ def resolve_entry(
                     "then explicitly select a complete home"
                 )
             if not complete:
-                if unbound_complete_homes(entry):
+                unbound = unbound_complete_homes(entry)
+                if unbound:
+                    missing_receipt = any(
+                        home.get("unbound_reason")
+                        in {
+                            None,
+                            "missing-authority",
+                            "missing-receipt",
+                            "non-exact-revision",
+                        }
+                        for home in unbound
+                    )
+                    if missing_receipt:
+                        fail(
+                            f"resolve: {entry['model_id']}: complete tree has no "
+                            "download receipt and is not a home; run "
+                            "scripts/model-library.sh cleanup-recommend, inspect "
+                            "and remove the unknown tree, then use home add "
+                            "--revision"
+                        )
                     fail(
                         f"resolve: {entry['model_id']}: complete tree is unbound; "
                         "occupy it with scripts/model-library.sh home relocate "
@@ -1799,6 +1863,7 @@ def _cleanup_recommendation(
     *,
     select_commands: list[str],
     removal_commands: list[dict[str, Any]],
+    reacquire_commands: list[str] | None = None,
     action: str,
     home_class: str | None = None,
 ) -> dict[str, Any]:
@@ -1814,6 +1879,9 @@ def _cleanup_recommendation(
         }
         if home_class is not None:
             record["home_class"] = home_class
+            record["unbound_reason"] = (
+                home.get("unbound_reason") or "missing-authority"
+            )
         projected.append(record)
     return {
         "model_id": entry["model_id"],
@@ -1822,6 +1890,7 @@ def _cleanup_recommendation(
         "selection_status": (entry.get("primary_selection") or {}).get("status"),
         "select_commands": select_commands,
         "removal_commands": removal_commands,
+        "reacquire_commands": reacquire_commands or [],
         "action": action,
     }
 
@@ -1832,6 +1901,33 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
         unbound = unbound_complete_homes(entry)
         if unbound and not entry.get("duplicate"):
             identity_arg = shlex.quote(entry["identity_key"])
+            relocatable = [
+                home
+                for home in unbound
+                if home.get("unbound_reason")
+                in {"missing-occupancy", "not-current-occupancy"}
+            ]
+            unreceipted = [home for home in unbound if home not in relocatable]
+            profiles = sorted(
+                str(profile) for profile in (entry.get("profiles") or []) if profile
+            )
+            reacquire_commands = []
+            if unreceipted:
+                for profile in profiles or ["PROFILE"]:
+                    profile_arg = shlex.quote(profile)
+                    reacquire_commands.extend(
+                        [
+                            (
+                                "scripts/model-library.sh home add "
+                                f"{profile_arg} --revision <selector> --plan --json"
+                            ),
+                            (
+                                "scripts/model-library.sh home add "
+                                f"{profile_arg} --revision <exact-commit-from-plan> "
+                                "--node <selected-rank-from-plan> --yes --json"
+                            ),
+                        ]
+                    )
             recommendations.append(
                 _cleanup_recommendation(
                     entry,
@@ -1842,16 +1938,23 @@ def cleanup_recommend(catalog: dict[str, Any]) -> list[dict[str, Any]]:
                             f"{identity_arg} --profile PROFILE "
                             f"--node {shlex.quote(str(home['rank']))} --yes"
                         )
-                        for home in unbound
+                        for home in relocatable
                     ],
                     removal_commands=_cleanup_home_removal_commands(
                         identity_arg, unbound
                     ),
+                    reacquire_commands=reacquire_commands,
                     action=(
-                        "Choose a compatible serving profile, then occupy one "
-                        "complete tree with home relocate after a live receipt "
-                        "rehash, or remove unbound complete trees. They are not "
-                        "durable homes."
+                        "Use home relocate only when intentionally moving "
+                        "occupancy to one receipted tree after a live full "
+                        "rehash; otherwise inspect and remove unwanted "
+                        "unbound trees."
+                        if relocatable and not unreceipted
+                        else
+                        "Inspect and remove each unknown tree, then use the "
+                        "read-only home add plan and separately confirmed exact "
+                        "commit acquisition. A tree without a receipt cannot be "
+                        "occupied or prepared."
                     ),
                     home_class="unbound-complete",
                 )
@@ -4009,6 +4112,44 @@ def plan_prepare(
     if resolved.get("model_id") != profile_data.get("model_id"):
         fail("prepare: catalog model differs from the live profile")
     home = resolved["home"]
+    home_rank = int(home["rank"])
+    node_count = nodes if nodes is not None else 1
+    if node_count < 1:
+        fail("prepare: nodes must be a positive integer")
+    if target_rank is not None:
+        if node_count != 1:
+            fail("prepare: an explicit target rank is valid only for one-node profiles")
+        if target_rank < 0:
+            fail("prepare: target rank must be non-negative")
+        if target_rank != home_rank:
+            fail(
+                "prepare: a one-node local-files service must run on its "
+                "durable-home rank"
+            )
+        target_ranks = [target_rank]
+    elif node_count == 1:
+        # A one-node model-library service consumes the durable-home view. The
+        # caller may make that placement explicit, but omission must not
+        # silently turn rank 0 into a non-home working copy.
+        target_ranks = [home_rank]
+    else:
+        target_ranks = list(range(node_count))
+        if home_rank not in target_ranks:
+            serving_text = " ".join(str(rank) for rank in target_ranks)
+            destination = target_ranks[0]
+            alternatives = " ".join(str(rank) for rank in target_ranks[1:])
+            alternative_text = (
+                f"; other valid serving ranks: {alternatives}"
+                if alternatives
+                else ""
+            )
+            fail(
+                f"prepare: durable home rank {home_rank} is outside {profile} "
+                f"serving ranks ({serving_text}); move occupancy before budget "
+                "or copy: scripts/model-library.sh home relocate "
+                f"{profile} --node {destination} --yes{alternative_text}; then "
+                "run scripts/model-library.sh catalog refresh and retry prepare"
+            )
     hub_path = home["hub_path"]
     digest, bytes_logical, integrity_manifest = activation_home_inventory(
         home,
@@ -4041,32 +4182,11 @@ def plan_prepare(
     )
     cid = hot_content_id(resolved["identity_key"], digest, validation)
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
-    node_count = nodes if nodes is not None else 1
-    if node_count < 1:
-        fail("prepare: nodes must be a positive integer")
-    if target_rank is not None:
-        if node_count != 1:
-            fail("prepare: an explicit target rank is valid only for one-node profiles")
-        if target_rank < 0:
-            fail("prepare: target rank must be non-negative")
-        if target_rank != int(home["rank"]):
-            fail(
-                "prepare: a one-node local-files service must run on its "
-                "durable-home rank"
-            )
-        target_ranks = [target_rank]
-    elif node_count == 1:
-        # A one-node model-library service consumes the durable-home view. The
-        # caller may make that placement explicit, but omission must not
-        # silently turn rank 0 into a non-home working copy.
-        target_ranks = [int(home["rank"])]
-    else:
-        target_ranks = list(range(node_count))
     hot_storage_requirements = build_hot_storage_requirements(
         target_ranks=target_ranks,
         bytes_logical=bytes_logical,
         instance_dir=instance,
-        home_rank=int(home["rank"]),
+        home_rank=home_rank,
     )
     existing = None
     if hot_stamp_path(instance).is_file():
@@ -4988,11 +5108,29 @@ def build_health_report(
             command = None if duplicate == "redundant" else "scripts/model-library.sh catalog primary set <model> --node <rank>"
             issues.append(_health_issue(code, "exact revision has multiple durable homes", command=command))
         elif unbound:
-            issues.append(_health_issue(
-                "unbound-complete",
-                "complete tree has no occupancy; relocate after a live receipt rehash",
-                command="scripts/model-library.sh home relocate <profile> --node <rank> --yes",
-            ))
+            missing_receipt = any(
+                home.get("unbound_reason")
+                in {None, "missing-authority", "missing-receipt", "non-exact-revision"}
+                for home in unbound
+            )
+            issues.append(
+                _health_issue(
+                    (
+                        "unbound-complete-no-receipt"
+                        if missing_receipt
+                        else "unbound-complete"
+                    ),
+                    (
+                        "complete tree has no download receipt; inspect and remove "
+                        "it before exact-revision acquisition"
+                        if missing_receipt
+                        else
+                        "complete tree has a receipt but no current occupancy; "
+                        "relocate after a live full rehash"
+                    ),
+                    command="scripts/model-library.sh cleanup-recommend",
+                )
+            )
         if primary.get("status") == "stale":
             issues.append(_health_issue("primary-selection-stale", "selected primary is no longer a complete home", command="scripts/model-library.sh catalog primary clear <model>"))
         expected_manifest = None
@@ -7385,6 +7523,7 @@ def cmd_build(args: argparse.Namespace) -> int:
             source_attested.classify_catalog_occupancy(catalog, args.library_dir)
         except source_attested.SourceAttestedAcquisitionError as exc:
             fail(f"catalog occupancy classification failed: {exc}")
+        retarget_catalog_profiles(catalog, profiles)
         _apply_catalog_primary_policies(catalog)
     if args.output:
         atomic_write_json(args.output, catalog)
@@ -7549,9 +7688,9 @@ def cmd_cleanup_recommend(args: argparse.Namespace) -> int:
         print(json.dumps({"recommendations": recs}, indent=2, sort_keys=True))
         return 0
     if not recs:
-        print("No duplicate complete homes found.")
+        print("No duplicate or unbound complete model trees found.")
         return 0
-    print(f"Found {len(recs)} model(s) with duplicate complete homes:\n")
+    print(f"Found {len(recs)} model(s) needing home attention:\n")
     for rec in recs:
         print(f"## {rec['model_id']}  ({rec['identity_key']})")
         for home in rec["homes"]:
@@ -7566,10 +7705,14 @@ def cmd_cleanup_recommend(args: argparse.Namespace) -> int:
             for command in rec["select_commands"]:
                 print(f"    {command}")
         if rec["removal_commands"]:
-            print("  Inspect and explicitly remove each unwanted non-primary home:")
+            print("  Inspect and explicitly remove unwanted or unknown trees:")
             for commands in rec["removal_commands"]:
                 print(f"    {commands['check']}")
                 print(f"    {commands['remove']}")
+        if rec.get("reacquire_commands"):
+            print("  After unknown trees are removed, reacquire exact bytes:")
+            for command in rec["reacquire_commands"]:
+                print(f"    {command}")
         print(f"  → {rec['action']}\n")
     return 0
 

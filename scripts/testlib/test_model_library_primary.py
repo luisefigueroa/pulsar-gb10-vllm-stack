@@ -44,6 +44,8 @@ class PrimarySelectionContracts(unittest.TestCase):
             "revision": self.revision,
             "identity_key": self.identity,
             "state": "complete",
+            "home_class": "occupancy",
+            "occupancy": True,
             "active": True,
             "bytes": 1024,
         }
@@ -246,7 +248,7 @@ class PrimarySelectionContracts(unittest.TestCase):
         self.assertFalse(entry["duplicate"])
         self.assertFalse(entry["has_primary"])
         with self.assertRaisesRegex(
-            model_library.ModelLibraryError, "complete tree is unbound"
+            model_library.ModelLibraryError, "complete tree has no download receipt"
         ):
             model_library.resolve_entry(
                 catalog, model_id=self.model_id, cold_root=None

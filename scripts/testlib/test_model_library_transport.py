@@ -178,6 +178,8 @@ class LibraryReadinessClassification(unittest.TestCase):
             "revision": revision,
             "identity_key": f"{model_id}@{revision}",
             "state": "complete",
+            "home_class": "occupancy",
+            "occupancy": True,
             "active": True,
             "bytes": 1024,
         }

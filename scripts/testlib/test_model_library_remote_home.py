@@ -81,6 +81,8 @@ class RemoteHomeActivationContracts(unittest.TestCase):
                             "cache_root": "/srv/remote-homes",
                             "hub_path": self.remote_hub,
                             "state": "complete",
+                            "home_class": "occupancy",
+                            "occupancy": True,
                             "bytes": self.inventory["bytes_logical"],
                             "primary": True,
                         }
@@ -144,6 +146,24 @@ class RemoteHomeActivationContracts(unittest.TestCase):
             "revision differs",
         ):
             self.plan(bad_revision)
+
+    def test_multi_rank_home_outside_serving_ranks_fails_before_inventory(self) -> None:
+        catalog = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        home = catalog["models"][0]["homes"][0]
+        home["rank"] = 2
+        home["node_id"] = "node-c"
+        home["hostname"] = "rank-2"
+        home["ssh_host"] = "rank-2.test"
+        home["primary"] = True
+        self.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            model_library.ModelLibraryError,
+            r"durable home rank 2 is outside qwen3-1[.]7b-2node serving ranks "
+            r"\(0 1\).*home relocate qwen3-1[.]7b-2node --node 0 --yes.*"
+            r"catalog refresh",
+        ):
+            self.plan({"integrity_manifest": {}})
 
 
 if __name__ == "__main__":
