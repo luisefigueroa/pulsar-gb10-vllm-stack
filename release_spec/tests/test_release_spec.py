@@ -130,7 +130,7 @@ class ReleaseSpecTests(unittest.TestCase):
         mutations.append(evidence)
 
         review = _copy(self.released)
-        review["review"]["status"] = "validated"
+        review["review"]["status"] = "withdrawn"
         review["review"]["reviewer"] = "other-reviewer"
         mutations.append(review)
 
@@ -388,6 +388,50 @@ class ReleaseSpecTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseSpecError, "review"):
             verify_spec(missing)
 
+    def test_passing_status_requires_passing_suite(self) -> None:
+        def released(status: str, measurements: list) -> dict:
+            document = _copy(self.released)
+            document["review"]["status"] = status
+            document["measurements"] = measurements
+            return document
+
+        baseline = self.released["measurements"][0]
+        failed_baseline = _copy(baseline)
+        failed_baseline["outcome"] = "fail"
+        other_policy = _copy(baseline)
+        other_policy["criterion_id"] = "example-accuracy"
+        other_policy["policy_digest"] = "c" * 64
+        deep = {
+            "criterion_id": "example-deep",
+            "suite": "deep",
+            "policy_digest": None,
+            "thresholds": _copy(baseline["thresholds"]),
+            "outcome": "pass",
+            "evidence_ids": ["evidence-1"],
+        }
+        failed_deep = _copy(deep)
+        failed_deep["outcome"] = "fail"
+
+        with self.assertRaisesRegex(ReleaseSpecError, "requires baseline-v1"):
+            verify_spec(released("stable", []))
+        with self.assertRaisesRegex(ReleaseSpecError, "outcome to be 'pass'"):
+            verify_spec(released("stable", [baseline, failed_baseline]))
+        with self.assertRaisesRegex(ReleaseSpecError, "one baseline-v1 policy_digest"):
+            verify_spec(released("stable", [baseline, other_policy]))
+        with self.assertRaisesRegex(ReleaseSpecError, "requires deep measurements"):
+            verify_spec(released("validated", [baseline]))
+        with self.assertRaisesRegex(ReleaseSpecError, "every deep outcome"):
+            verify_spec(released("validated", [baseline, failed_deep]))
+        with self.assertRaisesRegex(ReleaseSpecError, "requires baseline-v1"):
+            verify_spec(released("validated", [deep]))
+        verify_spec(released("validated", [baseline, deep]))
+        # failed and withdrawn carry no suite requirement; measured judges nothing.
+        verify_spec(released("failed", [failed_baseline]))
+        verify_spec(released("withdrawn", []))
+        measured = _copy(self.measured)
+        measured["measurements"] = [failed_baseline]
+        verify_spec(measured)
+
     def test_review_status_enum(self) -> None:
         document = _copy(self.released)
         document["review"]["status"] = "Validated"
@@ -447,6 +491,10 @@ class ReleaseSpecTests(unittest.TestCase):
         token = "HF_TOKEN=" + "hf_" + ("a" * 32)
         uri = "https://" + "example.invalid" + "/model"
         cases = (
+            ("identity.engine_args", "$" + "HOME/models"),
+            ("identity.engine_args", "${" + "MODEL_DIR}"),
+            ("identity.container_env", "CACHE=%" + "APPDATA%"),
+            ("identity.engine_args", "../weights"),
             ("identity.engine_args", site_path),
             ("identity.engine_args", ipv4),
             ("identity.container_env", token),

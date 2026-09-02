@@ -261,6 +261,34 @@ def _verify_review(value: Any, *, state: str, path: str) -> dict[str, Any]:
     }
 
 
+def _require_status_evidence(
+    review: dict[str, Any],
+    measurements: list[dict[str, Any]],
+) -> None:
+    """Couple passing review statuses to passing measurement suites.
+
+    ADR 0017 decision 4: ``stable`` means the spec passed baseline-v1 and
+    ``validated`` means it also passed the deep suite. This checks recorded
+    outcomes only; it does not judge thresholds or read the policy file.
+    """
+    status = review.get("status")
+    if status not in {"stable", "validated"}:
+        return
+    baseline = [item for item in measurements if item["suite"] == "baseline-v1"]
+    if not baseline:
+        fail(f"review.status {status!r} requires baseline-v1 measurements")
+    if any(item["outcome"] != "pass" for item in baseline):
+        fail(f"review.status {status!r} requires every baseline-v1 outcome to be 'pass'")
+    if len({item["policy_digest"] for item in baseline}) != 1:
+        fail(f"review.status {status!r} requires one baseline-v1 policy_digest")
+    if status == "validated":
+        deep = [item for item in measurements if item["suite"] == "deep"]
+        if not deep:
+            fail("review.status 'validated' requires deep measurements")
+        if any(item["outcome"] != "pass" for item in deep):
+            fail("review.status 'validated' requires every deep outcome to be 'pass'")
+
+
 def verify_spec(document: Any) -> dict[str, Any]:
     """Return the canonical document or raise ``ReleaseSpecError``."""
     if not isinstance(document, dict):
@@ -292,6 +320,7 @@ def verify_spec(document: Any) -> dict[str, Any]:
         path="launch_contract",
     )
     review = _verify_review(document.get("review"), state=state, path="review")
+    _require_status_evidence(review, measurements)
     computed = spec_id_for(identity)
     if spec_id != computed:
         fail("spec_id does not match the identity block")

@@ -63,6 +63,11 @@ HIGH_RISK_SECRET_VALUE_RE = re.compile(
 ABSOLUTE_SITE_PATH_RE = re.compile(
     r"(?:^|[\s=,:;\"'(\[{])(?:~[/\\]|/(?!/)|[A-Za-z]:[/\\]|\\\\)"
 )
+DEPLOYMENT_REFERENCE_RE = re.compile(
+    r"(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|"
+    r"%[A-Za-z_][A-Za-z0-9_]*%|"
+    r"(?:^|[\s=,:;\"'(\[{])\.\.[/\\])"
+)
 URI_ENDPOINT_RE = re.compile(r"(?i)\b[A-Za-z][A-Za-z0-9+.-]*://")
 IPV4_VALUE_RE = re.compile(
     r"(?:^|[^0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?:$|[^0-9])"
@@ -195,6 +200,7 @@ def screen_public_string(value: str, *, path: str) -> str:
     if (
         HIGH_RISK_SECRET_VALUE_RE.search(value)
         or ABSOLUTE_SITE_PATH_RE.search(value)
+        or DEPLOYMENT_REFERENCE_RE.search(value)
         or URI_ENDPOINT_RE.search(value)
         or IPV4_VALUE_RE.search(value)
         or IPV6_VALUE_RE.search(value)
