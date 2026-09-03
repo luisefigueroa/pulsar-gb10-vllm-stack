@@ -101,6 +101,7 @@ import os
 
 models = json.loads(os.environ["CATALOG_JSON"])["models"]
 assert models
+order = [model["id"] for model in models]
 for model in models:
     assert model["legacy_status"] == model["status"]
     release = model["model_serving_release"]
@@ -113,6 +114,25 @@ for model in models:
         "decision_id": None,
         "advisory": True,
     }
+    spec = model["release_spec"]
+    assert spec["receipt"] in {"found", "missing", "unreadable"}
+    assert isinstance(spec["identities"], list)
+    if spec["receipt"] != "found":
+        assert spec["identities"] == []
+    for identity in spec["identities"]:
+        assert set(identity) >= {
+            "spec_decode",
+            "default",
+            "spec_id",
+            "released",
+            "comparison",
+            "differs_fields",
+            "review_status",
+            "reviewed_at",
+        }
+        assert identity["released"] is False
+        assert identity["review_status"] is None
+assert order == [model["id"] for model in models]
 PY
 then
   echo "OK   catalog separates reviewed release projection from legacy status"
@@ -132,12 +152,21 @@ assert max(map(len, lines)) <= 48
 assert any("Release" in line and "No release binding" in line for line in lines)
 assert not any("Testing incomplete" in line for line in lines)
 assert any("Legacy" in line for line in lines)
+assert any("Spec review" in line for line in lines)
 PY
 then
   echo "OK   human catalog projection honors narrow terminal width"
   pass=$((pass + 1))
 else
   echo "FAIL narrow catalog release projection" >&2
+  fail=$((fail + 1))
+fi
+
+if grep -Fq 'spec-review=' "$REPO_DIR/scripts/up.sh"; then
+  echo "OK   up.sh prints display-only spec-review"
+  pass=$((pass + 1))
+else
+  echo "FAIL up.sh missing spec-review line" >&2
   fail=$((fail + 1))
 fi
 
@@ -247,6 +276,143 @@ else
 fi
 REPO_DIR="$original_repo_dir"
 unset PULSAR_MODEL_SERVING_RELEASE_REGISTRY_PY MODEL_SERVING_RELEASE_ID
+
+python3 - "$REPO_DIR" "$STATE/spec-fixture" <<'PY'
+import json
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from release_spec import pretty_json_bytes
+from scripts.testlib.test_release_consumer import (
+    NANO,
+    PINNED_IMAGE,
+    released_nano_spec,
+    write_fixture_library,
+)
+from scripts.testlib.test_release_spec_generate import nano_kwargs
+
+root = pathlib.Path(sys.argv[2])
+root.mkdir(parents=True, exist_ok=True)
+library, catalog, _receipt = write_fixture_library(
+    root, model_id=nano_kwargs()["model_id"], profile=NANO
+)
+releases = root / "releases"
+releases.mkdir(exist_ok=True)
+spec = released_nano_spec()
+(releases / f"{spec['spec_id']}.json").write_bytes(pretty_json_bytes(spec))
+(root / "paths.json").write_text(
+    json.dumps(
+        {
+            "library": str(library),
+            "catalog": str(catalog),
+            "releases": str(releases),
+            "image": PINNED_IMAGE,
+        }
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+
+library_dir=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["library"])' "$STATE/spec-fixture/paths.json")
+catalog_file=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["catalog"])' "$STATE/spec-fixture/paths.json")
+releases_dir=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["releases"])' "$STATE/spec-fixture/paths.json")
+pinned_image=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["image"])' "$STATE/spec-fixture/paths.json")
+
+fixture_json=$(
+  MODEL_LIBRARY_DIR="$library_dir" \
+  MODEL_LIBRARY_CATALOG="$catalog_file" \
+  PULSAR_RELEASES_ROOT="$releases_dir" \
+  VLLM_IMAGE_MAINLINE="$pinned_image" \
+  "$REPO_DIR/scripts/list-models.sh" --serving --json
+)
+if FIXTURE_JSON="$fixture_json" python3 - <<'PY'
+import json
+import os
+
+models = {item["id"]: item for item in json.loads(os.environ["FIXTURE_JSON"])["models"]}
+nano = models["nemotron-3-nano-30b-nvfp4"]
+assert nano["model_serving_release"]["effective_status_label"] == "No release binding"
+row = nano["release_spec"]["identities"][0]
+assert nano["release_spec"]["receipt"] == "found"
+assert row["comparison"] == "equal"
+assert row["review_status"] == "stable"
+PY
+then
+  echo "OK   fixture catalog shows equal stable spec review"
+  pass=$((pass + 1))
+else
+  echo "FAIL fixture catalog stable spec review" >&2
+  fail=$((fail + 1))
+fi
+
+fixture_human=$(
+  MODEL_LIBRARY_DIR="$library_dir" \
+  MODEL_LIBRARY_CATALOG="$catalog_file" \
+  PULSAR_RELEASES_ROOT="$releases_dir" \
+  VLLM_IMAGE_MAINLINE="$pinned_image" \
+  COLUMNS=48 \
+  "$REPO_DIR/scripts/list-models.sh" --serving
+)
+if FIXTURE_HUMAN="$fixture_human" python3 - <<'PY'
+import os
+
+lines = os.environ["FIXTURE_HUMAN"].splitlines()
+assert lines
+assert max(map(len, lines)) <= 48
+assert any("stable since" in line for line in lines)
+PY
+then
+  echo "OK   fixture human catalog shows stable since"
+  pass=$((pass + 1))
+else
+  echo "FAIL fixture human stable since" >&2
+  fail=$((fail + 1))
+fi
+
+hidden_human=$(
+  MODEL_LIBRARY_DIR="$library_dir" \
+  MODEL_LIBRARY_CATALOG="$catalog_file" \
+  PULSAR_RELEASES_ROOT="$releases_dir" \
+  VLLM_IMAGE_MAINLINE="$pinned_image" \
+  VLLM_EXTRA_ARGS="--enforce-eager" \
+  COLUMNS=48 \
+  "$REPO_DIR/scripts/list-models.sh" --serving
+)
+if HIDDEN_HUMAN="$hidden_human" python3 - <<'PY'
+import os
+
+lines = os.environ["HIDDEN_HUMAN"].splitlines()
+assert lines
+assert max(map(len, lines)) <= 48
+blob = " ".join(line.strip() for line in lines)
+assert "hidden (launch contract differs: argv)" in blob
+assert "stable since" not in blob
+PY
+then
+  echo "OK   extra args hide spec review.status"
+  pass=$((pass + 1))
+else
+  echo "FAIL extra args did not hide spec review" >&2
+  fail=$((fail + 1))
+fi
+
+export VLLM_IMAGE_MAINLINE="$pinned_image"
+export PULSAR_MODEL_LIBRARY_DIR="$library_dir"
+export PULSAR_MODEL_LIBRARY_CATALOG="$catalog_file"
+export PULSAR_RELEASES_ROOT="$releases_dir"
+load_conf nemotron-3-nano-30b-nvfp4
+resolve_spec_decode auto
+load_release_spec_projection
+spec_cell=$(release_spec_enabled_cell "${SPEC_DECODE_ENABLED:-0}")
+if [ "$spec_cell" = "stable since 2026-09-02T00:00:00Z" ]; then
+  echo "OK   up.sh spec-review cell matches the resolved identity"
+  pass=$((pass + 1))
+else
+  echo "FAIL up.sh spec-review cell='$spec_cell'" >&2
+  fail=$((fail + 1))
+fi
 
 echo "---"
 echo "pass=$pass fail=$fail"

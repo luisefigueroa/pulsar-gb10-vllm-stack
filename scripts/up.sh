@@ -72,6 +72,8 @@ elif [ -n "$NODE_SELECTOR" ]; then
 fi
 resolve_spec_decode "$SPEC_MODE"
 load_model_serving_release_projection local-verified-readonly
+load_release_spec_projection
+SPEC_REVIEW_CELL=$(release_spec_enabled_cell "${SPEC_DECODE_ENABLED:-0}")
 export QUIET=1
 [ "$VERBOSE" = 1 ] && export QUIET=0
 
@@ -88,11 +90,13 @@ if [ "$SPEC_DECODE_ENABLED" = 1 ]; then
 else
   echo "│  spec-decode=off  ($SPEC_DECODE_SOURCE)"
 fi
+echo "│  spec-review=$SPEC_REVIEW_CELL (display-only)"
 [ "$DRY" = 1 ] && echo "│  mode=DRY-RUN (checks only)"
 echo "├─ checks"
 
 echo "INFO  release   $MODEL_SERVING_RELEASE_STATUS_LABEL (display-only)"
 echo "INFO  legacy    $STATUS (display-only)"
+echo "INFO  spec-review $SPEC_REVIEW_CELL (display-only)"
 warn_profile_status
 echo "PASS  conf      exact profile contract parsed"
 

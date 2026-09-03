@@ -12,3 +12,4 @@ fallback.
 The directory may be empty. `models/*.conf` remains the operator start path
 through Stage 3. `scripts/release.sh` (`./pulsar release verify|show|list`)
 reads this directory. It does not start a server or grant serving permission.
+`PULSAR_RELEASES_ROOT` is a test override naming this directory.

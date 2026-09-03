@@ -645,13 +645,39 @@ PY
 
 
 render_model_selection() {
-  local rank label node
+  local rank label node spec_value
   load_model_serving_release_projection local-verified-readonly
+  load_release_spec_projection
+  local -a spec_review_values=()
+  mapfile -t spec_review_values < <(
+    printf '%s' "${RELEASE_SPEC_JSON:-}" | REPO_DIR="$REPO_DIR" python3 -c '
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["REPO_DIR"])
+from scripts.release_consumer import human_spec_review_values
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    payload = {"receipt": "unreadable", "identities": []}
+if not isinstance(payload, dict):
+    payload = {"receipt": "unreadable", "identities": []}
+print("\n".join(human_spec_review_values(payload)))
+'
+  )
+  [ "${#spec_review_values[@]}" -gt 0 ] || spec_review_values=("-")
   local -a fields=(
     "Model" "$NAME"
     "Serves" "$SERVED_NAME on :$PORT"
     "Release status" "$MODEL_SERVING_RELEASE_STATUS_LABEL · display-only"
     "Legacy label" "$STATUS · display-only"
+  )
+  for spec_value in "${spec_review_values[@]}"; do
+    fields+=("Spec review" "$spec_value · display-only")
+  done
+  fields+=(
     "Recipe" "exact $NODES-node profile"
   )
   if [ -n "${NOTES:-}" ]; then
@@ -2113,10 +2139,13 @@ esac
 # Selection loop: "Choose another model" returns here without re-running doctor.
 while true; do
   mapfile -t choices < <(
-    cmd_list_models_json | MAX_NODES="$topology_capacity" python3 -c "
+    cmd_list_models_json | MAX_NODES="$topology_capacity" REPO_DIR="$REPO_DIR" python3 -c "
 import json
 import os
 import sys
+
+sys.path.insert(0, os.environ.get('REPO_DIR') or '')
+from scripts.release_consumer import picker_spec_marks
 
 capacity = int(os.environ.get('MAX_NODES') or 1)
 models = [
@@ -2158,6 +2187,10 @@ for model in models:
         marks.append('first run')
     marks.append('release={}'.format(release_status(model)))
     marks.append('legacy={}'.format(model.get('status') or '?'))
+    payload = model.get('release_spec') or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    marks.extend(picker_spec_marks(payload))
     suffix = (' · ' + ' · '.join(marks)) if marks else ''
     node_word = 'node' if nodes == 1 else 'nodes'
     print(f\"{model['id']:<{name_width}}  {nodes} {node_word}{suffix}\")

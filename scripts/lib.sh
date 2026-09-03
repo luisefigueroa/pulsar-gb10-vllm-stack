@@ -642,6 +642,68 @@ print("\t".join((
   fi
 }
 
+# Display-only ADR 0017 spec-review projection. Never a serving gate; always
+# returns 0. Compact JSON is one line with no tabs.
+load_release_spec_projection() {
+  local tool output rc item
+  local -a args extra_split
+  RELEASE_SPEC_JSON='{"identities":[],"receipt":"unreadable"}'
+  tool="${PULSAR_RELEASE_CONSUMER_PY:-$REPO_DIR/scripts/release_consumer.py}"
+  [ -f "$tool" ] || return 0
+  args=(
+    project
+    --repo-root "$REPO_DIR"
+    --library-dir "$PULSAR_MODEL_LIBRARY_DIR"
+    --catalog "$PULSAR_MODEL_LIBRARY_CATALOG"
+    --platform-id "${PULSAR_PLATFORM_ID:-dgx-spark-gb10}"
+    --profile "${CONF_NAME:-}"
+  )
+  if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
+    args+=(--releases-root "$PULSAR_RELEASES_ROOT")
+  fi
+  append_loaded_profile_contract_args args
+  extra_split=()
+  append_vllm_extra_args extra_split
+  for item in ${extra_split[@]+"${extra_split[@]}"}; do
+    args+=("--extra-arg=$item")
+  done
+  # Word-split EXTRA_ENV the same way write_launch_plan_file does.
+  # shellcheck disable=SC2086
+  for item in ${EXTRA_ENV:+$EXTRA_ENV}; do
+    args+=("--extra-env=$item")
+  done
+  set +e
+  output=$(python3 "$tool" "${args[@]}" 2>/dev/null)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+    RELEASE_SPEC_JSON=$(printf '%s' "$output" | tr -d '\n\t')
+  fi
+  [ -n "$RELEASE_SPEC_JSON" ] || \
+    RELEASE_SPEC_JSON='{"identities":[],"receipt":"unreadable"}'
+  return 0
+}
+
+release_spec_enabled_cell() {
+  local enabled="${1:-0}"
+  python3 - "$REPO_DIR" "$enabled" "${RELEASE_SPEC_JSON:-}" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.release_consumer import enabled_identity_cell
+
+try:
+    payload = json.loads(sys.argv[3])
+except Exception:
+    payload = None
+if not isinstance(payload, dict):
+    print("-")
+    raise SystemExit(0)
+print(enabled_identity_cell(payload, spec_decode=sys.argv[2] == "1"))
+PY
+}
+
 mem_available_gib_local() {
   if [ -r /proc/meminfo ]; then
     local kb

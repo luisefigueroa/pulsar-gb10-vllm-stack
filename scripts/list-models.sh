@@ -62,7 +62,8 @@ for conf in "$REPO_DIR"/models/*.conf; do
     reviewed_identity=0 reviewed_model_id="" reviewed_revision=""
     reviewed_manifest=""
     load_model_serving_release_projection local-verified-readonly
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    load_release_spec_projection
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$name" "$STATUS" "$NODES" "$src" "$SERVED_NAME" "$spec" \
       "${FIRST_RUN_CANDIDATE:-0}" "$PROFILE_FAMILY" "$VARIANT_LABEL" \
       "$FAMILY_RECOMMENDED" "$TOPOLOGY_CLASS" "$MIN_RAILS_PER_PAIR" \
@@ -72,7 +73,8 @@ for conf in "$REPO_DIR"/models/*.conf; do
       "$MODEL_SERVING_RELEASE_PROJECTION_STATE" \
       "$MODEL_SERVING_RELEASE_STATUS" "$MODEL_SERVING_RELEASE_STATUS_LABEL" \
       "$MODEL_SERVING_RELEASE_CONTRACT_ID" \
-      "$MODEL_SERVING_RELEASE_DECISION_ID"
+      "$MODEL_SERVING_RELEASE_DECISION_ID" \
+      "$RELEASE_SPEC_JSON"
   ) >>"$tmp" || true
 done
 
@@ -105,8 +107,17 @@ with open("$tmp") as f:
         if not line:
             continue
         p = line.split("\\t")
-        while len(p) < 24:
+        while len(p) < 25:
             p.append("")
+        try:
+            release_spec = json.loads(p[24]) if p[24] else {
+                "receipt": "unreadable",
+                "identities": [],
+            }
+        except Exception:
+            release_spec = {"receipt": "unreadable", "identities": []}
+        if not isinstance(release_spec, dict):
+            release_spec = {"receipt": "unreadable", "identities": []}
         rows.append({
             "id": p[0],
             "status": p[1],
@@ -137,6 +148,7 @@ with open("$tmp") as f:
                 "decision_id": p[23] or None,
                 "advisory": True,
             },
+            "release_spec": release_spec,
         })
 print(json.dumps({"models": rows}, indent=2))
 PY
@@ -150,18 +162,31 @@ fi
 
 python3 - "$tmp" "$REPO_DIR" <<'PY'
 from pathlib import Path
+import json
 import sys
 
 sys.path.insert(0, sys.argv[2])
+from scripts.release_consumer import human_spec_review_values
 from scripts.terminal_format import TerminalWriter
 
 term = TerminalWriter()
 for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     fields = line.split("\t")
-    fields.extend([""] * (24 - len(fields)))
+    fields.extend([""] * (25 - len(fields)))
+    try:
+        release_spec = json.loads(fields[24]) if fields[24] else {
+            "receipt": "unreadable",
+            "identities": [],
+        }
+    except Exception:
+        release_spec = {"receipt": "unreadable", "identities": []}
+    if not isinstance(release_spec, dict):
+        release_spec = {"receipt": "unreadable", "identities": []}
     term.emit(fields[0])
     term.field("Release", fields[21], indent=2, label_width=10)
     term.field("Legacy", fields[1], indent=2, label_width=10)
+    for value in human_spec_review_values(release_spec):
+        term.field("Spec review", value, indent=2, label_width=10)
     term.field("Serves", fields[4], indent=2, label_width=10)
     term.field(
         "Recipe",
@@ -183,6 +208,16 @@ term.field(
     "Legacy status",
     "historical profile evidence/recommendation label; both status fields "
     "are display-only and neither grants nor denies launch",
+    indent=2,
+    label_width=16,
+)
+term.field(
+    "Spec review",
+    "display-only ADR 0017 review.status for the spec computed from this "
+    "profile plus its download receipt. Shown only when the live launch "
+    "contract (argv, container env, image digest, geometry) matches; "
+    "otherwise hidden. No receipt or no released spec is unlabeled (-) "
+    "and is not Untested. This field does not grant or deny launch",
     indent=2,
     label_width=16,
 )
