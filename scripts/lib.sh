@@ -273,7 +273,21 @@ _reset_loaded_profile_defaults() {
   TOPOLOGY_CLASS="" MIN_RAILS_PER_PAIR=""
   CONF_SOURCE=conf
   SNAPSHOT_REVISION=""
+  SPEC_MANIFEST_ID=""
   OVERLAY_PLACEMENT_NODE_ID=""
+}
+
+# verify-hot identity arguments for the loaded profile. A conf binds the
+# stamp profile name; a released spec binds the exact sealed manifest id
+# instead, because the view may have been prepared under a conf name.
+# Sets LIBRARY_VERIFY_PROFILE_ARGS for the caller (used on every rank).
+set_library_verify_profile_args() {
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || die "spec start requires SPEC_MANIFEST_ID"
+    LIBRARY_VERIFY_PROFILE_ARGS=(--expected-manifest-id "$SPEC_MANIFEST_ID")
+  else
+    LIBRARY_VERIFY_PROFILE_ARGS=(--profile "${CONF_NAME:?load_conf first}")
+  fi
 }
 
 _finalize_loaded_profile() {
@@ -770,9 +784,11 @@ PY
 }
 
 mem_available_gib_local() {
-  if [ -r /proc/meminfo ]; then
+  # PULSAR_MEMINFO_FILE is a deterministic-test override for /proc/meminfo.
+  local meminfo="${PULSAR_MEMINFO_FILE:-/proc/meminfo}"
+  if [ -r "$meminfo" ]; then
     local kb
-    kb=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    kb=$(awk '/MemAvailable:/ {print $2}' "$meminfo" 2>/dev/null || echo 0)
     awk -v kb="${kb:-0}" 'BEGIN { printf "%.2f", kb / 1048576 }'
     return
   fi
@@ -1339,12 +1355,13 @@ library_hot_info_for_profile() {
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || return 1
 
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    [ -n "${MODEL:-}" ] && [ -n "${SNAPSHOT_REVISION:-}" ] || return 1
+    [ -n "${MODEL:-}" ] && [ -n "${SNAPSHOT_REVISION:-}" ] \
+      && [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
     identity="${MODEL}@${SNAPSHOT_REVISION}"
-    find_hot_args=(find-hot --identity "$identity" --topology-id "$topology_id" \
-      --hot-root "$PULSAR_HOT_ROOT" --for-launch)
-    verify_hot_args=(verify-hot --topology-id "$topology_id" --for-launch \
-      --serve-time-witness)
+    find_hot_args=(find-hot --identity "$identity" --manifest-id "$SPEC_MANIFEST_ID" \
+      --topology-id "$topology_id" --hot-root "$PULSAR_HOT_ROOT" --for-launch)
+    verify_hot_args=(verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID" \
+      --topology-id "$topology_id" --for-launch --serve-time-witness)
   else
     find_hot_args=(find-hot --profile "$profile" --topology-id "$topology_id" \
       --hot-root "$PULSAR_HOT_ROOT" --for-launch)

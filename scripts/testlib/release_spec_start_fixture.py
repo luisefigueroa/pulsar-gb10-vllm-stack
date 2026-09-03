@@ -58,9 +58,15 @@ def write_identity_hot_view(
     topology_id: str,
     model_id: str,
     revision: str,
+    manifest: dict | None = None,
+    content_id: str = "c" * 12,
+    activated_at: str = "2026-09-02T00:00:00Z",
 ) -> pathlib.Path:
-    """Ready stamp under a conf-named directory for find-hot --identity."""
-    content_id = "c" * 12
+    """Ready stamp under a conf-named directory for find-hot --identity.
+
+    ``manifest`` is the sealed snapshot manifest the stamp claims; a spec
+    start must only accept a view whose manifest id equals the spec's.
+    """
     instance = model_library.hot_instance_dir(
         hot_root, profile, topology_id, content_id
     )
@@ -76,11 +82,14 @@ def write_identity_hot_view(
         "topology_id": topology_id,
         "content_id": content_id,
         "content_digest": "a" * 64,
-        "integrity": {"scheme": "sha256-snapshot-manifest-v1", "manifest": {}},
+        "integrity": {
+            "scheme": "sha256-snapshot-manifest-v1",
+            "manifest": dict(manifest or {}),
+        },
         "validation": {"identity_status": "receipt-occupancy", "expected_seal": None},
         "backend": "copy",
         "bytes_logical": 1,
-        "activated_at": "2026-09-02T00:00:00Z",
+        "activated_at": activated_at,
         "pinned": False,
         "budget_bytes_accounted": 1,
         "transport": "ssh-roce",

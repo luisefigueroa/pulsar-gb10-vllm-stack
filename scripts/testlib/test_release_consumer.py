@@ -859,6 +859,16 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(variables["RECOMMENDED_SPEC"], "0")
         self.assertEqual(variables["STATUS"], "?")
         self.assertNotIn("--gpu-memory-utilization", variables["ENGINE_ARGS"])
+        manifest = spec["identity"]["snapshot_manifest"]
+        self.assertEqual(variables["SPEC_MANIFEST_ID"], manifest["manifest_id"])
+        # Whole GiB rounded up, never below 1, so the memory gate sees the size.
+        self.assertEqual(variables["WEIGHTS_GIB"], "1")
+        big = json.loads(pretty_json_bytes(spec))
+        big["identity"]["snapshot_manifest"]["total_bytes"] = 75 * 1024 ** 3 + 1
+        self.assertEqual(
+            consumer.spec_profile_variables(big, overlay, "vllm/vllm-openai")["WEIGHTS_GIB"],
+            "76",
+        )
         self.assertNotIn("--tensor-parallel-size", variables["ENGINE_ARGS"])
         self.assertEqual(variables["TOPOLOGY_CLASS"], "single")
         self.assertEqual(variables["MIN_RAILS_PER_PAIR"], "0")

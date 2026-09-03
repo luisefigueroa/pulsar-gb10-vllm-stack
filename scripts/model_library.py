@@ -3363,9 +3363,14 @@ def find_hot_instance_for_identity(
     hot_root: str | pathlib.Path,
     identity_key: str,
     topology_id: str,
+    *,
+    manifest_id: str | None = None,
 ) -> pathlib.Path | None:
     """Return the newest ready instance whose stamp matches model_id@revision.
 
+    When ``manifest_id`` is given, the instance's sealed integrity manifest
+    must carry that id, so a released spec only launches the exact reviewed
+    file list (two specs can share a model and revision but not a manifest).
     Directory names may still use the conf that prepared the view. Spec
     presence is never occupancy.
     """
@@ -3390,6 +3395,16 @@ def find_hot_instance_for_identity(
                 stamp_identity = f"{stamp.get('model_id')}@{stamp.get('revision')}"
             if stamp_identity != identity_key:
                 continue
+            if manifest_id is not None:
+                integrity = stamp.get("integrity")
+                stamped = (
+                    integrity.get("manifest", {}).get("manifest_id")
+                    if isinstance(integrity, dict)
+                    and isinstance(integrity.get("manifest"), dict)
+                    else None
+                )
+                if stamped != manifest_id:
+                    continue
             matches.append((activated, candidate))
     if not matches:
         return None
@@ -7968,6 +7983,12 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
     if not isinstance(integrity, dict):
         fail("hot integrity seal missing")
     manifest = validate_snapshot_manifest(integrity.get("manifest"))
+    expected_manifest_id = str(getattr(args, "expected_manifest_id", "") or "")
+    if expected_manifest_id and manifest.get("manifest_id") != expected_manifest_id:
+        fail(
+            "hot manifest differs from the released spec manifest: "
+            f"stamp={manifest.get('manifest_id')} want={expected_manifest_id}"
+        )
     checked_validation = validate_hot_validation(
         stamp.get("validation"),
         profile=str(stamp.get("profile") or ""),
@@ -8011,6 +8032,9 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         fail("find-hot: require exactly one of --profile or --identity")
     if identity_key and args.models_dir:
         fail("find-hot: --models-dir is not valid with --identity")
+    manifest_id = str(getattr(args, "manifest_id", "") or "") or None
+    if manifest_id and not identity_key:
+        fail("find-hot: --manifest-id requires --identity")
     profile_data = (
         load_model_profile(args.models_dir, profile)
         if args.models_dir and profile
@@ -8021,9 +8045,11 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
             args.hot_root or default_hot_root(),
             identity_key,
             args.topology_id,
+            manifest_id=manifest_id,
         )
         if path is None:
-            fail(f"find-hot: no ready instance for identity {identity_key}")
+            wanted = f" with manifest {manifest_id}" if manifest_id else ""
+            fail(f"find-hot: no ready instance for identity {identity_key}{wanted}")
     else:
         path = find_hot_instance_for_profile(
             args.hot_root or default_hot_root(),
@@ -8948,6 +8974,11 @@ def build_parser() -> argparse.ArgumentParser:
     vh.add_argument("--models-dir", default="")
     vh.add_argument("--for-launch", action="store_true", help=argparse.SUPPRESS)
     vh.add_argument("--expected-validation-json", default="", help=argparse.SUPPRESS)
+    vh.add_argument(
+        "--expected-manifest-id",
+        default="",
+        help="fail unless the sealed integrity manifest carries this id",
+    )
     verify_mode = vh.add_mutually_exclusive_group()
     verify_mode.add_argument("--skip-digest", action="store_true")
     verify_mode.add_argument(
@@ -8973,6 +9004,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="identity_key",
         default="",
         help="model_id@revision when the view was prepared under a conf name",
+    )
+    fh.add_argument(
+        "--manifest-id",
+        dest="manifest_id",
+        default="",
+        help="with --identity: require the sealed integrity manifest id",
     )
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")

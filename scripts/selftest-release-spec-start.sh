@@ -157,6 +157,10 @@ esac
 SHIM
 chmod +x "$STATE/docker"
 
+# Deterministic memory probe: the gate must not depend on runner capacity.
+printf 'MemTotal:       268435456 kB\nMemFree:        209715200 kB\nMemAvailable:   209715200 kB\n' \
+  >"$STATE/meminfo"
+export PULSAR_MEMINFO_FILE="$STATE/meminfo"
 export CLUSTER_TOPOLOGY_FILE="$STATE/topology.json"
 export PULSAR_DOCKER="$STATE/docker"
 export PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py"
@@ -270,48 +274,96 @@ expect_failure 1 "both models/${COLLISION_HEX}.conf" \
       "$REPO_DIR/scripts/up.sh" "$COLLISION_HEX" --dry-run
 rm -f "$REPO_DIR/models/${COLLISION_HEX}.conf"
 
-python3 - "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" <<'PY'
+python3 - "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$spec_id" <<'PY'
+import json
 import pathlib
 import subprocess
 import sys
 
-repo, state, topology_id, model_id, revision = sys.argv[1:]
+repo, state, topology_id, model_id, revision, spec_id = sys.argv[1:]
 sys.path.insert(0, repo)
 from scripts.testlib.release_spec_start_fixture import write_identity_hot_view
 
+spec = json.loads(
+    (pathlib.Path(state) / "releases" / f"{spec_id}.json").read_text(encoding="utf-8")
+)
+manifest = spec["identity"]["snapshot_manifest"]
+other = json.loads(json.dumps(manifest))
+other["files"][0]["sha256"] = "f" * 64
+other["manifest_id"] = "e" * 64
 hot = pathlib.Path(state) / "identity-hot"
+# Newest view carries a different reviewed file list for the same model and
+# revision; the older one is the spec's exact manifest.
 write_identity_hot_view(
-    hot,
-    profile="nemotron-3-nano-30b-nvfp4",
-    topology_id=topology_id,
-    model_id=model_id,
-    revision=revision,
+    hot, profile="nemotron-3-nano-30b-nvfp4", topology_id=topology_id,
+    model_id=model_id, revision=revision, manifest=manifest,
+    content_id="c" * 12, activated_at="2026-09-02T00:00:00Z",
+)
+write_identity_hot_view(
+    hot, profile="nemotron-3-nano-30b-nvfp4", topology_id=topology_id,
+    model_id=model_id, revision=revision, manifest=other,
+    content_id="d" * 12, activated_at="2026-09-03T00:00:00Z",
 )
 identity = f"{model_id}@{revision}"
-result = subprocess.run(
-    [
-        sys.executable,
-        str(pathlib.Path(repo) / "scripts" / "model_library.py"),
-        "find-hot",
-        "--identity",
-        identity,
-        "--topology-id",
-        topology_id,
-        "--hot-root",
-        str(hot),
-    ],
-    cwd=repo,
-    capture_output=True,
-    text=True,
-    check=False,
+library = str(pathlib.Path(repo) / "scripts" / "model_library.py")
+
+def find_hot(*extra):
+    return subprocess.run(
+        [sys.executable, library, "find-hot", "--identity", identity,
+         "--topology-id", topology_id, "--hot-root", str(hot), *extra],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+
+newest = find_hot()
+if newest.returncode != 0 or ("d" * 12) not in newest.stdout:
+    raise SystemExit(f"identity lookup without manifest should pick newest: {newest.stdout}{newest.stderr}")
+bound = find_hot("--manifest-id", manifest["manifest_id"])
+if bound.returncode != 0 or ("c" * 12) not in bound.stdout:
+    raise SystemExit(f"manifest-bound lookup missed the spec view: {bound.stdout}{bound.stderr}")
+if "nemotron-3-nano-30b-nvfp4" not in bound.stdout:
+    raise SystemExit(f"identity lookup missed conf-named view: {bound.stdout}")
+missing = find_hot("--manifest-id", "a" * 64)
+if missing.returncode == 0 or "with manifest" not in (missing.stderr + missing.stdout):
+    raise SystemExit(f"unmatched manifest must fail: {missing.stdout}{missing.stderr}")
+
+bound_dir = json.loads(bound.stdout)["instance_dir"]
+mismatch = subprocess.run(
+    [sys.executable, library, "verify-hot", "--instance-dir", bound_dir,
+     "--expected-manifest-id", "a" * 64, "--skip-digest"],
+    cwd=repo, capture_output=True, text=True, check=False,
 )
-if result.returncode != 0:
-    raise SystemExit(result.stderr or result.stdout)
-if "nemotron-3-nano-30b-nvfp4" not in result.stdout:
-    raise SystemExit(f"identity lookup missed conf-named view: {result.stdout}")
+if mismatch.returncode == 0 or "differs from the released spec manifest" not in (mismatch.stderr + mismatch.stdout):
+    raise SystemExit(f"verify-hot must refuse a foreign manifest: {mismatch.stdout}{mismatch.stderr}")
 print("ok")
 PY
-echo "OK   find-hot --identity locates a view prepared under the conf name"
+echo "OK   find-hot --identity binds the spec manifest; verify-hot refuses a foreign one"
+
+# Remote ranks verify by manifest id for a spec and by profile name for a conf.
+verify_args_out=$(
+  PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" bash -c '
+    set -euo pipefail
+    . "$1/scripts/lib.sh"
+    load_conf "$2"
+    set_library_verify_profile_args
+    printf "%s\n" "${LIBRARY_VERIFY_PROFILE_ARGS[@]}"
+    load_conf nemotron-3-nano-30b-nvfp4
+    set_library_verify_profile_args
+    printf "%s\n" "${LIBRARY_VERIFY_PROFILE_ARGS[@]}"
+  ' _ "$REPO_DIR" "$spec_id"
+)
+printf '%s\n' "$verify_args_out" | grep -q -- "--expected-manifest-id"
+printf '%s\n' "$verify_args_out" | grep -q -- "^--profile$"
+for remote_script in scripts/check-weights.sh cluster/start-cluster.sh; do
+  # The verify-hot call on every remote rank must take the shared identity
+  # arguments (profile for a conf, manifest id for a spec), never a bare
+  # profile name.
+  if ! awk '/verify-hot/ {block=1} block && /LIBRARY_VERIFY_PROFILE_ARGS/ {found=1} /--serve-time-witness/ {block=0} END {exit !found}' \
+      "$REPO_DIR/$remote_script"; then
+    echo "FAIL $remote_script: remote verify-hot does not use LIBRARY_VERIFY_PROFILE_ARGS" >&2
+    exit 1
+  fi
+done
+echo "OK   remote rank verification is spec-aware"
 
 help_out=$("$REPO_DIR/pulsar" help)
 printf '%s\n' "$help_out" | grep -q "start <model|spec_id>"

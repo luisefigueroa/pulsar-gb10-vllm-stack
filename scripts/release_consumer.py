@@ -698,6 +698,17 @@ def spec_profile_variables(
     snapshot_revision = identity.get("snapshot_revision")
     if not isinstance(snapshot_revision, str) or not snapshot_revision:
         fail("spec identity.snapshot_revision is missing")
+    manifest = identity.get("snapshot_manifest")
+    if not isinstance(manifest, dict):
+        fail("spec identity.snapshot_manifest is missing")
+    manifest_id = manifest.get("manifest_id")
+    if not isinstance(manifest_id, str) or SHA256_HEX_RE.fullmatch(manifest_id) is None:
+        fail("spec identity.snapshot_manifest.manifest_id is missing")
+    total_bytes = manifest.get("total_bytes")
+    if isinstance(total_bytes, bool) or not isinstance(total_bytes, int) or total_bytes < 0:
+        fail("spec identity.snapshot_manifest.total_bytes is missing")
+    # Disk footprint for the memory gate: whole GiB, rounded up, never below 1.
+    weights_gib = str(max(1, -(-total_bytes // (1024 ** 3))))
     variables: dict[str, Any] = {
         "MODEL": identity.get("model_id") or "",
         "IMAGE": f"{repo}@{digest}",
@@ -718,7 +729,7 @@ def spec_profile_variables(
         "FAMILY_RECOMMENDED": "0",
         "PROFILE_FAMILY": served_name,
         "VARIANT_LABEL": f"{nodes}-node",
-        "WEIGHTS_GIB": "",
+        "WEIGHTS_GIB": weights_gib,
         "WEIGHTS_RAM_GIB": "",
         "KV_GIB": "",
         "OVERHEAD_GIB": "",
@@ -726,6 +737,7 @@ def spec_profile_variables(
         "CONF_NAME": spec_id,
         "CONF_SOURCE": "spec",
         "SNAPSHOT_REVISION": snapshot_revision,
+        "SPEC_MANIFEST_ID": manifest_id,
         "OVERLAY_PLACEMENT_NODE_ID": placement_node,
         "MODEL_SERVING_RELEASE_ID": "",
         "EXPECTED_MODEL_SEAL": "",

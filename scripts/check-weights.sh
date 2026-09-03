@@ -129,10 +129,11 @@ expected_validation_json="${hot_fields[1]:-null}"
 # Readiness is an all-rank claim: the local resolution above proves rank 0
 # only, so verify every remote serving rank's view before reporting ok.
 if [ "$NODES" -gt 1 ]; then
+  set_library_verify_profile_args
   for ((verify_rank = 1; verify_rank < NODES; verify_rank++)); do
     verify_command=$(shell_join_q python3 - verify-hot \
       --instance-dir "$instance" \
-      --profile "$NAME" \
+      "${LIBRARY_VERIFY_PROFILE_ARGS[@]}" \
       --topology-id "$CLUSTER_TOPOLOGY_ID" \
       --expected-validation-json "$expected_validation_json" \
       --for-launch \
