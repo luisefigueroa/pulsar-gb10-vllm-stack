@@ -649,9 +649,10 @@ def spec_profile_variables(
 ) -> dict[str, Any]:
     """Map a released spec plus overlay into load_conf-shaped variables.
 
-    ``active_platform_id`` is the platform this stack is running as; a spec
-    frozen for another platform fails without fallback rather than being
-    exported as an ordinary profile for this hardware.
+    ``SPEC_PLATFORM_ID`` is always exported so the start path can refuse a
+    spec frozen for another platform. Pass ``active_platform_id`` only from
+    a launch-admission caller: stop and status must still load a spec after
+    the platform setting changed, so the shared loader never gates on it.
     """
     spec_id = spec_lifecycle_key(str(spec.get("spec_id") or ""))
     identity = spec.get("identity")
@@ -667,6 +668,8 @@ def spec_profile_variables(
     except (KeyError, TypeError, ValueError) as exc:
         fail(f"spec identity.geometry is incomplete: {exc}")
     spec_platform = geometry.get("platform_id")
+    if not isinstance(spec_platform, str) or not spec_platform:
+        fail("spec identity.geometry.platform_id is missing")
     if active_platform_id and spec_platform != active_platform_id:
         fail(
             f"released spec {spec_id} targets platform {spec_platform!r}; "
@@ -759,6 +762,7 @@ def spec_profile_variables(
         "CONF_SOURCE": "spec",
         "SNAPSHOT_REVISION": snapshot_revision,
         "SPEC_MANIFEST_ID": manifest_id,
+        "SPEC_PLATFORM_ID": spec_platform,
         "OVERLAY_PLACEMENT_NODE_ID": placement_node,
         "MODEL_SERVING_RELEASE_ID": "",
         "EXPECTED_MODEL_SEAL": "",

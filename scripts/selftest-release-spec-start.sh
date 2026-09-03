@@ -238,11 +238,38 @@ expect_failure 2 "differs from overlay placement" \
       PULSAR_OVERLAY_PATH="$STATE/overlay-place.json" \
       "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --node fixture-node-0
 
-expect_failure 1 "targets platform" "spec frozen for another platform is refused" \
+expect_failure 2 "targets platform" "spec frozen for another platform is refused at start" \
   env PULSAR_PLATFORM=test-other \
       PULSAR_PLATFORM_FILE="$REPO_DIR/scripts/testdata/platforms/test-other.json" \
       PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
       "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --node fixture-node-0
+
+# The platform gate is launch admission only: after the platform setting
+# changed, status and stop must still load the spec they need to inspect.
+other_status=$(PULSAR_PLATFORM=test-other \
+  PULSAR_PLATFORM_FILE="$REPO_DIR/scripts/testdata/platforms/test-other.json" \
+  PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
+  "$REPO_DIR/scripts/status.sh" "$spec_id" --node fixture-node-0 2>&1 || true)
+if printf '%s\n' "$other_status" | grep -q "targets platform"; then
+  echo "FAIL status.sh refuses a spec after a platform change: $other_status" >&2
+  exit 1
+fi
+# The GB10 topology fixture does not validate under the other platform, so
+# status stops at placement: that step runs after the loader, which proves
+# the spec was loaded rather than refused.
+if ! printf '%s\n' "$other_status" | grep -q "cannot resolve physical node placement"; then
+  echo "FAIL status.sh under another platform did not get past the spec loader: $other_status" >&2
+  exit 1
+fi
+other_down=$(PULSAR_PLATFORM=test-other \
+  PULSAR_PLATFORM_FILE="$REPO_DIR/scripts/testdata/platforms/test-other.json" \
+  PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
+  "$REPO_DIR/scripts/down.sh" "$spec_id" --node fixture-node-0 2>&1 || true)
+if printf '%s\n' "$other_down" | grep -q "targets platform"; then
+  echo "FAIL down.sh refuses a spec after a platform change: $other_down" >&2
+  exit 1
+fi
+echo "OK   status and stop still load a spec after the platform setting changed"
 
 missing_hex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 expect_failure 1 "${missing_hex}.json" "missing released spec names releases/<id>.json" \

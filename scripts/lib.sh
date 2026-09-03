@@ -274,6 +274,7 @@ _reset_loaded_profile_defaults() {
   CONF_SOURCE=conf
   SNAPSHOT_REVISION=""
   SPEC_MANIFEST_ID=""
+  SPEC_PLATFORM_ID=""
   OVERLAY_PLACEMENT_NODE_ID=""
 }
 
@@ -344,7 +345,6 @@ load_spec_profile() {
     --repo-root "$REPO_DIR"
     --overlay "$overlay"
     --image-repo "$image_repo"
-    --platform-id "${PULSAR_PLATFORM_ID:-dgx-spark-gb10}"
   )
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     export_args+=(--releases-root "$PULSAR_RELEASES_ROOT")

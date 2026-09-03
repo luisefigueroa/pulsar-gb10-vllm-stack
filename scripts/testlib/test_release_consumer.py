@@ -954,9 +954,13 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(n2_vars["TOPOLOGY_CLASS"], "roce-full-mesh")
         self.assertEqual(n2_vars["MIN_RAILS_PER_PAIR"], "2")
 
-    def test_spec_for_another_platform_is_refused(self) -> None:
+    def test_spec_platform_is_exported_and_gated_only_by_admission(self) -> None:
         spec = released_nano_spec()
         overlay = consumer.overlay_for_spec(overlay_document(), spec)
+        # The shared loader exports the platform and never gates on it, so
+        # stop/status can load a spec after the platform setting changed.
+        variables = consumer.spec_profile_variables(spec, overlay, "vllm/vllm-openai")
+        self.assertEqual(variables["SPEC_PLATFORM_ID"], "dgx-spark-gb10")
         consumer.spec_profile_variables(
             spec, overlay, "vllm/vllm-openai", active_platform_id="dgx-spark-gb10"
         )
@@ -964,6 +968,7 @@ class ReleaseConsumerTests(unittest.TestCase):
             consumer.spec_profile_variables(
                 spec, overlay, "vllm/vllm-openai", active_platform_id="dgx-spark-other"
             )
+
 
     def test_project_uses_the_exported_revision_over_the_catalog(self) -> None:
         repo = self._repo()
