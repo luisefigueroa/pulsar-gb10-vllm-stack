@@ -172,7 +172,17 @@ if [ "$TARGET" = "--all" ]; then
   esac
 fi
 
-if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
+target_is_released_spec=0
+if [[ "$TARGET" =~ ^[0-9a-f]{64}$ ]] \
+    && [ -f "${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}/${TARGET}.json" ]; then
+  target_is_released_spec=1
+fi
+if [ "$target_is_released_spec" = 1 ] && [ -n "$HOT_AFTER" ]; then
+  # Hot hooks are profile-keyed library operations (pin/purge); a released
+  # spec cannot drive them until the library accepts spec identity.
+  die "--retain-weights/--pin-weights/--purge-hot are not available for released spec $TARGET yet: hot lifecycle by spec identity is not implemented; stop without hot options, then manage views through the profile that produced this spec" 2
+fi
+if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ] && [ "$target_is_released_spec" != 1 ]; then
   # Conf file is extra geometry. A retired profile (ADR 0006) still stops
   # through the same label predicate as --all. Hot hooks need a serving
   # profile and are unavailable here.
@@ -189,6 +199,12 @@ if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ]; then
 fi
 
 load_conf "$TARGET"
+if [ "${CONF_SOURCE:-conf}" = spec ]; then
+  # Released spec: stop by the same container name and labels a conf uses;
+  # no hot hooks (see above).
+  HOT_AFTER=""
+  PULSAR_HOT_STOP_POLICY=retain
+fi
 if [ "$NODES" -gt 1 ]; then
   load_cluster_topology >/dev/null || die "confirmed topology required"
   set_default_hot_policy "$TARGET" "$(container_name_for "$TARGET" "$NODES")"

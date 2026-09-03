@@ -257,12 +257,29 @@ printf '%s\n' "$status_out" | grep -q "expected_container=vllm-$spec_id"
 echo "OK   status accepts a spec id"
 
 down_out=$(PULSAR_RELEASES_ROOT="$STATE/releases" \
+  PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
   "$REPO_DIR/scripts/down.sh" "$spec_id" --node fixture-node-0 2>&1 || true)
-if printf '%s\n' "$down_out" | grep -q "no such config"; then
-  echo "FAIL down.sh still requires a conf for spec id: $down_out" >&2
+if printf '%s\n' "$down_out" | grep -q "no such config\|retired confs stop plainly"; then
+  echo "FAIL down.sh treats a released spec as a retired conf: $down_out" >&2
   exit 1
 fi
 echo "OK   down accepts a spec id without a conf"
+
+expect_failure 2 "not available for released spec" \
+  "hot options on a spec stop are refused with the spec wording" \
+  env PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
+      "$REPO_DIR/scripts/down.sh" "$spec_id" --purge-hot --node fixture-node-0
+
+# A spec with no ready view must not advertise `prepare <spec_id>`.
+missing_view_out=$(FAKE_HOT_INFO_FILE="$STATE/no-hot-info.json" \
+  PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
+  "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --node fixture-node-0 2>&1 || true)
+printf '%s\n' "$missing_view_out" | grep -q "profile that produced this spec"
+if printf '%s\n' "$missing_view_out" | grep -q "prepare $spec_id"; then
+  echo "FAIL spec start advertises prepare <spec_id>: $missing_view_out" >&2
+  exit 1
+fi
+echo "OK   missing view for a spec names the source-profile remediation"
 
 COLLISION_HEX=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 printf 'MODEL=collision/model\n' >"$REPO_DIR/models/${COLLISION_HEX}.conf"

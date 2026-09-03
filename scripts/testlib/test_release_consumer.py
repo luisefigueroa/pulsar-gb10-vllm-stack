@@ -861,6 +861,14 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertNotIn("--gpu-memory-utilization", variables["ENGINE_ARGS"])
         manifest = spec["identity"]["snapshot_manifest"]
         self.assertEqual(variables["SPEC_MANIFEST_ID"], manifest["manifest_id"])
+        for reference, repo in (
+            ("vllm/vllm-openai:v0.26.0", "vllm/vllm-openai"),
+            ("vllm/vllm-openai@sha256:" + "a" * 64, "vllm/vllm-openai"),
+            ("registry.example:5000/team/vllm:v0.26.0", "registry.example:5000/team/vllm"),
+            ("registry.example:5000/team/vllm@sha256:" + "a" * 64, "registry.example:5000/team/vllm"),
+            ("", "vllm/vllm-openai"),
+        ):
+            self.assertEqual(consumer.image_repo_from_reference(reference), repo, reference)
         # Whole GiB rounded up, never below 1, so the memory gate sees the size.
         self.assertEqual(variables["WEIGHTS_GIB"], "1")
         big = json.loads(pretty_json_bytes(spec))

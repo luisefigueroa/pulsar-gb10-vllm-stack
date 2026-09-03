@@ -572,16 +572,23 @@ def spec_lifecycle_key(spec_id: str) -> str:
 
 
 def image_repo_from_reference(reference: str | None) -> str:
-    """Repository part of a pullable image; default ``vllm/vllm-openai``."""
+    """Repository part of a pullable image; default ``vllm/vllm-openai``.
+
+    Strips an ``@digest`` and a ``:tag`` that follows the final slash, so a
+    registry port such as ``registry.example:5000/team/vllm:tag`` keeps its
+    port and yields ``registry.example:5000/team/vllm``.
+    """
     text = (reference or "").strip()
     if not text:
         return DEFAULT_IMAGE_REPO
-    cut = len(text)
-    for separator in (":", "@"):
-        index = text.find(separator)
-        if index != -1:
-            cut = min(cut, index)
-    repo = text[:cut].strip()
+    at = text.find("@")
+    if at != -1:
+        text = text[:at]
+    last_slash = text.rfind("/")
+    colon = text.rfind(":")
+    if colon != -1 and colon > last_slash:
+        text = text[:colon]
+    repo = text.strip()
     return repo or DEFAULT_IMAGE_REPO
 
 

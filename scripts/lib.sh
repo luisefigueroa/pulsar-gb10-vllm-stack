@@ -333,8 +333,11 @@ load_spec_profile() {
   if [ -f "$conf" ] && [ -e "$releases_root/${spec_id}.json" ]; then
     die "$spec_id: both models/${spec_id}.conf and $releases_root/${spec_id}.json exist; refuse without fallback"
   fi
-  image_repo="${image_repo%%:*}"
+  # Keep a registry port: drop @digest, then only a :tag after the last slash.
   image_repo="${image_repo%%@*}"
+  case "${image_repo##*/}" in
+    *:*) image_repo="${image_repo%:*}" ;;
+  esac
   [ -n "$image_repo" ] || image_repo=vllm/vllm-openai
   export_args=(
     export-profile "$spec_id"

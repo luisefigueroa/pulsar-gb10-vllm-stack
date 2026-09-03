@@ -119,6 +119,12 @@ if [ "$hot_rc" -ne 0 ]; then
   reason="${gap_fields[0]:-views-missing}"
   remediation="${gap_fields[1]:-scripts/model-library.sh prepare $NAME --yes}"
   detail="${gap_fields[2]:-model files are not prepared}"
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # Preparation is profile-keyed today; a released spec cannot prepare
+    # its own view yet. Say so instead of advertising a command that fails.
+    remediation="scripts/model-library.sh prepare <profile that produced this spec> --yes"
+    detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION}); prepare by spec identity is not available yet, so prepare the source profile, then retry"
+  fi
   emit_weights_gap "$reason" "$remediation" "$detail" "$one_node_rank"
   exit 1
 fi
