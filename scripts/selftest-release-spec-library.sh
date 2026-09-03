@@ -770,6 +770,20 @@ for cmd in prepare pin unpin purge-hot; do
     || { echo "FAIL $cmd usage error does not advertise spec_id: $usage_out" >&2; exit 1; }
 done
 echo "OK   lifecycle help and usage errors advertise <profile|spec_id>"
+
+# Both lookup-failure branches in check-weights emit for any rank count, so
+# neither may reference the one-node rank variable, which is unset on a
+# multi-rank placement under set -u.
+python3 - "$REPO_DIR/scripts/check-weights.sh" <<'PY'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+for reason in ("rank-unreachable", "identity-mismatch"):
+    start = text.index(f'"{reason}"')
+    block = text[start:text.index("exit 1", start)]
+    assert "SINGLE_NODE_INDEX" not in block, (reason, block)
+print("ok")
+PY
+echo "OK   check-weights lookup-failure branches never touch the one-node rank variable"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

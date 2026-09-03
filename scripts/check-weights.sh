@@ -102,7 +102,7 @@ if [ "$hot_rc" -ne 0 ]; then
       "identity-mismatch" \
       "scripts/model-library.sh health" \
       "$where runtime view failed verification; inspect health, then prepare $NAME --yes only if that view is missing or corrupt" \
-      "$SINGLE_NODE_INDEX"
+      "$one_node_rank"
     exit 1
   fi
   classify_args=(
