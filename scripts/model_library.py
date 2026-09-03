@@ -4408,7 +4408,14 @@ def plan_prepare(
         home_rank=home_rank,
     )
     existing = None
-    if hot_stamp_path(instance).is_file():
+    # A controller-local stamp proves the controller's view only. For a
+    # released spec whose placement excludes the controller (a one-node
+    # service on a remote home), that stamp is a stale leftover of an
+    # earlier placement and must not turn the plan into a skip: the wrapper
+    # verifies the spec-named view on the target rank before copying, and
+    # the stale view stays reachable for cleanup by naming the controller
+    # with purge-hot --node. A conf keeps its existing plan semantics.
+    if (not identity_key or 0 in target_ranks) and hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
         if _stamp_matches_plan(existing):
             return _ready_skip_plan(

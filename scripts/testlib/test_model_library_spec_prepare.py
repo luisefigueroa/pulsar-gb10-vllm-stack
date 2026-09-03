@@ -163,6 +163,35 @@ class SpecPreparePlannerTests(unittest.TestCase):
         # Both acquisition steps carry the selected placement.
         self.assertEqual(placed["remediation"].count("--node node-1"), 2)
 
+    def test_controller_stamp_never_skips_a_remote_placement(self) -> None:
+        # Prepared on the controller once; the exact spec-named instance has
+        # a matching stamp there.
+        plan = model_library.plan_prepare(**self._identity_kwargs())
+        instance = pathlib.Path(plan["instance_dir"])
+        instance.mkdir(parents=True)
+        model_library.write_hot_stamp(instance, plan["stamp"])
+        self.assertEqual(model_library.plan_prepare(**self._identity_kwargs())["action"], "skip")
+        # Occupancy moved to rank 1: the placement excludes the controller,
+        # so the controller-local stamp is a stale leftover, not a skip.
+        catalog = model_library.load_json(self.catalog_path)
+        home = catalog["models"][0]["homes"][0]
+        home["rank"] = 1
+        home["node_id"] = "node-1"
+        catalog["models"][0]["primary_selection"]["node_id"] = "node-1"
+        remote_catalog = self.root / "catalog-rank1.json"
+        model_library.atomic_write_json(remote_catalog, catalog)
+        remote_inventory = dict(self.home_inventory, rank=1, node_id="node-1")
+        moved = model_library.plan_prepare(
+            **self._identity_kwargs(
+                catalog_path=str(remote_catalog),
+                home_inventory=remote_inventory,
+                target_rank=1,
+            )
+        )
+        self.assertEqual(moved["action"], "copy")
+        self.assertEqual(moved["target_ranks"], [1])
+        self.assertEqual(moved["instance_dir"], str(instance))
+
     def test_symlinked_hot_entries_are_never_discovered_or_purged(self) -> None:
         conf_plan = model_library.plan_prepare(
             catalog_path=str(self.catalog_path),
