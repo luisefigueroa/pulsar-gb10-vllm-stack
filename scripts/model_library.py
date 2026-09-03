@@ -3319,7 +3319,9 @@ def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, d
     candidates: list[tuple[str, pathlib.Path, dict[str, Any]]] = []
     try:
         for child in parent.iterdir():
-            if not child.is_dir():
+            # Never follow a symlinked instance: a later purge would delete
+            # whatever it points at.
+            if child.is_symlink() or not child.is_dir():
                 continue
             stamp_path = hot_stamp_path(child)
             if not stamp_path.is_file():
@@ -3358,7 +3360,7 @@ def find_hot_instance_for_profile(
     """Return the newest ready instance matching the live expected identity."""
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
-    if not parent.is_dir():
+    if parent.is_symlink() or not parent.is_dir():
         return None
     for _activated, candidate, _stamp in _ready_hot_children(parent):
         if profile_data is not None:
@@ -3401,7 +3403,9 @@ def find_hot_instance_for_identity(
     except OSError:
         return None
     for parent in parents:
-        if not parent.is_dir() or not parent.name.endswith(suffix):
+        # A symlinked <name>-<topology> entry may point outside the hot
+        # root; identity discovery must not follow it into a purge target.
+        if parent.is_symlink() or not parent.is_dir() or not parent.name.endswith(suffix):
             continue
         for activated, candidate, stamp in _ready_hot_children(parent):
             stamp_identity = stamp.get("identity_key")
@@ -4715,6 +4719,11 @@ def purge_hot_instance(
     instance_dir = pathlib.Path(instance_dir)
     if not instance_dir.is_dir():
         fail(f"purge: not a directory: {instance_dir}")
+    # The library creates two levels under the hot root: <name>-<topology>
+    # and the content-id instance. Refuse to delete through a symlink at
+    # either level; rmtree would otherwise remove an external tree.
+    if instance_dir.is_symlink() or instance_dir.parent.is_symlink():
+        fail(f"purge: refusing to delete through a symlink: {instance_dir}")
     stamp_path = hot_stamp_path(instance_dir)
     if stamp_path.is_file():
         stamp = load_json(stamp_path)

@@ -277,6 +277,24 @@ _reset_loaded_profile_defaults() {
   OVERLAY_PLACEMENT_NODE_ID=""
 }
 
+# Effective one-node placement selector for the loaded profile: for a released
+# spec, an explicit --node wins, an overlay placement.node_id applies when no
+# selector was given, and a conflict between the two fails. Prints the
+# selector; callers assign it. Confs pass through unchanged.
+spec_overlay_node_selector() {
+  local selector="${1:-}"
+  if [ "${CONF_SOURCE:-conf}" = spec ] && [ "${NODES:-1}" -eq 1 ]; then
+    if [ -n "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
+        && [ "$selector" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then
+      die "--node '$selector' differs from overlay placement.node_id" 2
+    fi
+    if [ -z "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ]; then
+      selector="$OVERLAY_PLACEMENT_NODE_ID"
+    fi
+  fi
+  printf '%s\n' "$selector"
+}
+
 # verify-hot identity arguments for the loaded profile. A conf binds the
 # stamp profile name; a released spec binds the exact sealed manifest id
 # instead, because the view may have been prepared under a conf name.

@@ -183,6 +183,47 @@ class SpecPreparePlannerTests(unittest.TestCase):
         )
         self.assertNotEqual(copied["action"], "skip")
 
+    def test_symlinked_hot_entries_are_never_discovered_or_purged(self) -> None:
+        conf_plan = model_library.plan_prepare(
+            catalog_path=str(self.catalog_path),
+            profile=self.profile,
+            topology_id=TOPOLOGY_ID,
+            hot_root=str(self.hot),
+            models_dir=self.models_dir,
+            nodes=1,
+            home_inventory=self.home_inventory,
+            require_exact_revision=fixture.COMMIT,
+            expected_integrity_manifest=self.manifest,
+        )
+        outside = self.root / "outside"
+        real_instance = outside / "victim" / conf_plan["content_id"]
+        real_instance.mkdir(parents=True)
+        model_library.write_hot_stamp(real_instance, conf_plan["stamp"])
+        self.hot.mkdir(parents=True, exist_ok=True)
+        link_parent = self.hot / f"linked-{TOPOLOGY_ID[:12]}"
+        link_parent.symlink_to(outside / "victim", target_is_directory=True)
+        identity_key = conf_plan["identity_key"]
+        self.assertIsNone(
+            model_library.find_hot_instance_for_identity(
+                self.hot, identity_key, TOPOLOGY_ID
+            )
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "symlink"):
+            model_library.purge_hot_instance(link_parent / conf_plan["content_id"])
+        self.assertTrue(real_instance.is_dir())
+        link_parent.unlink()
+        real_parent = self.hot / f"real-{TOPOLOGY_ID[:12]}"
+        real_parent.mkdir()
+        (real_parent / conf_plan["content_id"]).symlink_to(real_instance, target_is_directory=True)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_identity(
+                self.hot, identity_key, TOPOLOGY_ID
+            )
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "symlink"):
+            model_library.purge_hot_instance(real_parent / conf_plan["content_id"])
+        self.assertTrue(real_instance.is_dir())
+
     def test_spec_receipt_mismatch_names_both_ids(self) -> None:
         other = json.loads(json.dumps(self.manifest))
         other["files"][0]["sha256"] = "f" * 64

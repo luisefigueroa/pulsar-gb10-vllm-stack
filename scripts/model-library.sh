@@ -3286,6 +3286,7 @@ cmd_prepare() {
   esac
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector")
   if [ -z "$transport" ]; then
     if [ "$ssh_mode_explicit" = 1 ]; then
       case "$COPY_SSH_MODE" in
@@ -3716,6 +3717,7 @@ cmd_pin() {
   [ -n "$profile" ] || die "usage: pin <profile> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector")
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank budget_plan
   local -a HOT_TARGET_RANKS=()
@@ -3759,6 +3761,7 @@ cmd_unpin() {
   [ -n "$profile" ] || die "usage: unpin <profile> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector")
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank
   local -a HOT_TARGET_RANKS=()
@@ -3798,6 +3801,7 @@ cmd_purge_hot() {
   [ -n "$profile" ] || die "usage: purge-hot <profile> [--node RANK|NODE_ID] [--yes] [--force-unpin]"
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector")
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank command content_id sharers
   local -a HOT_TARGET_RANKS=()

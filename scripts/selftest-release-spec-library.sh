@@ -301,4 +301,33 @@ assert "--expected-manifest-id" not in conf_call, conf_call
 print("ok")
 PY
 echo "OK   post-prepare verification binds a spec by manifest id, a conf by profile"
+
+# Library commands apply the spec overlay placement the way up.sh does:
+# --node wins, overlay placement fills an empty selector, conflicts fail.
+placement_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec NODES=1 OVERLAY_PLACEMENT_NODE_ID=fixture-node-1
+  spec_overlay_node_selector ""
+  spec_overlay_node_selector fixture-node-1
+  CONF_SOURCE=conf spec_overlay_node_selector ""
+' _ "$REPO_DIR")
+[ "$placement_out" = $'fixture-node-1\nfixture-node-1' ] \
+  || { echo "FAIL spec_overlay_node_selector output: $placement_out" >&2; exit 1; }
+if bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec NODES=1 OVERLAY_PLACEMENT_NODE_ID=fixture-node-1
+  spec_overlay_node_selector fixture-node-0
+' _ "$REPO_DIR" >/dev/null 2>&1; then
+  echo "FAIL spec_overlay_node_selector accepted a conflicting --node" >&2
+  exit 1
+fi
+for fn in cmd_prepare cmd_pin cmd_unpin cmd_purge_hot; do
+  if ! sed -n "/^${fn}() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -q "spec_overlay_node_selector"; then
+    echo "FAIL $fn does not apply the spec overlay placement" >&2
+    exit 1
+  fi
+done
+echo "OK   prepare, pin, unpin, and purge apply the spec overlay placement"
 echo "OK   WP1.4d library spec selftest"
