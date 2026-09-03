@@ -129,6 +129,7 @@ for model in models:
             "differs_fields",
             "review_status",
             "reviewed_at",
+            "release_file",
         }
         assert identity["released"] is False
         assert identity["review_status"] is None

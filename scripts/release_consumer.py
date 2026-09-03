@@ -97,7 +97,8 @@ USAGE = (
     "[--repo-root R] [--releases-root D] [--json]\n"
     "       python3 scripts/release_consumer.py project --repo-root R "
     "--library-dir L --profile NAME [profile fields] "
-    "[--releases-root D] [--extra-arg A] [--extra-env E]"
+    "[--releases-root D] [--extra-arg A] [--extra-env E]\n"
+    "       python3 scripts/release_consumer.py project-batch --records FILE"
 )
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 EMPTY_PROJECTION = {"receipt": "missing", "identities": []}
@@ -666,19 +667,40 @@ def load_release(
 def try_load_release(
     releases_root: str | pathlib.Path,
     spec_id: str,
-) -> dict[str, Any] | None:
-    """Return one released spec, or None when missing, measured, or unreadable."""
+) -> tuple[dict[str, Any] | None, str]:
+    """Return ``(spec, state)`` with state ``absent``, ``valid``, or ``invalid``.
+
+    ``invalid`` means the exact ``<spec_id>.json`` exists but fails
+    verification (malformed, hash mismatch, or not ``state=released``). The
+    catalog reports that explicitly instead of pretending no spec exists.
+    """
     try:
         digest = _require_spec_id(spec_id)
     except ReleaseConsumerError:
-        return None
+        return None, "absent"
     path = pathlib.Path(releases_root) / f"{digest}.json"
-    if not path.exists():
-        return None
+    if not path.exists() and not path.is_symlink():
+        return None, "absent"
     try:
-        return _load_released_file(path)
+        return _load_released_file(path), "valid"
     except (ReleaseConsumerError, OSError):
-        return None
+        return None, "invalid"
+
+
+class ProjectionContext:
+    """Per-process caches so a batch projection parses shared data once."""
+
+    def __init__(self) -> None:
+        self.catalogs: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
+        self.attachments: dict[str, list[dict[str, Any]] | None] = {}
+        self.receipts: dict[tuple[str, str, str | None], tuple[dict[str, Any] | None, str]] = {}
+        self.releases: dict[tuple[str, str], tuple[dict[str, Any] | None, str]] = {}
+
+    def release(self, root: pathlib.Path, spec_id: str) -> tuple[dict[str, Any] | None, str]:
+        key = (str(root), spec_id)
+        if key not in self.releases:
+            self.releases[key] = try_load_release(root, spec_id)
+        return self.releases[key]
 
 
 def _review_fields(spec: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -707,6 +729,7 @@ def _blocked_identity_row(*, spec_decode: bool, default: bool) -> dict[str, Any]
         "default": default,
         "spec_id": None,
         "released": False,
+        "release_file": "absent",
         "comparison": None,
         "differs_fields": [],
         "review_status": None,
@@ -722,6 +745,8 @@ def identity_review_cell(
     """Human cell for one identity (D5)."""
     if receipt in ("missing", "unreadable") or not identity:
         return "-"
+    if identity.get("release_file") == "invalid":
+        return "invalid release file (verification failed)"
     if not identity.get("spec_id") or not identity.get("released"):
         return "-"
     if identity.get("comparison") == "differs":
@@ -803,6 +828,7 @@ def _catalog_snapshot_revision(
     catalog_path: str | pathlib.Path | None,
     *,
     profile: str,
+    context: ProjectionContext | None = None,
 ) -> tuple[str | None, str | None]:
     """Return (revision, error) where error is 'unreadable' or None."""
     if catalog_path in (None, ""):
@@ -812,11 +838,20 @@ def _catalog_snapshot_revision(
         return None, None
     if path.is_symlink() or not path.is_file():
         return None, "unreadable"
-    try:
-        catalog = load_json(path)
-    except (ReleaseConsumerError, OSError):
-        return None, "unreadable"
-    if not isinstance(catalog, dict):
+    cache_key = str(path)
+    if context is not None and cache_key in context.catalogs:
+        catalog, error = context.catalogs[cache_key]
+    else:
+        error = None
+        try:
+            catalog = load_json(path)
+        except (ReleaseConsumerError, OSError):
+            catalog, error = None, "unreadable"
+        if error is None and not isinstance(catalog, dict):
+            catalog, error = None, "unreadable"
+        if context is not None:
+            context.catalogs[cache_key] = (catalog, error)
+    if error == "unreadable" or catalog is None:
         return None, "unreadable"
     try:
         from scripts.model_library import find_model_entry
@@ -839,12 +874,60 @@ def _load_occupancy_receipt(
     *,
     model_id: str,
     snapshot_revision: str | None,
+    context: ProjectionContext | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (receipt, status) with status found|missing|unreadable."""
+    cache_key = (str(library_dir), model_id, snapshot_revision)
+    if context is not None and cache_key in context.receipts:
+        return context.receipts[cache_key]
+    result = _load_occupancy_receipt_uncached(
+        library_dir,
+        model_id=model_id,
+        snapshot_revision=snapshot_revision,
+        context=context,
+    )
+    if context is not None:
+        context.receipts[cache_key] = result
+    return result
+
+
+def _list_attachments(
+    library_dir: str | pathlib.Path,
+    context: ProjectionContext | None,
+) -> list[dict[str, Any]]:
+    try:
+        from scripts.model_library_receipt import list_source_attested_home_attachments
+    except ModuleNotFoundError:
+        from model_library_receipt import (  # type: ignore[no-redef]
+            list_source_attested_home_attachments,
+        )
+    key = str(library_dir)
+    if context is not None and key in context.attachments:
+        cached = context.attachments[key]
+        if cached is None:
+            raise OSError("occupancy store listing failed")
+        return cached
+    try:
+        listed = list(list_source_attested_home_attachments(library_dir))
+    except Exception:
+        if context is not None:
+            context.attachments[key] = None
+        raise
+    if context is not None:
+        context.attachments[key] = listed
+    return listed
+
+
+def _load_occupancy_receipt_uncached(
+    library_dir: str | pathlib.Path,
+    *,
+    model_id: str,
+    snapshot_revision: str | None,
+    context: ProjectionContext | None,
+) -> tuple[dict[str, Any] | None, str]:
     try:
         from scripts.model_library_receipt import (
             SourceAttestedAcquisitionError,
-            list_source_attested_home_attachments,
             load_source_attested_home_attachment,
             load_source_attested_receipt,
             source_attested_receipt_store,
@@ -852,7 +935,6 @@ def _load_occupancy_receipt(
     except ModuleNotFoundError:
         from model_library_receipt import (  # type: ignore[no-redef]
             SourceAttestedAcquisitionError,
-            list_source_attested_home_attachments,
             load_source_attested_home_attachment,
             load_source_attested_receipt,
             source_attested_receipt_store,
@@ -863,7 +945,7 @@ def _load_occupancy_receipt(
         if revision is None:
             attachments = [
                 item
-                for item in list_source_attested_home_attachments(library_dir)
+                for item in _list_attachments(library_dir, context)
                 if item.get("model_id") == model_id
             ]
             if len(attachments) != 1:
@@ -907,6 +989,7 @@ def project_profile(
     repo_root: str | pathlib.Path | None = None,
     extra_args: Sequence[str] = (),
     extra_env: Sequence[str] = (),
+    context: ProjectionContext | None = None,
 ) -> dict[str, Any]:
     """Display-only projection. Never raises for catalog/receipt/spec absence."""
     try:
@@ -927,6 +1010,7 @@ def project_profile(
             repo_root=repo_root,
             extra_args=extra_args,
             extra_env=extra_env,
+            context=context,
         )
     except Exception:
         return dict(UNREADABLE_PROJECTION)
@@ -950,6 +1034,7 @@ def _project_profile(
     repo_root: str | pathlib.Path | None,
     extra_args: Sequence[str],
     extra_env: Sequence[str],
+    context: ProjectionContext | None = None,
 ) -> dict[str, Any]:
     if library_dir in (None, ""):
         return _empty_projection("missing")
@@ -957,11 +1042,13 @@ def _project_profile(
     catalog = catalog_path
     if catalog in (None, ""):
         catalog = library / "catalog.json"
-    revision, catalog_error = _catalog_snapshot_revision(catalog, profile=profile)
+    revision, catalog_error = _catalog_snapshot_revision(
+        catalog, profile=profile, context=context
+    )
     if catalog_error == "unreadable":
         return _empty_projection("unreadable")
     receipt, receipt_status = _load_occupancy_receipt(
-        library, model_id=model_id, snapshot_revision=revision
+        library, model_id=model_id, snapshot_revision=revision, context=context
     )
     if receipt_status != "found" or receipt is None:
         return _empty_projection(receipt_status)
@@ -1004,7 +1091,10 @@ def _project_profile(
             )
             continue
         spec_id = spec_id_for(identity)
-        spec = try_load_release(root, spec_id)
+        if context is not None:
+            spec, release_file = context.release(root, spec_id)
+        else:
+            spec, release_file = try_load_release(root, spec_id)
         if spec is None:
             identities.append(
                 {
@@ -1012,6 +1102,7 @@ def _project_profile(
                     "default": default,
                     "spec_id": spec_id,
                     "released": False,
+                    "release_file": release_file,
                     "comparison": None,
                     "differs_fields": [],
                     "review_status": None,
@@ -1033,6 +1124,7 @@ def _project_profile(
                 "default": default,
                 "spec_id": spec_id,
                 "released": True,
+                "release_file": "valid",
                 "comparison": comparison["result"],
                 "differs_fields": list(comparison["fields"]),
                 "review_status": status if equal else None,
@@ -1269,7 +1361,11 @@ def cmd_show(
     return 0
 
 
-def cmd_project(args: argparse.Namespace) -> int:
+def project_payload(
+    args: argparse.Namespace,
+    *,
+    context: ProjectionContext | None = None,
+) -> dict[str, Any]:
     try:
         recommended = bool(int(args.recommended_spec or 0))
     except (TypeError, ValueError):
@@ -1295,8 +1391,62 @@ def cmd_project(args: argparse.Namespace) -> int:
         repo_root=args.repo_root,
         extra_args=list(args.extra_arg or []),
         extra_env=list(args.extra_env or []),
+        context=context,
     )
-    sys.stdout.write(compact_projection_json(payload) + "\n")
+    return payload
+
+
+def cmd_project(args: argparse.Namespace) -> int:
+    sys.stdout.write(compact_projection_json(project_payload(args)) + "\n")
+    return 0
+
+
+def read_projection_records(path: str | pathlib.Path) -> list[list[str]]:
+    """Read batch records: one argv token per line, blank line between records."""
+    records: list[list[str]] = []
+    current: list[str] = []
+    for raw in pathlib.Path(path).read_text(encoding="utf-8").split("\n"):
+        if raw == "":
+            if current:
+                records.append(current)
+                current = []
+            continue
+        current.append(raw)
+    if current:
+        records.append(current)
+    return records
+
+
+def _record_profile(record: list[str]) -> str:
+    for index, token in enumerate(record):
+        if token == "--profile" and index + 1 < len(record):
+            return record[index + 1]
+        if token.startswith("--profile="):
+            return token[len("--profile="):]
+    return ""
+
+
+def cmd_project_batch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Project every record with one process and shared caches (display only)."""
+    context = ProjectionContext()
+    projections: dict[str, dict[str, Any]] = {}
+    try:
+        records = read_projection_records(args.records)
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    for record in records:
+        profile = _record_profile(record)
+        try:
+            record_args = parser.parse_args(["project", *record])
+            payload = project_payload(record_args, context=context)
+        except SystemExit:
+            payload = dict(UNREADABLE_PROJECTION)
+        except Exception:
+            payload = dict(UNREADABLE_PROJECTION)
+        if profile:
+            projections[profile] = payload
+    sys.stdout.write(compact_projection_json({"projections": projections}) + "\n")
     return 0
 
 
@@ -1305,7 +1455,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Read released ADR 0017 specs under releases/",
         usage=USAGE,
     )
-    parser.add_argument("command", choices=("list", "verify", "show", "project"))
+    parser.add_argument(
+        "command", choices=("list", "verify", "show", "project", "project-batch")
+    )
     parser.add_argument("spec_id", nargs="?")
     parser.add_argument(
         "--repo-root",
@@ -1341,6 +1493,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--platform-id", default="dgx-spark-gb10")
     parser.add_argument("--extra-arg", action="append", default=[])
     parser.add_argument("--extra-env", action="append", default=[])
+    parser.add_argument("--records", default="", help="project-batch: records file")
     return parser
 
 
@@ -1353,6 +1506,10 @@ def main(argv: list[str] | None = None) -> int:
         return int(code) if isinstance(code, int) else 2
     repo_root = pathlib.Path(args.repo_root)
     try:
+        if args.command == "project-batch":
+            if not args.records:
+                fail("project-batch requires --records FILE")
+            return cmd_project_batch(args, parser)
         if args.command == "project":
             if args.spec_id:
                 fail("project does not take a spec_id")

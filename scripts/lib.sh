@@ -644,14 +644,14 @@ print("\t".join((
 
 # Display-only ADR 0017 spec-review projection. Never a serving gate; always
 # returns 0. Compact JSON is one line with no tabs.
-load_release_spec_projection() {
-  local tool output rc item
-  local -a args extra_split
-  RELEASE_SPEC_JSON='{"identities":[],"receipt":"unreadable"}'
-  tool="${PULSAR_RELEASE_CONSUMER_PY:-$REPO_DIR/scripts/release_consumer.py}"
-  [ -f "$tool" ] || return 0
-  args=(
-    project
+# Print the `release_consumer.py project` arguments for the loaded profile,
+# one token per line: the profile projection plus the live VLLM_EXTRA_ARGS and
+# EXTRA_ENV, split the way write_launch_plan_file does. Tokens never contain
+# newlines (conf arrays cannot carry them), so callers use mapfile -t.
+print_release_spec_projection_args() {
+  local item
+  local -a args=() extra_split=()
+  args+=(
     --repo-root "$REPO_DIR"
     --library-dir "$PULSAR_MODEL_LIBRARY_DIR"
     --catalog "$PULSAR_MODEL_LIBRARY_CATALOG"
@@ -662,16 +662,27 @@ load_release_spec_projection() {
     args+=(--releases-root "$PULSAR_RELEASES_ROOT")
   fi
   append_loaded_profile_contract_args args
-  extra_split=()
   append_vllm_extra_args extra_split
   for item in ${extra_split[@]+"${extra_split[@]}"}; do
     args+=("--extra-arg=$item")
   done
-  # Word-split EXTRA_ENV the same way write_launch_plan_file does.
   # shellcheck disable=SC2086
   for item in ${EXTRA_ENV:+$EXTRA_ENV}; do
     args+=("--extra-env=$item")
   done
+  printf '%s\n' "${args[@]}"
+}
+
+# Display-only ADR 0017 spec-review projection for the loaded profile. Never a
+# serving gate; always returns 0. Compact JSON is one line with no tabs.
+# list-models batches all profiles through `project-batch` instead.
+load_release_spec_projection() {
+  local tool output rc
+  local -a args=(project)
+  RELEASE_SPEC_JSON='{"identities":[],"receipt":"unreadable"}'
+  tool="${PULSAR_RELEASE_CONSUMER_PY:-$REPO_DIR/scripts/release_consumer.py}"
+  [ -f "$tool" ] || return 0
+  mapfile -t -O 1 args < <(print_release_spec_projection_args)
   set +e
   output=$(python3 "$tool" "${args[@]}" 2>/dev/null)
   rc=$?

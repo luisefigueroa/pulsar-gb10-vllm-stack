@@ -251,6 +251,8 @@ def project_cli_args(kwargs: dict[str, object]) -> list[str]:
     ]
     if kwargs.get("releases_root"):
         args.extend(["--releases-root", str(kwargs["releases_root"])])
+    if kwargs.get("repo_root"):
+        args.extend(["--repo-root", str(kwargs["repo_root"])])
     for item in kwargs.get("engine_args") or []:
         args.append(f"--engine-arg={item}")
     for item in kwargs.get("container_env") or []:
@@ -658,6 +660,53 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(hidden_row["comparison"], "differs")
         self.assertEqual(hidden_row["differs_fields"], ["argv"])
         self.assertIsNone(hidden_row["review_status"])
+        self.assertEqual(equal_row["release_file"], "valid")
+
+        # A corrupt file in the trusted registry is reported, never shown as
+        # "no spec": display-only, non-gating, but not silent.
+        dest.write_text("{not json", encoding="utf-8")
+        invalid = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        invalid_row = invalid["identities"][0]
+        self.assertEqual(invalid_row["release_file"], "invalid")
+        self.assertFalse(invalid_row["released"])
+        self.assertIsNone(invalid_row["comparison"])
+        self.assertIsNone(invalid_row["review_status"])
+        self.assertEqual(
+            consumer.identity_review_cell(invalid_row, receipt="found"),
+            "invalid release file (verification failed)",
+        )
+        measured = json.loads(pretty_json_bytes(spec))
+        measured["state"] = "measured"
+        measured["review"] = {}
+        dest.write_bytes(pretty_json_bytes(measured))
+        self.assertEqual(
+            consumer.project_profile(
+                **project_kwargs(library, catalog, repo_root=repo)
+            )["identities"][0]["release_file"],
+            "invalid",
+        )
+        dest.write_bytes(pretty_json_bytes(spec))
+
+        # project-batch: one process, shared caches, same payload per record.
+        single = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        record = project_cli_args(project_kwargs(library, catalog, repo_root=repo))[1:]
+        records_path = repo / "records.txt"
+        records_path.write_text(
+            "\n".join(record) + "\n\n" + "\n".join(record) + "\n"
+            + "\n--profile\nno-such-profile\n--library-dir\n" + str(library) + "\n",
+            encoding="utf-8",
+        )
+        batch = run_cli(["project-batch", "--records", str(records_path)])
+        self.assertEqual(batch.returncode, 0, msg=batch.stderr)
+        payload = json.loads(batch.stdout)
+        self.assertEqual(payload["projections"][NANO], single)
+        self.assertEqual(payload["projections"]["no-such-profile"]["identities"], [])
+        self.assertEqual(batch.stdout.count("\n"), 1)
+        self.assertNotIn("\t", batch.stdout)
         self.assertEqual(
             consumer.identity_review_cell(hidden_row, receipt="found"),
             "hidden (launch contract differs: argv)",
