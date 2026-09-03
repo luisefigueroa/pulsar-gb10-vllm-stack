@@ -322,6 +322,42 @@ if printf '%s\n' "$check_out" | grep -q "profile that produced this spec"; then
 fi
 echo "OK   check-weights advertises prepare <spec_id> --yes"
 
+# An unmet prerequisite keeps its own remediation: prepare <spec_id> would
+# fail on the same missing catalog.
+no_catalog_out=$(MODEL_LIBRARY_DIR="$STATE/missing-library" PULSAR_HOT_ROOT="$STATE/hot-empty" \
+  "$REPO_DIR/scripts/check-weights.sh" "$spec_id" --node fixture-node-0 2>&1 || true)
+printf '%s\n' "$no_catalog_out" | grep -q "catalog refresh" \
+  || { echo "FAIL check-weights without a catalog lost the refresh remediation: $no_catalog_out" >&2; exit 1; }
+if printf '%s\n' "$no_catalog_out" | grep -q "prepare $spec_id --yes"; then
+  echo "FAIL check-weights without a catalog still advertises prepare: $no_catalog_out" >&2
+  exit 1
+fi
+echo "OK   check-weights keeps the classified remediation for a spec"
+
+# Purge must reach a damaged remote spec view: ownership is bound by the
+# stamp's identity and manifest id, and only prepare/launch verify content.
+# The fixture view carries a ready stamp but none of the manifest's files,
+# which is exactly a view whose content is missing.
+damaged_view=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot \
+  --identity "${model_id}@${revision}" --manifest-id "$manifest_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+lookup_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"
+  CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6"
+  ssh_node() { shift; bash -c "$1"; }
+  eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  if hot_instance_for_profile_on_rank spec 1 0 1 >/dev/null 2>&1; then
+    echo "verified-lookup-accepted-damage"
+  fi
+  hot_instance_for_profile_on_rank spec 1 0 0 | python3 -c "import json,sys; print(json.load(sys.stdin)[\"instance_dir\"])"
+' _ "$REPO_DIR" "$STATE/hot-rank1" "$model_id" "$revision" "$manifest_id" "$topology_id")
+[ "$lookup_out" = "$damaged_view" ] \
+  || { echo "FAIL purge lookup on a damaged remote spec view: $lookup_out" >&2; exit 1; }
+echo "OK   purge lookup binds a damaged remote spec view by stamp identity; launch lookup refuses it"
+
 # The post-prepare verification must bind a spec by its sealed manifest id and
 # never by profile name or conf directory (the view may carry a conf's name).
 verify_args_log="$STATE/verify-args.log"

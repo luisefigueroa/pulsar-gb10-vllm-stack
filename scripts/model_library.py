@@ -4413,6 +4413,11 @@ def plan_prepare(
         }
 
     def _stamp_matches_plan(stamp: dict[str, Any]) -> bool:
+        # A spec reuses views by identity, so a view bound to a previous
+        # home is not the current home's durable view: occupancy moved and
+        # the home symlink must be recreated, not accounted as zero bytes.
+        if identity_key and stamp.get("home_node_id") != home["node_id"]:
+            return False
         return (
             stamp.get("content_digest") == digest
             and stamp.get("identity_key") == resolved["identity_key"]
@@ -4474,7 +4479,12 @@ def plan_prepare(
     existing = None
     if hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
-        if _stamp_matches_plan(existing):
+        # Rank 0's stamp proves rank 0 only. A multi-rank spec falls through
+        # to the copy plan, which re-materializes every target rank, so a
+        # rank whose view was lost is repaired instead of failing verify.
+        if _stamp_matches_plan(existing) and (
+            target_ranks == [0] or not identity_key
+        ):
             return _ready_skip_plan(
                 instance_dir=instance,
                 stamp=existing,

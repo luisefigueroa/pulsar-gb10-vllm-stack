@@ -3595,8 +3595,12 @@ hot_view_live_users() {
   printf '%s\n' "$out" | awk 'NF' | sort -u
 }
 
+# hot_instance_for_profile_on_rank <profile> <rank> [require_launchable] [verify_content]
+# verify_content=0 (purge) binds a remote spec view by the stamp identity and
+# manifest id that find-hot already matched, without digest verification, so
+# a damaged view stays removable. Preparation and launch keep verify_content=1.
 hot_instance_for_profile_on_rank() {
-  local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}"
+  local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}" verify_content="${4:-1}"
   local command info stamp instance identity
   local -a launch_args=() find_hot_args=()
   [ "$require_launchable" = 0 ] || launch_args+=(--for-launch)
@@ -3632,11 +3636,13 @@ hot_instance_for_profile_on_rank() {
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
     || return 1
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    command=$(shell_join_q python3 - verify-hot \
-      --expected-manifest-id "$SPEC_MANIFEST_ID" \
-      --topology-id "$CLUSTER_TOPOLOGY_ID" \
-      --instance-dir "$instance")
-    ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || return 1
+    if [ "$verify_content" = 1 ]; then
+      command=$(shell_join_q python3 - verify-hot \
+        --expected-manifest-id "$SPEC_MANIFEST_ID" \
+        --topology-id "$CLUSTER_TOPOLOGY_ID" \
+        --instance-dir "$instance")
+      ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || return 1
+    fi
   else
     stamp=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
@@ -3829,7 +3835,7 @@ cmd_purge_hot() {
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" cleanup \
     || die "purge-hot: cannot resolve exact local-files placement"
-  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
+  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}" 0 0) \
     || die "no hot instance for $profile on the selected serving placement"
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
   # The instance directory is named by its content id, which is also the

@@ -123,11 +123,10 @@ if [ "$hot_rc" -ne 0 ]; then
   reason="${gap_fields[0]:-views-missing}"
   remediation="${gap_fields[1]:-scripts/model-library.sh prepare $NAME --yes}"
   detail="${gap_fields[2]:-model files are not prepared}"
-  if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    remediation="scripts/model-library.sh prepare $NAME --yes"
-    if [ -z "${gap_fields[2]:-}" ]; then
-      detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION})"
-    fi
+  # Classification names the unmet prerequisite (catalog refresh, cleanup,
+  # placement); prepare <spec_id> is only the fallback when it names none.
+  if [ "${CONF_SOURCE:-conf}" = spec ] && [ -z "${gap_fields[2]:-}" ]; then
+    detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION})"
   fi
   emit_weights_gap "$reason" "$remediation" "$detail" "$one_node_rank"
   exit 1

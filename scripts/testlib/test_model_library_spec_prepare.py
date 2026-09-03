@@ -147,6 +147,52 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertEqual(plan["stamp"]["profile"], self.profile)
         self.assertNotIn(SPEC_ID, plan["instance_dir"])
 
+    def test_identity_reuse_requires_the_current_home(self) -> None:
+        conf_plan = model_library.plan_prepare(
+            catalog_path=str(self.catalog_path),
+            profile=self.profile,
+            topology_id=TOPOLOGY_ID,
+            hot_root=str(self.hot),
+            models_dir=self.models_dir,
+            nodes=1,
+            home_inventory=self.home_inventory,
+            require_exact_revision=fixture.COMMIT,
+            expected_integrity_manifest=self.manifest,
+        )
+        instance = pathlib.Path(conf_plan["instance_dir"])
+        instance.mkdir(parents=True)
+        # Occupancy moved: the ready view is bound to a previous home, so it
+        # is a former non-home copy, not the current home's durable view.
+        moved = dict(conf_plan["stamp"])
+        moved["home_node_id"] = "node-1"
+        model_library.write_hot_stamp(instance, moved)
+        plan = model_library.plan_prepare(**self._identity_kwargs())
+        self.assertEqual(plan["action"], "copy")
+        candidate = model_library.plan_prepare(
+            **self._identity_kwargs(),
+            reuse_instance_dir=str(instance),
+            reuse_stamp=moved,
+        )
+        self.assertEqual(candidate["action"], "copy")
+        model_library.write_hot_stamp(instance, conf_plan["stamp"])
+        self.assertEqual(
+            model_library.plan_prepare(**self._identity_kwargs())["action"], "skip"
+        )
+
+    def test_multi_rank_identity_view_on_rank_0_alone_is_not_ready(self) -> None:
+        one_rank = model_library.plan_prepare(**self._identity_kwargs())
+        instance = pathlib.Path(one_rank["instance_dir"])
+        instance.mkdir(parents=True)
+        model_library.write_hot_stamp(instance, one_rank["stamp"])
+        self.assertEqual(
+            model_library.plan_prepare(**self._identity_kwargs())["action"], "skip"
+        )
+        # The exact spec-named view is ready on rank 0 only; a two-rank spec
+        # must re-materialize every rank rather than report skip from rank 0.
+        two_rank = model_library.plan_prepare(**self._identity_kwargs(nodes=2))
+        self.assertEqual(two_rank["action"], "copy")
+        self.assertEqual(two_rank["target_ranks"], [0, 1])
+
     def test_identity_reuses_candidate_from_the_selected_rank(self) -> None:
         # A one-node spec placed on a remote home rank: the wrapper discovers
         # the candidate there and hands it in; the controller hot root is
