@@ -5,15 +5,13 @@ The shell scenario stays arrange-act-assert: it calls this helper for every
 fixture it needs and keeps only CLI invocations and assertions.
 
   arrange REPO STATE                       library, catalog, receipt, topology,
-                                           released nano spec, overlay, hot views,
-                                           paths.json, home-inventory.json
-  reuse-view REPO STATE TOPOLOGY MODEL REV SPEC_ID MANIFEST_JSON
-                                           conf-named ready view whose stamp
-                                           matches what identity prepare plans
-  rank1-view REPO STATE TOPOLOGY MODEL REV MANIFEST_JSON
-  verified-pair REPO STATE TOPOLOGY MODEL REV MANIFEST_JSON
-                                           hot-pair: an older verifiable view
-                                           beside a newer fileless one
+                                           released nano spec, overlay, a
+                                           verifiable spec-named view under
+                                           hot-spec, paths.json,
+                                           home-inventory.json
+  rank1-view REPO STATE TOPOLOGY SPEC_ID MODEL REV MANIFEST_JSON
+                                           a spec-named ready stamp with no
+                                           payload under hot-rank1
   docker-shim PATH SPEC_ID FLAG            docker that reports one managed
                                            container for SPEC_ID while FLAG exists
   purge-docker-shim PATH                   docker whose `ps` lists
@@ -130,29 +128,25 @@ def cmd_arrange(argv: list[str]) -> None:
         json.dumps(catalog, indent=2) + "\n", encoding="utf-8"
     )
     manifest = spec["identity"]["snapshot_manifest"]
-    # Views that pin, unpin, and prepare inspect must verify for real: a
-    # strict lookup hashes rank 0, so each carries the sealed manifest's
-    # payload and a stamp whose digest and validation match it.
-    for hot_name, view_profile, content_id in (
-        ("hot-conf", NANO, "confview0001"),
-        ("hot-spec", spec["spec_id"], "specview0001"),
-    ):
-        instance = write_identity_hot_view(
-            root / hot_name,
-            profile=view_profile,
-            topology_id=topology["topology_id"],
-            model_id=spec["identity"]["model_id"],
-            revision=receipt["snapshot_revision"],
-            manifest=manifest,
-            content_id=content_id,
-        )
-        make_view_verifiable(
-            instance,
-            hub_source=hub,
-            profile=view_profile,
-            model_id=spec["identity"]["model_id"],
-            manifest=manifest,
-        )
+    # The spec-named view that pin, unpin, and prepare inspect must verify
+    # for real: a strict lookup hashes rank 0, so it carries the sealed
+    # manifest's payload and a stamp whose digest and validation match it.
+    instance = write_identity_hot_view(
+        root / "hot-spec",
+        profile=spec["spec_id"],
+        topology_id=topology["topology_id"],
+        model_id=spec["identity"]["model_id"],
+        revision=receipt["snapshot_revision"],
+        manifest=manifest,
+        content_id="specview0001",
+    )
+    make_view_verifiable(
+        instance,
+        hub_source=hub,
+        profile=spec["spec_id"],
+        model_id=spec["identity"]["model_id"],
+        manifest=manifest,
+    )
     rank1 = json.loads(json.dumps(catalog))
     rank1["models"][0]["homes"][0]["rank"] = 1
     rank1["models"][0]["homes"][0]["node_id"] = "fixture-node-1"
@@ -205,91 +199,25 @@ def make_view_verifiable(instance, *, hub_source, profile, model_id, manifest) -
         shutil.copytree(hub_source, hub_dest, symlinks=True)
 
 
-def cmd_reuse_view(argv: list[str]) -> None:
-    import json
-    import pathlib
-    import sys
-
-    repo, state, topology_id, model_id, revision, spec_id, manifest_json = sys.argv[1:]
-    sys.path.insert(0, repo)
-    from scripts import model_library
-    from scripts.testlib.release_spec_start_fixture import write_identity_hot_view
-
-    manifest = json.loads(manifest_json)
-    hot = pathlib.Path(state) / "hot-reuse"
-    write_identity_hot_view(
-        hot,
-        profile="nemotron-3-nano-30b-nvfp4",
-        topology_id=topology_id,
-        model_id=model_id,
-        revision=revision,
-        manifest=manifest,
-        content_id="reuseview001",
-    )
-    # Rebuild a matching stamp so reuse compares validation.
-    instance = next(hot.glob("*/*"))
-    stamp = model_library.load_hot_stamp(instance)
-    stamp["validation"] = model_library.require_activation_identity(
-        {"profile": spec_id, "model_id": model_id},
-        manifest,
-        allow_unvalidated=False,
-    )
-    stamp["content_digest"] = manifest["manifest_id"]
-    model_library.write_hot_stamp(instance, stamp)
-    print(instance)
 
 
 def cmd_rank1_view(argv: list[str]) -> None:
     import json, pathlib, sys
     sys.path.insert(0, sys.argv[1])
     from scripts.testlib.release_spec_start_fixture import write_identity_hot_view
-    manifest = json.loads(sys.argv[6])
-    write_identity_hot_view(
+    manifest = json.loads(sys.argv[7])
+    path = write_identity_hot_view(
         pathlib.Path(sys.argv[2]) / "hot-rank1",
-        profile="nemotron-3-nano-30b-nvfp4",
+        profile=sys.argv[4],
         topology_id=sys.argv[3],
-        model_id=sys.argv[4],
-        revision=sys.argv[5],
+        model_id=sys.argv[5],
+        revision=sys.argv[6],
         manifest=manifest,
         content_id="rank1view0001",
     )
+    print(path)
 
 
-def cmd_verified_pair(argv: list[str]) -> None:
-    import json, pathlib, sys
-    sys.path.insert(0, sys.argv[1])
-    from scripts.testlib.release_spec_start_fixture import write_identity_hot_view
-    manifest = json.loads(sys.argv[6])
-    state = pathlib.Path(sys.argv[2])
-    hot = state / "hot-pair"
-    older = write_identity_hot_view(
-        hot,
-        profile="nemotron-3-nano-30b-nvfp4",
-        topology_id=sys.argv[3],
-        model_id=sys.argv[4],
-        revision=sys.argv[5],
-        manifest=manifest,
-        content_id="olderview0001",
-        activated_at="2026-09-01T00:00:00Z",
-    )
-    make_view_verifiable(
-        older,
-        hub_source=state / "durable-home",
-        profile="nemotron-3-nano-30b-nvfp4",
-        model_id=sys.argv[4],
-        manifest=manifest,
-    )
-    newer = write_identity_hot_view(
-        hot,
-        profile="nemotron-3-nano-30b-nvfp4",
-        topology_id=sys.argv[3],
-        model_id=sys.argv[4],
-        revision=sys.argv[5],
-        manifest=manifest,
-        content_id="newerview0001",
-        activated_at="2026-09-03T00:00:00Z",
-    )
-    print(json.dumps({"older": str(older), "newer": str(newer)}))
 
 
 def cmd_docker_shim(argv: list[str]) -> None:
@@ -355,9 +283,7 @@ with open(os.environ["VERIFY_ARGS_LOG"], "a", encoding="utf-8") as fh:
 
 COMMANDS = {
     "arrange": cmd_arrange,
-    "reuse-view": cmd_reuse_view,
     "rank1-view": cmd_rank1_view,
-    "verified-pair": cmd_verified_pair,
     "docker-shim": cmd_docker_shim,
     "purge-docker-shim": cmd_purge_docker_shim,
     "record-tool": cmd_record_tool,

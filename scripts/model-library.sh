@@ -389,7 +389,7 @@ library_plan_prepare() {
   local profile="${1:?profile required}"
   shift
   local home_inventory model_id revision receipt_json manifest_json receipt_lookup
-  local home_rank node_id hub_path tmp remote_reuse
+  local home_rank node_id hub_path tmp
   local -a fields=() extra=()
   home_inventory=$(inspect_catalog_home "$profile") || return 1
   mapfile -t fields < <(json_fields "$home_inventory" \
@@ -425,18 +425,11 @@ library_plan_prepare() {
   extra+=(--profile "$profile")
   extra+=(--home-inventory-json "$home_inventory")
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # A released spec resolves its catalog entry by identity and hands the
+    # planner its sealed manifest, which must equal the receipt's. Its view
+    # is keyed by the spec id, one name one directory, like a conf's.
     extra+=(--identity "${MODEL}@${SNAPSHOT_REVISION}")
     extra+=(--spec-manifest-json "$(library_spec_snapshot_manifest_json "$profile")")
-    # A one-node spec serves on its durable-home rank. When that rank is not
-    # the controller, discover a reusable view there (by identity and
-    # sealed manifest) so the plan can skip the copy instead of scanning the
-    # controller's hot root, which is irrelevant to that placement.
-    if [ "$home_rank" != 0 ] && [ "${NODES:-1}" -eq 1 ] \
-        && remote_reuse=$(hot_instance_for_profile_on_rank "$profile" "$home_rank" 2>/dev/null) \
-        && [ -n "$remote_reuse" ]; then
-      extra+=(--reuse-instance-dir "$(printf '%s' "$remote_reuse" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')")
-      extra+=(--reuse-stamp-json "$(printf '%s' "$remote_reuse" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))')")
-    fi
   else
     extra+=(--models-dir "$REPO_DIR/models")
     library_conf_prepare_spec_manifest_json "$receipt_json" extra
@@ -2823,27 +2816,7 @@ verify_copy_ssh_roce_route() {
     || die "rank $remote_rank: live route does not match confirmed RoCE rail"
 }
 
-# copy_ranks_need_bulk_transfer <home_rank> <rank>...
-# Print 1 when bytes must cross the fabric: a copied rank is not the home
-# rank. The fabric map needs such a non-home peer; a home rank copied alone
-# materializes locally and moves nothing across the fabric.
-copy_ranks_need_bulk_transfer() {
-  local home_rank="${1:?}" rank
-  shift
-  for rank in "$@"; do
-    [ "$rank" = "$home_rank" ] || { printf '1\n'; return 0; }
-  done
-  printf '0\n'
-}
 
-# roce_map_ranks_csv <home_rank> <rank>...
-# The ranks the fabric map must cover: every copied rank plus the home rank,
-# which is the transfer source; sorted, unique, comma-separated.
-roce_map_ranks_csv() {
-  local home_rank="${1:?}"
-  shift
-  printf '%s\n' "$home_rank" "$@" | sort -n -u | paste -sd, -
-}
 
 load_copy_ssh_roce_map() {
   local home_rank="${1:?}" ranks_csv="${2:?}" rail_index="${3:-0}"
@@ -3092,58 +3065,8 @@ write_stamp_on_rank() {
     <"$PY_TOOL" >/dev/null
 }
 
-# observe_ready_ranks_for_instance <instance> <profile> <validation_json>
-#   <home_node_id> <rank>...
-# Print the comma-separated ranks whose exact view at INSTANCE passes full
-# verification and is bound to the current durable home. A rank with no
-# view, a damaged view, a view stamped for a previous home, or an
-# unreachable node is simply not ready and gets re-materialized.
-observe_ready_ranks_for_instance() {
-  local instance="${1:?}" profile="${2:?}" expected_validation_json="${3:?}"
-  local home_node_id="${4:?}" rank
-  shift 4
-  local -a ready=()
-  for rank in "$@"; do
-    if verify_hot_on_rank "$rank" "$instance" "$profile" \
-        "$CLUSTER_TOPOLOGY_ID" 0 "$expected_validation_json" "$home_node_id" 2>/dev/null; then
-      ready+=("$rank")
-    fi
-  done
-  (IFS=,; printf '%s\n' "${ready[*]}")
-}
 
-# spec_view_ready_on_every_rank <instance> <profile> <validation_json>
-#   <home_node_id> <ranks_csv> <rank>...
-# Succeed only when the observation over the given ranks equals RANKS_CSV.
-spec_view_ready_on_every_rank() {
-  local instance="${1:?}" profile="${2:?}" expected_validation_json="${3:?}"
-  local home_node_id="${4:?}" ranks_csv="${5:?}" observed
-  shift 5
-  observed=$(observe_ready_ranks_for_instance "$instance" "$profile" \
-    "$expected_validation_json" "$home_node_id" "$@")
-  [ "$observed" = "$ranks_csv" ]
-}
 
-# select_reusable_spec_view <profile> <validation_json> <home_node_id>
-#   <ranks_csv> "<ranks separated by spaces>" <candidate>...
-# Print the first candidate view that verifies, bound to the current home,
-# on every listed rank; fail when none does (or no candidate was given).
-select_reusable_spec_view() {
-  local profile="${1:?}" expected_validation_json="${2:?}" home_node_id="${3:?}"
-  local ranks_csv="${4:?}" ranks_ws="${5:?}" candidate
-  local -a ranks=()
-  shift 5
-  read -r -a ranks <<<"$ranks_ws"
-  for candidate in "$@"; do
-    [ -n "$candidate" ] || continue
-    if spec_view_ready_on_every_rank "$candidate" "$profile" \
-        "$expected_validation_json" "$home_node_id" "$ranks_csv" "${ranks[@]}"; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
 
 # require_no_view_users_on_ranks <instance> <content_id> <rank>...
 # Repairing a rank replaces its view in place (copy_hub_to_rank removes the
@@ -3161,15 +3084,14 @@ require_no_view_users_on_ranks() {
 }
 
 # verify_hot_on_rank <rank> <instance> <profile> <topology_id> [allow_verifying]
-#   [expected_validation_json] [expected_home_node_id]
+#   [expected_validation_json]
 # Returns the verifier's status on every rank, including rank 0, so a caller
 # testing it in a condition sees a failed verify as not ready.
 verify_hot_on_rank() {
   local rank="${1:?}" instance_dir="${2:?}" profile="${3:?}" topology_id="${4:?}"
   local allow_verifying="${5:-0}" expected_validation_json="${6:-}" command
-  local expected_home_node_id="${7:-}"
   # A conf binds the stamp profile name and its conf; a released spec binds
-  # the sealed manifest id instead (the view may carry a conf's name).
+  # the sealed manifest id instead (a spec has no conf file).
   local -a verify_args=(
     verify-hot
     --instance-dir "$instance_dir"
@@ -3186,8 +3108,6 @@ verify_hot_on_rank() {
   [ "$allow_verifying" = 1 ] && verify_args+=(--allow-verifying)
   [ -n "$expected_validation_json" ] \
     && verify_args+=(--expected-validation-json "$expected_validation_json")
-  [ -n "$expected_home_node_id" ] \
-    && verify_args+=(--expected-home-node-id "$expected_home_node_id")
   if [ "$rank" = 0 ]; then
     if [ "${CONF_SOURCE:-conf}" != spec ]; then
       verify_args+=(--models-dir "$REPO_DIR/models")
@@ -3453,44 +3373,8 @@ cmd_prepare() {
   expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
   target_ranks_csv=$(IFS=,; printf '%s' "${target_ranks[*]}")
-  local -a copy_ranks=("${target_ranks[@]}")
-  local ready_csv="" plan_home_node_id plan_content_id reuse_candidate=""
-  local -a reuse_candidates=()
-  plan_home_node_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"].get("node_id") or "")')
+  local plan_content_id
   plan_content_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["content_id"])')
-
-  # A released spec never reuses on stamp metadata alone. The plan lists
-  # every matching identity view on the controller (any name, its own
-  # spec-named view included), newest first; the first that verifies,
-  # bound to the current home, on every target rank is reused. None
-  # verifying falls through to materialization, so a view whose payload
-  # is damaged is repaired rather than protected by its stamp.
-  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ]; then
-    mapfile -t reuse_candidates < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin).get("reuse_candidates") or []))')
-    if reuse_candidate=$(select_reusable_spec_view "$profile" "$expected_validation_json" \
-        "$plan_home_node_id" "$target_ranks_csv" "${target_ranks[*]}" "${reuse_candidates[@]}"); then
-      log "reusing verified identity view $reuse_candidate on every target rank; model not started"
-      return 0
-    fi
-  fi
-  # A multi-rank released spec repairs only the ranks that are not ready.
-  # The plan sees rank 0 alone, so verify the exact view on every target
-  # rank here and re-plan with that observation: ready ranks keep their
-  # bytes, stamps, and pins, and no copy ever runs beneath them.
-  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ] \
-      && [ "${#target_ranks[@]}" -gt 1 ]; then
-    ready_csv=$(observe_ready_ranks_for_instance "$instance" "$profile" \
-      "$expected_validation_json" "$plan_home_node_id" "${target_ranks[@]}")
-    if [ "$ready_csv" = "$target_ranks_csv" ]; then
-      log "hot already ready on every target rank (verified); model not started"
-      return 0
-    fi
-    if [ -n "$ready_csv" ]; then
-      plan=$(library_plan_prepare "$profile" "${plan_flags[@]}" --ready-ranks "$ready_csv")
-      mapfile -t copy_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["copy_ranks"]))')
-      log "ranks $ready_csv hold verified views and stay untouched; repairing ranks ${copy_ranks[*]}"
-    fi
-  fi
 
   budget_plan=$(build_hot_budget_plan_from_activation "$plan" prepare) \
     || die "prepare: all-rank hot admission failed"
@@ -3522,36 +3406,34 @@ print(json.dumps(d))
 
   # Promotion candidate: SSH identity stays on the confirmed control alias;
   # bulk sockets are pinned to confirmed RoCE IPs after live route validation.
-  # The fabric decision and map follow the ranks actually copied (plus the
-  # home rank as the source), so a rank that stays untouched by a selective
-  # repair never needs a fabric mapping.
   if [ "$transport" = ssh-roce ]; then
-    needs_bulk_transfer=$(copy_ranks_need_bulk_transfer "$home_rank" "${copy_ranks[@]}")
+    needs_bulk_transfer=$(printf '%s' "$plan" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+home=int(d["home"]["rank"])
+print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
+')
     if [ "$needs_bulk_transfer" = 1 ]; then
-      load_copy_ssh_roce_map "$home_rank" \
-        "$(roce_map_ranks_csv "$home_rank" "${copy_ranks[@]}")" \
+      load_copy_ssh_roce_map "$home_rank" "$target_ranks_csv" \
         "${PULSAR_FABRIC_RAIL_INDEX:-0}"
       log "ssh-roce candidate: confirmed identity + RoCE HostName binding"
     else
-      # Only the home rank is materialized: no bytes cross the fabric and
-      # the map (which needs a non-home peer) is not built. A remote home's
-      # stamp still has to reach it, so that rsync takes the control path.
-      COPY_SSH_MODE=control
-      log "no non-home transfer is required; preparing the durable-home view (stamp over the control SSH path)"
+      log "no non-home transfer is required; preparing the durable-home local view"
     fi
   fi
 
   if [ "$yes" != 1 ]; then
-    log "will copy model to hot staging on ranks: ${copy_ranks[*]}"
+    log "will copy model to hot staging on ranks: ${target_ranks[*]}"
     log "source rank=$home_rank → $hub_dest"
     log "re-run with --yes to execute"
     return 0
   fi
 
-  # A released spec may be repairing a view in place: never beneath a
-  # managed container that references it on that rank.
+  # Materializing replaces the destination in place (copy_hub_to_rank
+  # removes it first): a released spec never does that beneath a managed
+  # container, running or stopped, that references the view on that rank.
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    require_no_view_users_on_ranks "$instance" "$plan_content_id" "${copy_ranks[@]}"
+    require_no_view_users_on_ranks "$instance" "$plan_content_id" "${target_ranks[@]}"
   fi
 
   local -a touched=() pids=()
@@ -3652,8 +3534,7 @@ print(json.dumps(d))
 
     # Publish ready only after every rank passed. A partial publish failure is
     # still covered by cleanup_partial, which removes every touched instance.
-    # Ranks that were already ready keep their own stamp, pin included.
-    for verify_rank in "${copy_ranks[@]}"; do
+    for verify_rank in "${target_ranks[@]}"; do
       write_stamp_on_rank "$verify_rank" "$instance" "$stamp_json" \
         || die "rank $verify_rank: ready stamp publish failed"
     done
@@ -3673,10 +3554,10 @@ print(json.dumps(d))
 
   [ "$time_it" = 1 ] && start_ts=$(date +%s)
 
-  # control-path copy — parallel ranks when N>1; ready ranks are skipped
+  # control-path copy — parallel ranks when N>1
   t0=$(date +%s)
   pids=()
-  for rank in "${copy_ranks[@]}"; do
+  for rank in "${target_ranks[@]}"; do
     (
       set -euo pipefail
       log "copy → rank $rank"
@@ -3741,71 +3622,30 @@ hot_view_live_users() {
 }
 
 # hot_instance_for_profile_on_rank <profile> <rank> [require_launchable] [strict]
-# strict=1 (default; prepare, pin, unpin) verifies a remote spec view's
-# content and, when HOT_HOME_NODE_ID is set by resolve_hot_profile_targets,
-# requires the stamp to be bound to that current durable home: after
-# occupancy moves, a view stamped for the previous home is a stale working
-# copy and must not be pinned or reported ready. strict=0 (purge) binds
-# ownership by the stamp identity and manifest id that find-hot already
-# matched, without digest verification or the home check, so a damaged or
-# stale view stays removable.
+# The ready view named by PROFILE (a conf name or a released spec id) on
+# RANK, as the find-hot record. A conf binds the stamp to its conf file; a
+# released spec binds the view to its sealed manifest id, and strict=1
+# (prepare, pin, unpin) verifies the content on that rank, the controller
+# included, since find-hot checks metadata only. strict=0 (purge) binds by
+# name and stamp alone so a damaged view stays removable.
+# Returns 1 when the rank holds no such view and 255 when the rank cannot be
+# observed at all (SSH failure), so cleanup can tell the two apart: absence
+# is already purged; unobservable is not.
 hot_instance_for_profile_on_rank() {
   local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}" strict="${4:-1}"
-  local command info stamp instance identity
-  local -a launch_args=() find_hot_args=()
+  local command info stamp instance rc=0
+  local -a launch_args=() find_hot_args=() verify_args=()
   [ "$require_launchable" = 0 ] || launch_args+=(--for-launch)
+  find_hot_args=(
+    find-hot
+    --profile "$profile"
+    --topology-id "${CLUSTER_TOPOLOGY_ID}"
+    --hot-root "$HOT_ROOT"
+  )
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ] \
-        || [ -z "${SPEC_MANIFEST_ID:-}" ]; then
-      return 1
-    fi
-    identity="${MODEL}@${SNAPSHOT_REVISION}"
-    find_hot_args=(
-      find-hot
-      --identity "$identity"
-      --manifest-id "$SPEC_MANIFEST_ID"
-      --topology-id "${CLUSTER_TOPOLOGY_ID}"
-      --hot-root "$HOT_ROOT"
-    )
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
   else
-    find_hot_args=(
-      find-hot
-      --profile "$profile"
-      --topology-id "${CLUSTER_TOPOLOGY_ID}"
-      --hot-root "$HOT_ROOT"
-      --models-dir "$REPO_DIR/models"
-    )
-  fi
-  # Returns 1 when the rank holds no matching view and 255 when the rank
-  # cannot be observed at all (SSH failure), so cleanup can tell the two
-  # apart: absence is already purged; unobservable is not.
-  local rc=0
-  if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$strict" = 1 ]; then
-    # A stamp proves metadata only. Every identity match is a candidate,
-    # newest first; the first that is bound to the current home and whose
-    # content verifies on this rank is the view, so pin, unpin, and
-    # prepare land on the view launch will use.
-    local list candidate
-    list=$(spec_candidate_records_on_rank "$profile" "$rank" "$require_launchable") || return $?
-    while IFS= read -r candidate; do
-      [ -n "$candidate" ] || continue
-      instance=$(printf '%s' "$candidate" | python3 -c \
-        'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
-      rc=0
-      spec_view_verifies_on_rank "$profile" "$rank" "$instance" || rc=$?
-      [ "$rc" -ne 255 ] || return 255
-      if [ "$rc" -eq 0 ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    done <<<"$list"
-    return 1
-  fi
-  if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    # Purge policy: ownership by identity and manifest only; the newest
-    # match is the single record, and the rank's status codes are kept.
-    hot_spec_views_on_rank "$profile" "$rank" | head -n 1
-    return "${PIPESTATUS[0]}"
+    find_hot_args+=(--models-dir "$REPO_DIR/models")
   fi
   if [ "$rank" -eq 0 ]; then
     info=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}") || return 1
@@ -3818,7 +3658,23 @@ hot_instance_for_profile_on_rank() {
   instance=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
     || return 1
-  if [ "$rank" -ne 0 ]; then
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if [ "$strict" = 1 ]; then
+      verify_args=(
+        verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID"
+        --topology-id "$CLUSTER_TOPOLOGY_ID" --instance-dir "$instance"
+      )
+      if [ "$rank" -eq 0 ]; then
+        python3 "$PY_TOOL" "${verify_args[@]}" >/dev/null || return 1
+      else
+        command=$(shell_join_q python3 - "${verify_args[@]}")
+        rc=0
+        ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || rc=$?
+        [ "$rc" -ne 255 ] || return 255
+        [ "$rc" -eq 0 ] || return 1
+      fi
+    fi
+  elif [ "$rank" -ne 0 ]; then
     stamp=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
       || return 1
@@ -3829,135 +3685,37 @@ hot_instance_for_profile_on_rank() {
   printf '%s\n' "$info"
 }
 
-# spec_candidate_records_on_rank <profile> <rank> [require_launchable]
-# Every identity+manifest match of the loaded spec on RANK as compact JSON
-# records, newest first (launchable stamps only when asked). Returns 1 when
-# the rank holds none, 255 when it is unreachable.
-spec_candidate_records_on_rank() {
-  local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}" list rows command rc=0
-  local -a args=(
-    find-hot --identity "${MODEL}@${SNAPSHOT_REVISION}" --manifest-id "$SPEC_MANIFEST_ID"
-    --topology-id "${CLUSTER_TOPOLOGY_ID}" --hot-root "$HOT_ROOT" --all
-  )
-  [ "$require_launchable" = 0 ] || args+=(--for-launch)
-  if [ "$rank" -eq 0 ]; then
-    list=$(python3 "$PY_TOOL" "${args[@]}") || return 1
-  else
-    command=$(shell_join_q python3 - "${args[@]}")
-    list=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
-    [ "$rc" -ne 255 ] || return 255
-    [ "$rc" -eq 0 ] || return 1
-  fi
-  rows=$(printf '%s' "$list" | python3 -c \
-    'import json,sys
-for record in json.load(sys.stdin):
-    print(json.dumps(record, sort_keys=True, separators=(",", ":")))') || return 1
-  [ -n "$rows" ] || return 1
-  printf '%s\n' "$rows"
-}
 
-# spec_view_verifies_on_rank <profile> <rank> <instance>
-# Full content verification of INSTANCE on RANK against the loaded spec's
-# manifest, bound to the current durable home when HOT_HOME_NODE_ID is set.
-# Returns 255 when the rank is unreachable, 1 when the view does not verify.
-spec_view_verifies_on_rank() {
-  local profile="${1:?}" rank="${2:?}" instance="${3:?}" command rc=0
-  local -a args=(
-    verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID"
-    --topology-id "$CLUSTER_TOPOLOGY_ID" --instance-dir "$instance"
-  )
-  [ -z "${HOT_HOME_NODE_ID:-}" ] || args+=(--expected-home-node-id "$HOT_HOME_NODE_ID")
-  if [ "$rank" -eq 0 ]; then
-    python3 "$PY_TOOL" "${args[@]}" >/dev/null || return 1
-    return 0
-  fi
-  command=$(shell_join_q python3 - "${args[@]}")
-  ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || rc=$?
-  [ "$rc" -ne 255 ] || return 255
-  [ "$rc" -eq 0 ] || return 1
-}
 
-# hot_spec_views_on_rank <profile> <rank>
-# Every identity+manifest match of the loaded spec on RANK, newest first,
-# one compact JSON record per line (purge policy: ownership by stamp, no
-# content check). Returns 1 when the rank holds none, 2 when the rank was
-# reached but its views could not be inspected (a malformed stamp, a tool
-# failure), and 255 when the rank is unreachable. Absence is already purged;
-# the other two must stop cleanup before anything is deleted anywhere.
-hot_spec_views_on_rank() {
-  local profile="${1:?}" rank="${2:?}" list rows command rc=0 identity
-  if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ] \
-      || [ -z "${SPEC_MANIFEST_ID:-}" ]; then
-    return 2
-  fi
-  identity="${MODEL}@${SNAPSHOT_REVISION}"
-  # Cleanup also reaches a view an interrupted preparation left behind
-  # (state=verifying): ownership is still bound by its stamp.
-  local -a args=(
-    find-hot --identity "$identity" --manifest-id "$SPEC_MANIFEST_ID"
-    --topology-id "${CLUSTER_TOPOLOGY_ID}" --hot-root "$HOT_ROOT" --all --include-incomplete
-  )
-  if [ "$rank" -eq 0 ]; then
-    list=$(python3 "$PY_TOOL" "${args[@]}") || return 2
-  else
-    command=$(shell_join_q python3 - "${args[@]}")
-    list=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
-    [ "$rc" -ne 255 ] || return 255
-    [ "$rc" -eq 0 ] || return 2
-  fi
-  rows=$(printf '%s' "$list" | python3 -c \
-    'import json,sys
-for record in json.load(sys.stdin):
-    print(json.dumps(record, sort_keys=True, separators=(",", ":")))') || return 2
-  [ -n "$rows" ] || return 1
-  printf '%s\n' "$rows"
-}
 
 # hot_instances_for_profile_on_ranks <profile> <rank>...
 # Print one "rank<TAB>instance_dir<TAB>stamped_content_id<TAB>pinned" line
-# per view of PROFILE on each target rank, bound by ownership only (purge
-# policy). A released spec lists every identity+manifest match on the rank,
-# so cleanup by spec id is explicit and complete: the view the spec served
-# from and any other copy of the same sealed content, damaged or not. A conf
-# lists its one exact instance.
-# A rank without a view is reported as already purged and skipped; the
-# function fails with 1 only when no target rank holds a view. It returns
-# 255 (unreachable) or 2 (reached but not inspectable) without printing:
-# such a rank may still run a container on its copy, so nothing may be
-# deleted anywhere until every rank has been inspected.
+# per target rank that holds the view named by PROFILE, bound by name and
+# stamp only (purge policy). A rank without the view is reported as already
+# purged and skipped; the function fails with 1 only when no target rank
+# holds it. It returns 255 without printing when a rank is unreachable: such
+# a rank may still run a container on its copy, so nothing may be deleted
+# anywhere until every rank has been inspected.
 hot_instances_for_profile_on_ranks() {
-  local profile="${1:?}" rank info found=0 rc record
+  local profile="${1:?}" rank info found=0 rc
   local -a fields=()
   local -a rows=()
   shift
   for rank in "$@"; do
     rc=0
-    if [ "${CONF_SOURCE:-conf}" = spec ]; then
-      info=$(hot_spec_views_on_rank "$profile" "$rank") || rc=$?
-    else
-      info=$(hot_instance_for_profile_on_rank "$profile" "$rank" 0 0) || rc=$?
-      [ "$rc" -ne 0 ] || info=$(printf '%s' "$info" | python3 -c \
-        'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))') || rc=2
-    fi
+    info=$(hot_instance_for_profile_on_rank "$profile" "$rank" 0 0) || rc=$?
     case "$rc" in
       0)
-        while IFS= read -r record; do
-          [ -n "$record" ] || continue
-          mapfile -t fields < <(json_fields "$record" instance_dir stamp.content_id stamp.pinned)
-          [ -n "${fields[0]:-}" ] || return 2
-          rows+=("$(printf '%s\t%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}" "${fields[2]:-false}")")
-          found=1
-        done <<<"$info"
+        mapfile -t fields < <(json_fields "$info" instance_dir stamp.content_id stamp.pinned)
+        [ -n "${fields[0]:-}" ] || return 2
+        rows+=("$(printf '%s\t%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}" "${fields[2]:-false}")")
+        found=1
         ;;
-      1) warn "$profile: rank $rank holds no view (already purged)" ;;
       255)
         warn "$profile: rank $rank is unobservable; aborting before any deletion"
         return 255
         ;;
-      *)
-        warn "$profile: rank $rank could not be inspected; aborting before any deletion"
-        return 2
-        ;;
+      *) warn "$profile: rank $rank holds no view (already purged)" ;;
     esac
   done
   [ "$found" = 1 ] || return 1
@@ -3972,51 +3730,24 @@ describe_purge_rows() {
 
 # hot_instances_for_profile_strict_on_ranks <profile> <require_launchable> <rank>...
 # Print one "rank<TAB>instance_dir" line per target rank after the strict
-# lookup (content verified, bound to the current durable home) succeeded on
-# every rank. Fails without printing when any rank has no such view, so a
-# pin-state change never starts on a partial set.
+# lookup (the view named by PROFILE, content-verified for a released spec)
+# succeeded on every rank. Fails without printing when any rank lacks it, so
+# a pin-state change never starts on a partial set; an unreachable rank
+# returns 255.
 hot_instances_for_profile_strict_on_ranks() {
-  local profile="${1:?}" require_launchable="${2:-0}" rank info instance
+  local profile="${1:?}" require_launchable="${2:-0}" rank info instance rc
   local -a rows=()
   shift 2
-  if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    # One common path: launch selects the first rank's verified candidate
-    # and requires that exact path on every rank, so pin must protect the
-    # same set. Candidates come from the first target rank, newest first;
-    # the first path that verifies (home-bound) on every target rank wins.
-    local list candidate rc other
+  for rank in "$@"; do
     rc=0
-    list=$(spec_candidate_records_on_rank "$profile" "$1" "$require_launchable") || rc=$?
+    info=$(hot_instance_for_profile_on_rank "$profile" "$rank" "$require_launchable" 1) || rc=$?
     if [ "$rc" -eq 255 ]; then
-      warn "$profile: rank $1 is unreachable"
+      warn "$profile: rank $rank is unreachable"
       return 255
     elif [ "$rc" -ne 0 ]; then
-      warn "$profile: rank $1 has no candidate view"
+      warn "$profile: rank $rank has no verified view"
       return 1
     fi
-    while IFS= read -r candidate; do
-      [ -n "$candidate" ] || continue
-      instance=$(printf '%s' "$candidate" | python3 -c \
-        'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
-      rows=()
-      for other in "$@"; do
-        rc=0
-        spec_view_verifies_on_rank "$profile" "$other" "$instance" || rc=$?
-        [ "$rc" -ne 255 ] || { warn "$profile: rank $other is unreachable"; return 255; }
-        [ "$rc" -eq 0 ] || { rows=(); break; }
-        rows+=("$(printf '%s\t%s' "$other" "$instance")")
-      done
-      if [ "${#rows[@]}" -eq $# ]; then
-        printf '%s\n' "${rows[@]}"
-        return 0
-      fi
-    done <<<"$list"
-    warn "$profile: no single view verifies, bound to the current home, on every serving rank"
-    return 1
-  fi
-  for rank in "$@"; do
-    info=$(hot_instance_for_profile_on_rank "$profile" "$rank" "$require_launchable" 1) \
-      || { warn "$profile: rank $rank has no verified view bound to the current home"; return 1; }
     instance=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
     rows+=("$(printf '%s\t%s' "$rank" "$instance")")
@@ -4035,7 +3766,6 @@ resolve_hot_profile_targets() {
   local resolved home_rank rank identity
   local -a ranks=()
   home_rank=""
-  HOT_HOME_NODE_ID=""
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
     if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ]; then
       die "$profile: spec hot lookup requires MODEL and SNAPSHOT_REVISION"
@@ -4050,9 +3780,6 @@ resolve_hot_profile_targets() {
       home_rank=$(printf '%s' "$resolved" | python3 -c \
         'import json,sys; print(json.load(sys.stdin)["home"]["rank"])') \
         || die "$profile: catalog home rank is unreadable"
-      HOT_HOME_NODE_ID=$(printf '%s' "$resolved" | python3 -c \
-        'import json,sys; print(json.load(sys.stdin)["home"].get("node_id") or "")') \
-        || die "$profile: catalog home node id is unreadable"
     elif [ "$policy" = cleanup ]; then
       warn "$profile: no catalog home for $identity; cleanup targets come from the spec geometry and the selected placement"
     else
@@ -4129,7 +3856,7 @@ cmd_pin() {
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank budget_plan
   local -a HOT_TARGET_RANKS=()
-  local HOT_TARGET_RANKS_CSV="" HOT_HOME_NODE_ID=""
+  local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
     || die "pin: cannot resolve exact local-files placement"
   # Every target rank is resolved and verified before any stamp changes, so
@@ -4137,7 +3864,7 @@ cmd_pin() {
   local -a pin_rows=() row=()
   local pin_list="" line
   pin_list=$(hot_instances_for_profile_strict_on_ranks "$profile" 1 "${HOT_TARGET_RANKS[@]}") \
-    || die "pin: every serving rank needs a verified view bound to the current home; retired cold stage-only state is cleanup-only and cannot be pinned"
+    || die "pin: every serving rank needs a verified view; retired cold stage-only state is cleanup-only and cannot be pinned"
   mapfile -t pin_rows < <(printf '%s\n' "$pin_list")
   budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$HOT_TARGET_RANKS_CSV") \
     || die "pin: all-rank hot budget observation failed"
@@ -4179,13 +3906,13 @@ cmd_unpin() {
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank
   local -a HOT_TARGET_RANKS=()
-  local HOT_TARGET_RANKS_CSV="" HOT_HOME_NODE_ID=""
+  local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
     || die "unpin: cannot resolve exact local-files placement"
   local -a pin_rows=() row=()
   local pin_list="" line
   pin_list=$(hot_instances_for_profile_strict_on_ranks "$profile" 0 "${HOT_TARGET_RANKS[@]}") \
-    || die "unpin: every serving rank needs a verified view bound to the current home"
+    || die "unpin: every serving rank needs a verified view"
   mapfile -t pin_rows < <(printf '%s\n' "$pin_list")
   for line in "${pin_rows[@]}"; do
     IFS=$'\t' read -r -a row <<<"$line"
@@ -4224,7 +3951,7 @@ cmd_purge_hot() {
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local instance rank command content_id sharers line
   local -a HOT_TARGET_RANKS=()
-  local HOT_TARGET_RANKS_CSV="" HOT_HOME_NODE_ID=""
+  local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" cleanup \
     || die "purge-hot: cannot resolve exact local-files placement"
   # Each target rank is inspected on its own: a rank that has already lost
@@ -4236,7 +3963,7 @@ cmd_purge_hot() {
   [ "$purge_rc" -ne 255 ] \
     || die "purge-hot: a target rank is unobservable; nothing was deleted"
   [ "$purge_rc" -ne 2 ] \
-    || die "purge-hot: a target rank could not be inspected; nothing was deleted"
+    || die "purge-hot: a target rank's view record is unreadable; nothing was deleted"
   [ -n "$purge_list" ] \
     || die "no hot instance for $profile on the selected serving placement"
   mapfile -t purge_rows < <(printf '%s\n' "$purge_list")

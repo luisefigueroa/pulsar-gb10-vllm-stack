@@ -309,55 +309,51 @@ spec = json.loads(
     (pathlib.Path(state) / "releases" / f"{spec_id}.json").read_text(encoding="utf-8")
 )
 manifest = spec["identity"]["snapshot_manifest"]
-other = json.loads(json.dumps(manifest))
-other["files"][0]["sha256"] = "f" * 64
-other["manifest_id"] = "e" * 64
+other = {"manifest_id": "e" * 64}
 hot = pathlib.Path(state) / "identity-hot"
-# Newest view carries a different reviewed file list for the same model and
-# revision; the older one is the spec's exact manifest.
+# A spec view is keyed by the spec id, like a conf view by its name. A view
+# of the same model and revision under a conf name is not the spec's view,
+# and a spec-named view is bound to the sealed manifest at verify time.
 write_identity_hot_view(
     hot, profile="nemotron-3-nano-30b-nvfp4", topology_id=topology_id,
     model_id=model_id, revision=revision, manifest=manifest,
     content_id="c" * 12, activated_at="2026-09-02T00:00:00Z",
 )
-write_identity_hot_view(
-    hot, profile="nemotron-3-nano-30b-nvfp4", topology_id=topology_id,
-    model_id=model_id, revision=revision, manifest=other,
+spec_view = write_identity_hot_view(
+    hot, profile=spec_id, topology_id=topology_id,
+    model_id=model_id, revision=revision, manifest=manifest,
     content_id="d" * 12, activated_at="2026-09-03T00:00:00Z",
 )
-identity = f"{model_id}@{revision}"
 library = str(pathlib.Path(repo) / "scripts" / "model_library.py")
 
-def find_hot(*extra):
+def find_hot(name):
     return subprocess.run(
-        [sys.executable, library, "find-hot", "--identity", identity,
-         "--topology-id", topology_id, "--hot-root", str(hot), *extra],
+        [sys.executable, library, "find-hot", "--profile", name,
+         "--topology-id", topology_id, "--hot-root", str(hot)],
         cwd=repo, capture_output=True, text=True, check=False,
     )
 
-newest = find_hot()
-if newest.returncode != 0 or ("d" * 12) not in newest.stdout:
-    raise SystemExit(f"identity lookup without manifest should pick newest: {newest.stdout}{newest.stderr}")
-bound = find_hot("--manifest-id", manifest["manifest_id"])
-if bound.returncode != 0 or ("c" * 12) not in bound.stdout:
-    raise SystemExit(f"manifest-bound lookup missed the spec view: {bound.stdout}{bound.stderr}")
-if "nemotron-3-nano-30b-nvfp4" not in bound.stdout:
-    raise SystemExit(f"identity lookup missed conf-named view: {bound.stdout}")
-missing = find_hot("--manifest-id", "a" * 64)
-if missing.returncode == 0 or "with manifest" not in (missing.stderr + missing.stdout):
-    raise SystemExit(f"unmatched manifest must fail: {missing.stdout}{missing.stderr}")
+by_spec = find_hot(spec_id)
+if by_spec.returncode != 0 or ("d" * 12) not in by_spec.stdout:
+    raise SystemExit(f"by-name lookup missed the spec view: {by_spec.stdout}{by_spec.stderr}")
+if json.loads(by_spec.stdout)["instance_dir"] != str(spec_view):
+    raise SystemExit(f"by-name lookup returned another directory: {by_spec.stdout}")
+if ("c" * 12) in by_spec.stdout:
+    raise SystemExit(f"by-name lookup returned the conf-named view: {by_spec.stdout}")
+absent = find_hot("0" * 64)
+if absent.returncode == 0:
+    raise SystemExit(f"a spec without a view must not resolve: {absent.stdout}")
 
-bound_dir = json.loads(bound.stdout)["instance_dir"]
 mismatch = subprocess.run(
-    [sys.executable, library, "verify-hot", "--instance-dir", bound_dir,
-     "--expected-manifest-id", "a" * 64, "--skip-digest"],
+    [sys.executable, library, "verify-hot", "--instance-dir", str(spec_view),
+     "--expected-manifest-id", other["manifest_id"], "--skip-digest"],
     cwd=repo, capture_output=True, text=True, check=False,
 )
 if mismatch.returncode == 0 or "differs from the released spec manifest" not in (mismatch.stderr + mismatch.stdout):
     raise SystemExit(f"verify-hot must refuse a foreign manifest: {mismatch.stdout}{mismatch.stderr}")
 print("ok")
 PY
-echo "OK   find-hot --identity binds the spec manifest; verify-hot refuses a foreign one"
+echo "OK   find-hot resolves a spec view by spec id; verify-hot binds the sealed manifest"
 
 # Remote ranks verify by manifest id for a spec and by profile name for a conf.
 verify_args_out=$(

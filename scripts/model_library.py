@@ -3331,16 +3331,8 @@ def load_hot_stamp(instance_dir: str | pathlib.Path) -> dict[str, Any]:
     return data
 
 
-def _ready_hot_children(
-    parent: pathlib.Path, *, include_incomplete: bool = False
-) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
-    """Stamped children of a <name>-<topology> entry, ready or pinned.
-
-    ``include_incomplete`` also lists views whose stamp is in another state
-    (an interrupted preparation left ``verifying``); ownership is still
-    bound by the stamp's schema, scheme, and identity, so purge discovery
-    can reach such a view while launch discovery stays ready-only.
-    """
+def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
+    """Stamped children of a <name>-<topology> entry, ready or pinned."""
     candidates: list[tuple[str, pathlib.Path, dict[str, Any]]] = []
     try:
         for child in parent.iterdir():
@@ -3365,7 +3357,7 @@ def _ready_hot_children(
             ):
                 continue
             if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
-                if stamp.get("state") != "ready" and not include_incomplete:
+                if stamp.get("state") != "ready":
                     continue
             activated = str(stamp.get("activated_at") or "")
             candidates.append((activated, child, stamp))
@@ -3398,77 +3390,6 @@ def find_hot_instance_for_profile(
                 continue
         return candidate
     return None
-
-
-def find_hot_instances_for_identity(
-    hot_root: str | pathlib.Path,
-    identity_key: str,
-    topology_id: str,
-    *,
-    manifest_id: str | None = None,
-    include_incomplete: bool = False,
-) -> list[pathlib.Path]:
-    """Return every ready instance whose stamp matches model_id@revision,
-    newest activation first.
-
-    When ``manifest_id`` is given, the instance's sealed integrity manifest
-    must carry that id, so a released spec only launches the exact reviewed
-    file list (two specs can share a model and revision but not a manifest).
-    Directory names may still use the conf that prepared the view. Spec
-    presence is never occupancy.
-    """
-    if not isinstance(identity_key, str) or "@" not in identity_key:
-        fail("find-hot: --identity must be model_id@revision")
-    topo12 = (topology_id or "notopology")[:12]
-    root = pathlib.Path(hot_root)
-    if not root.is_dir():
-        return []
-    suffix = f"-{topo12}"
-    matches: list[tuple[str, pathlib.Path]] = []
-    try:
-        parents = list(root.iterdir())
-    except OSError:
-        return []
-    for parent in parents:
-        # A symlinked <name>-<topology> entry may point outside the hot
-        # root; identity discovery must not follow it into a purge target.
-        if parent.is_symlink() or not parent.is_dir() or not parent.name.endswith(suffix):
-            continue
-        for activated, candidate, stamp in _ready_hot_children(
-            parent, include_incomplete=include_incomplete
-        ):
-            stamp_identity = stamp.get("identity_key")
-            if not stamp_identity:
-                stamp_identity = f"{stamp.get('model_id')}@{stamp.get('revision')}"
-            if stamp_identity != identity_key:
-                continue
-            if manifest_id is not None:
-                integrity = stamp.get("integrity")
-                stamped = (
-                    integrity.get("manifest", {}).get("manifest_id")
-                    if isinstance(integrity, dict)
-                    and isinstance(integrity.get("manifest"), dict)
-                    else None
-                )
-                if stamped != manifest_id:
-                    continue
-            matches.append((activated, candidate))
-    matches.sort(key=lambda item: item[0], reverse=True)
-    return [candidate for _activated, candidate in matches]
-
-
-def find_hot_instance_for_identity(
-    hot_root: str | pathlib.Path,
-    identity_key: str,
-    topology_id: str,
-    *,
-    manifest_id: str | None = None,
-) -> pathlib.Path | None:
-    """Return the newest ready instance matching the identity, or None."""
-    matches = find_hot_instances_for_identity(
-        hot_root, identity_key, topology_id, manifest_id=manifest_id
-    )
-    return matches[0] if matches else None
 
 
 def dir_size_bytes(path: pathlib.Path) -> int:
@@ -4261,17 +4182,13 @@ def plan_prepare(
     expected_integrity_manifest: dict[str, Any] | None = None,
     identity_key: str | None = None,
     spec_manifest: dict[str, Any] | None = None,
-    reuse_instance_dir: str | None = None,
-    reuse_stamp: dict[str, Any] | None = None,
-    ready_ranks: list[int] | None = None,
 ) -> dict[str, Any]:
     """Return a model-preparation plan JSON for bash to execute (copy + stamp).
 
-    ``reuse_instance_dir`` and ``reuse_stamp`` carry a ready view the Bash
-    wrapper discovered on the selected (remote) rank by identity and
-    manifest; the controller-local scan only applies when rank 0 is a
-    target, because a view on the controller is irrelevant to a service
-    placed elsewhere.
+    A released spec plans by ``identity_key`` (its catalog entry) and
+    ``spec_manifest`` (the reviewed file list, required to equal the
+    receipt's); its view is keyed by the spec id like a conf's view is keyed
+    by its name.
 
     Occupancy lookup lives in the Bash wrapper. This planner still requires
     the download-receipt commit and file list; unknown trees without a receipt
@@ -4455,11 +4372,6 @@ def plan_prepare(
         }
 
     def _stamp_matches_plan(stamp: dict[str, Any]) -> bool:
-        # A spec reuses views by identity, so a view bound to a previous
-        # home is not the current home's durable view: occupancy moved and
-        # the home symlink must be recreated, not accounted as zero bytes.
-        if identity_key and stamp.get("home_node_id") != home["node_id"]:
-            return False
         return (
             stamp.get("content_digest") == digest
             and stamp.get("identity_key") == resolved["identity_key"]
@@ -4467,91 +4379,27 @@ def plan_prepare(
             and stamp.get("state") in {"ready", "pinned"}
         )
 
-    reuse_candidates: list[str] = []
-    if identity_key:
-        spec_manifest_id = validate_snapshot_manifest(spec_manifest).get(
-            "manifest_id"
-        )
-        if reuse_stamp is not None and reuse_instance_dir:
-            # A candidate the wrapper found on the selected rank. Bind it the
-            # same way a local candidate is bound before trusting it.
-            candidate_manifest = (
-                (reuse_stamp.get("integrity") or {}).get("manifest") or {}
-            )
-            if (
-                _stamp_matches_plan(reuse_stamp)
-                and candidate_manifest.get("manifest_id") == spec_manifest_id
-            ):
-                return _ready_skip_plan(
-                    instance_dir=pathlib.Path(reuse_instance_dir),
-                    stamp=reuse_stamp,
-                    reason=(
-                        "reuse ready view on the selected rank with matching "
-                        "identity and manifest"
-                    ),
-                    storage_instance=pathlib.Path(reuse_instance_dir),
-                )
-        # A controller-local stamp proves metadata, not content. A spec may
-        # reuse a matching identity view under any name (a conf-named view
-        # of the same sealed manifest, or its own spec-named view), but only
-        # once the wrapper has verified that exact path on every target
-        # rank. The plan lists every candidate found on the controller,
-        # newest first; the wrapper probes them in order, so a newer view
-        # with a damaged payload, or one absent on another rank, is passed
-        # over for an older view that verifies, and none verifying falls
-        # through to materialization. A partial match is never repaired
-        # under another name. Candidates are only meaningful when rank 0 is
-        # a target; a one-rank remote placement reuses through the
-        # candidate the wrapper verified on that rank instead.
-        if 0 in target_ranks:
-            for candidate in find_hot_instances_for_identity(
-                hot_root,
-                resolved["identity_key"],
-                topology_id,
-                manifest_id=str(spec_manifest_id) if spec_manifest_id else None,
-            ):
-                if _stamp_matches_plan(load_hot_stamp(candidate)):
-                    reuse_candidates.append(str(candidate))
-
+    # A released spec's view is keyed by its spec id exactly as a conf's view
+    # is keyed by its name: one name, one directory. The spec's sealed
+    # manifest was already required to equal the receipt's, so the view
+    # prepared under the spec id carries the reviewed file list.
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
-    # Rank 0's stamp proves rank 0 only. For a multi-rank spec the wrapper
-    # verifies the exact view on every target rank and hands the ready set
-    # back as ``ready_ranks``; only the other ranks are copied, so a lost
-    # rank is repaired while ready ranks keep their bytes, stamps, and pins.
-    # Without that observation every target rank is a copy target.
-    ready_set = {int(rank) for rank in (ready_ranks or [])}
-    copy_ranks = list(target_ranks)
-    if identity_key:
-        copy_ranks = [rank for rank in target_ranks if rank not in ready_set]
-    existing = None
-    if hot_stamp_path(instance).is_file():
-        existing = load_hot_stamp(instance)
-        # A conf skips on its own matching stamp. A spec never skips on
-        # metadata alone: its exact instance is one of the candidates the
-        # wrapper verifies, and only an all-rank observation (ready_ranks
-        # covering every target) turns the exact instance into a skip.
-        if _stamp_matches_plan(existing) and (not identity_key or not copy_ranks):
-            return _ready_skip_plan(
-                instance_dir=instance,
-                stamp=existing,
-                reason=(
-                    "hot already ready on every target rank"
-                    if identity_key
-                    else "hot already ready with matching digest"
-                ),
-                storage_instance=instance,
-            )
-    if identity_key and not copy_ranks:
-        fail(
-            "prepare: every target rank reports a ready view but the rank-0 "
-            f"stamp does not match this plan at {instance}"
-        )
     hot_storage_requirements = build_hot_storage_requirements(
-        target_ranks=copy_ranks,
+        target_ranks=target_ranks,
         bytes_logical=bytes_logical,
         instance_dir=instance,
         home_rank=home_rank,
     )
+    existing = None
+    if hot_stamp_path(instance).is_file():
+        existing = load_hot_stamp(instance)
+        if _stamp_matches_plan(existing):
+            return _ready_skip_plan(
+                instance_dir=instance,
+                stamp=existing,
+                reason="hot already ready with matching digest",
+                storage_instance=instance,
+            )
 
     stamp = build_hot_stamp(
         profile=profile,
@@ -4595,8 +4443,6 @@ def plan_prepare(
         "transport": transport,
         "topology_id": topology_id,
         "target_ranks": target_ranks,
-        "copy_ranks": copy_ranks,
-        "reuse_candidates": reuse_candidates,
         "hot_storage_requirements": hot_storage_requirements,
         "stamp": stamp,
         "transfer": transfer,
@@ -8226,20 +8072,6 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
             fail("spec-manifest-json must be an object")
     identity_key = str(getattr(args, "identity_key", "") or "") or None
     models_dir = str(args.models_dir or "") or None
-    reuse_stamp = None
-    if getattr(args, "reuse_stamp_json", ""):
-        try:
-            reuse_stamp = json.loads(args.reuse_stamp_json)
-        except json.JSONDecodeError as exc:
-            fail(f"reuse-stamp-json: {exc}")
-        if not isinstance(reuse_stamp, dict):
-            fail("reuse-stamp-json must be an object")
-    ready_ranks = None
-    if getattr(args, "ready_ranks", ""):
-        try:
-            ready_ranks = [int(part) for part in args.ready_ranks.split(",") if part.strip()]
-        except ValueError:
-            fail("ready-ranks must be a comma-separated list of ranks")
     plan = plan_prepare(
         catalog_path=args.catalog,
         profile=args.profile or None,
@@ -8256,9 +8088,6 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
         expected_integrity_manifest=expected_manifest,
         identity_key=identity_key,
         spec_manifest=spec_manifest,
-        reuse_instance_dir=str(getattr(args, "reuse_instance_dir", "") or "") or None,
-        reuse_stamp=reuse_stamp,
-        ready_ranks=ready_ranks,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -8314,12 +8143,6 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
             "hot manifest differs from the released spec manifest: "
             f"stamp={manifest.get('manifest_id')} want={expected_manifest_id}"
         )
-    expected_home = str(getattr(args, "expected_home_node_id", "") or "")
-    if expected_home and stamp.get("home_node_id") != expected_home:
-        fail(
-            "hot view is bound to a different durable home: "
-            f"stamp={stamp.get('home_node_id')} want={expected_home}"
-        )
     checked_validation = validate_hot_validation(
         stamp.get("validation"),
         profile=str(stamp.get("profile") or ""),
@@ -8357,93 +8180,42 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
 
 
 def cmd_find_hot(args: argparse.Namespace) -> int:
-    identity_key = str(getattr(args, "identity_key", "") or "")
     profile = str(args.profile or "")
-    if bool(identity_key) == bool(profile):
-        fail("find-hot: require exactly one of --profile or --identity")
-    if identity_key and args.models_dir:
-        fail("find-hot: --models-dir is not valid with --identity")
-    manifest_id = str(getattr(args, "manifest_id", "") or "") or None
-    if manifest_id and not identity_key:
-        fail("find-hot: --manifest-id requires --identity")
+    if not profile:
+        fail("find-hot: --profile is required")
     profile_data = (
-        load_model_profile(args.models_dir, profile)
-        if args.models_dir and profile
-        else None
+        load_model_profile(args.models_dir, profile) if args.models_dir else None
     )
-    list_all = bool(getattr(args, "all_matches", False))
-    if list_all and not identity_key:
-        fail("find-hot: --all requires --identity")
-    if getattr(args, "include_incomplete", False) and not list_all:
-        fail("find-hot: --include-incomplete requires --all")
-    if getattr(args, "include_incomplete", False) and getattr(args, "for_launch", False):
-        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
-
-    def _record(path: pathlib.Path, stamp: dict[str, Any]) -> dict[str, Any]:
-        hub = hot_hub_path(path, stamp["model_id"])
-        revision = stamp.get("revision")
-        if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
-            fail("find-hot: sealed revision is invalid")
-        container_hub = (
-            "/root/.cache/huggingface/hub/"
-            + model_id_to_hub_dirname(stamp["model_id"])
-        )
-        return {
-            "instance_dir": str(path),
-            "hub_path": str(hub),
-            "snapshot_path": str(hub / "snapshots" / revision),
-            "runtime_model_relative": f"snapshots/{revision}",
-            "container_model_path": f"{container_hub}/snapshots/{revision}",
-            "stamp": stamp,
-        }
-
-    if list_all:
-        # Every identity match, newest first. A stamp proves metadata only:
-        # the caller verifies candidates in this order and consumes the
-        # first that passes, so readiness and launch land on the same view
-        # prepare reused rather than on a newer stamp over damaged bytes.
-        records = []
-        for path in find_hot_instances_for_identity(
-            args.hot_root or default_hot_root(),
-            identity_key,
-            args.topology_id,
-            manifest_id=manifest_id,
-            include_incomplete=bool(getattr(args, "include_incomplete", False)),
-        ):
-            stamp = load_hot_stamp(path)
-            if getattr(args, "for_launch", False):
-                try:
-                    require_launchable_hot_stamp(stamp)
-                except ModelLibraryError:
-                    continue
-            records.append(_record(path, stamp))
-        print(json.dumps(records, indent=2, sort_keys=True))
-        return 0
-    if identity_key:
-        path = find_hot_instance_for_identity(
-            args.hot_root or default_hot_root(),
-            identity_key,
-            args.topology_id,
-            manifest_id=manifest_id,
-        )
-        if path is None:
-            wanted = f" with manifest {manifest_id}" if manifest_id else ""
-            fail(f"find-hot: no ready instance for identity {identity_key}{wanted}")
-    else:
-        path = find_hot_instance_for_profile(
-            args.hot_root or default_hot_root(),
-            profile,
-            args.topology_id,
-            profile_data=profile_data,
-        )
-        if path is None:
-            fail(f"find-hot: no ready instance for profile {profile}")
+    path = find_hot_instance_for_profile(
+        args.hot_root or default_hot_root(),
+        profile,
+        args.topology_id,
+        profile_data=profile_data,
+    )
+    if path is None:
+        fail(f"find-hot: no ready instance for profile {profile}")
     stamp = load_hot_stamp(path)
     if getattr(args, "for_launch", False):
         require_launchable_hot_stamp(stamp)
     if profile_data is not None:
         verify_hot_stamp_against_profile(stamp, profile_data)
-    print(json.dumps(_record(path, stamp), indent=2, sort_keys=True))
+    hub = hot_hub_path(path, stamp["model_id"])
+    revision = stamp.get("revision")
+    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+        fail("find-hot: sealed revision is invalid")
+    container_hub = (
+        "/root/.cache/huggingface/hub/"
+        + model_id_to_hub_dirname(stamp["model_id"])
+    )
+    out = {
+        "instance_dir": str(path),
+        "hub_path": str(hub),
+        "snapshot_path": str(hub / "snapshots" / revision),
+        "runtime_model_relative": f"snapshots/{revision}",
+        "container_model_path": f"{container_hub}/snapshots/{revision}",
+        "stamp": stamp,
+    }
+    print(json.dumps(out, indent=2, sort_keys=True))
     return 0
 
 
@@ -9280,9 +9052,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help=argparse.SUPPRESS,
     )
-    plan.add_argument("--reuse-instance-dir", default="", help=argparse.SUPPRESS)
-    plan.add_argument("--reuse-stamp-json", default="", help=argparse.SUPPRESS)
-    plan.add_argument("--ready-ranks", default="", help=argparse.SUPPRESS)
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
     plan.add_argument("--models-dir", default="")
@@ -9366,11 +9135,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="fail unless the sealed integrity manifest carries this id",
     )
-    vh.add_argument(
-        "--expected-home-node-id",
-        default="",
-        help="fail unless the stamp is bound to this durable home node",
-    )
     verify_mode = vh.add_mutually_exclusive_group()
     verify_mode.add_argument("--skip-digest", action="store_true")
     verify_mode.add_argument(
@@ -9389,32 +9153,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vh.set_defaults(func=cmd_verify_hot)
 
-    fh = sub.add_parser("find-hot", help="Find ready hot instance for profile")
-    fh.add_argument("--profile", default="")
-    fh.add_argument(
-        "--identity",
-        dest="identity_key",
-        default="",
-        help="model_id@revision when the view was prepared under a conf name",
+    fh = sub.add_parser(
+        "find-hot",
+        help="Find the ready hot instance for a profile name or a released spec id",
     )
-    fh.add_argument(
-        "--manifest-id",
-        dest="manifest_id",
-        default="",
-        help="with --identity: require the sealed integrity manifest id",
-    )
-    fh.add_argument(
-        "--all",
-        dest="all_matches",
-        action="store_true",
-        help="with --identity: print every ready match as a JSON list, newest first",
-    )
-    fh.add_argument(
-        "--include-incomplete",
-        dest="include_incomplete",
-        action="store_true",
-        help="with --all: also list views whose stamp is not ready (cleanup only)",
-    )
+    fh.add_argument("--profile", default="", help="conf profile name or 64-hex spec id")
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")
     fh.add_argument("--models-dir", default="")

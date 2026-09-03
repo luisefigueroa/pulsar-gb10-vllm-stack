@@ -272,6 +272,7 @@ _reset_loaded_profile_defaults() {
   PROFILE_FAMILY="" VARIANT_LABEL="" FAMILY_RECOMMENDED=0 PROFILE_PURPOSE="serving"
   TOPOLOGY_CLASS="" MIN_RAILS_PER_PAIR=""
   CONF_SOURCE=conf
+  # shellcheck disable=SC2034  # consumed by model-library.sh and check-weights.sh
   SNAPSHOT_REVISION=""
   SPEC_MANIFEST_ID=""
   OVERLAY_PLACEMENT_NODE_ID=""
@@ -1385,105 +1386,8 @@ PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
-# library_first_verified_spec_candidate <find-hot args...> -- <verify-hot args...>
-# On the selected rank (remote one-node placement or the controller), list
-# every identity match with find-hot --all and print the record of the first
-# whose verify-hot passes. Returns 255 when the rank is SSH-unreachable, 2
-# when candidates exist but none verifies, 1 when there is no candidate.
-library_first_verified_spec_candidate() {
-  local -a find_args=() verify_args=() serving_ranks=()
-  local selection_rank=0 list rc candidate instance expected_validation_json seen=0 r
-  local expected_home=""
-  while [ $# -gt 0 ]; do
-    [ "$1" != -- ] || { shift; break; }
-    find_args+=("$1")
-    shift
-  done
-  verify_args=("$@")
-  # Bind the choice to the current durable home whenever the catalog
-  # resolves it, the same condition under which the library's strict
-  # lookup binds, so launch, readiness, pin, and prepare land on one view.
-  if [ -f "$PULSAR_MODEL_LIBRARY_CATALOG" ]; then
-    expected_home=$(python3 "$PULSAR_MODEL_LIBRARY_PY" resolve \
-        --catalog "$PULSAR_MODEL_LIBRARY_CATALOG" --no-cold --json "${MODEL}@${SNAPSHOT_REVISION}" 2>/dev/null \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"].get("node_id") or "")' 2>/dev/null) \
-      || expected_home=""
-  fi
-  [ -z "$expected_home" ] || verify_args+=(--expected-home-node-id "$expected_home")
-  # Candidates are listed on the selection rank (the one-node placement,
-  # or rank 0 for a multi-rank spec) and a candidate is chosen only when it
-  # verifies on every serving rank, so readiness, launch, pin, and prepare
-  # all land on the same path.
-  if [ "${NODES:-1}" -eq 1 ]; then
-    if [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
-      selection_rank="${SINGLE_NODE_INDEX:?remote single-node rank is unresolved}"
-    fi
-    serving_ranks=("$selection_rank")
-  else
-    for ((r = 0; r < NODES; r++)); do serving_ranks+=("$r"); done
-  fi
-  rc=0
-  list=$(library_spec_candidate_list "$selection_rank" "${find_args[@]}") || rc=$?
-  [ "$rc" -eq 0 ] || return "$rc"
-  while IFS= read -r candidate; do
-    [ -n "$candidate" ] || continue
-    seen=1
-    instance=$(printf '%s' "$candidate" | python3 -c \
-      'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
-    expected_validation_json=$(printf '%s' "$candidate" | python3 -c \
-      'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]["validation"], sort_keys=True, separators=(",", ":")))') \
-      || return 1
-    for r in "${serving_ranks[@]}"; do
-      rc=0
-      library_verify_spec_view_on_rank "$r" "$instance" "$expected_validation_json" "${verify_args[@]}" || rc=$?
-      [ "$rc" -ne 255 ] || return 255
-      [ "$rc" -eq 0 ] || break
-    done
-    if [ "$rc" -eq 0 ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done <<<"$list"
-  [ "$seen" = 1 ] && return 2
-  return 1
-}
 
-# library_spec_candidate_list <rank> <find-hot args...>
-# Every identity match on RANK as compact JSON lines, newest first (find-hot
-# --all). Returns 255 when the rank is SSH-unreachable, 1 otherwise on failure.
-library_spec_candidate_list() {
-  local rank="${1:?}" list rc=0 command
-  shift
-  if [ "$rank" -eq 0 ]; then
-    list=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "$@" --all) || return 1
-  else
-    command=$(shell_join_q python3 - "$@" --all)
-    list=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
-    [ "$rc" -eq 0 ] || return "$rc"
-  fi
-  printf '%s' "$list" | python3 -c \
-    'import json,sys
-for record in json.load(sys.stdin):
-    print(json.dumps(record, sort_keys=True, separators=(",", ":")))'
-}
 
-# library_verify_spec_view_on_rank <rank> <instance> <validation_json> <verify-hot args...>
-# Returns 0 when the view verifies on RANK, 255 when RANK is SSH-unreachable,
-# 1 otherwise.
-library_verify_spec_view_on_rank() {
-  local rank="${1:?}" instance="${2:?}" expected_validation_json="${3:?}" command rc=0
-  shift 3
-  if [ "$rank" -eq 0 ]; then
-    python3 "$PULSAR_MODEL_LIBRARY_PY" "$@" --instance-dir "$instance" >/dev/null || return 1
-    return 0
-  fi
-  command=$(shell_join_q python3 - "$@" \
-    --instance-dir "$instance" \
-    --expected-validation-json "$expected_validation_json")
-  ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
-  [ "$rc" -ne 255 ] || return 255
-  [ "$rc" -eq 0 ] || return 1
-}
 
 # Print find-hot JSON for the selected rank. Return 0 on success, 255 when
 # that rank is SSH-unreachable, 2 when a found view fails verification, and
@@ -1491,18 +1395,18 @@ library_verify_spec_view_on_rank() {
 # topology (or a resolved one-node topology id).
 library_hot_info_for_profile() {
   local profile="${1:?profile required}" topology_id info stamp_json instance
-  local expected_validation_json command rank rc identity
+  local expected_validation_json command rank rc
   local -a find_hot_args verify_hot_args
   topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] || return 1
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || return 1
 
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    [ -n "${MODEL:-}" ] && [ -n "${SNAPSHOT_REVISION:-}" ] \
-      && [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
-    identity="${MODEL}@${SNAPSHOT_REVISION}"
-    find_hot_args=(find-hot --identity "$identity" --manifest-id "$SPEC_MANIFEST_ID" \
-      --topology-id "$topology_id" --hot-root "$PULSAR_HOT_ROOT" --for-launch)
+    # A released spec's view is keyed by the spec id, like a conf's by its
+    # name; the sealed manifest id binds the view's content at verify time.
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
+    find_hot_args=(find-hot --profile "$profile" --topology-id "$topology_id" \
+      --hot-root "$PULSAR_HOT_ROOT" --for-launch)
     verify_hot_args=(verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID" \
       --topology-id "$topology_id" --for-launch --serve-time-witness)
   else
@@ -1510,15 +1414,6 @@ library_hot_info_for_profile() {
       --hot-root "$PULSAR_HOT_ROOT" --for-launch)
     verify_hot_args=(verify-hot --profile "$profile" --topology-id "$topology_id" \
       --models-dir "$REPO_DIR/models" --for-launch --serve-time-witness)
-  fi
-
-  if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    # A stamp proves metadata only. Every identity match is a candidate,
-    # newest first, and the first whose content verifies is the view:
-    # readiness and launch must land on the view prepare reused, never on
-    # a newer stamp over damaged bytes.
-    library_first_verified_spec_candidate "${find_hot_args[@]}" -- "${verify_hot_args[@]}"
-    return
   fi
 
   if [ "${NODES:-1}" -eq 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then

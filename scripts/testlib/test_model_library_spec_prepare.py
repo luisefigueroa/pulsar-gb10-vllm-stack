@@ -118,147 +118,14 @@ class SpecPreparePlannerTests(unittest.TestCase):
     def test_identity_plan_stamps_spec_id(self) -> None:
         plan = model_library.plan_prepare(**self._identity_kwargs())
         self.assertEqual(plan["action"], "copy")
+        self.assertNotIn("reuse_candidates", plan)
+        self.assertNotIn("copy_ranks", plan)
         self.assertEqual(plan["profile"], SPEC_ID)
         self.assertEqual(plan["stamp"]["profile"], SPEC_ID)
         self.assertEqual(
             plan["identity_key"], f"{self.model_id}@{fixture.COMMIT}"
         )
         self.assertIn(SPEC_ID, plan["instance_dir"])
-
-    def test_identity_reuses_conf_named_ready_view(self) -> None:
-        conf_plan = model_library.plan_prepare(
-            catalog_path=str(self.catalog_path),
-            profile=self.profile,
-            topology_id=TOPOLOGY_ID,
-            hot_root=str(self.hot),
-            models_dir=self.models_dir,
-            nodes=1,
-            home_inventory=self.home_inventory,
-            require_exact_revision=fixture.COMMIT,
-            expected_integrity_manifest=self.manifest,
-        )
-        instance = pathlib.Path(conf_plan["instance_dir"])
-        instance.mkdir(parents=True)
-        model_library.write_hot_stamp(instance, conf_plan["stamp"])
-        # Metadata alone never skips: the conf-named match is listed for the
-        # wrapper to verify on the target rank before it is reused.
-        plan = model_library.plan_prepare(**self._identity_kwargs())
-        self.assertEqual(plan["action"], "copy")
-        self.assertEqual(plan["reuse_candidates"], [str(instance)])
-        self.assertNotIn(SPEC_ID, plan["reuse_candidates"][0])
-        self.assertIn(SPEC_ID, plan["instance_dir"])
-
-    def test_identity_reuse_requires_the_current_home(self) -> None:
-        conf_plan = model_library.plan_prepare(
-            catalog_path=str(self.catalog_path),
-            profile=self.profile,
-            topology_id=TOPOLOGY_ID,
-            hot_root=str(self.hot),
-            models_dir=self.models_dir,
-            nodes=1,
-            home_inventory=self.home_inventory,
-            require_exact_revision=fixture.COMMIT,
-            expected_integrity_manifest=self.manifest,
-        )
-        instance = pathlib.Path(conf_plan["instance_dir"])
-        instance.mkdir(parents=True)
-        # Occupancy moved: the ready view is bound to a previous home, so it
-        # is a former non-home copy, not the current home's durable view.
-        moved = dict(conf_plan["stamp"])
-        moved["home_node_id"] = "node-1"
-        model_library.write_hot_stamp(instance, moved)
-        plan = model_library.plan_prepare(**self._identity_kwargs())
-        self.assertEqual(plan["action"], "copy")
-        self.assertEqual(plan["reuse_candidates"], [])
-        candidate = model_library.plan_prepare(
-            **self._identity_kwargs(),
-            reuse_instance_dir=str(instance),
-            reuse_stamp=moved,
-        )
-        self.assertEqual(candidate["action"], "copy")
-        model_library.write_hot_stamp(instance, conf_plan["stamp"])
-        self.assertEqual(
-            model_library.plan_prepare(**self._identity_kwargs())["reuse_candidates"],
-            [str(instance)],
-        )
-
-    def test_multi_rank_identity_view_on_rank_0_alone_is_not_ready(self) -> None:
-        one_rank = model_library.plan_prepare(**self._identity_kwargs())
-        instance = pathlib.Path(one_rank["instance_dir"])
-        instance.mkdir(parents=True)
-        model_library.write_hot_stamp(instance, one_rank["stamp"])
-        # The exact spec-named view is a candidate the wrapper verifies, not
-        # a metadata skip; the wrapper's all-rank observation makes the skip.
-        again = model_library.plan_prepare(**self._identity_kwargs())
-        self.assertEqual(again["action"], "copy")
-        self.assertEqual(again["reuse_candidates"], [str(instance)])
-        self.assertEqual(
-            model_library.plan_prepare(**self._identity_kwargs(), ready_ranks=[0])["action"],
-            "skip",
-        )
-        # The exact spec-named view is ready on rank 0 only; a two-rank spec
-        # must not report skip from rank 0 alone. Without a per-rank
-        # observation every rank is a copy target.
-        two_rank = model_library.plan_prepare(**self._identity_kwargs(nodes=2))
-        self.assertEqual(two_rank["action"], "copy")
-        self.assertEqual(two_rank["target_ranks"], [0, 1])
-        self.assertEqual(two_rank["copy_ranks"], [0, 1])
-        self.assertEqual(two_rank["reuse_candidates"], [str(instance)])
-        # The wrapper verified rank 0: only rank 1 is repaired, and the
-        # storage requirement covers rank 1 alone.
-        repair = model_library.plan_prepare(
-            **self._identity_kwargs(nodes=2), ready_ranks=[0]
-        )
-        self.assertEqual(repair["action"], "copy")
-        self.assertEqual(repair["copy_ranks"], [1])
-        self.assertEqual(
-            sorted(int(r["rank"]) for r in repair["hot_storage_requirements"]),
-            [1],
-        )
-        # Every rank verified: nothing to copy.
-        ready = model_library.plan_prepare(
-            **self._identity_kwargs(nodes=2), ready_ranks=[0, 1]
-        )
-        self.assertEqual(ready["action"], "skip")
-        self.assertIn("every target rank", ready["reason"])
-
-    def test_multi_rank_identity_names_every_reuse_candidate(self) -> None:
-        self.assertEqual(
-            model_library.plan_prepare(**self._identity_kwargs(nodes=2))["reuse_candidates"],
-            [],
-        )
-        conf_plan = model_library.plan_prepare(
-            catalog_path=str(self.catalog_path),
-            profile=self.profile,
-            topology_id=TOPOLOGY_ID,
-            hot_root=str(self.hot),
-            models_dir=self.models_dir,
-            nodes=1,
-            home_inventory=self.home_inventory,
-            require_exact_revision=fixture.COMMIT,
-            expected_integrity_manifest=self.manifest,
-        )
-        instance = pathlib.Path(conf_plan["instance_dir"])
-        instance.mkdir(parents=True)
-        model_library.write_hot_stamp(instance, conf_plan["stamp"])
-        # A two-rank spec does not skip from the controller alone, but names
-        # every identity match, newest first, for the wrapper to probe until
-        # one verifies on every rank.
-        older = pathlib.Path(
-            model_library.hot_instance_dir(
-                self.hot, "older-conf", TOPOLOGY_ID, conf_plan["content_id"]
-            )
-        )
-        older.mkdir(parents=True)
-        old_stamp = dict(conf_plan["stamp"])
-        old_stamp["profile"] = "older-conf"
-        old_stamp["activated_at"] = "2020-01-01T00:00:00Z"
-        model_library.write_hot_stamp(older, old_stamp)
-        plan = model_library.plan_prepare(**self._identity_kwargs(nodes=2))
-        self.assertEqual(plan["action"], "copy")
-        self.assertEqual(plan["reuse_candidates"], [str(instance), str(older)])
-        for candidate in plan["reuse_candidates"]:
-            self.assertNotIn(SPEC_ID, candidate)
 
     def test_identity_classification_names_the_exact_commit(self) -> None:
         empty = self.root / "empty-catalog.json"
@@ -296,42 +163,6 @@ class SpecPreparePlannerTests(unittest.TestCase):
         # Both acquisition steps carry the selected placement.
         self.assertEqual(placed["remediation"].count("--node node-1"), 2)
 
-    def test_identity_reuses_candidate_from_the_selected_rank(self) -> None:
-        # A one-node spec placed on a remote home rank: the wrapper discovers
-        # the candidate there and hands it in; the controller hot root is
-        # not scanned when rank 0 is not a target.
-        conf_plan = model_library.plan_prepare(
-            catalog_path=str(self.catalog_path),
-            profile=self.profile,
-            topology_id=TOPOLOGY_ID,
-            hot_root=str(self.hot),
-            models_dir=self.models_dir,
-            nodes=1,
-            home_inventory=self.home_inventory,
-            require_exact_revision=fixture.COMMIT,
-            expected_integrity_manifest=self.manifest,
-        )
-        remote_dir = "/remote/hot/nemotron-3-nano-30b-nvfp4-topo/" + conf_plan["content_id"]
-        plan = model_library.plan_prepare(
-            **self._identity_kwargs(),
-            reuse_instance_dir=remote_dir,
-            reuse_stamp=conf_plan["stamp"],
-        )
-        self.assertEqual(plan["action"], "skip")
-        self.assertIn("selected rank", plan["reason"])
-        self.assertEqual(plan["instance_dir"], remote_dir)
-        foreign = dict(conf_plan["stamp"])
-        foreign["integrity"] = {
-            "scheme": foreign["integrity"]["scheme"],
-            "manifest": {**foreign["integrity"]["manifest"], "manifest_id": "f" * 64},
-        }
-        copied = model_library.plan_prepare(
-            **self._identity_kwargs(),
-            reuse_instance_dir=remote_dir,
-            reuse_stamp=foreign,
-        )
-        self.assertNotEqual(copied["action"], "skip")
-
     def test_symlinked_hot_entries_are_never_discovered_or_purged(self) -> None:
         conf_plan = model_library.plan_prepare(
             catalog_path=str(self.catalog_path),
@@ -351,11 +182,8 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.hot.mkdir(parents=True, exist_ok=True)
         link_parent = self.hot / f"linked-{TOPOLOGY_ID[:12]}"
         link_parent.symlink_to(outside / "victim", target_is_directory=True)
-        identity_key = conf_plan["identity_key"]
         self.assertIsNone(
-            model_library.find_hot_instance_for_identity(
-                self.hot, identity_key, TOPOLOGY_ID
-            )
+            model_library.find_hot_instance_for_profile(self.hot, "linked", TOPOLOGY_ID)
         )
         with self.assertRaisesRegex(model_library.ModelLibraryError, "symlink"):
             model_library.purge_hot_instance(link_parent / conf_plan["content_id"])
@@ -365,9 +193,7 @@ class SpecPreparePlannerTests(unittest.TestCase):
         real_parent.mkdir()
         (real_parent / conf_plan["content_id"]).symlink_to(real_instance, target_is_directory=True)
         self.assertIsNone(
-            model_library.find_hot_instance_for_identity(
-                self.hot, identity_key, TOPOLOGY_ID
-            )
+            model_library.find_hot_instance_for_profile(self.hot, "real", TOPOLOGY_ID)
         )
         with self.assertRaisesRegex(model_library.ModelLibraryError, "symlink"):
             model_library.purge_hot_instance(real_parent / conf_plan["content_id"])

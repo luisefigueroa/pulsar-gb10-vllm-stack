@@ -17,11 +17,14 @@ reads this directory. It does not start a server or grant serving permission.
 A released spec id (the 64-hex file name) is accepted wherever a profile
 name is: `./pulsar start|status|stop <spec_id>` and the model-library
 lifecycle commands `prepare`, `pin`, `unpin`, and `purge-hot <spec_id>`.
-The spec's sealed snapshot manifest is the reviewed file list those commands
-verify against. A spec reuses a prepared view of the same model, commit, and
-manifest under any name; only a new view is named by spec id. Prepare, pin,
-and launch take the first matching view that verifies on every serving rank
-and is bound to the current durable home; `purge-hot <spec_id>` removes every
-matching view on the target ranks, incomplete ones included, honors pins
-first, and may name a previous placement with `--node`. Spec presence is
+A spec's prepared view is keyed by the spec id exactly as a conf's view is
+keyed by its name: one name, one directory, and no sharing between names.
+`prepare <spec_id>` resolves the catalog entry for the spec's model and
+commit, requires the spec's sealed snapshot manifest to equal the durable
+home's download receipt, and materializes the view under the spec id; a
+view prepared under a conf name is not reused, so a conf and its spec on
+the same non-home rank hold two working copies while both exist. Prepare,
+pin, and launch verify a spec view against the sealed manifest id, not a
+conf file; `purge-hot <spec_id>` removes the spec's own view on the target
+ranks and may name a previous placement with `--node`. Spec presence is
 never occupancy, and `review.status` is display only.
