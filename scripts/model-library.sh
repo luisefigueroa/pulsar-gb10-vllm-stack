@@ -3830,6 +3830,12 @@ for record in json.load(sys.stdin):
     print(json.dumps(record, sort_keys=True, separators=(",", ":")))')
     return 1
   fi
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # Purge policy: ownership by identity and manifest only; the newest
+    # match is the single record, and the rank's status codes are kept.
+    hot_spec_views_on_rank "$profile" "$rank" | head -n 1
+    return "${PIPESTATUS[0]}"
+  fi
   if [ "$rank" -eq 0 ]; then
     info=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}") || return 1
   else
@@ -3841,9 +3847,7 @@ for record in json.load(sys.stdin):
   instance=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
     || return 1
-  if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    : # purge policy: ownership by identity and manifest, newest match
-  elif [ "$rank" -ne 0 ]; then
+  if [ "$rank" -ne 0 ]; then
     stamp=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
       || return 1
@@ -3854,33 +3858,86 @@ for record in json.load(sys.stdin):
   printf '%s\n' "$info"
 }
 
+# hot_spec_views_on_rank <profile> <rank>
+# Every identity+manifest match of the loaded spec on RANK, newest first,
+# one compact JSON record per line (purge policy: ownership by stamp, no
+# content check). Returns 1 when the rank holds none, 2 when the rank was
+# reached but its views could not be inspected (a malformed stamp, a tool
+# failure), and 255 when the rank is unreachable. Absence is already purged;
+# the other two must stop cleanup before anything is deleted anywhere.
+hot_spec_views_on_rank() {
+  local profile="${1:?}" rank="${2:?}" list rows command rc=0 identity
+  if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ] \
+      || [ -z "${SPEC_MANIFEST_ID:-}" ]; then
+    return 2
+  fi
+  identity="${MODEL}@${SNAPSHOT_REVISION}"
+  local -a args=(
+    find-hot --identity "$identity" --manifest-id "$SPEC_MANIFEST_ID"
+    --topology-id "${CLUSTER_TOPOLOGY_ID}" --hot-root "$HOT_ROOT" --all
+  )
+  if [ "$rank" -eq 0 ]; then
+    list=$(python3 "$PY_TOOL" "${args[@]}") || return 2
+  else
+    command=$(shell_join_q python3 - "${args[@]}")
+    list=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
+    [ "$rc" -ne 255 ] || return 255
+    [ "$rc" -eq 0 ] || return 2
+  fi
+  rows=$(printf '%s' "$list" | python3 -c \
+    'import json,sys
+for record in json.load(sys.stdin):
+    print(json.dumps(record, sort_keys=True, separators=(",", ":")))') || return 2
+  [ -n "$rows" ] || return 1
+  printf '%s\n' "$rows"
+}
+
 # hot_instances_for_profile_on_ranks <profile> <rank>...
-# Print one "rank<TAB>instance_dir<TAB>stamped_content_id" line per target
-# rank that holds a view of PROFILE, bound by ownership only (purge policy).
+# Print one "rank<TAB>instance_dir<TAB>stamped_content_id<TAB>pinned" line
+# per view of PROFILE on each target rank, bound by ownership only (purge
+# policy). A released spec lists every identity+manifest match on the rank,
+# so cleanup by spec id is explicit and complete: the view the spec served
+# from and any other copy of the same sealed content, damaged or not. A conf
+# lists its one exact instance.
 # A rank without a view is reported as already purged and skipped; the
-# function fails only when no target rank holds a view.
-# Returns 255 without printing when any target rank is unobservable: an
-# unreachable rank may still run a container on its copy, so nothing may be
+# function fails with 1 only when no target rank holds a view. It returns
+# 255 (unreachable) or 2 (reached but not inspectable) without printing:
+# such a rank may still run a container on its copy, so nothing may be
 # deleted anywhere until every rank has been inspected.
 hot_instances_for_profile_on_ranks() {
-  local profile="${1:?}" rank info found=0 rc
+  local profile="${1:?}" rank info found=0 rc record
   local -a fields=()
   local -a rows=()
   shift
   for rank in "$@"; do
     rc=0
-    info=$(hot_instance_for_profile_on_rank "$profile" "$rank" 0 0) || rc=$?
-    if [ "$rc" -eq 255 ]; then
-      warn "$profile: rank $rank is unobservable; aborting before any deletion"
-      return 255
-    elif [ "$rc" -eq 0 ]; then
-      mapfile -t fields < <(json_fields "$info" instance_dir stamp.content_id)
-      [ -n "${fields[0]:-}" ] || return 1
-      rows+=("$(printf '%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}")")
-      found=1
+    if [ "${CONF_SOURCE:-conf}" = spec ]; then
+      info=$(hot_spec_views_on_rank "$profile" "$rank") || rc=$?
     else
-      warn "$profile: rank $rank holds no view (already purged)"
+      info=$(hot_instance_for_profile_on_rank "$profile" "$rank" 0 0) || rc=$?
+      [ "$rc" -ne 0 ] || info=$(printf '%s' "$info" | python3 -c \
+        'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))') || rc=2
     fi
+    case "$rc" in
+      0)
+        while IFS= read -r record; do
+          [ -n "$record" ] || continue
+          mapfile -t fields < <(json_fields "$record" instance_dir stamp.content_id stamp.pinned)
+          [ -n "${fields[0]:-}" ] || return 2
+          rows+=("$(printf '%s\t%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}" "${fields[2]:-false}")")
+          found=1
+        done <<<"$info"
+        ;;
+      1) warn "$profile: rank $rank holds no view (already purged)" ;;
+      255)
+        warn "$profile: rank $rank is unobservable; aborting before any deletion"
+        return 255
+        ;;
+      *)
+        warn "$profile: rank $rank could not be inspected; aborting before any deletion"
+        return 2
+        ;;
+    esac
   done
   [ "$found" = 1 ] || return 1
   printf '%s\n' "${rows[@]}"
@@ -4115,13 +4172,20 @@ cmd_purge_hot() {
   purge_list=$(hot_instances_for_profile_on_ranks "$profile" "${HOT_TARGET_RANKS[@]}") || purge_rc=$?
   [ "$purge_rc" -ne 255 ] \
     || die "purge-hot: a target rank is unobservable; nothing was deleted"
+  [ "$purge_rc" -ne 2 ] \
+    || die "purge-hot: a target rank could not be inspected; nothing was deleted"
   [ -n "$purge_list" ] \
     || die "no hot instance for $profile on the selected serving placement"
   mapfile -t purge_rows < <(printf '%s\n' "$purge_list")
-  local stamped_content_id
+  local stamped_content_id pinned_rows=""
   for line in "${purge_rows[@]}"; do
     IFS=$'\t' read -r -a row <<<"$line"
     rank="${row[0]}" instance="${row[1]}" stamped_content_id="${row[2]:-}"
+    # Pins are honored before anything is deleted, so a pinned view among
+    # several never leaves the others half-purged.
+    if [ "${row[3]:-false}" = true ] && [ "$force_unpin" != 1 ]; then
+      pinned_rows="${pinned_rows:+$pinned_rows; }rank $rank: $instance"
+    fi
     # The instance directory is named by its content id, which is also the
     # weight-config label live containers carry. Query Docker by the name
     # on disk and refuse a stamp that disagrees: a damaged stamp must not
@@ -4137,6 +4201,8 @@ cmd_purge_hot() {
     [ -z "$sharers" ] \
       || die "purge-hot: refusing to delete $instance on rank $rank: still referenced by managed container(s), running or stopped: $sharers (stop and remove them first; ./pulsar stop <name> --purge-hot does both)"
   done
+  [ -z "$pinned_rows" ] \
+    || die "purge-hot: pinned view(s) present ($pinned_rows); pass --force-unpin to remove them; nothing was deleted"
   [ "$yes" = 1 ] || die "purge-hot will delete $(describe_purge_rows "${purge_rows[@]}") — re-run with --yes"
   for line in "${purge_rows[@]}"; do
     IFS=$'\t' read -r -a row <<<"$line"

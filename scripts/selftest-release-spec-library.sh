@@ -351,6 +351,7 @@ lookup_out=$(bash -c '
   HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"
   CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6"
   ssh_node() { shift; bash -c "$1"; }
+  eval "$(sed -n "/^hot_spec_views_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   if hot_instance_for_profile_on_rank spec 1 0 1 >/dev/null 2>&1; then
     echo "verified-lookup-accepted-damage"
@@ -409,7 +410,7 @@ per_rank_out=$(bash -c '
   rc=0; out=$(hot_instances_for_profile_on_ranks spec 1 9 2>/dev/null) || rc=$?
   echo "unobservable rc=$rc out=[$out]"
 ' _ "$REPO_DIR")
-[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1\nunobservable rc=255 out=[]' ] \
+[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1\tfalse\nunobservable rc=255 out=[]' ] \
   || { echo "FAIL per-rank purge lookup: $per_rank_out" >&2; exit 1; }
 echo "OK   purge-hot resolves surviving views per rank, treats a missing rank as purged, and aborts on an unobservable rank"
 
@@ -565,6 +566,7 @@ strict_pick=$(bash -c '
   . "$1/scripts/lib.sh"
   HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"
   CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6"
+  eval "$(sed -n "/^hot_spec_views_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   hot_instance_for_profile_on_rank spec 0 0 1 | python3 -c "import json,sys; print(json.load(sys.stdin)[\"instance_dir\"])"
 ' _ "$REPO_DIR" "$STATE/hot-pair" "$model_id" "$revision" "$manifest_id" "$topology_id")
@@ -580,6 +582,80 @@ launch_pick=$(bash -c '
 PULSAR_HOT_ROOT="$STATE/hot-pair" "$REPO_DIR/scripts/check-weights.sh" "$spec_id" --node fixture-node-0 >/dev/null 2>&1 \
   || { echo "FAIL check-weights did not accept the older verified view" >&2; exit 1; }
 echo "OK   readiness and launch lookups consume the first verified identity candidate"
+
+# Launch binds its choice to the catalog home the way the strict library
+# lookup does: a verified view stamped for another home is not served.
+python3 - "$REPO_DIR" "$older_view" fixture-node-1 <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts import model_library
+import pathlib
+path = pathlib.Path(sys.argv[2])
+stamp = model_library.load_hot_stamp(path)
+stamp["home_node_id"] = sys.argv[3]
+model_library.write_hot_stamp(path, stamp)
+PY
+launch_rc=0
+bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  PULSAR_HOT_ROOT="$2"
+  CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6" NODES=1 SINGLE_NODE_REMOTE=0
+  library_hot_info_for_profile spec >/dev/null
+' _ "$REPO_DIR" "$STATE/hot-pair" "$model_id" "$revision" "$manifest_id" "$topology_id" 2>/dev/null || launch_rc=$?
+[ "$launch_rc" = 2 ] || { echo "FAIL launch lookup served a view bound to another home (rc=$launch_rc)" >&2; exit 1; }
+python3 - "$REPO_DIR" "$older_view" fixture-node-0 <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts import model_library
+import pathlib
+path = pathlib.Path(sys.argv[2])
+stamp = model_library.load_hot_stamp(path)
+stamp["home_node_id"] = sys.argv[3]
+model_library.write_hot_stamp(path, stamp)
+PY
+echo "OK   launch lookup binds the catalog home"
+
+# Purge by spec id is explicit and complete: every identity match on the
+# rank is listed, pins are honored before anything is deleted, and with
+# --force-unpin both the damaged newer view and the served older view go.
+python3 "$REPO_DIR/scripts/model_library.py" set-pinned --instance-dir "$older_view" --pinned >/dev/null
+pinned_out=$(PULSAR_HOT_ROOT="$STATE/hot-pair" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
+printf '%s\n' "$pinned_out" | grep -q "pinned view(s) present" \
+  || { echo "FAIL purge-hot ignored a pinned view among several: $pinned_out" >&2; exit 1; }
+[ -d "$older_view" ] && [ -d "$newer_view" ] || { echo "FAIL purge-hot deleted views despite a pin" >&2; exit 1; }
+confirm_text=$(PULSAR_HOT_ROOT="$STATE/hot-pair" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --force-unpin 2>&1 || true)
+printf '%s\n' "$confirm_text" | grep -q "rank 0: $newer_view; rank 0: $older_view" \
+  || { echo "FAIL purge-hot confirmation does not list both matches: $confirm_text" >&2; exit 1; }
+PULSAR_HOT_ROOT="$STATE/hot-pair" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
+[ ! -e "$older_view" ] && [ ! -e "$newer_view" ] || { echo "FAIL purge-hot left an identity match behind" >&2; exit 1; }
+echo "OK   purge-hot <spec_id> removes every identity match on the rank and honors pins first"
+
+# Cleanup tells absence (already purged) from an inspection failure or an
+# unreachable rank: only absence lets cleanup continue.
+spec_rows_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec
+  hot_spec_views_on_rank() {
+    case "$2" in
+      1) printf "%s\n" "{\"instance_dir\": \"/hot/a-topo/cidA\", \"stamp\": {\"content_id\": \"cidA\", \"pinned\": true}}" "{\"instance_dir\": \"/hot/b-topo/cidB\", \"stamp\": {\"content_id\": \"cidB\", \"pinned\": false}}" ;;
+      7) return 2 ;;
+      9) return 255 ;;
+      *) return 1 ;;
+    esac
+  }
+  eval "$(sed -n "/^hot_instances_for_profile_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
+  hot_instances_for_profile_on_ranks spec 0 1 2>/dev/null
+  rc=0; out=$(hot_instances_for_profile_on_ranks spec 1 7 2>/dev/null) || rc=$?; echo "inspect rc=$rc out=[$out]"
+  rc=0; out=$(hot_instances_for_profile_on_ranks spec 1 9 2>/dev/null) || rc=$?; echo "unreachable rc=$rc out=[$out]"
+' _ "$REPO_DIR")
+[ "$spec_rows_out" = $'1\t/hot/a-topo/cidA\tcidA\ttrue\n1\t/hot/b-topo/cidB\tcidB\tfalse\ninspect rc=2 out=[]\nunreachable rc=255 out=[]' ] \
+  || { echo "FAIL spec per-rank purge rows: $spec_rows_out" >&2; exit 1; }
+echo "OK   spec purge lists every match per rank and aborts on inspection failure or an unreachable rank"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

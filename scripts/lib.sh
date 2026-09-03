@@ -1388,12 +1388,23 @@ PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 library_first_verified_spec_candidate() {
   local -a find_args=() verify_args=()
   local rank="" command list rc candidate instance expected_validation_json seen=0
+  local expected_home=""
   while [ $# -gt 0 ]; do
     [ "$1" != -- ] || { shift; break; }
     find_args+=("$1")
     shift
   done
   verify_args=("$@")
+  # Bind the choice to the current durable home whenever the catalog
+  # resolves it, the same condition under which the library's strict
+  # lookup binds, so launch, readiness, pin, and prepare land on one view.
+  if [ -f "$PULSAR_MODEL_LIBRARY_CATALOG" ]; then
+    expected_home=$(python3 "$PULSAR_MODEL_LIBRARY_PY" resolve \
+        --catalog "$PULSAR_MODEL_LIBRARY_CATALOG" --no-cold --json "${MODEL}@${SNAPSHOT_REVISION}" 2>/dev/null \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"].get("node_id") or "")' 2>/dev/null) \
+      || expected_home=""
+  fi
+  [ -z "$expected_home" ] || verify_args+=(--expected-home-node-id "$expected_home")
   if [ "${NODES:-1}" -eq 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
     rank="${SINGLE_NODE_INDEX:?remote single-node rank is unresolved}"
     command=$(shell_join_q python3 - "${find_args[@]}" --all)
