@@ -1875,7 +1875,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kv-gib", default="")
     parser.add_argument("--overhead-gib", default="")
     parser.add_argument("--mem-min-free-gib", default="")
-    parser.add_argument("--platform-id", default="dgx-spark-gb10")
+    # No parser default: export-profile must only gate on a platform the
+    # launch-admission caller passes explicitly; project applies the GB10
+    # default itself.
+    parser.add_argument("--platform-id", default="")
     parser.add_argument("--extra-arg", action="append", default=[])
     parser.add_argument("--extra-env", action="append", default=[])
     parser.add_argument("--records", default="", help="project-batch: records file")

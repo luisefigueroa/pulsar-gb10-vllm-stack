@@ -15,7 +15,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from release_spec import load_spec, pretty_json_bytes, verify_spec  # noqa: E402
+from release_spec import identity_block, load_spec, pretty_json_bytes, spec_id_for, verify_spec  # noqa: E402
 from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts import release_consumer as consumer  # noqa: E402
 from scripts import release_spec_generate as generate  # noqa: E402
@@ -1012,6 +1012,36 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(json.loads(cli.stdout)["receipt"], "found")
         bad = consumer.project_profile(**base, snapshot_revision="not-a-commit")
         self.assertEqual(bad["receipt"], "unreadable")
+
+    def test_export_profile_never_gates_without_an_explicit_platform(self) -> None:
+        # A spec frozen for another platform must load for stop/status when
+        # no platform is passed, and must be refused only by explicit
+        # launch admission. The parser must not smuggle in a GB10 default.
+        repo = self._repo()
+        spec = released_nano_spec()
+        other = json.loads(pretty_json_bytes(spec))
+        other["identity"]["geometry"]["platform_id"] = "test-other"
+        other["identity"] = identity_block(other["identity"])
+        other["spec_id"] = spec_id_for(other["identity"])
+        other_spec = verify_spec(other)
+        (repo / consumer.RELEASES_DIR / f"{other_spec['spec_id']}.json").write_bytes(
+            pretty_json_bytes(other_spec)
+        )
+        write_json(repo / consumer.OVERLAY_FILENAME, overlay_document())
+        base = ["export-profile", other_spec["spec_id"], "--overlay", str(repo / consumer.OVERLAY_FILENAME)]
+        loaded = run_cli(base, repo=repo)
+        self.assertEqual(loaded.returncode, 0, msg=loaded.stderr)
+        self.assertIn("SPEC_PLATFORM_ID='test-other'", loaded.stdout)
+        same = run_cli(base + ["--platform-id", "test-other"], repo=repo)
+        self.assertEqual(same.returncode, 0, msg=same.stderr)
+        gated = run_cli(base + ["--platform-id", "dgx-spark-gb10"], repo=repo)
+        self.assertEqual(gated.returncode, 2)
+        self.assertIn("targets platform", gated.stderr)
+        # project still defaults its platform to GB10 for identity hashing.
+        payload = consumer.project_profile(**project_kwargs(*write_fixture_library(
+            repo / "lib", model_id=nano_kwargs()["model_id"], profile=NANO
+        )[:2], repo_root=repo))
+        self.assertIn(payload["receipt"], {"found", "missing", "unreadable"})
 
     def test_export_profile_cli_and_missing_overlay(self) -> None:
         repo = self._repo()
