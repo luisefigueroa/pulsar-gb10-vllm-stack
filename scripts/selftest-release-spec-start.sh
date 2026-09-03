@@ -238,6 +238,12 @@ expect_failure 2 "differs from overlay placement" \
       PULSAR_OVERLAY_PATH="$STATE/overlay-place.json" \
       "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --node fixture-node-0
 
+expect_failure 1 "targets platform" "spec frozen for another platform is refused" \
+  env PULSAR_PLATFORM=test-other \
+      PULSAR_PLATFORM_FILE="$REPO_DIR/scripts/testdata/platforms/test-other.json" \
+      PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
+      "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --node fixture-node-0
+
 missing_hex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 expect_failure 1 "${missing_hex}.json" "missing released spec names releases/<id>.json" \
   env PULSAR_RELEASES_ROOT="$STATE/releases" \

@@ -344,6 +344,7 @@ load_spec_profile() {
     --repo-root "$REPO_DIR"
     --overlay "$overlay"
     --image-repo "$image_repo"
+    --platform-id "${PULSAR_PLATFORM_ID:-dgx-spark-gb10}"
   )
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     export_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
@@ -731,6 +732,11 @@ print_release_spec_projection_args() {
   )
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     args+=(--releases-root "$PULSAR_RELEASES_ROOT")
+  fi
+  # A spec start knows its exact commit; pass it so a library holding several
+  # revisions of one model still resolves the right receipt.
+  if [ "${CONF_SOURCE:-conf}" = spec ] && [ -n "${SNAPSHOT_REVISION:-}" ]; then
+    args+=(--snapshot-revision "$SNAPSHOT_REVISION")
   fi
   append_loaded_profile_contract_args args
   append_vllm_extra_args extra_split

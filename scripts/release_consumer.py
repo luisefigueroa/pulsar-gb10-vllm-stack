@@ -644,8 +644,15 @@ def spec_profile_variables(
     spec: dict[str, Any],
     overlay_entry: dict[str, Any],
     image_repo: str,
+    *,
+    active_platform_id: str | None = None,
 ) -> dict[str, Any]:
-    """Map a released spec plus overlay into load_conf-shaped variables."""
+    """Map a released spec plus overlay into load_conf-shaped variables.
+
+    ``active_platform_id`` is the platform this stack is running as; a spec
+    frozen for another platform fails without fallback rather than being
+    exported as an ordinary profile for this hardware.
+    """
     spec_id = spec_lifecycle_key(str(spec.get("spec_id") or ""))
     identity = spec.get("identity")
     if not isinstance(identity, dict):
@@ -659,6 +666,13 @@ def spec_profile_variables(
         pipeline_parallel = int(geometry["pp"])
     except (KeyError, TypeError, ValueError) as exc:
         fail(f"spec identity.geometry is incomplete: {exc}")
+    spec_platform = geometry.get("platform_id")
+    if active_platform_id and spec_platform != active_platform_id:
+        fail(
+            f"released spec {spec_id} targets platform {spec_platform!r}; "
+            f"this stack is {active_platform_id!r} (refusing to launch outside "
+            "the spec's frozen geometry)"
+        )
     fabric = geometry.get("fabric")
     expected_fabric = FABRIC_LOCAL if nodes == 1 else FABRIC_ROCE_V2
     if fabric != expected_fabric:
@@ -1297,8 +1311,14 @@ def project_profile(
     extra_args: Sequence[str] = (),
     extra_env: Sequence[str] = (),
     context: ProjectionContext | None = None,
+    snapshot_revision: str | None = None,
 ) -> dict[str, Any]:
-    """Display-only projection. Never raises for catalog/receipt/spec absence."""
+    """Display-only projection. Never raises for catalog/receipt/spec absence.
+
+    ``snapshot_revision`` is the exact commit when the caller already knows it
+    (a spec start exports it); it replaces the catalog hint so a library with
+    several revisions of one model still resolves the right receipt.
+    """
     try:
         return _project_profile(
             profile=profile,
@@ -1318,6 +1338,7 @@ def project_profile(
             extra_args=extra_args,
             extra_env=extra_env,
             context=context,
+            snapshot_revision=snapshot_revision,
         )
     except Exception:
         return dict(UNREADABLE_PROJECTION)
@@ -1342,18 +1363,25 @@ def _project_profile(
     extra_args: Sequence[str],
     extra_env: Sequence[str],
     context: ProjectionContext | None = None,
+    snapshot_revision: str | None = None,
 ) -> dict[str, Any]:
     if library_dir in (None, ""):
         return _empty_projection("missing")
     library = pathlib.Path(library_dir)
-    catalog = catalog_path
-    if catalog in (None, ""):
-        catalog = library / "catalog.json"
-    revision, catalog_error = _catalog_snapshot_revision(
-        catalog, profile=profile, context=context
-    )
-    if catalog_error == "unreadable":
-        return _empty_projection("unreadable")
+    hint = (snapshot_revision or "").strip()
+    if hint:
+        if COMMIT_RE.fullmatch(hint) is None:
+            return _empty_projection("unreadable")
+        revision: str | None = hint
+    else:
+        catalog = catalog_path
+        if catalog in (None, ""):
+            catalog = library / "catalog.json"
+        revision, catalog_error = _catalog_snapshot_revision(
+            catalog, profile=profile, context=context
+        )
+        if catalog_error == "unreadable":
+            return _empty_projection("unreadable")
     receipt, receipt_status = _load_occupancy_receipt(
         library, model_id=model_id, snapshot_revision=revision, context=context
     )
@@ -1606,6 +1634,7 @@ def cmd_export_profile(
     overlay_path: str | pathlib.Path | None = None,
     releases_root: str | pathlib.Path | None = None,
     image_repo: str | None = None,
+    active_platform_id: str | None = None,
 ) -> int:
     spec = load_release(repo_root, spec_id, releases_root=releases_root)
     overlay_file = (
@@ -1618,7 +1647,9 @@ def cmd_export_profile(
     repo = image_repo_from_reference(
         image_repo or os.environ.get("VLLM_IMAGE_MAINLINE")
     )
-    variables = spec_profile_variables(spec, entry, repo)
+    variables = spec_profile_variables(
+        spec, entry, repo, active_platform_id=active_platform_id or None
+    )
     sys.stdout.write(format_shell_assignments(variables))
     return 0
 
@@ -1723,6 +1754,7 @@ def project_payload(
         extra_args=list(args.extra_arg or []),
         extra_env=list(args.extra_env or []),
         context=context,
+        snapshot_revision=str(getattr(args, "snapshot_revision", "") or "") or None,
     )
     return payload
 
@@ -1843,6 +1875,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extra-arg", action="append", default=[])
     parser.add_argument("--extra-env", action="append", default=[])
     parser.add_argument("--records", default="", help="project-batch: records file")
+    parser.add_argument(
+        "--snapshot-revision",
+        default="",
+        help="project: exact commit already known to the caller (spec starts)",
+    )
     return parser
 
 
@@ -1880,6 +1917,7 @@ def main(argv: list[str] | None = None) -> int:
                 overlay_path=args.overlay or None,
                 releases_root=args.releases_root,
                 image_repo=args.image_repo or None,
+                active_platform_id=args.platform_id or None,
             )
         if args.command == "verify":
             return cmd_verify(

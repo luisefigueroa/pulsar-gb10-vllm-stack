@@ -19,6 +19,7 @@ from release_spec import load_spec, pretty_json_bytes, verify_spec  # noqa: E402
 from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts import release_consumer as consumer  # noqa: E402
 from scripts import release_spec_generate as generate  # noqa: E402
+from scripts.testlib import release_spec_generate_fixture as receipt_fixture  # noqa: E402
 from scripts.testlib.test_release_spec_generate import (  # noqa: E402
     NANO,
     PINNED_IMAGE,
@@ -952,6 +953,60 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertIn("--tensor-parallel-size", n2_vars["ENGINE_ARGS"])
         self.assertEqual(n2_vars["TOPOLOGY_CLASS"], "roce-full-mesh")
         self.assertEqual(n2_vars["MIN_RAILS_PER_PAIR"], "2")
+
+    def test_spec_for_another_platform_is_refused(self) -> None:
+        spec = released_nano_spec()
+        overlay = consumer.overlay_for_spec(overlay_document(), spec)
+        consumer.spec_profile_variables(
+            spec, overlay, "vllm/vllm-openai", active_platform_id="dgx-spark-gb10"
+        )
+        with self.assertRaisesRegex(consumer.ReleaseConsumerError, "targets platform"):
+            consumer.spec_profile_variables(
+                spec, overlay, "vllm/vllm-openai", active_platform_id="dgx-spark-other"
+            )
+
+    def test_project_uses_the_exported_revision_over_the_catalog(self) -> None:
+        repo = self._repo()
+        library, catalog, receipt = write_fixture_library(
+            repo, model_id=nano_kwargs()["model_id"], profile=NANO
+        )
+        # A second revision of the same model occupies another home in the
+        # same library; a revision-less lookup is ambiguous and stays
+        # "missing" for display, but a spec start knows its commit.
+        other = receipt_fixture.build_fixture_receipt(
+            nano_kwargs()["model_id"], profile=NANO, snapshot_revision="b" * 40
+        )
+        source_attested.write_source_attested_receipt(library, other, operation="test")
+        other_home = repo / "other-home"
+        other_home.mkdir()
+        source_attested.write_source_attested_home_attachment(
+            library,
+            receipt=other,
+            node_id="node-0",
+            durable_home_path=str(other_home.resolve()),
+            directory_identity={"device": 1, "inode": 2, "ctime_ns": 2},
+        )
+        spec = released_nano_spec()
+        (repo / consumer.RELEASES_DIR / f"{spec['spec_id']}.json").write_bytes(
+            pretty_json_bytes(spec)
+        )
+        base = project_kwargs(library, catalog, repo_root=repo)
+        base["profile"] = spec["spec_id"]  # a spec start's CONF_NAME
+        ambiguous = consumer.project_profile(**base)
+        self.assertEqual(ambiguous["receipt"], "missing")
+        hinted = consumer.project_profile(
+            **base, snapshot_revision=receipt["snapshot_revision"]
+        )
+        self.assertEqual(hinted["receipt"], "found")
+        self.assertEqual(hinted["identities"][0]["review_status"], "stable")
+        cli = run_cli(
+            project_cli_args({**base, "snapshot_revision": receipt["snapshot_revision"]})
+            + ["--snapshot-revision", receipt["snapshot_revision"]]
+        )
+        self.assertEqual(cli.returncode, 0, msg=cli.stderr)
+        self.assertEqual(json.loads(cli.stdout)["receipt"], "found")
+        bad = consumer.project_profile(**base, snapshot_revision="not-a-commit")
+        self.assertEqual(bad["receipt"], "unreadable")
 
     def test_export_profile_cli_and_missing_overlay(self) -> None:
         repo = self._repo()
