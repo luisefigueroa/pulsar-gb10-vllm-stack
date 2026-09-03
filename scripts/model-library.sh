@@ -3574,16 +3574,21 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
 # stop hook path already stops the service before it purges. Returns 1 when
 # Docker on that rank cannot be queried; callers must not treat that as
 # "no users".
+# Managed containers that reference a hot view by its weight-config label,
+# running or stopped: a stopped container that was not removed can still be
+# started again and needs its mounted view, so purge counts it as a user.
+# The stack's own stop removes containers before purging, so the
+# stop-and-purge path never sees itself here.
 hot_view_live_users() {
   local rank="${1:?}" content_id="${2:?}" out remote_cmd
   local filter_managed filter_config
   filter_managed="label=${PULSAR_MANAGED_LABEL}=true"
   filter_config="label=${PULSAR_WEIGHT_CONFIG_LABEL}=${content_id}"
   if [ "$rank" = 0 ]; then
-    out=$("$PULSAR_DOCKER" ps --filter "$filter_managed" --filter "$filter_config" \
+    out=$("$PULSAR_DOCKER" ps --all --filter "$filter_managed" --filter "$filter_config" \
       --format "{{.Label \"${PULSAR_CONF_LABEL}\"}}" 2>/dev/null) || return 1
   else
-    printf -v remote_cmd 'docker ps --filter %q --filter %q --format %q' \
+    printf -v remote_cmd 'docker ps --all --filter %q --filter %q --format %q' \
       "$filter_managed" "$filter_config" "{{.Label \"${PULSAR_CONF_LABEL}\"}}"
     out=$(ssh_node "$rank" "$remote_cmd" </dev/null) || return 1
   fi
@@ -3842,7 +3847,7 @@ cmd_purge_hot() {
     sharers=$(hot_view_live_users "$rank" "$content_id") \
       || die "purge-hot: cannot verify on rank $rank that no running service uses $instance"
     [ -z "$sharers" ] \
-      || die "purge-hot: refusing to delete $instance on rank $rank: still mounted by running service(s): $sharers (stop them first; ./pulsar stop <name> --purge-hot does both)"
+      || die "purge-hot: refusing to delete $instance on rank $rank: still referenced by managed container(s), running or stopped: $sharers (stop and remove them first; ./pulsar stop <name> --purge-hot does both)"
   done
   [ "$yes" = 1 ] || die "purge-hot will delete $instance — re-run with --yes"
   for rank in "${HOT_TARGET_RANKS[@]}"; do

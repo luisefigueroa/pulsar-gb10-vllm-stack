@@ -281,12 +281,29 @@ _reset_loaded_profile_defaults() {
 # spec, an explicit --node wins, an overlay placement.node_id applies when no
 # selector was given, and a conflict between the two fails. Prints the
 # selector; callers assign it. Confs pass through unchanged.
+# Print the topology rank a node selector names (node id, hostname, ssh
+# host, control IP, key, or rank), or fail. The shared resolver runs in a
+# subshell so the caller's placement variables are untouched.
+single_node_index_for_selector() {
+  local selector="${1:?}"
+  (
+    resolve_single_node_placement "$selector" >/dev/null 2>&1 || exit 1
+    printf '%s\n' "$SINGLE_NODE_INDEX"
+  )
+}
+
 spec_overlay_node_selector() {
-  local selector="${1:-}"
+  local selector="${1:-}" selector_rank overlay_rank
   if [ "${CONF_SOURCE:-conf}" = spec ] && [ "${NODES:-1}" -eq 1 ]; then
     if [ -n "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
         && [ "$selector" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then
-      die "--node '$selector' differs from overlay placement.node_id" 2
+      # A rank number, hostname, or node id may all name the overlay's
+      # node; compare the placement they resolve to, not the spelling.
+      if ! selector_rank=$(single_node_index_for_selector "$selector") \
+          || ! overlay_rank=$(single_node_index_for_selector "$OVERLAY_PLACEMENT_NODE_ID") \
+          || [ "$selector_rank" != "$overlay_rank" ]; then
+        die "--node '$selector' differs from overlay placement.node_id '$OVERLAY_PLACEMENT_NODE_ID'" 2
+      fi
     fi
     if [ -z "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ]; then
       selector="$OVERLAY_PLACEMENT_NODE_ID"

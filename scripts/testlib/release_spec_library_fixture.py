@@ -263,8 +263,10 @@ def cmd_purge_docker_shim(argv: list[str]) -> None:
         """#!/usr/bin/env bash
 set -euo pipefail
 if [ "${1:-}" = ps ]; then
+  # A stopped-but-present container is only visible with --all; report the
+  # sharer only when purge asks for every managed container.
   case "$*" in
-    *weight-config=*) [ -z "${FAKE_DOCKER_SHARED_CONF:-}" ] || printf '%s\\n' "$FAKE_DOCKER_SHARED_CONF" ;;
+    *--all*weight-config=*) [ -z "${FAKE_DOCKER_SHARED_CONF:-}" ] || printf '%s\\n' "$FAKE_DOCKER_SHARED_CONF" ;;
   esac
   exit 0
 fi

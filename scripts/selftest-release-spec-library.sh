@@ -211,7 +211,7 @@ PY
   for user in nemotron-3-nano-30b-nvfp4 "$spec_id"; do
     shared_out=$(FAKE_DOCKER_SHARED_CONF="$user" PULSAR_HOT_ROOT="$hot_root" \
       "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
-    if ! printf '%s\n' "$shared_out" | grep -q "still mounted by running service"; then
+    if ! printf '%s\n' "$shared_out" | grep -q "still referenced by managed container"; then
       echo "FAIL purge-hot <spec_id> deleted or ignored a view mounted by $user: $shared_out" >&2
       exit 1
     fi
@@ -373,6 +373,27 @@ if bash -c '
   echo "FAIL spec_overlay_node_selector accepted a conflicting --node" >&2
   exit 1
 fi
+# A rank number or hostname that names the overlay's node is the same
+# placement, not a conflict (CLUSTER_TOPOLOGY_FILE is the fixture topology).
+alias_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec NODES=1 OVERLAY_PLACEMENT_NODE_ID=fixture-node-0
+  spec_overlay_node_selector 0
+  spec_overlay_node_selector fixture-head
+' _ "$REPO_DIR")
+[ "$alias_out" = $'0\nfixture-head' ] \
+  || { echo "FAIL spec_overlay_node_selector rejected an equivalent selector: $alias_out" >&2; exit 1; }
+if bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec NODES=1 OVERLAY_PLACEMENT_NODE_ID=fixture-node-0
+  spec_overlay_node_selector fixture-node-1
+' _ "$REPO_DIR" >/dev/null 2>&1; then
+  echo "FAIL spec_overlay_node_selector accepted an unknown --node against overlay placement" >&2
+  exit 1
+fi
+echo "OK   overlay placement accepts equivalent node selectors and rejects other nodes"
 for fn in cmd_prepare cmd_pin cmd_unpin cmd_purge_hot; do
   if ! sed -n "/^${fn}() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -q "spec_overlay_node_selector"; then
     echo "FAIL $fn does not apply the spec overlay placement" >&2
