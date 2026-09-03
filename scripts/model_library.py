@@ -4222,6 +4222,7 @@ def plan_prepare(
     spec_manifest: dict[str, Any] | None = None,
     reuse_instance_dir: str | None = None,
     reuse_stamp: dict[str, Any] | None = None,
+    ready_ranks: list[int] | None = None,
 ) -> dict[str, Any]:
     """Return a model-preparation plan JSON for bash to execute (copy + stamp).
 
@@ -4470,27 +4471,42 @@ def plan_prepare(
                     )
 
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
-    hot_storage_requirements = build_hot_storage_requirements(
-        target_ranks=target_ranks,
-        bytes_logical=bytes_logical,
-        instance_dir=instance,
-        home_rank=home_rank,
-    )
+    # Rank 0's stamp proves rank 0 only. For a multi-rank spec the wrapper
+    # verifies the exact view on every target rank and hands the ready set
+    # back as ``ready_ranks``; only the other ranks are copied, so a lost
+    # rank is repaired while ready ranks keep their bytes, stamps, and pins.
+    # Without that observation every target rank is a copy target.
+    ready_set = {int(rank) for rank in (ready_ranks or [])}
+    copy_ranks = list(target_ranks)
+    if identity_key and len(target_ranks) > 1:
+        copy_ranks = [rank for rank in target_ranks if rank not in ready_set]
     existing = None
     if hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
-        # Rank 0's stamp proves rank 0 only. A multi-rank spec falls through
-        # to the copy plan, which re-materializes every target rank, so a
-        # rank whose view was lost is repaired instead of failing verify.
         if _stamp_matches_plan(existing) and (
-            target_ranks == [0] or not identity_key
+            target_ranks == [0] or not identity_key or not copy_ranks
         ):
             return _ready_skip_plan(
                 instance_dir=instance,
                 stamp=existing,
-                reason="hot already ready with matching digest",
+                reason=(
+                    "hot already ready on every target rank"
+                    if identity_key and len(target_ranks) > 1
+                    else "hot already ready with matching digest"
+                ),
                 storage_instance=instance,
             )
+    if identity_key and not copy_ranks:
+        fail(
+            "prepare: every target rank reports a ready view but the rank-0 "
+            f"stamp does not match this plan at {instance}"
+        )
+    hot_storage_requirements = build_hot_storage_requirements(
+        target_ranks=copy_ranks,
+        bytes_logical=bytes_logical,
+        instance_dir=instance,
+        home_rank=home_rank,
+    )
 
     stamp = build_hot_stamp(
         profile=profile,
@@ -4534,6 +4550,7 @@ def plan_prepare(
         "transport": transport,
         "topology_id": topology_id,
         "target_ranks": target_ranks,
+        "copy_ranks": copy_ranks,
         "hot_storage_requirements": hot_storage_requirements,
         "stamp": stamp,
         "transfer": transfer,
@@ -8171,6 +8188,12 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
             fail(f"reuse-stamp-json: {exc}")
         if not isinstance(reuse_stamp, dict):
             fail("reuse-stamp-json must be an object")
+    ready_ranks = None
+    if getattr(args, "ready_ranks", ""):
+        try:
+            ready_ranks = [int(part) for part in args.ready_ranks.split(",") if part.strip()]
+        except ValueError:
+            fail("ready-ranks must be a comma-separated list of ranks")
     plan = plan_prepare(
         catalog_path=args.catalog,
         profile=args.profile or None,
@@ -8189,6 +8212,7 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
         spec_manifest=spec_manifest,
         reuse_instance_dir=str(getattr(args, "reuse_instance_dir", "") or "") or None,
         reuse_stamp=reuse_stamp,
+        ready_ranks=ready_ranks,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -9174,6 +9198,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan.add_argument("--reuse-instance-dir", default="", help=argparse.SUPPRESS)
     plan.add_argument("--reuse-stamp-json", default="", help=argparse.SUPPRESS)
+    plan.add_argument("--ready-ranks", default="", help=argparse.SUPPRESS)
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
     plan.add_argument("--models-dir", default="")

@@ -358,6 +358,63 @@ lookup_out=$(bash -c '
   || { echo "FAIL purge lookup on a damaged remote spec view: $lookup_out" >&2; exit 1; }
 echo "OK   purge lookup binds a damaged remote spec view by stamp identity; launch lookup refuses it"
 
+# After occupancy moves, a view stamped for the previous durable home is a
+# stale working copy: pin refuses it against the current catalog home, and
+# purge (ownership only) can still remove it.
+python3 - "$REPO_DIR" "$damaged_view" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts import model_library
+import pathlib
+path = pathlib.Path(sys.argv[2])
+stamp = model_library.load_hot_stamp(path)
+stamp["home_node_id"] = "fixture-node-1"
+model_library.write_hot_stamp(path, stamp)
+PY
+expect_failure 1 "bound to durable home 'fixture-node-1', not the current home 'fixture-node-0'" \
+  "spec pin refuses a view bound to a previous durable home" \
+  env PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+    "$REPO_DIR/scripts/model-library.sh" pin "$spec_id" --node fixture-node-0
+PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
+[ ! -e "$damaged_view" ] || { echo "FAIL purge-hot left a view bound to a previous home" >&2; exit 1; }
+echo "OK   purge-hot removes a view bound to a previous durable home"
+
+# Multi-rank purge inspects every target rank on its own: a rank whose view
+# is already gone is already purged, and the surviving copies are still
+# returned for removal. Only a placement with no view anywhere fails.
+per_rank_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  hot_instance_for_profile_on_rank() {
+    [ "$2" = 1 ] || return 1
+    printf "%s\n" "{\"instance_dir\": \"/hot/x-topo/cid1\", \"stamp\": {\"content_id\": \"cid1\"}}"
+  }
+  eval "$(sed -n "/^hot_instances_for_profile_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
+  hot_instances_for_profile_on_ranks spec 0 1 2>/dev/null
+  if hot_instances_for_profile_on_ranks spec 0 2 2>/dev/null; then echo "unexpected-success"; fi
+' _ "$REPO_DIR")
+[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1' ] \
+  || { echo "FAIL per-rank purge lookup: $per_rank_out" >&2; exit 1; }
+echo "OK   purge-hot resolves surviving views per rank and treats a missing rank as already purged"
+
+# A multi-rank spec repairs only the ranks whose exact view fails
+# verification; ready ranks are reported so the plan leaves them untouched.
+observe_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CLUSTER_TOPOLOGY_ID=topo-1
+  verify_hot_on_rank() { [ "$1" = 1 ]; }
+  eval "$(sed -n "/^observe_ready_ranks_for_instance() {/,/^}/p" "$1/scripts/model-library.sh")"
+  observe_ready_ranks_for_instance /hot/x spec "{}" 0 1 2
+' _ "$REPO_DIR")
+[ "$observe_out" = "1" ] || { echo "FAIL ready-rank observation: $observe_out" >&2; exit 1; }
+for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
+  grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
+    || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }
+done
+echo "OK   prepare copies and publishes only the ranks the plan marks for repair"
+
 # The post-prepare verification must bind a spec by its sealed manifest id and
 # never by profile name or conf directory (the view may carry a conf's name).
 verify_args_log="$STATE/verify-args.log"

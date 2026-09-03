@@ -188,10 +188,29 @@ class SpecPreparePlannerTests(unittest.TestCase):
             model_library.plan_prepare(**self._identity_kwargs())["action"], "skip"
         )
         # The exact spec-named view is ready on rank 0 only; a two-rank spec
-        # must re-materialize every rank rather than report skip from rank 0.
+        # must not report skip from rank 0 alone. Without a per-rank
+        # observation every rank is a copy target.
         two_rank = model_library.plan_prepare(**self._identity_kwargs(nodes=2))
         self.assertEqual(two_rank["action"], "copy")
         self.assertEqual(two_rank["target_ranks"], [0, 1])
+        self.assertEqual(two_rank["copy_ranks"], [0, 1])
+        # The wrapper verified rank 0: only rank 1 is repaired, and the
+        # storage requirement covers rank 1 alone.
+        repair = model_library.plan_prepare(
+            **self._identity_kwargs(nodes=2), ready_ranks=[0]
+        )
+        self.assertEqual(repair["action"], "copy")
+        self.assertEqual(repair["copy_ranks"], [1])
+        self.assertEqual(
+            sorted(int(r["rank"]) for r in repair["hot_storage_requirements"]),
+            [1],
+        )
+        # Every rank verified: nothing to copy.
+        ready = model_library.plan_prepare(
+            **self._identity_kwargs(nodes=2), ready_ranks=[0, 1]
+        )
+        self.assertEqual(ready["action"], "skip")
+        self.assertIn("every target rank", ready["reason"])
 
     def test_identity_reuses_candidate_from_the_selected_rank(self) -> None:
         # A one-node spec placed on a remote home rank: the wrapper discovers
