@@ -676,8 +676,10 @@ common_out=$(bash -c '
   hot_instances_for_profile_strict_on_ranks spec 1 0 1 2>/dev/null
   rc=0; out=$(hot_instances_for_profile_strict_on_ranks spec 1 0 2 2>/dev/null) || rc=$?; echo "none rc=$rc out=[$out]"
   rc=0; out=$(hot_instances_for_profile_strict_on_ranks spec 1 0 9 2>/dev/null) || rc=$?; echo "unreachable rc=$rc out=[$out]"
+  spec_candidate_records_on_rank() { return 255; }
+  rc=0; out=$(hot_instances_for_profile_strict_on_ranks spec 1 9 2>/dev/null) || rc=$?; echo "first-unreachable rc=$rc out=[$out]"
 ' _ "$REPO_DIR")
-[ "$common_out" = $'0\t/hot/older\n1\t/hot/older\nnone rc=1 out=[]\nunreachable rc=255 out=[]' ] \
+[ "$common_out" = $'0\t/hot/older\n1\t/hot/older\nnone rc=1 out=[]\nunreachable rc=255 out=[]\nfirst-unreachable rc=255 out=[]' ] \
   || { echo "FAIL common-path pin selection: $common_out" >&2; exit 1; }
 echo "OK   pin selects one path that verifies on every serving rank"
 
@@ -707,6 +709,55 @@ historic_out=$(bash -c '
 sed -n "/^cmd_purge_hot() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c 'spec_overlay_node_selector "$node_selector" cleanup' >/dev/null \
   || { echo "FAIL purge-hot does not use the cleanup overlay policy" >&2; exit 1; }
 echo "OK   purge-hot reaches a previous one-rank placement by explicit --node"
+
+# Launch and readiness choose the first candidate that verifies on every
+# serving rank, so a newer view verifying on rank 0 alone is passed over.
+launch_common=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec MODEL=m SNAPSHOT_REVISION=r NODES=2 PULSAR_MODEL_LIBRARY_CATALOG=/nonexistent
+  library_spec_candidate_list() { printf "%s\n" "{\"instance_dir\": \"/hot/newer\", \"stamp\": {\"validation\": {}}}" "{\"instance_dir\": \"/hot/older\", \"stamp\": {\"validation\": {}}}"; }
+  library_verify_spec_view_on_rank() {
+    case "$1:$2" in 0:/hot/newer|0:/hot/older|1:/hot/older) return 0 ;; *) return 1 ;; esac
+  }
+  library_first_verified_spec_candidate find-hot -- verify-hot | python3 -c "import json,sys; print(json.load(sys.stdin)[\"instance_dir\"])"
+  library_verify_spec_view_on_rank() { [ "$1" = 0 ]; }
+  rc=0; library_first_verified_spec_candidate find-hot -- verify-hot >/dev/null || rc=$?; echo "none rc=$rc"
+  library_verify_spec_view_on_rank() { [ "$1" = 0 ] || return 255; }
+  rc=0; library_first_verified_spec_candidate find-hot -- verify-hot >/dev/null || rc=$?; echo "unreachable rc=$rc"
+' _ "$REPO_DIR")
+[ "$launch_common" = $'/hot/older\nnone rc=2\nunreachable rc=255' ] \
+  || { echo "FAIL launch all-rank candidate selection: $launch_common" >&2; exit 1; }
+echo "OK   launch and readiness select the first candidate that verifies on every serving rank"
+
+# Cleanup reaches a view an interrupted preparation left in state
+# verifying: launch discovery stays ready-only, purge discovery sees it.
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$manifest_json"
+incomplete_view=$(python3 - "$REPO_DIR" "$STATE/hot-rank1" "${model_id}@${revision}" "$manifest_id" "$topology_id" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts import model_library
+hot, identity, manifest_id, topology_id = sys.argv[2:]
+path = model_library.find_hot_instance_for_identity(hot, identity, topology_id, manifest_id=manifest_id)
+stamp = model_library.load_hot_stamp(path)
+stamp["state"] = "verifying"
+model_library.write_hot_stamp(path, stamp)
+print(path)
+PY
+)
+ready_only=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot --all \
+  --identity "${model_id}@${revision}" --manifest-id "$manifest_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1")
+[ "$ready_only" = "[]" ] || { echo "FAIL launch discovery listed an incomplete view: $ready_only" >&2; exit 1; }
+with_incomplete=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot --all --include-incomplete \
+  --identity "${model_id}@${revision}" --manifest-id "$manifest_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" \
+  | python3 -c 'import json,sys; print("\n".join(r["instance_dir"] for r in json.load(sys.stdin)))')
+[ "$with_incomplete" = "$incomplete_view" ] || { echo "FAIL cleanup discovery missed the incomplete view: $with_incomplete" >&2; exit 1; }
+PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
+[ ! -e "$incomplete_view" ] || { echo "FAIL purge-hot left the incomplete view" >&2; exit 1; }
+echo "OK   purge-hot recovers a view an interrupted preparation left in state verifying"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

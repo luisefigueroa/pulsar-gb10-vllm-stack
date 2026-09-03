@@ -3891,9 +3891,11 @@ hot_spec_views_on_rank() {
     return 2
   fi
   identity="${MODEL}@${SNAPSHOT_REVISION}"
+  # Cleanup also reaches a view an interrupted preparation left behind
+  # (state=verifying): ownership is still bound by its stamp.
   local -a args=(
     find-hot --identity "$identity" --manifest-id "$SPEC_MANIFEST_ID"
-    --topology-id "${CLUSTER_TOPOLOGY_ID}" --hot-root "$HOT_ROOT" --all
+    --topology-id "${CLUSTER_TOPOLOGY_ID}" --hot-root "$HOT_ROOT" --all --include-incomplete
   )
   if [ "$rank" -eq 0 ]; then
     list=$(python3 "$PY_TOOL" "${args[@]}") || return 2
@@ -3983,10 +3985,15 @@ hot_instances_for_profile_strict_on_ranks() {
     # same set. Candidates come from the first target rank, newest first;
     # the first path that verifies (home-bound) on every target rank wins.
     local list candidate rc other
-    list=$(spec_candidate_records_on_rank "$profile" "$1" "$require_launchable") || {
+    rc=0
+    list=$(spec_candidate_records_on_rank "$profile" "$1" "$require_launchable") || rc=$?
+    if [ "$rc" -eq 255 ]; then
+      warn "$profile: rank $1 is unreachable"
+      return 255
+    elif [ "$rc" -ne 0 ]; then
       warn "$profile: rank $1 has no candidate view"
       return 1
-    }
+    fi
     while IFS= read -r candidate; do
       [ -n "$candidate" ] || continue
       instance=$(printf '%s' "$candidate" | python3 -c \

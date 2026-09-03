@@ -3331,7 +3331,16 @@ def load_hot_stamp(instance_dir: str | pathlib.Path) -> dict[str, Any]:
     return data
 
 
-def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
+def _ready_hot_children(
+    parent: pathlib.Path, *, include_incomplete: bool = False
+) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
+    """Stamped children of a <name>-<topology> entry, ready or pinned.
+
+    ``include_incomplete`` also lists views whose stamp is in another state
+    (an interrupted preparation left ``verifying``); ownership is still
+    bound by the stamp's schema, scheme, and identity, so purge discovery
+    can reach such a view while launch discovery stays ready-only.
+    """
     candidates: list[tuple[str, pathlib.Path, dict[str, Any]]] = []
     try:
         for child in parent.iterdir():
@@ -3356,7 +3365,7 @@ def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, d
             ):
                 continue
             if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
-                if stamp.get("state") != "ready":
+                if stamp.get("state") != "ready" and not include_incomplete:
                     continue
             activated = str(stamp.get("activated_at") or "")
             candidates.append((activated, child, stamp))
@@ -3397,6 +3406,7 @@ def find_hot_instances_for_identity(
     topology_id: str,
     *,
     manifest_id: str | None = None,
+    include_incomplete: bool = False,
 ) -> list[pathlib.Path]:
     """Return every ready instance whose stamp matches model_id@revision,
     newest activation first.
@@ -3424,7 +3434,9 @@ def find_hot_instances_for_identity(
         # root; identity discovery must not follow it into a purge target.
         if parent.is_symlink() or not parent.is_dir() or not parent.name.endswith(suffix):
             continue
-        for activated, candidate, stamp in _ready_hot_children(parent):
+        for activated, candidate, stamp in _ready_hot_children(
+            parent, include_incomplete=include_incomplete
+        ):
             stamp_identity = stamp.get("identity_key")
             if not stamp_identity:
                 stamp_identity = f"{stamp.get('model_id')}@{stamp.get('revision')}"
@@ -8362,6 +8374,10 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
     list_all = bool(getattr(args, "all_matches", False))
     if list_all and not identity_key:
         fail("find-hot: --all requires --identity")
+    if getattr(args, "include_incomplete", False) and not list_all:
+        fail("find-hot: --include-incomplete requires --all")
+    if getattr(args, "include_incomplete", False) and getattr(args, "for_launch", False):
+        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
 
     def _record(path: pathlib.Path, stamp: dict[str, Any]) -> dict[str, Any]:
         hub = hot_hub_path(path, stamp["model_id"])
@@ -8392,6 +8408,7 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
             identity_key,
             args.topology_id,
             manifest_id=manifest_id,
+            include_incomplete=bool(getattr(args, "include_incomplete", False)),
         ):
             stamp = load_hot_stamp(path)
             if getattr(args, "for_launch", False):
@@ -9391,6 +9408,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="all_matches",
         action="store_true",
         help="with --identity: print every ready match as a JSON list, newest first",
+    )
+    fh.add_argument(
+        "--include-incomplete",
+        dest="include_incomplete",
+        action="store_true",
+        help="with --all: also list views whose stamp is not ready (cleanup only)",
     )
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")

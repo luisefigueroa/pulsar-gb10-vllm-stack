@@ -1391,8 +1391,8 @@ PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 # whose verify-hot passes. Returns 255 when the rank is SSH-unreachable, 2
 # when candidates exist but none verifies, 1 when there is no candidate.
 library_first_verified_spec_candidate() {
-  local -a find_args=() verify_args=()
-  local rank="" command list rc candidate instance expected_validation_json seen=0
+  local -a find_args=() verify_args=() serving_ranks=()
+  local selection_rank=0 list rc candidate instance expected_validation_json seen=0 r
   local expected_home=""
   while [ $# -gt 0 ]; do
     [ "$1" != -- ] || { shift; break; }
@@ -1410,15 +1410,21 @@ library_first_verified_spec_candidate() {
       || expected_home=""
   fi
   [ -z "$expected_home" ] || verify_args+=(--expected-home-node-id "$expected_home")
-  if [ "${NODES:-1}" -eq 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
-    rank="${SINGLE_NODE_INDEX:?remote single-node rank is unresolved}"
-    command=$(shell_join_q python3 - "${find_args[@]}" --all)
-    rc=0
-    list=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
-    [ "$rc" -eq 0 ] || return "$rc"
+  # Candidates are listed on the selection rank (the one-node placement,
+  # or rank 0 for a multi-rank spec) and a candidate is chosen only when it
+  # verifies on every serving rank, so readiness, launch, pin, and prepare
+  # all land on the same path.
+  if [ "${NODES:-1}" -eq 1 ]; then
+    if [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
+      selection_rank="${SINGLE_NODE_INDEX:?remote single-node rank is unresolved}"
+    fi
+    serving_ranks=("$selection_rank")
   else
-    list=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${find_args[@]}" --all) || return 1
+    for ((r = 0; r < NODES; r++)); do serving_ranks+=("$r"); done
   fi
+  rc=0
+  list=$(library_spec_candidate_list "$selection_rank" "${find_args[@]}") || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue
     seen=1
@@ -1427,27 +1433,56 @@ library_first_verified_spec_candidate() {
     expected_validation_json=$(printf '%s' "$candidate" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]["validation"], sort_keys=True, separators=(",", ":")))') \
       || return 1
-    rc=0
-    if [ -n "$rank" ]; then
-      command=$(shell_join_q python3 - "${verify_args[@]}" \
-        --instance-dir "$instance" \
-        --expected-validation-json "$expected_validation_json")
-      ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
+    for r in "${serving_ranks[@]}"; do
+      rc=0
+      library_verify_spec_view_on_rank "$r" "$instance" "$expected_validation_json" "${verify_args[@]}" || rc=$?
       [ "$rc" -ne 255 ] || return 255
-    else
-      python3 "$PULSAR_MODEL_LIBRARY_PY" "${verify_args[@]}" \
-        --instance-dir "$instance" >/dev/null || rc=$?
-    fi
+      [ "$rc" -eq 0 ] || break
+    done
     if [ "$rc" -eq 0 ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
-  done < <(printf '%s' "$list" | python3 -c \
-    'import json,sys
-for record in json.load(sys.stdin):
-    print(json.dumps(record, sort_keys=True, separators=(",", ":")))')
+  done <<<"$list"
   [ "$seen" = 1 ] && return 2
   return 1
+}
+
+# library_spec_candidate_list <rank> <find-hot args...>
+# Every identity match on RANK as compact JSON lines, newest first (find-hot
+# --all). Returns 255 when the rank is SSH-unreachable, 1 otherwise on failure.
+library_spec_candidate_list() {
+  local rank="${1:?}" list rc=0 command
+  shift
+  if [ "$rank" -eq 0 ]; then
+    list=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "$@" --all) || return 1
+  else
+    command=$(shell_join_q python3 - "$@" --all)
+    list=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+  fi
+  printf '%s' "$list" | python3 -c \
+    'import json,sys
+for record in json.load(sys.stdin):
+    print(json.dumps(record, sort_keys=True, separators=(",", ":")))'
+}
+
+# library_verify_spec_view_on_rank <rank> <instance> <validation_json> <verify-hot args...>
+# Returns 0 when the view verifies on RANK, 255 when RANK is SSH-unreachable,
+# 1 otherwise.
+library_verify_spec_view_on_rank() {
+  local rank="${1:?}" instance="${2:?}" expected_validation_json="${3:?}" command rc=0
+  shift 3
+  if [ "$rank" -eq 0 ]; then
+    python3 "$PULSAR_MODEL_LIBRARY_PY" "$@" --instance-dir "$instance" >/dev/null || return 1
+    return 0
+  fi
+  command=$(shell_join_q python3 - "$@" \
+    --instance-dir "$instance" \
+    --expected-validation-json "$expected_validation_json")
+  ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
+  [ "$rc" -ne 255 ] || return 255
+  [ "$rc" -eq 0 ] || return 1
 }
 
 # Print find-hot JSON for the selected rank. Return 0 on success, 255 when
