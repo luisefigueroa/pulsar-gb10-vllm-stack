@@ -4479,35 +4479,19 @@ def plan_prepare(
                     ),
                     storage_instance=pathlib.Path(reuse_instance_dir),
                 )
-        # A controller-local candidate proves readiness on rank 0 only, so it
-        # may stand in for a copy only when rank 0 is the sole target. Multi-
-        # rank specs fall through to the copy plan, whose per-rank skip and
-        # verify steps decide what already exists where.
-        if target_ranks == [0]:
-            reused = find_hot_instance_for_identity(
-                hot_root,
-                resolved["identity_key"],
-                topology_id,
-                manifest_id=str(spec_manifest_id) if spec_manifest_id else None,
-            )
-            if reused is not None:
-                existing_reuse = load_hot_stamp(reused)
-                if _stamp_matches_plan(existing_reuse):
-                    return _ready_skip_plan(
-                        instance_dir=reused,
-                        stamp=existing_reuse,
-                        reason="reuse ready view with matching identity and manifest",
-                        storage_instance=reused,
-                    )
-        elif len(target_ranks) > 1:
-            # A multi-rank spec may reuse a matching identity view under any
-            # name (a conf-named view of the same sealed manifest), but only
-            # once the wrapper has verified that exact path on every target
-            # rank. The plan lists every candidate found on the controller,
-            # newest first; the wrapper probes them in order, since a newer
-            # one-rank view may be absent elsewhere while an older complete
-            # multi-rank view exists everywhere. A partial match is never
-            # repaired under another name.
+        # A controller-local stamp proves metadata, not content. A spec may
+        # reuse a matching identity view under any name (a conf-named view
+        # of the same sealed manifest, or its own spec-named view), but only
+        # once the wrapper has verified that exact path on every target
+        # rank. The plan lists every candidate found on the controller,
+        # newest first; the wrapper probes them in order, so a newer view
+        # with a damaged payload, or one absent on another rank, is passed
+        # over for an older view that verifies, and none verifying falls
+        # through to materialization. A partial match is never repaired
+        # under another name. Candidates are only meaningful when rank 0 is
+        # a target; a one-rank remote placement reuses through the
+        # candidate the wrapper verified on that rank instead.
+        if 0 in target_ranks:
             for candidate in find_hot_instances_for_identity(
                 hot_root,
                 resolved["identity_key"],
@@ -4525,20 +4509,22 @@ def plan_prepare(
     # Without that observation every target rank is a copy target.
     ready_set = {int(rank) for rank in (ready_ranks or [])}
     copy_ranks = list(target_ranks)
-    if identity_key and len(target_ranks) > 1:
+    if identity_key:
         copy_ranks = [rank for rank in target_ranks if rank not in ready_set]
     existing = None
     if hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
-        if _stamp_matches_plan(existing) and (
-            target_ranks == [0] or not identity_key or not copy_ranks
-        ):
+        # A conf skips on its own matching stamp. A spec never skips on
+        # metadata alone: its exact instance is one of the candidates the
+        # wrapper verifies, and only an all-rank observation (ready_ranks
+        # covering every target) turns the exact instance into a skip.
+        if _stamp_matches_plan(existing) and (not identity_key or not copy_ranks):
             return _ready_skip_plan(
                 instance_dir=instance,
                 stamp=existing,
                 reason=(
                     "hot already ready on every target rank"
-                    if identity_key and len(target_ranks) > 1
+                    if identity_key
                     else "hot already ready with matching digest"
                 ),
                 storage_instance=instance,

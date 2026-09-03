@@ -140,12 +140,13 @@ class SpecPreparePlannerTests(unittest.TestCase):
         instance = pathlib.Path(conf_plan["instance_dir"])
         instance.mkdir(parents=True)
         model_library.write_hot_stamp(instance, conf_plan["stamp"])
+        # Metadata alone never skips: the conf-named match is listed for the
+        # wrapper to verify on the target rank before it is reused.
         plan = model_library.plan_prepare(**self._identity_kwargs())
-        self.assertEqual(plan["action"], "skip")
-        self.assertIn("reuse", plan["reason"])
-        self.assertEqual(plan["instance_dir"], str(instance))
-        self.assertEqual(plan["stamp"]["profile"], self.profile)
-        self.assertNotIn(SPEC_ID, plan["instance_dir"])
+        self.assertEqual(plan["action"], "copy")
+        self.assertEqual(plan["reuse_candidates"], [str(instance)])
+        self.assertNotIn(SPEC_ID, plan["reuse_candidates"][0])
+        self.assertIn(SPEC_ID, plan["instance_dir"])
 
     def test_identity_reuse_requires_the_current_home(self) -> None:
         conf_plan = model_library.plan_prepare(
@@ -168,6 +169,7 @@ class SpecPreparePlannerTests(unittest.TestCase):
         model_library.write_hot_stamp(instance, moved)
         plan = model_library.plan_prepare(**self._identity_kwargs())
         self.assertEqual(plan["action"], "copy")
+        self.assertEqual(plan["reuse_candidates"], [])
         candidate = model_library.plan_prepare(
             **self._identity_kwargs(),
             reuse_instance_dir=str(instance),
@@ -176,7 +178,8 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertEqual(candidate["action"], "copy")
         model_library.write_hot_stamp(instance, conf_plan["stamp"])
         self.assertEqual(
-            model_library.plan_prepare(**self._identity_kwargs())["action"], "skip"
+            model_library.plan_prepare(**self._identity_kwargs())["reuse_candidates"],
+            [str(instance)],
         )
 
     def test_multi_rank_identity_view_on_rank_0_alone_is_not_ready(self) -> None:
@@ -184,8 +187,14 @@ class SpecPreparePlannerTests(unittest.TestCase):
         instance = pathlib.Path(one_rank["instance_dir"])
         instance.mkdir(parents=True)
         model_library.write_hot_stamp(instance, one_rank["stamp"])
+        # The exact spec-named view is a candidate the wrapper verifies, not
+        # a metadata skip; the wrapper's all-rank observation makes the skip.
+        again = model_library.plan_prepare(**self._identity_kwargs())
+        self.assertEqual(again["action"], "copy")
+        self.assertEqual(again["reuse_candidates"], [str(instance)])
         self.assertEqual(
-            model_library.plan_prepare(**self._identity_kwargs())["action"], "skip"
+            model_library.plan_prepare(**self._identity_kwargs(), ready_ranks=[0])["action"],
+            "skip",
         )
         # The exact spec-named view is ready on rank 0 only; a two-rank spec
         # must not report skip from rank 0 alone. Without a per-rank
@@ -194,6 +203,7 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertEqual(two_rank["action"], "copy")
         self.assertEqual(two_rank["target_ranks"], [0, 1])
         self.assertEqual(two_rank["copy_ranks"], [0, 1])
+        self.assertEqual(two_rank["reuse_candidates"], [str(instance)])
         # The wrapper verified rank 0: only rank 1 is repaired, and the
         # storage requirement covers rank 1 alone.
         repair = model_library.plan_prepare(

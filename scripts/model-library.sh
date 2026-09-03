@@ -3459,21 +3459,26 @@ cmd_prepare() {
   plan_home_node_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"].get("node_id") or "")')
   plan_content_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["content_id"])')
 
-  # A multi-rank released spec repairs only the ranks that are not ready.
-  # The plan sees rank 0 alone, so verify the exact view on every target
-  # rank here and re-plan with that observation: ready ranks keep their
-  # bytes, stamps, and pins, and no copy ever runs beneath them.
-  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ] \
-      && [ "${#target_ranks[@]}" -gt 1 ]; then
-    # A matching identity view under any name is reused only when that
-    # exact path verifies on every target rank; a partial match is never
-    # repaired under the spec's name.
+  # A released spec never reuses on stamp metadata alone. The plan lists
+  # every matching identity view on the controller (any name, its own
+  # spec-named view included), newest first; the first that verifies,
+  # bound to the current home, on every target rank is reused. None
+  # verifying falls through to materialization, so a view whose payload
+  # is damaged is repaired rather than protected by its stamp.
+  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ]; then
     mapfile -t reuse_candidates < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin).get("reuse_candidates") or []))')
     if reuse_candidate=$(select_reusable_spec_view "$profile" "$expected_validation_json" \
         "$plan_home_node_id" "$target_ranks_csv" "${target_ranks[*]}" "${reuse_candidates[@]}"); then
       log "reusing verified identity view $reuse_candidate on every target rank; model not started"
       return 0
     fi
+  fi
+  # A multi-rank released spec repairs only the ranks that are not ready.
+  # The plan sees rank 0 alone, so verify the exact view on every target
+  # rank here and re-plan with that observation: ready ranks keep their
+  # bytes, stamps, and pins, and no copy ever runs beneath them.
+  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ] \
+      && [ "${#target_ranks[@]}" -gt 1 ]; then
     ready_csv=$(observe_ready_ranks_for_instance "$instance" "$profile" \
       "$expected_validation_json" "$plan_home_node_id" "${target_ranks[@]}")
     if [ "$ready_csv" = "$target_ranks_csv" ]; then

@@ -81,13 +81,16 @@ reuse_plan=$(python3 "$PY" plan-prepare \
   --home-inventory-json "$inventory_json" \
   --require-exact-revision "$revision" \
   --expected-integrity-manifest-json "$manifest_json")
+# Stamp metadata never skips a spec prepare: the conf-named match is listed
+# first for the wrapper to verify on the target rank before it is reused.
 reuse_action=$(printf '%s' "$reuse_plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
-reuse_reason=$(printf '%s' "$reuse_plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["reason"])')
-reuse_profile=$(printf '%s' "$reuse_plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"]["profile"])')
-[ "$reuse_action" = skip ] || { echo "FAIL reuse action=$reuse_action" >&2; exit 1; }
-printf '%s' "$reuse_reason" | grep -q reuse || { echo "FAIL reuse reason=$reuse_reason" >&2; exit 1; }
-[ "$reuse_profile" = "nemotron-3-nano-30b-nvfp4" ] || { echo "FAIL reuse left stamp profile=$reuse_profile" >&2; exit 1; }
-echo "OK   identity prepare reuses a conf-named ready view"
+reuse_candidate=$(printf '%s' "$reuse_plan" | python3 -c 'import json,sys; c=json.load(sys.stdin)["reuse_candidates"]; print(c[0] if c else "")')
+[ "$reuse_action" = copy ] || { echo "FAIL reuse action=$reuse_action" >&2; exit 1; }
+case "$reuse_candidate" in
+  "$STATE/hot-reuse/nemotron-3-nano-30b-nvfp4-"*) ;;
+  *) echo "FAIL reuse candidate=$reuse_candidate" >&2; exit 1 ;;
+esac
+echo "OK   identity prepare lists the conf-named ready view for verification before reuse"
 
 mismatch_json=$(printf '%s' "$manifest_json" | python3 -c '
 import json, sys
