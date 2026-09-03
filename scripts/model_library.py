@@ -8268,6 +8268,12 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
             "hot manifest differs from the released spec manifest: "
             f"stamp={manifest.get('manifest_id')} want={expected_manifest_id}"
         )
+    expected_home = str(getattr(args, "expected_home_node_id", "") or "")
+    if expected_home and stamp.get("home_node_id") != expected_home:
+        fail(
+            "hot view is bound to a different durable home: "
+            f"stamp={stamp.get('home_node_id')} want={expected_home}"
+        )
     checked_validation = validate_hot_validation(
         stamp.get("validation"),
         profile=str(stamp.get("profile") or ""),
@@ -9281,6 +9287,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--expected-manifest-id",
         default="",
         help="fail unless the sealed integrity manifest carries this id",
+    )
+    vh.add_argument(
+        "--expected-home-node-id",
+        default="",
+        help="fail unless the stamp is bound to this durable home node",
     )
     verify_mode = vh.add_mutually_exclusive_group()
     verify_mode.add_argument("--skip-digest", action="store_true")

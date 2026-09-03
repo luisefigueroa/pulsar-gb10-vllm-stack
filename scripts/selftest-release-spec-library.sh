@@ -383,32 +383,83 @@ echo "OK   purge-hot removes a view bound to a previous durable home"
 # Multi-rank purge inspects every target rank on its own: a rank whose view
 # is already gone is already purged, and the surviving copies are still
 # returned for removal. Only a placement with no view anywhere fails.
+# Absence on a rank (exit 1) is already purged; an unobservable rank (exit
+# 255, SSH failure) aborts before anything is deleted anywhere.
 per_rank_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
   hot_instance_for_profile_on_rank() {
-    [ "$2" = 1 ] || return 1
-    printf "%s\n" "{\"instance_dir\": \"/hot/x-topo/cid1\", \"stamp\": {\"content_id\": \"cid1\"}}"
+    case "$2" in
+      1) printf "%s\n" "{\"instance_dir\": \"/hot/x-topo/cid1\", \"stamp\": {\"content_id\": \"cid1\"}}" ;;
+      9) return 255 ;;
+      *) return 1 ;;
+    esac
   }
   eval "$(sed -n "/^hot_instances_for_profile_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
   hot_instances_for_profile_on_ranks spec 0 1 2>/dev/null
   if hot_instances_for_profile_on_ranks spec 0 2 2>/dev/null; then echo "unexpected-success"; fi
+  rc=0; out=$(hot_instances_for_profile_on_ranks spec 1 9 2>/dev/null) || rc=$?
+  echo "unobservable rc=$rc out=[$out]"
 ' _ "$REPO_DIR")
-[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1' ] \
+[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1\nunobservable rc=255 out=[]' ] \
   || { echo "FAIL per-rank purge lookup: $per_rank_out" >&2; exit 1; }
-echo "OK   purge-hot resolves surviving views per rank and treats a missing rank as already purged"
+echo "OK   purge-hot resolves surviving views per rank, treats a missing rank as purged, and aborts on an unobservable rank"
 
 # A multi-rank spec repairs only the ranks whose exact view fails
-# verification; ready ranks are reported so the plan leaves them untouched.
+# verification or is bound to another durable home; ready ranks are
+# reported so the plan leaves them untouched.
 observe_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
   CLUSTER_TOPOLOGY_ID=topo-1
-  verify_hot_on_rank() { [ "$1" = 1 ]; }
+  verify_hot_on_rank() { [ "$1" = 1 ] && [ "${7:-}" = home-a ]; }
   eval "$(sed -n "/^observe_ready_ranks_for_instance() {/,/^}/p" "$1/scripts/model-library.sh")"
-  observe_ready_ranks_for_instance /hot/x spec "{}" 0 1 2
+  observe_ready_ranks_for_instance /hot/x spec "{}" home-a 0 1 2
 ' _ "$REPO_DIR")
 [ "$observe_out" = "1" ] || { echo "FAIL ready-rank observation: $observe_out" >&2; exit 1; }
+# A failed local verify must read as not ready even when tested in a
+# condition, where set -e is suspended inside the helper.
+printf 'raise SystemExit(1)\n' >"$STATE/failing-tool.py"
+status_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  PY_TOOL="$2"; REPO_DIR="$1"; CONF_SOURCE=spec SPEC_MANIFEST_ID=m
+  eval "$(sed -n "/^verify_hot_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  if verify_hot_on_rank 0 /hot/x spec topo-1 0 "" 2>/dev/null; then echo ready; else echo not-ready; fi
+' _ "$REPO_DIR" "$STATE/failing-tool.py")
+[ "$status_out" = not-ready ] || { echo "FAIL verify_hot_on_rank hid a failed local verify: $status_out" >&2; exit 1; }
+echo "OK   a failed local verify is not ready inside a condition"
+# Repairing a rank in place is refused while a managed container references
+# the view on that rank.
+guard_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  hot_view_live_users() { [ "$1" = 1 ] && echo other-service; true; }
+  eval "$(sed -n "/^require_no_view_users_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
+  require_no_view_users_on_ranks /hot/x cid1 0 && echo clear
+  ( require_no_view_users_on_ranks /hot/x cid1 0 1 ) 2>&1 || true
+' _ "$REPO_DIR")
+printf '%s\n' "$guard_out" | grep -q "^clear$" || { echo "FAIL repair guard refused an unreferenced rank: $guard_out" >&2; exit 1; }
+printf '%s\n' "$guard_out" | grep -q "refusing to re-materialize /hot/x on rank 1.*other-service" \
+  || { echo "FAIL repair guard allowed a referenced rank: $guard_out" >&2; exit 1; }
+echo "OK   prepare refuses to re-materialize a view a managed container references"
+# verify-hot binds the durable home when asked, before any digest work.
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$manifest_json"
+home_view=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot \
+  --identity "${model_id}@${revision}" --manifest-id "$manifest_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+expect_failure 1 "bound to a different durable home" \
+  "verify-hot refuses a view bound to another durable home" \
+  python3 "$REPO_DIR/scripts/model_library.py" verify-hot --instance-dir "$home_view" \
+    --topology-id "$topology_id" --expected-manifest-id "$manifest_id" \
+    --expected-home-node-id fixture-node-1
+if python3 "$REPO_DIR/scripts/model_library.py" verify-hot --instance-dir "$home_view" \
+    --topology-id "$topology_id" --expected-manifest-id "$manifest_id" \
+    --expected-home-node-id fixture-node-0 2>&1 | grep -q "different durable home"; then
+  echo "FAIL verify-hot rejected the current durable home" >&2; exit 1
+fi
+echo "OK   verify-hot --expected-home-node-id binds the current durable home"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }
