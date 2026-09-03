@@ -61,12 +61,7 @@ load_conf "$NAME"
 if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$SPEC_MODE" != auto ]; then
   die "released spec $NAME: --spec-decode/--no-spec-decode are refused (the identity is fixed)" 2
 fi
-# Launch admission only: stop and status must still load a spec after the
-# platform setting changed, so the shared loader never gates on this.
-if [ "${CONF_SOURCE:-conf}" = spec ] \
-    && [ "${SPEC_PLATFORM_ID:-}" != "${PULSAR_PLATFORM_ID:-dgx-spark-gb10}" ]; then
-  die "released spec $NAME targets platform '${SPEC_PLATFORM_ID:-?}'; this stack is '${PULSAR_PLATFORM_ID:-dgx-spark-gb10}' (refusing to launch outside the spec's frozen geometry)" 2
-fi
+require_spec_platform_admission "$NAME"
 if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$NODES" -eq 1 ]; then
   if [ -n "$NODE_SELECTOR" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
       && [ "$NODE_SELECTOR" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then

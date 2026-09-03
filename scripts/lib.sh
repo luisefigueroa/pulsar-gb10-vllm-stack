@@ -278,6 +278,17 @@ _reset_loaded_profile_defaults() {
   OVERLAY_PLACEMENT_NODE_ID=""
 }
 
+# Launch admission for a released spec: refuse to start outside the spec's
+# frozen platform. Called by every launcher (up.sh, serve.sh,
+# cluster/start-cluster.sh) right after load_conf; never by status or stop,
+# which must still load a spec after the platform setting changed.
+require_spec_platform_admission() {
+  local name="${1:-${CONF_NAME:-}}" active="${PULSAR_PLATFORM_ID:-dgx-spark-gb10}"
+  [ "${CONF_SOURCE:-conf}" = spec ] || return 0
+  [ "${SPEC_PLATFORM_ID:-}" = "$active" ] \
+    || die "released spec $name targets platform '${SPEC_PLATFORM_ID:-?}'; this stack is '$active' (refusing to launch outside the spec's frozen geometry)" 2
+}
+
 # verify-hot identity arguments for the loaded profile. A conf binds the
 # stamp profile name; a released spec binds the exact sealed manifest id
 # instead, because the view may have been prepared under a conf name.

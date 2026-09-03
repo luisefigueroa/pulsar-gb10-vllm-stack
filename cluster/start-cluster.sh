@@ -37,6 +37,7 @@ done
 
 acquire_model_library_lifecycle_lock shared
 load_conf "$MODEL_NAME"
+require_spec_platform_admission "$MODEL_NAME"
 acquire_model_library_hot_lock shared
 [ "$(model_source_kind)" = hf ] \
   || die "non-HF model profiles are not servable (ADR 0006)"
