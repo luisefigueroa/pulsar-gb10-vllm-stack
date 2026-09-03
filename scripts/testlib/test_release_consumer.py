@@ -689,6 +689,41 @@ class ReleaseConsumerTests(unittest.TestCase):
         )
         dest.write_bytes(pretty_json_bytes(spec))
 
+        # An attachment that binds a different receipt than the one on disk
+        # (partial restore, private-state corruption) must not lend its status.
+        store = source_attested.source_attested_home_attachment_store(library)
+        attachment_path = next(store.glob("*.json"))
+        attachment = json.loads(attachment_path.read_text(encoding="utf-8"))
+        original = attachment["observed_manifest_id"]
+        attachment["observed_manifest_id"] = "f" * 64
+        attachment_path.write_text(json.dumps(attachment), encoding="utf-8")
+        unlinked = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        self.assertEqual(unlinked, {"receipt": "unreadable", "identities": []})
+        attachment["observed_manifest_id"] = original
+        attachment_path.write_text(json.dumps(attachment), encoding="utf-8")
+
+        # A batch context scans the occupancy store once for many records,
+        # including the exact-revision path a refreshed catalog takes.
+        calls: list[str] = []
+        real_listing = source_attested.list_source_attested_home_attachments
+
+        def counting_listing(library_dir):
+            calls.append(str(library_dir))
+            return real_listing(library_dir)
+
+        source_attested.list_source_attested_home_attachments = counting_listing
+        try:
+            context = consumer.ProjectionContext()
+            for _ in range(3):
+                consumer.project_profile(
+                    **project_kwargs(library, catalog, repo_root=repo), context=context
+                )
+        finally:
+            source_attested.list_source_attested_home_attachments = real_listing
+        self.assertEqual(len(calls), 1)
+
         # project-batch: one process, shared caches, same payload per record.
         single = consumer.project_profile(
             **project_kwargs(library, catalog, repo_root=repo)

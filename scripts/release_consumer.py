@@ -925,41 +925,51 @@ def _load_occupancy_receipt_uncached(
     snapshot_revision: str | None,
     context: ProjectionContext | None,
 ) -> tuple[dict[str, Any] | None, str]:
+    """Select the occupancy attachment, load its receipt, and verify the link.
+
+    The attachment listing comes from the shared cache, so a batch scans the
+    store once. The receipt must be the one the attachment binds: model,
+    revision, selected rank, inventory digest, and observed manifest id all
+    have to agree (the same linkage the live-home authority check applies),
+    otherwise the projection is ``unreadable`` rather than a status borrowed
+    from a different receipt.
+    """
     try:
         from scripts.model_library_receipt import (
             SourceAttestedAcquisitionError,
-            load_source_attested_home_attachment,
             load_source_attested_receipt,
+            source_attested_home_attachment_key,
             source_attested_receipt_store,
         )
     except ModuleNotFoundError:
         from model_library_receipt import (  # type: ignore[no-redef]
             SourceAttestedAcquisitionError,
-            load_source_attested_home_attachment,
             load_source_attested_receipt,
+            source_attested_home_attachment_key,
             source_attested_receipt_store,
         )
 
-    revision = snapshot_revision
     try:
-        if revision is None:
-            attachments = [
-                item
-                for item in _list_attachments(library_dir, context)
-                if item.get("model_id") == model_id
-            ]
-            if len(attachments) != 1:
-                return None, "missing"
-            revision = str(attachments[0]["snapshot_revision"])
-        attachment = load_source_attested_home_attachment(
-            library_dir, model_id=model_id, snapshot_revision=revision
-        )
-    except SourceAttestedAcquisitionError:
+        attachments = _list_attachments(library_dir, context)
+    except Exception:
         return None, "unreadable"
-    except OSError:
-        return None, "unreadable"
-    if attachment is None:
-        return None, "missing"
+    if snapshot_revision is None:
+        matches = [item for item in attachments if item.get("model_id") == model_id]
+        if len(matches) != 1:
+            return None, "missing"
+    else:
+        try:
+            key = source_attested_home_attachment_key(
+                model_id=model_id, snapshot_revision=snapshot_revision
+            )
+        except SourceAttestedAcquisitionError:
+            return None, "unreadable"
+        matches = [item for item in attachments if item.get("attachment_key") == key]
+        if not matches:
+            return None, "missing"
+        if len(matches) != 1:
+            return None, "unreadable"
+    attachment = matches[0]
     receipt_id = str(attachment.get("receipt_id") or "")
     receipt_path = source_attested_receipt_store(library_dir) / f"{receipt_id}.json"
     if not receipt_path.exists():
@@ -967,6 +977,19 @@ def _load_occupancy_receipt_uncached(
     try:
         receipt = load_source_attested_receipt(library_dir, receipt_id)
     except (SourceAttestedAcquisitionError, OSError):
+        return None, "unreadable"
+    try:
+        linked = (
+            receipt["model_id"] == attachment["model_id"]
+            and receipt["snapshot_revision"] == attachment["snapshot_revision"]
+            and receipt["selected_rank"] == attachment["selected_rank"]
+            and receipt["source"]["inventory_digest"] == attachment["inventory_digest"]
+            and receipt["observed_manifest"]["manifest_id"]
+            == attachment["observed_manifest_id"]
+        )
+    except (KeyError, TypeError):
+        linked = False
+    if not linked:
         return None, "unreadable"
     return receipt, "found"
 
