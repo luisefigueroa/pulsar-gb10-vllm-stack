@@ -3643,23 +3643,36 @@ hot_instance_for_profile_on_rank() {
   printf '%s\n' "$info"
 }
 
+# resolve_hot_profile_targets <profile> [node_selector] [policy]
+# policy "required" (default): a released spec needs its catalog home.
+# policy "cleanup": purge may proceed without a catalog home so a stranded
+# view can still be recovered; multi-rank targets come from the spec
+# geometry and a one-rank target needs an explicit or overlay placement.
+# A released spec never falls back to rank 0 under either policy.
 resolve_hot_profile_targets() {
-  local profile="${1:?}" node_selector="${2:-}" resolved home_rank rank identity
+  local profile="${1:?}" node_selector="${2:-}" policy="${3:-required}"
+  local resolved home_rank rank identity
   local -a ranks=()
   home_rank=""
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
     if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ]; then
       die "$profile: spec hot lookup requires MODEL and SNAPSHOT_REVISION"
     fi
-    [ -f "$CATALOG_FILE" ] \
-      || die "$profile: catalog home is required for a released spec; no rank-0 fallback"
     identity="${MODEL}@${SNAPSHOT_REVISION}"
-    resolved=$(python3 "$PY_TOOL" resolve \
-      --catalog "$CATALOG_FILE" --no-cold --json "$identity") \
-      || die "$profile: cannot resolve catalog home for $identity"
-    home_rank=$(printf '%s' "$resolved" | python3 -c \
-      'import json,sys; print(json.load(sys.stdin)["home"]["rank"])') \
-      || die "$profile: catalog home rank is unreadable"
+    resolved=""
+    if [ -f "$CATALOG_FILE" ]; then
+      resolved=$(python3 "$PY_TOOL" resolve \
+        --catalog "$CATALOG_FILE" --no-cold --json "$identity") || resolved=""
+    fi
+    if [ -n "$resolved" ]; then
+      home_rank=$(printf '%s' "$resolved" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["home"]["rank"])') \
+        || die "$profile: catalog home rank is unreadable"
+    elif [ "$policy" = cleanup ]; then
+      warn "$profile: no catalog home for $identity; cleanup targets come from the spec geometry and the selected placement"
+    else
+      die "$profile: catalog home is required for a released spec; no rank-0 fallback"
+    fi
   elif [ -f "$CATALOG_FILE" ]; then
     resolved=$(python3 "$PY_TOOL" resolve \
       --catalog "$CATALOG_FILE" --profile "$profile" \
@@ -3676,6 +3689,9 @@ resolve_hot_profile_targets() {
     elif [ -n "$home_rank" ]; then
       rank="$home_rank"
       resolve_single_node_placement "$rank" || return 1
+    elif [ "${CONF_SOURCE:-conf}" = spec ]; then
+      warn "$profile: a released spec has no rank-0 fallback; pass --node or set the overlay placement"
+      return 1
     else
       # Historical hot state may have no warm catalog home. Retired cold
       # stage-only state is discoverable for cleanup but cannot launch.
@@ -3806,7 +3822,7 @@ cmd_purge_hot() {
   local info instance rank command content_id sharers
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
-  resolve_hot_profile_targets "$profile" "$node_selector" \
+  resolve_hot_profile_targets "$profile" "$node_selector" cleanup \
     || die "purge-hot: cannot resolve exact local-files placement"
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
     || die "no hot instance for $profile on the selected serving placement"

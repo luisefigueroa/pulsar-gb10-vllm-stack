@@ -266,6 +266,23 @@ expect_failure 1 "catalog home is required" \
   env MODEL_LIBRARY_DIR="$STATE/missing-library" PULSAR_HOT_ROOT="$STATE/hot-rank1" \
     "$REPO_DIR/scripts/model-library.sh" pin "$spec_id" --node fixture-node-0
 
+# Capacity recovery must not depend on a warm catalog home, but a released
+# spec still never falls back to rank 0: cleanup needs a placement.
+expect_failure 1 "no rank-0 fallback" \
+  "spec purge-hot without a catalog and without a placement refuses rank 0" \
+  env MODEL_LIBRARY_DIR="$STATE/missing-library" PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --yes --force-unpin
+stranded_view=$(PULSAR_HOT_ROOT="$STATE/hot-rank1" python3 "$REPO_DIR/scripts/model_library.py" find-hot \
+  --identity "${model_id}@${revision}" --manifest-id "$manifest_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+[ -d "$stranded_view" ] || { echo "FAIL stranded view vanished before recovery" >&2; exit 1; }
+MODEL_LIBRARY_DIR="$STATE/missing-library" PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
+[ ! -e "$stranded_view" ] || { echo "FAIL purge-hot without a catalog left the stranded view" >&2; exit 1; }
+echo "OK   purge-hot <spec_id> recovers a stranded view without a catalog when a placement is given"
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$manifest_json"
+
 set +e
 rank1_out=$(MODEL_LIBRARY_CATALOG="$STATE/library/catalog-rank1.json" \
   PULSAR_HOT_ROOT="$STATE/hot-rank1" \
