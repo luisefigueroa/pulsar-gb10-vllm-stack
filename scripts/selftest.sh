@@ -35,6 +35,8 @@ run "release spec stack consumer (ADR 0017 WP1.4a)" \
   python3 "$REPO_DIR/scripts/testlib/test_release_consumer.py"
 run "release spec stack consumer CLI (ADR 0017 WP1.4a)" \
   "$REPO_DIR/scripts/selftest-release.sh"
+run "start a released spec (ADR 0017 WP1.4c)" \
+  "$REPO_DIR/scripts/selftest-release-spec-start.sh"
 run "launch-plan and serving-probe contracts" \
   python3 "$REPO_DIR/scripts/testlib/test_launch_plan.py"
 run "topology-bound SSH identity" "$REPO_DIR/scripts/selftest-topology-ssh-trust.sh"

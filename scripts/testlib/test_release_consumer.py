@@ -838,6 +838,154 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(env_cli.returncode, 0, msg=env_cli.stderr)
         self.assertIn(spec["spec_id"], env_cli.stdout)
 
+    def test_spec_profile_variables_and_plan_to_comparable(self) -> None:
+        spec = released_nano_spec()
+        overlay = consumer.overlay_for_spec(overlay_document(), spec)
+        variables = consumer.spec_profile_variables(
+            spec, overlay, "vllm/vllm-openai:v0.26.0"
+        )
+        self.assertEqual(variables["CONF_NAME"], spec["spec_id"])
+        self.assertEqual(variables["CONF_SOURCE"], "spec")
+        self.assertEqual(variables["MODEL"], spec["identity"]["model_id"])
+        self.assertEqual(
+            variables["IMAGE"],
+            f"vllm/vllm-openai@{spec['identity']['image']['digest']}",
+        )
+        self.assertEqual(variables["NODES"], "1")
+        self.assertEqual(variables["SERVED_NAME"], spec["identity"]["model_id"])
+        self.assertEqual(variables["PORT"], "8000")
+        self.assertEqual(variables["GPU_MEM_UTIL"], "0.80")
+        self.assertEqual(variables["SPEC_DECODE_ARGS"], [])
+        self.assertEqual(variables["RECOMMENDED_SPEC"], "0")
+        self.assertEqual(variables["STATUS"], "?")
+        self.assertNotIn("--gpu-memory-utilization", variables["ENGINE_ARGS"])
+        self.assertNotIn("--tensor-parallel-size", variables["ENGINE_ARGS"])
+        self.assertEqual(variables["TOPOLOGY_CLASS"], "single")
+        self.assertEqual(variables["MIN_RAILS_PER_PAIR"], "0")
+        self.assertEqual(
+            variables["SNAPSHOT_REVISION"],
+            spec["identity"]["snapshot_revision"],
+        )
+        self.assertEqual(consumer.spec_lifecycle_key(spec["spec_id"]), spec["spec_id"])
+
+        named = consumer.overlay_for_spec(
+            overlay_document(
+                defaults={
+                    "port": 9001,
+                    "served_name": "nemotron-3-nano",
+                    "cache_root": "/tmp/hf-cache",
+                    "placement": {"node_id": "fixture-node-0"},
+                }
+            ),
+            spec,
+        )
+        named_vars = consumer.spec_profile_variables(
+            spec, named, "vllm/vllm-openai@sha256:" + ("c" * 64)
+        )
+        self.assertEqual(named_vars["SERVED_NAME"], "nemotron-3-nano")
+        self.assertEqual(named_vars["PORT"], "9001")
+        self.assertEqual(named_vars["HF_CACHE"], "/tmp/hf-cache")
+        self.assertEqual(named_vars["OVERLAY_PLACEMENT_NODE_ID"], "fixture-node-0")
+
+        engine = list(variables["ENGINE_ARGS"])
+        plan = {
+            "nodes": 1,
+            "image": variables["IMAGE"],
+            "gpu_mem_util": 0.8,
+            "runtime": {
+                "engine_args": engine,
+                "spec_decode_args": [],
+                "container_env": variables["CONTAINER_ENV"],
+            },
+        }
+        comparable = consumer.plan_to_comparable(plan)
+        expected = consumer.comparable_contract_from_spec(spec)
+        self.assertEqual(
+            consumer.compare_contracts(comparable, expected),
+            {"result": "equal", "fields": []},
+        )
+
+        two_identity = json.loads(pretty_json_bytes(spec["identity"]))
+        two_identity["geometry"] = {
+            **two_identity["geometry"],
+            "nodes": 2,
+            "tp": 2,
+            "pp": 1,
+            "fabric": "roce-v2",
+        }
+        with self.assertRaisesRegex(consumer.ReleaseConsumerError, "fabric"):
+            consumer.spec_profile_variables(
+                {"spec_id": spec["spec_id"], "identity": {
+                    **spec["identity"],
+                    "geometry": {
+                        **spec["identity"]["geometry"],
+                        "fabric": "roce-v2",
+                    },
+                }},
+                overlay,
+                "vllm/vllm-openai",
+            )
+        n2_vars = consumer.spec_profile_variables(
+            {"spec_id": spec["spec_id"], "identity": two_identity},
+            overlay,
+            "vllm/vllm-openai",
+        )
+        self.assertEqual(n2_vars["NODES"], "2")
+        self.assertIn("--tensor-parallel-size", n2_vars["ENGINE_ARGS"])
+        self.assertEqual(n2_vars["TOPOLOGY_CLASS"], "roce-full-mesh")
+        self.assertEqual(n2_vars["MIN_RAILS_PER_PAIR"], "2")
+
+    def test_export_profile_cli_and_missing_overlay(self) -> None:
+        repo = self._repo()
+        spec = released_nano_spec()
+        dest = repo / consumer.RELEASES_DIR / f"{spec['spec_id']}.json"
+        dest.write_bytes(pretty_json_bytes(spec))
+        overlay_path = repo / consumer.OVERLAY_FILENAME
+        write_json(
+            overlay_path,
+            overlay_document(
+                defaults={
+                    "port": 8000,
+                    "served_name": "nemotron-3-nano",
+                    "cache_root": None,
+                    "placement": None,
+                }
+            ),
+        )
+        result = run_cli(
+            [
+                "export-profile",
+                spec["spec_id"],
+                "--overlay",
+                str(overlay_path),
+                "--image-repo",
+                "vllm/vllm-openai",
+            ],
+            repo=repo,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("CONF_SOURCE='spec'", result.stdout)
+        self.assertIn(f"CONF_NAME='{spec['spec_id']}'", result.stdout)
+        self.assertIn("SERVED_NAME='nemotron-3-nano'", result.stdout)
+        self.assertIn("SPEC_DECODE_ARGS=()", result.stdout)
+
+        missing = run_cli(
+            [
+                "export-profile",
+                spec["spec_id"],
+                "--overlay",
+                str(repo / "absent.pulsar-overlay.json"),
+            ],
+            repo=repo,
+        )
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("absent.pulsar-overlay.json", missing.stderr)
+
+        unknown = "a" * 64
+        absent_spec = run_cli(["export-profile", unknown], repo=repo)
+        self.assertEqual(absent_spec.returncode, 2)
+        self.assertIn(f"{unknown}.json", absent_spec.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
