@@ -352,6 +352,8 @@ lookup_out=$(bash -c '
   CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6"
   ssh_node() { shift; bash -c "$1"; }
   eval "$(sed -n "/^hot_spec_views_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^spec_candidate_records_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^spec_view_verifies_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   if hot_instance_for_profile_on_rank spec 1 0 1 >/dev/null 2>&1; then
     echo "verified-lookup-accepted-damage"
@@ -380,7 +382,7 @@ stamp = model_library.load_hot_stamp(path)
 stamp["home_node_id"] = "fixture-node-1"
 model_library.write_hot_stamp(path, stamp)
 PY
-expect_failure 1 "bound to durable home 'fixture-node-1', not the current home 'fixture-node-0'" \
+expect_failure 1 "bound to a different durable home: stamp=fixture-node-1 want=fixture-node-0" \
   "spec pin refuses a view bound to a previous durable home" \
   env PULSAR_HOT_ROOT="$STATE/hot-rank1" \
     "$REPO_DIR/scripts/model-library.sh" pin "$spec_id" --node fixture-node-0
@@ -567,6 +569,8 @@ strict_pick=$(bash -c '
   HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"
   CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6"
   eval "$(sed -n "/^hot_spec_views_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^spec_candidate_records_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^spec_view_verifies_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   hot_instance_for_profile_on_rank spec 0 0 1 | python3 -c "import json,sys; print(json.load(sys.stdin)[\"instance_dir\"])"
 ' _ "$REPO_DIR" "$STATE/hot-pair" "$model_id" "$revision" "$manifest_id" "$topology_id")
@@ -656,6 +660,53 @@ spec_rows_out=$(bash -c '
 [ "$spec_rows_out" = $'1\t/hot/a-topo/cidA\tcidA\ttrue\n1\t/hot/b-topo/cidB\tcidB\tfalse\ninspect rc=2 out=[]\nunreachable rc=255 out=[]' ] \
   || { echo "FAIL spec per-rank purge rows: $spec_rows_out" >&2; exit 1; }
 echo "OK   spec purge lists every match per rank and aborts on inspection failure or an unreachable rank"
+
+# Pin protects one common path: candidates come from the first rank in
+# order, and the first that verifies on every target rank wins, even when
+# a newer candidate verifies on the first rank alone.
+common_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec
+  spec_candidate_records_on_rank() { printf "%s\n" "{\"instance_dir\": \"/hot/newer\"}" "{\"instance_dir\": \"/hot/older\"}"; }
+  spec_view_verifies_on_rank() {
+    case "$2:$3" in 0:/hot/newer|0:/hot/older|1:/hot/older) return 0 ;; 9:*) return 255 ;; *) return 1 ;; esac
+  }
+  eval "$(sed -n "/^hot_instances_for_profile_strict_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
+  hot_instances_for_profile_strict_on_ranks spec 1 0 1 2>/dev/null
+  rc=0; out=$(hot_instances_for_profile_strict_on_ranks spec 1 0 2 2>/dev/null) || rc=$?; echo "none rc=$rc out=[$out]"
+  rc=0; out=$(hot_instances_for_profile_strict_on_ranks spec 1 0 9 2>/dev/null) || rc=$?; echo "unreachable rc=$rc out=[$out]"
+' _ "$REPO_DIR")
+[ "$common_out" = $'0\t/hot/older\n1\t/hot/older\nnone rc=1 out=[]\nunreachable rc=255 out=[]' ] \
+  || { echo "FAIL common-path pin selection: $common_out" >&2; exit 1; }
+echo "OK   pin selects one path that verifies on every serving rank"
+
+# Cleanup reaches a previous one-rank placement: an explicit --node that
+# differs from the overlay or from the current catalog home is accepted
+# under the cleanup policy only.
+cleanup_sel=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec NODES=1 OVERLAY_PLACEMENT_NODE_ID=fixture-node-1
+  spec_overlay_node_selector fixture-node-0 cleanup
+  spec_overlay_node_selector "" cleanup
+' _ "$REPO_DIR")
+[ "$cleanup_sel" = $'fixture-node-0\nfixture-node-1' ] || { echo "FAIL cleanup overlay selector: $cleanup_sel" >&2; exit 1; }
+printf 'import json,sys\nprint(json.dumps({"home": {"rank": 0, "node_id": "n0"}}))\n' >"$STATE/resolve-stub.py"
+: >"$STATE/stub-catalog.json"
+historic_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CONF_SOURCE=spec NODES=1 MODEL=m SNAPSHOT_REVISION=r PY_TOOL="$2" CATALOG_FILE="$3"
+  resolve_single_node_placement() { SINGLE_NODE_INDEX=1; }
+  eval "$(sed -n "/^resolve_hot_profile_targets() {/,/^}/p" "$1/scripts/model-library.sh")"
+  resolve_hot_profile_targets spec fixture-node-1 cleanup 2>/dev/null && echo "cleanup ranks=$HOT_TARGET_RANKS_CSV"
+  resolve_hot_profile_targets spec fixture-node-1 required 2>/dev/null || echo "required refused"
+' _ "$REPO_DIR" "$STATE/resolve-stub.py" "$STATE/stub-catalog.json")
+[ "$historic_out" = $'cleanup ranks=1\nrequired refused' ] || { echo "FAIL historical placement cleanup: $historic_out" >&2; exit 1; }
+sed -n "/^cmd_purge_hot() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c 'spec_overlay_node_selector "$node_selector" cleanup' >/dev/null \
+  || { echo "FAIL purge-hot does not use the cleanup overlay policy" >&2; exit 1; }
+echo "OK   purge-hot reaches a previous one-rank placement by explicit --node"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

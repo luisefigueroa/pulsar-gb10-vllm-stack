@@ -292,10 +292,15 @@ single_node_index_for_selector() {
   )
 }
 
+# spec_overlay_node_selector <selector> [policy]
+# Fill an empty selector from the overlay placement. A selector that names a
+# different node than the overlay is a conflict for serving-side commands;
+# under policy "cleanup" it is an explicit historical placement (a previous
+# rank after home relocate) and is passed through unchanged.
 spec_overlay_node_selector() {
-  local selector="${1:-}" selector_rank overlay_rank
+  local selector="${1:-}" policy="${2:-serve}" selector_rank overlay_rank
   if [ "${CONF_SOURCE:-conf}" = spec ] && [ "${NODES:-1}" -eq 1 ]; then
-    if [ -n "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
+    if [ "$policy" != cleanup ] && [ -n "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
         && [ "$selector" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then
       # A rank number, hostname, or node id may all name the overlay's
       # node; compare the placement they resolve to, not the spelling.

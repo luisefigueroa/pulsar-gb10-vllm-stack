@@ -3785,49 +3785,20 @@ hot_instance_for_profile_on_rank() {
     # newest first; the first that is bound to the current home and whose
     # content verifies on this rank is the view, so pin, unpin, and
     # prepare land on the view launch will use.
-    local list candidate stamped_home_c
-    if [ "$rank" -eq 0 ]; then
-      list=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}" --all) || return 1
-    else
-      command=$(shell_join_q python3 - "${find_hot_args[@]}" "${launch_args[@]}" --all)
-      list=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
-      [ "$rc" -ne 255 ] || return 255
-      [ "$rc" -eq 0 ] || return 1
-    fi
+    local list candidate
+    list=$(spec_candidate_records_on_rank "$profile" "$rank" "$require_launchable") || return $?
     while IFS= read -r candidate; do
       [ -n "$candidate" ] || continue
       instance=$(printf '%s' "$candidate" | python3 -c \
         'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
-      if [ -n "${HOT_HOME_NODE_ID:-}" ]; then
-        stamped_home_c=$(printf '%s' "$candidate" | python3 -c \
-          'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")') || return 1
-        if [ "$stamped_home_c" != "$HOT_HOME_NODE_ID" ]; then
-          warn "$profile: view $instance on rank $rank is bound to durable home '$stamped_home_c', not the current home '$HOT_HOME_NODE_ID'; prepare $profile --yes re-materializes it"
-          continue
-        fi
-      fi
       rc=0
-      if [ "$rank" -eq 0 ]; then
-        python3 "$PY_TOOL" verify-hot \
-          --expected-manifest-id "$SPEC_MANIFEST_ID" \
-          --topology-id "$CLUSTER_TOPOLOGY_ID" \
-          --instance-dir "$instance" >/dev/null || rc=$?
-      else
-        command=$(shell_join_q python3 - verify-hot \
-          --expected-manifest-id "$SPEC_MANIFEST_ID" \
-          --topology-id "$CLUSTER_TOPOLOGY_ID" \
-          --instance-dir "$instance")
-        ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || rc=$?
-        [ "$rc" -ne 255 ] || return 255
-      fi
+      spec_view_verifies_on_rank "$profile" "$rank" "$instance" || rc=$?
+      [ "$rc" -ne 255 ] || return 255
       if [ "$rc" -eq 0 ]; then
         printf '%s\n' "$candidate"
         return 0
       fi
-    done < <(printf '%s' "$list" | python3 -c \
-      'import json,sys
-for record in json.load(sys.stdin):
-    print(json.dumps(record, sort_keys=True, separators=(",", ":")))')
+    done <<<"$list"
     return 1
   fi
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
@@ -3856,6 +3827,54 @@ for record in json.load(sys.stdin):
       --stamp-file /dev/stdin >/dev/null || return 1
   fi
   printf '%s\n' "$info"
+}
+
+# spec_candidate_records_on_rank <profile> <rank> [require_launchable]
+# Every identity+manifest match of the loaded spec on RANK as compact JSON
+# records, newest first (launchable stamps only when asked). Returns 1 when
+# the rank holds none, 255 when it is unreachable.
+spec_candidate_records_on_rank() {
+  local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}" list rows command rc=0
+  local -a args=(
+    find-hot --identity "${MODEL}@${SNAPSHOT_REVISION}" --manifest-id "$SPEC_MANIFEST_ID"
+    --topology-id "${CLUSTER_TOPOLOGY_ID}" --hot-root "$HOT_ROOT" --all
+  )
+  [ "$require_launchable" = 0 ] || args+=(--for-launch)
+  if [ "$rank" -eq 0 ]; then
+    list=$(python3 "$PY_TOOL" "${args[@]}") || return 1
+  else
+    command=$(shell_join_q python3 - "${args[@]}")
+    list=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
+    [ "$rc" -ne 255 ] || return 255
+    [ "$rc" -eq 0 ] || return 1
+  fi
+  rows=$(printf '%s' "$list" | python3 -c \
+    'import json,sys
+for record in json.load(sys.stdin):
+    print(json.dumps(record, sort_keys=True, separators=(",", ":")))') || return 1
+  [ -n "$rows" ] || return 1
+  printf '%s\n' "$rows"
+}
+
+# spec_view_verifies_on_rank <profile> <rank> <instance>
+# Full content verification of INSTANCE on RANK against the loaded spec's
+# manifest, bound to the current durable home when HOT_HOME_NODE_ID is set.
+# Returns 255 when the rank is unreachable, 1 when the view does not verify.
+spec_view_verifies_on_rank() {
+  local profile="${1:?}" rank="${2:?}" instance="${3:?}" command rc=0
+  local -a args=(
+    verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID"
+    --topology-id "$CLUSTER_TOPOLOGY_ID" --instance-dir "$instance"
+  )
+  [ -z "${HOT_HOME_NODE_ID:-}" ] || args+=(--expected-home-node-id "$HOT_HOME_NODE_ID")
+  if [ "$rank" -eq 0 ]; then
+    python3 "$PY_TOOL" "${args[@]}" >/dev/null || return 1
+    return 0
+  fi
+  command=$(shell_join_q python3 - "${args[@]}")
+  ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || rc=$?
+  [ "$rc" -ne 255 ] || return 255
+  [ "$rc" -eq 0 ] || return 1
 }
 
 # hot_spec_views_on_rank <profile> <rank>
@@ -3958,6 +3977,36 @@ hot_instances_for_profile_strict_on_ranks() {
   local profile="${1:?}" require_launchable="${2:-0}" rank info instance
   local -a rows=()
   shift 2
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # One common path: launch selects the first rank's verified candidate
+    # and requires that exact path on every rank, so pin must protect the
+    # same set. Candidates come from the first target rank, newest first;
+    # the first path that verifies (home-bound) on every target rank wins.
+    local list candidate rc other
+    list=$(spec_candidate_records_on_rank "$profile" "$1" "$require_launchable") || {
+      warn "$profile: rank $1 has no candidate view"
+      return 1
+    }
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      instance=$(printf '%s' "$candidate" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
+      rows=()
+      for other in "$@"; do
+        rc=0
+        spec_view_verifies_on_rank "$profile" "$other" "$instance" || rc=$?
+        [ "$rc" -ne 255 ] || { warn "$profile: rank $other is unreachable"; return 255; }
+        [ "$rc" -eq 0 ] || { rows=(); break; }
+        rows+=("$(printf '%s\t%s' "$other" "$instance")")
+      done
+      if [ "${#rows[@]}" -eq $# ]; then
+        printf '%s\n' "${rows[@]}"
+        return 0
+      fi
+    done <<<"$list"
+    warn "$profile: no single view verifies, bound to the current home, on every serving rank"
+    return 1
+  fi
   for rank in "$@"; do
     info=$(hot_instance_for_profile_on_rank "$profile" "$rank" "$require_launchable" 1) \
       || { warn "$profile: rank $rank has no verified view bound to the current home"; return 1; }
@@ -4027,10 +4076,17 @@ resolve_hot_profile_targets() {
       rank=0
       resolve_single_node_placement "$rank" || return 1
     fi
-    [ -z "$home_rank" ] || [ "$rank" = "$home_rank" ] || {
-      warn "$profile: one-node local-files lifecycle must target durable-home rank $home_rank"
-      return 1
-    }
+    if [ -n "$home_rank" ] && [ "$rank" != "$home_rank" ]; then
+      if [ "$policy" = cleanup ] && [ -n "$node_selector" ]; then
+        # After home relocate the previous placement may still hold a view
+        # the current home never uses. Explicit cleanup of that historical
+        # rank stays reachable; ownership and live-user checks still apply.
+        warn "$profile: cleaning previous placement rank $rank (current durable home is rank $home_rank)"
+      else
+        warn "$profile: one-node local-files lifecycle must target durable-home rank $home_rank"
+        return 1
+      fi
+    fi
     ranks=("$rank")
   else
     [ -z "$node_selector" ] || {
@@ -4157,7 +4213,7 @@ cmd_purge_hot() {
   [ -n "$profile" ] || die "usage: purge-hot <profile> [--node RANK|NODE_ID] [--yes] [--force-unpin]"
   require_py
   load_conf "$profile"
-  node_selector=$(spec_overlay_node_selector "$node_selector")
+  node_selector=$(spec_overlay_node_selector "$node_selector" cleanup)
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local instance rank command content_id sharers line
   local -a HOT_TARGET_RANKS=()
