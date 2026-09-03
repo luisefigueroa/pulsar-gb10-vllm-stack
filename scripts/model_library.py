@@ -4439,7 +4439,11 @@ def plan_prepare(
                     ),
                     storage_instance=pathlib.Path(reuse_instance_dir),
                 )
-        if 0 in target_ranks:
+        # A controller-local candidate proves readiness on rank 0 only, so it
+        # may stand in for a copy only when rank 0 is the sole target. Multi-
+        # rank specs fall through to the copy plan, whose per-rank skip and
+        # verify steps decide what already exists where.
+        if target_ranks == [0]:
             reused = find_hot_instance_for_identity(
                 hot_root,
                 resolved["identity_key"],

@@ -25,158 +25,7 @@ expect_failure() {
   echo "OK   $label"
 }
 
-python3 - "$REPO_DIR" "$STATE" <<'PY'
-import json
-import os
-import pathlib
-import sys
-
-repo = pathlib.Path(sys.argv[1])
-root = pathlib.Path(sys.argv[2])
-sys.path.insert(0, str(repo))
-
-from release_spec import pretty_json_bytes
-from scripts import model_library
-from scripts import model_library_receipt as source_attested
-from scripts.testlib.model_library_receipt_fixture import write_snapshot_hub
-from scripts.testlib.release_spec_start_fixture import (
-    write_identity_hot_view,
-    write_overlay,
-    write_released_nano,
-)
-from scripts.testlib.test_release_consumer import receipt_for
-from scripts.testlib.test_release_spec_generate import NANO, PINNED_IMAGE
-from scripts.testlib.topology_manifest_fixture import build as build_topology
-from scripts.topology_manifest import topology_digest, validate_manifest
-
-spec, _path = write_released_nano(root / "releases")
-write_overlay(root / "overlay.json")
-receipt = source_attested.validate_source_attested_acquisition_receipt(
-    json.loads(receipt_for(spec["identity"]["model_id"]).read_text(encoding="utf-8"))
-)
-hub = root / "durable-home"
-write_snapshot_hub(hub, revision=receipt["snapshot_revision"])
-live = model_library.inspect_live_directory_identity(hub)
-library = root / "library"
-source_attested.write_source_attested_receipt(library, receipt, operation="test")
-source_attested.write_source_attested_home_attachment(
-    library,
-    receipt=receipt,
-    node_id="fixture-node-0",
-    durable_home_path=str(hub.resolve()),
-    directory_identity={
-        "device": live["device"],
-        "inode": live["inode"],
-        "ctime_ns": live["ctime_ns"],
-    },
-)
-topology = build_topology("worker.test")
-validate_manifest(topology)
-topology["topology_id"] = topology_digest(topology)
-(root / "topology.json").write_text(
-    json.dumps(topology, indent=2) + "\n", encoding="utf-8"
-)
-inventory = model_library.inspect_hub_inventory(
-    hub,
-    rank=0,
-    node_id="fixture-node-0",
-    model_id=spec["identity"]["model_id"],
-    revision=receipt["snapshot_revision"],
-    allow_empty_files=True,
-)
-catalog = {
-    "schema_version": 2,
-    "generated_at": "2026-09-02T00:00:00.000Z",
-    "topology_id": topology["topology_id"],
-    "models": [
-        {
-            "model_id": spec["identity"]["model_id"],
-            "revision": receipt["snapshot_revision"],
-            "identity_key": (
-                f"{spec['identity']['model_id']}@{receipt['snapshot_revision']}"
-            ),
-            "validation": "unvalidated",
-            "profiles": [NANO],
-            "profile_validation": [],
-            "homes": [
-                {
-                    "rank": 0,
-                    "node_id": "fixture-node-0",
-                    "hostname": "fixture-head",
-                    "ssh_host": "local",
-                    "cache_root": str(root / "cache-0"),
-                    "hub_path": str(hub.resolve()),
-                    "state": "complete",
-                    "home_class": "occupancy",
-                    "occupancy": True,
-                    "bytes": inventory["bytes_logical"],
-                    "primary": True,
-                }
-            ],
-            "duplicate": False,
-            "has_primary": True,
-            "primary_selection": {
-                "status": "selected",
-                "node_id": "fixture-node-0",
-                "mode": "automatic-single-home",
-            },
-        }
-    ],
-    "primary_selections": [],
-}
-(library / "catalog.json").write_text(
-    json.dumps(catalog, indent=2) + "\n", encoding="utf-8"
-)
-manifest = spec["identity"]["snapshot_manifest"]
-write_identity_hot_view(
-    root / "hot-conf",
-    profile=NANO,
-    topology_id=topology["topology_id"],
-    model_id=spec["identity"]["model_id"],
-    revision=receipt["snapshot_revision"],
-    manifest=manifest,
-    content_id="confview0001",
-)
-write_identity_hot_view(
-    root / "hot-spec",
-    profile=spec["spec_id"],
-    topology_id=topology["topology_id"],
-    model_id=spec["identity"]["model_id"],
-    revision=receipt["snapshot_revision"],
-    manifest=manifest,
-    content_id="specview0001",
-)
-rank1 = json.loads(json.dumps(catalog))
-rank1["models"][0]["homes"][0]["rank"] = 1
-rank1["models"][0]["homes"][0]["node_id"] = "fixture-node-1"
-rank1["models"][0]["homes"][0]["hostname"] = "fixture-worker"
-rank1["models"][0]["primary_selection"]["node_id"] = "fixture-node-1"
-(library / "catalog-rank1.json").write_text(
-    json.dumps(rank1, indent=2) + "\n", encoding="utf-8"
-)
-(root / "paths.json").write_text(
-    json.dumps(
-        {
-            "spec_id": spec["spec_id"],
-            "model_id": spec["identity"]["model_id"],
-            "revision": receipt["snapshot_revision"],
-            "manifest_id": manifest["manifest_id"],
-            "manifest": manifest,
-            "inventory": inventory,
-            "topology_id": topology["topology_id"],
-            "image": PINNED_IMAGE,
-            "identity_key": (
-                f"{spec['identity']['model_id']}@{receipt['snapshot_revision']}"
-            ),
-        }
-    )
-    + "\n",
-    encoding="utf-8",
-)
-(root / "home-inventory.json").write_text(
-    json.dumps(inventory) + "\n", encoding="utf-8"
-)
-PY
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" arrange "$REPO_DIR" "$STATE"
 
 spec_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec_id"])' "$STATE/paths.json")
 model_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["model_id"])' "$STATE/paths.json")
@@ -218,39 +67,7 @@ stamp_profile=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.lo
 [ "$stamp_profile" = "$spec_id" ] || { echo "FAIL stamp profile=$stamp_profile" >&2; exit 1; }
 echo "OK   plan-prepare --identity stamps spec id"
 
-python3 - "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$spec_id" "$manifest_json" <<'PY'
-import json
-import pathlib
-import sys
-
-repo, state, topology_id, model_id, revision, spec_id, manifest_json = sys.argv[1:]
-sys.path.insert(0, repo)
-from scripts import model_library
-from scripts.testlib.release_spec_start_fixture import write_identity_hot_view
-
-manifest = json.loads(manifest_json)
-hot = pathlib.Path(state) / "hot-reuse"
-write_identity_hot_view(
-    hot,
-    profile="nemotron-3-nano-30b-nvfp4",
-    topology_id=topology_id,
-    model_id=model_id,
-    revision=revision,
-    manifest=manifest,
-    content_id="reuseview001",
-)
-# Rebuild a matching stamp so reuse compares validation.
-instance = next(hot.glob("*/*"))
-stamp = model_library.load_hot_stamp(instance)
-stamp["validation"] = model_library.require_activation_identity(
-    {"profile": spec_id, "model_id": model_id},
-    manifest,
-    allow_unvalidated=False,
-)
-stamp["content_digest"] = manifest["manifest_id"]
-model_library.write_hot_stamp(instance, stamp)
-print(instance)
-PY
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" reuse-view "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$spec_id" "$manifest_json"
 
 reuse_plan=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/library/catalog.json" \
@@ -364,19 +181,7 @@ expect_failure 1 "differs from receipt" \
 
 # Docker shim for purge cases: no managed containers unless
 # FAKE_DOCKER_SHARED_CONF names a profile that still mounts the view.
-mkdir -p "$STATE/purge-bin"
-cat >"$STATE/purge-bin/docker" <<'SHIM'
-#!/usr/bin/env bash
-set -euo pipefail
-if [ "${1:-}" = ps ]; then
-  case "$*" in
-    *weight-config=*) [ -z "${FAKE_DOCKER_SHARED_CONF:-}" ] || printf '%s\n' "$FAKE_DOCKER_SHARED_CONF" ;;
-  esac
-  exit 0
-fi
-exit 0
-SHIM
-chmod +x "$STATE/purge-bin/docker"
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" purge-docker-shim "$STATE/purge-bin/docker"
 export PULSAR_DOCKER="$STATE/purge-bin/docker"
 
 pin_one() {
@@ -400,15 +205,18 @@ PY
   PULSAR_HOT_ROOT="$hot_root" \
     "$REPO_DIR/scripts/model-library.sh" unpin "$spec_id" --node fixture-node-0 >/dev/null
   echo "OK   unpin <spec_id> on $label"
-  # Never delete a view another running service still mounts.
-  local shared_out
-  shared_out=$(FAKE_DOCKER_SHARED_CONF=nemotron-3-nano-30b-nvfp4 PULSAR_HOT_ROOT="$hot_root" \
-    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
-  if ! printf '%s\n' "$shared_out" | grep -q "still mounted by running service"; then
-    echo "FAIL purge-hot <spec_id> deleted or ignored a shared view: $shared_out" >&2
-    exit 1
-  fi
-  echo "OK   purge-hot <spec_id> refuses a view another live service mounts ($label)"
+  # Never delete a view a running service still mounts: another profile's
+  # service, or the spec's own (stop first; the stop hook does both).
+  local shared_out user
+  for user in nemotron-3-nano-30b-nvfp4 "$spec_id"; do
+    shared_out=$(FAKE_DOCKER_SHARED_CONF="$user" PULSAR_HOT_ROOT="$hot_root" \
+      "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
+    if ! printf '%s\n' "$shared_out" | grep -q "still mounted by running service"; then
+      echo "FAIL purge-hot <spec_id> deleted or ignored a view mounted by $user: $shared_out" >&2
+      exit 1
+    fi
+  done
+  echo "OK   purge-hot <spec_id> refuses a view a running service mounts, own or other ($label)"
   PULSAR_HOT_ROOT="$hot_root" \
     "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes >/dev/null
   echo "OK   purge-hot <spec_id> on $label"
@@ -419,21 +227,7 @@ pin_one "$STATE/hot-conf" "a conf-named view"
 pin_one "$STATE/hot-spec" "a spec-named view"
 
 # Recreate a conf-named view for the rank-0 fallback refusal.
-python3 - "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$manifest_json" <<'PY'
-import json, pathlib, sys
-sys.path.insert(0, sys.argv[1])
-from scripts.testlib.release_spec_start_fixture import write_identity_hot_view
-manifest = json.loads(sys.argv[6])
-write_identity_hot_view(
-    pathlib.Path(sys.argv[2]) / "hot-rank1",
-    profile="nemotron-3-nano-30b-nvfp4",
-    topology_id=sys.argv[3],
-    model_id=sys.argv[4],
-    revision=sys.argv[5],
-    manifest=manifest,
-    content_id="rank1view0001",
-)
-PY
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$manifest_json"
 expect_failure 1 "catalog home is required" \
   "spec pin does not fall back to rank 0 when the catalog is missing" \
   env MODEL_LIBRARY_DIR="$STATE/missing-library" PULSAR_HOT_ROOT="$STATE/hot-rank1" \
@@ -456,34 +250,7 @@ printf '%s\n' "$*" >>"$FAKE_LIBRARY_LOG"
 exit 0
 SHIM
 chmod +x "$STATE/bin/model-library"
-python3 - "$STATE/bin/docker" "$spec_id" "$STATE/docker-present" <<'PY'
-from pathlib import Path
-import sys
-spec_id = sys.argv[2]
-flag = sys.argv[3]
-Path(flag).write_text("1\n", encoding="utf-8")
-Path(sys.argv[1]).write_text(
-    f"""#!/usr/bin/env bash
-set -euo pipefail
-case "${{1:-}}" in
-  info) exit 0 ;;
-  inspect)
-    [ -f {flag!r} ] || exit 1
-    printf '%s\\n' '{{"id":"{'a'*64}","name":"/vllm-{spec_id}","labels":{{"io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"{spec_id}","io.pulsar.gb10.rank":"single","io.pulsar.gb10.weight-source":"local-files"}}}}'
-    exit 0
-    ;;
-  rm)
-    rm -f {flag!r}
-    exit 0
-    ;;
-  ps) exit 0 ;;
-  *) exit 0 ;;
-esac
-""",
-    encoding="utf-8",
-)
-PY
-chmod +x "$STATE/bin/docker"
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" docker-shim "$STATE/bin/docker" "$spec_id" "$STATE/docker-present"
 : >"$STATE/library.log"
 down_out=$(PULSAR_DOCKER="$STATE/bin/docker" \
   PULSAR_MODEL_LIBRARY_CMD="$STATE/bin/model-library" \
@@ -508,11 +275,7 @@ echo "OK   check-weights advertises prepare <spec_id> --yes"
 # The post-prepare verification must bind a spec by its sealed manifest id and
 # never by profile name or conf directory (the view may carry a conf's name).
 verify_args_log="$STATE/verify-args.log"
-cat >"$STATE/record-py-tool.py" <<'PY'
-import os, sys
-with open(os.environ["VERIFY_ARGS_LOG"], "a", encoding="utf-8") as fh:
-    fh.write("\n".join(sys.argv[1:]) + "\n--END--\n")
-PY
+python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" record-tool "$STATE/record-py-tool.py"
 : >"$verify_args_log"
 VERIFY_ARGS_LOG="$verify_args_log" bash -c '
   set -euo pipefail

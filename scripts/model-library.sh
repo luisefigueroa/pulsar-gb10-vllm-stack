@@ -3568,11 +3568,13 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
 }
 
 # Running stack-managed containers on RANK that mount the view with
-# CONTENT_ID and belong to a profile other than PROFILE (one name per line).
-# Returns 1 when Docker on that rank cannot be queried; callers must not
-# treat that as "no users".
-hot_view_other_live_users() {
-  local rank="${1:?}" content_id="${2:?}" profile="${3:?}" out remote_cmd
+# CONTENT_ID (one profile name per line), including the target's own
+# service: purge must never delete bytes under a running container, and the
+# stop hook path already stops the service before it purges. Returns 1 when
+# Docker on that rank cannot be queried; callers must not treat that as
+# "no users".
+hot_view_live_users() {
+  local rank="${1:?}" content_id="${2:?}" out remote_cmd
   local filter_managed filter_config
   filter_managed="label=${PULSAR_MANAGED_LABEL}=true"
   filter_config="label=${PULSAR_WEIGHT_CONFIG_LABEL}=${content_id}"
@@ -3584,7 +3586,7 @@ hot_view_other_live_users() {
       "$filter_managed" "$filter_config" "{{.Label \"${PULSAR_CONF_LABEL}\"}}"
     out=$(ssh_node "$rank" "$remote_cmd" </dev/null) || return 1
   fi
-  printf '%s\n' "$out" | awk -v me="$profile" 'NF && $0 != me' | sort -u
+  printf '%s\n' "$out" | awk 'NF' | sort -u
 }
 
 hot_instance_for_profile_on_rank() {
@@ -3809,10 +3811,10 @@ cmd_purge_hot() {
   # A view can be shared: a released spec reuses a conf-named view of the
   # same sealed manifest. Never delete bytes another live service mounts.
   for rank in "${HOT_TARGET_RANKS[@]}"; do
-    sharers=$(hot_view_other_live_users "$rank" "$content_id" "$profile") \
-      || die "purge-hot: cannot verify on rank $rank that no other service uses $instance"
+    sharers=$(hot_view_live_users "$rank" "$content_id") \
+      || die "purge-hot: cannot verify on rank $rank that no running service uses $instance"
     [ -z "$sharers" ] \
-      || die "purge-hot: refusing to delete $instance on rank $rank: still mounted by running service(s): $sharers (stop them first)"
+      || die "purge-hot: refusing to delete $instance on rank $rank: still mounted by running service(s): $sharers (stop them first; ./pulsar stop <name> --purge-hot does both)"
   done
   [ "$yes" = 1 ] || die "purge-hot will delete $instance — re-run with --yes"
   for rank in "${HOT_TARGET_RANKS[@]}"; do
