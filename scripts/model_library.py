@@ -2681,9 +2681,10 @@ def classify_library_readiness(
     profile: str,
     catalog_path: str | pathlib.Path | None,
     topology_id: str,
-    models_dir: str | pathlib.Path,
+    models_dir: str | pathlib.Path | None,
     selected_rank: int | None = None,
     selected_node_id: str | None = None,
+    identity_key: str | None = None,
 ) -> dict[str, Any]:
     """Classify why library views are not ready, without restaging."""
     refresh = "scripts/model-library.sh catalog refresh"
@@ -2718,13 +2719,21 @@ def classify_library_readiness(
             "remediation": refresh,
             "detail": "catalog topology does not match the confirmed topology",
         }
+    identity_key = str(identity_key or "").strip() or None
     try:
-        resolved = resolve_entry(
-            catalog,
-            profile=profile,
-            cold_root=None,
-            models_dir=models_dir,
-        )
+        if identity_key:
+            resolved = resolve_entry(
+                catalog,
+                identity_key=identity_key,
+                cold_root=None,
+            )
+        else:
+            resolved = resolve_entry(
+                catalog,
+                profile=profile,
+                cold_root=None,
+                models_dir=models_dir,
+            )
     except ModelLibraryError as exc:
         text = str(exc)
         if "not found in warm catalog" in text or "no complete warm home" in text:
@@ -2810,13 +2819,18 @@ def classify_library_readiness(
 
 
 def cmd_classify_library_readiness(args: argparse.Namespace) -> int:
+    identity_key = str(getattr(args, "identity_key", "") or "") or None
+    models_dir = str(args.models_dir or "") or None
+    if not identity_key and not models_dir:
+        fail("classify-library-readiness: require --models-dir or --identity")
     report = classify_library_readiness(
         profile=args.profile,
         catalog_path=args.catalog,
         topology_id=args.topology_id,
-        models_dir=args.models_dir,
+        models_dir=models_dir,
         selected_rank=args.selected_rank,
         selected_node_id=args.selected_node_id or None,
+        identity_key=identity_key,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
@@ -4140,13 +4154,57 @@ def selected_rail_between(
     return rail[home_side], rail[client_side], rail["network"]
 
 
+def compare_spec_receipt_and_home_manifests(
+    spec_manifest: dict[str, Any],
+    receipt_manifest: dict[str, Any],
+    home_manifest: dict[str, Any],
+) -> None:
+    """Fail without fallback when a spec, receipt, and home rehash disagree.
+
+    Names both manifest ids and the first differing path (ADR 0017 decision 6).
+    Spec presence is never occupancy.
+    """
+    spec = validate_snapshot_manifest(spec_manifest)
+    receipt = validate_snapshot_manifest(receipt_manifest)
+    home = validate_snapshot_manifest(home_manifest)
+
+    def first_differing_path(
+        left: dict[str, Any], right: dict[str, Any]
+    ) -> str:
+        left_files = {item["path"]: item for item in left.get("files") or []}
+        right_files = {item["path"]: item for item in right.get("files") or []}
+        for path in sorted(set(left_files) | set(right_files)):
+            if left_files.get(path) != right_files.get(path):
+                return path
+        return "(manifest_id)"
+
+    if spec.get("manifest_id") != receipt.get("manifest_id") or spec.get(
+        "files"
+    ) != receipt.get("files"):
+        fail(
+            "prepare: spec manifest "
+            f"{spec.get('manifest_id')} differs from receipt "
+            f"{receipt.get('manifest_id')}; first differing path: "
+            f"{first_differing_path(spec, receipt)}"
+        )
+    if spec.get("manifest_id") != home.get("manifest_id") or spec.get(
+        "files"
+    ) != home.get("files"):
+        fail(
+            "prepare: spec manifest "
+            f"{spec.get('manifest_id')} differs from home rehash "
+            f"{home.get('manifest_id')}; first differing path: "
+            f"{first_differing_path(spec, home)}"
+        )
+
+
 def plan_prepare(
     *,
     catalog_path: str,
-    profile: str,
+    profile: str | None = None,
     topology_id: str,
     hot_root: str,
-    models_dir: str | pathlib.Path,
+    models_dir: str | pathlib.Path | None = None,
     backend: str | None = None,
     transport: str | None = None,
     allow_unvalidated: bool = False,
@@ -4156,12 +4214,17 @@ def plan_prepare(
     home_inventory: dict[str, Any] | None = None,
     require_exact_revision: str | None = None,
     expected_integrity_manifest: dict[str, Any] | None = None,
+    identity_key: str | None = None,
+    spec_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a model-preparation plan JSON for bash to execute (copy + stamp).
 
     Occupancy lookup lives in the Bash wrapper. This planner still requires
     the download-receipt commit and file list; unknown trees without a receipt
     fail without fallback and must not use a self-observed manifest as identity.
+    Catalog binding is exactly one of ``profile`` + ``models_dir`` or
+    ``identity_key`` + ``spec_manifest``. Identity prepare still needs
+    ``profile`` as the spec_id used to name a newly created view.
     """
     backend, transport = resolve_activate_transport(
         backend, transport, nodes=nodes
@@ -4173,15 +4236,45 @@ def plan_prepare(
             f"(catalog={catalog['topology_id'][:12]}… live={topology_id[:12]}…); "
             "run catalog refresh"
         )
-    # Preparation is receipt/occupancy warm-catalog only. Legacy cold fill
-    # paths do not create serving identity, and cold stage-only is retired.
-    profile_data = load_hf_profile(models_dir, profile)
-    resolved = resolve_entry(
-        catalog,
-        profile=profile,
-        cold_root=None,
-        models_dir=models_dir,
-    )
+    identity_key = str(identity_key or "").strip() or None
+    profile = str(profile or "").strip() or None
+    if bool(identity_key) == bool(models_dir):
+        fail(
+            "prepare: require exactly one of --profile --models-dir or "
+            "--identity --spec-manifest-json"
+        )
+    if identity_key:
+        if not profile:
+            fail("prepare: identity prepare requires --profile <spec_id> to name a new view")
+        if spec_manifest is None:
+            fail("prepare: --identity requires --spec-manifest-json")
+        if "@" not in identity_key:
+            fail("prepare: --identity must be model_id@revision")
+        # Preparation is receipt/occupancy warm-catalog only. Spec presence
+        # is never occupancy (ADR 0017 decision 9.5).
+        resolved = resolve_entry(
+            catalog,
+            identity_key=identity_key,
+            cold_root=None,
+        )
+        if resolved.get("identity_key") != identity_key:
+            fail("prepare: catalog identity differs from --identity")
+        profile_data = {
+            "profile": profile,
+            "model_id": resolved["model_id"],
+        }
+    else:
+        if not profile:
+            fail("prepare: --profile is required")
+        # Preparation is receipt/occupancy warm-catalog only. Legacy cold fill
+        # paths do not create serving identity, and cold stage-only is retired.
+        profile_data = load_hf_profile(models_dir, profile)
+        resolved = resolve_entry(
+            catalog,
+            profile=profile,
+            cold_root=None,
+            models_dir=models_dir,
+        )
     if resolved.get("tier") == "cold":
         fail(
             "prepare: a cold tree is not receipt/occupancy serving identity; "
@@ -4256,12 +4349,85 @@ def plan_prepare(
         fail("prepare: receipt-backed home rehash differs from the receipt")
     if integrity_manifest.get("files") != expected.get("files"):
         fail("prepare: receipt-backed home file set differs from the receipt")
+    if spec_manifest is not None:
+        compare_spec_receipt_and_home_manifests(
+            spec_manifest,
+            expected,
+            integrity_manifest,
+        )
     validation = require_activation_identity(
         profile_data,
         integrity_manifest,
         allow_unvalidated=allow_unvalidated,
     )
     cid = hot_content_id(resolved["identity_key"], digest, validation)
+
+    def _ready_skip_plan(
+        *,
+        instance_dir: pathlib.Path,
+        stamp: dict[str, Any],
+        reason: str,
+        storage_instance: pathlib.Path,
+    ) -> dict[str, Any]:
+        storage = build_hot_storage_requirements(
+            target_ranks=target_ranks,
+            bytes_logical=bytes_logical,
+            instance_dir=storage_instance,
+            home_rank=home_rank,
+        )
+        return {
+            "action": "skip",
+            "reason": reason,
+            "profile": profile,
+            "model_id": resolved["model_id"],
+            "identity_key": resolved["identity_key"],
+            "revision": resolved.get("revision"),
+            "home": home,
+            "hot_root": hot_root,
+            "instance_dir": str(instance_dir),
+            "hub_dest": str(hot_hub_path(instance_dir, resolved["model_id"])),
+            "content_id": cid,
+            "content_digest": digest,
+            "integrity_manifest": integrity_manifest,
+            "validation": validation,
+            "bytes_logical": bytes_logical,
+            "backend": backend,
+            "transport": transport,
+            "topology_id": topology_id,
+            "target_ranks": target_ranks,
+            "hot_storage_requirements": storage,
+            "stamp": stamp,
+            "transfer": None,
+        }
+
+    def _stamp_matches_plan(stamp: dict[str, Any]) -> bool:
+        return (
+            stamp.get("content_digest") == digest
+            and stamp.get("identity_key") == resolved["identity_key"]
+            and stamp.get("validation") == validation
+            and stamp.get("state") in {"ready", "pinned"}
+        )
+
+    if identity_key:
+        spec_manifest_id = validate_snapshot_manifest(spec_manifest).get(
+            "manifest_id"
+        )
+        reused = find_hot_instance_for_identity(
+            hot_root,
+            resolved["identity_key"],
+            topology_id,
+            manifest_id=str(spec_manifest_id) if spec_manifest_id else None,
+        )
+        if reused is not None:
+            existing_reuse = load_hot_stamp(reused)
+            if _stamp_matches_plan(existing_reuse):
+                return _ready_skip_plan(
+                    instance_dir=reused,
+                    stamp=existing_reuse,
+                    reason="reuse ready view with matching identity and manifest",
+                    storage_instance=reused,
+                )
+
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     hot_storage_requirements = build_hot_storage_requirements(
         target_ranks=target_ranks,
@@ -4272,36 +4438,13 @@ def plan_prepare(
     existing = None
     if hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
-        if (
-            existing.get("content_digest") == digest
-            and existing.get("identity_key") == resolved["identity_key"]
-            and existing.get("validation") == validation
-            and existing.get("state") in {"ready", "pinned"}
-        ):
-            return {
-                "action": "skip",
-                "reason": "hot already ready with matching digest",
-                "profile": profile,
-                "model_id": resolved["model_id"],
-                "identity_key": resolved["identity_key"],
-                "revision": resolved.get("revision"),
-                "home": home,
-                "hot_root": hot_root,
-                "instance_dir": str(instance),
-                "hub_dest": str(hot_hub_path(instance, resolved["model_id"])),
-                "content_id": cid,
-                "content_digest": digest,
-                "integrity_manifest": integrity_manifest,
-                "validation": validation,
-                "bytes_logical": bytes_logical,
-                "backend": backend,
-                "transport": transport,
-                "topology_id": topology_id,
-                "target_ranks": target_ranks,
-                "hot_storage_requirements": hot_storage_requirements,
-                "stamp": existing,
-                "transfer": None,
-            }
+        if _stamp_matches_plan(existing):
+            return _ready_skip_plan(
+                instance_dir=instance,
+                stamp=existing,
+                reason="hot already ready with matching digest",
+                storage_instance=instance,
+            )
 
     stamp = build_hot_stamp(
         profile=profile,
@@ -7920,12 +8063,22 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
             fail(f"expected-integrity-manifest-json: {exc}")
         if not isinstance(expected_manifest, dict):
             fail("expected-integrity-manifest-json must be an object")
+    spec_manifest = None
+    if getattr(args, "spec_manifest_json", ""):
+        try:
+            spec_manifest = json.loads(args.spec_manifest_json)
+        except json.JSONDecodeError as exc:
+            fail(f"spec-manifest-json: {exc}")
+        if not isinstance(spec_manifest, dict):
+            fail("spec-manifest-json must be an object")
+    identity_key = str(getattr(args, "identity_key", "") or "") or None
+    models_dir = str(args.models_dir or "") or None
     plan = plan_prepare(
         catalog_path=args.catalog,
-        profile=args.profile,
+        profile=args.profile or None,
         topology_id=args.topology_id,
         hot_root=args.hot_root or default_hot_root(),
-        models_dir=args.models_dir,
+        models_dir=models_dir,
         backend=args.backend or None,
         transport=args.transport or None,
         nodes=args.nodes,
@@ -7934,6 +8087,8 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
         home_inventory=home_inventory,
         require_exact_revision=getattr(args, "require_exact_revision", None) or None,
         expected_integrity_manifest=expected_manifest,
+        identity_key=identity_key,
+        spec_manifest=spec_manifest,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -8901,10 +9056,21 @@ def build_parser() -> argparse.ArgumentParser:
         "plan-prepare", help="Plan copy preparation into hot staging"
     )
     plan.add_argument("--catalog", required=True)
-    plan.add_argument("--profile", required=True)
+    plan.add_argument("--profile", default="")
+    plan.add_argument(
+        "--identity",
+        dest="identity_key",
+        default="",
+        help="model_id@revision when preparing a released spec",
+    )
+    plan.add_argument(
+        "--spec-manifest-json",
+        default="",
+        help=argparse.SUPPRESS,
+    )
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
-    plan.add_argument("--models-dir", required=True)
+    plan.add_argument("--models-dir", default="")
     plan.add_argument("--backend", default="", choices=("copy",))
     plan.add_argument(
         "--transport",
@@ -8955,7 +9121,13 @@ def build_parser() -> argparse.ArgumentParser:
     classify.add_argument("--profile", required=True)
     classify.add_argument("--catalog", default="")
     classify.add_argument("--topology-id", default="")
-    classify.add_argument("--models-dir", required=True)
+    classify.add_argument("--models-dir", default="")
+    classify.add_argument(
+        "--identity",
+        dest="identity_key",
+        default="",
+        help="model_id@revision when classifying a released spec",
+    )
     classify.add_argument("--selected-rank", type=int, default=None)
     classify.add_argument("--selected-node-id", default="")
     classify.set_defaults(func=cmd_classify_library_readiness)

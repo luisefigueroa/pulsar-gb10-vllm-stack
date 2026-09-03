@@ -284,15 +284,32 @@ ensure_catalog() {
 
 inspect_catalog_home() {
   local profile="${1:?profile required}" resolved home_rank hub_path node_id
-  local expected_node command out model_id revision
-  local -a fields=()
-  resolved=$(
-    python3 "$PY_TOOL" resolve \
-      --catalog "$CATALOG_FILE" \
-      --profile "$profile" \
-      --models-dir "$REPO_DIR/models" \
-      --no-cold \
+  local expected_node command out model_id revision identity
+  local -a fields=() resolve_args
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ]; then
+      die "prepare: spec catalog lookup requires MODEL and SNAPSHOT_REVISION"
+    fi
+    identity="${MODEL}@${SNAPSHOT_REVISION}"
+    resolve_args=(
+      resolve
+      --catalog "$CATALOG_FILE"
+      --no-cold
       --json
+      "$identity"
+    )
+  else
+    resolve_args=(
+      resolve
+      --catalog "$CATALOG_FILE"
+      --profile "$profile"
+      --models-dir "$REPO_DIR/models"
+      --no-cold
+      --json
+    )
+  fi
+  resolved=$(
+    python3 "$PY_TOOL" "${resolve_args[@]}"
   ) || return 1
   mapfile -t fields < <(json_fields "$resolved" \
     home.rank home.hub_path home.node_id model_id revision)
@@ -404,13 +421,97 @@ library_plan_prepare() {
     'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
   extra+=(--require-exact-revision "$revision")
   extra+=(--expected-integrity-manifest-json "$manifest_json")
+  extra+=(--catalog "$CATALOG_FILE")
+  extra+=(--profile "$profile")
+  extra+=(--home-inventory-json "$home_inventory")
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    extra+=(--identity "${MODEL}@${SNAPSHOT_REVISION}")
+    extra+=(--spec-manifest-json "$(library_spec_snapshot_manifest_json "$profile")")
+  else
+    extra+=(--models-dir "$REPO_DIR/models")
+    library_conf_prepare_spec_manifest_json "$receipt_json" extra
+  fi
   python3 "$PY_TOOL" plan-prepare \
-    --catalog "$CATALOG_FILE" \
-    --profile "$profile" \
-    --models-dir "$REPO_DIR/models" \
-    --home-inventory-json "$home_inventory" \
     "${extra[@]}" \
     "$@"
+}
+
+library_spec_snapshot_manifest_json() {
+  local spec_id="${1:?spec_id required}"
+  local -a show_args=(
+    show "$spec_id"
+    --repo-root "$REPO_DIR"
+  )
+  if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
+    show_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
+  fi
+  python3 "$REPO_DIR/scripts/release_consumer.py" "${show_args[@]}" \
+    | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["identity"]["snapshot_manifest"]))' \
+    || die "prepare: cannot load the released spec manifest for $spec_id"
+}
+
+library_conf_prepare_spec_manifest_json() {
+  local receipt_json="${1:?}"
+  local -n extra_ref="${2:?}"
+  local matching spec_manifest
+  PULSAR_PREPARE_ENGINE_ARGS_JSON=$(
+    json_encode_strings ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"}
+  )
+  PULSAR_PREPARE_CONTAINER_ENV_JSON=$(
+    json_encode_strings ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}
+  )
+  PULSAR_PREPARE_SPEC_DECODE_ARGS_JSON=$(
+    json_encode_strings ${SPEC_DECODE_ARGS[@]+"${SPEC_DECODE_ARGS[@]}"}
+  )
+  export PULSAR_PREPARE_ENGINE_ARGS_JSON
+  export PULSAR_PREPARE_CONTAINER_ENV_JSON
+  export PULSAR_PREPARE_SPEC_DECODE_ARGS_JSON
+  matching=$(
+    python3 - "$REPO_DIR" "${PULSAR_RELEASES_ROOT:-}" "$receipt_json" \
+      "$MODEL" "$IMAGE" "$NODES" "${GPU_MEM_UTIL:-}" \
+      "${RECOMMENDED_SPEC:-0}" <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.release_consumer import matching_release_for_profile
+
+releases_root = sys.argv[2] or None
+receipt = json.loads(sys.argv[3])
+engine_args = json.loads(os.environ.get("PULSAR_PREPARE_ENGINE_ARGS_JSON", "[]"))
+container_env = json.loads(os.environ.get("PULSAR_PREPARE_CONTAINER_ENV_JSON", "[]"))
+spec_decode_args = json.loads(os.environ.get("PULSAR_PREPARE_SPEC_DECODE_ARGS_JSON", "[]"))
+files = list((receipt.get("observed_manifest") or {}).get("files") or [])
+result = matching_release_for_profile(
+    repo_root=sys.argv[1],
+    releases_root=releases_root,
+    model_id=sys.argv[4],
+    image=sys.argv[5],
+    nodes=int(sys.argv[6]),
+    gpu_mem_util=sys.argv[7],
+    engine_args=engine_args,
+    container_env=container_env,
+    spec_decode_args=spec_decode_args,
+    platform_id="dgx-spark-gb10",
+    snapshot_revision=str(receipt.get("snapshot_revision") or ""),
+    files=files,
+    receipt_model_id=receipt.get("model_id") if isinstance(receipt.get("model_id"), str) else None,
+    recommended_spec=sys.argv[8] in ("1", "true", "TRUE"),
+)
+print(json.dumps(result))
+PY
+  ) || die "prepare: released spec at the recomputed spec_id is invalid"
+  spec_manifest=$(
+    printf '%s' "$matching" | python3 -c '
+import json, sys
+row = json.load(sys.stdin)
+if row.get("state") != "valid":
+    raise SystemExit(0)
+print(json.dumps(row["snapshot_manifest"]))
+'
+  ) || die "prepare: matching released spec is unreadable"
+  [ -z "$spec_manifest" ] || extra_ref+=(--spec-manifest-json "$spec_manifest")
 }
 
 hot_budget_policy_args() {
@@ -3449,38 +3550,75 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
 
 hot_instance_for_profile_on_rank() {
   local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}"
-  local command info stamp
-  local -a launch_args=()
+  local command info stamp instance identity
+  local -a launch_args=() find_hot_args=()
   [ "$require_launchable" = 0 ] || launch_args+=(--for-launch)
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ] \
+        || [ -z "${SPEC_MANIFEST_ID:-}" ]; then
+      return 1
+    fi
+    identity="${MODEL}@${SNAPSHOT_REVISION}"
+    find_hot_args=(
+      find-hot
+      --identity "$identity"
+      --manifest-id "$SPEC_MANIFEST_ID"
+      --topology-id "${CLUSTER_TOPOLOGY_ID}"
+      --hot-root "$HOT_ROOT"
+    )
+  else
+    find_hot_args=(
+      find-hot
+      --profile "$profile"
+      --topology-id "${CLUSTER_TOPOLOGY_ID}"
+      --hot-root "$HOT_ROOT"
+      --models-dir "$REPO_DIR/models"
+    )
+  fi
   if [ "$rank" -eq 0 ]; then
-    python3 "$PY_TOOL" find-hot \
-      --profile "$profile" \
-      --topology-id "${CLUSTER_TOPOLOGY_ID}" \
-      --hot-root "$HOT_ROOT" \
-      --models-dir "$REPO_DIR/models" \
-      "${launch_args[@]}"
+    python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}"
     return
   fi
-  command=$(shell_join_q python3 - find-hot \
-    --profile "$profile" \
-    --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --hot-root "$HOT_ROOT" \
-    "${launch_args[@]}")
+  command=$(shell_join_q python3 - "${find_hot_args[@]}" "${launch_args[@]}")
   info=$(ssh_node "$rank" "$command" <"$PY_TOOL") || return 1
-  stamp=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
+  instance=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
     || return 1
-  printf '%s' "$stamp" | python3 "$PY_TOOL" validate-hot-stamp \
-    --profile "$profile" --models-dir "$REPO_DIR/models" \
-    --stamp-file /dev/stdin >/dev/null || return 1
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    command=$(shell_join_q python3 - verify-hot \
+      --expected-manifest-id "$SPEC_MANIFEST_ID" \
+      --topology-id "$CLUSTER_TOPOLOGY_ID" \
+      --instance-dir "$instance")
+    ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || return 1
+  else
+    stamp=$(printf '%s' "$info" | python3 -c \
+      'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
+      || return 1
+    printf '%s' "$stamp" | python3 "$PY_TOOL" validate-hot-stamp \
+      --profile "$profile" --models-dir "$REPO_DIR/models" \
+      --stamp-file /dev/stdin >/dev/null || return 1
+  fi
   printf '%s\n' "$info"
 }
 
 resolve_hot_profile_targets() {
-  local profile="${1:?}" node_selector="${2:-}" resolved home_rank rank
+  local profile="${1:?}" node_selector="${2:-}" resolved home_rank rank identity
   local -a ranks=()
   home_rank=""
-  if [ -f "$CATALOG_FILE" ]; then
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ]; then
+      die "$profile: spec hot lookup requires MODEL and SNAPSHOT_REVISION"
+    fi
+    [ -f "$CATALOG_FILE" ] \
+      || die "$profile: catalog home is required for a released spec; no rank-0 fallback"
+    identity="${MODEL}@${SNAPSHOT_REVISION}"
+    resolved=$(python3 "$PY_TOOL" resolve \
+      --catalog "$CATALOG_FILE" --no-cold --json "$identity") \
+      || die "$profile: cannot resolve catalog home for $identity"
+    home_rank=$(printf '%s' "$resolved" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["home"]["rank"])') \
+      || die "$profile: catalog home rank is unreadable"
+  elif [ -f "$CATALOG_FILE" ]; then
     resolved=$(python3 "$PY_TOOL" resolve \
       --catalog "$CATALOG_FILE" --profile "$profile" \
       --models-dir "$REPO_DIR/models" --no-cold --json 2>/dev/null) || resolved=""

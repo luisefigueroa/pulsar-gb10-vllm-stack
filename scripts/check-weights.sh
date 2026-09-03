@@ -105,8 +105,12 @@ if [ "$hot_rc" -ne 0 ]; then
     --profile "$NAME"
     --catalog "$CATALOG_FILE"
     --topology-id "$CLUSTER_TOPOLOGY_ID"
-    --models-dir "$REPO_DIR/models"
   )
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    classify_args+=(--identity "${MODEL}@${SNAPSHOT_REVISION}")
+  else
+    classify_args+=(--models-dir "$REPO_DIR/models")
+  fi
   if [ "$NODES" -eq 1 ]; then
     classify_args+=(--selected-rank "$SINGLE_NODE_INDEX")
     if [ -n "${SINGLE_NODE_ID:-}" ]; then
@@ -120,10 +124,10 @@ if [ "$hot_rc" -ne 0 ]; then
   remediation="${gap_fields[1]:-scripts/model-library.sh prepare $NAME --yes}"
   detail="${gap_fields[2]:-model files are not prepared}"
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    # Preparation is profile-keyed today; a released spec cannot prepare
-    # its own view yet. Say so instead of advertising a command that fails.
-    remediation="scripts/model-library.sh prepare <profile that produced this spec> --yes"
-    detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION}); prepare by spec identity is not available yet, so prepare the source profile, then retry"
+    remediation="scripts/model-library.sh prepare $NAME --yes"
+    if [ -z "${gap_fields[2]:-}" ]; then
+      detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION})"
+    fi
   fi
   emit_weights_gap "$reason" "$remediation" "$detail" "$one_node_rank"
   exit 1
