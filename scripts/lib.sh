@@ -1380,6 +1380,60 @@ PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
+# library_first_verified_spec_candidate <find-hot args...> -- <verify-hot args...>
+# On the selected rank (remote one-node placement or the controller), list
+# every identity match with find-hot --all and print the record of the first
+# whose verify-hot passes. Returns 255 when the rank is SSH-unreachable, 2
+# when candidates exist but none verifies, 1 when there is no candidate.
+library_first_verified_spec_candidate() {
+  local -a find_args=() verify_args=()
+  local rank="" command list rc candidate instance expected_validation_json seen=0
+  while [ $# -gt 0 ]; do
+    [ "$1" != -- ] || { shift; break; }
+    find_args+=("$1")
+    shift
+  done
+  verify_args=("$@")
+  if [ "${NODES:-1}" -eq 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
+    rank="${SINGLE_NODE_INDEX:?remote single-node rank is unresolved}"
+    command=$(shell_join_q python3 - "${find_args[@]}" --all)
+    rc=0
+    list=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+  else
+    list=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${find_args[@]}" --all) || return 1
+  fi
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    seen=1
+    instance=$(printf '%s' "$candidate" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
+    expected_validation_json=$(printf '%s' "$candidate" | python3 -c \
+      'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]["validation"], sort_keys=True, separators=(",", ":")))') \
+      || return 1
+    rc=0
+    if [ -n "$rank" ]; then
+      command=$(shell_join_q python3 - "${verify_args[@]}" \
+        --instance-dir "$instance" \
+        --expected-validation-json "$expected_validation_json")
+      ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
+      [ "$rc" -ne 255 ] || return 255
+    else
+      python3 "$PULSAR_MODEL_LIBRARY_PY" "${verify_args[@]}" \
+        --instance-dir "$instance" >/dev/null || rc=$?
+    fi
+    if [ "$rc" -eq 0 ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(printf '%s' "$list" | python3 -c \
+    'import json,sys
+for record in json.load(sys.stdin):
+    print(json.dumps(record, sort_keys=True, separators=(",", ":")))')
+  [ "$seen" = 1 ] && return 2
+  return 1
+}
+
 # Print find-hot JSON for the selected rank. Return 0 on success, 255 when
 # that rank is SSH-unreachable, 2 when a found view fails verification, and
 # 1 when no ready instance is present. Requires load_conf plus confirmed
@@ -1405,6 +1459,15 @@ library_hot_info_for_profile() {
       --hot-root "$PULSAR_HOT_ROOT" --for-launch)
     verify_hot_args=(verify-hot --profile "$profile" --topology-id "$topology_id" \
       --models-dir "$REPO_DIR/models" --for-launch --serve-time-witness)
+  fi
+
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # A stamp proves metadata only. Every identity match is a candidate,
+    # newest first, and the first whose content verifies is the view:
+    # readiness and launch must land on the view prepare reused, never on
+    # a newer stamp over damaged bytes.
+    library_first_verified_spec_candidate "${find_hot_args[@]}" -- "${verify_hot_args[@]}"
+    return
   fi
 
   if [ "${NODES:-1}" -eq 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then

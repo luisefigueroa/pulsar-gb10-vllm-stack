@@ -547,6 +547,39 @@ confirm_out=$(bash -c '
 ' _ "$REPO_DIR")
 [ "$confirm_out" = "rank 0: /hot/a; rank 1: /hot/b" ] || { echo "FAIL purge confirmation text: $confirm_out" >&2; exit 1; }
 echo "OK   purge-hot confirmation lists every rank's view"
+
+# Readiness follows the view prepare reused: with a newer fileless stamp
+# beside an older verifiable view, find-hot --all lists both newest first,
+# and every strict consumer (library lookup, launch lookup, check-weights)
+# lands on the older view that verifies.
+pair_json=$(python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" verified-pair "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$manifest_json")
+older_view=$(printf '%s' "$pair_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["older"])')
+newer_view=$(printf '%s' "$pair_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["newer"])')
+all_out=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot --all \
+  --identity "${model_id}@${revision}" --manifest-id "$manifest_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-pair" \
+  | python3 -c 'import json,sys; print("\n".join(r["instance_dir"] for r in json.load(sys.stdin)))')
+[ "$all_out" = "$newer_view"$'\n'"$older_view" ] || { echo "FAIL find-hot --all order: $all_out" >&2; exit 1; }
+strict_pick=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"
+  CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6"
+  eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  hot_instance_for_profile_on_rank spec 0 0 1 | python3 -c "import json,sys; print(json.load(sys.stdin)[\"instance_dir\"])"
+' _ "$REPO_DIR" "$STATE/hot-pair" "$model_id" "$revision" "$manifest_id" "$topology_id")
+[ "$strict_pick" = "$older_view" ] || { echo "FAIL strict library lookup picked: $strict_pick" >&2; exit 1; }
+launch_pick=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  PULSAR_HOT_ROOT="$2"
+  CONF_SOURCE=spec MODEL="$3" SNAPSHOT_REVISION="$4" SPEC_MANIFEST_ID="$5" CLUSTER_TOPOLOGY_ID="$6" NODES=1 SINGLE_NODE_REMOTE=0
+  library_hot_info_for_profile spec | python3 -c "import json,sys; print(json.load(sys.stdin)[\"instance_dir\"])"
+' _ "$REPO_DIR" "$STATE/hot-pair" "$model_id" "$revision" "$manifest_id" "$topology_id")
+[ "$launch_pick" = "$older_view" ] || { echo "FAIL launch lookup picked: $launch_pick" >&2; exit 1; }
+PULSAR_HOT_ROOT="$STATE/hot-pair" "$REPO_DIR/scripts/check-weights.sh" "$spec_id" --node fixture-node-0 >/dev/null 2>&1 \
+  || { echo "FAIL check-weights did not accept the older verified view" >&2; exit 1; }
+echo "OK   readiness and launch lookups consume the first verified identity candidate"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

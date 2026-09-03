@@ -8359,6 +8359,49 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         if args.models_dir and profile
         else None
     )
+    list_all = bool(getattr(args, "all_matches", False))
+    if list_all and not identity_key:
+        fail("find-hot: --all requires --identity")
+
+    def _record(path: pathlib.Path, stamp: dict[str, Any]) -> dict[str, Any]:
+        hub = hot_hub_path(path, stamp["model_id"])
+        revision = stamp.get("revision")
+        if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
+            fail("find-hot: sealed revision is invalid")
+        container_hub = (
+            "/root/.cache/huggingface/hub/"
+            + model_id_to_hub_dirname(stamp["model_id"])
+        )
+        return {
+            "instance_dir": str(path),
+            "hub_path": str(hub),
+            "snapshot_path": str(hub / "snapshots" / revision),
+            "runtime_model_relative": f"snapshots/{revision}",
+            "container_model_path": f"{container_hub}/snapshots/{revision}",
+            "stamp": stamp,
+        }
+
+    if list_all:
+        # Every identity match, newest first. A stamp proves metadata only:
+        # the caller verifies candidates in this order and consumes the
+        # first that passes, so readiness and launch land on the same view
+        # prepare reused rather than on a newer stamp over damaged bytes.
+        records = []
+        for path in find_hot_instances_for_identity(
+            args.hot_root or default_hot_root(),
+            identity_key,
+            args.topology_id,
+            manifest_id=manifest_id,
+        ):
+            stamp = load_hot_stamp(path)
+            if getattr(args, "for_launch", False):
+                try:
+                    require_launchable_hot_stamp(stamp)
+                except ModelLibraryError:
+                    continue
+            records.append(_record(path, stamp))
+        print(json.dumps(records, indent=2, sort_keys=True))
+        return 0
     if identity_key:
         path = find_hot_instance_for_identity(
             args.hot_root or default_hot_root(),
@@ -8383,23 +8426,7 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         require_launchable_hot_stamp(stamp)
     if profile_data is not None:
         verify_hot_stamp_against_profile(stamp, profile_data)
-    hub = hot_hub_path(path, stamp["model_id"])
-    revision = stamp.get("revision")
-    if not isinstance(revision, str) or SAFE_REV.fullmatch(revision) is None:
-        fail("find-hot: sealed revision is invalid")
-    container_hub = (
-        "/root/.cache/huggingface/hub/"
-        + model_id_to_hub_dirname(stamp["model_id"])
-    )
-    out = {
-        "instance_dir": str(path),
-        "hub_path": str(hub),
-        "snapshot_path": str(hub / "snapshots" / revision),
-        "runtime_model_relative": f"snapshots/{revision}",
-        "container_model_path": f"{container_hub}/snapshots/{revision}",
-        "stamp": stamp,
-    }
-    print(json.dumps(out, indent=2, sort_keys=True))
+    print(json.dumps(_record(path, stamp), indent=2, sort_keys=True))
     return 0
 
 
@@ -9358,6 +9385,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="manifest_id",
         default="",
         help="with --identity: require the sealed integrity manifest id",
+    )
+    fh.add_argument(
+        "--all",
+        dest="all_matches",
+        action="store_true",
+        help="with --identity: print every ready match as a JSON list, newest first",
     )
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")

@@ -11,6 +11,9 @@ fixture it needs and keeps only CLI invocations and assertions.
                                            conf-named ready view whose stamp
                                            matches what identity prepare plans
   rank1-view REPO STATE TOPOLOGY MODEL REV MANIFEST_JSON
+  verified-pair REPO STATE TOPOLOGY MODEL REV MANIFEST_JSON
+                                           hot-pair: an older verifiable view
+                                           beside a newer fileless one
   docker-shim PATH SPEC_ID FLAG            docker that reports one managed
                                            container for SPEC_ID while FLAG exists
   purge-docker-shim PATH                   docker whose `ps` lists
@@ -252,6 +255,43 @@ def cmd_rank1_view(argv: list[str]) -> None:
     )
 
 
+def cmd_verified_pair(argv: list[str]) -> None:
+    import json, pathlib, sys
+    sys.path.insert(0, sys.argv[1])
+    from scripts.testlib.release_spec_start_fixture import write_identity_hot_view
+    manifest = json.loads(sys.argv[6])
+    state = pathlib.Path(sys.argv[2])
+    hot = state / "hot-pair"
+    older = write_identity_hot_view(
+        hot,
+        profile="nemotron-3-nano-30b-nvfp4",
+        topology_id=sys.argv[3],
+        model_id=sys.argv[4],
+        revision=sys.argv[5],
+        manifest=manifest,
+        content_id="olderview0001",
+        activated_at="2026-09-01T00:00:00Z",
+    )
+    make_view_verifiable(
+        older,
+        hub_source=state / "durable-home",
+        profile="nemotron-3-nano-30b-nvfp4",
+        model_id=sys.argv[4],
+        manifest=manifest,
+    )
+    newer = write_identity_hot_view(
+        hot,
+        profile="nemotron-3-nano-30b-nvfp4",
+        topology_id=sys.argv[3],
+        model_id=sys.argv[4],
+        revision=sys.argv[5],
+        manifest=manifest,
+        content_id="newerview0001",
+        activated_at="2026-09-03T00:00:00Z",
+    )
+    print(json.dumps({"older": str(older), "newer": str(newer)}))
+
+
 def cmd_docker_shim(argv: list[str]) -> None:
     from pathlib import Path
     import sys
@@ -317,6 +357,7 @@ COMMANDS = {
     "arrange": cmd_arrange,
     "reuse-view": cmd_reuse_view,
     "rank1-view": cmd_rank1_view,
+    "verified-pair": cmd_verified_pair,
     "docker-shim": cmd_docker_shim,
     "purge-docker-shim": cmd_purge_docker_shim,
     "record-tool": cmd_record_tool,

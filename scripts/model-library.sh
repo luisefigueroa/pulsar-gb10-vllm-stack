@@ -3751,7 +3751,7 @@ hot_view_live_users() {
 # stale view stays removable.
 hot_instance_for_profile_on_rank() {
   local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}" strict="${4:-1}"
-  local command info stamp instance identity stamped_home
+  local command info stamp instance identity
   local -a launch_args=() find_hot_args=()
   [ "$require_launchable" = 0 ] || launch_args+=(--for-launch)
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
@@ -3780,6 +3780,56 @@ hot_instance_for_profile_on_rank() {
   # cannot be observed at all (SSH failure), so cleanup can tell the two
   # apart: absence is already purged; unobservable is not.
   local rc=0
+  if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$strict" = 1 ]; then
+    # A stamp proves metadata only. Every identity match is a candidate,
+    # newest first; the first that is bound to the current home and whose
+    # content verifies on this rank is the view, so pin, unpin, and
+    # prepare land on the view launch will use.
+    local list candidate stamped_home_c
+    if [ "$rank" -eq 0 ]; then
+      list=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}" --all) || return 1
+    else
+      command=$(shell_join_q python3 - "${find_hot_args[@]}" "${launch_args[@]}" --all)
+      list=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
+      [ "$rc" -ne 255 ] || return 255
+      [ "$rc" -eq 0 ] || return 1
+    fi
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      instance=$(printf '%s' "$candidate" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
+      if [ -n "${HOT_HOME_NODE_ID:-}" ]; then
+        stamped_home_c=$(printf '%s' "$candidate" | python3 -c \
+          'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")') || return 1
+        if [ "$stamped_home_c" != "$HOT_HOME_NODE_ID" ]; then
+          warn "$profile: view $instance on rank $rank is bound to durable home '$stamped_home_c', not the current home '$HOT_HOME_NODE_ID'; prepare $profile --yes re-materializes it"
+          continue
+        fi
+      fi
+      rc=0
+      if [ "$rank" -eq 0 ]; then
+        python3 "$PY_TOOL" verify-hot \
+          --expected-manifest-id "$SPEC_MANIFEST_ID" \
+          --topology-id "$CLUSTER_TOPOLOGY_ID" \
+          --instance-dir "$instance" >/dev/null || rc=$?
+      else
+        command=$(shell_join_q python3 - verify-hot \
+          --expected-manifest-id "$SPEC_MANIFEST_ID" \
+          --topology-id "$CLUSTER_TOPOLOGY_ID" \
+          --instance-dir "$instance")
+        ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || rc=$?
+        [ "$rc" -ne 255 ] || return 255
+      fi
+      if [ "$rc" -eq 0 ]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done < <(printf '%s' "$list" | python3 -c \
+      'import json,sys
+for record in json.load(sys.stdin):
+    print(json.dumps(record, sort_keys=True, separators=(",", ":")))')
+    return 1
+  fi
   if [ "$rank" -eq 0 ]; then
     info=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}") || return 1
   else
@@ -3792,31 +3842,7 @@ hot_instance_for_profile_on_rank() {
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
     || return 1
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    if [ "$strict" = 1 ] && [ -n "${HOT_HOME_NODE_ID:-}" ]; then
-      stamped_home=$(printf '%s' "$info" | python3 -c \
-        'import json,sys; print(json.load(sys.stdin)["stamp"].get("home_node_id") or "")') \
-        || return 1
-      if [ "$stamped_home" != "$HOT_HOME_NODE_ID" ]; then
-        warn "$profile: view on rank $rank is bound to durable home '$stamped_home', not the current home '$HOT_HOME_NODE_ID'; prepare $profile --yes re-materializes it"
-        return 1
-      fi
-    fi
-    # find-hot checks metadata only; a strict lookup hashes the content on
-    # every rank, the controller included, before it reports the view.
-    if [ "$strict" = 1 ]; then
-      if [ "$rank" -eq 0 ]; then
-        python3 "$PY_TOOL" verify-hot \
-          --expected-manifest-id "$SPEC_MANIFEST_ID" \
-          --topology-id "$CLUSTER_TOPOLOGY_ID" \
-          --instance-dir "$instance" >/dev/null || return 1
-      else
-        command=$(shell_join_q python3 - verify-hot \
-          --expected-manifest-id "$SPEC_MANIFEST_ID" \
-          --topology-id "$CLUSTER_TOPOLOGY_ID" \
-          --instance-dir "$instance")
-        ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || return 1
-      fi
-    fi
+    : # purge policy: ownership by identity and manifest, newest match
   elif [ "$rank" -ne 0 ]; then
     stamp=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \

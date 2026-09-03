@@ -22,6 +22,16 @@ def main() -> int:
     info_file = os.environ.get("FAKE_HOT_INFO_FILE", "")
     ready = bool(info_file) and pathlib.Path(info_file).is_file()
     if verb == "find-hot":
+        # --all lists every identity match newest first; the canned info is
+        # the single match, and no ready view is an empty list, exactly as
+        # the real tool answers.
+        if "--all" in sys.argv[2:]:
+            if not ready:
+                print("[]")
+                return 0
+            info = json.loads(pathlib.Path(info_file).read_text(encoding="utf-8"))
+            print(json.dumps([info], indent=2, sort_keys=True))
+            return 0
         if not ready:
             print(
                 "model-library: ERROR: find-hot: no ready instance",
