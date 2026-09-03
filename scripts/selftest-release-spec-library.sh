@@ -352,11 +352,16 @@ lookup_out=$(bash -c '
   if hot_instance_for_profile_on_rank spec 1 0 1 >/dev/null 2>&1; then
     echo "verified-lookup-accepted-damage"
   fi
+  # The controller is verified the same way: metadata alone never binds.
+  if hot_instance_for_profile_on_rank spec 0 0 1 >/dev/null 2>&1; then
+    echo "local-verified-lookup-accepted-damage"
+  fi
+  hot_instance_for_profile_on_rank spec 0 0 0 >/dev/null || echo "local-purge-lookup-failed"
   hot_instance_for_profile_on_rank spec 1 0 0 | python3 -c "import json,sys; print(json.load(sys.stdin)[\"instance_dir\"])"
 ' _ "$REPO_DIR" "$STATE/hot-rank1" "$model_id" "$revision" "$manifest_id" "$topology_id")
 [ "$lookup_out" = "$damaged_view" ] \
   || { echo "FAIL purge lookup on a damaged remote spec view: $lookup_out" >&2; exit 1; }
-echo "OK   purge lookup binds a damaged remote spec view by stamp identity; launch lookup refuses it"
+echo "OK   purge lookup binds a damaged spec view by stamp identity on any rank; strict lookup refuses it on any rank"
 
 # After occupancy moves, a view stamped for the previous durable home is a
 # stale working copy: pin refuses it against the current catalog home, and
@@ -466,14 +471,18 @@ echo "OK   verify-hot --expected-home-node-id binds the current durable home"
 roce_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
-  eval "$(sed -n "/^copy_ranks_need_bulk_transfer() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^copy_ranks_need_fabric_map() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^roce_map_ranks_csv() {/,/^}/p" "$1/scripts/model-library.sh")"
-  copy_ranks_need_bulk_transfer 0 0
-  copy_ranks_need_bulk_transfer 0 2
+  copy_ranks_need_fabric_map 0 0
+  copy_ranks_need_fabric_map 0 2
+  copy_ranks_need_fabric_map 1 1
+  copy_ranks_need_fabric_map 1 0
   roce_map_ranks_csv 0 2
   roce_map_ranks_csv 1 1
 ' _ "$REPO_DIR")
-[ "$roce_out" = $'0\n1\n0,2\n1' ] || { echo "FAIL fabric ranks from copy_ranks: $roce_out" >&2; exit 1; }
+# A remote home repaired alone still rsyncs its stamp over the fabric shell,
+# and rank 0 copied from a remote home pulls over it: both need the map.
+[ "$roce_out" = $'0\n1\n1\n1\n0,2\n1' ] || { echo "FAIL fabric ranks from copy_ranks: $roce_out" >&2; exit 1; }
 grep -q 'load_copy_ssh_roce_map "$home_rank" \\$' "$REPO_DIR/scripts/model-library.sh" \
   && grep -q 'roce_map_ranks_csv "$home_rank" "${copy_ranks\[@\]}"' "$REPO_DIR/scripts/model-library.sh" \
   || { echo "FAIL prepare still maps the fabric from target_ranks" >&2; exit 1; }
@@ -500,6 +509,23 @@ for fn in cmd_pin cmd_unpin; do
     || { echo "FAIL $fn does not resolve every rank before mutating" >&2; exit 1; }
 done
 echo "OK   pin and unpin verify every rank's view before changing any stamp"
+
+# A multi-rank spec reuses a matching identity view under any name only when
+# that exact path verifies on every target rank.
+candidate_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CLUSTER_TOPOLOGY_ID=topo-1
+  verify_hot_on_rank() { [ "$2" = /hot/conf-view ]; }
+  eval "$(sed -n "/^observe_ready_ranks_for_instance() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^spec_view_ready_on_every_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  spec_view_ready_on_every_rank /hot/conf-view spec "{}" home-a 0,1 0 1 && echo reuse
+  spec_view_ready_on_every_rank /hot/other spec "{}" home-a 0,1 0 1 || echo copy
+' _ "$REPO_DIR")
+[ "$candidate_out" = $'reuse\ncopy' ] || { echo "FAIL identity reuse candidate check: $candidate_out" >&2; exit 1; }
+sed -n "/^cmd_prepare() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -q "reuse_candidate" \
+  || { echo "FAIL prepare ignores the plan reuse candidate" >&2; exit 1; }
+echo "OK   a multi-rank spec reuses an identity view only when every rank verifies it"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

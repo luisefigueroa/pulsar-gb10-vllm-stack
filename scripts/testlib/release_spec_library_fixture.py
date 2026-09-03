@@ -127,24 +127,29 @@ def cmd_arrange(argv: list[str]) -> None:
         json.dumps(catalog, indent=2) + "\n", encoding="utf-8"
     )
     manifest = spec["identity"]["snapshot_manifest"]
-    write_identity_hot_view(
-        root / "hot-conf",
-        profile=NANO,
-        topology_id=topology["topology_id"],
-        model_id=spec["identity"]["model_id"],
-        revision=receipt["snapshot_revision"],
-        manifest=manifest,
-        content_id="confview0001",
-    )
-    write_identity_hot_view(
-        root / "hot-spec",
-        profile=spec["spec_id"],
-        topology_id=topology["topology_id"],
-        model_id=spec["identity"]["model_id"],
-        revision=receipt["snapshot_revision"],
-        manifest=manifest,
-        content_id="specview0001",
-    )
+    # Views that pin, unpin, and prepare inspect must verify for real: a
+    # strict lookup hashes rank 0, so each carries the sealed manifest's
+    # payload and a stamp whose digest and validation match it.
+    for hot_name, view_profile, content_id in (
+        ("hot-conf", NANO, "confview0001"),
+        ("hot-spec", spec["spec_id"], "specview0001"),
+    ):
+        instance = write_identity_hot_view(
+            root / hot_name,
+            profile=view_profile,
+            topology_id=topology["topology_id"],
+            model_id=spec["identity"]["model_id"],
+            revision=receipt["snapshot_revision"],
+            manifest=manifest,
+            content_id=content_id,
+        )
+        make_view_verifiable(
+            instance,
+            hub_source=hub,
+            profile=view_profile,
+            model_id=spec["identity"]["model_id"],
+            manifest=manifest,
+        )
     rank1 = json.loads(json.dumps(catalog))
     rank1["models"][0]["homes"][0]["rank"] = 1
     rank1["models"][0]["homes"][0]["node_id"] = "fixture-node-1"
@@ -175,6 +180,26 @@ def cmd_arrange(argv: list[str]) -> None:
     (root / "home-inventory.json").write_text(
         json.dumps(inventory) + "\n", encoding="utf-8"
     )
+
+
+def make_view_verifiable(instance, *, hub_source, profile, model_id, manifest) -> None:
+    """Give a stub view the payload and stamp fields verify-hot checks."""
+    import shutil
+
+    from scripts import model_library
+
+    stamp = model_library.load_hot_stamp(instance)
+    stamp["validation"] = model_library.require_activation_identity(
+        {"profile": profile, "model_id": model_id},
+        manifest,
+        allow_unvalidated=False,
+    )
+    stamp["content_digest"] = manifest["manifest_id"]
+    stamp["bytes_logical"] = manifest["total_bytes"]
+    model_library.write_hot_stamp(instance, stamp)
+    hub_dest = model_library.hot_hub_path(instance, model_id)
+    if not hub_dest.exists():
+        shutil.copytree(hub_source, hub_dest, symlinks=True)
 
 
 def cmd_reuse_view(argv: list[str]) -> None:

@@ -212,6 +212,56 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertEqual(ready["action"], "skip")
         self.assertIn("every target rank", ready["reason"])
 
+    def test_multi_rank_identity_names_a_reuse_candidate(self) -> None:
+        self.assertIsNone(
+            model_library.plan_prepare(**self._identity_kwargs(nodes=2))["reuse_candidate"]
+        )
+        conf_plan = model_library.plan_prepare(
+            catalog_path=str(self.catalog_path),
+            profile=self.profile,
+            topology_id=TOPOLOGY_ID,
+            hot_root=str(self.hot),
+            models_dir=self.models_dir,
+            nodes=1,
+            home_inventory=self.home_inventory,
+            require_exact_revision=fixture.COMMIT,
+            expected_integrity_manifest=self.manifest,
+        )
+        instance = pathlib.Path(conf_plan["instance_dir"])
+        instance.mkdir(parents=True)
+        model_library.write_hot_stamp(instance, conf_plan["stamp"])
+        # A two-rank spec does not skip from the controller alone, but names
+        # the conf-named identity match for the wrapper to verify on every
+        # rank before reusing it.
+        plan = model_library.plan_prepare(**self._identity_kwargs(nodes=2))
+        self.assertEqual(plan["action"], "copy")
+        self.assertEqual(plan["reuse_candidate"], str(instance))
+        self.assertNotIn(SPEC_ID, plan["reuse_candidate"])
+
+    def test_identity_classification_names_the_exact_commit(self) -> None:
+        empty = self.root / "empty-catalog.json"
+        model_library.atomic_write_json(
+            empty,
+            {
+                "schema_version": 2,
+                "generated_at": "2026-09-02T00:00:00.000Z",
+                "topology_id": TOPOLOGY_ID,
+                "models": [],
+                "primary_selections": [],
+            },
+        )
+        gap = model_library.classify_library_readiness(
+            profile=SPEC_ID,
+            catalog_path=str(empty),
+            topology_id=TOPOLOGY_ID,
+            models_dir=None,
+            identity_key=f"{self.model_id}@{fixture.COMMIT}",
+        )
+        self.assertEqual(gap["reason"], "no-home")
+        self.assertIn(f"--revision {fixture.COMMIT}", gap["remediation"])
+        self.assertNotIn("<selector>", gap["remediation"])
+        self.assertNotIn("<exact-commit>", gap["remediation"])
+
     def test_identity_reuses_candidate_from_the_selected_rank(self) -> None:
         # A one-node spec placed on a remote home rank: the wrapper discovers
         # the candidate there and hands it in; the controller hot root is

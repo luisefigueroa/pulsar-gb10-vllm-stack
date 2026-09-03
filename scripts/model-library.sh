@@ -2823,14 +2823,19 @@ verify_copy_ssh_roce_route() {
     || die "rank $remote_rank: live route does not match confirmed RoCE rail"
 }
 
-# copy_ranks_need_bulk_transfer <home_rank> <rank>...
-# Print 1 when any copied rank is not the home rank (bytes must cross the
-# fabric), else 0.
-copy_ranks_need_bulk_transfer() {
+# copy_ranks_need_fabric_map <home_rank> <rank>...
+# Print 1 when the fabric map is needed: a copied rank is remote (its bytes
+# and its stamp travel over the fabric shell), or rank 0 is copied from a
+# remote home. Only a controller-local copy from a controller home needs
+# no map.
+copy_ranks_need_fabric_map() {
   local home_rank="${1:?}" rank
   shift
   for rank in "$@"; do
-    [ "$rank" = "$home_rank" ] || { printf '1\n'; return 0; }
+    if [ "$rank" != 0 ] || [ "$home_rank" != 0 ]; then
+      printf '1\n'
+      return 0
+    fi
   done
   printf '0\n'
 }
@@ -3109,6 +3114,18 @@ observe_ready_ranks_for_instance() {
     fi
   done
   (IFS=,; printf '%s\n' "${ready[*]}")
+}
+
+# spec_view_ready_on_every_rank <instance> <profile> <validation_json>
+#   <home_node_id> <ranks_csv> <rank>...
+# Succeed only when the observation over the given ranks equals RANKS_CSV.
+spec_view_ready_on_every_rank() {
+  local instance="${1:?}" profile="${2:?}" expected_validation_json="${3:?}"
+  local home_node_id="${4:?}" ranks_csv="${5:?}" observed
+  shift 5
+  observed=$(observe_ready_ranks_for_instance "$instance" "$profile" \
+    "$expected_validation_json" "$home_node_id" "$@")
+  [ "$observed" = "$ranks_csv" ]
 }
 
 # require_no_view_users_on_ranks <instance> <content_id> <rank>...
@@ -3420,7 +3437,7 @@ cmd_prepare() {
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
   target_ranks_csv=$(IFS=,; printf '%s' "${target_ranks[*]}")
   local -a copy_ranks=("${target_ranks[@]}")
-  local ready_csv="" plan_home_node_id plan_content_id
+  local ready_csv="" plan_home_node_id plan_content_id reuse_candidate=""
   plan_home_node_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"].get("node_id") or "")')
   plan_content_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["content_id"])')
 
@@ -3430,6 +3447,15 @@ cmd_prepare() {
   # bytes, stamps, and pins, and no copy ever runs beneath them.
   if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ] \
       && [ "${#target_ranks[@]}" -gt 1 ]; then
+    # A matching identity view under any name is reused only when that
+    # exact path verifies on every target rank; a partial match is never
+    # repaired under the spec's name.
+    reuse_candidate=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reuse_candidate") or "")')
+    if [ -n "$reuse_candidate" ] && spec_view_ready_on_every_rank "$reuse_candidate" "$profile" \
+        "$expected_validation_json" "$plan_home_node_id" "$target_ranks_csv" "${target_ranks[@]}"; then
+      log "reusing verified identity view $reuse_candidate on every target rank; model not started"
+      return 0
+    fi
     ready_csv=$(observe_ready_ranks_for_instance "$instance" "$profile" \
       "$expected_validation_json" "$plan_home_node_id" "${target_ranks[@]}")
     if [ "$ready_csv" = "$target_ranks_csv" ]; then
@@ -3477,14 +3503,14 @@ print(json.dumps(d))
   # home rank as the source), so a rank that stays untouched by a selective
   # repair never needs a fabric mapping.
   if [ "$transport" = ssh-roce ]; then
-    needs_bulk_transfer=$(copy_ranks_need_bulk_transfer "$home_rank" "${copy_ranks[@]}")
+    needs_bulk_transfer=$(copy_ranks_need_fabric_map "$home_rank" "${copy_ranks[@]}")
     if [ "$needs_bulk_transfer" = 1 ]; then
       load_copy_ssh_roce_map "$home_rank" \
         "$(roce_map_ranks_csv "$home_rank" "${copy_ranks[@]}")" \
         "${PULSAR_FABRIC_RAIL_INDEX:-0}"
       log "ssh-roce candidate: confirmed identity + RoCE HostName binding"
     else
-      log "no non-home transfer is required; preparing the durable-home local view"
+      log "no fabric transfer is required; preparing the controller-local durable-home view"
     fi
   fi
 
@@ -3748,12 +3774,21 @@ hot_instance_for_profile_on_rank() {
         return 1
       fi
     fi
-    if [ "$rank" -ne 0 ] && [ "$strict" = 1 ]; then
-      command=$(shell_join_q python3 - verify-hot \
-        --expected-manifest-id "$SPEC_MANIFEST_ID" \
-        --topology-id "$CLUSTER_TOPOLOGY_ID" \
-        --instance-dir "$instance")
-      ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || return 1
+    # find-hot checks metadata only; a strict lookup hashes the content on
+    # every rank, the controller included, before it reports the view.
+    if [ "$strict" = 1 ]; then
+      if [ "$rank" -eq 0 ]; then
+        python3 "$PY_TOOL" verify-hot \
+          --expected-manifest-id "$SPEC_MANIFEST_ID" \
+          --topology-id "$CLUSTER_TOPOLOGY_ID" \
+          --instance-dir "$instance" >/dev/null || return 1
+      else
+        command=$(shell_join_q python3 - verify-hot \
+          --expected-manifest-id "$SPEC_MANIFEST_ID" \
+          --topology-id "$CLUSTER_TOPOLOGY_ID" \
+          --instance-dir "$instance")
+        ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || return 1
+      fi
     fi
   elif [ "$rank" -ne 0 ]; then
     stamp=$(printf '%s' "$info" | python3 -c \
