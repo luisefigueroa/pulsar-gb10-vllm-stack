@@ -57,6 +57,7 @@ models = {m["id"]: m for m in json.load(sys.stdin)["models"]}
 assert "deepseek-v4-flash" not in models
 assert not any(m.get("spec_default_enabled") for m in models.values())
 assert models["nemotron-3-super-120b-nvfp4"]["spec_default_enabled"] is False
+assert "release_spec" in models["nemotron-3-super-120b-nvfp4"]
 '
 
 grep -q -- '--no-spec-decode' "$REPO_DIR/scripts/up.sh"

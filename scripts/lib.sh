@@ -642,6 +642,79 @@ print("\t".join((
   fi
 }
 
+# Display-only ADR 0017 spec-review projection. Never a serving gate; always
+# returns 0. Compact JSON is one line with no tabs.
+# Print the `release_consumer.py project` arguments for the loaded profile,
+# one token per line: the profile projection plus the live VLLM_EXTRA_ARGS and
+# EXTRA_ENV, split the way write_launch_plan_file does. Tokens never contain
+# newlines (conf arrays cannot carry them), so callers use mapfile -t.
+print_release_spec_projection_args() {
+  local item
+  local -a args=() extra_split=()
+  args+=(
+    --repo-root "$REPO_DIR"
+    --library-dir "$PULSAR_MODEL_LIBRARY_DIR"
+    --catalog "$PULSAR_MODEL_LIBRARY_CATALOG"
+    --platform-id "${PULSAR_PLATFORM_ID:-dgx-spark-gb10}"
+    --profile "${CONF_NAME:-}"
+  )
+  if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
+    args+=(--releases-root "$PULSAR_RELEASES_ROOT")
+  fi
+  append_loaded_profile_contract_args args
+  append_vllm_extra_args extra_split
+  for item in ${extra_split[@]+"${extra_split[@]}"}; do
+    args+=("--extra-arg=$item")
+  done
+  # shellcheck disable=SC2086
+  for item in ${EXTRA_ENV:+$EXTRA_ENV}; do
+    args+=("--extra-env=$item")
+  done
+  printf '%s\n' "${args[@]}"
+}
+
+# Display-only ADR 0017 spec-review projection for the loaded profile. Never a
+# serving gate; always returns 0. Compact JSON is one line with no tabs.
+# list-models batches all profiles through `project-batch` instead.
+load_release_spec_projection() {
+  local tool output rc
+  local -a args=(project)
+  RELEASE_SPEC_JSON='{"identities":[],"receipt":"unreadable"}'
+  tool="${PULSAR_RELEASE_CONSUMER_PY:-$REPO_DIR/scripts/release_consumer.py}"
+  [ -f "$tool" ] || return 0
+  mapfile -t -O 1 args < <(print_release_spec_projection_args)
+  set +e
+  output=$(python3 "$tool" "${args[@]}" 2>/dev/null)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
+    RELEASE_SPEC_JSON=$(printf '%s' "$output" | tr -d '\n\t')
+  fi
+  [ -n "$RELEASE_SPEC_JSON" ] || \
+    RELEASE_SPEC_JSON='{"identities":[],"receipt":"unreadable"}'
+  return 0
+}
+
+release_spec_enabled_cell() {
+  local enabled="${1:-0}"
+  python3 - "$REPO_DIR" "$enabled" "${RELEASE_SPEC_JSON:-}" <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.release_consumer import enabled_identity_cell
+
+try:
+    payload = json.loads(sys.argv[3])
+except Exception:
+    payload = None
+if not isinstance(payload, dict):
+    print("-")
+    raise SystemExit(0)
+print(enabled_identity_cell(payload, spec_decode=sys.argv[2] == "1"))
+PY
+}
+
 mem_available_gib_local() {
   if [ -r /proc/meminfo ]; then
     local kb

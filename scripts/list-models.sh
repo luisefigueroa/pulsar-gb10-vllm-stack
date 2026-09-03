@@ -30,8 +30,11 @@ while [ $# -gt 0 ]; do
 done
 
 tmp=$(mktemp "${TMPDIR:-/tmp}/pulsar-list-models.XXXXXX")
-trap 'rm -f "$tmp"' EXIT
+records=$(mktemp "${TMPDIR:-/tmp}/pulsar-list-models-records.XXXXXX")
+projections=$(mktemp "${TMPDIR:-/tmp}/pulsar-list-models-projections.XXXXXX")
+trap 'rm -f "$tmp" "$records" "$projections"' EXIT
 : >"$tmp"
+: >"$records"
 
 for conf in "$REPO_DIR"/models/*.conf; do
   [ -f "$conf" ] || continue
@@ -62,6 +65,8 @@ for conf in "$REPO_DIR"/models/*.conf; do
     reviewed_identity=0 reviewed_model_id="" reviewed_revision=""
     reviewed_manifest=""
     load_model_serving_release_projection local-verified-readonly
+    # One spec-review record per profile; projected in one batch below.
+    { print_release_spec_projection_args; printf '\n'; } >>"$records"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$name" "$STATUS" "$NODES" "$src" "$SERVED_NAME" "$spec" \
       "${FIRST_RUN_CANDIDATE:-0}" "$PROFILE_FAMILY" "$VARIANT_LABEL" \
@@ -75,6 +80,14 @@ for conf in "$REPO_DIR"/models/*.conf; do
       "$MODEL_SERVING_RELEASE_DECISION_ID"
   ) >>"$tmp" || true
 done
+
+# Display-only spec review for every listed profile in one process (ADR 0017).
+# Any failure leaves every row unlabeled; a listing never fails on spec state.
+: >"$projections"
+if [ -s "$records" ]; then
+  python3 "${PULSAR_RELEASE_CONSUMER_PY:-$REPO_DIR/scripts/release_consumer.py}" \
+    project-batch --records "$records" >"$projections" 2>/dev/null || : >"$projections"
+fi
 
 # Legacy tested/recommended profiles first, then first-run candidates, one-node,
 # and name. This is recommendation order only; no status is hidden by default.
@@ -96,8 +109,17 @@ path.write_text("".join(f"{line}\n" for line in sorted(rows, key=key)), encoding
 PY
 
 if [ "$JSON" = 1 ]; then
-  python3 - <<PY
+  python3 - "$projections" <<PY
 import json
+import sys
+UNREADABLE = {"receipt": "unreadable", "identities": []}
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        projections = json.load(f).get("projections", {})
+except Exception:
+    projections = {}
+if not isinstance(projections, dict):
+    projections = {}
 rows = []
 with open("$tmp") as f:
     for line in f:
@@ -107,6 +129,9 @@ with open("$tmp") as f:
         p = line.split("\\t")
         while len(p) < 24:
             p.append("")
+        release_spec = projections.get(p[0])
+        if not isinstance(release_spec, dict):
+            release_spec = dict(UNREADABLE)
         rows.append({
             "id": p[0],
             "status": p[1],
@@ -137,6 +162,7 @@ with open("$tmp") as f:
                 "decision_id": p[23] or None,
                 "advisory": True,
             },
+            "release_spec": release_spec,
         })
 print(json.dumps({"models": rows}, indent=2))
 PY
@@ -148,20 +174,34 @@ if [ ! -s "$tmp" ]; then
   exit 0
 fi
 
-python3 - "$tmp" "$REPO_DIR" <<'PY'
+python3 - "$tmp" "$REPO_DIR" "$projections" <<'PY'
 from pathlib import Path
+import json
 import sys
 
 sys.path.insert(0, sys.argv[2])
+from scripts.release_consumer import human_spec_review_values
 from scripts.terminal_format import TerminalWriter
 
+UNREADABLE = {"receipt": "unreadable", "identities": []}
+try:
+    projections = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8")).get("projections", {})
+except Exception:
+    projections = {}
+if not isinstance(projections, dict):
+    projections = {}
 term = TerminalWriter()
 for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     fields = line.split("\t")
     fields.extend([""] * (24 - len(fields)))
+    release_spec = projections.get(fields[0])
+    if not isinstance(release_spec, dict):
+        release_spec = dict(UNREADABLE)
     term.emit(fields[0])
     term.field("Release", fields[21], indent=2, label_width=10)
     term.field("Legacy", fields[1], indent=2, label_width=10)
+    for value in human_spec_review_values(release_spec):
+        term.field("Spec review", value, indent=2, label_width=10)
     term.field("Serves", fields[4], indent=2, label_width=10)
     term.field(
         "Recipe",
@@ -183,6 +223,16 @@ term.field(
     "Legacy status",
     "historical profile evidence/recommendation label; both status fields "
     "are display-only and neither grants nor denies launch",
+    indent=2,
+    label_width=16,
+)
+term.field(
+    "Spec review",
+    "display-only ADR 0017 review.status for the spec computed from this "
+    "profile plus its download receipt. Shown only when the live launch "
+    "contract (argv, container env, image digest, geometry) matches; "
+    "otherwise hidden. No receipt or no released spec is unlabeled (-) "
+    "and is not Untested. This field does not grant or deny launch",
     indent=2,
     label_width=16,
 )

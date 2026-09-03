@@ -2483,6 +2483,17 @@ def _attachment_matches_target(
     )
 
 
+def list_source_attested_home_attachments(
+    library_dir: str | pathlib.Path,
+) -> list[dict[str, Any]]:
+    """Return every stored occupancy attachment (historical store listing).
+
+    Display-only callers use this to find the single attachment for a model
+    when no catalog revision is known. It is not live-home authority.
+    """
+    return _listed_source_attested_home_attachments(library_dir)
+
+
 def _listed_source_attested_home_attachments(
     library_dir: str | pathlib.Path,
 ) -> list[dict[str, Any]]:

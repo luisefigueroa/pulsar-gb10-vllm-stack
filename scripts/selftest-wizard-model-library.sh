@@ -12,6 +12,17 @@ trap 'rm -rf "$STATE"' EXIT
 mkdir -p "$STATE/bin" "$STATE/reports" "$STATE/logs"
 
 python3 "$REPO_DIR/scripts/testlib/model_storage_fixture.py" "$STATE/reports"
+python3 - "$STATE/reports/profiles.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+for model in document.get("models") or []:
+    model.setdefault("release_spec", {"receipt": "missing", "identities": []})
+path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
 
 python3 - "$STATE/inventory.json" "$STATE/memory.json" "$REPO_DIR" <<'PY'
 import json
@@ -190,6 +201,7 @@ one_profiles = {"models": [{
     "reviewed_model_id": None,
     "reviewed_revision": None,
     "reviewed_manifest": None,
+    "release_spec": {"receipt": "missing", "identities": []},
 }]}
 one_health = {
     "schema_version": 1,
@@ -248,6 +260,7 @@ unsealed_one = {"models": [{
     "spec": "none", "spec_default_enabled": False,
     "reviewed_identity": False, "reviewed_model_id": None,
     "reviewed_revision": None, "reviewed_manifest": None,
+    "release_spec": {"receipt": "missing", "identities": []},
 }]}
 unsealed_two = {"models": [{
     "id": "qwen3.8-27b-fp8-2node", "status": "tested", "nodes": 2,
@@ -255,6 +268,7 @@ unsealed_two = {"models": [{
     "spec": "none", "spec_default_enabled": False,
     "reviewed_identity": False, "reviewed_model_id": None,
     "reviewed_revision": None, "reviewed_manifest": None,
+    "release_spec": {"receipt": "missing", "identities": []},
 }]}
 for name, value in (
     ("unsealed-one-profiles.json", unsealed_one),
@@ -441,6 +455,8 @@ run_wizard healthy.json 0 0 $'2\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/output.log" 'legacy=untested' \
   "wizard exposes a non-recommended serving profile with its display-only status"
+assert_contains "$STATE/logs/output.log" 'spec=' \
+  "wizard picker shows display-only spec review"
 assert_empty "$STATE/logs/prepare.log" "ready views need no preparation"
 assert_contains "$STATE/logs/weights.log" '^qwen3.8-27b-fp8-2node --json$' \
   "weight preflight carries no mode flag"

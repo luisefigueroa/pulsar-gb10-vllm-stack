@@ -88,7 +88,8 @@ MODELS_JSON='{
       "served_name": "qwen3-1.7b-2node",
       "spec": "recommended",
       "spec_default_enabled": true,
-      "first_run_candidate": false
+      "first_run_candidate": false,
+      "release_spec": {"receipt": "missing", "identities": []}
     },
     {
       "id": "qwen3.6-27b-fp8",
@@ -98,7 +99,8 @@ MODELS_JSON='{
       "served_name": "qwen3.6-27b-fp8",
       "spec": "none",
       "spec_default_enabled": false,
-      "first_run_candidate": true
+      "first_run_candidate": true,
+      "release_spec": {"receipt": "missing", "identities": []}
     },
     {
       "id": "qwen3.8-27b-fp8",
@@ -110,7 +112,8 @@ MODELS_JSON='{
       "spec_default_enabled": false,
       "first_run_candidate": true,
       "family": "qwen3.8-27b-fp8",
-      "family_recommended": true
+      "family_recommended": true,
+      "release_spec": {"receipt": "missing", "identities": []}
     }
   ]
 }'
@@ -749,6 +752,10 @@ assert_file_contains "$STATE/logs/wizard.combined" "pre-library launch" \
   "legacy running service is named a pre-library launch"
 assert_file_contains "$STATE/logs/wizard.out" "^MODEL SELECTED$" \
   "wizard model selection uses a semantic section"
+assert_file_contains "$STATE/logs/wizard.out" "Spec review" \
+  "wizard model selection shows display-only spec review"
+assert_file_contains "$STATE/logs/wizard.err" "spec=-" \
+  "wizard picker shows spec review from catalog JSON"
 assert_file_not_contains "$STATE/logs/wizard.out" "sha256:" "default model selection hides image digest"
 assert_file_contains "$STATE/logs/wizard.out" "^TARGET$" "wizard target uses a semantic section"
 assert_file_contains "$STATE/logs/wizard.out" "^PREFLIGHT$" "wizard preflight uses a semantic section"

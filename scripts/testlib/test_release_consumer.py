@@ -16,11 +16,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from release_spec import load_spec, pretty_json_bytes, verify_spec  # noqa: E402
+from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts import release_consumer as consumer  # noqa: E402
 from scripts import release_spec_generate as generate  # noqa: E402
 from scripts.testlib.test_release_spec_generate import (  # noqa: E402
+    NANO,
     PINNED_IMAGE,
     PLATFORM_ID,
+    SUPER,
     SUPER_JSON,
     nano_kwargs,
     receipt_for,
@@ -58,6 +61,7 @@ def run_cli(
     cmd.extend(args)
     env = dict(os.environ)
     env.pop("COLUMNS", None)
+    env.pop("PULSAR_RELEASES_ROOT", None)
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
@@ -114,6 +118,152 @@ def super_identity_kwargs() -> dict[str, object]:
         "files": receipt["observed_manifest"]["files"],
         "receipt_model_id": receipt["model_id"],
     }
+
+
+def released_nano_spec() -> dict:
+    spec, report = generate.build_spec_from_profile(**nano_kwargs())
+    assert spec is not None
+    assert report["generated"]
+    golden = golden_spec()
+    document = json.loads(pretty_json_bytes(spec))
+    document["state"] = "released"
+    document["measurements"] = golden["measurements"]
+    document["baselines"] = golden["baselines"]
+    document["evidence"] = golden["evidence"]
+    document["review"] = {
+        "status": "stable",
+        "reviewer": "example-reviewer",
+        "reviewed_at": "2026-09-02T00:00:00Z",
+    }
+    return verify_spec(document)
+
+
+def write_fixture_library(
+    root: pathlib.Path,
+    *,
+    model_id: str,
+    profile: str,
+) -> tuple[pathlib.Path, pathlib.Path, dict]:
+    library = root / "library"
+    home = root / "durable-home"
+    home.mkdir(parents=True)
+    receipt = source_attested.validate_source_attested_acquisition_receipt(
+        json.loads(receipt_for(model_id).read_text(encoding="utf-8"))
+    )
+    source_attested.write_source_attested_receipt(
+        library, receipt, operation="test"
+    )
+    source_attested.write_source_attested_home_attachment(
+        library,
+        receipt=receipt,
+        node_id="node-0",
+        durable_home_path=str(home.resolve()),
+        directory_identity={"device": 1, "inode": 1, "ctime_ns": 1},
+    )
+    catalog = {
+        "schema_version": 2,
+        "models": [
+            {
+                "model_id": model_id,
+                "revision": receipt["snapshot_revision"],
+                "identity_key": f"{model_id}@{receipt['snapshot_revision']}",
+                "profiles": [profile],
+                "homes": [],
+            }
+        ],
+    }
+    catalog_path = library / "catalog.json"
+    catalog_path.write_text(
+        json.dumps(catalog, indent=2) + "\n", encoding="utf-8"
+    )
+    return library, catalog_path, receipt
+
+
+def project_kwargs(
+    library: pathlib.Path,
+    catalog: pathlib.Path,
+    *,
+    profile: str = NANO,
+    recommended_spec: bool = False,
+    image: str | None = None,
+    extra_args: tuple[str, ...] = (),
+    extra_env: tuple[str, ...] = (),
+    releases_root: pathlib.Path | None = None,
+    repo_root: pathlib.Path | None = None,
+    identity: dict[str, object] | None = None,
+) -> dict[str, object]:
+    values = dict(identity or nano_identity_kwargs())
+    values.pop("spec_decode", None)
+    values.pop("files", None)
+    values.pop("snapshot_revision", None)
+    values.pop("receipt_model_id", None)
+    return {
+        "profile": profile,
+        "model_id": values["model_id"],
+        "image": image if image is not None else values["image"],
+        "nodes": values["nodes"],
+        "gpu_mem_util": values["gpu_mem_util"],
+        "engine_args": values["engine_args"],
+        "container_env": values["container_env"],
+        "spec_decode_args": values["spec_decode_args"],
+        "platform_id": values["platform_id"],
+        "recommended_spec": recommended_spec,
+        "library_dir": library,
+        "catalog_path": catalog,
+        "releases_root": releases_root,
+        "repo_root": repo_root,
+        "extra_args": extra_args,
+        "extra_env": extra_env,
+    }
+
+
+def project_cli_args(kwargs: dict[str, object]) -> list[str]:
+    args = [
+        "project",
+        "--library-dir",
+        str(kwargs["library_dir"]),
+        "--catalog",
+        str(kwargs.get("catalog_path") or ""),
+        "--profile",
+        str(kwargs["profile"]),
+        "--model-id",
+        str(kwargs["model_id"]),
+        "--served-name",
+        "nemotron-3-nano",
+        "--image",
+        str(kwargs["image"]),
+        "--nodes",
+        str(kwargs["nodes"]),
+        "--port",
+        "8000",
+        "--gpu-mem-util",
+        str(kwargs["gpu_mem_util"]),
+        "--recommended-spec",
+        "1" if kwargs.get("recommended_spec") else "0",
+        "--platform-id",
+        str(kwargs["platform_id"]),
+        "--profile-purpose",
+        "serving",
+        "--topology-class",
+        "single",
+        "--min-rails-per-pair",
+        "0",
+    ]
+    if kwargs.get("releases_root"):
+        args.extend(["--releases-root", str(kwargs["releases_root"])])
+    if kwargs.get("repo_root"):
+        args.extend(["--repo-root", str(kwargs["repo_root"])])
+    for item in kwargs.get("engine_args") or []:
+        args.append(f"--engine-arg={item}")
+    for item in kwargs.get("container_env") or []:
+        args.append(f"--container-env={item}")
+    for item in kwargs.get("spec_decode_args") or []:
+        args.append(f"--spec-decode-arg={item}")
+    for item in kwargs.get("extra_args") or []:
+        args.append(f"--extra-arg={item}")
+    for item in kwargs.get("extra_env") or []:
+        args.append(f"--extra-env={item}")
+    return args
 
 
 def nano_identity_kwargs() -> dict[str, object]:
@@ -406,6 +556,252 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertEqual(len(nano), 1)
         self.assertFalse(nano[0]["spec_decode"])
         self.assertTrue(nano[0]["default"])
+
+    def test_review_text_since_only_for_stable(self) -> None:
+        self.assertEqual(
+            consumer._review_text("stable", "2026-09-02T00:00:00Z"),
+            "stable since 2026-09-02T00:00:00Z",
+        )
+        self.assertEqual(
+            consumer._review_text("validated", "2026-09-02T00:00:00Z"),
+            "validated",
+        )
+        self.assertEqual(
+            consumer._review_text("failed", "2026-09-02T00:00:00Z"),
+            "failed",
+        )
+        self.assertEqual(
+            consumer._review_text("withdrawn", "2026-09-02T00:00:00Z"),
+            "withdrawn",
+        )
+        self.assertEqual(consumer._review_text(None, None), "-")
+
+    def test_project_profile_absence_and_equal_and_hidden(self) -> None:
+        root = pathlib.Path(tempfile.mkdtemp(prefix="pulsar-project-"))
+        self._tmp = root
+        repo = root / "repo"
+        (repo / consumer.RELEASES_DIR).mkdir(parents=True)
+        missing = consumer.project_profile(
+            **project_kwargs(
+                pathlib.Path("/no/such/library"),
+                pathlib.Path("/no/such/catalog.json"),
+            )
+        )
+        self.assertEqual(missing["receipt"], "missing")
+        self.assertEqual(missing["identities"], [])
+
+        empty = root / "empty-lib"
+        empty.mkdir()
+        catalog_only = empty / "catalog.json"
+        catalog_only.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "models": [
+                        {
+                            "model_id": "other/other",
+                            "revision": "a" * 40,
+                            "profiles": ["other"],
+                            "homes": [],
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        absent_profile = consumer.project_profile(
+            **project_kwargs(empty, catalog_only)
+        )
+        self.assertEqual(absent_profile["receipt"], "missing")
+        self.assertEqual(absent_profile["identities"], [])
+
+        library, catalog, _receipt = write_fixture_library(
+            root, model_id=nano_kwargs()["model_id"], profile=NANO
+        )
+
+        no_release = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        self.assertEqual(no_release["receipt"], "found")
+        self.assertEqual(len(no_release["identities"]), 1)
+        row = no_release["identities"][0]
+        self.assertFalse(row["released"])
+        self.assertIsNone(row["comparison"])
+        self.assertIsNone(row["review_status"])
+        self.assertTrue(row["spec_id"])
+
+        spec = released_nano_spec()
+        dest = repo / consumer.RELEASES_DIR / f"{spec['spec_id']}.json"
+        dest.write_bytes(pretty_json_bytes(spec))
+        equal = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        self.assertEqual(equal["receipt"], "found")
+        equal_row = equal["identities"][0]
+        self.assertTrue(equal_row["released"])
+        self.assertEqual(equal_row["comparison"], "equal")
+        self.assertEqual(equal_row["review_status"], "stable")
+        self.assertEqual(equal_row["reviewed_at"], "2026-09-02T00:00:00Z")
+        self.assertEqual(
+            consumer.identity_review_cell(equal_row, receipt="found"),
+            "stable since 2026-09-02T00:00:00Z",
+        )
+
+        hidden_args = consumer.project_profile(
+            **project_kwargs(
+                library,
+                catalog,
+                repo_root=repo,
+                extra_args=("--enforce-eager",),
+            )
+        )
+        hidden_row = hidden_args["identities"][0]
+        self.assertEqual(hidden_row["comparison"], "differs")
+        self.assertEqual(hidden_row["differs_fields"], ["argv"])
+        self.assertIsNone(hidden_row["review_status"])
+        self.assertEqual(equal_row["release_file"], "valid")
+
+        # A corrupt file in the trusted registry is reported, never shown as
+        # "no spec": display-only, non-gating, but not silent.
+        dest.write_text("{not json", encoding="utf-8")
+        invalid = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        invalid_row = invalid["identities"][0]
+        self.assertEqual(invalid_row["release_file"], "invalid")
+        self.assertFalse(invalid_row["released"])
+        self.assertIsNone(invalid_row["comparison"])
+        self.assertIsNone(invalid_row["review_status"])
+        self.assertEqual(
+            consumer.identity_review_cell(invalid_row, receipt="found"),
+            "invalid release file (verification failed)",
+        )
+        measured = json.loads(pretty_json_bytes(spec))
+        measured["state"] = "measured"
+        measured["review"] = {}
+        dest.write_bytes(pretty_json_bytes(measured))
+        self.assertEqual(
+            consumer.project_profile(
+                **project_kwargs(library, catalog, repo_root=repo)
+            )["identities"][0]["release_file"],
+            "invalid",
+        )
+        dest.write_bytes(pretty_json_bytes(spec))
+
+        # project-batch: one process, shared caches, same payload per record.
+        single = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        record = project_cli_args(project_kwargs(library, catalog, repo_root=repo))[1:]
+        records_path = repo / "records.txt"
+        records_path.write_text(
+            "\n".join(record) + "\n\n" + "\n".join(record) + "\n"
+            + "\n--profile\nno-such-profile\n--library-dir\n" + str(library) + "\n",
+            encoding="utf-8",
+        )
+        batch = run_cli(["project-batch", "--records", str(records_path)])
+        self.assertEqual(batch.returncode, 0, msg=batch.stderr)
+        payload = json.loads(batch.stdout)
+        self.assertEqual(payload["projections"][NANO], single)
+        self.assertEqual(payload["projections"]["no-such-profile"]["identities"], [])
+        self.assertEqual(batch.stdout.count("\n"), 1)
+        self.assertNotIn("\t", batch.stdout)
+        self.assertEqual(
+            consumer.identity_review_cell(hidden_row, receipt="found"),
+            "hidden (launch contract differs: argv)",
+        )
+
+        hidden_env = consumer.project_profile(
+            **project_kwargs(
+                library,
+                catalog,
+                repo_root=repo,
+                extra_env=("FOO=1",),
+            )
+        )
+        env_row = hidden_env["identities"][0]
+        self.assertEqual(env_row["comparison"], "differs")
+        self.assertEqual(env_row["differs_fields"], ["container_env"])
+        self.assertIsNone(env_row["review_status"])
+
+        measured, report = generate.build_spec_from_profile(**nano_kwargs())
+        self.assertIsNotNone(measured)
+        dest.write_bytes(pretty_json_bytes(measured))
+        measured_proj = consumer.project_profile(
+            **project_kwargs(library, catalog, repo_root=repo)
+        )
+        self.assertFalse(measured_proj["identities"][0]["released"])
+        self.assertIsNone(measured_proj["identities"][0]["comparison"])
+
+        unpinned = consumer.project_profile(
+            **project_kwargs(
+                library,
+                catalog,
+                repo_root=repo,
+                image="vllm/vllm-openai:v0.26.0",
+            )
+        )
+        self.assertEqual(unpinned["receipt"], "found")
+        self.assertIsNone(unpinned["identities"][0]["spec_id"])
+
+        super_lib, super_cat, _super_receipt = write_fixture_library(
+            root / "super",
+            model_id="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+            profile=SUPER,
+        )
+        off = consumer.project_profile(
+            **project_kwargs(
+                super_lib,
+                super_cat,
+                profile=SUPER,
+                identity=super_identity_kwargs(),
+                recommended_spec=False,
+            )
+        )
+        self.assertEqual(len(off["identities"]), 2)
+        self.assertTrue(off["identities"][0]["default"])
+        self.assertFalse(off["identities"][1]["default"])
+        on = consumer.project_profile(
+            **project_kwargs(
+                super_lib,
+                super_cat,
+                profile=SUPER,
+                identity=super_identity_kwargs(),
+                recommended_spec=True,
+            )
+        )
+        self.assertFalse(on["identities"][0]["default"])
+        self.assertTrue(on["identities"][1]["default"])
+
+        kwargs = project_kwargs(library, catalog, repo_root=repo)
+        dest.write_bytes(pretty_json_bytes(spec))
+        cli = run_cli(project_cli_args(kwargs), repo=repo)
+        self.assertEqual(cli.returncode, 0, msg=cli.stderr)
+        payload = json.loads(cli.stdout)
+        self.assertEqual(payload["receipt"], "found")
+        self.assertEqual(payload["identities"][0]["comparison"], "equal")
+        self.assertNotIn("\t", cli.stdout)
+
+        missing_cli = run_cli(
+            project_cli_args(
+                project_kwargs(
+                    pathlib.Path("/no/such/library"),
+                    pathlib.Path("/no/such/catalog.json"),
+                )
+            ),
+            repo=repo,
+        )
+        self.assertEqual(missing_cli.returncode, 0, msg=missing_cli.stderr)
+        self.assertEqual(json.loads(missing_cli.stdout)["receipt"], "missing")
+
+        env_cli = run_cli(
+            ["list"],
+            repo=repo,
+            env_extra={"PULSAR_RELEASES_ROOT": str(repo / consumer.RELEASES_DIR)},
+        )
+        self.assertEqual(env_cli.returncode, 0, msg=env_cli.stderr)
+        self.assertIn(spec["spec_id"], env_cli.stdout)
 
 
 if __name__ == "__main__":
