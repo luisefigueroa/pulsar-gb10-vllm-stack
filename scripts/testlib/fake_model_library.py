@@ -37,7 +37,7 @@ def main() -> int:
                 "model-library: ERROR: find-hot: no ready instance",
                 file=sys.stderr,
             )
-            return 1
+            return 3
         sys.stdout.write(pathlib.Path(info_file).read_text(encoding="utf-8"))
         return 0
     if verb == "verify-hot":

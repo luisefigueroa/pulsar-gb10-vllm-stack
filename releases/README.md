@@ -26,5 +26,9 @@ view prepared under a conf name is not reused, so a conf and its spec on
 the same non-home rank hold two working copies while both exist. Prepare,
 pin, and launch verify a spec view against the sealed manifest id, not a
 conf file; `purge-hot <spec_id>` removes the spec's own view on the target
-ranks and may name a previous placement with `--node`. Spec presence is
-never occupancy, and `review.status` is display only.
+ranks, including one an interrupted preparation left incomplete, and may
+name a previous placement with `--node`. Preparation is all-or-nothing: a
+multi-rank view lost on one rank is re-materialized on every rank by
+`purge-hot <spec_id> --yes --force-unpin` followed by `prepare <spec_id>
+--yes`. Spec presence is never occupancy, and `review.status` is display
+only.

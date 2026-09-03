@@ -3068,15 +3068,29 @@ write_stamp_on_rank() {
 
 
 
-# require_no_view_users_on_ranks <instance> <content_id> <rank>...
-# Repairing a rank replaces its view in place (copy_hub_to_rank removes the
-# destination first). Refuse while any managed container on that rank,
-# running or stopped, references the view.
-require_no_view_users_on_ranks() {
-  local instance="${1:?}" content_id="${2:?}" rank sharers
-  shift 2
+# spec_view_verified_on_ranks <instance> <profile> <validation_json> <rank>...
+# Succeed only when the exact view at INSTANCE passes full verification on
+# every listed rank; any rank without it, with a damaged view, or
+# unreachable fails quietly.
+spec_view_verified_on_ranks() {
+  local instance="${1:?}" profile="${2:?}" expected_validation_json="${3:?}" rank
+  shift 3
   for rank in "$@"; do
-    sharers=$(hot_view_live_users "$rank" "$content_id") \
+    verify_hot_on_rank "$rank" "$instance" "$profile" \
+      "$CLUSTER_TOPOLOGY_ID" 0 "$expected_validation_json" 2>/dev/null || return 1
+  done
+  return 0
+}
+
+# require_no_view_users_on_ranks <instance> <content_id> <owner> <rank>...
+# Materializing replaces the destination in place (copy_hub_to_rank removes
+# it first). Refuse while any managed container on that rank, running or
+# stopped, references the view named OWNER.
+require_no_view_users_on_ranks() {
+  local instance="${1:?}" content_id="${2:?}" owner="${3:?}" rank sharers
+  shift 3
+  for rank in "$@"; do
+    sharers=$(hot_view_live_users "$rank" "$content_id" "$owner") \
       || die "prepare: cannot verify on rank $rank that no managed container references $instance"
     [ -z "$sharers" ] \
       || die "prepare: refusing to re-materialize $instance on rank $rank: referenced by managed container(s), running or stopped: $sharers (stop and remove them first)"
@@ -3376,6 +3390,18 @@ cmd_prepare() {
   local plan_content_id
   plan_content_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["content_id"])')
 
+  # The plan sees the controller's stamp only. A released spec placed on a
+  # remote home, or re-run after a complete preparation, holds its view on
+  # the target ranks and not on the controller: verify the spec-named view
+  # on every target rank before copying, so a complete preparation is left
+  # untouched and keeps its pins. Anything short of every rank verified is
+  # re-materialized on every rank (all-or-nothing).
+  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ] \
+      && spec_view_verified_on_ranks "$instance" "$profile" "$expected_validation_json" "${target_ranks[@]}"; then
+    log "hot already ready on every target rank (verified); model not started"
+    return 0
+  fi
+
   budget_plan=$(build_hot_budget_plan_from_activation "$plan" prepare) \
     || die "prepare: all-rank hot admission failed"
   render_hot_budget_plan_json "$budget_plan"
@@ -3389,7 +3415,7 @@ cmd_prepare() {
     for rank in "${target_ranks[@]}"; do
       verify_hot_on_rank "$rank" "$instance" "$profile" \
         "$CLUSTER_TOPOLOGY_ID" 0 "$expected_validation_json" \
-        || die "rank $rank: hot verify failed"
+        || die "rank $rank: hot verify failed; preparation is all-or-nothing: re-materialize every rank with purge-hot $profile --yes --force-unpin, then prepare $profile --yes"
     done
     log "model files prepared (reused verified runtime views; model not started)"
     return 0
@@ -3433,7 +3459,7 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
   # removes it first): a released spec never does that beneath a managed
   # container, running or stopped, that references the view on that rank.
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    require_no_view_users_on_ranks "$instance" "$plan_content_id" "${target_ranks[@]}"
+    require_no_view_users_on_ranks "$instance" "$plan_content_id" "$profile" "${target_ranks[@]}"
   fi
 
   local -a touched=() pids=()
@@ -3605,17 +3631,23 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
 # started again and needs its mounted view, so purge counts it as a user.
 # The stack's own stop removes containers before purging, so the
 # stop-and-purge path never sees itself here.
+# hot_view_live_users <rank> <content_id> <owner>
+# One name, one directory: a container mounts the view named OWNER (its
+# conf label) with content CONTENT_ID (its weight-config label). Both labels
+# must match, since a conf and a released spec of the same model revision
+# share a content id but never a directory.
 hot_view_live_users() {
-  local rank="${1:?}" content_id="${2:?}" out remote_cmd
-  local filter_managed filter_config
+  local rank="${1:?}" content_id="${2:?}" owner="${3:?}" out remote_cmd
+  local filter_managed filter_config filter_owner
   filter_managed="label=${PULSAR_MANAGED_LABEL}=true"
   filter_config="label=${PULSAR_WEIGHT_CONFIG_LABEL}=${content_id}"
+  filter_owner="label=${PULSAR_CONF_LABEL}=${owner}"
   if [ "$rank" = 0 ]; then
     out=$("$PULSAR_DOCKER" ps --all --filter "$filter_managed" --filter "$filter_config" \
-      --format "{{.Label \"${PULSAR_CONF_LABEL}\"}}" 2>/dev/null) || return 1
+      --filter "$filter_owner" --format "{{.Label \"${PULSAR_CONF_LABEL}\"}}" 2>/dev/null) || return 1
   else
-    printf -v remote_cmd 'docker ps --all --filter %q --filter %q --format %q' \
-      "$filter_managed" "$filter_config" "{{.Label \"${PULSAR_CONF_LABEL}\"}}"
+    printf -v remote_cmd 'docker ps --all --filter %q --filter %q --filter %q --format %q' \
+      "$filter_managed" "$filter_config" "$filter_owner" "{{.Label \"${PULSAR_CONF_LABEL}\"}}"
     out=$(ssh_node "$rank" "$remote_cmd" </dev/null) || return 1
   fi
   printf '%s\n' "$out" | awk 'NF' | sort -u
@@ -3628,9 +3660,12 @@ hot_view_live_users() {
 # (prepare, pin, unpin) verifies the content on that rank, the controller
 # included, since find-hot checks metadata only. strict=0 (purge) binds by
 # name and stamp alone so a damaged view stays removable.
-# Returns 1 when the rank holds no such view and 255 when the rank cannot be
-# observed at all (SSH failure), so cleanup can tell the two apart: absence
-# is already purged; unobservable is not.
+# Returns 1 when the rank holds no such view (find-hot exit 3), 2 when the
+# rank was reached but the view could not be inspected (a malformed stamp,
+# a tool failure), and 255 when the rank cannot be observed at all (SSH
+# failure), so cleanup can tell them apart: absence is already purged; the
+# other two are not. The purge lookup (strict=0) also finds a view an
+# interrupted preparation left in a non-ready state.
 hot_instance_for_profile_on_rank() {
   local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}" strict="${4:-1}"
   local command info stamp instance rc=0
@@ -3642,19 +3677,21 @@ hot_instance_for_profile_on_rank() {
     --topology-id "${CLUSTER_TOPOLOGY_ID}"
     --hot-root "$HOT_ROOT"
   )
+  [ "$strict" = 1 ] || find_hot_args+=(--include-incomplete)
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || return 2
   else
     find_hot_args+=(--models-dir "$REPO_DIR/models")
   fi
   if [ "$rank" -eq 0 ]; then
-    info=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}") || return 1
+    info=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}") || rc=$?
   else
     command=$(shell_join_q python3 - "${find_hot_args[@]}" "${launch_args[@]}")
     info=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
     [ "$rc" -ne 255 ] || return 255
-    [ "$rc" -eq 0 ] || return 1
   fi
+  [ "$rc" -ne 3 ] || return 1
+  [ "$rc" -eq 0 ] || return 2
   instance=$(printf '%s' "$info" | python3 -c \
     'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
     || return 1
@@ -3691,11 +3728,13 @@ hot_instance_for_profile_on_rank() {
 # hot_instances_for_profile_on_ranks <profile> <rank>...
 # Print one "rank<TAB>instance_dir<TAB>stamped_content_id<TAB>pinned" line
 # per target rank that holds the view named by PROFILE, bound by name and
-# stamp only (purge policy). A rank without the view is reported as already
-# purged and skipped; the function fails with 1 only when no target rank
-# holds it. It returns 255 without printing when a rank is unreachable: such
-# a rank may still run a container on its copy, so nothing may be deleted
-# anywhere until every rank has been inspected.
+# stamp only (purge policy; a view left in a non-ready state by an
+# interrupted preparation counts). A rank without the view is reported as
+# already purged and skipped; the function fails with 1 only when no target
+# rank holds it. It returns 255 (unreachable) or 2 (reached but not
+# inspectable) without printing: such a rank may still run a container on
+# its copy, so nothing may be deleted anywhere until every rank has been
+# inspected.
 hot_instances_for_profile_on_ranks() {
   local profile="${1:?}" rank info found=0 rc
   local -a fields=()
@@ -3711,11 +3750,15 @@ hot_instances_for_profile_on_ranks() {
         rows+=("$(printf '%s\t%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}" "${fields[2]:-false}")")
         found=1
         ;;
+      1) warn "$profile: rank $rank holds no view (already purged)" ;;
       255)
         warn "$profile: rank $rank is unobservable; aborting before any deletion"
         return 255
         ;;
-      *) warn "$profile: rank $rank holds no view (already purged)" ;;
+      *)
+        warn "$profile: rank $rank could not be inspected; aborting before any deletion"
+        return 2
+        ;;
     esac
   done
   [ "$found" = 1 ] || return 1
@@ -3744,6 +3787,9 @@ hot_instances_for_profile_strict_on_ranks() {
     if [ "$rc" -eq 255 ]; then
       warn "$profile: rank $rank is unreachable"
       return 255
+    elif [ "$rc" -eq 2 ]; then
+      warn "$profile: rank $rank could not be inspected"
+      return 2
     elif [ "$rc" -ne 0 ]; then
       warn "$profile: rank $rank has no verified view"
       return 1
@@ -3963,7 +4009,7 @@ cmd_purge_hot() {
   [ "$purge_rc" -ne 255 ] \
     || die "purge-hot: a target rank is unobservable; nothing was deleted"
   [ "$purge_rc" -ne 2 ] \
-    || die "purge-hot: a target rank's view record is unreadable; nothing was deleted"
+    || die "purge-hot: a target rank could not be inspected; nothing was deleted"
   [ -n "$purge_list" ] \
     || die "no hot instance for $profile on the selected serving placement"
   mapfile -t purge_rows < <(printf '%s\n' "$purge_list")
@@ -3986,7 +4032,7 @@ cmd_purge_hot() {
     fi
     # A view can be shared: a released spec reuses a conf-named view of the
     # same sealed manifest. Never delete bytes another live service mounts.
-    sharers=$(hot_view_live_users "$rank" "$content_id") \
+    sharers=$(hot_view_live_users "$rank" "$content_id" "$profile") \
       || die "purge-hot: cannot verify on rank $rank that no running service uses $instance"
     [ -z "$sharers" ] \
       || die "purge-hot: refusing to delete $instance on rank $rank: still referenced by managed container(s), running or stopped: $sharers (stop and remove them first; ./pulsar stop <name> --purge-hot does both)"

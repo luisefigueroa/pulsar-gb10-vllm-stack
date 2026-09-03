@@ -204,18 +204,16 @@ PY
   PULSAR_HOT_ROOT="$hot_root" \
     "$REPO_DIR/scripts/model-library.sh" unpin "$spec_id" --node fixture-node-0 >/dev/null
   echo "OK   unpin <spec_id> on $label"
-  # Never delete a view a running service still mounts: another profile's
-  # service, or the spec's own (stop first; the stop hook does both).
-  local shared_out user
-  for user in nemotron-3-nano-30b-nvfp4 "$spec_id"; do
-    shared_out=$(FAKE_DOCKER_SHARED_CONF="$user" PULSAR_HOT_ROOT="$hot_root" \
-      "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
-    if ! printf '%s\n' "$shared_out" | grep -q "still referenced by managed container"; then
-      echo "FAIL purge-hot <spec_id> deleted or ignored a view mounted by $user: $shared_out" >&2
-      exit 1
-    fi
-  done
-  echo "OK   purge-hot <spec_id> refuses a view a running service mounts, own or other ($label)"
+  # Never delete a view the spec's own service still mounts (stop first;
+  # the stop hook does both).
+  local shared_out
+  shared_out=$(FAKE_DOCKER_SHARED_CONF="$spec_id" PULSAR_HOT_ROOT="$hot_root" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
+  if ! printf '%s\n' "$shared_out" | grep -q "still referenced by managed container"; then
+    echo "FAIL purge-hot <spec_id> deleted or ignored a view its own service mounts: $shared_out" >&2
+    exit 1
+  fi
+  echo "OK   purge-hot <spec_id> refuses a view its own service mounts ($label)"
   # A damaged stamp whose content_id disagrees with the directory name must
   # not steer the live-user query; the purge is refused instead.
   local damaged_out
@@ -249,9 +247,11 @@ stamp["content_id"] = path.name
 model_library.write_hot_stamp(path, stamp)
 PY
   echo "OK   purge-hot <spec_id> refuses a damaged stamp ($label)"
-  PULSAR_HOT_ROOT="$hot_root" \
+  # A conf service of the same model revision mounts its own directory: it
+  # shares the content id but not the view, so it never blocks the spec.
+  FAKE_DOCKER_SHARED_CONF=nemotron-3-nano-30b-nvfp4 PULSAR_HOT_ROOT="$hot_root" \
     "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes >/dev/null
-  echo "OK   purge-hot <spec_id> on $label"
+  echo "OK   purge-hot <spec_id> on $label while an unrelated conf service of the same model runs"
 }
 
 pin_one "$STATE/hot-spec" "a spec-named view"
@@ -397,15 +397,79 @@ echo "OK   a failed local verify is not ready inside a condition"
 guard_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
-  hot_view_live_users() { [ "$1" = 1 ] && echo other-service; true; }
+  hot_view_live_users() { [ "$1" = 1 ] && [ "$3" = spec ] && echo spec; true; }
   eval "$(sed -n "/^require_no_view_users_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
-  require_no_view_users_on_ranks /hot/x cid1 0 && echo clear
-  ( require_no_view_users_on_ranks /hot/x cid1 0 1 ) 2>&1 || true
+  require_no_view_users_on_ranks /hot/x cid1 spec 0 && echo clear
+  ( require_no_view_users_on_ranks /hot/x cid1 spec 0 1 ) 2>&1 || true
 ' _ "$REPO_DIR")
 printf '%s\n' "$guard_out" | grep -q "^clear$" || { echo "FAIL repair guard refused an unreferenced rank: $guard_out" >&2; exit 1; }
-printf '%s\n' "$guard_out" | grep -q "refusing to re-materialize /hot/x on rank 1.*other-service" \
+printf '%s\n' "$guard_out" | grep -q "refusing to re-materialize /hot/x on rank 1.*spec" \
   || { echo "FAIL repair guard allowed a referenced rank: $guard_out" >&2; exit 1; }
 echo "OK   prepare refuses to re-materialize a view a managed container references"
+
+# A spec copy plan first verifies the spec-named view on every target rank
+# (the plan sees the controller only): every rank verified means nothing to
+# do, anything less re-materializes every rank.
+all_ready_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  CLUSTER_TOPOLOGY_ID=topo-1
+  verify_hot_on_rank() { [ "$1" != 2 ]; }
+  eval "$(sed -n "/^spec_view_verified_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
+  spec_view_verified_on_ranks /hot/x spec "{}" 0 1 && echo all-ready
+  spec_view_verified_on_ranks /hot/x spec "{}" 0 1 2 || echo not-all-ready
+' _ "$REPO_DIR")
+[ "$all_ready_out" = $'all-ready\nnot-all-ready' ] || { echo "FAIL all-rank observation before a spec copy: $all_ready_out" >&2; exit 1; }
+sed -n "/^cmd_prepare() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c "spec_view_verified_on_ranks" >/dev/null \
+  || { echo "FAIL prepare does not verify every target rank before a spec copy" >&2; exit 1; }
+sed -n "/^cmd_prepare() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c "purge-hot \$profile --yes --force-unpin, then prepare" >/dev/null \
+  || { echo "FAIL the skip-path verify failure does not name the all-or-nothing remediation" >&2; exit 1; }
+echo "OK   a spec copy plan skips only when every target rank verifies; a partial loss names purge-then-prepare"
+
+# Cleanup tells absence (find-hot exit 3, already purged) from a rank whose
+# view could not be inspected (any other failure): only absence lets
+# cleanup continue.
+printf 'import os, sys\nsys.exit(int(os.environ["FAKE_FIND_RC"]))\n' >"$STATE/find-rc-tool.py"
+inspect_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  HOT_ROOT=/hot PY_TOOL="$2" CLUSTER_TOPOLOGY_ID=topo-1 CONF_SOURCE=spec SPEC_MANIFEST_ID=m
+  eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^hot_instances_for_profile_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
+  rc=0; FAKE_FIND_RC=3 hot_instance_for_profile_on_rank spec 0 0 0 >/dev/null 2>&1 || rc=$?; echo "absent rc=$rc"
+  rc=0; FAKE_FIND_RC=1 hot_instance_for_profile_on_rank spec 0 0 0 >/dev/null 2>&1 || rc=$?; echo "unreadable rc=$rc"
+  rc=0; FAKE_FIND_RC=3 hot_instances_for_profile_on_ranks spec 0 >/dev/null 2>&1 || rc=$?; echo "purge-absent rc=$rc"
+  rc=0; FAKE_FIND_RC=1 hot_instances_for_profile_on_ranks spec 0 >/dev/null 2>&1 || rc=$?; echo "purge-unreadable rc=$rc"
+' _ "$REPO_DIR" "$STATE/find-rc-tool.py")
+[ "$inspect_out" = $'absent rc=1\nunreadable rc=2\npurge-absent rc=1\npurge-unreadable rc=2' ] \
+  || { echo "FAIL absence versus inspection failure: $inspect_out" >&2; exit 1; }
+echo "OK   purge tells an absent view from an uninspectable rank"
+
+# Cleanup reaches a spec view an interrupted preparation left in state
+# verifying: launch discovery stays ready-only, the purge lookup sees it.
+incomplete_view=$(python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$spec_id" "$model_id" "$revision" "$manifest_json")
+python3 - "$REPO_DIR" "$incomplete_view" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts import model_library
+import pathlib
+path = pathlib.Path(sys.argv[2])
+stamp = model_library.load_hot_stamp(path)
+stamp["state"] = "verifying"
+model_library.write_hot_stamp(path, stamp)
+PY
+ready_rc=0
+python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" >/dev/null 2>&1 || ready_rc=$?
+[ "$ready_rc" = 3 ] || { echo "FAIL ready-only find-hot listed an incomplete view or failed oddly (rc=$ready_rc)" >&2; exit 1; }
+if python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" --include-incomplete --for-launch \
+    --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" >/dev/null 2>&1; then
+  echo "FAIL --include-incomplete must be refused with --for-launch" >&2; exit 1
+fi
+PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
+[ ! -e "$incomplete_view" ] || { echo "FAIL purge-hot left the incomplete view" >&2; exit 1; }
+echo "OK   purge-hot recovers a spec view an interrupted preparation left in state verifying"
 # The purge confirmation names every rank's path, not just the first row.
 confirm_out=$(bash -c '
   set -euo pipefail

@@ -116,6 +116,12 @@ COLD_HUB_REL_PATHS = (
 )
 
 
+class HotInstanceNotFound(ValueError):
+    """find-hot found no ready instance for the name: exit status 3, so a
+    caller can tell absence (already purged, not prepared) from a failure
+    to inspect the rank (a malformed stamp, a tool error), which exits 1."""
+
+
 class ModelLibraryError(ValueError):
     """Operator-facing library error."""
 
@@ -3331,8 +3337,16 @@ def load_hot_stamp(instance_dir: str | pathlib.Path) -> dict[str, Any]:
     return data
 
 
-def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
-    """Stamped children of a <name>-<topology> entry, ready or pinned."""
+def _ready_hot_children(
+    parent: pathlib.Path, *, include_incomplete: bool = False
+) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
+    """Stamped children of a <name>-<topology> entry, ready or pinned.
+
+    ``include_incomplete`` also lists a child whose stamp is in another
+    state (an interrupted preparation leaves ``verifying``). Ownership is
+    still bound by the stamp's schema, scheme, and identity, so cleanup can
+    reach such a view while launch discovery stays ready-only.
+    """
     candidates: list[tuple[str, pathlib.Path, dict[str, Any]]] = []
     try:
         for child in parent.iterdir():
@@ -3357,7 +3371,7 @@ def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, d
             ):
                 continue
             if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
-                if stamp.get("state") != "ready":
+                if stamp.get("state") != "ready" and not include_incomplete:
                     continue
             activated = str(stamp.get("activated_at") or "")
             candidates.append((activated, child, stamp))
@@ -3373,13 +3387,16 @@ def find_hot_instance_for_profile(
     topology_id: str,
     *,
     profile_data: dict[str, Any] | None = None,
+    include_incomplete: bool = False,
 ) -> pathlib.Path | None:
     """Return the newest ready instance matching the live expected identity."""
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
     if parent.is_symlink() or not parent.is_dir():
         return None
-    for _activated, candidate, _stamp in _ready_hot_children(parent):
+    for _activated, candidate, _stamp in _ready_hot_children(
+        parent, include_incomplete=include_incomplete
+    ):
         if profile_data is not None:
             try:
                 verify_hot_stamp_against_profile(
@@ -8183,6 +8200,9 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
     profile = str(args.profile or "")
     if not profile:
         fail("find-hot: --profile is required")
+    include_incomplete = bool(getattr(args, "include_incomplete", False))
+    if include_incomplete and getattr(args, "for_launch", False):
+        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
     profile_data = (
         load_model_profile(args.models_dir, profile) if args.models_dir else None
     )
@@ -8191,9 +8211,10 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         profile,
         args.topology_id,
         profile_data=profile_data,
+        include_incomplete=include_incomplete,
     )
     if path is None:
-        fail(f"find-hot: no ready instance for profile {profile}")
+        raise HotInstanceNotFound(f"find-hot: no ready instance for profile {profile}")
     stamp = load_hot_stamp(path)
     if getattr(args, "for_launch", False):
         require_launchable_hot_stamp(stamp)
@@ -9158,6 +9179,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Find the ready hot instance for a profile name or a released spec id",
     )
     fh.add_argument("--profile", default="", help="conf profile name or 64-hex spec id")
+    fh.add_argument(
+        "--include-incomplete",
+        dest="include_incomplete",
+        action="store_true",
+        help="cleanup only: also find a view whose stamp is not ready (never with --for-launch)",
+    )
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")
     fh.add_argument("--models-dir", default="")
@@ -9319,6 +9346,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(effective_argv)
     try:
         return int(args.func(args))
+    except HotInstanceNotFound as exc:
+        print(f"model-library: ERROR: {exc}", file=sys.stderr)
+        return 3
     except ModelLibraryError as exc:
         print(f"model-library: ERROR: {exc}", file=sys.stderr)
         return 1
