@@ -224,6 +224,48 @@ class SpecPreparePlannerTests(unittest.TestCase):
             model_library.purge_hot_instance(real_parent / conf_plan["content_id"])
         self.assertTrue(real_instance.is_dir())
 
+    def test_purge_requires_canonical_containment_and_a_truthful_stamp(self) -> None:
+        conf_plan = model_library.plan_prepare(
+            catalog_path=str(self.catalog_path),
+            profile=self.profile,
+            topology_id=TOPOLOGY_ID,
+            hot_root=str(self.hot),
+            models_dir=self.models_dir,
+            nodes=1,
+            home_inventory=self.home_inventory,
+            require_exact_revision=fixture.COMMIT,
+            expected_integrity_manifest=self.manifest,
+        )
+        instance = pathlib.Path(conf_plan["instance_dir"])
+        instance.mkdir(parents=True)
+        model_library.write_hot_stamp(instance, conf_plan["stamp"])
+        # A hot root that is itself a symlink is the operator's configured
+        # root: an instance inside its real target is contained.
+        linked_root = self.root / "hot-link"
+        linked_root.symlink_to(self.hot, target_is_directory=True)
+        model_library.require_hot_instance_within_root(instance, linked_root)
+        # An instance outside the root, or one level deeper, is refused.
+        outside = self.root / "elsewhere" / "x-topo" / conf_plan["content_id"]
+        outside.mkdir(parents=True)
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not inside the hot root"):
+            model_library.purge_hot_instance(outside, hot_root=self.hot)
+        self.assertTrue(outside.is_dir())
+        deeper = instance / "nested"
+        deeper.mkdir()
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a <name>-<topology>"):
+            model_library.purge_hot_instance(deeper, hot_root=self.hot)
+        # A stamp whose content_id disagrees with the directory name is
+        # damaged and must not be trusted, so the purge is refused.
+        damaged = dict(conf_plan["stamp"])
+        damaged["content_id"] = "e" * 12
+        model_library.write_hot_stamp(instance, damaged)
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "differs from the instance name"):
+            model_library.purge_hot_instance(instance, hot_root=self.hot)
+        self.assertTrue(instance.is_dir())
+        model_library.write_hot_stamp(instance, conf_plan["stamp"])
+        model_library.purge_hot_instance(instance, hot_root=self.hot)
+        self.assertFalse(instance.exists())
+
     def test_spec_receipt_mismatch_names_both_ids(self) -> None:
         other = json.loads(json.dumps(self.manifest))
         other["files"][0]["sha256"] = "f" * 64

@@ -3811,7 +3811,15 @@ cmd_purge_hot() {
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
     || die "no hot instance for $profile on the selected serving placement"
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  content_id=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
+  # The instance directory is named by its content id, which is also the
+  # weight-config label live containers carry. Query Docker by the name on
+  # disk and refuse a stamp that disagrees: a damaged stamp must not steer
+  # the live-user check away from the container that mounts this tree.
+  content_id=$(basename "$instance")
+  stamped_content_id=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
+  if [ -n "$stamped_content_id" ] && [ "$stamped_content_id" != "$content_id" ]; then
+    die "purge-hot: stamp content_id '$stamped_content_id' differs from the instance name '$content_id'; refusing"
+  fi
   # A view can be shared: a released spec reuses a conf-named view of the
   # same sealed manifest. Never delete bytes another live service mounts.
   for rank in "${HOT_TARGET_RANKS[@]}"; do
@@ -3824,12 +3832,12 @@ cmd_purge_hot() {
   for rank in "${HOT_TARGET_RANKS[@]}"; do
     if [ "$rank" = 0 ]; then
       if [ "$force_unpin" = 1 ]; then
-        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --force-unpin
+        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --hot-root "$HOT_ROOT" --force-unpin
       else
-        python3 "$PY_TOOL" purge-hot --instance-dir "$instance"
+        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --hot-root "$HOT_ROOT"
       fi
     else
-      command=$(shell_join_q python3 - purge-hot --instance-dir "$instance")
+      command=$(shell_join_q python3 - purge-hot --instance-dir "$instance" --hot-root "$HOT_ROOT")
       if [ "$force_unpin" = 1 ]; then
         command+=" --force-unpin"
         ssh_node "$rank" "$command" <"$PY_TOOL" \

@@ -4711,10 +4711,38 @@ def set_hot_pinned(instance_dir: str | pathlib.Path, pinned: bool) -> dict[str, 
     return stamp
 
 
+def require_hot_instance_within_root(
+    instance_dir: str | pathlib.Path,
+    hot_root: str | pathlib.Path,
+) -> pathlib.Path:
+    """Canonical containment at the destructive boundary.
+
+    The instance must canonically resolve to ``<real hot root>/<name>-<topo>/
+    <content_id>`` with no symlink at either level the library creates. A
+    hot root that is itself a symlink is the operator's configured root and
+    is allowed; anything that escapes its real target is not.
+    """
+    instance = pathlib.Path(instance_dir)
+    root_real = pathlib.Path(os.path.realpath(hot_root))
+    instance_real = pathlib.Path(os.path.realpath(instance))
+    try:
+        relative = instance_real.relative_to(root_real)
+    except ValueError:
+        fail(f"purge: {instance} is not inside the hot root {hot_root}")
+    if len(relative.parts) != 2:
+        fail(f"purge: {instance} is not a <name>-<topology>/<content_id> instance")
+    if instance.is_symlink() or instance.parent.is_symlink():
+        fail(f"purge: refusing to delete through a symlink: {instance}")
+    if (root_real / relative.parts[0]).is_symlink():
+        fail(f"purge: refusing to delete through a symlink: {instance}")
+    return instance
+
+
 def purge_hot_instance(
     instance_dir: str | pathlib.Path,
     *,
     force_unpin: bool = False,
+    hot_root: str | pathlib.Path | None = None,
 ) -> None:
     instance_dir = pathlib.Path(instance_dir)
     if not instance_dir.is_dir():
@@ -4724,12 +4752,23 @@ def purge_hot_instance(
     # either level; rmtree would otherwise remove an external tree.
     if instance_dir.is_symlink() or instance_dir.parent.is_symlink():
         fail(f"purge: refusing to delete through a symlink: {instance_dir}")
+    if hot_root is not None:
+        require_hot_instance_within_root(instance_dir, hot_root)
     stamp_path = hot_stamp_path(instance_dir)
     if stamp_path.is_file():
         stamp = load_json(stamp_path)
-        if isinstance(stamp, dict) and stamp.get("pinned") and not force_unpin:
-            fail("purge: instance is pinned; pass --force-unpin to remove")
-    # Safety: only delete under hot root pattern
+        if isinstance(stamp, dict):
+            # The instance directory is named by its content id; a stamp
+            # that disagrees is damaged and must not be trusted for any
+            # decision about this tree, least of all deleting it.
+            stamped = str(stamp.get("content_id") or "")
+            if stamped and stamped != instance_dir.name:
+                fail(
+                    f"purge: stamp content_id {stamped!r} differs from the "
+                    f"instance name {instance_dir.name!r}; refusing"
+                )
+            if stamp.get("pinned") and not force_unpin:
+                fail("purge: instance is pinned; pass --force-unpin to remove")
     shutil.rmtree(instance_dir)
 
 
@@ -8313,7 +8352,11 @@ def cmd_set_pinned(args: argparse.Namespace) -> int:
 
 
 def cmd_purge_hot(args: argparse.Namespace) -> int:
-    purge_hot_instance(args.instance_dir, force_unpin=args.force_unpin)
+    purge_hot_instance(
+        args.instance_dir,
+        force_unpin=args.force_unpin,
+        hot_root=(args.hot_root or None),
+    )
     if args.json:
         print(json.dumps({"purged": args.instance_dir}, indent=2, sort_keys=True))
     else:
@@ -9260,6 +9303,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     ph = sub.add_parser("purge-hot", help="Delete a hot instance directory")
     ph.add_argument("--instance-dir", required=True)
+    ph.add_argument(
+        "--hot-root",
+        default="",
+        help="require the instance to resolve canonically inside this hot root",
+    )
     ph.add_argument("--force-unpin", action="store_true")
     ph.add_argument("--json", action="store_true")
     ph.set_defaults(func=cmd_purge_hot)

@@ -217,6 +217,39 @@ PY
     fi
   done
   echo "OK   purge-hot <spec_id> refuses a view a running service mounts, own or other ($label)"
+  # A damaged stamp whose content_id disagrees with the directory name must
+  # not steer the live-user query; the purge is refused instead.
+  local damaged_out
+  damaged_out=$(python3 - "$REPO_DIR" "$hot_root" "$topology_id" "$identity_key" "$manifest_id" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts import model_library
+hot, topology_id, identity, manifest_id = sys.argv[2:]
+path = model_library.find_hot_instance_for_identity(hot, identity, topology_id, manifest_id=manifest_id)
+stamp = model_library.load_hot_stamp(path)
+stamp["content_id"] = "e" * 12
+model_library.write_hot_stamp(path, stamp)
+print(path)
+PY
+)
+  shared_out=$(PULSAR_HOT_ROOT="$hot_root" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
+  if ! printf '%s\n' "$shared_out" | grep -q "differs from the instance name"; then
+    echo "FAIL purge-hot <spec_id> trusted a damaged stamp: $shared_out" >&2
+    exit 1
+  fi
+  [ -d "$damaged_out" ] || { echo "FAIL damaged-stamp purge deleted the view" >&2; exit 1; }
+  python3 - "$REPO_DIR" "$damaged_out" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts import model_library
+import pathlib
+path = pathlib.Path(sys.argv[2])
+stamp = model_library.load_hot_stamp(path)
+stamp["content_id"] = path.name
+model_library.write_hot_stamp(path, stamp)
+PY
+  echo "OK   purge-hot <spec_id> refuses a damaged stamp ($label)"
   PULSAR_HOT_ROOT="$hot_root" \
     "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes >/dev/null
   echo "OK   purge-hot <spec_id> on $label"
