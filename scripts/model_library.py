@@ -4216,8 +4216,16 @@ def plan_prepare(
     expected_integrity_manifest: dict[str, Any] | None = None,
     identity_key: str | None = None,
     spec_manifest: dict[str, Any] | None = None,
+    reuse_instance_dir: str | None = None,
+    reuse_stamp: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a model-preparation plan JSON for bash to execute (copy + stamp).
+
+    ``reuse_instance_dir`` and ``reuse_stamp`` carry a ready view the Bash
+    wrapper discovered on the selected (remote) rank by identity and
+    manifest; the controller-local scan only applies when rank 0 is a
+    target, because a view on the controller is irrelevant to a service
+    placed elsewhere.
 
     Occupancy lookup lives in the Bash wrapper. This planner still requires
     the download-receipt commit and file list; unknown trees without a receipt
@@ -4412,21 +4420,41 @@ def plan_prepare(
         spec_manifest_id = validate_snapshot_manifest(spec_manifest).get(
             "manifest_id"
         )
-        reused = find_hot_instance_for_identity(
-            hot_root,
-            resolved["identity_key"],
-            topology_id,
-            manifest_id=str(spec_manifest_id) if spec_manifest_id else None,
-        )
-        if reused is not None:
-            existing_reuse = load_hot_stamp(reused)
-            if _stamp_matches_plan(existing_reuse):
+        if reuse_stamp is not None and reuse_instance_dir:
+            # A candidate the wrapper found on the selected rank. Bind it the
+            # same way a local candidate is bound before trusting it.
+            candidate_manifest = (
+                (reuse_stamp.get("integrity") or {}).get("manifest") or {}
+            )
+            if (
+                _stamp_matches_plan(reuse_stamp)
+                and candidate_manifest.get("manifest_id") == spec_manifest_id
+            ):
                 return _ready_skip_plan(
-                    instance_dir=reused,
-                    stamp=existing_reuse,
-                    reason="reuse ready view with matching identity and manifest",
-                    storage_instance=reused,
+                    instance_dir=pathlib.Path(reuse_instance_dir),
+                    stamp=reuse_stamp,
+                    reason=(
+                        "reuse ready view on the selected rank with matching "
+                        "identity and manifest"
+                    ),
+                    storage_instance=pathlib.Path(reuse_instance_dir),
                 )
+        if 0 in target_ranks:
+            reused = find_hot_instance_for_identity(
+                hot_root,
+                resolved["identity_key"],
+                topology_id,
+                manifest_id=str(spec_manifest_id) if spec_manifest_id else None,
+            )
+            if reused is not None:
+                existing_reuse = load_hot_stamp(reused)
+                if _stamp_matches_plan(existing_reuse):
+                    return _ready_skip_plan(
+                        instance_dir=reused,
+                        stamp=existing_reuse,
+                        reason="reuse ready view with matching identity and manifest",
+                        storage_instance=reused,
+                    )
 
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     hot_storage_requirements = build_hot_storage_requirements(
@@ -8073,6 +8101,14 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
             fail("spec-manifest-json must be an object")
     identity_key = str(getattr(args, "identity_key", "") or "") or None
     models_dir = str(args.models_dir or "") or None
+    reuse_stamp = None
+    if getattr(args, "reuse_stamp_json", ""):
+        try:
+            reuse_stamp = json.loads(args.reuse_stamp_json)
+        except json.JSONDecodeError as exc:
+            fail(f"reuse-stamp-json: {exc}")
+        if not isinstance(reuse_stamp, dict):
+            fail("reuse-stamp-json must be an object")
     plan = plan_prepare(
         catalog_path=args.catalog,
         profile=args.profile or None,
@@ -8089,6 +8125,8 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
         expected_integrity_manifest=expected_manifest,
         identity_key=identity_key,
         spec_manifest=spec_manifest,
+        reuse_instance_dir=str(getattr(args, "reuse_instance_dir", "") or "") or None,
+        reuse_stamp=reuse_stamp,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -9068,6 +9106,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help=argparse.SUPPRESS,
     )
+    plan.add_argument("--reuse-instance-dir", default="", help=argparse.SUPPRESS)
+    plan.add_argument("--reuse-stamp-json", default="", help=argparse.SUPPRESS)
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
     plan.add_argument("--models-dir", default="")

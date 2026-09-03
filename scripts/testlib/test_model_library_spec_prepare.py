@@ -147,6 +147,42 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertEqual(plan["stamp"]["profile"], self.profile)
         self.assertNotIn(SPEC_ID, plan["instance_dir"])
 
+    def test_identity_reuses_candidate_from_the_selected_rank(self) -> None:
+        # A one-node spec placed on a remote home rank: the wrapper discovers
+        # the candidate there and hands it in; the controller hot root is
+        # not scanned when rank 0 is not a target.
+        conf_plan = model_library.plan_prepare(
+            catalog_path=str(self.catalog_path),
+            profile=self.profile,
+            topology_id=TOPOLOGY_ID,
+            hot_root=str(self.hot),
+            models_dir=self.models_dir,
+            nodes=1,
+            home_inventory=self.home_inventory,
+            require_exact_revision=fixture.COMMIT,
+            expected_integrity_manifest=self.manifest,
+        )
+        remote_dir = "/remote/hot/nemotron-3-nano-30b-nvfp4-topo/" + conf_plan["content_id"]
+        plan = model_library.plan_prepare(
+            **self._identity_kwargs(),
+            reuse_instance_dir=remote_dir,
+            reuse_stamp=conf_plan["stamp"],
+        )
+        self.assertEqual(plan["action"], "skip")
+        self.assertIn("selected rank", plan["reason"])
+        self.assertEqual(plan["instance_dir"], remote_dir)
+        foreign = dict(conf_plan["stamp"])
+        foreign["integrity"] = {
+            "scheme": foreign["integrity"]["scheme"],
+            "manifest": {**foreign["integrity"]["manifest"], "manifest_id": "f" * 64},
+        }
+        copied = model_library.plan_prepare(
+            **self._identity_kwargs(),
+            reuse_instance_dir=remote_dir,
+            reuse_stamp=foreign,
+        )
+        self.assertNotEqual(copied["action"], "skip")
+
     def test_spec_receipt_mismatch_names_both_ids(self) -> None:
         other = json.loads(json.dumps(self.manifest))
         other["files"][0]["sha256"] = "f" * 64

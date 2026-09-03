@@ -362,6 +362,23 @@ expect_failure 1 "differs from receipt" \
     --require-exact-revision "$revision" \
     --expected-integrity-manifest-json "$manifest_json"
 
+# Docker shim for purge cases: no managed containers unless
+# FAKE_DOCKER_SHARED_CONF names a profile that still mounts the view.
+mkdir -p "$STATE/purge-bin"
+cat >"$STATE/purge-bin/docker" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = ps ]; then
+  case "$*" in
+    *weight-config=*) [ -z "${FAKE_DOCKER_SHARED_CONF:-}" ] || printf '%s\n' "$FAKE_DOCKER_SHARED_CONF" ;;
+  esac
+  exit 0
+fi
+exit 0
+SHIM
+chmod +x "$STATE/purge-bin/docker"
+export PULSAR_DOCKER="$STATE/purge-bin/docker"
+
 pin_one() {
   local hot_root="$1" label="$2"
   PULSAR_HOT_ROOT="$hot_root" \
@@ -383,6 +400,15 @@ PY
   PULSAR_HOT_ROOT="$hot_root" \
     "$REPO_DIR/scripts/model-library.sh" unpin "$spec_id" --node fixture-node-0 >/dev/null
   echo "OK   unpin <spec_id> on $label"
+  # Never delete a view another running service still mounts.
+  local shared_out
+  shared_out=$(FAKE_DOCKER_SHARED_CONF=nemotron-3-nano-30b-nvfp4 PULSAR_HOT_ROOT="$hot_root" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes 2>&1 || true)
+  if ! printf '%s\n' "$shared_out" | grep -q "still mounted by running service"; then
+    echo "FAIL purge-hot <spec_id> deleted or ignored a shared view: $shared_out" >&2
+    exit 1
+  fi
+  echo "OK   purge-hot <spec_id> refuses a view another live service mounts ($label)"
   PULSAR_HOT_ROOT="$hot_root" \
     "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes >/dev/null
   echo "OK   purge-hot <spec_id> on $label"

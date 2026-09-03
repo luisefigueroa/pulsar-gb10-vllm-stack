@@ -389,7 +389,7 @@ library_plan_prepare() {
   local profile="${1:?profile required}"
   shift
   local home_inventory model_id revision receipt_json manifest_json receipt_lookup
-  local home_rank node_id hub_path tmp
+  local home_rank node_id hub_path tmp remote_reuse
   local -a fields=() extra=()
   home_inventory=$(inspect_catalog_home "$profile") || return 1
   mapfile -t fields < <(json_fields "$home_inventory" \
@@ -427,6 +427,16 @@ library_plan_prepare() {
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
     extra+=(--identity "${MODEL}@${SNAPSHOT_REVISION}")
     extra+=(--spec-manifest-json "$(library_spec_snapshot_manifest_json "$profile")")
+    # A one-node spec serves on its durable-home rank. When that rank is not
+    # the controller, discover a reusable view there (by identity and
+    # sealed manifest) so the plan can skip the copy instead of scanning the
+    # controller's hot root, which is irrelevant to that placement.
+    if [ "$home_rank" != 0 ] && [ "${NODES:-1}" -eq 1 ] \
+        && remote_reuse=$(hot_instance_for_profile_on_rank "$profile" "$home_rank" 2>/dev/null) \
+        && [ -n "$remote_reuse" ]; then
+      extra+=(--reuse-instance-dir "$(printf '%s' "$remote_reuse" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')")
+      extra+=(--reuse-stamp-json "$(printf '%s' "$remote_reuse" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))')")
+    fi
   else
     extra+=(--models-dir "$REPO_DIR/models")
     library_conf_prepare_spec_manifest_json "$receipt_json" extra
@@ -3557,6 +3567,26 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
   printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["instance_dir"]); print(d["hub_dest"])'
 }
 
+# Running stack-managed containers on RANK that mount the view with
+# CONTENT_ID and belong to a profile other than PROFILE (one name per line).
+# Returns 1 when Docker on that rank cannot be queried; callers must not
+# treat that as "no users".
+hot_view_other_live_users() {
+  local rank="${1:?}" content_id="${2:?}" profile="${3:?}" out remote_cmd
+  local filter_managed filter_config
+  filter_managed="label=${PULSAR_MANAGED_LABEL}=true"
+  filter_config="label=${PULSAR_WEIGHT_CONFIG_LABEL}=${content_id}"
+  if [ "$rank" = 0 ]; then
+    out=$("$PULSAR_DOCKER" ps --filter "$filter_managed" --filter "$filter_config" \
+      --format "{{.Label \"${PULSAR_CONF_LABEL}\"}}" 2>/dev/null) || return 1
+  else
+    printf -v remote_cmd 'docker ps --filter %q --filter %q --format %q' \
+      "$filter_managed" "$filter_config" "{{.Label \"${PULSAR_CONF_LABEL}\"}}"
+    out=$(ssh_node "$rank" "$remote_cmd" </dev/null) || return 1
+  fi
+  printf '%s\n' "$out" | awk -v me="$profile" 'NF && $0 != me' | sort -u
+}
+
 hot_instance_for_profile_on_rank() {
   local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}"
   local command info stamp instance identity
@@ -3767,7 +3797,7 @@ cmd_purge_hot() {
   require_py
   load_conf "$profile"
   load_cluster_topology >/dev/null || die "confirmed topology required"
-  local info instance rank command
+  local info instance rank command content_id sharers
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
@@ -3775,6 +3805,15 @@ cmd_purge_hot() {
   info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
     || die "no hot instance for $profile on the selected serving placement"
   instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  content_id=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"].get("content_id") or "")')
+  # A view can be shared: a released spec reuses a conf-named view of the
+  # same sealed manifest. Never delete bytes another live service mounts.
+  for rank in "${HOT_TARGET_RANKS[@]}"; do
+    sharers=$(hot_view_other_live_users "$rank" "$content_id" "$profile") \
+      || die "purge-hot: cannot verify on rank $rank that no other service uses $instance"
+    [ -z "$sharers" ] \
+      || die "purge-hot: refusing to delete $instance on rank $rank: still mounted by running service(s): $sharers (stop them first)"
+  done
   [ "$yes" = 1 ] || die "purge-hot will delete $instance — re-run with --yes"
   for rank in "${HOT_TARGET_RANKS[@]}"; do
     if [ "$rank" = 0 ]; then
