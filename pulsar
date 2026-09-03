@@ -4,9 +4,9 @@
 #   ./pulsar wizard          → serve/switch wizard (doctor + preflight)
 #   ./pulsar models          → catalog view + explicit refresh/preparation
 #   ./pulsar inventory …     → scripts/inventory.sh
-#   ./pulsar start <model>…  → scripts/up.sh
-#   ./pulsar stop <model|--all> [--node ID] → scripts/down.sh
-#   ./pulsar status [model] [--node ID] → scripts/status.sh (optional completion)
+#   ./pulsar start <model|spec_id>…  → scripts/up.sh
+#   ./pulsar stop <model|spec_id|--all> [--node ID] → scripts/down.sh
+#   ./pulsar status [model|spec_id] [--node ID] → scripts/status.sh (optional completion)
 #   ./pulsar doctor [--json] → scripts/doctor.sh
 #   ./pulsar release …       → scripts/release.sh
 #   ./pulsar help
@@ -28,10 +28,11 @@ Usage:
   ./pulsar wizard               Serve or switch a model (doctor + preflight)
   ./pulsar models               Browse storage; refresh or prepare explicitly
   ./pulsar inventory [opts]     Read-only service/memory inventory
-  ./pulsar start <model> [args] Start a model (scripts/up.sh)
-  ./pulsar stop <model|--all> [--node ID]
+  ./pulsar start <model|spec_id> [args]
+                                Start a conf or a released spec (scripts/up.sh)
+  ./pulsar stop <model|spec_id|--all> [--node ID]
                                 Stop stack-managed service(s)
-  ./pulsar status [model] [--node ID]
+  ./pulsar status [model|spec_id] [--node ID]
                                 Probe containers + API (may run a completion)
   ./pulsar doctor [--json]     Read-only host, cluster, and library diagnostics
   ./pulsar release verify|show|list [spec_id]
@@ -95,11 +96,11 @@ case "$cmd" in
     exec "$REPO_DIR/scripts/inventory.sh" "$@"
     ;;
   start)
-    [ $# -ge 1 ] || { echo "usage: ./pulsar start <model> [up.sh args...]" >&2; exit 2; }
+    [ $# -ge 1 ] || { echo "usage: ./pulsar start <model|spec_id> [up.sh args...]" >&2; exit 2; }
     exec "$REPO_DIR/scripts/up.sh" "$@"
     ;;
   stop)
-    [ $# -ge 1 ] || { echo "usage: ./pulsar stop <model|--all> [--node NODE_ID]" >&2; exit 2; }
+    [ $# -ge 1 ] || { echo "usage: ./pulsar stop <model|spec_id|--all> [--node NODE_ID]" >&2; exit 2; }
     exec "$REPO_DIR/scripts/down.sh" "$@"
     ;;
   status)

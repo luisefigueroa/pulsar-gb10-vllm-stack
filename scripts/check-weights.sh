@@ -119,6 +119,12 @@ if [ "$hot_rc" -ne 0 ]; then
   reason="${gap_fields[0]:-views-missing}"
   remediation="${gap_fields[1]:-scripts/model-library.sh prepare $NAME --yes}"
   detail="${gap_fields[2]:-model files are not prepared}"
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # Preparation is profile-keyed today; a released spec cannot prepare
+    # its own view yet. Say so instead of advertising a command that fails.
+    remediation="scripts/model-library.sh prepare <profile that produced this spec> --yes"
+    detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION}); prepare by spec identity is not available yet, so prepare the source profile, then retry"
+  fi
   emit_weights_gap "$reason" "$remediation" "$detail" "$one_node_rank"
   exit 1
 fi
@@ -129,10 +135,11 @@ expected_validation_json="${hot_fields[1]:-null}"
 # Readiness is an all-rank claim: the local resolution above proves rank 0
 # only, so verify every remote serving rank's view before reporting ok.
 if [ "$NODES" -gt 1 ]; then
+  set_library_verify_profile_args
   for ((verify_rank = 1; verify_rank < NODES; verify_rank++)); do
     verify_command=$(shell_join_q python3 - verify-hot \
       --instance-dir "$instance" \
-      --profile "$NAME" \
+      "${LIBRARY_VERIFY_PROFILE_ARGS[@]}" \
       --topology-id "$CLUSTER_TOPOLOGY_ID" \
       --expected-validation-json "$expected_validation_json" \
       --for-launch \

@@ -58,6 +58,18 @@ done
 
 acquire_model_library_lifecycle_lock shared
 load_conf "$NAME"
+if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$SPEC_MODE" != auto ]; then
+  die "released spec $NAME: --spec-decode/--no-spec-decode are refused (the identity is fixed)" 2
+fi
+if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$NODES" -eq 1 ]; then
+  if [ -n "$NODE_SELECTOR" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
+      && [ "$NODE_SELECTOR" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then
+    die "--node '$NODE_SELECTOR' differs from overlay placement.node_id" 2
+  fi
+  if [ -z "$NODE_SELECTOR" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ]; then
+    NODE_SELECTOR="$OVERLAY_PLACEMENT_NODE_ID"
+  fi
+fi
 acquire_model_library_hot_lock shared
 PLACEMENT_ARGS=()
 SERVICE_API_BASE="http://127.0.0.1:$PORT"
@@ -78,6 +90,9 @@ export QUIET=1
 [ "$VERBOSE" = 1 ] && export QUIET=0
 
 echo "┌─ up  $NAME"
+if [ "${CONF_SOURCE:-conf}" = spec ]; then
+  echo "│  source=spec $CONF_NAME"
+fi
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT"
 echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (display-only)"
 echo "│  legacy-status=$STATUS (display-only)"

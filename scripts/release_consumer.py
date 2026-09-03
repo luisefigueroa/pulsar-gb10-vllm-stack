@@ -95,11 +95,14 @@ PARALLELISM_CANONICAL = {
 USAGE = (
     "usage: python3 scripts/release_consumer.py list|verify|show [spec_id] "
     "[--repo-root R] [--releases-root D] [--json]\n"
+    "       python3 scripts/release_consumer.py export-profile <spec_id> "
+    "[--overlay F] [--releases-root D] [--repo-root R] [--image-repo NAME]\n"
     "       python3 scripts/release_consumer.py project --repo-root R "
     "--library-dir L --profile NAME [profile fields] "
     "[--releases-root D] [--extra-arg A] [--extra-env E]\n"
     "       python3 scripts/release_consumer.py project-batch --records FILE"
 )
+DEFAULT_IMAGE_REPO = "vllm/vllm-openai"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 EMPTY_PROJECTION = {"receipt": "missing", "identities": []}
 UNREADABLE_PROJECTION = {"receipt": "unreadable", "identities": []}
@@ -561,6 +564,287 @@ def compare_contracts(
     if fields:
         return {"result": "differs", "fields": fields}
     return {"result": "equal", "fields": []}
+
+
+def spec_lifecycle_key(spec_id: str) -> str:
+    """Return the 64-hex key used for CONF_NAME, labels, and containers."""
+    return _require_spec_id(spec_id)
+
+
+def image_repo_from_reference(reference: str | None) -> str:
+    """Repository part of a pullable image; default ``vllm/vllm-openai``.
+
+    Strips an ``@digest`` and a ``:tag`` that follows the final slash, so a
+    registry port such as ``registry.example:5000/team/vllm:tag`` keeps its
+    port and yields ``registry.example:5000/team/vllm``.
+    """
+    text = (reference or "").strip()
+    if not text:
+        return DEFAULT_IMAGE_REPO
+    at = text.find("@")
+    if at != -1:
+        text = text[:at]
+    last_slash = text.rfind("/")
+    colon = text.rfind(":")
+    if colon != -1 and colon > last_slash:
+        text = text[:colon]
+    repo = text.strip()
+    return repo or DEFAULT_IMAGE_REPO
+
+
+def _shell_single_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def format_shell_assignments(variables: dict[str, Any]) -> str:
+    """Emit ``NAME=value`` / ``NAME=(...)`` lines for Bash ``eval``."""
+    lines: list[str] = []
+    for key, value in variables.items():
+        if not isinstance(key, str) or not key.isidentifier():
+            fail(f"export-profile: invalid variable name {key!r}")
+        if isinstance(value, list):
+            quoted = " ".join(_shell_single_quote(str(item)) for item in value)
+            lines.append(f"{key}=({quoted})" if quoted else f"{key}=()")
+            continue
+        if value is None:
+            continue
+        lines.append(f"{key}={_shell_single_quote(str(value))}")
+    return "\n".join(lines) + "\n"
+
+
+def _gpu_mem_util_from_engine_args(engine_args: list[str]) -> tuple[str, list[str]]:
+    """Return GPU_MEM_UTIL and engine_args without that flag pair."""
+    remaining: list[str] = []
+    gpu_value: str | None = None
+    index = 0
+    while index < len(engine_args):
+        item = engine_args[index]
+        if item == "--gpu-memory-utilization":
+            if index + 1 >= len(engine_args):
+                fail("identity.engine_args: --gpu-memory-utilization requires a value")
+            if gpu_value is not None:
+                fail("identity.engine_args repeats --gpu-memory-utilization")
+            gpu_value = engine_args[index + 1]
+            index += 2
+            continue
+        if item.startswith("--gpu-memory-utilization="):
+            if gpu_value is not None:
+                fail("identity.engine_args repeats --gpu-memory-utilization")
+            gpu_value = item.split("=", 1)[1]
+            index += 1
+            continue
+        remaining.append(item)
+        index += 1
+    if gpu_value is None or not gpu_value:
+        fail("identity.engine_args must include --gpu-memory-utilization")
+    return gpu_value, remaining
+
+
+def spec_profile_variables(
+    spec: dict[str, Any],
+    overlay_entry: dict[str, Any],
+    image_repo: str,
+) -> dict[str, Any]:
+    """Map a released spec plus overlay into load_conf-shaped variables."""
+    spec_id = spec_lifecycle_key(str(spec.get("spec_id") or ""))
+    identity = spec.get("identity")
+    if not isinstance(identity, dict):
+        fail("spec identity is missing")
+    geometry = identity.get("geometry")
+    if not isinstance(geometry, dict):
+        fail("spec identity.geometry is missing")
+    try:
+        nodes = int(geometry["nodes"])
+        tensor_parallel = int(geometry["tp"])
+        pipeline_parallel = int(geometry["pp"])
+    except (KeyError, TypeError, ValueError) as exc:
+        fail(f"spec identity.geometry is incomplete: {exc}")
+    fabric = geometry.get("fabric")
+    expected_fabric = FABRIC_LOCAL if nodes == 1 else FABRIC_ROCE_V2
+    if fabric != expected_fabric:
+        fail(
+            f"spec geometry.fabric {fabric!r} disagrees with nodes={nodes} "
+            f"(expected {expected_fabric})"
+        )
+    digest = identity.get("image", {}).get("digest") if isinstance(
+        identity.get("image"), dict
+    ) else None
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        fail("spec identity.image.digest is missing")
+    repo = image_repo_from_reference(image_repo)
+    gpu_mem_util, engine_args = _gpu_mem_util_from_engine_args(
+        list(identity.get("engine_args") or [])
+    )
+    if nodes > 1 or tensor_parallel != 1 or pipeline_parallel != 1:
+        engine_args = [
+            *engine_args,
+            "--tensor-parallel-size",
+            str(tensor_parallel),
+            "--pipeline-parallel-size",
+            str(pipeline_parallel),
+        ]
+    served_name = overlay_entry.get("served_name")
+    if not isinstance(served_name, str) or not served_name:
+        fail("overlay served_name is missing")
+    port = overlay_entry.get("port")
+    if isinstance(port, bool) or not isinstance(port, int):
+        fail("overlay port must be an integer")
+    placement = overlay_entry.get("placement") or {}
+    placement_node = ""
+    if isinstance(placement, dict):
+        node_id = placement.get("node_id")
+        if isinstance(node_id, str):
+            placement_node = node_id
+    cache_root = overlay_entry.get("cache_root")
+    if nodes == 1:
+        topology_class = "single"
+        min_rails = "0"
+    else:
+        topology_class = "roce-full-mesh"
+        min_rails = "2"
+    snapshot_revision = identity.get("snapshot_revision")
+    if not isinstance(snapshot_revision, str) or not snapshot_revision:
+        fail("spec identity.snapshot_revision is missing")
+    manifest = identity.get("snapshot_manifest")
+    if not isinstance(manifest, dict):
+        fail("spec identity.snapshot_manifest is missing")
+    manifest_id = manifest.get("manifest_id")
+    if not isinstance(manifest_id, str) or SHA256_HEX_RE.fullmatch(manifest_id) is None:
+        fail("spec identity.snapshot_manifest.manifest_id is missing")
+    total_bytes = manifest.get("total_bytes")
+    if isinstance(total_bytes, bool) or not isinstance(total_bytes, int) or total_bytes < 0:
+        fail("spec identity.snapshot_manifest.total_bytes is missing")
+    # Disk footprint for the memory gate: whole GiB, rounded up, never below 1.
+    weights_gib = str(max(1, -(-total_bytes // (1024 ** 3))))
+    variables: dict[str, Any] = {
+        "MODEL": identity.get("model_id") or "",
+        "IMAGE": f"{repo}@{digest}",
+        "NODES": str(nodes),
+        "PORT": str(port),
+        "SERVED_NAME": served_name,
+        "GPU_MEM_UTIL": gpu_mem_util,
+        "ENGINE_ARGS": engine_args,
+        "CONTAINER_ENV": list(identity.get("container_env") or []),
+        "SPEC_DECODE_ARGS": [],
+        "PROFILE_PURPOSE": "serving",
+        "TOPOLOGY_CLASS": topology_class,
+        "MIN_RAILS_PER_PAIR": min_rails,
+        "STATUS": "?",
+        "NOTES": "",
+        "RECOMMENDED_SPEC": "0",
+        "FIRST_RUN_CANDIDATE": "0",
+        "FAMILY_RECOMMENDED": "0",
+        "PROFILE_FAMILY": served_name,
+        "VARIANT_LABEL": f"{nodes}-node",
+        "WEIGHTS_GIB": weights_gib,
+        "WEIGHTS_RAM_GIB": "",
+        "KV_GIB": "",
+        "OVERHEAD_GIB": "",
+        "MEM_MIN_FREE_GIB": "",
+        "CONF_NAME": spec_id,
+        "CONF_SOURCE": "spec",
+        "SNAPSHOT_REVISION": snapshot_revision,
+        "SPEC_MANIFEST_ID": manifest_id,
+        "OVERLAY_PLACEMENT_NODE_ID": placement_node,
+        "MODEL_SERVING_RELEASE_ID": "",
+        "EXPECTED_MODEL_SEAL": "",
+    }
+    if not variables["MODEL"]:
+        fail("spec identity.model_id is missing")
+    if isinstance(cache_root, str) and cache_root:
+        variables["HF_CACHE"] = cache_root
+    return variables
+
+
+def _format_gpu_mem_util(value: Any) -> str:
+    if isinstance(value, str) and value:
+        return value
+    number = float(value)
+    text = f"{number:.2f}"
+    if float(text) == number:
+        return text
+    return format(number, "g")
+
+
+def _extract_structured_tokens(
+    tokens: list[str],
+) -> tuple[int | None, int | None, str | None, list[str]]:
+    tensor_parallel: int | None = None
+    pipeline_parallel: int | None = None
+    gpu_value: str | None = None
+    remaining: list[str] = []
+    index = 0
+    while index < len(tokens):
+        matched = _flag_and_value(tokens[index], index, tokens)
+        if matched is None:
+            remaining.append(tokens[index])
+            index += 1
+            continue
+        flag, raw, next_index = matched
+        canonical = PARALLELISM_CANONICAL.get(flag, flag)
+        if canonical == "--tensor-parallel-size":
+            tensor_parallel = int(raw)
+        elif canonical == "--pipeline-parallel-size":
+            pipeline_parallel = int(raw)
+        elif canonical == "--gpu-memory-utilization":
+            gpu_value = raw
+        else:
+            remaining.append(tokens[index])
+        index = next_index
+    return tensor_parallel, pipeline_parallel, gpu_value, remaining
+
+
+def plan_to_comparable(plan: dict[str, Any]) -> dict[str, Any]:
+    """Project a launch plan onto ADR 0017 comparable contract fields."""
+    if not isinstance(plan, dict):
+        fail("plan must be an object")
+    runtime = plan.get("runtime")
+    if not isinstance(runtime, dict):
+        runtime = {}
+    engine_tp, engine_pp, engine_gpu, remaining_engine = _extract_structured_tokens(
+        list(runtime.get("engine_args") or [])
+    )
+    spec_tp, spec_pp, spec_gpu, remaining_spec = _extract_structured_tokens(
+        list(runtime.get("spec_decode_args") or [])
+    )
+    tensor_parallel = engine_tp if engine_tp is not None else spec_tp
+    pipeline_parallel = engine_pp if engine_pp is not None else spec_pp
+    if tensor_parallel is None:
+        tensor_parallel = 1
+    if pipeline_parallel is None:
+        pipeline_parallel = 1
+    gpu_value = engine_gpu or spec_gpu or _format_gpu_mem_util(plan.get("gpu_mem_util"))
+    argv = [
+        *remaining_engine,
+        "--gpu-memory-utilization",
+        gpu_value,
+        *remaining_spec,
+        "--tensor-parallel-size",
+        str(tensor_parallel),
+        "--pipeline-parallel-size",
+        str(pipeline_parallel),
+    ]
+    try:
+        nodes = int(plan["nodes"])
+    except (KeyError, TypeError, ValueError) as exc:
+        fail(f"plan.nodes is invalid: {exc}")
+    try:
+        digest = profile_image_digest(str(plan.get("image") or ""))
+    except ReleaseConsumerError as exc:
+        fail(f"plan.image: {exc}")
+    platform_id = plan.get("platform_id") or "dgx-spark-gb10"
+    return {
+        "argv": argv,
+        "container_env": list(runtime.get("container_env") or []),
+        "image_digest": digest,
+        "geometry": {
+            "platform_id": platform_id,
+            "nodes": nodes,
+            "tp": tensor_parallel,
+            "pp": pipeline_parallel,
+            "fabric": FABRIC_LOCAL if nodes == 1 else FABRIC_ROCE_V2,
+        },
+    }
 
 
 def profile_identities(
@@ -1315,6 +1599,30 @@ def overlay_for_spec(
     }
 
 
+def cmd_export_profile(
+    repo_root: pathlib.Path,
+    spec_id: str,
+    *,
+    overlay_path: str | pathlib.Path | None = None,
+    releases_root: str | pathlib.Path | None = None,
+    image_repo: str | None = None,
+) -> int:
+    spec = load_release(repo_root, spec_id, releases_root=releases_root)
+    overlay_file = (
+        pathlib.Path(overlay_path)
+        if overlay_path not in (None, "")
+        else pathlib.Path(repo_root) / OVERLAY_FILENAME
+    )
+    overlay = load_overlay(overlay_file)
+    entry = overlay_for_spec(overlay, spec)
+    repo = image_repo_from_reference(
+        image_repo or os.environ.get("VLLM_IMAGE_MAINLINE")
+    )
+    variables = spec_profile_variables(spec, entry, repo)
+    sys.stdout.write(format_shell_assignments(variables))
+    return 0
+
+
 def _review_text(status: str | None, reviewed_at: str | None) -> str:
     """Human review line: ``stable since <date>``, otherwise the bare status."""
     if not status:
@@ -1479,9 +1787,27 @@ def build_parser() -> argparse.ArgumentParser:
         usage=USAGE,
     )
     parser.add_argument(
-        "command", choices=("list", "verify", "show", "project", "project-batch")
+        "command",
+        choices=(
+            "list",
+            "verify",
+            "show",
+            "export-profile",
+            "project",
+            "project-batch",
+        ),
     )
     parser.add_argument("spec_id", nargs="?")
+    parser.add_argument(
+        "--overlay",
+        default="",
+        help="Deployment overlay path (default: <repo-root>/.pulsar-overlay.json)",
+    )
+    parser.add_argument(
+        "--image-repo",
+        default="",
+        help="Image repository used with the spec digest (default: VLLM_IMAGE_MAINLINE)",
+    )
     parser.add_argument(
         "--repo-root",
         default=str(_REPO_ROOT),
@@ -1547,6 +1873,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         if not args.spec_id:
             fail(f"{args.command} requires a spec_id")
+        if args.command == "export-profile":
+            return cmd_export_profile(
+                repo_root,
+                args.spec_id,
+                overlay_path=args.overlay or None,
+                releases_root=args.releases_root,
+                image_repo=args.image_repo or None,
+            )
         if args.command == "verify":
             return cmd_verify(
                 repo_root,

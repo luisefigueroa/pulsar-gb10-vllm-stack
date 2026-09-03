@@ -59,11 +59,12 @@ resolve_library_hot_for_profile "$MODEL_NAME"
 WEIGHT_OWNER_ID="${LIBRARY_VIEW_HOME_NODE_ID}"
 WEIGHT_CONFIG_ID="${LIBRARY_VIEW_CONTENT_ID}"
 runtime_model="$LIBRARY_VIEW_CONTAINER_MODEL_PATH"
+set_library_verify_profile_args
 for ((rank = 1; rank < NODES; rank++)); do
   library_verify_command=$(shell_join_q \
     python3 - verify-hot \
     --instance-dir "$LIBRARY_VIEW_INSTANCE_DIR" \
-    --profile "$MODEL_NAME" \
+    "${LIBRARY_VERIFY_PROFILE_ARGS[@]}" \
     --topology-id "$CLUSTER_TOPOLOGY_ID" \
     --expected-validation-json "$LIBRARY_VIEW_VALIDATION_JSON" \
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}" \

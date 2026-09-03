@@ -261,17 +261,7 @@ acquire_model_library_hot_lock() {
   PULSAR_MODEL_LIBRARY_HOT_LOCK_MODE="$mode"
 }
 
-# Load models/<name>.conf into caller shell. Resets optional fields first.
-load_conf() {
-  local name="${1:?load_conf: model name required}"
-  case "$name" in
-    *[!A-Za-z0-9._-]*|"")
-      die "invalid model id '$name' (use letters, numbers, dot, underscore, or hyphen)"
-      ;;
-  esac
-  local conf="$REPO_DIR/models/${name}.conf"
-  [ -f "$conf" ] || die "no such config: $conf (try scripts/list-models.sh)"
-
+_reset_loaded_profile_defaults() {
   MODEL="" SERVED_NAME="" IMAGE="" NOTES="" STATUS="?"
   EXPECTED_MODEL_SEAL=""
   MODEL_SERVING_RELEASE_ID=""
@@ -281,10 +271,27 @@ load_conf() {
   RECOMMENDED_SPEC=0 FIRST_RUN_CANDIDATE=0
   PROFILE_FAMILY="" VARIANT_LABEL="" FAMILY_RECOMMENDED=0 PROFILE_PURPOSE="serving"
   TOPOLOGY_CLASS="" MIN_RAILS_PER_PAIR=""
+  CONF_SOURCE=conf
+  SNAPSHOT_REVISION=""
+  SPEC_MANIFEST_ID=""
+  OVERLAY_PLACEMENT_NODE_ID=""
+}
 
-  # shellcheck disable=SC1090
-  . "$conf"
+# verify-hot identity arguments for the loaded profile. A conf binds the
+# stamp profile name; a released spec binds the exact sealed manifest id
+# instead, because the view may have been prepared under a conf name.
+# Sets LIBRARY_VERIFY_PROFILE_ARGS for the caller (used on every rank).
+set_library_verify_profile_args() {
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || die "spec start requires SPEC_MANIFEST_ID"
+    LIBRARY_VERIFY_PROFILE_ARGS=(--expected-manifest-id "$SPEC_MANIFEST_ID")
+  else
+    LIBRARY_VERIFY_PROFILE_ARGS=(--profile "${CONF_NAME:?load_conf first}")
+  fi
+}
 
+_finalize_loaded_profile() {
+  local name="${1:?profile name required}"
   [ -n "$MODEL" ] || die "$name: MODEL unset in conf"
   SERVED_NAME="${SERVED_NAME:-$name}"
   IMAGE="${IMAGE:-$VLLM_IMAGE_MAINLINE}"
@@ -308,12 +315,76 @@ load_conf() {
     MIN_RAILS_PER_PAIR="${MIN_RAILS_PER_PAIR:-2}"
   fi
   CONF_NAME="$name"
-  CONF_PATH="$conf"
-
   [[ "$NODES" =~ ^[1-9][0-9]*$ ]] || die "$name: NODES must be a positive integer"
   validate_profile_contract
   [ -z "$EXPECTED_MODEL_SEAL" ] ||
     die "$name: EXPECTED_MODEL_SEAL is retired (ADR 0012); expected-seal and schema-1 validation bundles are not a live product"
+}
+
+# Load a released spec plus the site overlay into caller shell (no conf).
+load_spec_profile() {
+  local spec_id="${1:?load_spec_profile: spec_id required}"
+  local conf="$REPO_DIR/models/${spec_id}.conf"
+  local releases_root="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"
+  local overlay="${PULSAR_OVERLAY_PATH:-$REPO_DIR/.pulsar-overlay.json}"
+  local image_repo="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai}"
+  local output err
+  local -a export_args
+  if [ -f "$conf" ] && [ -e "$releases_root/${spec_id}.json" ]; then
+    die "$spec_id: both models/${spec_id}.conf and $releases_root/${spec_id}.json exist; refuse without fallback"
+  fi
+  # Keep a registry port: drop @digest, then only a :tag after the last slash.
+  image_repo="${image_repo%%@*}"
+  case "${image_repo##*/}" in
+    *:*) image_repo="${image_repo%:*}" ;;
+  esac
+  [ -n "$image_repo" ] || image_repo=vllm/vllm-openai
+  export_args=(
+    export-profile "$spec_id"
+    --repo-root "$REPO_DIR"
+    --overlay "$overlay"
+    --image-repo "$image_repo"
+  )
+  if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
+    export_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
+  fi
+  err=$(mktemp "${TMPDIR:-/tmp}/pulsar-export-profile.XXXXXX")
+  if ! output=$(python3 "$REPO_DIR/scripts/release_consumer.py" \
+      "${export_args[@]}" 2>"$err"); then
+    output=$(tr -d '\r' <"$err" | sed 's/^error: //')
+    rm -f "$err"
+    die "$output"
+  fi
+  rm -f "$err"
+  # shellcheck disable=SC1090
+  eval "$output"
+  CONF_SOURCE=spec
+  CONF_PATH="$releases_root/${spec_id}.json"
+  _finalize_loaded_profile "$spec_id"
+}
+
+# Load models/<name>.conf, or a released spec when name is a 64-hex spec_id.
+load_conf() {
+  local name="${1:?load_conf: model name required}"
+  case "$name" in
+    *[!A-Za-z0-9._-]*|"")
+      die "invalid model id '$name' (use letters, numbers, dot, underscore, or hyphen)"
+      ;;
+  esac
+  _reset_loaded_profile_defaults
+  if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
+    load_spec_profile "$name"
+    return
+  fi
+  local conf="$REPO_DIR/models/${name}.conf"
+  [ -f "$conf" ] || die "no such config: $conf (try scripts/list-models.sh)"
+
+  # shellcheck disable=SC1090
+  . "$conf"
+
+  CONF_SOURCE=conf
+  CONF_PATH="$conf"
+  _finalize_loaded_profile "$name"
 }
 
 engine_arg_value() {
@@ -716,9 +787,11 @@ PY
 }
 
 mem_available_gib_local() {
-  if [ -r /proc/meminfo ]; then
+  # PULSAR_MEMINFO_FILE is a deterministic-test override for /proc/meminfo.
+  local meminfo="${PULSAR_MEMINFO_FILE:-/proc/meminfo}"
+  if [ -r "$meminfo" ]; then
     local kb
-    kb=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    kb=$(awk '/MemAvailable:/ {print $2}' "$meminfo" 2>/dev/null || echo 0)
     awk -v kb="${kb:-0}" 'BEGIN { printf "%.2f", kb / 1048576 }'
     return
   fi
@@ -1278,41 +1351,55 @@ PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 # topology (or a resolved one-node topology id).
 library_hot_info_for_profile() {
   local profile="${1:?profile required}" topology_id info stamp_json instance
-  local expected_validation_json command rank rc
+  local expected_validation_json command rank rc identity
+  local -a find_hot_args verify_hot_args
   topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] || return 1
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || return 1
 
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    [ -n "${MODEL:-}" ] && [ -n "${SNAPSHOT_REVISION:-}" ] \
+      && [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
+    identity="${MODEL}@${SNAPSHOT_REVISION}"
+    find_hot_args=(find-hot --identity "$identity" --manifest-id "$SPEC_MANIFEST_ID" \
+      --topology-id "$topology_id" --hot-root "$PULSAR_HOT_ROOT" --for-launch)
+    verify_hot_args=(verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID" \
+      --topology-id "$topology_id" --for-launch --serve-time-witness)
+  else
+    find_hot_args=(find-hot --profile "$profile" --topology-id "$topology_id" \
+      --hot-root "$PULSAR_HOT_ROOT" --for-launch)
+    verify_hot_args=(verify-hot --profile "$profile" --topology-id "$topology_id" \
+      --models-dir "$REPO_DIR/models" --for-launch --serve-time-witness)
+  fi
+
   if [ "${NODES:-1}" -eq 1 ] && [ "${SINGLE_NODE_REMOTE:-0}" = 1 ]; then
     rank="${SINGLE_NODE_INDEX:?remote single-node rank is unresolved}"
-    command=$(shell_join_q python3 - find-hot \
-      --profile "$profile" \
-      --topology-id "$topology_id" \
-      --hot-root "$PULSAR_HOT_ROOT" \
-      --for-launch)
+    command=$(shell_join_q python3 - "${find_hot_args[@]}")
     rc=0
     info=$(ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY") || rc=$?
     [ "$rc" -eq 0 ] || return "$rc"
     stamp_json=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
       || return 1
-    expected_validation_json=$(printf '%s' "$stamp_json" | \
-      python3 "$PULSAR_MODEL_LIBRARY_PY" validate-hot-stamp \
-        --profile "$profile" \
-        --models-dir "$REPO_DIR/models" \
-        --stamp-file /dev/stdin | \
-      python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))') \
-      || return 1
+    if [ "${CONF_SOURCE:-conf}" = spec ]; then
+      expected_validation_json=$(printf '%s' "$stamp_json" | python3 -c \
+        'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))') \
+        || return 1
+    else
+      expected_validation_json=$(printf '%s' "$stamp_json" | \
+        python3 "$PULSAR_MODEL_LIBRARY_PY" validate-hot-stamp \
+          --profile "$profile" \
+          --models-dir "$REPO_DIR/models" \
+          --stamp-file /dev/stdin | \
+        python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True, separators=(",", ":")))') \
+        || return 1
+    fi
     instance=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
       || return 1
-    command=$(shell_join_q python3 - verify-hot \
+    command=$(shell_join_q python3 - "${verify_hot_args[@]}" \
       --instance-dir "$instance" \
-      --profile "$profile" \
-      --topology-id "$topology_id" \
-      --expected-validation-json "$expected_validation_json" \
-      --for-launch \
-      --serve-time-witness)
+      --expected-validation-json "$expected_validation_json")
     rc=0
     ssh_node "$rank" "$command" <"$PULSAR_MODEL_LIBRARY_PY" >/dev/null || rc=$?
     if [ "$rc" -ne 0 ]; then
@@ -1320,22 +1407,17 @@ library_hot_info_for_profile() {
       return 2
     fi
   else
-    info=$(python3 "$PULSAR_MODEL_LIBRARY_PY" find-hot \
-      --profile "$profile" \
-      --topology-id "$topology_id" \
-      --hot-root "$PULSAR_HOT_ROOT" \
-      --models-dir "$REPO_DIR/models" \
-      --for-launch) || return 1
+    if [ "${CONF_SOURCE:-conf}" = spec ]; then
+      info=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${find_hot_args[@]}") || return 1
+    else
+      info=$(python3 "$PULSAR_MODEL_LIBRARY_PY" "${find_hot_args[@]}" \
+        --models-dir "$REPO_DIR/models") || return 1
+    fi
     instance=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
       || return 1
-    python3 "$PULSAR_MODEL_LIBRARY_PY" verify-hot \
-      --instance-dir "$instance" \
-      --profile "$profile" \
-      --topology-id "$topology_id" \
-      --models-dir "$REPO_DIR/models" \
-      --for-launch \
-      --serve-time-witness >/dev/null || return 2
+    python3 "$PULSAR_MODEL_LIBRARY_PY" "${verify_hot_args[@]}" \
+      --instance-dir "$instance" >/dev/null || return 2
   fi
   printf '%s\n' "$info"
 }
