@@ -3063,19 +3063,28 @@ write_stamp_on_rank() {
 verify_hot_on_rank() {
   local rank="${1:?}" instance_dir="${2:?}" profile="${3:?}" topology_id="${4:?}"
   local allow_verifying="${5:-0}" expected_validation_json="${6:-}" command
+  # A conf binds the stamp profile name and its conf; a released spec binds
+  # the sealed manifest id instead (the view may carry a conf's name).
   local -a verify_args=(
     verify-hot
     --instance-dir "$instance_dir"
-    --profile "$profile"
     --topology-id "$topology_id"
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
     --refresh-witness
   )
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || die "verify: spec prepare requires SPEC_MANIFEST_ID"
+    verify_args+=(--expected-manifest-id "$SPEC_MANIFEST_ID")
+  else
+    verify_args+=(--profile "$profile")
+  fi
   [ "$allow_verifying" = 1 ] && verify_args+=(--allow-verifying)
   [ -n "$expected_validation_json" ] \
     && verify_args+=(--expected-validation-json "$expected_validation_json")
   if [ "$rank" = 0 ]; then
-    verify_args+=(--models-dir "$REPO_DIR/models")
+    if [ "${CONF_SOURCE:-conf}" != spec ]; then
+      verify_args+=(--models-dir "$REPO_DIR/models")
+    fi
     python3 "$PY_TOOL" "${verify_args[@]}" >/dev/null
     return 0
   fi

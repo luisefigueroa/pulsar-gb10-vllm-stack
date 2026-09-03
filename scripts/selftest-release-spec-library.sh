@@ -478,4 +478,38 @@ if printf '%s\n' "$check_out" | grep -q "profile that produced this spec"; then
   exit 1
 fi
 echo "OK   check-weights advertises prepare <spec_id> --yes"
+
+# The post-prepare verification must bind a spec by its sealed manifest id and
+# never by profile name or conf directory (the view may carry a conf's name).
+verify_args_log="$STATE/verify-args.log"
+cat >"$STATE/record-py-tool.py" <<'PY'
+import os, sys
+with open(os.environ["VERIFY_ARGS_LOG"], "a", encoding="utf-8") as fh:
+    fh.write("\n".join(sys.argv[1:]) + "\n--END--\n")
+PY
+: >"$verify_args_log"
+VERIFY_ARGS_LOG="$verify_args_log" bash -c '
+  set -euo pipefail
+  REPO_DIR="$1"; PY_TOOL="$2"; manifest="$3"; spec="$4"
+  die() { echo "die: $*" >&2; exit 1; }
+  ssh_node() { return 0; }
+  shell_join_q() { printf "%q " "$@"; }
+  eval "$(sed -n "/^verify_hot_on_rank() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh")"
+  CONF_SOURCE=spec SPEC_MANIFEST_ID="$manifest" verify_hot_on_rank 0 /tmp/instance "$spec" topo-1
+  CONF_SOURCE=conf verify_hot_on_rank 0 /tmp/instance nemotron-3-nano-30b-nvfp4 topo-1
+' _ "$REPO_DIR" "$STATE/record-py-tool.py" "$manifest_id" "$spec_id"
+python3 - "$verify_args_log" "$manifest_id" "$spec_id" <<'PY'
+import sys
+log, manifest_id, spec_id = sys.argv[1:]
+records = [r.split("\n") for r in open(log, encoding="utf-8").read().split("--END--\n") if r.strip()]
+assert len(records) == 2, records
+spec_call, conf_call = records
+assert "--expected-manifest-id" in spec_call and manifest_id in spec_call, spec_call
+assert "--profile" not in spec_call and "--models-dir" not in spec_call, spec_call
+assert spec_id not in spec_call, spec_call
+assert "--profile" in conf_call and "--models-dir" in conf_call, conf_call
+assert "--expected-manifest-id" not in conf_call, conf_call
+print("ok")
+PY
+echo "OK   post-prepare verification binds a spec by manifest id, a conf by profile"
 echo "OK   WP1.4d library spec selftest"
