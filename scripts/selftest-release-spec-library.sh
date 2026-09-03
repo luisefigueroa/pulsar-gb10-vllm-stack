@@ -460,6 +460,46 @@ if python3 "$REPO_DIR/scripts/model_library.py" verify-hot --instance-dir "$home
   echo "FAIL verify-hot rejected the current durable home" >&2; exit 1
 fi
 echo "OK   verify-hot --expected-home-node-id binds the current durable home"
+
+# The fabric decision and map follow the ranks actually copied plus the home
+# rank (the transfer source), never the untouched ranks.
+roce_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  eval "$(sed -n "/^copy_ranks_need_bulk_transfer() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^roce_map_ranks_csv() {/,/^}/p" "$1/scripts/model-library.sh")"
+  copy_ranks_need_bulk_transfer 0 0
+  copy_ranks_need_bulk_transfer 0 2
+  roce_map_ranks_csv 0 2
+  roce_map_ranks_csv 1 1
+' _ "$REPO_DIR")
+[ "$roce_out" = $'0\n1\n0,2\n1' ] || { echo "FAIL fabric ranks from copy_ranks: $roce_out" >&2; exit 1; }
+grep -q 'load_copy_ssh_roce_map "$home_rank" \\$' "$REPO_DIR/scripts/model-library.sh" \
+  && grep -q 'roce_map_ranks_csv "$home_rank" "${copy_ranks\[@\]}"' "$REPO_DIR/scripts/model-library.sh" \
+  || { echo "FAIL prepare still maps the fabric from target_ranks" >&2; exit 1; }
+echo "OK   prepare derives the fabric decision and map from the copied ranks"
+
+# Pin and unpin resolve and verify every rank before any stamp changes.
+strict_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  hot_instance_for_profile_on_rank() {
+    [ "$4" = 1 ] || { echo "not-strict" >&2; return 1; }
+    [ "$2" != 2 ] || return 1
+    printf "%s\n" "{\"instance_dir\": \"/hot/x-topo/cid-$2\"}"
+  }
+  eval "$(sed -n "/^hot_instances_for_profile_strict_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
+  hot_instances_for_profile_strict_on_ranks spec 1 0 1
+  rc=0; out=$(hot_instances_for_profile_strict_on_ranks spec 0 0 2 2>/dev/null) || rc=$?
+  echo "partial rc=$rc out=[$out]"
+' _ "$REPO_DIR")
+[ "$strict_out" = $'0\t/hot/x-topo/cid-0\n1\t/hot/x-topo/cid-1\npartial rc=1 out=[]' ] \
+  || { echo "FAIL strict per-rank lookup: $strict_out" >&2; exit 1; }
+for fn in cmd_pin cmd_unpin; do
+  sed -n "/^${fn}() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -q "hot_instances_for_profile_strict_on_ranks" \
+    || { echo "FAIL $fn does not resolve every rank before mutating" >&2; exit 1; }
+done
+echo "OK   pin and unpin verify every rank's view before changing any stamp"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

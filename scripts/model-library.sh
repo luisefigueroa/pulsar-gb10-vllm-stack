@@ -2823,6 +2823,27 @@ verify_copy_ssh_roce_route() {
     || die "rank $remote_rank: live route does not match confirmed RoCE rail"
 }
 
+# copy_ranks_need_bulk_transfer <home_rank> <rank>...
+# Print 1 when any copied rank is not the home rank (bytes must cross the
+# fabric), else 0.
+copy_ranks_need_bulk_transfer() {
+  local home_rank="${1:?}" rank
+  shift
+  for rank in "$@"; do
+    [ "$rank" = "$home_rank" ] || { printf '1\n'; return 0; }
+  done
+  printf '0\n'
+}
+
+# roce_map_ranks_csv <home_rank> <rank>...
+# The ranks the fabric map must cover: every copied rank plus the home rank,
+# which is the transfer source; sorted, unique, comma-separated.
+roce_map_ranks_csv() {
+  local home_rank="${1:?}"
+  shift
+  printf '%s\n' "$home_rank" "$@" | sort -n -u | paste -sd, -
+}
+
 load_copy_ssh_roce_map() {
   local home_rank="${1:?}" ranks_csv="${2:?}" rail_index="${3:-0}"
   local map r ip control_host netdev expected
@@ -3452,15 +3473,14 @@ print(json.dumps(d))
 
   # Promotion candidate: SSH identity stays on the confirmed control alias;
   # bulk sockets are pinned to confirmed RoCE IPs after live route validation.
+  # The fabric decision and map follow the ranks actually copied (plus the
+  # home rank as the source), so a rank that stays untouched by a selective
+  # repair never needs a fabric mapping.
   if [ "$transport" = ssh-roce ]; then
-    needs_bulk_transfer=$(printf '%s' "$plan" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-home=int(d["home"]["rank"])
-print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
-')
+    needs_bulk_transfer=$(copy_ranks_need_bulk_transfer "$home_rank" "${copy_ranks[@]}")
     if [ "$needs_bulk_transfer" = 1 ]; then
-      load_copy_ssh_roce_map "$home_rank" "$target_ranks_csv" \
+      load_copy_ssh_roce_map "$home_rank" \
+        "$(roce_map_ranks_csv "$home_rank" "${copy_ranks[@]}")" \
         "${PULSAR_FABRIC_RAIL_INDEX:-0}"
       log "ssh-roce candidate: confirmed identity + RoCE HostName binding"
     else
@@ -3778,6 +3798,25 @@ hot_instances_for_profile_on_ranks() {
   printf '%s\n' "${rows[@]}"
 }
 
+# hot_instances_for_profile_strict_on_ranks <profile> <require_launchable> <rank>...
+# Print one "rank<TAB>instance_dir" line per target rank after the strict
+# lookup (content verified, bound to the current durable home) succeeded on
+# every rank. Fails without printing when any rank has no such view, so a
+# pin-state change never starts on a partial set.
+hot_instances_for_profile_strict_on_ranks() {
+  local profile="${1:?}" require_launchable="${2:-0}" rank info instance
+  local -a rows=()
+  shift 2
+  for rank in "$@"; do
+    info=$(hot_instance_for_profile_on_rank "$profile" "$rank" "$require_launchable" 1) \
+      || { warn "$profile: rank $rank has no verified view bound to the current home"; return 1; }
+    instance=$(printf '%s' "$info" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
+    rows+=("$(printf '%s\t%s' "$rank" "$instance")")
+  done
+  printf '%s\n' "${rows[@]}"
+}
+
 # resolve_hot_profile_targets <profile> [node_selector] [policy]
 # policy "required" (default): a released spec needs its catalog home.
 # policy "cleanup": purge may proceed without a catalog home so a stranded
@@ -3879,15 +3918,21 @@ cmd_pin() {
   local HOT_TARGET_RANKS_CSV="" HOT_HOME_NODE_ID=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
     || die "pin: cannot resolve exact local-files placement"
-  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}" 1) \
-    || die "pin: retired cold stage-only state is cleanup-only and cannot be pinned"
-  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  # Every target rank is resolved and verified before any stamp changes, so
+  # a rank that lacks the view never leaves the others half-pinned.
+  local -a pin_rows=() row=()
+  local pin_list="" line
+  pin_list=$(hot_instances_for_profile_strict_on_ranks "$profile" 1 "${HOT_TARGET_RANKS[@]}") \
+    || die "pin: every serving rank needs a verified view bound to the current home; retired cold stage-only state is cleanup-only and cannot be pinned"
+  mapfile -t pin_rows < <(printf '%s\n' "$pin_list")
   budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$HOT_TARGET_RANKS_CSV") \
     || die "pin: all-rank hot budget observation failed"
   render_hot_budget_plan_json "$budget_plan"
   hot_budget_plan_is_eligible "$budget_plan" \
     || die "pin: current hot state exceeds policy; nothing was pinned"
-  for rank in "${HOT_TARGET_RANKS[@]}"; do
+  for line in "${pin_rows[@]}"; do
+    IFS=$'\t' read -r -a row <<<"$line"
+    rank="${row[0]}" instance="${row[1]}"
     if [ "$rank" = 0 ]; then
       python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --pinned >/dev/null
     else
@@ -3923,9 +3968,14 @@ cmd_unpin() {
   local HOT_TARGET_RANKS_CSV="" HOT_HOME_NODE_ID=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
     || die "unpin: cannot resolve exact local-files placement"
-  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
-  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  for rank in "${HOT_TARGET_RANKS[@]}"; do
+  local -a pin_rows=() row=()
+  local pin_list="" line
+  pin_list=$(hot_instances_for_profile_strict_on_ranks "$profile" 0 "${HOT_TARGET_RANKS[@]}") \
+    || die "unpin: every serving rank needs a verified view bound to the current home"
+  mapfile -t pin_rows < <(printf '%s\n' "$pin_list")
+  for line in "${pin_rows[@]}"; do
+    IFS=$'\t' read -r -a row <<<"$line"
+    rank="${row[0]}" instance="${row[1]}"
     if [ "$rank" = 0 ]; then
       python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --no-pinned >/dev/null
     else
