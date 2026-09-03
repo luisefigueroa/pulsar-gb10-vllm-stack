@@ -97,7 +97,7 @@ Usage:
   scripts/model-library.sh cold show <model_id|/abs/path> --cold-root PATH [--json]
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
       [--cache-root PATH] [--cold-root PATH] [--yes]
-  scripts/model-library.sh prepare <profile>
+  scripts/model-library.sh prepare <profile|spec_id>
       [--transport ssh-control|ssh-roce]
       [--yes] [--interactive-sudo] [--time]
       [--copy-streams N] [--node RANK|NODE_ID]
@@ -106,9 +106,9 @@ Usage:
       [--output PATH] [--nodes N] [--rail-index N]
       [--order control-first|roce-first]
       [--copy-streams N]
-  scripts/model-library.sh pin <profile> [--node RANK|NODE_ID]
-  scripts/model-library.sh unpin <profile> [--node RANK|NODE_ID]
-  scripts/model-library.sh purge-hot <profile> [--node RANK|NODE_ID]
+  scripts/model-library.sh pin <profile|spec_id> [--node RANK|NODE_ID]
+  scripts/model-library.sh unpin <profile|spec_id> [--node RANK|NODE_ID]
+  scripts/model-library.sh purge-hot <profile|spec_id> [--node RANK|NODE_ID]
       [--yes] [--force-unpin]
   scripts/model-library.sh health [--json]
   scripts/model-library.sh budget [--json]
@@ -3376,7 +3376,7 @@ cmd_prepare() {
     shift
   done
   [ -n "$profile" ] \
-    || die "usage: prepare <profile> [--transport ssh-control|ssh-roce]"
+    || die "usage: prepare <profile|spec_id> [--transport ssh-control|ssh-roce]"
   case "$backend" in
     copy) ;;
     *) die "prepare: --backend must be copy" ;;
@@ -4122,7 +4122,7 @@ cmd_pin() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: pin <profile> [--node RANK|NODE_ID]"
+  [ -n "$profile" ] || die "usage: pin <profile|spec_id> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
   node_selector=$(spec_overlay_node_selector "$node_selector")
@@ -4172,7 +4172,7 @@ cmd_unpin() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: unpin <profile> [--node RANK|NODE_ID]"
+  [ -n "$profile" ] || die "usage: unpin <profile|spec_id> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
   node_selector=$(spec_overlay_node_selector "$node_selector")
@@ -4217,7 +4217,7 @@ cmd_purge_hot() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: purge-hot <profile> [--node RANK|NODE_ID] [--yes] [--force-unpin]"
+  [ -n "$profile" ] || die "usage: purge-hot <profile|spec_id> [--node RANK|NODE_ID] [--yes] [--force-unpin]"
   require_py
   load_conf "$profile"
   node_selector=$(spec_overlay_node_selector "$node_selector" cleanup)

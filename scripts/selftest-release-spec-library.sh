@@ -758,6 +758,18 @@ PULSAR_HOT_ROOT="$STATE/hot-rank1" \
   "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
 [ ! -e "$incomplete_view" ] || { echo "FAIL purge-hot left the incomplete view" >&2; exit 1; }
 echo "OK   purge-hot recovers a view an interrupted preparation left in state verifying"
+
+# The lifecycle commands advertise the released spec id they accept, in
+# the rendered help and in each command's usage error.
+help_out=$("$REPO_DIR/scripts/model-library.sh" --help)
+for cmd in prepare pin unpin purge-hot; do
+  printf '%s\n' "$help_out" | grep -c "model-library.sh $cmd <profile|spec_id>" >/dev/null \
+    || { echo "FAIL help does not advertise spec_id for $cmd" >&2; exit 1; }
+  usage_out=$("$REPO_DIR/scripts/model-library.sh" "$cmd" 2>&1 || true)
+  printf '%s\n' "$usage_out" | grep -c "usage: $cmd <profile|spec_id>" >/dev/null \
+    || { echo "FAIL $cmd usage error does not advertise spec_id: $usage_out" >&2; exit 1; }
+done
+echo "OK   lifecycle help and usage errors advertise <profile|spec_id>"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }

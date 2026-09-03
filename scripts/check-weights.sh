@@ -85,19 +85,23 @@ if [ "$hot_rc" -ne 0 ]; then
   if [ "$NODES" -eq 1 ]; then
     one_node_rank="$SINGLE_NODE_INDEX"
   fi
-  if [ "$NODES" -eq 1 ] && [ "$hot_rc" -eq 255 ]; then
+  # The lookup verifies every serving rank, so its codes carry the same
+  # meaning for a multi-rank placement; only the rank label differs.
+  where="a serving rank"
+  [ "$NODES" -ne 1 ] || where="rank $SINGLE_NODE_INDEX"
+  if [ "$hot_rc" -eq 255 ]; then
     emit_weights_gap \
       "rank-unreachable" \
       "./pulsar inventory" \
-      "rank $SINGLE_NODE_INDEX is unreachable; restore SSH to that confirmed node, then re-check. Do not restage while the rank is unobservable" \
-      "$SINGLE_NODE_INDEX"
+      "$where is unreachable; restore SSH to that confirmed node, then re-check. Do not restage while the rank is unobservable" \
+      "$one_node_rank"
     exit 1
   fi
-  if [ "$NODES" -eq 1 ] && [ "$hot_rc" -eq 2 ]; then
+  if [ "$hot_rc" -eq 2 ]; then
     emit_weights_gap \
       "identity-mismatch" \
       "scripts/model-library.sh health" \
-      "rank $SINGLE_NODE_INDEX runtime view failed verification; inspect health, then prepare $NAME --yes only if that view is missing or corrupt" \
+      "$where runtime view failed verification; inspect health, then prepare $NAME --yes only if that view is missing or corrupt" \
       "$SINGLE_NODE_INDEX"
     exit 1
   fi
