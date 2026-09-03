@@ -2823,19 +2823,15 @@ verify_copy_ssh_roce_route() {
     || die "rank $remote_rank: live route does not match confirmed RoCE rail"
 }
 
-# copy_ranks_need_fabric_map <home_rank> <rank>...
-# Print 1 when the fabric map is needed: a copied rank is remote (its bytes
-# and its stamp travel over the fabric shell), or rank 0 is copied from a
-# remote home. Only a controller-local copy from a controller home needs
-# no map.
-copy_ranks_need_fabric_map() {
+# copy_ranks_need_bulk_transfer <home_rank> <rank>...
+# Print 1 when bytes must cross the fabric: a copied rank is not the home
+# rank. The fabric map needs such a non-home peer; a home rank copied alone
+# materializes locally and moves nothing across the fabric.
+copy_ranks_need_bulk_transfer() {
   local home_rank="${1:?}" rank
   shift
   for rank in "$@"; do
-    if [ "$rank" != 0 ] || [ "$home_rank" != 0 ]; then
-      printf '1\n'
-      return 0
-    fi
+    [ "$rank" = "$home_rank" ] || { printf '1\n'; return 0; }
   done
   printf '0\n'
 }
@@ -3126,6 +3122,27 @@ spec_view_ready_on_every_rank() {
   observed=$(observe_ready_ranks_for_instance "$instance" "$profile" \
     "$expected_validation_json" "$home_node_id" "$@")
   [ "$observed" = "$ranks_csv" ]
+}
+
+# select_reusable_spec_view <profile> <validation_json> <home_node_id>
+#   <ranks_csv> "<ranks separated by spaces>" <candidate>...
+# Print the first candidate view that verifies, bound to the current home,
+# on every listed rank; fail when none does (or no candidate was given).
+select_reusable_spec_view() {
+  local profile="${1:?}" expected_validation_json="${2:?}" home_node_id="${3:?}"
+  local ranks_csv="${4:?}" ranks_ws="${5:?}" candidate
+  local -a ranks=()
+  shift 5
+  read -r -a ranks <<<"$ranks_ws"
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    if spec_view_ready_on_every_rank "$candidate" "$profile" \
+        "$expected_validation_json" "$home_node_id" "$ranks_csv" "${ranks[@]}"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # require_no_view_users_on_ranks <instance> <content_id> <rank>...
@@ -3438,6 +3455,7 @@ cmd_prepare() {
   target_ranks_csv=$(IFS=,; printf '%s' "${target_ranks[*]}")
   local -a copy_ranks=("${target_ranks[@]}")
   local ready_csv="" plan_home_node_id plan_content_id reuse_candidate=""
+  local -a reuse_candidates=()
   plan_home_node_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["home"].get("node_id") or "")')
   plan_content_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["content_id"])')
 
@@ -3450,9 +3468,9 @@ cmd_prepare() {
     # A matching identity view under any name is reused only when that
     # exact path verifies on every target rank; a partial match is never
     # repaired under the spec's name.
-    reuse_candidate=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reuse_candidate") or "")')
-    if [ -n "$reuse_candidate" ] && spec_view_ready_on_every_rank "$reuse_candidate" "$profile" \
-        "$expected_validation_json" "$plan_home_node_id" "$target_ranks_csv" "${target_ranks[@]}"; then
+    mapfile -t reuse_candidates < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin).get("reuse_candidates") or []))')
+    if reuse_candidate=$(select_reusable_spec_view "$profile" "$expected_validation_json" \
+        "$plan_home_node_id" "$target_ranks_csv" "${target_ranks[*]}" "${reuse_candidates[@]}"); then
       log "reusing verified identity view $reuse_candidate on every target rank; model not started"
       return 0
     fi
@@ -3503,14 +3521,18 @@ print(json.dumps(d))
   # home rank as the source), so a rank that stays untouched by a selective
   # repair never needs a fabric mapping.
   if [ "$transport" = ssh-roce ]; then
-    needs_bulk_transfer=$(copy_ranks_need_fabric_map "$home_rank" "${copy_ranks[@]}")
+    needs_bulk_transfer=$(copy_ranks_need_bulk_transfer "$home_rank" "${copy_ranks[@]}")
     if [ "$needs_bulk_transfer" = 1 ]; then
       load_copy_ssh_roce_map "$home_rank" \
         "$(roce_map_ranks_csv "$home_rank" "${copy_ranks[@]}")" \
         "${PULSAR_FABRIC_RAIL_INDEX:-0}"
       log "ssh-roce candidate: confirmed identity + RoCE HostName binding"
     else
-      log "no fabric transfer is required; preparing the controller-local durable-home view"
+      # Only the home rank is materialized: no bytes cross the fabric and
+      # the map (which needs a non-home peer) is not built. A remote home's
+      # stamp still has to reach it, so that rsync takes the control path.
+      COPY_SSH_MODE=control
+      log "no non-home transfer is required; preparing the durable-home view (stamp over the control SSH path)"
     fi
   fi
 
@@ -3833,6 +3855,12 @@ hot_instances_for_profile_on_ranks() {
   printf '%s\n' "${rows[@]}"
 }
 
+# describe_purge_rows <row>...
+# One "rank N: path" per row, joined with "; ", for the confirmation text.
+describe_purge_rows() {
+  printf '%s\n' "$@" | awk -F'\t' 'NF {print "rank " $1 ": " $2}' | paste -sd ';' - | sed 's/;/; /g'
+}
+
 # hot_instances_for_profile_strict_on_ranks <profile> <require_launchable> <rank>...
 # Print one "rank<TAB>instance_dir" line per target rank after the strict
 # lookup (content verified, bound to the current durable home) succeeded on
@@ -4078,7 +4106,7 @@ cmd_purge_hot() {
     [ -z "$sharers" ] \
       || die "purge-hot: refusing to delete $instance on rank $rank: still referenced by managed container(s), running or stopped: $sharers (stop and remove them first; ./pulsar stop <name> --purge-hot does both)"
   done
-  [ "$yes" = 1 ] || die "purge-hot will delete $(printf '%s' "${purge_rows[*]}" | awk -F'\t' '{print "rank " $1 ": " $2}' | paste -sd ';' -) — re-run with --yes"
+  [ "$yes" = 1 ] || die "purge-hot will delete $(describe_purge_rows "${purge_rows[@]}") — re-run with --yes"
   for line in "${purge_rows[@]}"; do
     IFS=$'\t' read -r -a row <<<"$line"
     rank="${row[0]}" instance="${row[1]}"

@@ -2722,11 +2722,19 @@ def classify_library_readiness(
     identity_key = str(identity_key or "").strip() or None
     if identity_key and "@" in identity_key:
         # A released spec names its exact commit: acquisition must fetch
-        # that commit, never a selector that may resolve elsewhere.
+        # that commit, never a selector that may resolve elsewhere. A
+        # selected placement travels with it, otherwise home add may pick
+        # another eligible rank that the overlay then rejects.
         exact_revision = identity_key.split("@", 1)[1]
+        placement = ""
+        selected = (selected_node_id or "").strip() or (
+            str(selected_rank) if selected_rank is not None else ""
+        )
+        if selected:
+            placement = f" --node {selected}"
         unsealed_add = (
-            f"scripts/model-library.sh home add {profile} --revision {exact_revision} --plan && "
-            f"scripts/model-library.sh home add {profile} --revision {exact_revision} --yes"
+            f"scripts/model-library.sh home add {profile} --revision {exact_revision}{placement} --plan && "
+            f"scripts/model-library.sh home add {profile} --revision {exact_revision}{placement} --yes"
         )
     try:
         if identity_key:
@@ -3383,14 +3391,15 @@ def find_hot_instance_for_profile(
     return None
 
 
-def find_hot_instance_for_identity(
+def find_hot_instances_for_identity(
     hot_root: str | pathlib.Path,
     identity_key: str,
     topology_id: str,
     *,
     manifest_id: str | None = None,
-) -> pathlib.Path | None:
-    """Return the newest ready instance whose stamp matches model_id@revision.
+) -> list[pathlib.Path]:
+    """Return every ready instance whose stamp matches model_id@revision,
+    newest activation first.
 
     When ``manifest_id`` is given, the instance's sealed integrity manifest
     must carry that id, so a released spec only launches the exact reviewed
@@ -3403,13 +3412,13 @@ def find_hot_instance_for_identity(
     topo12 = (topology_id or "notopology")[:12]
     root = pathlib.Path(hot_root)
     if not root.is_dir():
-        return None
+        return []
     suffix = f"-{topo12}"
     matches: list[tuple[str, pathlib.Path]] = []
     try:
         parents = list(root.iterdir())
     except OSError:
-        return None
+        return []
     for parent in parents:
         # A symlinked <name>-<topology> entry may point outside the hot
         # root; identity discovery must not follow it into a purge target.
@@ -3432,10 +3441,22 @@ def find_hot_instance_for_identity(
                 if stamped != manifest_id:
                     continue
             matches.append((activated, candidate))
-    if not matches:
-        return None
     matches.sort(key=lambda item: item[0], reverse=True)
-    return matches[0][1]
+    return [candidate for _activated, candidate in matches]
+
+
+def find_hot_instance_for_identity(
+    hot_root: str | pathlib.Path,
+    identity_key: str,
+    topology_id: str,
+    *,
+    manifest_id: str | None = None,
+) -> pathlib.Path | None:
+    """Return the newest ready instance matching the identity, or None."""
+    matches = find_hot_instances_for_identity(
+        hot_root, identity_key, topology_id, manifest_id=manifest_id
+    )
+    return matches[0] if matches else None
 
 
 def dir_size_bytes(path: pathlib.Path) -> int:
@@ -4434,7 +4455,7 @@ def plan_prepare(
             and stamp.get("state") in {"ready", "pinned"}
         )
 
-    reuse_candidate = None
+    reuse_candidates: list[str] = []
     if identity_key:
         spec_manifest_id = validate_snapshot_manifest(spec_manifest).get(
             "manifest_id"
@@ -4482,16 +4503,19 @@ def plan_prepare(
             # A multi-rank spec may reuse a matching identity view under any
             # name (a conf-named view of the same sealed manifest), but only
             # once the wrapper has verified that exact path on every target
-            # rank. The plan names the candidate found on the controller; a
-            # partial match is never repaired under another name.
-            candidate = find_hot_instance_for_identity(
+            # rank. The plan lists every candidate found on the controller,
+            # newest first; the wrapper probes them in order, since a newer
+            # one-rank view may be absent elsewhere while an older complete
+            # multi-rank view exists everywhere. A partial match is never
+            # repaired under another name.
+            for candidate in find_hot_instances_for_identity(
                 hot_root,
                 resolved["identity_key"],
                 topology_id,
                 manifest_id=str(spec_manifest_id) if spec_manifest_id else None,
-            )
-            if candidate is not None and _stamp_matches_plan(load_hot_stamp(candidate)):
-                reuse_candidate = str(candidate)
+            ):
+                if _stamp_matches_plan(load_hot_stamp(candidate)):
+                    reuse_candidates.append(str(candidate))
 
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     # Rank 0's stamp proves rank 0 only. For a multi-rank spec the wrapper
@@ -4574,7 +4598,7 @@ def plan_prepare(
         "topology_id": topology_id,
         "target_ranks": target_ranks,
         "copy_ranks": copy_ranks,
-        "reuse_candidate": reuse_candidate,
+        "reuse_candidates": reuse_candidates,
         "hot_storage_requirements": hot_storage_requirements,
         "stamp": stamp,
         "transfer": transfer,

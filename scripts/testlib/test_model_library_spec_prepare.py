@@ -212,9 +212,10 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertEqual(ready["action"], "skip")
         self.assertIn("every target rank", ready["reason"])
 
-    def test_multi_rank_identity_names_a_reuse_candidate(self) -> None:
-        self.assertIsNone(
-            model_library.plan_prepare(**self._identity_kwargs(nodes=2))["reuse_candidate"]
+    def test_multi_rank_identity_names_every_reuse_candidate(self) -> None:
+        self.assertEqual(
+            model_library.plan_prepare(**self._identity_kwargs(nodes=2))["reuse_candidates"],
+            [],
         )
         conf_plan = model_library.plan_prepare(
             catalog_path=str(self.catalog_path),
@@ -231,12 +232,23 @@ class SpecPreparePlannerTests(unittest.TestCase):
         instance.mkdir(parents=True)
         model_library.write_hot_stamp(instance, conf_plan["stamp"])
         # A two-rank spec does not skip from the controller alone, but names
-        # the conf-named identity match for the wrapper to verify on every
-        # rank before reusing it.
+        # every identity match, newest first, for the wrapper to probe until
+        # one verifies on every rank.
+        older = pathlib.Path(
+            model_library.hot_instance_dir(
+                self.hot, "older-conf", TOPOLOGY_ID, conf_plan["content_id"]
+            )
+        )
+        older.mkdir(parents=True)
+        old_stamp = dict(conf_plan["stamp"])
+        old_stamp["profile"] = "older-conf"
+        old_stamp["activated_at"] = "2020-01-01T00:00:00Z"
+        model_library.write_hot_stamp(older, old_stamp)
         plan = model_library.plan_prepare(**self._identity_kwargs(nodes=2))
         self.assertEqual(plan["action"], "copy")
-        self.assertEqual(plan["reuse_candidate"], str(instance))
-        self.assertNotIn(SPEC_ID, plan["reuse_candidate"])
+        self.assertEqual(plan["reuse_candidates"], [str(instance), str(older)])
+        for candidate in plan["reuse_candidates"]:
+            self.assertNotIn(SPEC_ID, candidate)
 
     def test_identity_classification_names_the_exact_commit(self) -> None:
         empty = self.root / "empty-catalog.json"
@@ -261,6 +273,18 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertIn(f"--revision {fixture.COMMIT}", gap["remediation"])
         self.assertNotIn("<selector>", gap["remediation"])
         self.assertNotIn("<exact-commit>", gap["remediation"])
+        self.assertNotIn("--node", gap["remediation"])
+        placed = model_library.classify_library_readiness(
+            profile=SPEC_ID,
+            catalog_path=str(empty),
+            topology_id=TOPOLOGY_ID,
+            models_dir=None,
+            identity_key=f"{self.model_id}@{fixture.COMMIT}",
+            selected_rank=1,
+            selected_node_id="node-1",
+        )
+        # Both acquisition steps carry the selected placement.
+        self.assertEqual(placed["remediation"].count("--node node-1"), 2)
 
     def test_identity_reuses_candidate_from_the_selected_rank(self) -> None:
         # A one-node spec placed on a remote home rank: the wrapper discovers

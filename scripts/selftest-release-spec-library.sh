@@ -471,18 +471,21 @@ echo "OK   verify-hot --expected-home-node-id binds the current durable home"
 roce_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
-  eval "$(sed -n "/^copy_ranks_need_fabric_map() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^copy_ranks_need_bulk_transfer() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^roce_map_ranks_csv() {/,/^}/p" "$1/scripts/model-library.sh")"
-  copy_ranks_need_fabric_map 0 0
-  copy_ranks_need_fabric_map 0 2
-  copy_ranks_need_fabric_map 1 1
-  copy_ranks_need_fabric_map 1 0
+  copy_ranks_need_bulk_transfer 0 0
+  copy_ranks_need_bulk_transfer 0 2
+  copy_ranks_need_bulk_transfer 1 1
+  copy_ranks_need_bulk_transfer 1 0
   roce_map_ranks_csv 0 2
   roce_map_ranks_csv 1 1
 ' _ "$REPO_DIR")
-# A remote home repaired alone still rsyncs its stamp over the fabric shell,
-# and rank 0 copied from a remote home pulls over it: both need the map.
-[ "$roce_out" = $'0\n1\n1\n1\n0,2\n1' ] || { echo "FAIL fabric ranks from copy_ranks: $roce_out" >&2; exit 1; }
+# The map needs a non-home peer: a home repaired alone (1 1) moves nothing
+# across the fabric and its stamp takes the control path instead; rank 0
+# copied from a remote home (1 0) is a non-home transfer.
+[ "$roce_out" = $'0\n1\n0\n1\n0,2\n1' ] || { echo "FAIL fabric ranks from copy_ranks: $roce_out" >&2; exit 1; }
+sed -n "/^cmd_prepare() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c "COPY_SSH_MODE=control" >/dev/null \
+  || { echo "FAIL a lone home repair does not fall back to the control SSH path" >&2; exit 1; }
 grep -q 'load_copy_ssh_roce_map "$home_rank" \\$' "$REPO_DIR/scripts/model-library.sh" \
   && grep -q 'roce_map_ranks_csv "$home_rank" "${copy_ranks\[@\]}"' "$REPO_DIR/scripts/model-library.sh" \
   || { echo "FAIL prepare still maps the fabric from target_ranks" >&2; exit 1; }
@@ -505,7 +508,7 @@ strict_out=$(bash -c '
 [ "$strict_out" = $'0\t/hot/x-topo/cid-0\n1\t/hot/x-topo/cid-1\npartial rc=1 out=[]' ] \
   || { echo "FAIL strict per-rank lookup: $strict_out" >&2; exit 1; }
 for fn in cmd_pin cmd_unpin; do
-  sed -n "/^${fn}() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -q "hot_instances_for_profile_strict_on_ranks" \
+  sed -n "/^${fn}() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c "hot_instances_for_profile_strict_on_ranks" >/dev/null \
     || { echo "FAIL $fn does not resolve every rank before mutating" >&2; exit 1; }
 done
 echo "OK   pin and unpin verify every rank's view before changing any stamp"
@@ -519,13 +522,28 @@ candidate_out=$(bash -c '
   verify_hot_on_rank() { [ "$2" = /hot/conf-view ]; }
   eval "$(sed -n "/^observe_ready_ranks_for_instance() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^spec_view_ready_on_every_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^select_reusable_spec_view() {/,/^}/p" "$1/scripts/model-library.sh")"
   spec_view_ready_on_every_rank /hot/conf-view spec "{}" home-a 0,1 0 1 && echo reuse
   spec_view_ready_on_every_rank /hot/other spec "{}" home-a 0,1 0 1 || echo copy
+  # Candidates are probed in order: a newer view absent elsewhere is passed
+  # over for an older one that verifies on every rank.
+  select_reusable_spec_view spec "{}" home-a 0,1 "0 1" /hot/newer /hot/conf-view
+  select_reusable_spec_view spec "{}" home-a 0,1 "0 1" /hot/newer /hot/other || echo none
+  select_reusable_spec_view spec "{}" home-a 0,1 "0 1" || echo empty
 ' _ "$REPO_DIR")
-[ "$candidate_out" = $'reuse\ncopy' ] || { echo "FAIL identity reuse candidate check: $candidate_out" >&2; exit 1; }
-sed -n "/^cmd_prepare() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -q "reuse_candidate" \
-  || { echo "FAIL prepare ignores the plan reuse candidate" >&2; exit 1; }
-echo "OK   a multi-rank spec reuses an identity view only when every rank verifies it"
+[ "$candidate_out" = $'reuse\ncopy\n/hot/conf-view\nnone\nempty' ] || { echo "FAIL identity reuse candidate check: $candidate_out" >&2; exit 1; }
+sed -n "/^cmd_prepare() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c "select_reusable_spec_view" >/dev/null \
+  || { echo "FAIL prepare does not probe the plan reuse candidates" >&2; exit 1;}
+echo "OK   a multi-rank spec probes identity views in order and reuses the first verified on every rank"
+
+# The purge confirmation names every rank's path, not just the first row.
+confirm_out=$(bash -c '
+  set -euo pipefail
+  eval "$(sed -n "/^describe_purge_rows() {/,/^}/p" "$1/scripts/model-library.sh")"
+  describe_purge_rows "$(printf "0\t/hot/a")" "$(printf "1\t/hot/b")"
+' _ "$REPO_DIR")
+[ "$confirm_out" = "rank 0: /hot/a; rank 1: /hot/b" ] || { echo "FAIL purge confirmation text: $confirm_out" >&2; exit 1; }
+echo "OK   purge-hot confirmation lists every rank's view"
 for loop in 'for rank in "${copy_ranks\[@\]}"' 'for verify_rank in "${copy_ranks\[@\]}"'; do
   grep -q "$loop" "$REPO_DIR/scripts/model-library.sh" \
     || { echo "FAIL prepare does not iterate copy_ranks: $loop" >&2; exit 1; }
@@ -605,7 +623,7 @@ if bash -c '
 fi
 echo "OK   overlay placement accepts equivalent node selectors and rejects other nodes"
 for fn in cmd_prepare cmd_pin cmd_unpin cmd_purge_hot; do
-  if ! sed -n "/^${fn}() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -q "spec_overlay_node_selector"; then
+  if ! sed -n "/^${fn}() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c "spec_overlay_node_selector" >/dev/null; then
     echo "FAIL $fn does not apply the spec overlay placement" >&2
     exit 1
   fi
