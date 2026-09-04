@@ -258,6 +258,117 @@ class SpecPreparePlannerTests(unittest.TestCase):
             ),
             instance,
         )
+        # A directory without a stamp, left by a transfer that failed before
+        # the stamp was written: no view for launch, a partial view for
+        # cleanup, so purge can remove it.
+        partial = parent / ("f" * 12)
+        partial.mkdir()
+        (partial / "leftover.bin").write_bytes(b"x")
+        self.assertEqual(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID),
+            instance,
+        )
+        instance_stamp = model_library.load_hot_stamp(instance)
+        model_library.purge_hot_instance(instance, hot_root=self.hot)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        self.assertEqual(
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            ),
+            partial,
+        )
+        # With no retention metadata the partial view cannot prove it was
+        # unpinned: its record demands the force-unpin path.
+        record = model_library.find_hot_instance_for_profile(
+            self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+        )
+        self.assertEqual(record, partial)
+        model_library.purge_hot_instance(partial, hot_root=self.hot)
+        self.assertFalse(partial.exists())
+        # A stamp path that exists but is not a regular file is an
+        # inspection failure for cleanup and a refusal at the purge boundary.
+        odd = parent / ("d" * 12)
+        (odd / ".pulsar" / "hot.json").mkdir(parents=True)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.purge_hot_instance(odd, hot_root=self.hot)
+        self.assertTrue(odd.is_dir())
+        import shutil
+        shutil.rmtree(odd)
+        # A stamp path that is a symlink to valid metadata elsewhere is
+        # judged as the link, never through it: no view for launch, an
+        # inspection failure for cleanup, a refusal at the purge boundary.
+        linked = parent / ("b" * 12)
+        (linked / ".pulsar").mkdir(parents=True)
+        (linked / ".pulsar" / "hot.json").symlink_to(instance / ".pulsar" / "hot.json")
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        self.assertNotIn(
+            linked,
+            model_library.find_hot_instances_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID),
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.purge_hot_instance(linked, hot_root=self.hot)
+        self.assertTrue(linked.is_dir())
+        shutil.rmtree(linked)
+        # The metadata directory itself as a symlink to a real directory
+        # holding a valid stamp: the middle component is judged too.
+        outside_meta = self.root / "outside-meta"
+        outside_meta.mkdir()
+        model_library.atomic_write_json(outside_meta / "hot.json", instance_stamp)
+        hijacked = parent / ("a" * 12)
+        hijacked.mkdir()
+        (hijacked / ".pulsar").symlink_to(outside_meta, target_is_directory=True)
+        self.assertNotIn(
+            hijacked,
+            model_library.find_hot_instances_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID),
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "metadata directory .* is not a directory"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "metadata directory .* is not a directory"):
+            model_library.purge_hot_instance(hijacked, hot_root=self.hot)
+        self.assertTrue(hijacked.is_dir())
+        self.assertTrue((outside_meta / "hot.json").is_file())
+        shutil.rmtree(hijacked)
+        instance.mkdir(parents=True)
+        model_library.write_hot_stamp(instance, instance_stamp)
+        # The same for a conf profile, whose lookup verifies stamps against
+        # the conf file: a partial view has no stamp to verify and is still
+        # listed for cleanup, still invisible to launch.
+        conf_parent = self.hot / f"{self.profile}-{TOPOLOGY_ID[:12]}"
+        conf_partial = conf_parent / ("e" * 12)
+        conf_partial.mkdir(parents=True)
+        (conf_partial / "leftover.bin").write_bytes(b"x")
+        conf_data = model_library.load_model_profile(self.models_dir, self.profile)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(
+                self.hot, self.profile, TOPOLOGY_ID, profile_data=conf_data
+            )
+        )
+        self.assertEqual(
+            model_library.find_hot_instance_for_profile(
+                self.hot, self.profile, TOPOLOGY_ID,
+                profile_data=conf_data, include_incomplete=True,
+            ),
+            conf_partial,
+        )
+        model_library.purge_hot_instance(conf_partial, hot_root=self.hot)
+        self.assertFalse(conf_partial.exists())
         # An entry that exists but cannot be listed is an inspection failure
         # for cleanup and no view for launch (not meaningful as root).
         if os.geteuid() != 0:

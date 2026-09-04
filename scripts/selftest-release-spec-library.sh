@@ -341,6 +341,7 @@ lookup_out=$(bash -c '
   HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"
   CONF_SOURCE=spec SPEC_MANIFEST_ID="$3" CLUSTER_TOPOLOGY_ID="$4"
   ssh_node() { shift; bash -c "$1"; }
+  eval "$(sed -n "/^hot_views_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   if hot_instance_for_profile_on_rank "$5" 1 0 1 >/dev/null 2>&1; then
     echo "verified-lookup-accepted-damage"
@@ -363,7 +364,7 @@ echo "OK   purge lookup binds a damaged spec view by name on any rank; strict lo
 per_rank_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
-  hot_instance_for_profile_on_rank() {
+  hot_views_for_profile_on_rank() {
     case "$2" in
       1) printf "%s\n" "{\"instance_dir\": \"/hot/x-topo/cid1\", \"stamp\": {\"content_id\": \"cid1\"}}" ;;
       9) return 255 ;;
@@ -376,7 +377,7 @@ per_rank_out=$(bash -c '
   rc=0; out=$(hot_instances_for_profile_on_ranks spec 1 9 2>/dev/null) || rc=$?
   echo "unobservable rc=$rc out=[$out]"
 ' _ "$REPO_DIR")
-[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1\tfalse\nunobservable rc=255 out=[]' ] \
+[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1\tfalse\t\nunobservable rc=255 out=[]' ] \
   || { echo "FAIL per-rank purge lookup: $per_rank_out" >&2; exit 1; }
 echo "OK   purge-hot resolves surviving views per rank, treats a missing rank as purged, and aborts on an unobservable rank"
 
@@ -434,6 +435,7 @@ inspect_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
   HOT_ROOT=/hot PY_TOOL="$2" CLUSTER_TOPOLOGY_ID=topo-1 CONF_SOURCE=spec SPEC_MANIFEST_ID=m
+  eval "$(sed -n "/^hot_views_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instances_for_profile_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
   rc=0; FAKE_FIND_RC=3 hot_instance_for_profile_on_rank spec 0 0 0 >/dev/null 2>&1 || rc=$?; echo "absent rc=$rc"
@@ -471,6 +473,74 @@ PULSAR_HOT_ROOT="$STATE/hot-rank1" \
 [ ! -e "$incomplete_view" ] || { echo "FAIL purge-hot left the incomplete view" >&2; exit 1; }
 echo "OK   purge-hot recovers a spec view an interrupted preparation left in state verifying"
 
+# A transfer that failed before its stamp was written leaves an unstamped
+# directory under the spec's entry: invisible to launch, a partial view to
+# cleanup, and removable by purge-hot.
+partial_dir="$STATE/hot-rank1/$spec_id-${topology_id:0:12}/partial000001"
+mkdir -p "$partial_dir/hub"
+printf 'leftover\n' >"$partial_dir/hub/leftover.bin"
+launch_rc=0; python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" >/dev/null 2>&1 || launch_rc=$?
+[ "$launch_rc" = 3 ] || { echo "FAIL launch discovery saw an unstamped partial view (rc=$launch_rc)" >&2; exit 1; }
+partial_state=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" --include-incomplete \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stamp"]["state"], d["stamp"]["content_id"])')
+[ "$partial_state" = "partial partial000001" ] || { echo "FAIL cleanup discovery did not list the partial view: $partial_state" >&2; exit 1; }
+# No retention metadata means the view cannot prove it was unpinned: the
+# ordinary purge refuses, the force-unpin path removes it.
+expect_failure 1 "unstamped view(s) present" \
+  "purge-hot without --force-unpin refuses an unstamped partial view" \
+  env PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes
+[ -d "$partial_dir" ] || { echo "FAIL the refused purge deleted the partial view" >&2; exit 1; }
+PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
+[ ! -e "$partial_dir" ] || { echo "FAIL purge-hot left the unstamped partial view" >&2; exit 1; }
+echo "OK   purge-hot removes an unstamped partial view a failed transfer left behind (force-unpin path)"
+
+# A retained unpinned stamped view and a failed transfer's residue under
+# one entry: every view is preflighted before any deletion, so the ordinary
+# purge refuses with both still in place, and the force-unpin path removes
+# both in one pass.
+stamped_view=$(python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$spec_id" "$model_id" "$revision" "$manifest_json")
+partial_dir="$STATE/hot-rank1/$spec_id-${topology_id:0:12}/partial000002"
+mkdir -p "$partial_dir/hub"
+printf 'leftover\n' >"$partial_dir/hub/leftover.bin"
+expect_failure 1 "unstamped view(s) present" \
+  "purge-hot preflights every view and refuses before deleting anything" \
+  env PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes
+[ -d "$stamped_view" ] && [ -d "$partial_dir" ] \
+  || { echo "FAIL the refused purge deleted a view (half-purge)" >&2; exit 1; }
+all_out=$(PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin 2>&1)
+[ ! -e "$stamped_view" ] && [ ! -e "$partial_dir" ] \
+  || { echo "FAIL purge-hot left a view under the entry: $all_out" >&2; exit 1; }
+printf '%s\n' "$all_out" | grep -q "purged hot for $spec_id (2 view(s))" \
+  || { echo "FAIL purge-hot did not report both views: $all_out" >&2; exit 1; }
+echo "OK   purge-hot enumerates every view under the entry, refuses whole or removes whole"
+
+# A conf's unstamped partial view on a remote rank is listed by the cleanup
+# lookup too: the synthetic stamp is not run through the conf validator.
+conf_partial_root="$STATE/hot-conf-partial"
+conf_partial_dir="$conf_partial_root/nemotron-3-nano-30b-nvfp4-${topology_id:0:12}/partialconf01"
+mkdir -p "$conf_partial_dir/hub"
+printf 'leftover\n' >"$conf_partial_dir/hub/leftover.bin"
+conf_partial_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"; REPO_DIR="$1"
+  CONF_SOURCE=conf CLUSTER_TOPOLOGY_ID="$3"
+  ssh_node() { shift; bash -c "$1"; }
+  eval "$(sed -n "/^hot_views_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  if hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 1 >/dev/null 2>&1; then echo "strict-saw-partial"; fi
+  hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 0 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"instance_dir\"], d[\"stamp\"][\"state\"])"
+' _ "$REPO_DIR" "$conf_partial_root" "$topology_id")
+[ "$conf_partial_out" = "$conf_partial_dir partial" ] \
+  || { echo "FAIL remote conf partial view lookup: $conf_partial_out" >&2; exit 1; }
+echo "OK   a conf's unstamped partial view on a remote rank is visible to cleanup, invisible to strict lookup"
+
 # A malformed stamp is an inspection failure for cleanup, never an absence:
 # the ready-only lookup still reports no view, the cleanup lookup fails, and
 # purge stops before deleting anything.
@@ -499,17 +569,20 @@ pinned_guard_out=$(bash -c '
     case "$*" in
       *" 9"*) return 255 ;;
       *" 7"*) return 2 ;;
-      *" 1"*) printf "%s\n" "$(printf "0\t/hot/a\tcid\tfalse")" "$(printf "1\t/hot/a\tcid\ttrue")" ;;
+      *" 1"*) printf "%s\n" "$(printf "0\t/hot/a\tcid\tfalse\tready")" "$(printf "1\t/hot/a\tcid\ttrue\tready")" ;;
+      *" 3"*) printf "%s\n" "$(printf "0\t/hot/a\tcid\tfalse\tready")" "$(printf "3\t/hot/a\tcid\ttrue\tpartial")" ;;
       *) return 1 ;;
     esac
   }
   eval "$(sed -n "/^spec_refuse_pinned_ranks_before_copy() {/,/^}/p" "$1/scripts/model-library.sh")"
   spec_refuse_pinned_ranks_before_copy spec 0 && echo clear
+  spec_refuse_pinned_ranks_before_copy spec 0 3 && echo residue-ignored
   ( spec_refuse_pinned_ranks_before_copy spec 0 1 ) 2>&1 || true
   ( spec_refuse_pinned_ranks_before_copy spec 0 7 ) 2>&1 || true
   ( spec_refuse_pinned_ranks_before_copy spec 0 9 ) 2>&1 || true
 ' _ "$REPO_DIR")
 printf '%s\n' "$pinned_guard_out" | grep -q "^clear$" || { echo "FAIL pinned guard refused an unpinned set: $pinned_guard_out" >&2; exit 1; }
+printf '%s\n' "$pinned_guard_out" | grep -q "^residue-ignored$" || { echo "FAIL pinned guard let a failed transfer's residue block re-materialization: $pinned_guard_out" >&2; exit 1; }
 printf '%s\n' "$pinned_guard_out" | grep -q "holds a pinned view on rank 1.*--force-unpin" || { echo "FAIL pinned guard allowed a pinned rank: $pinned_guard_out" >&2; exit 1; }
 printf '%s\n' "$pinned_guard_out" | grep -q "could not be inspected" || { echo "FAIL pinned guard ignored an uninspectable rank: $pinned_guard_out" >&2; exit 1; }
 printf '%s\n' "$pinned_guard_out" | grep -q "unobservable" || { echo "FAIL pinned guard ignored an unreachable rank: $pinned_guard_out" >&2; exit 1; }

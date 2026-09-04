@@ -2647,6 +2647,20 @@ def hot_stamp_path(instance_dir: pathlib.Path) -> pathlib.Path:
     return instance_dir / ".pulsar" / "hot.json"
 
 
+def hot_metadata_dir_is_regular(instance_dir: pathlib.Path) -> bool | None:
+    """Whether the instance's ``.pulsar`` directory is a real directory.
+
+    Judged as the path itself, never through a link: a symlinked metadata
+    directory would let metadata outside the instance authorize a launch
+    or a deletion. Returns None when it does not exist.
+    """
+    try:
+        mode = os.lstat(instance_dir / ".pulsar").st_mode
+    except FileNotFoundError:
+        return None
+    return stat.S_ISDIR(mode)
+
+
 def hot_witness_path(instance_dir: pathlib.Path) -> pathlib.Path:
     return instance_dir / ".pulsar" / "witness.json"
 
@@ -3401,7 +3415,54 @@ def _ready_hot_children(
             if not child.is_dir():
                 continue
             stamp_path = hot_stamp_path(child)
-            if not stamp_path.is_file():
+            # The stamp and its metadata directory are judged as the paths
+            # themselves, never through a link: metadata outside the
+            # instance must not authorize a launch or a deletion. A missing
+            # stamp is a partial view for cleanup; a metadata directory or
+            # stamp path that exists but is not what it should be (a
+            # symlink, a directory in place of the file) is an inspection
+            # failure for cleanup and no view for launch.
+            try:
+                metadata_regular = hot_metadata_dir_is_regular(child)
+            except OSError as exc:
+                if include_incomplete:
+                    fail(f"cleanup: cannot inspect hot metadata of {child}: {exc}")
+                continue
+            if metadata_regular is False:
+                if include_incomplete:
+                    fail(f"cleanup: hot metadata directory of {child} is not a directory")
+                continue
+            try:
+                stamp_mode = os.lstat(stamp_path).st_mode
+            except FileNotFoundError:
+                stamp_mode = None
+            except OSError as exc:
+                if include_incomplete:
+                    fail(f"cleanup: cannot inspect hot stamp {stamp_path}: {exc}")
+                continue
+            if stamp_mode is not None and not stat.S_ISREG(stamp_mode):
+                if include_incomplete:
+                    fail(f"cleanup: hot stamp at {stamp_path} is not a regular file")
+                continue
+            if stamp_mode is None:
+                # A directory without a stamp is what a transfer leaves when
+                # it fails before the stamp is written and rollback cannot
+                # reach the rank. Launch never sees it; cleanup lists it as a
+                # partial view of this entry's name so purge can remove it.
+                # With no retention metadata the view cannot prove it was
+                # unpinned, so it demands the force-unpin path.
+                if include_incomplete:
+                    candidates.append((
+                        "",
+                        child,
+                        {
+                            "state": "partial",
+                            "profile": parent.name.rsplit("-", 1)[0],
+                            "content_id": child.name,
+                            "pinned": True,
+                            "pin_state": "unknown (no stamp)",
+                        },
+                    ))
                 continue
             try:
                 stamp = load_json(stamp_path)
@@ -3438,15 +3499,23 @@ def _ready_hot_children(
     return candidates
 
 
-def find_hot_instance_for_profile(
+def find_hot_instances_for_profile(
     hot_root: str | pathlib.Path,
     profile: str,
     topology_id: str,
     *,
     profile_data: dict[str, Any] | None = None,
     include_incomplete: bool = False,
-) -> pathlib.Path | None:
-    """Return the newest ready instance matching the live expected identity."""
+) -> list[pathlib.Path]:
+    """Every instance under the name's entry that belongs to this name,
+    newest first, partial (unstamped) views last.
+
+    Launch discovery (``include_incomplete`` false) lists ready views whose
+    stamp names this owner and, for a conf, verifies against the conf.
+    Cleanup (``include_incomplete`` true) also lists non-ready and partial
+    views, and turns anything it cannot account for into an inspection
+    failure instead of absence.
+    """
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
     if include_incomplete:
@@ -3455,7 +3524,7 @@ def find_hot_instance_for_profile(
         try:
             os.lstat(parent)
         except FileNotFoundError:
-            return None
+            return []
         except OSError as exc:
             fail(f"cleanup: cannot inspect hot entry {parent}: {exc}")
     if parent.is_symlink():
@@ -3465,9 +3534,10 @@ def find_hot_instance_for_profile(
         # unsafe.
         if include_incomplete:
             fail(f"cleanup: refusing a symlinked hot entry at {parent}")
-        return None
+        return []
     if not parent.is_dir():
-        return None
+        return []
+    matches: list[pathlib.Path] = []
     for _activated, candidate, stamp in _ready_hot_children(
         parent, include_incomplete=include_incomplete
     ):
@@ -3482,7 +3552,13 @@ def find_hot_instance_for_profile(
                     f"not {profile!r}"
                 )
             continue
-        if profile_data is not None:
+        if stamp.get("state") == "partial":
+            # An unstamped partial view has nothing to verify against the
+            # conf; its ownership is the parent entry's name. Only cleanup
+            # lists it, and only so purge can remove it.
+            matches.append(candidate)
+            continue
+        if profile_data is not None and not include_incomplete:
             try:
                 verify_hot_stamp_against_profile(
                     load_hot_stamp(candidate),
@@ -3490,10 +3566,27 @@ def find_hot_instance_for_profile(
                 )
             except ModelLibraryError:
                 continue
-        return candidate
-    return None
+        matches.append(candidate)
+    return matches
 
 
+def find_hot_instance_for_profile(
+    hot_root: str | pathlib.Path,
+    profile: str,
+    topology_id: str,
+    *,
+    profile_data: dict[str, Any] | None = None,
+    include_incomplete: bool = False,
+) -> pathlib.Path | None:
+    """Return the newest instance of the name, or None."""
+    matches = find_hot_instances_for_profile(
+        hot_root,
+        profile,
+        topology_id,
+        profile_data=profile_data,
+        include_incomplete=include_incomplete,
+    )
+    return matches[0] if matches else None
 def dir_size_bytes(path: pathlib.Path) -> int:
     return tree_bytes(path)
 
@@ -4783,7 +4876,19 @@ def purge_hot_instance(
     if hot_root is not None:
         require_hot_instance_within_root(instance_dir, hot_root)
     stamp_path = hot_stamp_path(instance_dir)
-    if stamp_path.is_file():
+    if hot_metadata_dir_is_regular(instance_dir) is False:
+        fail(f"purge: hot metadata directory of {instance_dir} is not a directory; refusing")
+    try:
+        stamp_mode: int | None = os.lstat(stamp_path).st_mode
+    except FileNotFoundError:
+        stamp_mode = None
+    except OSError as exc:
+        fail(f"purge: cannot inspect hot stamp {stamp_path}: {exc}")
+    # Judged as the path itself: a symlinked stamp would authorize the
+    # deletion with metadata outside the instance.
+    if stamp_mode is not None and not stat.S_ISREG(stamp_mode):
+        fail(f"purge: hot stamp at {stamp_path} is not a regular file; refusing")
+    if stamp_mode is not None:
         stamp = load_json(stamp_path)
         if isinstance(stamp, dict):
             # The instance directory is named by its content id; a stamp
@@ -8288,29 +8393,38 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_find_hot(args: argparse.Namespace) -> int:
-    profile = str(args.profile or "")
-    if not profile:
-        fail("find-hot: --profile is required")
-    include_incomplete = bool(getattr(args, "include_incomplete", False))
-    if include_incomplete and getattr(args, "for_launch", False):
-        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
-    profile_data = (
-        load_model_profile(args.models_dir, profile) if args.models_dir else None
-    )
-    path = find_hot_instance_for_profile(
-        args.hot_root or default_hot_root(),
-        profile,
-        args.topology_id,
-        profile_data=profile_data,
-        include_incomplete=include_incomplete,
-    )
-    if path is None:
-        raise HotInstanceNotFound(f"find-hot: no ready instance for profile {profile}")
+def _hot_view_record(
+    path: pathlib.Path,
+    profile: str,
+    *,
+    profile_data: dict[str, Any] | None,
+    for_launch: bool,
+    include_incomplete: bool,
+) -> dict[str, Any]:
+    if include_incomplete and hot_metadata_dir_is_regular(path) is False:
+        fail(f"cleanup: hot metadata directory of {path} is not a directory")
+    if include_incomplete and not os.path.lexists(hot_stamp_path(path)):
+        # A partial view has no stamp and no runtime paths; cleanup needs
+        # only its location and the content id its directory name carries.
+        # With no retention metadata it cannot prove it was unpinned.
+        return {
+            "instance_dir": str(path),
+            "hub_path": None,
+            "snapshot_path": None,
+            "runtime_model_relative": None,
+            "container_model_path": None,
+            "stamp": {
+                "state": "partial",
+                "profile": profile,
+                "content_id": path.name,
+                "pinned": True,
+                "pin_state": "unknown (no stamp)",
+            },
+        }
     stamp = load_hot_stamp(path)
-    if getattr(args, "for_launch", False):
+    if for_launch:
         require_launchable_hot_stamp(stamp)
-    if profile_data is not None:
+    if profile_data is not None and not include_incomplete:
         verify_hot_stamp_against_profile(stamp, profile_data)
     hub = hot_hub_path(path, stamp["model_id"])
     revision = stamp.get("revision")
@@ -8320,7 +8434,7 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         "/root/.cache/huggingface/hub/"
         + model_id_to_hub_dirname(stamp["model_id"])
     )
-    out = {
+    return {
         "instance_dir": str(path),
         "hub_path": str(hub),
         "snapshot_path": str(hub / "snapshots" / revision),
@@ -8328,7 +8442,57 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         "container_model_path": f"{container_hub}/snapshots/{revision}",
         "stamp": stamp,
     }
-    print(json.dumps(out, indent=2, sort_keys=True))
+
+
+def cmd_find_hot(args: argparse.Namespace) -> int:
+    profile = str(args.profile or "")
+    if not profile:
+        fail("find-hot: --profile is required")
+    include_incomplete = bool(getattr(args, "include_incomplete", False))
+    list_all = bool(getattr(args, "all_views", False))
+    for_launch = bool(getattr(args, "for_launch", False))
+    if include_incomplete and for_launch:
+        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
+    if list_all and not include_incomplete:
+        fail("find-hot: --all is cleanup-only and requires --include-incomplete")
+    profile_data = (
+        load_model_profile(args.models_dir, profile) if args.models_dir else None
+    )
+    hot_root = args.hot_root or default_hot_root()
+    if list_all:
+        # Every view under the name's entry, so cleanup can preflight all of
+        # them before it deletes any.
+        records = [
+            _hot_view_record(
+                path,
+                profile,
+                profile_data=profile_data,
+                for_launch=False,
+                include_incomplete=True,
+            )
+            for path in find_hot_instances_for_profile(
+                hot_root, profile, args.topology_id,
+                profile_data=profile_data, include_incomplete=True,
+            )
+        ]
+        print(json.dumps(records, indent=2, sort_keys=True))
+        return 0
+    path = find_hot_instance_for_profile(
+        hot_root,
+        profile,
+        args.topology_id,
+        profile_data=profile_data,
+        include_incomplete=include_incomplete,
+    )
+    if path is None:
+        raise HotInstanceNotFound(f"find-hot: no ready instance for profile {profile}")
+    print(json.dumps(_hot_view_record(
+        path,
+        profile,
+        profile_data=profile_data,
+        for_launch=for_launch,
+        include_incomplete=include_incomplete,
+    ), indent=2, sort_keys=True))
     return 0
 
 
@@ -9276,6 +9440,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="include_incomplete",
         action="store_true",
         help="cleanup only: also find a view whose stamp is not ready (never with --for-launch)",
+    )
+    fh.add_argument(
+        "--all",
+        dest="all_views",
+        action="store_true",
+        help="cleanup only (with --include-incomplete): print every view under the name as a JSON list",
     )
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")
