@@ -213,7 +213,9 @@ python3 validate/soak.py --model <served-name> --minutes 60 --concurrency 8 \
 ```
 
 The GSM8K dataset file, commit, and file digest must equal the policy pins
-(`policy/README.md`). Then fill the spec and read the proposed status:
+(`policy/README.md`); the pinned file is Parquet, so the lab host needs
+`pyarrow` (see [PREREQUISITES.md](./PREREQUISITES.md)). Then fill the spec
+and read the proposed status:
 
 ```bash
 python3 validate/baseline_v1.py --spec <measured-spec> \

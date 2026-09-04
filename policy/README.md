@@ -10,9 +10,12 @@ The GSM8K pins are frozen to the public `openai/gsm8k` dataset at commit
 `ee7b8da9e381df27b9e3f7758a159ab2bdaa4dbaa910546cbbc47e0cb44e4f59` (the
 digest Hugging Face publishes for that file at that commit). Fetch that
 exact file yourself, confirm the digest, and pass it to
-`validate/gsm8k_eval.py --dataset`; the file is not committed. Changing any
-pin changes the policy digest, so every spec measured afterwards records a
-different `policy_digest`.
+`validate/gsm8k_eval.py --dataset`; the file is not committed. Reading a
+Parquet dataset needs `pyarrow`, which the DGX OS image does not ship; the
+lab host that runs the accuracy gate installs it once
+(`docs/PREREQUISITES.md`), otherwise the producer writes an incomplete
+`dataset-invalid` measurement. Changing any pin changes the policy digest,
+so every spec measured afterwards records a different `policy_digest`.
 
 `accuracy_floor_overrides` is keyed by exact Hugging Face model id. An empty
 object means every spec uses the default accuracy floor in the gsm8k-subset
