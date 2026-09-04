@@ -426,7 +426,7 @@ library_plan_prepare() {
   extra+=(--home-inventory-json "$home_inventory")
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
     # A released spec resolves its catalog entry by identity and hands the
-    # planner its sealed manifest, which must equal the receipt's. Its view
+    # planner its reviewed snapshot manifest, which must equal the receipt's. Its view
     # is keyed by the spec id, one name one directory, like a conf's.
     extra+=(--identity "${MODEL}@${SNAPSHOT_REVISION}")
     extra+=(--spec-manifest-json "$(library_spec_snapshot_manifest_json "$profile")")
@@ -3126,7 +3126,7 @@ verify_hot_on_rank() {
   local rank="${1:?}" instance_dir="${2:?}" profile="${3:?}" topology_id="${4:?}"
   local allow_verifying="${5:-0}" expected_validation_json="${6:-}" command
   # A conf binds the stamp profile name and its conf; a released spec binds
-  # the sealed manifest id instead (a spec has no conf file).
+  # the spec snapshot manifest id instead (a spec has no conf file).
   local -a verify_args=(
     verify-hot
     --instance-dir "$instance_dir"
@@ -3682,7 +3682,7 @@ hot_view_live_users() {
 # hot_instance_for_profile_on_rank <profile> <rank> [require_launchable] [strict]
 # The ready view named by PROFILE (a conf name or a released spec id) on
 # RANK, as the find-hot record. A conf binds the stamp to its conf file; a
-# released spec binds the view to its sealed manifest id, and strict=1
+# released spec binds the view to its spec snapshot manifest id, and strict=1
 # (prepare, pin, unpin) verifies the content on that rank, the controller
 # included, since find-hot checks metadata only. strict=0 (purge) binds by
 # name and stamp alone so a damaged view stays removable.
@@ -4057,7 +4057,7 @@ cmd_purge_hot() {
       die "purge-hot: stamp content_id '$stamped_content_id' differs from the instance name '$content_id' on rank $rank; refusing"
     fi
     # A view can be shared: a released spec reuses a conf-named view of the
-    # same sealed manifest. Never delete bytes another live service mounts.
+    # same spec snapshot manifest. Never delete bytes another live service mounts.
     sharers=$(hot_view_live_users "$rank" "$content_id" "$profile") \
       || die "purge-hot: cannot verify on rank $rank that no running service uses $instance"
     [ -z "$sharers" ] \

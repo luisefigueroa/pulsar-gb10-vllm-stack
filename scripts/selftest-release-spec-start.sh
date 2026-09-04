@@ -367,7 +367,7 @@ other = {"manifest_id": "e" * 64}
 hot = pathlib.Path(state) / "identity-hot"
 # A spec view is keyed by the spec id, like a conf view by its name. A view
 # of the same model and revision under a conf name is not the spec's view,
-# and a spec-named view is bound to the sealed manifest at verify time.
+# and a spec-named view is bound to the spec snapshot manifest at verify time.
 write_identity_hot_view(
     hot, profile="nemotron-3-nano-30b-nvfp4", topology_id=topology_id,
     model_id=model_id, revision=revision, manifest=manifest,
@@ -407,7 +407,7 @@ if mismatch.returncode == 0 or "differs from the released spec manifest" not in 
     raise SystemExit(f"verify-hot must refuse a foreign manifest: {mismatch.stdout}{mismatch.stderr}")
 print("ok")
 PY
-echo "OK   find-hot resolves a spec view by spec id; verify-hot binds the sealed manifest"
+echo "OK   find-hot resolves a spec view by spec id; verify-hot binds the spec snapshot manifest"
 
 # Remote ranks verify by manifest id for a spec and by profile name for a conf.
 verify_args_out=$(

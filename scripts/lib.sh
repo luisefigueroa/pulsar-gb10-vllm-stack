@@ -1420,7 +1420,7 @@ library_hot_info_for_profile() {
 
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
     # A released spec's view is keyed by the spec id, like a conf's by its
-    # name; the sealed manifest id binds the view's content at verify time.
+    # name; the spec snapshot manifest id binds the view's content at verify time.
     [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
     find_hot_args=(find-hot --profile "$profile" --topology-id "$topology_id" \
       --hot-root "$PULSAR_HOT_ROOT" --for-launch)

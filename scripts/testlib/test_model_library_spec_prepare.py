@@ -239,6 +239,18 @@ class SpecPreparePlannerTests(unittest.TestCase):
             model_library.find_hot_instance_for_profile(
                 self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
             )
+        # A stamp of another schema is not inspectable by this tool: launch
+        # sees no view, cleanup refuses rather than reading absence.
+        unsupported = dict(plan["stamp"])
+        unsupported["schema_version"] = 99
+        model_library.write_hot_stamp(instance, unsupported)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "unsupported hot stamp schema"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
         model_library.write_hot_stamp(instance, plan["stamp"])
         self.assertEqual(
             model_library.find_hot_instance_for_profile(

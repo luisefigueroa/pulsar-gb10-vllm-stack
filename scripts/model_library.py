@@ -3414,11 +3414,18 @@ def _ready_hot_children(
                     fail(f"cleanup: malformed hot stamp at {stamp_path}")
                 continue
             if stamp.get("schema_version") != HOT_SCHEMA_VERSION:
+                if include_incomplete:
+                    fail(
+                        f"cleanup: unsupported hot stamp schema "
+                        f"{stamp.get('schema_version')!r} at {stamp_path}"
+                    )
                 continue
             integrity = stamp.get("integrity")
             if not isinstance(integrity, dict) or (
                 integrity.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME
             ):
+                if include_incomplete:
+                    fail(f"cleanup: unsupported integrity scheme at {stamp_path}")
                 continue
             if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
                 if stamp.get("state") != "ready" and not include_incomplete:
@@ -4475,7 +4482,7 @@ def plan_prepare(
         )
 
     # A released spec's view is keyed by its spec id exactly as a conf's view
-    # is keyed by its name: one name, one directory. The spec's sealed
+    # is keyed by its name: one name, one directory. The spec's reviewed
     # manifest was already required to equal the receipt's, so the view
     # prepared under the spec id carries the reviewed file list.
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)

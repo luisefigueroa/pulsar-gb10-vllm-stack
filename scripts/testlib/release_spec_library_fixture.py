@@ -129,7 +129,7 @@ def cmd_arrange(argv: list[str]) -> None:
     )
     manifest = spec["identity"]["snapshot_manifest"]
     # The spec-named view that pin, unpin, and prepare inspect must verify
-    # for real: a strict lookup hashes rank 0, so it carries the sealed
+    # for real: a strict lookup hashes rank 0, so it carries the reviewed
     # manifest's payload and a stamp whose digest and validation match it.
     instance = write_identity_hot_view(
         root / "hot-spec",

@@ -73,7 +73,7 @@ esac
 echo "OK   plan-prepare --identity stamps the spec id and keys the view by it"
 
 # Launch and readiness resolve a spec view by its spec id and verify it
-# against the sealed manifest; the fixture's spec-named view under hot-spec
+# against the spec snapshot manifest; the fixture's spec-named view under hot-spec
 # carries real payload, the one under hot-rank1 does not.
 launch_pick=$(bash -c '
   set -euo pipefail
@@ -577,7 +577,7 @@ for reason in ("rank-unreachable", "identity-mismatch"):
 print("ok")
 PY
 echo "OK   check-weights lookup-failure branches never touch the one-node rank variable"
-# The post-prepare verification must bind a spec by its sealed manifest id and
+# The post-prepare verification must bind a spec by its spec snapshot manifest id and
 # never by profile name or conf directory (a spec has no conf file).
 verify_args_log="$STATE/verify-args.log"
 python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" record-tool "$STATE/record-py-tool.py"

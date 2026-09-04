@@ -20,11 +20,11 @@ lifecycle commands `prepare`, `pin`, `unpin`, and `purge-hot <spec_id>`.
 A spec's prepared view is keyed by the spec id exactly as a conf's view is
 keyed by its name: one name, one directory, and no sharing between names.
 `prepare <spec_id>` resolves the catalog entry for the spec's model and
-commit, requires the spec's sealed snapshot manifest to equal the durable
+commit, requires the spec's reviewed snapshot manifest to equal the durable
 home's download receipt, and materializes the view under the spec id; a
 view prepared under a conf name is not reused, so a conf and its spec on
 the same non-home rank hold two working copies while both exist. Prepare,
-pin, and launch verify a spec view against the sealed manifest id, not a
+pin, and launch verify a spec view against the spec snapshot manifest id, not a
 conf file; `purge-hot <spec_id>` removes the spec's own view on the target
 ranks, including one an interrupted preparation left incomplete, and may
 name a previous placement with `--node`. Preparation is all-or-nothing: a
