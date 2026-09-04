@@ -99,6 +99,12 @@ run "snapshot manifest closed measurement producer" \
   python3 "$REPO_DIR/scripts/testlib/test_verify_snapshot_manifest.py"
 run "serving smoke closed measurement producer" \
   python3 "$REPO_DIR/scripts/testlib/test_serve_smoke.py"
+run "baseline-v1 run record and policy run arguments" \
+  python3 "$REPO_DIR/scripts/testlib/test_baseline_run.py"
+run "release spec promotion" \
+  python3 "$REPO_DIR/scripts/testlib/test_release_spec_promote.py"
+run "baseline-v1 runner dry run" \
+  "$REPO_DIR/scripts/selftest-baseline-runner.sh"
 run "Model Serving Release attempt composition" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_attempt.py"
 run "Model Serving Release onboarding skill" \

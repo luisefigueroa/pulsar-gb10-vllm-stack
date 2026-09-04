@@ -18,11 +18,18 @@ Usage:
   scripts/release-spec.sh from-profile <profile> --receipt FILE
       --stack-version STRING
       [--spec-decode] [--out FILE] [--gap-report FILE]
+  scripts/release-spec.sh promote <measured-spec> --reviewer NAME
+      --out releases/<spec_id>.json [--reviewed-at ISO-8601-Z]
+      [--status stable|failed|withdrawn|validated]
 
-  • Reads models/<profile>.conf, an explicit download receipt, the pinned
-    image digest, and the current platform.
-  • Writes a measured spec (empty measurements) and a closed gap report.
-  • Does not write releases/, the catalog, or profile status.
+  • from-profile reads models/<profile>.conf, an explicit download receipt,
+    the pinned image digest, and the current platform; writes a measured
+    spec (empty measurements) and a closed gap report.
+  • promote copies an evaluated measured spec with state=released and a
+    review block; the status defaults to stable when every baseline-v1
+    outcome passed and failed otherwise. Committing the file under
+    releases/ is the reviewed promotion PR.
+  • Neither writes the catalog or profile status.
   • --stack-version is required. It is never read from git.
 EOF
 }
@@ -36,8 +43,13 @@ esac
 
 command="$1"
 shift
+PROMOTE_PY="${PULSAR_RELEASE_SPEC_PROMOTE_PY:-$REPO_DIR/scripts/release_spec_promote.py}"
 case "$command" in
   from-profile) ;;
+  promote)
+    [ -f "$PROMOTE_PY" ] || die "missing $PROMOTE_PY"
+    exec python3 "$PROMOTE_PY" "$@"
+    ;;
   *) die "unknown release-spec command: $command" 2 ;;
 esac
 

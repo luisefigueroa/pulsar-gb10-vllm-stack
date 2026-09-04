@@ -14,7 +14,7 @@ import pathlib
 from datetime import datetime, timedelta
 from typing import Any
 
-from .identity import canonical_identity, spec_id_for
+from .identity import argv_from_identity,  canonical_identity, spec_id_for
 from .schema import (
     BASELINE_KEYS,
     EVIDENCE_KEYS,
@@ -333,6 +333,8 @@ def verify_spec(document: Any) -> dict[str, Any]:
     computed = spec_id_for(identity)
     if spec_id != computed:
         fail("spec_id does not match the identity block")
+    if launch_contract["argv"] != argv_from_identity(identity):
+        fail("launch_contract.argv does not match the identity's engine_args and geometry")
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": KIND,

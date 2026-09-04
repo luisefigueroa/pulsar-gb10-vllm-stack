@@ -530,6 +530,21 @@ the approved plan.
   in [ADR 0017](docs/decisions/0017-release-spec-is-the-release-contract.md);
   this file's object names, commands, and decision strings remain the live
   implementation contract until that staged cutover.
+- **ADR 0017 baseline-v1 runs are a separate procedure.** A measured spec is
+  judged by `validate/baseline_v1.py` against `policy/baseline-v1.json`
+  (six gates: identity manifest, serving smoke, strict same-boot captures,
+  pinned GSM8K subset, 60-minute soak, performance snapshot). The six closed
+  measurements, the filled measured spec, and the run record live under
+  `results/baseline-v1/<spec_id>/`; `evidence[]` names each file's digest
+  and the lab commit that produced it. `validate/baseline-v1.sh` orchestrates
+  a run against an already-running server and refuses a container whose
+  launch contract or image differs from the spec. The ADR 0004 rules in this
+  file about attempt composition, `observe-resources` summaries, capture
+  gaps, and hash-binding attempted criteria govern ADR 0004 objects only;
+  they are not requirements on a baseline-v1 run. `stable` is proposed only
+  by the evaluator and recorded only by a reviewed promotion PR
+  (`scripts/release-spec.sh promote`); the `review` block names the
+  maintainer who merges that PR.
 - Its primary artifact identity is source-neutral: use `huggingface-snapshot`
   for an exact Hugging Face commit and full manifest, or
   `content-addressed-model` for another complete model tree with a public

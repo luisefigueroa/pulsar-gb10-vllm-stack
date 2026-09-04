@@ -36,6 +36,7 @@ from release_spec import (  # noqa: E402
     pretty_json_bytes,
     spec_id_for,
 )
+from release_spec.identity import argv_from_identity as spec_argv_from_identity  # noqa: E402
 from release_spec.schema import (  # noqa: E402
     FABRIC_LOCAL,
     FABRIC_ROCE_V2,
@@ -516,15 +517,8 @@ def argv_from_identity(
     *,
     extra_args: Sequence[str] = (),
 ) -> list[str]:
-    """Recipe argv: engine_args plus tp/pp tokens, then live extra args."""
-    return [
-        *list(identity["engine_args"]),
-        "--tensor-parallel-size",
-        str(identity["geometry"]["tp"]),
-        "--pipeline-parallel-size",
-        str(identity["geometry"]["pp"]),
-        *list(extra_args),
-    ]
+    """Recipe argv: the shared projection, then live extra args."""
+    return [*spec_argv_from_identity(identity), *list(extra_args)]
 
 
 def comparable_contract_from_identity(

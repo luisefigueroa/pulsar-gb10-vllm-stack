@@ -194,39 +194,41 @@ record, not a continuation of an older result.
 
 A measured [ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)
 spec is judged against the lab-wide policy in `policy/baseline-v1.json`.
-Produce the six closed measurements against the already-running exact
-subject, in one boot, into one directory:
+Start the profile as written with `./pulsar start`, then run the six gates
+in one boot with the runner:
 
 ```bash
-python3 validate/verify_snapshot_manifest.py --spec <measured-spec> \
-  --hub <hot-view>/hub/models--<org>--<name> \
-  --result-json <dir>/verify-snapshot-manifest.json
-python3 validate/serve_smoke.py --model <served-name> \
-  --result-json <dir>/serve-smoke.json
-validate/run-gates.sh <served-name> --tag <tag> --measurement-dir <dir>
-python3 validate/gsm8k_eval.py --model <served-name> \
-  --dataset <exact-dataset-file> --dataset-id openai/gsm8k \
-  --dataset-revision <pinned-commit> --sample-size 100 \
-  --result-json <dir>/evaluate-gsm8k.json
-python3 validate/soak.py --model <served-name> --minutes 60 --concurrency 8 \
-  --result-json <dir>/validate-soak.json
+validate/baseline-v1.sh <profile|spec_id> --spec <measured-spec> \
+  --out results/baseline-v1/<spec_id> --dataset <exact-dataset-file> \
+  [--tag <label>] [--soak-concurrency 8]
 ```
 
-The GSM8K dataset file, commit, and file digest must equal the policy pins
-(`policy/README.md`); the pinned file is Parquet, so the lab host needs
-`pyarrow` (see [PREREQUISITES.md](./PREREQUISITES.md)). Then fill the spec
-and read the proposed status:
+The runner refuses to start unless every producer answers `--help`, the
+tracked tree equals the lab commit the evidence will name (`HEAD`, or an
+explicit `--lab-commit` that the tree must match), the dataset digest equals
+the policy pin, the running container carries the profile's current launch
+contract, the spec's image digest, and the spec's speculative-decode state,
+the spec is the identity the catalog computes for the profile (released or
+not), and the served model answers `/v1/models`. One-node profiles served on
+this node only; multi-node runs wait for the two-node milestone. It then
+runs, in order,
+`validate/verify_snapshot_manifest.py`, `validate/serve_smoke.py`,
+`validate/run-gates.sh` (captures and the bench sweep at the policy's
+concurrency levels), `validate/gsm8k_eval.py` with the policy's pinned
+arguments, and `validate/soak.py` for the policy's duration; it stops at
+the first failed gate and keeps every document
+already written. A boot witness (the container id and its start time) is
+read before and after; a restart or re-creation during the run voids it.
+Finally it calls
+`validate/baseline_v1.py`, which fills `measurements[]` and `evidence[]`
+into `<out>/spec.json` and prints `proposed_status=stable|failed`, and
+writes `<out>/run.json` with the gate windows and the witness. The pinned
+GSM8K file is Parquet, so the lab host needs `pyarrow`
+(see [PREREQUISITES.md](./PREREQUISITES.md)).
 
-```bash
-python3 validate/baseline_v1.py --spec <measured-spec> \
-  --policy policy/baseline-v1.json --measurements-dir <dir> \
-  --lab-commit <40-hex-commit-of-this-checkout> \
-  --evidence-path-prefix results/<evidence-dir> --out <filled-spec>
-```
-
-The evaluator writes `measurements[]` and `evidence[]` and prints
-`proposed_status=stable|failed`. It never writes `review`; a reviewed
-promotion PR sets `state=released` and `review.status`.
+The evaluator never writes `review`. Promotion is
+`scripts/release-spec.sh promote <out>/spec.json --reviewer <maintainer>
+--out releases/<spec_id>.json`, committed by a reviewed PR.
 
 ## 6. Capture and stage a reviewed proposal
 
