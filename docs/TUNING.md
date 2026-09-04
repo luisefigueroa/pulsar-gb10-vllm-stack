@@ -53,8 +53,12 @@ already picks — but grep the log to confirm on every image bump):
   silently wrong on sm_121 — upstream-documented, not re-derived here).
 - `VLLM_MARLIN_USE_ATOMIC_ADD`: real vLLM env (passed via conf
   `CONTAINER_ENV`). **Model-conf owned, not a global default.**
-  - `nemotron-3-nano` / `nemotron-3-super`: set to `1` (matches the
-    validated confs that earned their STATUS rows).
+  - `nemotron-3-super`: set to `1` (matches the validated conf that earned
+    its STATUS row).
+  - `nemotron-3-nano`: dropped on 2026-09-04. With it set, the strict
+    same-boot gate of baseline-v1 failed at 29/30 identical captures (one
+    near-tie flip, floating-point equivalent); the atomic-add reduction is
+    order-nondeterministic. The recipe without it is a new spec identity.
   - `laguna-s-2.1-nvfp4`: profile removed by ADR 0006 (absolute-path
     catalog). Historical conf left this unset; do not cargo-cult it onto
     remaining NVFP4 models without a dedicated determinism A/B.

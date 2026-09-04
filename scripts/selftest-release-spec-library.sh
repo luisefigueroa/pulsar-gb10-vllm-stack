@@ -132,7 +132,7 @@ matching_release_for_profile(
     nodes=1,
     gpu_mem_util="0.80",
     engine_args=["--max-model-len", "131072", "--max-num-seqs", "16", "--moe-backend", "marlin"],
-    container_env=["VLLM_MARLIN_USE_ATOMIC_ADD=1"],
+    container_env=[],
     spec_decode_args=[],
     platform_id="dgx-spark-gb10",
     snapshot_revision=paths["revision"],

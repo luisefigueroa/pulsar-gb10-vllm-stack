@@ -136,7 +136,7 @@ def nano_kwargs(**overrides: object) -> dict[str, object]:
             "--moe-backend",
             "marlin",
         ],
-        "container_env": ["VLLM_MARLIN_USE_ATOMIC_ADD=1"],
+        "container_env": [],
         "spec_decode_args": [],
         "platform_id": PLATFORM_ID,
         "stack_version": STACK_VERSION,

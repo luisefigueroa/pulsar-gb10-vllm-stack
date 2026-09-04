@@ -282,7 +282,7 @@ def nano_identity_kwargs() -> dict[str, object]:
             "--moe-backend",
             "marlin",
         ],
-        "container_env": ["VLLM_MARLIN_USE_ATOMIC_ADD=1"],
+        "container_env": [],
         "spec_decode_args": [],
         "spec_decode": False,
         "platform_id": PLATFORM_ID,
