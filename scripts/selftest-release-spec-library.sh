@@ -341,6 +341,7 @@ lookup_out=$(bash -c '
   HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"
   CONF_SOURCE=spec SPEC_MANIFEST_ID="$3" CLUSTER_TOPOLOGY_ID="$4"
   ssh_node() { shift; bash -c "$1"; }
+  eval "$(sed -n "/^hot_views_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   if hot_instance_for_profile_on_rank "$5" 1 0 1 >/dev/null 2>&1; then
     echo "verified-lookup-accepted-damage"
@@ -363,7 +364,7 @@ echo "OK   purge lookup binds a damaged spec view by name on any rank; strict lo
 per_rank_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
-  hot_instance_for_profile_on_rank() {
+  hot_views_for_profile_on_rank() {
     case "$2" in
       1) printf "%s\n" "{\"instance_dir\": \"/hot/x-topo/cid1\", \"stamp\": {\"content_id\": \"cid1\"}}" ;;
       9) return 255 ;;
@@ -434,6 +435,7 @@ inspect_out=$(bash -c '
   set -euo pipefail
   . "$1/scripts/lib.sh"
   HOT_ROOT=/hot PY_TOOL="$2" CLUSTER_TOPOLOGY_ID=topo-1 CONF_SOURCE=spec SPEC_MANIFEST_ID=m
+  eval "$(sed -n "/^hot_views_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instances_for_profile_on_ranks() {/,/^}/p" "$1/scripts/model-library.sh")"
   rc=0; FAKE_FIND_RC=3 hot_instance_for_profile_on_rank spec 0 0 0 >/dev/null 2>&1 || rc=$?; echo "absent rc=$rc"
@@ -496,19 +498,27 @@ PULSAR_HOT_ROOT="$STATE/hot-rank1" \
 [ ! -e "$partial_dir" ] || { echo "FAIL purge-hot left the unstamped partial view" >&2; exit 1; }
 echo "OK   purge-hot removes an unstamped partial view a failed transfer left behind (force-unpin path)"
 
-# A retained stamped view and a failed transfer's residue under one entry:
-# purge repeats discovery until the entry is empty, so both go.
+# A retained unpinned stamped view and a failed transfer's residue under
+# one entry: every view is preflighted before any deletion, so the ordinary
+# purge refuses with both still in place, and the force-unpin path removes
+# both in one pass.
 stamped_view=$(python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$spec_id" "$model_id" "$revision" "$manifest_json")
 partial_dir="$STATE/hot-rank1/$spec_id-${topology_id:0:12}/partial000002"
 mkdir -p "$partial_dir/hub"
 printf 'leftover\n' >"$partial_dir/hub/leftover.bin"
-passes_out=$(PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+expect_failure 1 "unstamped view(s) present" \
+  "purge-hot preflights every view and refuses before deleting anything" \
+  env PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes
+[ -d "$stamped_view" ] && [ -d "$partial_dir" ] \
+  || { echo "FAIL the refused purge deleted a view (half-purge)" >&2; exit 1; }
+all_out=$(PULSAR_HOT_ROOT="$STATE/hot-rank1" \
   "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin 2>&1)
 [ ! -e "$stamped_view" ] && [ ! -e "$partial_dir" ] \
-  || { echo "FAIL purge-hot left a view under the entry: $passes_out" >&2; exit 1; }
-printf '%s\n' "$passes_out" | grep -q "2 view(s) over 2 pass(es)" \
-  || { echo "FAIL purge-hot did not report two passes: $passes_out" >&2; exit 1; }
-echo "OK   purge-hot repeats discovery until the entry is empty"
+  || { echo "FAIL purge-hot left a view under the entry: $all_out" >&2; exit 1; }
+printf '%s\n' "$all_out" | grep -q "purged hot for $spec_id (2 view(s))" \
+  || { echo "FAIL purge-hot did not report both views: $all_out" >&2; exit 1; }
+echo "OK   purge-hot enumerates every view under the entry, refuses whole or removes whole"
 
 # A conf's unstamped partial view on a remote rank is listed by the cleanup
 # lookup too: the synthetic stamp is not run through the conf validator.
@@ -522,6 +532,7 @@ conf_partial_out=$(bash -c '
   HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"; REPO_DIR="$1"
   CONF_SOURCE=conf CLUSTER_TOPOLOGY_ID="$3"
   ssh_node() { shift; bash -c "$1"; }
+  eval "$(sed -n "/^hot_views_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
   if hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 1 >/dev/null 2>&1; then echo "strict-saw-partial"; fi
   hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 0 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"instance_dir\"], d[\"stamp\"][\"state\"])"

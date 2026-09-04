@@ -3467,15 +3467,23 @@ def _ready_hot_children(
     return candidates
 
 
-def find_hot_instance_for_profile(
+def find_hot_instances_for_profile(
     hot_root: str | pathlib.Path,
     profile: str,
     topology_id: str,
     *,
     profile_data: dict[str, Any] | None = None,
     include_incomplete: bool = False,
-) -> pathlib.Path | None:
-    """Return the newest ready instance matching the live expected identity."""
+) -> list[pathlib.Path]:
+    """Every instance under the name's entry that belongs to this name,
+    newest first, partial (unstamped) views last.
+
+    Launch discovery (``include_incomplete`` false) lists ready views whose
+    stamp names this owner and, for a conf, verifies against the conf.
+    Cleanup (``include_incomplete`` true) also lists non-ready and partial
+    views, and turns anything it cannot account for into an inspection
+    failure instead of absence.
+    """
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
     if include_incomplete:
@@ -3484,7 +3492,7 @@ def find_hot_instance_for_profile(
         try:
             os.lstat(parent)
         except FileNotFoundError:
-            return None
+            return []
         except OSError as exc:
             fail(f"cleanup: cannot inspect hot entry {parent}: {exc}")
     if parent.is_symlink():
@@ -3494,9 +3502,10 @@ def find_hot_instance_for_profile(
         # unsafe.
         if include_incomplete:
             fail(f"cleanup: refusing a symlinked hot entry at {parent}")
-        return None
+        return []
     if not parent.is_dir():
-        return None
+        return []
+    matches: list[pathlib.Path] = []
     for _activated, candidate, stamp in _ready_hot_children(
         parent, include_incomplete=include_incomplete
     ):
@@ -3515,8 +3524,9 @@ def find_hot_instance_for_profile(
             # An unstamped partial view has nothing to verify against the
             # conf; its ownership is the parent entry's name. Only cleanup
             # lists it, and only so purge can remove it.
-            return candidate
-        if profile_data is not None:
+            matches.append(candidate)
+            continue
+        if profile_data is not None and not include_incomplete:
             try:
                 verify_hot_stamp_against_profile(
                     load_hot_stamp(candidate),
@@ -3524,10 +3534,27 @@ def find_hot_instance_for_profile(
                 )
             except ModelLibraryError:
                 continue
-        return candidate
-    return None
+        matches.append(candidate)
+    return matches
 
 
+def find_hot_instance_for_profile(
+    hot_root: str | pathlib.Path,
+    profile: str,
+    topology_id: str,
+    *,
+    profile_data: dict[str, Any] | None = None,
+    include_incomplete: bool = False,
+) -> pathlib.Path | None:
+    """Return the newest instance of the name, or None."""
+    matches = find_hot_instances_for_profile(
+        hot_root,
+        profile,
+        topology_id,
+        profile_data=profile_data,
+        include_incomplete=include_incomplete,
+    )
+    return matches[0] if matches else None
 def dir_size_bytes(path: pathlib.Path) -> int:
     return tree_bytes(path)
 
@@ -8330,29 +8357,19 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_find_hot(args: argparse.Namespace) -> int:
-    profile = str(args.profile or "")
-    if not profile:
-        fail("find-hot: --profile is required")
-    include_incomplete = bool(getattr(args, "include_incomplete", False))
-    if include_incomplete and getattr(args, "for_launch", False):
-        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
-    profile_data = (
-        load_model_profile(args.models_dir, profile) if args.models_dir else None
-    )
-    path = find_hot_instance_for_profile(
-        args.hot_root or default_hot_root(),
-        profile,
-        args.topology_id,
-        profile_data=profile_data,
-        include_incomplete=include_incomplete,
-    )
-    if path is None:
-        raise HotInstanceNotFound(f"find-hot: no ready instance for profile {profile}")
+def _hot_view_record(
+    path: pathlib.Path,
+    profile: str,
+    *,
+    profile_data: dict[str, Any] | None,
+    for_launch: bool,
+    include_incomplete: bool,
+) -> dict[str, Any]:
     if include_incomplete and not hot_stamp_path(path).is_file():
         # A partial view has no stamp and no runtime paths; cleanup needs
         # only its location and the content id its directory name carries.
-        print(json.dumps({
+        # With no retention metadata it cannot prove it was unpinned.
+        return {
             "instance_dir": str(path),
             "hub_path": None,
             "snapshot_path": None,
@@ -8365,12 +8382,11 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
                 "pinned": True,
                 "pin_state": "unknown (no stamp)",
             },
-        }, indent=2, sort_keys=True))
-        return 0
+        }
     stamp = load_hot_stamp(path)
-    if getattr(args, "for_launch", False):
+    if for_launch:
         require_launchable_hot_stamp(stamp)
-    if profile_data is not None:
+    if profile_data is not None and not include_incomplete:
         verify_hot_stamp_against_profile(stamp, profile_data)
     hub = hot_hub_path(path, stamp["model_id"])
     revision = stamp.get("revision")
@@ -8380,7 +8396,7 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         "/root/.cache/huggingface/hub/"
         + model_id_to_hub_dirname(stamp["model_id"])
     )
-    out = {
+    return {
         "instance_dir": str(path),
         "hub_path": str(hub),
         "snapshot_path": str(hub / "snapshots" / revision),
@@ -8388,7 +8404,57 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
         "container_model_path": f"{container_hub}/snapshots/{revision}",
         "stamp": stamp,
     }
-    print(json.dumps(out, indent=2, sort_keys=True))
+
+
+def cmd_find_hot(args: argparse.Namespace) -> int:
+    profile = str(args.profile or "")
+    if not profile:
+        fail("find-hot: --profile is required")
+    include_incomplete = bool(getattr(args, "include_incomplete", False))
+    list_all = bool(getattr(args, "all_views", False))
+    for_launch = bool(getattr(args, "for_launch", False))
+    if include_incomplete and for_launch:
+        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
+    if list_all and not include_incomplete:
+        fail("find-hot: --all is cleanup-only and requires --include-incomplete")
+    profile_data = (
+        load_model_profile(args.models_dir, profile) if args.models_dir else None
+    )
+    hot_root = args.hot_root or default_hot_root()
+    if list_all:
+        # Every view under the name's entry, so cleanup can preflight all of
+        # them before it deletes any.
+        records = [
+            _hot_view_record(
+                path,
+                profile,
+                profile_data=profile_data,
+                for_launch=False,
+                include_incomplete=True,
+            )
+            for path in find_hot_instances_for_profile(
+                hot_root, profile, args.topology_id,
+                profile_data=profile_data, include_incomplete=True,
+            )
+        ]
+        print(json.dumps(records, indent=2, sort_keys=True))
+        return 0
+    path = find_hot_instance_for_profile(
+        hot_root,
+        profile,
+        args.topology_id,
+        profile_data=profile_data,
+        include_incomplete=include_incomplete,
+    )
+    if path is None:
+        raise HotInstanceNotFound(f"find-hot: no ready instance for profile {profile}")
+    print(json.dumps(_hot_view_record(
+        path,
+        profile,
+        profile_data=profile_data,
+        for_launch=for_launch,
+        include_incomplete=include_incomplete,
+    ), indent=2, sort_keys=True))
     return 0
 
 
@@ -9336,6 +9402,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="include_incomplete",
         action="store_true",
         help="cleanup only: also find a view whose stamp is not ready (never with --for-launch)",
+    )
+    fh.add_argument(
+        "--all",
+        dest="all_views",
+        action="store_true",
+        help="cleanup only (with --include-incomplete): print every view under the name as a JSON list",
     )
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")
