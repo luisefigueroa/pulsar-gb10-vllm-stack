@@ -14,6 +14,31 @@ through Stage 3. `scripts/release.sh` (`./pulsar release verify|show|list`)
 reads this directory. It does not start a server or grant serving permission.
 `PULSAR_RELEASES_ROOT` is a test override naming this directory.
 
+Serving a spec needs the gitignored deployment overlay
+`.pulsar-overlay.json` at the repository root. It holds only deployment
+values, never recipe fields. The smallest valid overlay serves every spec on
+port 8000 under its Hugging Face model id on this node:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "pulsar-deployment-overlay",
+  "defaults": {
+    "port": 8000,
+    "served_name": null,
+    "cache_root": null,
+    "placement": null
+  },
+  "specs": {}
+}
+```
+
+Every key is required; `null` keeps the default (`served_name` null means
+the model id). A per-spec entry under `specs` keyed by spec id overrides the
+defaults, and `placement` is `{"node_id": "<topology node id>"}` when the
+spec must run on one confirmed node. `scripts/release_consumer.py` owns the
+schema and fails without fallback on an unknown key.
+
 A released spec id (the 64-hex file name) is accepted wherever a profile
 name is: `./pulsar start|status|stop <spec_id>` and the model-library
 lifecycle commands `prepare`, `pin`, `unpin`, and `purge-hot <spec_id>`.
