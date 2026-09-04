@@ -377,7 +377,7 @@ per_rank_out=$(bash -c '
   rc=0; out=$(hot_instances_for_profile_on_ranks spec 1 9 2>/dev/null) || rc=$?
   echo "unobservable rc=$rc out=[$out]"
 ' _ "$REPO_DIR")
-[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1\tfalse\nunobservable rc=255 out=[]' ] \
+[ "$per_rank_out" = $'1\t/hot/x-topo/cid1\tcid1\tfalse\t\nunobservable rc=255 out=[]' ] \
   || { echo "FAIL per-rank purge lookup: $per_rank_out" >&2; exit 1; }
 echo "OK   purge-hot resolves surviving views per rank, treats a missing rank as purged, and aborts on an unobservable rank"
 
@@ -569,17 +569,20 @@ pinned_guard_out=$(bash -c '
     case "$*" in
       *" 9"*) return 255 ;;
       *" 7"*) return 2 ;;
-      *" 1"*) printf "%s\n" "$(printf "0\t/hot/a\tcid\tfalse")" "$(printf "1\t/hot/a\tcid\ttrue")" ;;
+      *" 1"*) printf "%s\n" "$(printf "0\t/hot/a\tcid\tfalse\tready")" "$(printf "1\t/hot/a\tcid\ttrue\tready")" ;;
+      *" 3"*) printf "%s\n" "$(printf "0\t/hot/a\tcid\tfalse\tready")" "$(printf "3\t/hot/a\tcid\ttrue\tpartial")" ;;
       *) return 1 ;;
     esac
   }
   eval "$(sed -n "/^spec_refuse_pinned_ranks_before_copy() {/,/^}/p" "$1/scripts/model-library.sh")"
   spec_refuse_pinned_ranks_before_copy spec 0 && echo clear
+  spec_refuse_pinned_ranks_before_copy spec 0 3 && echo residue-ignored
   ( spec_refuse_pinned_ranks_before_copy spec 0 1 ) 2>&1 || true
   ( spec_refuse_pinned_ranks_before_copy spec 0 7 ) 2>&1 || true
   ( spec_refuse_pinned_ranks_before_copy spec 0 9 ) 2>&1 || true
 ' _ "$REPO_DIR")
 printf '%s\n' "$pinned_guard_out" | grep -q "^clear$" || { echo "FAIL pinned guard refused an unpinned set: $pinned_guard_out" >&2; exit 1; }
+printf '%s\n' "$pinned_guard_out" | grep -q "^residue-ignored$" || { echo "FAIL pinned guard let a failed transfer's residue block re-materialization: $pinned_guard_out" >&2; exit 1; }
 printf '%s\n' "$pinned_guard_out" | grep -q "holds a pinned view on rank 1.*--force-unpin" || { echo "FAIL pinned guard allowed a pinned rank: $pinned_guard_out" >&2; exit 1; }
 printf '%s\n' "$pinned_guard_out" | grep -q "could not be inspected" || { echo "FAIL pinned guard ignored an uninspectable rank: $pinned_guard_out" >&2; exit 1; }
 printf '%s\n' "$pinned_guard_out" | grep -q "unobservable" || { echo "FAIL pinned guard ignored an unreachable rank: $pinned_guard_out" >&2; exit 1; }

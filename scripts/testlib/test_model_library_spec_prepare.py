@@ -303,6 +303,27 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertTrue(odd.is_dir())
         import shutil
         shutil.rmtree(odd)
+        # A stamp path that is a symlink to valid metadata elsewhere is
+        # judged as the link, never through it: no view for launch, an
+        # inspection failure for cleanup, a refusal at the purge boundary.
+        linked = parent / ("b" * 12)
+        (linked / ".pulsar").mkdir(parents=True)
+        (linked / ".pulsar" / "hot.json").symlink_to(instance / ".pulsar" / "hot.json")
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        self.assertNotIn(
+            linked,
+            model_library.find_hot_instances_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID),
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.purge_hot_instance(linked, hot_root=self.hot)
+        self.assertTrue(linked.is_dir())
+        shutil.rmtree(linked)
         instance.mkdir(parents=True)
         model_library.write_hot_stamp(instance, instance_stamp)
         # The same for a conf profile, whose lookup verifies stamps against

@@ -3083,9 +3083,12 @@ spec_view_verified_on_ranks() {
 }
 
 # spec_refuse_pinned_ranks_before_copy <profile> <rank>...
-# Die when any target rank still holds a pinned view named PROFILE (any
-# state), or when a rank cannot be inspected: re-materialization would
-# rewrite that rank's stamp and silently clear the pin.
+# Die when any target rank still holds a stamped, pinned view named
+# PROFILE, or when a rank cannot be inspected: re-materialization would
+# rewrite that rank's stamp and silently clear the pin. The residue of a
+# failed transfer (a partial view, no stamp) carries no pin to lose and is
+# exactly what re-materialization replaces, so it never blocks a prepare;
+# purge alone treats it as protected.
 spec_refuse_pinned_ranks_before_copy() {
   local profile="${1:?}" rows rc=0 line pinned_on=""
   local -a row=()
@@ -3097,6 +3100,7 @@ spec_refuse_pinned_ranks_before_copy() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     IFS=$'\t' read -r -a row <<<"$line"
+    [ "${row[4]:-}" != partial ] || continue
     [ "${row[3]:-false}" != true ] || pinned_on="${pinned_on:+$pinned_on, }rank ${row[0]}"
   done <<<"$rows"
   [ -z "$pinned_on" ] \
@@ -3792,8 +3796,8 @@ for record in json.load(sys.stdin):
 }
 
 # hot_instances_for_profile_on_ranks <profile> <rank>...
-# Print one "rank<TAB>instance_dir<TAB>stamped_content_id<TAB>pinned" line
-# per view under the name's entry on each target rank, bound by name and
+# Print one "rank<TAB>instance_dir<TAB>stamped_content_id<TAB>pinned<TAB>state"
+# line per view under the name's entry on each target rank, bound by name and
 # stamp only (purge policy; non-ready and partial views count), so cleanup
 # can preflight every view before it deletes any. A rank without a view is
 # reported as already purged and skipped; the function fails with 1 only
@@ -3814,9 +3818,9 @@ hot_instances_for_profile_on_ranks() {
       0)
         while IFS= read -r record; do
           [ -n "$record" ] || continue
-          mapfile -t fields < <(json_fields "$record" instance_dir stamp.content_id stamp.pinned)
+          mapfile -t fields < <(json_fields "$record" instance_dir stamp.content_id stamp.pinned stamp.state)
           [ -n "${fields[0]:-}" ] || return 2
-          rows+=("$(printf '%s\t%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}" "${fields[2]:-false}")")
+          rows+=("$(printf '%s\t%s\t%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}" "${fields[2]:-false}" "${fields[3]:-}")")
           found=1
         done <<<"$info"
         ;;

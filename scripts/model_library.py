@@ -3401,25 +3401,32 @@ def _ready_hot_children(
             if not child.is_dir():
                 continue
             stamp_path = hot_stamp_path(child)
-            if not stamp_path.is_file():
+            # The stamp is judged as the path itself, never through a link:
+            # metadata outside the instance must not authorize a launch or a
+            # deletion. A missing stamp is a partial view for cleanup; a
+            # stamp path that exists but is not a regular file (a directory,
+            # any symlink) is an inspection failure for cleanup and no view
+            # for launch.
+            try:
+                stamp_mode = os.lstat(stamp_path).st_mode
+            except FileNotFoundError:
+                stamp_mode = None
+            except OSError as exc:
+                if include_incomplete:
+                    fail(f"cleanup: cannot inspect hot stamp {stamp_path}: {exc}")
+                continue
+            if stamp_mode is not None and not stat.S_ISREG(stamp_mode):
+                if include_incomplete:
+                    fail(f"cleanup: hot stamp at {stamp_path} is not a regular file")
+                continue
+            if stamp_mode is None:
                 # A directory without a stamp is what a transfer leaves when
                 # it fails before the stamp is written and rollback cannot
                 # reach the rank. Launch never sees it; cleanup lists it as a
                 # partial view of this entry's name so purge can remove it.
-                # Cleanup tells a missing stamp from a stamp path that exists
-                # but is not a regular file (a directory, a broken symlink),
-                # which is an inspection failure like any malformed stamp.
                 # With no retention metadata the view cannot prove it was
                 # unpinned, so it demands the force-unpin path.
                 if include_incomplete:
-                    try:
-                        os.lstat(stamp_path)
-                    except FileNotFoundError:
-                        pass
-                    except OSError as exc:
-                        fail(f"cleanup: cannot inspect hot stamp {stamp_path}: {exc}")
-                    else:
-                        fail(f"cleanup: hot stamp at {stamp_path} is not a regular file")
                     candidates.append((
                         "",
                         child,
@@ -4845,14 +4852,16 @@ def purge_hot_instance(
         require_hot_instance_within_root(instance_dir, hot_root)
     stamp_path = hot_stamp_path(instance_dir)
     try:
-        stamp_present = os.lstat(stamp_path) is not None
+        stamp_mode: int | None = os.lstat(stamp_path).st_mode
     except FileNotFoundError:
-        stamp_present = False
+        stamp_mode = None
     except OSError as exc:
         fail(f"purge: cannot inspect hot stamp {stamp_path}: {exc}")
-    if stamp_present and not stamp_path.is_file():
+    # Judged as the path itself: a symlinked stamp would authorize the
+    # deletion with metadata outside the instance.
+    if stamp_mode is not None and not stat.S_ISREG(stamp_mode):
         fail(f"purge: hot stamp at {stamp_path} is not a regular file; refusing")
-    if stamp_path.is_file():
+    if stamp_mode is not None:
         stamp = load_json(stamp_path)
         if isinstance(stamp, dict):
             # The instance directory is named by its content id; a stamp
@@ -8365,7 +8374,7 @@ def _hot_view_record(
     for_launch: bool,
     include_incomplete: bool,
 ) -> dict[str, Any]:
-    if include_incomplete and not hot_stamp_path(path).is_file():
+    if include_incomplete and not os.path.lexists(hot_stamp_path(path)):
         # A partial view has no stamp and no runtime paths; cleanup needs
         # only its location and the content id its directory name carries.
         # With no retention metadata it cannot prove it was unpinned.
