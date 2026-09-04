@@ -470,6 +470,52 @@ PULSAR_HOT_ROOT="$STATE/hot-rank1" \
   "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
 [ ! -e "$incomplete_view" ] || { echo "FAIL purge-hot left the incomplete view" >&2; exit 1; }
 echo "OK   purge-hot recovers a spec view an interrupted preparation left in state verifying"
+
+# A malformed stamp is an inspection failure for cleanup, never an absence:
+# the ready-only lookup still reports no view, the cleanup lookup fails, and
+# purge stops before deleting anything.
+malformed_dir="$STATE/hot-rank1/$spec_id-${topology_id:0:12}/badstamp0001"
+mkdir -p "$malformed_dir/.pulsar"
+printf 'not json\n' >"$malformed_dir/.pulsar/hot.json"
+ready_rc=0; python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" >/dev/null 2>&1 || ready_rc=$?
+[ "$ready_rc" = 3 ] || { echo "FAIL ready-only lookup did not report absence for a malformed stamp (rc=$ready_rc)" >&2; exit 1; }
+cleanup_rc=0; python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" --include-incomplete \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" >/dev/null 2>&1 || cleanup_rc=$?
+[ "$cleanup_rc" = 1 ] || { echo "FAIL cleanup lookup treated a malformed stamp as absence (rc=$cleanup_rc)" >&2; exit 1; }
+expect_failure 1 "could not be inspected" \
+  "purge-hot stops on a malformed stamp instead of treating it as purged" \
+  env PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin
+[ -d "$malformed_dir" ] || { echo "FAIL purge deleted a view it could not inspect" >&2; exit 1; }
+rm -rf "$malformed_dir"
+
+# A spec copy plan never clears a surviving pin as a side effect: a pinned
+# target rank stops re-materialization until the explicit force-unpin purge.
+pinned_guard_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  hot_instances_for_profile_on_ranks() {
+    case "$*" in
+      *" 9"*) return 255 ;;
+      *" 7"*) return 2 ;;
+      *" 1"*) printf "%s\n" "$(printf "0\t/hot/a\tcid\tfalse")" "$(printf "1\t/hot/a\tcid\ttrue")" ;;
+      *) return 1 ;;
+    esac
+  }
+  eval "$(sed -n "/^spec_refuse_pinned_ranks_before_copy() {/,/^}/p" "$1/scripts/model-library.sh")"
+  spec_refuse_pinned_ranks_before_copy spec 0 && echo clear
+  ( spec_refuse_pinned_ranks_before_copy spec 0 1 ) 2>&1 || true
+  ( spec_refuse_pinned_ranks_before_copy spec 0 7 ) 2>&1 || true
+  ( spec_refuse_pinned_ranks_before_copy spec 0 9 ) 2>&1 || true
+' _ "$REPO_DIR")
+printf '%s\n' "$pinned_guard_out" | grep -q "^clear$" || { echo "FAIL pinned guard refused an unpinned set: $pinned_guard_out" >&2; exit 1; }
+printf '%s\n' "$pinned_guard_out" | grep -q "holds a pinned view on rank 1.*--force-unpin" || { echo "FAIL pinned guard allowed a pinned rank: $pinned_guard_out" >&2; exit 1; }
+printf '%s\n' "$pinned_guard_out" | grep -q "could not be inspected" || { echo "FAIL pinned guard ignored an uninspectable rank: $pinned_guard_out" >&2; exit 1; }
+printf '%s\n' "$pinned_guard_out" | grep -q "unobservable" || { echo "FAIL pinned guard ignored an unreachable rank: $pinned_guard_out" >&2; exit 1; }
+sed -n "/^cmd_prepare() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh" | grep -c "spec_refuse_pinned_ranks_before_copy" >/dev/null \
+  || { echo "FAIL prepare does not guard pinned ranks before a spec copy" >&2; exit 1; }
+echo "OK   a spec copy plan refuses to clear a surviving pin; only purge-hot --force-unpin drops it"
 # The purge confirmation names every rank's path, not just the first row.
 confirm_out=$(bash -c '
   set -euo pipefail

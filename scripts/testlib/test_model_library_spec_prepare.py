@@ -162,6 +162,23 @@ class SpecPreparePlannerTests(unittest.TestCase):
         )
         # Both acquisition steps carry the selected placement.
         self.assertEqual(placed["remediation"].count("--node node-1"), 2)
+        # A one-rank spec placed by its overlay on a rank other than its
+        # durable home: the remediation names the two real choices, never a
+        # re-check on the home rank that the next start would undo.
+        mismatch = model_library.classify_library_readiness(
+            profile=SPEC_ID,
+            catalog_path=str(self.catalog_path),
+            topology_id=TOPOLOGY_ID,
+            models_dir=None,
+            identity_key=f"{self.model_id}@{fixture.COMMIT}",
+            selected_rank=1,
+            selected_node_id="node-1",
+        )
+        self.assertEqual(mismatch["reason"], "wrong-placement")
+        self.assertIn(f"home relocate {SPEC_ID} --node node-1 --yes", mismatch["remediation"])
+        self.assertIn("catalog refresh", mismatch["remediation"])
+        self.assertIn("placement.node_id to node-0", mismatch["remediation"])
+        self.assertNotIn("check-weights", mismatch["remediation"])
 
     def test_controller_stamp_never_skips_a_remote_placement(self) -> None:
         # Prepared on the controller once; the exact spec-named instance has

@@ -2823,6 +2823,27 @@ def classify_library_readiness(
         target = home_node_id or (
             str(home_rank) if home_rank is not None else "HOME"
         )
+        if identity_key:
+            # A released spec's one-rank placement comes from the overlay,
+            # so re-checking on the home rank leads nowhere: the next start
+            # enforces the overlay again. Either occupancy moves to the
+            # selected rank or the overlay names the home.
+            selected = selected_node or (
+                str(selected_rank) if selected_rank is not None else "SELECTED"
+            )
+            return {
+                "reason": "wrong-placement",
+                "remediation": (
+                    f"scripts/model-library.sh home relocate {profile} --node {selected} --yes && "
+                    f"scripts/model-library.sh catalog refresh"
+                    f"  # or set .pulsar-overlay.json placement.node_id to {target}"
+                ),
+                "detail": (
+                    f"the overlay places this spec on {selected} but its durable home is "
+                    f"{target} (rank {home_rank}); relocate occupancy to {selected} and refresh "
+                    f"the catalog, or point the overlay at {target}"
+                ),
+            }
         return {
             "reason": "wrong-placement",
             "remediation": f"scripts/check-weights.sh {profile} --node {target}",
@@ -3345,7 +3366,10 @@ def _ready_hot_children(
     ``include_incomplete`` also lists a child whose stamp is in another
     state (an interrupted preparation leaves ``verifying``). Ownership is
     still bound by the stamp's schema, scheme, and identity, so cleanup can
-    reach such a view while launch discovery stays ready-only.
+    reach such a view while launch discovery stays ready-only. In that
+    cleanup mode a child whose stamp cannot be read is an inspection
+    failure, never an absence: cleanup must stop rather than delete the
+    healthy ranks around a view it could not account for.
     """
     candidates: list[tuple[str, pathlib.Path, dict[str, Any]]] = []
     try:
@@ -3359,9 +3383,13 @@ def _ready_hot_children(
                 continue
             try:
                 stamp = load_json(stamp_path)
-            except ModelLibraryError:
+            except ModelLibraryError as exc:
+                if include_incomplete:
+                    fail(f"cleanup: unreadable hot stamp at {stamp_path}: {exc}")
                 continue
             if not isinstance(stamp, dict):
+                if include_incomplete:
+                    fail(f"cleanup: malformed hot stamp at {stamp_path}")
                 continue
             if stamp.get("schema_version") != HOT_SCHEMA_VERSION:
                 continue

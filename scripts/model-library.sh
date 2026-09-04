@@ -3082,6 +3082,27 @@ spec_view_verified_on_ranks() {
   return 0
 }
 
+# spec_refuse_pinned_ranks_before_copy <profile> <rank>...
+# Die when any target rank still holds a pinned view named PROFILE (any
+# state), or when a rank cannot be inspected: re-materialization would
+# rewrite that rank's stamp and silently clear the pin.
+spec_refuse_pinned_ranks_before_copy() {
+  local profile="${1:?}" rows rc=0 line pinned_on=""
+  local -a row=()
+  shift
+  rows=$(hot_instances_for_profile_on_ranks "$profile" "$@" 2>/dev/null) || rc=$?
+  [ "$rc" -ne 255 ] || die "prepare: a target rank is unobservable; nothing was changed"
+  [ "$rc" -ne 2 ] || die "prepare: a target rank could not be inspected; nothing was changed"
+  [ -n "$rows" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    IFS=$'\t' read -r -a row <<<"$line"
+    [ "${row[3]:-false}" != true ] || pinned_on="${pinned_on:+$pinned_on, }rank ${row[0]}"
+  done <<<"$rows"
+  [ -z "$pinned_on" ] \
+    || die "prepare: $profile holds a pinned view on $pinned_on; a partial preparation is re-materialized on every rank only after purge-hot $profile --yes --force-unpin"
+}
+
 # require_no_view_users_on_ranks <instance> <content_id> <owner> <rank>...
 # Materializing replaces the destination in place (copy_hub_to_rank removes
 # it first). Refuse while any managed container on that rank, running or
@@ -3396,10 +3417,15 @@ cmd_prepare() {
   # on every target rank before copying, so a complete preparation is left
   # untouched and keeps its pins. Anything short of every rank verified is
   # re-materialized on every rank (all-or-nothing).
-  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ] \
-      && spec_view_verified_on_ranks "$instance" "$profile" "$expected_validation_json" "${target_ranks[@]}"; then
-    log "hot already ready on every target rank (verified); model not started"
-    return 0
+  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if spec_view_verified_on_ranks "$instance" "$profile" "$expected_validation_json" "${target_ranks[@]}"; then
+      log "hot already ready on every target rank (verified); model not started"
+      return 0
+    fi
+    # Re-materializing rewrites every target rank's stamp. A pin is dropped
+    # only through the explicit purge-hot --force-unpin confirmation, never
+    # as a side effect of repairing another rank.
+    spec_refuse_pinned_ranks_before_copy "$profile" "${target_ranks[@]}"
   fi
 
   budget_plan=$(build_hot_budget_plan_from_activation "$plan" prepare) \
