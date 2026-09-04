@@ -62,6 +62,7 @@ done
 
 acquire_model_library_lifecycle_lock shared
 load_conf "$MODEL_NAME"
+require_spec_platform_admission "$MODEL_NAME"
 acquire_model_library_hot_lock shared
 if [ -n "$PORT_OVERRIDE" ]; then
   case "$PORT_OVERRIDE" in

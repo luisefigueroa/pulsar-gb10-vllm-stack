@@ -35,8 +35,10 @@ def receipt_path(model_id: str) -> pathlib.Path:
     return RECEIPT_DIR / f"{model_id.replace('/', '__')}.json"
 
 
-def build_fixture_receipt(model_id: str, *, profile: str) -> dict[str, object]:
-    source = fixture.build_source(model_id=model_id)
+def build_fixture_receipt(
+    model_id: str, *, profile: str, snapshot_revision: str = fixture.COMMIT
+) -> dict[str, object]:
+    source = fixture.build_source(model_id=model_id, snapshot_revision=snapshot_revision)
     identity = source_attested.resolve_huggingface_v1_acquisition_identity(
         source=source, profile=profile
     )
