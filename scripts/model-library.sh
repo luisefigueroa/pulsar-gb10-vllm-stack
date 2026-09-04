@@ -76,7 +76,7 @@ Usage:
   scripts/model-library.sh resolve <profile|model_id|/abs/path>
       [--json] [--cold-root PATH]
   scripts/model-library.sh cleanup-recommend [--json]
-  scripts/model-library.sh home add <profile>
+  scripts/model-library.sh home add <spec_id>|--draft <draft.conf>
       --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]
   scripts/model-library.sh home verify <profile|model_id|model_id@revision>
       [--json]
@@ -692,14 +692,13 @@ scan_rank_homes() {
 }
 
 validate_catalog_profile_contracts() {
-  local conf profile
-  for conf in "$REPO_DIR"/models/*.conf; do
-    [ -e "$conf" ] || continue
-    profile="${conf##*/}"
-    profile="${profile%.conf}"
-    # A serving profile is loaded here from its sourced Bash values. The
-    # Python catalog parser deliberately handles only the small declarative
-    # subset and cannot reconstruct arrays, defaults, or resolved image state.
+  local spec profile releases_root="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"
+  for spec in "$releases_root"/*.json; do
+    [ -e "$spec" ] || continue
+    profile="${spec##*/}"
+    profile="${profile%.json}"
+    [[ "$profile" =~ ^[0-9a-f]{64}$ ]] || continue
+    # Every released spec must load as a profile (spec plus overlay).
     load_conf "$profile"
   done
 }
@@ -1497,7 +1496,11 @@ cmd_home_add_source_attested() (
   require_py
   load_cluster_topology >/dev/null \
     || die "home add: confirmed topology required"
-  load_conf "$profile"
+  if [ -n "${PULSAR_DRAFT_FILE:-}" ]; then
+    load_draft "$PULSAR_DRAFT_FILE"
+  else
+    load_conf "$profile"
+  fi
   [ "$(model_source_kind)" = hf ] \
     || die "home add: $profile is not a Hugging Face model profile"
   model_id="$MODEL"
@@ -1781,7 +1784,7 @@ sa.compare_observed_manifest_to_expected(
 
 cmd_home_add() (
   set -euo pipefail
-  local profile="" node_selector="" yes=0 json=0 plan_only=0 revision_selector=""
+  local profile="" draft="" node_selector="" yes=0 json=0 plan_only=0 revision_selector=""
   local tmp identity_plan_b64 content_bytes revision model_id
   local plan plan_b64
   local target_rank target_node target_hf staging_json staging_root result_file
@@ -1793,6 +1796,11 @@ cmd_home_add() (
         shift
         [ $# -gt 0 ] || die "--node needs a rank or node ID"
         node_selector="$1"
+        ;;
+      --draft)
+        shift
+        [ $# -gt 0 ] || die "--draft needs a conf-format draft file"
+        draft="$1"
         ;;
       --revision)
         shift
@@ -1807,9 +1815,17 @@ cmd_home_add() (
     esac
     shift
   done
-  [ -n "$profile" ] \
-    || die "usage: home add <profile> --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
-  load_conf "$profile"
+  if [ -n "$draft" ]; then
+    [ -z "$profile" ] || die "home add: pass either a spec id or --draft FILE, not both"
+    load_draft "$draft"
+    profile="$CONF_NAME"
+    # Nested loads of this acquisition re-read the same draft, never a profile.
+    export PULSAR_DRAFT_FILE="$draft"
+  else
+    [ -n "$profile" ] \
+      || die "usage: home add <spec_id>|--draft FILE --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
+    load_conf "$profile"
+  fi
   [ -n "$revision_selector" ] \
     || die "home add: pass --revision SELECTOR; acquisition requires modern hf and one exact Hugging Face revision (ADR 0012)"
   cmd_home_add_source_attested \

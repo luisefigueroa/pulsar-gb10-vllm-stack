@@ -58,18 +58,19 @@ INVENTORY_SSH="${INVENTORY_SSH:-ssh}"
 INVENTORY_NVIDIA_SMI="${INVENTORY_NVIDIA_SMI:-nvidia-smi}"
 
 # ---------------------------------------------------------------------------
-# Profile catalog (repo models/*.conf)
+# Profile catalog (released specs under releases/)
 # ---------------------------------------------------------------------------
 build_profile_catalog_json() {
   # Pure bash catalog so we do not depend on Python seeing REPO_DIR, then
   # emit JSON via a single Python encode step.
-  local conf name tmp line
+  local spec name tmp line releases_root="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"
   tmp=$(mktemp "${TMPDIR:-/tmp}/pulsar-inv-profiles.XXXXXX")
   : >"$tmp"
   shopt -s nullglob
-  for conf in "$REPO_DIR"/models/*.conf; do
-    name="${conf##*/}"
-    name="${name%.conf}"
+  for spec in "$releases_root"/*.json; do
+    name="${spec##*/}"
+    name="${name%.json}"
+    [[ "$name" =~ ^[0-9a-f]{64}$ ]] || continue
     # Subshell isolates load_conf state between profiles.
     line=$(
       set -euo pipefail

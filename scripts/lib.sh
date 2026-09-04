@@ -377,15 +377,11 @@ _finalize_loaded_profile() {
 # Load a released spec plus the site overlay into caller shell (no conf).
 load_spec_profile() {
   local spec_id="${1:?load_spec_profile: spec_id required}"
-  local conf="$REPO_DIR/models/${spec_id}.conf"
   local releases_root="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"
   local overlay="${PULSAR_OVERLAY_PATH:-$REPO_DIR/.pulsar-overlay.json}"
   local image_repo="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai}"
   local output err
   local -a export_args
-  if [ -f "$conf" ] && [ -e "$releases_root/${spec_id}.json" ]; then
-    die "$spec_id: both models/${spec_id}.conf and $releases_root/${spec_id}.json exist; refuse without fallback"
-  fi
   # Keep a registry port: drop @digest, then only a :tag after the last slash.
   image_repo="${image_repo%%@*}"
   case "${image_repo##*/}" in
@@ -416,7 +412,10 @@ load_spec_profile() {
   _finalize_loaded_profile "$spec_id"
 }
 
-# Load models/<name>.conf, or a released spec when name is a 64-hex spec_id.
+# A profile is a released spec: load one by its 64-hex spec_id (ADR 0017
+# Stage 4). models/*.conf no longer exist; a conf-format file survives only
+# as a lab draft loaded by load_draft for the first acquisition and the
+# spec generator, and is never a startable profile.
 load_conf() {
   local name="${1:?load_conf: model name required}"
   case "$name" in
@@ -429,14 +428,26 @@ load_conf() {
     load_spec_profile "$name"
     return
   fi
-  local conf="$REPO_DIR/models/${name}.conf"
-  [ -f "$conf" ] || die "no such config: $conf (try scripts/list-models.sh)"
+  die "no released spec named '$name': profiles are spec ids under releases/ (scripts/release.sh list); a conf-format draft is only an input to scripts/release-spec.sh from-draft and home add --draft"
+}
 
+# Load a conf-format draft from an explicit path (lab input, not a profile).
+load_draft() {
+  local path="${1:?load_draft: draft file required}" name
+  [ -f "$path" ] && [ ! -L "$path" ] || die "draft is not a regular file: $path"
+  name="${path##*/}"
+  name="${name%.conf}"
+  case "$name" in
+    *[!A-Za-z0-9._-]*|"") die "invalid draft name '$name' (use letters, numbers, dot, underscore, or hyphen)" ;;
+  esac
+  if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
+    die "draft file name must not be a spec id: $path"
+  fi
+  _reset_loaded_profile_defaults
   # shellcheck disable=SC1090
-  . "$conf"
-
-  CONF_SOURCE=conf
-  CONF_PATH="$conf"
+  . "$path"
+  CONF_SOURCE=draft
+  CONF_PATH="$path"
   _finalize_loaded_profile "$name"
 }
 

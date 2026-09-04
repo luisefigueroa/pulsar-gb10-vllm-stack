@@ -20,12 +20,13 @@ cd "$REPO_DIR"
 . "$REPO_DIR/scripts/lib.sh"
 
 if [ "${1:-}" = "--list" ]; then
-  for f in models/*.conf; do
-    name=$(basename "$f" .conf)
-    # shellcheck disable=SC1090
+  for f in "${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"/*.json; do
+    [ -e "$f" ] || continue
+    name=$(basename "$f" .json)
+    [[ "$name" =~ ^[0-9a-f]{64}$ ]] || continue
     (
       load_conf "$name"
-      printf "%-28s nodes=%s status=%-14s %s\n" "$name" "$NODES" "$STATUS" "$MODEL"
+      printf "%s nodes=%s %s\n" "$name" "$NODES" "$MODEL"
     )
   done
   exit 0
