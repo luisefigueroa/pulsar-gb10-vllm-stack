@@ -489,6 +489,26 @@ PULSAR_HOT_ROOT="$STATE/hot-rank1" \
 [ ! -e "$partial_dir" ] || { echo "FAIL purge-hot left the unstamped partial view" >&2; exit 1; }
 echo "OK   purge-hot removes an unstamped partial view a failed transfer left behind"
 
+# A conf's unstamped partial view on a remote rank is listed by the cleanup
+# lookup too: the synthetic stamp is not run through the conf validator.
+conf_partial_root="$STATE/hot-conf-partial"
+conf_partial_dir="$conf_partial_root/nemotron-3-nano-30b-nvfp4-${topology_id:0:12}/partialconf01"
+mkdir -p "$conf_partial_dir/hub"
+printf 'leftover\n' >"$conf_partial_dir/hub/leftover.bin"
+conf_partial_out=$(bash -c '
+  set -euo pipefail
+  . "$1/scripts/lib.sh"
+  HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"; REPO_DIR="$1"
+  CONF_SOURCE=conf CLUSTER_TOPOLOGY_ID="$3"
+  ssh_node() { shift; bash -c "$1"; }
+  eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
+  if hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 1 >/dev/null 2>&1; then echo "strict-saw-partial"; fi
+  hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 0 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"instance_dir\"], d[\"stamp\"][\"state\"])"
+' _ "$REPO_DIR" "$conf_partial_root" "$topology_id")
+[ "$conf_partial_out" = "$conf_partial_dir partial" ] \
+  || { echo "FAIL remote conf partial view lookup: $conf_partial_out" >&2; exit 1; }
+echo "OK   a conf's unstamped partial view on a remote rank is visible to cleanup, invisible to strict lookup"
+
 # A malformed stamp is an inspection failure for cleanup, never an absence:
 # the ready-only lookup still reports no view, the cleanup lookup fails, and
 # purge stops before deleting anything.

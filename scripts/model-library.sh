@@ -3741,9 +3741,14 @@ hot_instance_for_profile_on_rank() {
     stamp=$(printf '%s' "$info" | python3 -c \
       'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
       || return 1
-    printf '%s' "$stamp" | python3 "$PY_TOOL" validate-hot-stamp \
-      --profile "$profile" --models-dir "$REPO_DIR/models" \
-      --stamp-file /dev/stdin >/dev/null || return 1
+    # A partial view (cleanup lookup only) carries a synthetic stamp with
+    # nothing to validate against the conf; its ownership is the entry's
+    # name, and it is listed only so purge can remove it.
+    if [ "$(printf '%s' "$stamp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state") or "")')" != partial ]; then
+      printf '%s' "$stamp" | python3 "$PY_TOOL" validate-hot-stamp \
+        --profile "$profile" --models-dir "$REPO_DIR/models" \
+        --stamp-file /dev/stdin >/dev/null || return 1
+    fi
   fi
   printf '%s\n' "$info"
 }
