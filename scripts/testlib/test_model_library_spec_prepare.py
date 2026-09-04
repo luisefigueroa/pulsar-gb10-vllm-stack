@@ -175,7 +175,10 @@ class SpecPreparePlannerTests(unittest.TestCase):
             selected_node_id="node-1",
         )
         self.assertEqual(mismatch["reason"], "wrong-placement")
-        self.assertIn(f"home relocate {SPEC_ID} --node node-1 --yes", mismatch["remediation"])
+        self.assertIn(
+            f"home relocate {self.model_id}@{fixture.COMMIT} --profile {SPEC_ID} --node node-1 --yes",
+            mismatch["remediation"],
+        )
         self.assertIn("catalog refresh", mismatch["remediation"])
         self.assertIn("placement.node_id to node-0", mismatch["remediation"])
         self.assertNotIn("check-weights", mismatch["remediation"])
@@ -231,6 +234,11 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertIsNone(
             model_library.find_hot_instance_for_profile(self.hot, "linked", TOPOLOGY_ID)
         )
+        # Cleanup never reads a symlinked entry as absence.
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "symlinked hot entry"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, "linked", TOPOLOGY_ID, include_incomplete=True
+            )
         with self.assertRaisesRegex(model_library.ModelLibraryError, "symlink"):
             model_library.purge_hot_instance(link_parent / conf_plan["content_id"])
         self.assertTrue(real_instance.is_dir())
@@ -241,6 +249,10 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertIsNone(
             model_library.find_hot_instance_for_profile(self.hot, "real", TOPOLOGY_ID)
         )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "symlinked hot instance"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, "real", TOPOLOGY_ID, include_incomplete=True
+            )
         with self.assertRaisesRegex(model_library.ModelLibraryError, "symlink"):
             model_library.purge_hot_instance(real_parent / conf_plan["content_id"])
         self.assertTrue(real_instance.is_dir())

@@ -2831,11 +2831,14 @@ def classify_library_readiness(
             selected = selected_node or (
                 str(selected_rank) if selected_rank is not None else "SELECTED"
             )
+            # home relocate resolves a bare profile to its model id, which is
+            # ambiguous when several complete revisions exist; the exact
+            # model@commit query with --profile names this spec's occupancy.
             return {
                 "reason": "wrong-placement",
                 "remediation": (
-                    f"scripts/model-library.sh home relocate {profile} --node {selected} --yes && "
-                    f"scripts/model-library.sh catalog refresh"
+                    f"scripts/model-library.sh home relocate {identity_key} --profile {profile} "
+                    f"--node {selected} --yes && scripts/model-library.sh catalog refresh"
                     f"  # or set .pulsar-overlay.json placement.node_id to {target}"
                 ),
                 "detail": (
@@ -3375,8 +3378,13 @@ def _ready_hot_children(
     try:
         for child in parent.iterdir():
             # Never follow a symlinked instance: a later purge would delete
-            # whatever it points at.
-            if child.is_symlink() or not child.is_dir():
+            # whatever it points at. Cleanup must not read it as absence
+            # either, or it would delete the healthy ranks around it.
+            if child.is_symlink():
+                if include_incomplete:
+                    fail(f"cleanup: refusing a symlinked hot instance at {child}")
+                continue
+            if not child.is_dir():
                 continue
             stamp_path = hot_stamp_path(child)
             if not stamp_path.is_file():
@@ -3420,7 +3428,15 @@ def find_hot_instance_for_profile(
     """Return the newest ready instance matching the live expected identity."""
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
-    if parent.is_symlink() or not parent.is_dir():
+    if parent.is_symlink():
+        # A symlinked <name>-<topology> entry may point outside the hot
+        # root. Launch discovery treats it as no view; cleanup must stop,
+        # since deleting through it or reading it as absence are both
+        # unsafe.
+        if include_incomplete:
+            fail(f"cleanup: refusing a symlinked hot entry at {parent}")
+        return None
+    if not parent.is_dir():
         return None
     for _activated, candidate, _stamp in _ready_hot_children(
         parent, include_incomplete=include_incomplete
