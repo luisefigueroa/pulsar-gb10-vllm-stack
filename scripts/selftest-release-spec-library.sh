@@ -149,6 +149,29 @@ write_released_nano(pathlib.Path(sys.argv[2]))
 PY
 echo "OK   restored released spec after corrupt-file check"
 
+# Lab path: before promotion the measured spec file is the profile, so the
+# prepare manifest lookup must read it even with nothing under releases/.
+mkdir -p "$STATE/empty-releases"
+measured_manifest=$(PULSAR_RELEASES_ROOT="$STATE/empty-releases" PULSAR_SPEC_FILE="$STATE/releases/$spec_id.json" bash -c '
+  set -euo pipefail
+  REPO_DIR="$1"
+  die() { echo "die: $*" >&2; exit 1; }
+  eval "$(sed -n "/^library_spec_snapshot_manifest_json() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh")"
+  library_spec_snapshot_manifest_json "$2"
+' _ "$REPO_DIR" "$spec_id")
+[ "$(printf '%s' "$measured_manifest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_id"])')" = "$manifest_id" ] \
+  || { echo "FAIL prepare manifest lookup ignores PULSAR_SPEC_FILE: $measured_manifest" >&2; exit 1; }
+if PULSAR_RELEASES_ROOT="$STATE/empty-releases" bash -c '
+  set -euo pipefail
+  REPO_DIR="$1"
+  die() { echo "die: $*" >&2; exit 1; }
+  eval "$(sed -n "/^library_spec_snapshot_manifest_json() {/,/^}/p" "$REPO_DIR/scripts/model-library.sh")"
+  library_spec_snapshot_manifest_json "$2"
+' _ "$REPO_DIR" "$spec_id" >/dev/null 2>&1; then
+  echo "FAIL prepare manifest lookup found a spec with nothing released and no spec file" >&2; exit 1
+fi
+echo "OK   prepare manifest lookup honors PULSAR_SPEC_FILE before promotion"
+
 # The same plan by profile name: a profile is the spec id (ADR 0017 Stage 4).
 conf_plan=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/library/catalog.json" \

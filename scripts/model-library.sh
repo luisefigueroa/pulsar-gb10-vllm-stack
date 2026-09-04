@@ -448,9 +448,13 @@ library_spec_snapshot_manifest_json() {
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     show_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
   fi
+  # Lab path: the measured spec file is the profile before promotion.
+  if [ -n "${PULSAR_SPEC_FILE:-}" ]; then
+    show_args+=(--spec-file "$PULSAR_SPEC_FILE")
+  fi
   python3 "$REPO_DIR/scripts/release_consumer.py" "${show_args[@]}" \
     | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["identity"]["snapshot_manifest"]))' \
-    || die "prepare: cannot load the released spec manifest for $spec_id"
+    || die "prepare: cannot load the spec manifest for $spec_id"
 }
 
 library_conf_prepare_spec_manifest_json() {

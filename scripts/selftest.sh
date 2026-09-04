@@ -177,7 +177,7 @@ run "model catalog scopes" bash -c '
   . "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
   spec_fixture_env >/dev/null
   all=$("$REPO_DIR/scripts/list-models.sh" --json)
-  echo "$all" | ONE="$ONE_NODE_ID" TWO="$TWO_NODE_ID" python3 -c "import json,os,sys; d=json.load(sys.stdin); m={x[\"id\"]:x for x in d[\"models\"]}; assert os.environ[\"ONE\"] in m and os.environ[\"TWO\"] in m; assert m[os.environ[\"TWO\"]][\"nodes\"]==2; assert all(x[\"status\"]==\"-\" and x[\"review_status\"]==\"-\" for x in d[\"models\"]), d[\"models\"]; assert d[\"unloadable\"]==[]; assert all(x[\"served_name\"]==\"fixture-served\" for x in d[\"models\"])"
+  echo "$all" | ONE="$ONE_NODE_ID" TWO="$TWO_NODE_ID" python3 -c "import json,os,sys; d=json.load(sys.stdin); m={x[\"id\"]:x for x in d[\"models\"]}; assert os.environ[\"ONE\"] in m and os.environ[\"TWO\"] in m; assert m[os.environ[\"TWO\"]][\"nodes\"]==2; assert all(x[\"status\"]==\"stable\" for x in d[\"models\"]), d[\"models\"]; assert d[\"unloadable\"]==[]; assert all(x[\"served_name\"]==\"fixture-served\" for x in d[\"models\"])"
   serving=$("$REPO_DIR/scripts/list-models.sh" --serving --json)
   echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x and \"release_spec\" in x and \"image_digest\" in x for x in m); assert not any(x.get(\"spec_default_enabled\") for x in m); assert all(x[\"reviewed_identity\"] is False for x in m)"
   diagnostic=$("$REPO_DIR/scripts/list-models.sh" --diagnostic --json)

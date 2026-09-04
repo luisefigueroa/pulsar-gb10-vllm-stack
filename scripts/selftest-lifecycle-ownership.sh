@@ -1343,7 +1343,7 @@ msg=$(report_untracked_launch_container head "$TWO_NODE_ID" 0 "$cname" 2>&1) || 
 assert_true "untracked report mentions inventory.sh" \
   bash -c "printf '%s' $(printf %q "$msg") | grep -q 'scripts/inventory.sh'"
 assert_true "untracked report mentions down.sh <model>" \
-  bash -c "printf '%s' $(printf %q "$msg") | grep -q "scripts/down.sh $TWO_NODE_ID""
+  bash -c "printf '%s' $(printf %q "$msg") | grep -q 'scripts/down.sh $TWO_NODE_ID'"
 assert_true "untracked report says left untouched" \
   bash -c "printf '%s' $(printf %q "$msg") | grep -qi 'left untouched'"
 assert_true "untracked report includes short id when proven" \

@@ -105,6 +105,7 @@ USAGE = (
 )
 DEFAULT_IMAGE_REPO = "vllm/vllm-openai"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+SPEC_ID_RE = re.compile(r"[0-9a-f]{64}")
 EMPTY_PROJECTION = {"receipt": "missing", "identities": []}
 UNREADABLE_PROJECTION = {"receipt": "unreadable", "identities": []}
 
@@ -1096,7 +1097,9 @@ def identity_review_cell(
     receipt: str,
 ) -> str:
     """Human cell for one identity (D5)."""
-    if receipt in ("missing", "unreadable") or not identity:
+    if not identity:
+        return "-"
+    if receipt in ("missing", "unreadable") and not identity.get("released"):
         return "-"
     if identity.get("release_file") == "invalid":
         return "invalid release file (verification failed)"
@@ -1420,44 +1423,58 @@ def _project_profile(
     context: ProjectionContext | None = None,
     snapshot_revision: str | None = None,
 ) -> dict[str, Any]:
-    if library_dir in (None, ""):
-        return _empty_projection("missing")
-    library = pathlib.Path(library_dir)
-    hint = (snapshot_revision or "").strip()
-    if hint:
-        if COMMIT_RE.fullmatch(hint) is None:
-            return _empty_projection("unreadable")
-        revision: str | None = hint
-    else:
-        catalog = catalog_path
-        if catalog in (None, ""):
-            catalog = library / "catalog.json"
-        revision, catalog_error = _catalog_snapshot_revision(
-            catalog, profile=profile, context=context
-        )
-        if catalog_error == "unreadable":
-            return _empty_projection("unreadable")
-    receipt, receipt_status = _load_occupancy_receipt(
-        library, model_id=model_id, snapshot_revision=revision, context=context
-    )
-    if receipt_status != "found" or receipt is None:
-        return _empty_projection(receipt_status)
-
-    files = list((receipt.get("observed_manifest") or {}).get("files") or [])
-    snapshot_revision = receipt.get("snapshot_revision")
-    if not isinstance(snapshot_revision, str):
-        return _empty_projection("unreadable")
-    receipt_model_id = receipt.get("model_id")
-    if not isinstance(receipt_model_id, str):
-        receipt_model_id = None
-
-    variants = [False]
-    if spec_decode_args:
-        variants.append(True)
     root = _releases_root(
         repo_root if repo_root not in (None, "") else _REPO_ROOT,
         releases_root,
     )
+    receipt_label = "missing"
+    receipt: dict[str, Any] | None = None
+    if library_dir not in (None, ""):
+        library = pathlib.Path(library_dir)
+        hint = (snapshot_revision or "").strip()
+        if hint:
+            if COMMIT_RE.fullmatch(hint) is None:
+                return _empty_projection("unreadable")
+            revision: str | None = hint
+        else:
+            catalog = catalog_path
+            if catalog in (None, ""):
+                catalog = library / "catalog.json"
+            revision, catalog_error = _catalog_snapshot_revision(
+                catalog, profile=profile, context=context
+            )
+            if catalog_error == "unreadable":
+                return _empty_projection("unreadable")
+        receipt, receipt_label = _load_occupancy_receipt(
+            library, model_id=model_id, snapshot_revision=revision, context=context
+        )
+        if receipt_label != "found":
+            receipt = None
+
+    if receipt is not None:
+        files = list((receipt.get("observed_manifest") or {}).get("files") or [])
+        snapshot_revision = receipt.get("snapshot_revision")
+        if not isinstance(snapshot_revision, str):
+            return _empty_projection("unreadable")
+        receipt_model_id = receipt.get("model_id")
+        if not isinstance(receipt_model_id, str):
+            receipt_model_id = None
+    else:
+        # No receipt on this node yet. A profile that is itself a released
+        # spec still projects that spec's review (display-only): its own
+        # snapshot manifest stands in for the receipt, and the launch
+        # contract comparison below still hides the review on drift.
+        own = _released_spec_named_by_profile(root, profile, context)
+        if own is None:
+            return _empty_projection(receipt_label)
+        manifest = own["identity"]["snapshot_manifest"]
+        files = list(manifest.get("files") or [])
+        snapshot_revision = str(own["identity"]["snapshot_revision"])
+        receipt_model_id = str(own["identity"]["model_id"])
+
+    variants = [False]
+    if spec_decode_args:
+        variants.append(True)
     identities: list[dict[str, Any]] = []
     for spec_decode in variants:
         default = spec_decode if recommended_spec else not spec_decode
@@ -1521,7 +1538,22 @@ def _project_profile(
                 "reviewed_at": reviewed_at if equal else None,
             }
         )
-    return {"receipt": "found", "identities": identities}
+    return {"receipt": receipt_label, "identities": identities}
+
+
+def _released_spec_named_by_profile(
+    root: pathlib.Path,
+    profile: str,
+    context: ProjectionContext | None,
+) -> dict[str, Any] | None:
+    """The released spec whose id is ``profile`` (a profile is a spec id)."""
+    if not SPEC_ID_RE.fullmatch(profile or ""):
+        return None
+    if context is not None:
+        spec, _release_file = context.release(root, profile)
+    else:
+        spec, _release_file = try_load_release(root, profile)
+    return spec
 
 
 def list_releases(
@@ -1826,8 +1858,12 @@ def cmd_show(
     *,
     as_json: bool,
     releases_root: str | pathlib.Path | None = None,
+    spec_file: str | pathlib.Path | None = None,
 ) -> int:
-    spec = load_release(repo_root, spec_id, releases_root=releases_root)
+    if spec_file:
+        spec = load_spec_file_for_id(spec_file, spec_id)
+    else:
+        spec = load_release(repo_root, spec_id, releases_root=releases_root)
     sys.stdout.buffer.write(pretty_json_bytes(spec))
     return 0
 
@@ -1967,7 +2003,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--spec-file",
         default="",
-        help="export-profile: read this spec document (measured or released) instead of releases/",
+        help="export-profile/show: read this spec document (measured or released) instead of releases/",
     )
     parser.add_argument("--library-dir", default="")
     parser.add_argument("--catalog", default="")
@@ -2055,6 +2091,7 @@ def main(argv: list[str] | None = None) -> int:
             args.spec_id,
             as_json=args.json,
             releases_root=args.releases_root,
+            spec_file=args.spec_file or None,
         )
     except (ReleaseConsumerError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

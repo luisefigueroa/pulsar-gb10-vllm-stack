@@ -125,7 +125,8 @@ for model in models:
     assert spec["receipt"] in {"found", "missing", "unreadable"}
     assert isinstance(spec["identities"], list)
     if spec["receipt"] != "found":
-        assert spec["identities"] == []
+        # Without a receipt only the row's own released spec projects.
+        assert all(item["spec_id"] == model["id"] for item in spec["identities"]), spec
     for identity in spec["identities"]:
         assert set(identity) >= {
             "spec_decode",
