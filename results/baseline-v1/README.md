@@ -7,7 +7,11 @@ the six closed validator measurements the evaluator reads
 `benchmark-serving.json`) and `spec.json`, the measured spec after
 `validate/baseline_v1.py` filled `measurements[]` and `evidence[]`.
 `evidence[].sha256` is the digest of each measurement file and
-`evidence[].lab_commit` names the checkout that produced it.
+`evidence[].lab_commit` names the checkout that produced it. A run driven
+by `validate/baseline-v1.sh` also leaves `run.json`: the launch contract
+and image digest the container carried, the boot witness before and after
+the gates, and each gate's UTC window and exit code. The evaluator does not
+read it; it is run evidence, not a criterion.
 
 Raw captures and bench output from `validate/run-gates.sh` and the soak
 summary stay flat under `results/` by served name and tag, as before. The

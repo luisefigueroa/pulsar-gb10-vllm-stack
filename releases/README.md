@@ -3,6 +3,10 @@
 This directory holds **released** ADR 0017 specs. One file per identity,
 named `<spec_id>.json`. A spec is promoted only by a reviewed pull request
 that copies a lab `measured` document here with `state=released`.
+`scripts/release-spec.sh promote <measured> --reviewer <maintainer> --out
+releases/<spec_id>.json` writes that copy; `review.reviewer` names the
+maintainer who merges the promotion PR and `review.reviewed_at` is when the
+copy was made, so the PR itself is the review act.
 
 Git history of each file is identity lineage. Lifecycle is `review.status`.
 Do not put site values (hostnames, node ids, paths, credentials) in these

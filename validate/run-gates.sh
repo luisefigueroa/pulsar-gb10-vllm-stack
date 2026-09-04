@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Run the single-server validation gates against an ALREADY-RUNNING server.
 #
-#   validate/run-gates.sh <served-name> [--url http://host:8000] \
+#   validate/run-gates.sh <label> [--model SERVED_NAME] [--url http://host:8000] \
 #       [--needle-tokens N] [--baseline results/<file>.json] [--tag LABEL] \
 #       [--allow-fp-equivalent-run-to-run] \
 #       [--measurement-dir DIR] [--invocation-plan FILE]
+#
+# <label> names the artifacts under results/ and, unless --model is given,
+# is also the served model name sent to the API. Pass --model when the
+# served name is not a safe file label (a spec served under its model id).
 #
 # Gates, in order (each writes into results/ under --tag):
 #   1. greedy captures x2  -> run-to-run determinism verdict
@@ -23,14 +27,15 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-NAME="${1:?usage: run-gates.sh <served-name> [--url U] [--needle-tokens N] [--baseline F] [--tag T] [--allow-fp-equivalent-run-to-run] [--measurement-dir DIR] [--invocation-plan FILE]}"
+NAME="${1:?usage: run-gates.sh <label> [--model SERVED_NAME] [--url U] [--needle-tokens N] [--baseline F] [--tag T] [--allow-fp-equivalent-run-to-run] [--measurement-dir DIR] [--invocation-plan FILE]}"
 case "$NAME" in
   *[!A-Za-z0-9._-]*|"")
-    echo "invalid served name: use only letters, numbers, dot, underscore, or hyphen" >&2
+    echo "invalid served name or label: use only letters, numbers, dot, underscore, or hyphen" >&2
     exit 2
     ;;
 esac
 shift
+MODEL="$NAME"
 URL="http://127.0.0.1:8000"; NEEDLE=0; BASELINE=""; TAG="$(date +%Y%m%dT%H%M%S)"
 ALLOW_FP_RUN=0
 MEASUREMENT_DIR=""
@@ -38,6 +43,10 @@ INVOCATION_PLAN=""
 ATTEMPT_PY="${PULSAR_MODEL_SERVING_RELEASE_ATTEMPT_PY:-$PWD/scripts/model_serving_release_attempt.py}"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --model)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then echo "--model requires a served model name" >&2; exit 2; fi
+      MODEL="$2"; shift
+      ;;
     --url)
       [ "$#" -ge 2 ] || { echo "--url requires a value" >&2; exit 2; }
       URL="$2"; shift
@@ -150,10 +159,10 @@ preserve_child_stderr() {
 echo "== gate 1: greedy determinism (captures x2)"
 set +e
 preserve_child_stderr "${P}-runA.stderr.log" \
-  python3 validate/greedy_capture.py --url "$URL" --model "$NAME" --out "${P}-runA.json"
+  python3 validate/greedy_capture.py --url "$URL" --model "$MODEL" --out "${P}-runA.json"
 cap_a=$?
 preserve_child_stderr "${P}-runB.stderr.log" \
-  python3 validate/greedy_capture.py --url "$URL" --model "$NAME" --out "${P}-runB.json"
+  python3 validate/greedy_capture.py --url "$URL" --model "$MODEL" --out "${P}-runB.json"
 cap_b=$?
 COMPARE_CMD=(
   python3 validate/compare_captures.py
@@ -184,7 +193,7 @@ echo "== gate 3: bench sweep (warmup per level)"
 BENCH_CMD=(
   python3 validate/bench_serve.py
   --url "$URL"
-  --model "$NAME"
+  --model "$MODEL"
 )
 BENCH_CMD+=("${BENCH_ARGS[@]}")
 BENCH_CMD+=(--out "${P}-bench.json")
@@ -200,7 +209,7 @@ set -e
 if [ "$NEEDLE" -gt 0 ]; then
   echo "== gate 4: needle @ ${NEEDLE} tokens"
   set +e
-  python3 validate/needle.py --url "$URL" --model "$NAME" --context-tokens "$NEEDLE" --depths 0.05 0.5 0.95 | tail -4
+  python3 validate/needle.py --url "$URL" --model "$MODEL" --context-tokens "$NEEDLE" --depths 0.05 0.5 0.95 | tail -4
   needle_rc=${PIPESTATUS[0]}
   set -e
   [ "$needle_rc" -eq 0 ] || FAIL=1
