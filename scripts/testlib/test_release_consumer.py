@@ -271,7 +271,7 @@ def nano_identity_kwargs() -> dict[str, object]:
     receipt = json.loads(receipt_for(nano_kwargs()["model_id"]).read_text(encoding="utf-8"))
     return {
         "model_id": nano_kwargs()["model_id"],
-        "image": PINNED_IMAGE,
+        "image": nano_kwargs()["image"],
         "nodes": 1,
         "gpu_mem_util": "0.80",
         "engine_args": [
