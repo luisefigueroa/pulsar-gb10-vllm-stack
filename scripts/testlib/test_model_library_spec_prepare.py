@@ -283,6 +283,28 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertFalse(partial.exists())
         instance.mkdir(parents=True)
         model_library.write_hot_stamp(instance, instance_stamp)
+        # The same for a conf profile, whose lookup verifies stamps against
+        # the conf file: a partial view has no stamp to verify and is still
+        # listed for cleanup, still invisible to launch.
+        conf_parent = self.hot / f"{self.profile}-{TOPOLOGY_ID[:12]}"
+        conf_partial = conf_parent / ("e" * 12)
+        conf_partial.mkdir(parents=True)
+        (conf_partial / "leftover.bin").write_bytes(b"x")
+        conf_data = model_library.load_model_profile(self.models_dir, self.profile)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(
+                self.hot, self.profile, TOPOLOGY_ID, profile_data=conf_data
+            )
+        )
+        self.assertEqual(
+            model_library.find_hot_instance_for_profile(
+                self.hot, self.profile, TOPOLOGY_ID,
+                profile_data=conf_data, include_incomplete=True,
+            ),
+            conf_partial,
+        )
+        model_library.purge_hot_instance(conf_partial, hot_root=self.hot)
+        self.assertFalse(conf_partial.exists())
         # An entry that exists but cannot be listed is an inspection failure
         # for cleanup and no view for launch (not meaningful as root).
         if os.geteuid() != 0:

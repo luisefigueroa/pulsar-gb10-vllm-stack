@@ -3497,6 +3497,11 @@ def find_hot_instance_for_profile(
                     f"not {profile!r}"
                 )
             continue
+        if stamp.get("state") == "partial":
+            # An unstamped partial view has nothing to verify against the
+            # conf; its ownership is the parent entry's name. Only cleanup
+            # lists it, and only so purge can remove it.
+            return candidate
         if profile_data is not None:
             try:
                 verify_hot_stamp_against_profile(
