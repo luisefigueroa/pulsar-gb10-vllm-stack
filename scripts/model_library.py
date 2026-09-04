@@ -3376,7 +3376,21 @@ def _ready_hot_children(
     """
     candidates: list[tuple[str, pathlib.Path, dict[str, Any]]] = []
     try:
-        for child in parent.iterdir():
+        children = list(parent.iterdir())
+    except OSError as exc:
+        # An entry that exists but cannot be listed (permissions, I/O) is
+        # not inspectable. Cleanup must say so rather than read it as
+        # absence and delete the healthy ranks around it.
+        if include_incomplete:
+            fail(f"cleanup: cannot list hot entry {parent}: {exc}")
+        return []
+    try:
+        for child in children:
+            if include_incomplete:
+                try:
+                    os.lstat(child)
+                except OSError as exc:
+                    fail(f"cleanup: cannot inspect hot instance {child}: {exc}")
             # Never follow a symlinked instance: a later purge would delete
             # whatever it points at. Cleanup must not read it as absence
             # either, or it would delete the healthy ranks around it.
@@ -3428,6 +3442,15 @@ def find_hot_instance_for_profile(
     """Return the newest ready instance matching the live expected identity."""
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
+    if include_incomplete:
+        # Cleanup tells absence from an entry it cannot account for: only a
+        # missing entry is absence; a stat failure is an inspection failure.
+        try:
+            os.lstat(parent)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            fail(f"cleanup: cannot inspect hot entry {parent}: {exc}")
     if parent.is_symlink():
         # A symlinked <name>-<topology> entry may point outside the hot
         # root. Launch discovery treats it as no view; cleanup must stop,
@@ -3438,9 +3461,20 @@ def find_hot_instance_for_profile(
         return None
     if not parent.is_dir():
         return None
-    for _activated, candidate, _stamp in _ready_hot_children(
+    for _activated, candidate, stamp in _ready_hot_children(
         parent, include_incomplete=include_incomplete
     ):
+        # One name, one directory: the stamp under this name must name this
+        # owner. A stamp naming another owner is not a view of this name;
+        # cleanup must not purge it under this owner's container check.
+        owner = stamp.get("profile")
+        if owner != profile:
+            if include_incomplete:
+                fail(
+                    f"cleanup: stamp at {candidate} names owner {owner!r}, "
+                    f"not {profile!r}"
+                )
+            continue
         if profile_data is not None:
             try:
                 verify_hot_stamp_against_profile(

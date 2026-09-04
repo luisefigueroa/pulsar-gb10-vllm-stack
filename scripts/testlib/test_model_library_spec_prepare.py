@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -211,6 +212,54 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.assertEqual(moved["action"], "copy")
         self.assertEqual(moved["target_ranks"], [1])
         self.assertEqual(moved["instance_dir"], str(instance))
+
+    def test_cleanup_lookup_tells_absence_from_uninspectable_or_foreign_entries(self) -> None:
+        plan = model_library.plan_prepare(**self._identity_kwargs())
+        instance = pathlib.Path(plan["instance_dir"])
+        parent = instance.parent
+        # Missing entry: absence in both modes.
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        )
+        # A stamp under the spec's directory that names another owner is
+        # not this spec's view: launch skips it, cleanup refuses.
+        instance.mkdir(parents=True)
+        foreign = dict(plan["stamp"])
+        foreign["profile"] = "someone-else"
+        model_library.write_hot_stamp(instance, foreign)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "names owner 'someone-else'"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        model_library.write_hot_stamp(instance, plan["stamp"])
+        self.assertEqual(
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            ),
+            instance,
+        )
+        # An entry that exists but cannot be listed is an inspection failure
+        # for cleanup and no view for launch (not meaningful as root).
+        if os.geteuid() != 0:
+            parent.chmod(0)
+            try:
+                self.assertIsNone(
+                    model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+                )
+                with self.assertRaisesRegex(model_library.ModelLibraryError, "cannot list hot entry"):
+                    model_library.find_hot_instance_for_profile(
+                        self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+                    )
+            finally:
+                parent.chmod(0o755)
 
     def test_symlinked_hot_entries_are_never_discovered_or_purged(self) -> None:
         conf_plan = model_library.plan_prepare(
