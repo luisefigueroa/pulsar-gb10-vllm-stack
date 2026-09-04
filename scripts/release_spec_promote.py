@@ -27,6 +27,13 @@ if str(_REPO_ROOT) not in sys.path:
 from release_spec import ReleaseSpecError, load_spec, pretty_json_bytes, verify_spec  # noqa: E402
 from release_spec.schema import REVIEW_STATUSES  # noqa: E402
 
+_VALIDATE_DIR = _REPO_ROOT / "validate"
+if str(_VALIDATE_DIR) not in sys.path:
+    sys.path.insert(0, str(_VALIDATE_DIR))
+from baseline_v1_policy import EXPECTED_GATES  # noqa: E402
+
+BASELINE_CRITERIA = frozenset(criterion for criterion, _operation in EXPECTED_GATES)
+
 
 class PromoteError(ValueError):
     """The measured spec cannot be promoted as requested."""
@@ -36,10 +43,30 @@ def fail(message: str) -> None:
     raise PromoteError(message)
 
 
-def default_status(spec: dict[str, Any]) -> str:
+def baseline_suite(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the complete baseline-v1 suite or fail when it is partial.
+
+    ``stable`` means every baseline-v1 criterion the policy names passed under
+    one policy digest. A document carrying fewer criteria is not a judged run.
+    """
     baseline = [m for m in spec["measurements"] if m["suite"] == "baseline-v1"]
     if not baseline:
         fail("measured spec has no baseline-v1 measurements; run the evaluator first")
+    criteria = {m["criterion_id"] for m in baseline}
+    if criteria != BASELINE_CRITERIA or len(criteria) != len(baseline):
+        missing = sorted(BASELINE_CRITERIA - criteria)
+        extra = sorted(criteria - BASELINE_CRITERIA)
+        fail(
+            "measured spec does not carry the exact baseline-v1 suite "
+            f"(missing={missing}, extra={extra}); a partial run is not promotable"
+        )
+    if len({m["policy_digest"] for m in baseline}) != 1:
+        fail("baseline-v1 measurements were judged under more than one policy digest")
+    return baseline
+
+
+def default_status(spec: dict[str, Any]) -> str:
+    baseline = baseline_suite(spec)
     return "stable" if all(m["outcome"] == "pass" for m in baseline) else "failed"
 
 
@@ -56,6 +83,8 @@ def promote(
         status = default_status(spec)
     if status not in REVIEW_STATUSES:
         fail(f"unsupported review status {status!r}")
+    if status in {"stable", "validated"}:
+        baseline_suite(spec)
     document = dict(spec)
     document["state"] = "released"
     document["review"] = {

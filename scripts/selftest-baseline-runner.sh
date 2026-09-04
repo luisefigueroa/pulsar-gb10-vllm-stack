@@ -18,6 +18,8 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from release_spec import pretty_json_bytes, verify_spec
 from scripts.testlib.release_spec_start_fixture import write_overlay, write_released_nano
+from scripts.testlib.test_release_consumer import write_fixture_library
+from scripts.testlib.test_release_spec_generate import NANO, nano_kwargs
 
 root = pathlib.Path(sys.argv[2])
 releases = root / "releases"
@@ -31,6 +33,8 @@ measured["evidence"] = []
 measured = verify_spec(measured)
 (root / "measured.json").write_bytes(pretty_json_bytes(measured))
 write_overlay(root / "overlay.json")
+library, catalog, _receipt = write_fixture_library(root / "conf-fixture", model_id=nano_kwargs()["model_id"], profile=NANO)
+(root / "empty-releases").mkdir()
 dataset = root / "gsm8k-fixture.parquet"
 dataset.write_bytes(b"fixture dataset bytes\n")
 digest = hashlib.sha256(dataset.read_bytes()).hexdigest()
@@ -50,6 +54,9 @@ for gate in policy["gates"]:
             "revision": spec["identity"]["snapshot_revision"],
             "image_digest": spec["identity"]["image"]["digest"],
             "served_name": "nemotron-3-nano",
+            "conf": NANO,
+            "library": str(library),
+            "catalog": str(catalog),
         }
     )
     + "\n",
@@ -83,22 +90,29 @@ export VLLM_IMAGE_MAINLINE="vllm/vllm-openai@$image_digest"
 
 expected_contract=$(REPO_DIR="$REPO_DIR" bash -c '. "$REPO_DIR/scripts/lib.sh"; launch_contract_id_for_profile "$1"' _ "$spec_id")
 [ "${#expected_contract}" -eq 64 ] || { echo "FAIL fixture launch contract id: $expected_contract" >&2; exit 1; }
+conf_name=$(field conf)
+library_dir=$(field library)
+catalog_file=$(field catalog)
+conf_contract=$(MODEL_LIBRARY_DIR="$library_dir" MODEL_LIBRARY_CATALOG="$catalog_file" REPO_DIR="$REPO_DIR" \
+  bash -c '. "$REPO_DIR/scripts/lib.sh"; launch_contract_id_for_profile "$1"' _ "$conf_name")
+conf_served=$(MODEL_LIBRARY_DIR="$library_dir" MODEL_LIBRARY_CATALOG="$catalog_file" REPO_DIR="$REPO_DIR" \
+  bash -c '. "$REPO_DIR/scripts/lib.sh"; load_conf "$1"; printf "%s" "$SERVED_NAME"' _ "$conf_name")
+if [ "${#conf_contract}" -ne 64 ] || [ -z "$conf_served" ]; then echo "FAIL conf fixture contract/served name" >&2; exit 1; fi
 
 mkdir -p "$STATE/bin"
 cat >"$STATE/bin/docker" <<SHIM
 #!/usr/bin/env bash
 set -euo pipefail
-label_file="$STATE/contract-label"
 case "\${1:-}" in
   info) exit 0 ;;
-  ps) echo "vllm-$spec_id" ;;
+  ps) cat "$STATE/container-name" ;;
   image)
     [ "\${2:-}" = inspect ] || exit 64
     echo '["vllm/vllm-openai@$image_digest"]'
     ;;
   inspect)
-    printf '{"running":true,"labels":{"io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"%s","io.pulsar.gb10.launch-contract":"%s"},"image":"sha256:fixtureimageid"}\n' \
-      "$spec_id" "\$(cat "\$label_file")"
+    printf '{"running":true,"labels":{"io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"%s","io.pulsar.gb10.launch-contract":"%s","io.pulsar.gb10.spec-decode":"%s"},"image":"sha256:fixtureimageid"}\n' \
+      "\$(cat "$STATE/conf-label")" "\$(cat "$STATE/contract-label")" "\$(cat "$STATE/spec-decode-label")"
     ;;
   *) exit 0 ;;
 esac
@@ -111,10 +125,13 @@ n=\$(( \$(cat "\$count_file" 2>/dev/null || echo 0) + 1 ))
 echo "\$n" >"\$count_file"
 created=1700000000
 if [ -e "$STATE/restart-after-first" ] && [ "\$n" -gt 1 ]; then created=1700009999; fi
-printf '{"object":"list","data":[{"id":"%s","object":"model","created":%s}]}\n' "$served" "\$created"
+printf '{"object":"list","data":[{"id":"%s","object":"model","created":%s},{"id":"%s","object":"model","created":%s}]}\n' "$served" "\$created" "$conf_served" "\$created"
 SHIM
 chmod +x "$STATE/bin/docker" "$STATE/bin/curl"
 printf '%s\n' "$expected_contract" >"$STATE/contract-label"
+printf '%s\n' "$spec_id" >"$STATE/conf-label"
+printf 'vllm-%s\n' "$spec_id" >"$STATE/container-name"
+printf 'off\n' >"$STATE/spec-decode-label"
 export PULSAR_DOCKER="$STATE/bin/docker"
 export PATH="$STATE/bin:$PATH"
 
@@ -187,6 +204,7 @@ fi
 [ "$(gate_order)" = "verify-snapshot-manifest serve-smoke run-gates evaluate-gsm8k validate-soak" ] \
   || { echo "FAIL gate order: $(gate_order)" >&2; exit 1; }
 grep -q -- "--model $served" "$STATE/calls.log" || { echo "FAIL run-gates did not receive --model" >&2; exit 1; }
+grep -q -- "--concurrency 1 2 4 8" "$STATE/calls.log" || { echo "FAIL run-gates did not receive the policy concurrencies" >&2; exit 1; }
 grep -q "^run-gates spec-${spec_id:0:12} " "$STATE/calls.log" || { echo "FAIL run-gates label is not spec-<12hex>" >&2; exit 1; }
 python3 - "$out1" "$spec_id" "$LAB_COMMIT" <<'PY'
 import json, pathlib, sys
@@ -259,5 +277,31 @@ if "$REPO_DIR/validate/baseline-v1.sh" "$spec_id" --spec "$STATE/measured.json" 
 fi
 grep -q "is not the policy pin" "$STATE/run5.log"
 echo "OK   dataset that is not the policy pin is refused"
+
+# 6. a container with speculative decoding on is refused for a spec without it
+printf 'on\n' >"$STATE/spec-decode-label"
+if run_runner "$STATE/out-specdecode" >"$STATE/run6.log" 2>&1; then
+  echo "FAIL a container with speculative decoding on was accepted" >&2; exit 1
+fi
+printf 'off\n' >"$STATE/spec-decode-label"
+grep -q "speculative decoding is 'on'" "$STATE/run6.log"
+[ ! -s "$STATE/calls.log" ] || { echo "FAIL gates ran against a spec-decode mismatch" >&2; exit 1; }
+echo "OK   speculative-decode state must match the spec before any gate"
+
+# 7. a conf profile measured before promotion: the catalog computes the spec id, nothing is released yet
+printf '%s\n' "$conf_contract" >"$STATE/contract-label"
+printf '%s\n' "$conf_name" >"$STATE/conf-label"
+printf 'vllm-%s\n' "$conf_name" >"$STATE/container-name"
+: >"$STATE/calls.log"; rm -f "$STATE/curl-count"
+out7="$STATE/out-conf"
+if ! MODEL_LIBRARY_DIR="$library_dir" MODEL_LIBRARY_CATALOG="$catalog_file" PULSAR_RELEASES_ROOT="$STATE/empty-releases" \
+    "$REPO_DIR/validate/baseline-v1.sh" "$conf_name" --spec "$STATE/measured.json" --out "$out7" \
+    --dataset "$STATE/gsm8k-fixture.parquet" --policy "$STATE/policy.json" --producer-dir "$STATE/producers" \
+    --lab-commit "$LAB_COMMIT" --tag fixture-conf --node fixture-node-0 --skip-weights-check >"$STATE/run7.log" 2>&1; then
+  echo "FAIL conf profile with an unreleased spec was refused:" >&2; cat "$STATE/run7.log" >&2; exit 1
+fi
+grep -q "proposed_status=stable" "$STATE/run7.log"
+grep -q "^run-gates $conf_name " "$STATE/calls.log" || { echo "FAIL conf run-gates label" >&2; exit 1; }
+echo "OK   conf profile is measured before promotion from the catalog's computed identity"
 
 echo "baseline-v1 runner dry run: PASS"

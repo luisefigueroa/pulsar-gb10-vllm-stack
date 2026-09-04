@@ -3,7 +3,7 @@
 #
 #   validate/run-gates.sh <label> [--model SERVED_NAME] [--url http://host:8000] \
 #       [--needle-tokens N] [--baseline results/<file>.json] [--tag LABEL] \
-#       [--allow-fp-equivalent-run-to-run] \
+#       [--concurrency N [N ...]] [--allow-fp-equivalent-run-to-run] \
 #       [--measurement-dir DIR] [--invocation-plan FILE]
 #
 # <label> names the artifacts under results/ and, unless --model is given,
@@ -39,6 +39,7 @@ MODEL="$NAME"
 URL="http://127.0.0.1:8000"; NEEDLE=0; BASELINE=""; TAG="$(date +%Y%m%dT%H%M%S)"
 ALLOW_FP_RUN=0
 MEASUREMENT_DIR=""
+CONCURRENCIES=()
 INVOCATION_PLAN=""
 ATTEMPT_PY="${PULSAR_MODEL_SERVING_RELEASE_ATTEMPT_PY:-$PWD/scripts/model_serving_release_attempt.py}"
 while [ $# -gt 0 ]; do
@@ -62,6 +63,12 @@ while [ $# -gt 0 ]; do
     --tag)
       [ "$#" -ge 2 ] || { echo "--tag requires a value" >&2; exit 2; }
       TAG="$2"; shift
+      ;;
+    --concurrency)
+      while [ "$#" -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; do
+        CONCURRENCIES+=("$2"); shift
+      done
+      [ "${#CONCURRENCIES[@]}" -gt 0 ] || { echo "--concurrency requires one or more positive integers" >&2; exit 2; }
       ;;
     --allow-fp-equivalent-run-to-run) ALLOW_FP_RUN=1 ;;
     --measurement-dir)
@@ -129,6 +136,9 @@ RUN_COMPARE_ARGS=(--require-identical)
 [ "$ALLOW_FP_RUN" = 1 ] && RUN_COMPARE_ARGS=()
 
 BENCH_ARGS=(--concurrency 1 2 4 8)
+if [ "${#CONCURRENCIES[@]}" -gt 0 ]; then
+  BENCH_ARGS=(--concurrency "${CONCURRENCIES[@]}")
+fi
 if [ -n "$INVOCATION_PLAN" ]; then
   set +e
   BENCH_ARGV_OUT=$(python3 "$ATTEMPT_PY" bench-argv --invocation-plan "$INVOCATION_PLAN")

@@ -68,6 +68,24 @@ class PromoteTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("only a measured spec", err)
 
+    def test_partial_suite_is_not_promotable(self) -> None:
+        document = json.loads(PASS.read_text(encoding="utf-8"))
+        document["measurements"] = document["measurements"][:1]
+        document["evidence"] = [e for e in document["evidence"] if e["id"] in {m for m in document["measurements"][0]["evidence_ids"]}]
+        partial = self.root / "partial.json"
+        partial.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        from release_spec import pretty_json_bytes, verify_spec
+        partial.write_bytes(pretty_json_bytes(verify_spec(document)))
+        code, _out, err = self.run_main(partial)
+        self.assertEqual(code, 2)
+        self.assertIn("exact baseline-v1 suite", err)
+        code, _out, err = self.run_main(partial, "--status", "stable")
+        self.assertEqual(code, 2)
+        self.assertIn("exact baseline-v1 suite", err)
+        code, out, err = self.run_main(partial, "--status", "failed")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(load_spec(out)["review"]["status"], "failed")
+
     def test_reviewed_at_defaults_to_now_in_utc_z(self) -> None:
         spec_id = json.loads(PASS.read_text(encoding="utf-8"))["spec_id"]
         out = self.root / f"{spec_id}.json"

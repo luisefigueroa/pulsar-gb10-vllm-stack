@@ -8,13 +8,15 @@
 # --check-only stops after the server-identity checks and the boot witness
 # and writes nothing; use it to confirm a running server is the spec's
 # before committing two hours to the gates.
-# Order: producers present → lab commit → server identity (container label
-# equals the profile's launch contract, image digest equals the spec's) →
-# boot witness → the six closed measurements into --out → boot witness again
-# → validate/baseline_v1.py → run.json. It never starts, stops, or restarts
+# Order: producers present → lab commit (the tracked tree must equal it) →
+# server identity (container label equals the profile's launch contract,
+# image digest and speculative-decode state equal the spec's, the spec is
+# the identity the catalog computes for the profile) → boot witness → the
+# six closed measurements into --out → boot witness again →
+# validate/baseline_v1.py → run.json. It never starts, stops, or restarts
 # a server, never invents a document, and stops at the first failed gate
-# while keeping every document already written. Requires the serving rank
-# to be this node. --out should live under results/baseline-v1/<spec_id>/.
+# while keeping every document already written. One-node profiles served
+# on this node only. --out should live under results/baseline-v1/<spec_id>/.
 set -euo pipefail
 # Used by log/warn/die after sourcing lib.sh.
 # shellcheck disable=SC2034
@@ -23,7 +25,7 @@ SCRIPT_NAME=baseline-v1
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib.sh"
 
 PY="${PULSAR_LAB_PYTHON:-python3}"
-usage() { sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^set -euo pipefail/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   ""|--*) usage >&2; exit 2 ;;
@@ -60,7 +62,7 @@ fi
 [ -f "$POLICY" ] || die "policy is not a file: $POLICY" 2
 case "$SOAK_CONCURRENCY" in *[!0-9]*|"") die "--soak-concurrency must be a positive integer" 2 ;; esac
 [ "$SOAK_CONCURRENCY" -ge 1 ] || die "--soak-concurrency must be a positive integer" 2
-[ -n "$TAG" ] || TAG="baseline-v1-$(date -u +%Y%m%d)"
+[ -n "$TAG" ] || TAG="baseline-v1-$(date -u +%Y%m%dT%H%M%SZ)"
 case "$TAG" in *[!A-Za-z0-9._-]*) die "invalid --tag: use only letters, numbers, dot, underscore, or hyphen" 2 ;; esac
 
 # --- producers present ---------------------------------------------------
@@ -78,13 +80,19 @@ log "producers present"
 # --- lab commit -----------------------------------------------------------
 if [ -z "$LAB_COMMIT" ]; then
   LAB_COMMIT=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null) \
-    || die "cannot read the lab commit; pass --lab-commit"
-  if [ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
-    die "tracked files are modified; commit them or pass --lab-commit explicitly so evidence names a real commit"
-  fi
+    || die "cannot read the lab commit; commit the checkout or pass --lab-commit"
 fi
 case "$LAB_COMMIT" in *[!0-9a-f]*|"") die "--lab-commit must be a 40-character lowercase hex commit" 2 ;; esac
 [ "${#LAB_COMMIT}" -eq 40 ] || die "--lab-commit must be a 40-character lowercase hex commit" 2
+if [ "${PULSAR_SELFTEST:-0}" = 1 ]; then
+  warn "lab commit $LAB_COMMIT accepted without verification (PULSAR_SELFTEST=1)"
+else
+  git -C "$REPO_DIR" cat-file -e "${LAB_COMMIT}^{commit}" 2>/dev/null \
+    || die "lab commit $LAB_COMMIT is not a commit of this checkout"
+  if ! git -C "$REPO_DIR" diff --quiet "$LAB_COMMIT" -- . 2>/dev/null; then
+    die "tracked files differ from commit $LAB_COMMIT; the producers that run must be the ones evidence names"
+  fi
+fi
 
 # --- policy-derived arguments and dataset pin ------------------------------
 policy_args=$("$PY" "$REPO_DIR/validate/baseline_run.py" run-args --policy "$POLICY") \
@@ -98,7 +106,8 @@ while IFS='=' read -r key value; do
 done <<<"$policy_args"
 : "${GSM8K_DATASET_ID:?}" "${GSM8K_DATASET_REVISION:?}" "${GSM8K_DATASET_SHA256:?}" \
   "${GSM8K_SUBSET:?}" "${GSM8K_SPLIT:?}" "${GSM8K_SAMPLE_SIZE:?}" \
-  "${GSM8K_MAX_COMPLETION_TOKENS:?}" "${GSM8K_REASONING_MODE:?}" "${SOAK_MINUTES:?}"
+  "${GSM8K_MAX_COMPLETION_TOKENS:?}" "${GSM8K_REASONING_MODE:?}" "${SOAK_MINUTES:?}" \
+  "${PERF_CONCURRENCIES:?}"
 dataset_digest=$(sha256sum "$DATASET" | cut -d' ' -f1)
 [ "$dataset_digest" = "$GSM8K_DATASET_SHA256" ] \
   || die "dataset digest $dataset_digest is not the policy pin $GSM8K_DATASET_SHA256 (policy/README.md)"
@@ -115,30 +124,40 @@ if [ "$NODES" -eq 1 ]; then
   [ "${SINGLE_NODE_REMOTE:-0}" = 0 ] \
     || die "baseline-v1 runs on the serving node; placement on another node is not supported yet"
   URL=$(single_node_api_base_url "$PORT")
-elif [ -n "$NODE_SELECTOR" ]; then
-  die "--node is only valid for one-node profiles" 2
 else
-  URL="http://127.0.0.1:$PORT"
+  die "multi-node baseline runs are not supported by this runner yet: every serving rank's container must be verified, which lands with the two-node milestone" 2
 fi
 case "$PROFILE" in
   [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
     [ "$PROFILE" = "$spec_id" ] || die "profile is spec $PROFILE but --spec is $spec_id"
     label="spec-${spec_id:0:12}"
+    expected_spec_decode=off
     ;;
   *)
     catalog=$("$REPO_DIR/scripts/list-models.sh" --serving --json 2>/dev/null) \
       || die "cannot read the catalog projection for $PROFILE"
-    CATALOG_JSON="$catalog" "$PY" - "$CONF_NAME" "$spec_id" <<'PY' || die "spec $spec_id is not the identity the catalog computes for $PROFILE with an equal launch contract"
+    identity_line=$(CATALOG_JSON="$catalog" "$PY" - "$CONF_NAME" "$spec_id" <<'PY'
 import json, os, sys
 conf, spec_id = sys.argv[1:]
 for model in json.loads(os.environ["CATALOG_JSON"])["models"]:
     if model["id"] != conf:
         continue
     for identity in model["release_spec"]["identities"]:
-        if identity["spec_id"] == spec_id and identity["comparison"] == "equal":
+        if identity["spec_id"] != spec_id:
+            continue
+        if identity["released"] and identity["comparison"] != "equal":
+            print(f"released-differs {identity['comparison']}")
             raise SystemExit(0)
-raise SystemExit(1)
+        print("ok " + ("on" if identity["spec_decode"] else "off"))
+        raise SystemExit(0)
+print("absent")
 PY
+    ) || die "cannot inspect the catalog projection for $PROFILE"
+    case "$identity_line" in
+      "ok "*) expected_spec_decode="${identity_line#ok }" ;;
+      released-differs*) die "released spec $spec_id and profile $PROFILE compute different launch contracts (${identity_line#released-differs })" ;;
+      *) die "spec $spec_id is not an identity the catalog computes for $PROFILE; regenerate it with scripts/release-spec.sh from-profile" ;;
+    esac
     label="$CONF_NAME"
     ;;
 esac
@@ -159,10 +178,11 @@ image_id=$(printf '%s' "$meta" | "$PY" -c 'import json,sys; print(json.load(sys.
 repo_digests=$("$PULSAR_DOCKER" image inspect --format '{{json .RepoDigests}}' "$image_id" 2>/dev/null) \
   || die "cannot inspect the served image"
 META_JSON="$meta" REPO_DIGESTS="$repo_digests" "$PY" - "$CONF_NAME" "$expected_contract" \
-  "$spec_image_digest" "$PULSAR_MANAGED_LABEL" "$PULSAR_CONF_LABEL" "$PULSAR_LAUNCH_CONTRACT_LABEL" <<'PY' \
+  "$spec_image_digest" "$expected_spec_decode" "$PULSAR_MANAGED_LABEL" "$PULSAR_CONF_LABEL" \
+  "$PULSAR_LAUNCH_CONTRACT_LABEL" "$PULSAR_SPEC_DECODE_LABEL" <<'PY' \
   || die "container $cname does not serve profile $PROFILE as written for spec $spec_id (see the lines above)"
 import json, os, sys
-conf, contract, digest, managed_key, conf_key, contract_key = sys.argv[1:]
+conf, contract, digest, spec_decode, managed_key, conf_key, contract_key, spec_decode_key = sys.argv[1:]
 meta = json.loads(os.environ["META_JSON"])
 labels = meta.get("labels") or {}
 problems = []
@@ -174,6 +194,8 @@ if labels.get(conf_key) != conf:
     problems.append(f"container conf label is {labels.get(conf_key)!r}, expected {conf!r}")
 if labels.get(contract_key) != contract:
     problems.append("container launch contract differs from the profile as written now")
+if str(labels.get(spec_decode_key, "off")).lower() != spec_decode:
+    problems.append(f"container speculative decoding is {labels.get(spec_decode_key, 'off')!r}; this spec expects {spec_decode!r}")
 repo_digests = json.loads(os.environ["REPO_DIGESTS"]) or []
 if not any(item.split("@", 1)[-1] == digest for item in repo_digests):
     problems.append("served image digest is not the spec's image digest")
@@ -204,6 +226,9 @@ OUT=$(cd "$OUT" && pwd)
 for existing in verify-snapshot-manifest serve-smoke compare-captures evaluate-gsm8k validate-soak benchmark-serving spec run; do
   [ ! -e "$OUT/$existing.json" ] || die "refusing to overwrite $OUT/$existing.json (choose a fresh --out)"
 done
+if compgen -G "$REPO_DIR/results/${label}-${TAG}-*" >/dev/null; then
+  die "raw artifacts results/${label}-${TAG}-* already exist; choose a unique --tag"
+fi
 case "$OUT" in
   "$REPO_DIR"/results/*) evidence_prefix="${OUT#"$REPO_DIR"/}/" ;;
   *)
@@ -237,9 +262,10 @@ run_gate verify-snapshot-manifest \
 run_gate serve-smoke \
   "$PY" "$PRODUCER_DIR/serve_smoke.py" --url "$URL" --model "$SERVED_NAME" \
     --result-json "$OUT/serve-smoke.json"
+# shellcheck disable=SC2086  # PERF_CONCURRENCIES is a policy-derived list of integers
 run_gate run-gates \
   "$PRODUCER_DIR/run-gates.sh" "$label" --model "$SERVED_NAME" --url "$URL" --tag "$TAG" \
-    --measurement-dir "$OUT"
+    --concurrency $PERF_CONCURRENCIES --measurement-dir "$OUT"
 run_gate evaluate-gsm8k \
   "$PY" "$PRODUCER_DIR/gsm8k_eval.py" --url "$URL" --model "$SERVED_NAME" --dataset "$DATASET" \
     --dataset-id "$GSM8K_DATASET_ID" --dataset-revision "$GSM8K_DATASET_REVISION" \

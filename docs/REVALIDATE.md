@@ -204,14 +204,19 @@ validate/baseline-v1.sh <profile|spec_id> --spec <measured-spec> \
 ```
 
 The runner refuses to start unless every producer answers `--help`, the
-tracked tree is clean (or `--lab-commit` names the commit explicitly), the
-dataset digest equals the policy pin, the running container carries the
-profile's current launch contract and the spec's image digest, and the
-served model answers `/v1/models`. It then runs, in order,
+tracked tree equals the lab commit the evidence will name (`HEAD`, or an
+explicit `--lab-commit` that the tree must match), the dataset digest equals
+the policy pin, the running container carries the profile's current launch
+contract, the spec's image digest, and the spec's speculative-decode state,
+the spec is the identity the catalog computes for the profile (released or
+not), and the served model answers `/v1/models`. One-node profiles served on
+this node only; multi-node runs wait for the two-node milestone. It then
+runs, in order,
 `validate/verify_snapshot_manifest.py`, `validate/serve_smoke.py`,
-`validate/run-gates.sh` (captures and bench), `validate/gsm8k_eval.py` with
-the policy's pinned arguments, and `validate/soak.py` for the policy's
-duration; it stops at the first failed gate and keeps every document
+`validate/run-gates.sh` (captures and the bench sweep at the policy's
+concurrency levels), `validate/gsm8k_eval.py` with the policy's pinned
+arguments, and `validate/soak.py` for the policy's duration; it stops at
+the first failed gate and keeps every document
 already written. A boot witness (the served model's registration epoch) is
 read before and after; a restart during the run voids it. Finally it calls
 `validate/baseline_v1.py`, which fills `measurements[]` and `evidence[]`
