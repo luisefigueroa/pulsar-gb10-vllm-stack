@@ -45,28 +45,45 @@ PHASE_NAMES = ("health", "warmup", "completion")
 SMOKE_PROMPT = "2+2="
 SMOKE_MAX_TOKENS = 8
 HEALTH_POLL_SECONDS = 2.0
+MIN_HEALTH_REQUEST_SECONDS = 1.0
+
+
+def health_request_timeout(timeout: float, remaining: float) -> float:
+    """Cap one health request at the remaining health window (at least 1 s)."""
+    return max(min(timeout, remaining), MIN_HEALTH_REQUEST_SECONDS)
 
 
 def check_health(
     url: str, api_key: str | None, *, timeout: float, health_timeout: float
 ) -> None:
-    """Return once /health answers 200; raise after health_timeout."""
+    """Return once /health answers 200; raise once health_timeout has elapsed.
+
+    Each request and each pause is capped at the time left in the health
+    window, so a server that accepts connections but never answers cannot
+    stall this phase past ``health_timeout`` by more than one short request.
+    """
     deadline = time.monotonic() + health_timeout
     last = "no attempt"
     while True:
         request = urllib.request.Request(
             url.rstrip("/") + "/health", headers=api_headers(api_key)
         )
+        request_timeout = health_request_timeout(
+            timeout, deadline - time.monotonic()
+        )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urllib.request.urlopen(
+                request, timeout=request_timeout
+            ) as response:
                 if response.status == 200:
                     return
                 last = f"HTTP {response.status}"
         except Exception as exc:  # noqa: BLE001 — any transport failure is a retry
             last = f"{type(exc).__name__}: {exc}"
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise RuntimeError(f"health did not answer 200: {last}")
-        time.sleep(HEALTH_POLL_SECONDS)
+        time.sleep(min(HEALTH_POLL_SECONDS, remaining))
 
 
 def run_warmup(url: str, model: str, api_key: str | None, *, timeout: float) -> None:
@@ -153,7 +170,9 @@ def main(argv: list[str] | None = None) -> int:
         "--timeout",
         type=float,
         default=300.0,
-        help="per-request timeout seconds (cold JIT can be slow)",
+        help="per-request timeout seconds for warmup and completion "
+        "(cold JIT can be slow); health requests are capped at the "
+        "remaining --health-timeout window",
     )
     parser.add_argument(
         "--health-timeout",

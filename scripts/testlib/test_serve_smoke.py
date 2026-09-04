@@ -139,11 +139,48 @@ class ServeSmokeTests(unittest.TestCase):
     def test_check_health_gives_up_after_timeout(self) -> None:
         with mock.patch.object(
             serve_smoke.urllib.request, "urlopen", side_effect=OSError("refused")
-        ):
+        ) as urlopen:
             with self.assertRaises(RuntimeError):
                 serve_smoke.check_health(
-                    "http://127.0.0.1:9", None, timeout=1, health_timeout=0
+                    "http://127.0.0.1:9", None, timeout=300, health_timeout=0
                 )
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 1.0)
+
+    def test_health_requests_never_outlive_the_health_window(self) -> None:
+        clock = {"now": 100.0}
+        request_timeouts: list[float] = []
+        sleeps: list[float] = []
+
+        def stalled_urlopen(_request: Any, timeout: float) -> None:
+            request_timeouts.append(timeout)
+            clock["now"] += 0.5
+            raise OSError("stalled")
+
+        def fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock["now"] += seconds
+
+        with mock.patch.object(
+            serve_smoke.urllib.request, "urlopen", side_effect=stalled_urlopen
+        ), mock.patch.object(
+            serve_smoke.time, "monotonic", side_effect=lambda: clock["now"]
+        ), mock.patch.object(serve_smoke.time, "sleep", side_effect=fake_sleep):
+            with self.assertRaises(RuntimeError):
+                serve_smoke.check_health(
+                    "http://127.0.0.1:9", None, timeout=300, health_timeout=5
+                )
+        self.assertGreater(len(request_timeouts), 1)
+        for value in request_timeouts:
+            self.assertLessEqual(value, 5.0)
+            self.assertGreaterEqual(value, serve_smoke.MIN_HEALTH_REQUEST_SECONDS)
+        for value in sleeps:
+            self.assertLessEqual(value, serve_smoke.HEALTH_POLL_SECONDS)
+        # The window closes after at most one short request past the deadline.
+        self.assertLessEqual(clock["now"] - 100.0, 5.5)
+        self.assertEqual(serve_smoke.health_request_timeout(300, 0.2), 1.0)
+        self.assertEqual(serve_smoke.health_request_timeout(300, 42), 42)
+        self.assertEqual(serve_smoke.health_request_timeout(3, 42), 3)
 
     def test_run_warmup_covers_every_warmup_phase(self) -> None:
         seen: list[str] = []
