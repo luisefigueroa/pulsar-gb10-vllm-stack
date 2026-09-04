@@ -11,6 +11,12 @@ authorities substitutes for another.
 - No current profile sets `MODEL_SERVING_RELEASE_ID`.
 - No current profile therefore has a reviewed Model Serving Release status.
 - Accepted target: one release spec is the contract ([ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)); this section remains the live implementation until that staged cutover.
+- First ADR 0017 baseline-v1 measurement (2026-09-04): spec
+  `de2e93ce…` for `nemotron-3.5-lightning-30b-nvfp4` passed all six
+  baseline-v1 gates on one DGX Spark at policy digest `0b79190d…`; the
+  closed measurements and the filled measured spec are under
+  `results/baseline-v1/`. This is a measured lab result; `review.status`
+  exists only on a released copy under `releases/` after a promotion PR.
 - Serving remains status-independent; concrete identity, recipe, topology,
   capacity, security, ownership, and lifecycle checks still fail without
   fallback.
@@ -52,6 +58,7 @@ serving profile that fits the confirmed topology with its actual caveats.
 | `nemotron-3-nano-30b-nvfp4` | `STATUS=tested` | 61.9 output tok/s at c=1, 399 aggregate at c=16, gsm8k 0.830, same-boot exact captures, 15-minute clean soak; Gate 14 separately covers a bounded catalog/artifact lifecycle |
 | `nemotron-3-super-120b-nvfp4` | `STATUS=tested` | 16.2 output tok/s at c=1, 113 aggregate at c=32, gsm8k 0.940, 20-minute clean soak; MTP remains opt-in |
 | `qwen3.6-27b-fp8` | `STATUS=tested` | 8.0 output tok/s at c=1, 93 aggregate at c=16, gsm8k 0.615, 20-minute clean soak; ngram speculative decode is forbidden |
+| `nemotron-3.5-lightning-30b-nvfp4` | `STATUS=untested` (legacy, display-only) | ADR 0017 baseline-v1 passed 2026-09-04 (spec `de2e93ce…`, one node, image `1c8e60a0…`): 81.6 decode tok/s at c=1, 302 aggregate at c=8, gsm8k 0.930 on the 100-item pinned subset, same-boot 30/30 identical, 60-minute clean soak at c=8. Gaps: no deep suite (`validated` not claimed); no experiment resource-monitor summary was captured for this run (explicit capture gap, the policy has no resource criterion); 131,072-token context configured, longer context unevaluated |
 | `qwen3.6-27b-fp8-2node` | `STATUS=do-not-use` | Cross-node GDN behavior remains unsuitable; do not infer a supported two-rank recipe from the one-rank result |
 | `qwen3.8-27b-fp8` | `STATUS=untested` | Recipe shell only; no retained onboarding or Model Serving Release evidence |
 | `qwen3.8-27b-fp8-2node` | `STATUS=untested` | Recipe shell only; no retained onboarding or Model Serving Release evidence |

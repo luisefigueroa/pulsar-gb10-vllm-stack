@@ -26,7 +26,7 @@
       "id": "evaluate-gsm8k",
       "lab_commit": "dddddddddddddddddddddddddddddddddddddddd",
       "path": "results/example/evaluate-gsm8k.json",
-      "sha256": "6c2766b36154c69948d94f961689731362cdb11b3bad98a330ec538af061077c"
+      "sha256": "990071dcdf89ea1f56b4112d9c9268c25e3cd50d01bdcbbb6bec5d26174f2907"
     },
     {
       "id": "serve-smoke",
@@ -108,7 +108,7 @@
         "evaluate-gsm8k"
       ],
       "outcome": "pass",
-      "policy_digest": "0bc35c33af7d89ad048768e63947ddf8eec6a798907c4eee084f0c4e6e867416",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
       "suite": "baseline-v1",
       "thresholds": [
         {
@@ -133,13 +133,13 @@
           "metric": "dataset_revision",
           "operator": "==",
           "unit": "commit",
-          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "value": "740312add88f781978c0658806c59bc2815b9866"
         },
         {
           "metric": "dataset_file_sha256",
           "operator": "==",
           "unit": "digest",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          "value": "ee7b8da9e381df27b9e3f7758a159ab2bdaa4dbaa910546cbbc47e0cb44e4f59"
         }
       ]
     },
@@ -149,7 +149,7 @@
         "verify-snapshot-manifest"
       ],
       "outcome": "pass",
-      "policy_digest": "0bc35c33af7d89ad048768e63947ddf8eec6a798907c4eee084f0c4e6e867416",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
       "suite": "baseline-v1",
       "thresholds": [
         {
@@ -166,7 +166,7 @@
         "benchmark-serving"
       ],
       "outcome": "pass",
-      "policy_digest": "0bc35c33af7d89ad048768e63947ddf8eec6a798907c4eee084f0c4e6e867416",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
       "suite": "baseline-v1",
       "thresholds": [
         {
@@ -183,7 +183,7 @@
         "serve-smoke"
       ],
       "outcome": "pass",
-      "policy_digest": "0bc35c33af7d89ad048768e63947ddf8eec6a798907c4eee084f0c4e6e867416",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
       "suite": "baseline-v1",
       "thresholds": [
         {
@@ -212,7 +212,7 @@
         "validate-soak"
       ],
       "outcome": "pass",
-      "policy_digest": "0bc35c33af7d89ad048768e63947ddf8eec6a798907c4eee084f0c4e6e867416",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
       "suite": "baseline-v1",
       "thresholds": [
         {
@@ -241,7 +241,7 @@
         "compare-captures"
       ],
       "outcome": "pass",
-      "policy_digest": "0bc35c33af7d89ad048768e63947ddf8eec6a798907c4eee084f0c4e6e867416",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
       "suite": "baseline-v1",
       "thresholds": [
         {

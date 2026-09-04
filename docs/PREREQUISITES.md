@@ -81,6 +81,19 @@ confirm membership and do not construct topology.
 Not required on the host: vLLM Python install, Ray, host NCCL, jumbo MTU,
 GPUDirect RDMA.
 
+One lab-only addition: the baseline-v1 accuracy gate reads the pinned GSM8K
+file, which is Parquet, so the Python 3 environment that runs
+`validate/gsm8k_eval.py` needs `pyarrow`. The DGX OS system Python is
+externally managed; create a venv once and run the producer with it:
+
+```bash
+python3 -m venv "$HOME/.pulsar-lab-venv" && "$HOME/.pulsar-lab-venv/bin/pip" install pyarrow
+"$HOME/.pulsar-lab-venv/bin/python3" validate/gsm8k_eval.py ...
+```
+
+Serving, the model library, and every other producer stay on the standard
+library and need no package.
+
 `./pulsar` opens the workflow menu. `./pulsar wizard` (or
 `./wizard.sh`) is the direct serve/switch shortcut. Both use the vendored Gum
 v0.17.0 Linux ARM64 binary by default (shared `scripts/ui.sh`); no package

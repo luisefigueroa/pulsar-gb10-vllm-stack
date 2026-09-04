@@ -190,6 +190,44 @@ The retained recipes have no carried-forward evidence. For example, running
 either Qwen3.8 recipe or the Qwen3 1.7B two-rank draft begins a new onboarding
 record, not a continuation of an older result.
 
+### Baseline-v1 for a release spec
+
+A measured [ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)
+spec is judged against the lab-wide policy in `policy/baseline-v1.json`.
+Produce the six closed measurements against the already-running exact
+subject, in one boot, into one directory:
+
+```bash
+python3 validate/verify_snapshot_manifest.py --spec <measured-spec> \
+  --hub <hot-view>/hub/models--<org>--<name> \
+  --result-json <dir>/verify-snapshot-manifest.json
+python3 validate/serve_smoke.py --model <served-name> \
+  --result-json <dir>/serve-smoke.json
+validate/run-gates.sh <served-name> --tag <tag> --measurement-dir <dir>
+python3 validate/gsm8k_eval.py --model <served-name> \
+  --dataset <exact-dataset-file> --dataset-id openai/gsm8k \
+  --dataset-revision <pinned-commit> --sample-size 100 \
+  --result-json <dir>/evaluate-gsm8k.json
+python3 validate/soak.py --model <served-name> --minutes 60 --concurrency 8 \
+  --result-json <dir>/validate-soak.json
+```
+
+The GSM8K dataset file, commit, and file digest must equal the policy pins
+(`policy/README.md`); the pinned file is Parquet, so the lab host needs
+`pyarrow` (see [PREREQUISITES.md](./PREREQUISITES.md)). Then fill the spec
+and read the proposed status:
+
+```bash
+python3 validate/baseline_v1.py --spec <measured-spec> \
+  --policy policy/baseline-v1.json --measurements-dir <dir> \
+  --lab-commit <40-hex-commit-of-this-checkout> \
+  --evidence-path-prefix results/<evidence-dir> --out <filled-spec>
+```
+
+The evaluator writes `measurements[]` and `evidence[]` and prints
+`proposed_status=stable|failed`. It never writes `review`; a reviewed
+promotion PR sets `state=released` and `review.status`.
+
 ## 6. Capture and stage a reviewed proposal
 
 The onboarding skill composes planning, acquisition, preparation, launch, and

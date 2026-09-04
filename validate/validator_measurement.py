@@ -4,10 +4,9 @@
 This module owns the versioned measurement contract emitted by
 ``validate/compare_captures.py``, ``validate/bench_serve.py``,
 ``validate/gsm8k_eval.py``, ``validate/soak.py``, the experiment-only
-resource monitor, and the baseline-v1 identity and serving-smoke
-operations. Future producers ``validate/verify_snapshot_manifest.py`` and
-``validate/serve_smoke.py`` are declared here; they are not implemented in
-this unit. Documents record measured facts and completion/reason only. They
+resource monitor, ``validate/verify_snapshot_manifest.py``, and
+``validate/serve_smoke.py`` (the baseline-v1 identity and serving-smoke
+operations). Documents record measured facts and completion/reason only. They
 do not evaluate ADR 0004 status, issue a decision, or grant serving
 permission.
 """

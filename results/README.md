@@ -9,6 +9,7 @@ model-specific repository reset.
 | `qwen27b-*`, `bench-qwen27b-*`, `lm-eval-qwen27b-*`, `soak-qwen27b-*` | Qwen3.6 27B measurements |
 | `laguna-*`, `bench-laguna-*`, `lm-eval-laguna-*`, `soak-laguna-*` | Laguna measurements retained for their existing ledger claims |
 | `nano-*`, `super-*`, `bench-nano.json`, `bench-super-*`, `lm-eval-nano/`, `lm-eval-super/`, `soak-nano-*`, `soak-super-*` | Nemotron measurements |
+| `baseline-v1/<spec_id>/`, `nemotron-3.5-lightning-30b-nvfp4-baseline-v1-20260904-*` | ADR 0017 baseline-v1 closed measurements, filled measured spec, and raw captures/bench/soak for the Nemotron 3.5 Lightning spec `de2e93ce…` (2026-09-04) |
 | [`model-library/`](./model-library/) | Current catalog and artifact evidence index |
 | [`model-onboarding/`](./model-onboarding/) | Empty until a model is onboarded again |
 | [`weight-fabric/`](./weight-fabric/) | Pointer for retired distribution paths; no model-specific evidence retained |
