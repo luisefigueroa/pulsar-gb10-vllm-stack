@@ -9,11 +9,12 @@ results do not transfer automatically.
 
 - The tracked registry under `models/model-serving-releases/` is empty.
 - No current profile sets `MODEL_SERVING_RELEASE_ID`.
-- `qwen3.8-27b-fp8`, `qwen3.8-27b-fp8-2node`, and
-  `qwen3-1.7b-2node` are untested recipe shells. They carry no retained
-  onboarding, qualification, or Model Serving Release evidence.
-- Profile `STATUS=tested*` is the older recommendation class. It is not an
-  ADR 0004 decision and does not authorize serving.
+- Every conf profile was retired with ADR 0017 Stage 4; the former
+  `qwen3.8-27b-fp8`, `qwen3.8-27b-fp8-2node`, and `qwen3-1.7b-2node` recipe
+  shells carried no retained onboarding, qualification, or Model Serving
+  Release evidence. Onboarding starts again from a lab draft.
+- A released spec's `review.status` is display-only. It is not an ADR 0004
+  decision and does not authorize serving.
 - Accepted target: one release spec is the contract ([ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)); this section remains the live implementation until that staged cutover.
 
 ## Qualification scopes
@@ -186,19 +187,21 @@ not evaluate thresholds, issue status, or substitute for context, integration,
 geometry, or provenance evidence. Each extra-attempt context must name the
 matching `observe-resources` summary for the same timestamps and scope.
 
-The retained recipes have no carried-forward evidence. For example, running
-either Qwen3.8 recipe or the Qwen3 1.7B two-rank draft begins a new onboarding
-record, not a continuation of an older result.
+Retired recipes have no carried-forward evidence: onboarding a model again
+begins a new record, not a continuation of an older result.
 
 ### Baseline-v1 for a release spec
 
 A measured [ADR 0017](./decisions/0017-release-spec-is-the-release-contract.md)
 spec is judged against the lab-wide policy in `policy/baseline-v1.json`.
-Start the profile as written with `./pulsar start`, then run the six gates
-in one boot with the runner:
+Generate the measured spec from a lab draft
+(`scripts/release-spec.sh from-draft <draft.conf> --receipt <receipt>
+--stack-version <version>`), start it as the profile before promotion
+(`PULSAR_SPEC_FILE=<measured-spec> ./pulsar start <spec_id>`; the spec id is
+the profile name), then run the six gates in one boot with the runner:
 
 ```bash
-validate/baseline-v1.sh <profile|spec_id> --spec <measured-spec> \
+validate/baseline-v1.sh <spec_id> --spec <measured-spec> \
   --out results/baseline-v1/<spec_id> --dataset <exact-dataset-file> \
   [--tag <label>] [--soak-concurrency 8]
 ```

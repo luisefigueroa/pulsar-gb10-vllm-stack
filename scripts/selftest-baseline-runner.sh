@@ -33,7 +33,7 @@ measured["evidence"] = []
 measured = verify_spec(measured)
 (root / "measured.json").write_bytes(pretty_json_bytes(measured))
 write_overlay(root / "overlay.json")
-library, catalog, _receipt = write_fixture_library(root / "conf-fixture", model_id=nano_kwargs()["model_id"], profile=NANO)
+library, catalog, _receipt = write_fixture_library(root / "spec-fixture", model_id=nano_kwargs()["model_id"], profile=spec["spec_id"])
 (root / "empty-releases").mkdir()
 dataset = root / "gsm8k-fixture.parquet"
 dataset.write_bytes(b"fixture dataset bytes\n")
@@ -54,7 +54,6 @@ for gate in policy["gates"]:
             "revision": spec["identity"]["snapshot_revision"],
             "image_digest": spec["identity"]["image"]["digest"],
             "served_name": "nemotron-3-nano",
-            "conf": NANO,
             "library": str(library),
             "catalog": str(catalog),
         }
@@ -96,14 +95,8 @@ echo "OK   --producer-dir is refused outside selftests"
 
 expected_contract=$(REPO_DIR="$REPO_DIR" bash -c '. "$REPO_DIR/scripts/lib.sh"; launch_contract_id_for_profile "$1"' _ "$spec_id")
 [ "${#expected_contract}" -eq 64 ] || { echo "FAIL fixture launch contract id: $expected_contract" >&2; exit 1; }
-conf_name=$(field conf)
 library_dir=$(field library)
 catalog_file=$(field catalog)
-conf_contract=$(MODEL_LIBRARY_DIR="$library_dir" MODEL_LIBRARY_CATALOG="$catalog_file" REPO_DIR="$REPO_DIR" \
-  bash -c '. "$REPO_DIR/scripts/lib.sh"; launch_contract_id_for_profile "$1"' _ "$conf_name")
-conf_served=$(MODEL_LIBRARY_DIR="$library_dir" MODEL_LIBRARY_CATALOG="$catalog_file" REPO_DIR="$REPO_DIR" \
-  bash -c '. "$REPO_DIR/scripts/lib.sh"; load_conf "$1"; printf "%s" "$SERVED_NAME"' _ "$conf_name")
-if [ "${#conf_contract}" -ne 64 ] || [ -z "$conf_served" ]; then echo "FAIL conf fixture contract/served name" >&2; exit 1; fi
 
 mkdir -p "$STATE/bin"
 cat >"$STATE/bin/docker" <<SHIM
@@ -134,7 +127,7 @@ SHIM
 cat >"$STATE/bin/curl" <<SHIM
 #!/usr/bin/env bash
 set -euo pipefail
-printf '{"object":"list","data":[{"id":"%s","object":"model","created":1700000000},{"id":"%s","object":"model","created":1700000000}]}\n' "$served" "$conf_served"
+printf '{"object":"list","data":[{"id":"%s","object":"model","created":1700000000}]}\n' "$served"
 SHIM
 chmod +x "$STATE/bin/docker" "$STATE/bin/curl"
 printf '%s\n' "$expected_contract" >"$STATE/contract-label"
@@ -297,20 +290,27 @@ grep -q "speculative decoding is 'on'" "$STATE/run6.log"
 [ ! -s "$STATE/calls.log" ] || { echo "FAIL gates ran against a spec-decode mismatch" >&2; exit 1; }
 echo "OK   speculative-decode state must match the spec before any gate"
 
-# 7. a conf profile measured before promotion: the catalog computes the spec id, nothing is released yet
-printf '%s\n' "$conf_contract" >"$STATE/contract-label"
-printf '%s\n' "$conf_name" >"$STATE/conf-label"
-printf 'vllm-%s\n' "$conf_name" >"$STATE/container-name"
+# 7. a measured spec before promotion: nothing is released, the --spec file is
+#    the startable profile (PULSAR_SPEC_FILE) and the run proceeds by spec id
+printf '%s\n' "$expected_contract" >"$STATE/contract-label"
+printf '%s\n' "$spec_id" >"$STATE/conf-label"
+printf 'vllm-%s\n' "$spec_id" >"$STATE/container-name"
 : >"$STATE/calls.log"; rm -f "$STATE/witness-count"
-out7="$STATE/out-conf"
+out7="$STATE/out-measured"
 if ! MODEL_LIBRARY_DIR="$library_dir" MODEL_LIBRARY_CATALOG="$catalog_file" PULSAR_RELEASES_ROOT="$STATE/empty-releases" \
-    "$REPO_DIR/validate/baseline-v1.sh" "$conf_name" --spec "$STATE/measured.json" --out "$out7" \
+    "$REPO_DIR/validate/baseline-v1.sh" "$spec_id" --spec "$STATE/measured.json" --out "$out7" \
     --dataset "$STATE/gsm8k-fixture.parquet" --policy "$STATE/policy.json" --producer-dir "$STATE/producers" \
-    --lab-commit "$LAB_COMMIT" --tag fixture-conf --node fixture-node-0 --skip-weights-check >"$STATE/run7.log" 2>&1; then
-  echo "FAIL conf profile with an unreleased spec was refused:" >&2; cat "$STATE/run7.log" >&2; exit 1
+    --lab-commit "$LAB_COMMIT" --tag fixture-measured --node fixture-node-0 --skip-weights-check >"$STATE/run7.log" 2>&1; then
+  echo "FAIL measured spec with an empty releases root was refused:" >&2; cat "$STATE/run7.log" >&2; exit 1
 fi
 grep -q "proposed_status=stable" "$STATE/run7.log"
-grep -q "^run-gates $conf_name " "$STATE/calls.log" || { echo "FAIL conf run-gates label" >&2; exit 1; }
-echo "OK   conf profile is measured before promotion from the catalog's computed identity"
+grep -q "^run-gates spec-${spec_id:0:12} " "$STATE/calls.log" || { echo "FAIL measured run-gates label" >&2; exit 1; }
+if PULSAR_RELEASES_ROOT="$STATE/empty-releases" "$REPO_DIR/validate/baseline-v1.sh" nemotron-3-nano-30b-nvfp4 --spec "$STATE/measured.json" \
+    --out "$STATE/out-conf-name" --dataset "$STATE/gsm8k-fixture.parquet" --policy "$STATE/policy.json" --producer-dir "$STATE/producers" \
+    --lab-commit "$LAB_COMMIT" --tag fixture-conf --node fixture-node-0 --skip-weights-check >"$STATE/run7b.log" 2>&1; then
+  echo "FAIL a conf name is not a profile for the runner" >&2; exit 1
+fi
+grep -q "profile must be a spec id" "$STATE/run7b.log" || { cat "$STATE/run7b.log" >&2; exit 1; }
+echo "OK   a measured spec is startable by spec id before promotion; a conf name is refused"
 
 echo "baseline-v1 runner dry run: PASS"

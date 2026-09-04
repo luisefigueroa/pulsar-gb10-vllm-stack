@@ -40,16 +40,13 @@ check "?" 0
 check experimental 0
 check "" 0
 
-# conf files on disk
-for pair in \
-  "qwen3.6-27b-fp8-2node:0" \
-  "qwen3.8-27b-fp8:0" \
-  "nemotron-3-nano-30b-nvfp4:1" \
-  "qwen3.6-27b-fp8:1" \
-  "qwen3-1.7b-2node:0"
-do
-  name="${pair%%:*}"
-  exp_tested="${pair##*:}"
+# Released specs on disk: a profile carries no legacy STATUS label at all
+# (ADR 0017 Stage 4); review.status is display-only and never a launch gate.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+spec_fixture_env "$STATE/released-set" >/dev/null
+for name in "$ONE_NODE_ID" "$TWO_NODE_ID" "$ONE_NODE_QWEN_ID" "$DIAG_TWO_NODE_ID"; do
+  exp_tested=0
   load_conf "$name"
   if status_is_tested; then tested=1; else tested=0; fi
   if status_is_launchable; then launchable=1; else launchable=0; fi
@@ -94,20 +91,26 @@ else
   fail=$((fail + 1))
 fi
 
-# The repository releases/ holds promoted specs; the no-release projection
-# contract is checked against an explicitly empty releases root.
+# Profiles are the released specs under the releases root: an empty root
+# lists nothing, and every listed row carries the same display-only
+# projection shape (spec review plus the untouched ADR 0004 registry view).
 mkdir -p "$STATE/empty-releases"
-catalog_json=$(PULSAR_RELEASES_ROOT="$STATE/empty-releases" \
+empty_json=$(PULSAR_RELEASES_ROOT="$STATE/empty-releases" \
   "$REPO_DIR/scripts/list-models.sh" --serving --json)
-if CATALOG_JSON="$catalog_json" python3 - <<'PY'
+catalog_json=$("$REPO_DIR/scripts/list-models.sh" --serving --json)
+if CATALOG_JSON="$catalog_json" EMPTY_JSON="$empty_json" python3 - <<'PY'
 import json
 import os
 
+empty = json.loads(os.environ["EMPTY_JSON"])
+assert empty["models"] == [] and empty["unloadable"] == [], empty
 models = json.loads(os.environ["CATALOG_JSON"])["models"]
 assert models
 order = [model["id"] for model in models]
 for model in models:
-    assert model["legacy_status"] == model["status"]
+    # A row is a released spec; its display-only status is the spec review.
+    assert model["status"] == model["review_status"]
+    assert "legacy_status" not in model
     release = model["model_serving_release"]
     assert release == {
         "release_id": None,
@@ -135,8 +138,10 @@ for model in models:
             "reviewed_at",
             "release_file",
         }
-        assert identity["released"] is False
-        assert identity["review_status"] is None
+        if identity["released"]:
+            assert identity["review_status"] in {"stable", "validated", "failed", "withdrawn"}
+        else:
+            assert identity["review_status"] is None
 assert order == [model["id"] for model in models]
 PY
 then
@@ -154,10 +159,10 @@ import os
 lines = os.environ["NARROW_CATALOG"].splitlines()
 assert lines
 assert max(map(len, lines)) <= 48
-assert any("Release" in line and "No release binding" in line for line in lines)
 assert not any("Testing incomplete" in line for line in lines)
-assert any("Legacy" in line for line in lines)
+assert not any("Legacy" in line for line in lines)
 assert any("Spec review" in line for line in lines)
+assert any("Serves" in line for line in lines)
 PY
 then
   echo "OK   human catalog projection honors narrow terminal width"
@@ -323,6 +328,7 @@ PY
 library_dir=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["library"])' "$STATE/spec-fixture/paths.json")
 catalog_file=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["catalog"])' "$STATE/spec-fixture/paths.json")
 releases_dir=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["releases"])' "$STATE/spec-fixture/paths.json")
+nano_spec_id=$(basename "$(ls "$releases_dir"/*.json | head -1)" .json)
 pinned_image=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["image"])' "$STATE/spec-fixture/paths.json")
 
 fixture_json=$(
@@ -332,12 +338,12 @@ fixture_json=$(
   VLLM_IMAGE_MAINLINE="$pinned_image" \
   "$REPO_DIR/scripts/list-models.sh" --serving --json
 )
-if FIXTURE_JSON="$fixture_json" python3 - <<'PY'
+if FIXTURE_JSON="$fixture_json" NANO_SPEC_ID="$nano_spec_id" python3 - <<'PY'
 import json
 import os
 
 models = {item["id"]: item for item in json.loads(os.environ["FIXTURE_JSON"])["models"]}
-nano = models["nemotron-3-nano-30b-nvfp4"]
+nano = models[os.environ["NANO_SPEC_ID"]]
 assert nano["model_serving_release"]["effective_status_label"] == "No release binding"
 row = nano["release_spec"]["identities"][0]
 assert nano["release_spec"]["receipt"] == "found"
@@ -407,7 +413,14 @@ export VLLM_IMAGE_MAINLINE="$pinned_image"
 export PULSAR_MODEL_LIBRARY_DIR="$library_dir"
 export PULSAR_MODEL_LIBRARY_CATALOG="$catalog_file"
 export PULSAR_RELEASES_ROOT="$releases_dir"
-load_conf nemotron-3-nano-30b-nvfp4
+export PULSAR_OVERLAY_PATH="$STATE/spec-fixture-overlay.json"
+python3 - "$REPO_DIR" "$PULSAR_OVERLAY_PATH" <<'PY'
+import pathlib, sys
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib.release_spec_start_fixture import write_overlay
+write_overlay(pathlib.Path(sys.argv[2]))
+PY
+load_conf "$nano_spec_id"
 resolve_spec_decode auto
 load_release_spec_projection
 spec_cell=$(release_spec_enabled_cell "${SPEC_DECODE_ENABLED:-0}")

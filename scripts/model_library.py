@@ -918,41 +918,100 @@ def parse_profile_conf_any(
     }
 
 
+SPEC_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def releases_root(explicit: str | pathlib.Path | None = None) -> pathlib.Path:
+    """The released-spec directory: explicit, PULSAR_RELEASES_ROOT, or repo releases/."""
+    if explicit:
+        return pathlib.Path(explicit)
+    env = os.environ.get("PULSAR_RELEASES_ROOT", "").strip()
+    if env:
+        return pathlib.Path(env)
+    return pathlib.Path(__file__).resolve().parents[1] / "releases"
+
+
+def _release_profile_record(path: pathlib.Path) -> dict[str, Any] | None:
+    """A released spec as a profile record shaped like a parsed conf.
+
+    A profile is a spec id (ADR 0017 Stage 4). Reads only the fields the
+    catalog needs; the stack consumer verifies the file fully on read.
+    """
+    if not SPEC_ID_RE.fullmatch(path.stem):
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if document.get("kind") != "pulsar-release-spec" or document.get("state") != "released":
+            return None
+        if document.get("spec_id") != path.stem:
+            return None
+        identity = document["identity"]
+        model_id = str(identity["model_id"])
+        revision = str(identity["snapshot_revision"])
+        nodes = int(identity["geometry"]["nodes"])
+        status = str((document.get("review") or {}).get("status") or "")
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not model_id or SAFE_REV.fullmatch(revision) is None or nodes < 1:
+        return None
+    return {
+        "profile": path.stem,
+        "model_id": model_id,
+        "revision": revision,
+        "status": status,
+        "nodes": nodes,
+        "validated": False,
+        "expected_model_seal_ref": None,
+        "expected_model_seal": None,
+        "validation_bundle": None,
+    }
+
+
+def load_release_profiles(root: str | pathlib.Path | None = None) -> list[dict[str, Any]]:
+    directory = releases_root(root)
+    if not directory.is_dir():
+        return []
+    records = []
+    for path in sorted(directory.glob("*.json")):
+        record = _release_profile_record(path)
+        if record is not None:
+            records.append(record)
+    return records
+
+
 def load_hf_profiles(models_dir: str | pathlib.Path) -> list[dict[str, Any]]:
-    models_dir = pathlib.Path(models_dir)
-    profiles: list[dict[str, Any]] = []
-    if not models_dir.is_dir():
-        return profiles
-    for path in sorted(models_dir.glob("*.conf")):
-        parsed = parse_profile_conf_any(path, hf_only=True)
-        if parsed is not None:
-            parsed.pop("absolute_path", None)
-            profiles.append(parsed)
-    return profiles
+    """Profiles the catalog binds: released specs only (ADR 0017 Stage 4).
+
+    ``models_dir`` is accepted for CLI compatibility and not read: a
+    conf-format draft is a lab input to ``release-spec.sh from-draft`` and
+    ``home add --draft``, never a catalog profile.
+    """
+    del models_dir
+    return list(load_release_profiles())
 
 
 def load_hf_profile(
     models_dir: str | pathlib.Path,
     profile: str,
 ) -> dict[str, Any]:
-    path = pathlib.Path(models_dir) / f"{profile}.conf"
-    parsed = parse_profile_conf_any(path, hf_only=True)
-    if parsed is None:
-        fail(f"{profile}: expected a Hugging Face model profile")
-    parsed.pop("absolute_path", None)
-    return parsed
+    del models_dir
+    if SPEC_ID_RE.fullmatch(profile):
+        for record in load_release_profiles():
+            if record["profile"] == profile:
+                return record
+        fail(f"{profile}: no released spec under {releases_root()}")
+    fail(
+        f"{profile}: profiles are spec ids under {releases_root()} "
+        "(a conf-format draft is not a catalog profile)"
+    )
 
 
 def load_model_profile(
     models_dir: str | pathlib.Path,
     profile: str,
 ) -> dict[str, Any]:
-    """Load an HF or absolute-path profile for hot-state revalidation."""
-    path = pathlib.Path(models_dir) / f"{profile}.conf"
-    parsed = parse_profile_conf_any(path)
-    if parsed is None:
-        fail(f"{profile}: model profile is missing or invalid")
-    return parsed
+    """The released spec behind ``profile`` for hot-state revalidation."""
+    return load_hf_profile(models_dir, profile)
 
 
 def observed_model_seal_projection(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -1662,18 +1721,14 @@ def resolve_entry(
       None / "" / "none" — disable cold fall-through
       str — explicit cold root
     """
-    # Profile conf supplies model identity and, when reviewed, the exact commit.
-    if profile and models_dir:
-        conf = pathlib.Path(models_dir) / f"{profile}.conf"
-        if conf.is_file():
-            parsed = parse_profile_conf_any(conf)
-            if parsed:
-                model_id = model_id or parsed.get("model_id")
-                absolute_path = absolute_path or parsed.get("absolute_path")
-                _refuse_expected_model_seal(
-                    parsed.get("profile") or profile,
-                    parsed.get("expected_model_seal_ref"),
-                )
+    # A released spec (profile is a spec id) supplies the model identity;
+    # ``models_dir`` is accepted for CLI compatibility and not read.
+    del models_dir
+    if profile and SPEC_ID_RE.fullmatch(profile):
+        for record in load_release_profiles():
+            if record["profile"] == profile:
+                model_id = model_id or record["model_id"]
+                break
 
     warm_error: str | None = None
     if catalog is not None and not absolute_path:
@@ -2095,16 +2150,12 @@ def plan_cold_adopt(
     if root is None:
         fail("cold adopt: explicit --cold-root is required")
 
-    if profile and models_dir:
-        conf = pathlib.Path(models_dir) / f"{profile}.conf"
-        parsed = parse_profile_conf_any(conf) if conf.is_file() else None
-        if parsed:
-            model_id = model_id or parsed.get("model_id")
-            path = path or parsed.get("absolute_path")
-            _refuse_expected_model_seal(
-                parsed.get("profile") or profile,
-                parsed.get("expected_model_seal_ref"),
-            )
+    del models_dir
+    if profile and SPEC_ID_RE.fullmatch(profile):
+        for record in load_release_profiles():
+            if record["profile"] == profile:
+                model_id = model_id or record["model_id"]
+                break
 
     entry = find_cold_entry(
         root,
@@ -4404,9 +4455,9 @@ def plan_prepare(
         )
     identity_key = str(identity_key or "").strip() or None
     profile = str(profile or "").strip() or None
-    if bool(identity_key) == bool(models_dir):
+    if not identity_key and not profile:
         fail(
-            "prepare: require exactly one of --profile --models-dir or "
+            "prepare: require --profile (a spec id) or "
             "--identity --spec-manifest-json"
         )
     if identity_key:
@@ -7009,13 +7060,8 @@ def _load_home_reference_observations(
 
 
 def _profile_model_map(models_dir: str | pathlib.Path) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-    root = pathlib.Path(models_dir)
-    for path in sorted(root.glob("*.conf")):
-        parsed = parse_profile_conf_any(path)
-        if parsed and parsed.get("model_id"):
-            mapping[path.stem] = str(parsed["model_id"])
-    return mapping
+    del models_dir
+    return {record["profile"]: record["model_id"] for record in load_release_profiles()}
 
 
 def _container_home_blocker(

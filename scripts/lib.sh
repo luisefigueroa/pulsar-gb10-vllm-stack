@@ -397,6 +397,11 @@ load_spec_profile() {
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     export_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
   fi
+  # Lab path: a measured spec file (validate/baseline-v1.sh --spec) is the
+  # profile before promotion; the file's spec_id must equal the profile.
+  if [ -n "${PULSAR_SPEC_FILE:-}" ]; then
+    export_args+=(--spec-file "$PULSAR_SPEC_FILE")
+  fi
   err=$(mktemp "${TMPDIR:-/tmp}/pulsar-export-profile.XXXXXX")
   if ! output=$(python3 "$REPO_DIR/scripts/release_consumer.py" \
       "${export_args[@]}" 2>"$err"); then
@@ -408,7 +413,7 @@ load_spec_profile() {
   # shellcheck disable=SC1090
   eval "$output"
   CONF_SOURCE=spec
-  CONF_PATH="$releases_root/${spec_id}.json"
+  CONF_PATH="${PULSAR_SPEC_FILE:-$releases_root/${spec_id}.json}"
   _finalize_loaded_profile "$spec_id"
 }
 
@@ -671,12 +676,6 @@ status_is_launchable() {
 
 status_requires_force() {
   return 1
-}
-
-warn_profile_status() {
-  if ! status_is_tested; then
-    warn "profile status=${STATUS:-?} is advisory; ${NOTES:-review its evidence and caveats before serving}"
-  fi
 }
 
 # Load the advisory ADR 0004 status for the reviewed release explicitly bound
@@ -1163,7 +1162,7 @@ refuse_removed_weight_mode_flag() {
 # get a generic "unknown arg".
 REMOVED_FORCE_MESSAGE='--force was removed (ADR 0008): status labels never block serving. Drop the flag.'
 REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): drop the flag. Lab expected-identity files are not a live product (ADR 0012).'
-REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --legacy-tested (historical STATUS=tested*). It does not mean ADR 0004 Validated.'
+REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): profiles are released specs whose review.status is display-only (scripts/release.sh list). It does not mean ADR 0004 Validated.'
 REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): drop the flag. --reviewed-identity is retired (ADR 0012). It does not mean ADR 0004 Validated.'
 REMOVED_ACTIVATE_MESSAGE='activate was removed (ADR 0008): use prepare.'
 REMOVED_COLD_STAGE_ONLY_MESSAGE='cold stage-only was removed (ADR 0012): a self-observed cold tree cannot create receipt/occupancy serving identity. Use home add --revision for a new exact Hugging Face home; use home relocate with an existing immutable receipt, or home restore with that receipt and its protected cold recovery set.'
@@ -1839,24 +1838,29 @@ expected_rank_for_nodes() {
   fi
 }
 
-# NODES from models/<conf>.conf without sourcing the full profile (default 1).
+# Node count of a profile, read from the released spec's geometry without
+# loading it (a profile is a spec id, ADR 0017 Stage 4). Fails for anything
+# else, including a conf name.
 profile_nodes_for_conf() {
   local conf="${1:?}"
-  local path="$REPO_DIR/models/${conf}.conf"
+  [[ "$conf" =~ ^[0-9a-f]{64}$ ]] || return 1
+  local path="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}/${conf}.json"
   [ -f "$path" ] || return 1
   local nodes
-  nodes=$(awk -F= '
-    /^[[:space:]]*NODES=/ {
-      v=$0
-      sub(/^[^=]*=/, "", v)
-      gsub(/[[:space:]"'\'']/, "", v)
-      print v
-      found=1
-      exit
-    }
-    END { if (!found) print "1" }
-  ' "$path")
-  [ -n "$nodes" ] || nodes=1
+  nodes=$(python3 - "$path" <<'PY'
+import json
+import sys
+
+try:
+    document = json.load(open(sys.argv[1], encoding="utf-8"))
+    nodes = int(document["identity"]["geometry"]["nodes"])
+except (OSError, ValueError, KeyError, TypeError):
+    raise SystemExit(1)
+if nodes < 1:
+    raise SystemExit(1)
+print(nodes)
+PY
+  ) || return 1
   printf '%s' "$nodes"
 }
 
@@ -2077,10 +2081,10 @@ container_all_candidate_is_safe() {
   [ -n "$conf" ] || return 1
   [ -n "$rank" ] || return 1
   local nodes
-  if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
-    # Retired profile (e.g. removed by ADR 0006): the conf file is gone, but
-    # ownership is still proven by labels, so the container must remain
-    # stoppable. Geometry comes from the container's own labels.
+  if ! profile_nodes_for_conf "$conf" >/dev/null 2>&1; then
+    # Retired profile (no released spec under releases/, or a conf name from
+    # before ADR 0017 Stage 4): ownership is still proven by labels, so the
+    # container must remain stoppable. Geometry comes from its own labels.
     if [ "$rank" = single ]; then
       placement_index_for_role "$placement" >/dev/null || return 1
       container_single_node_identity_is_proven "$metadata" "$placement"
@@ -2150,7 +2154,7 @@ container_all_refuse_reason() {
     echo "managed label set but conf/rank incomplete (conf='${conf}' rank='${rank}')"
     return
   fi
-  if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
+  if ! profile_nodes_for_conf "$conf" >/dev/null 2>&1; then
     if [ "$rank" = single ]; then
       container_single_node_identity_refuse_reason "$metadata" "$placement"
       return

@@ -4,6 +4,11 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-cli-inputs.XXXXXX")
+STATE="$tmpdir"
+# Profiles are released specs: malformed-input cases run against fixture specs.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$tmpdir"' EXIT
 export CLUSTER_TOPOLOGY_FILE="$tmpdir/no-topology.json"
 
@@ -27,17 +32,17 @@ expect_failure() {
 }
 
 expect_failure 2 "--port requires a value" "serve missing port value" \
-  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --port
+  "$REPO_DIR/serve.sh" "$ONE_NODE_QWEN_ID" --dry-run --port
 expect_failure 2 "invalid --port" "serve rejects nonnumeric port" \
-  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --port nope
+  "$REPO_DIR/serve.sh" "$ONE_NODE_QWEN_ID" --dry-run --port nope
 expect_failure 2 "invalid --port" "serve rejects out-of-range port" \
-  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --port 70000
+  "$REPO_DIR/serve.sh" "$ONE_NODE_QWEN_ID" --dry-run --port 70000
 expect_failure 1 "invalid model id" "config loader rejects path traversal" \
   "$REPO_DIR/serve.sh" ../outside --dry-run
 expect_failure 2 "ADR 0006" "serve rejects the removed weight-mode axis" \
-  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --weight-source library-hot
+  "$REPO_DIR/serve.sh" "$ONE_NODE_QWEN_ID" --dry-run --weight-source library-hot
 expect_failure 2 "SIM-12" "pulsar refuses removed weight-fabric helper" \
-  "$REPO_DIR/pulsar" weight-fabric show qwen3.8-27b-fp8-2node
+  "$REPO_DIR/pulsar" weight-fabric show "$TWO_NODE_ID"
 expect_failure 2 "configure cold-storage" "pulsar configure without a topic is usage" \
   "$REPO_DIR/pulsar" configure
 expect_failure 2 "configure cold-storage" "pulsar configure rejects an unsupported topic" \
@@ -47,20 +52,20 @@ expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy repair" \
 expect_failure 2 "SIM-13" "model-library refuses removed hot-legacy remove" \
   "$REPO_DIR/scripts/model-library.sh" hot legacy remove unused --yes
 expect_failure 2 "ADR 0012" "model-library refuses retired cold stage-only" \
-  "$REPO_DIR/scripts/model-library.sh" cold stage-only qwen3.8-27b-fp8 --yes
+  "$REPO_DIR/scripts/model-library.sh" cold stage-only "$ONE_NODE_QWEN_ID" --yes
 
 expect_failure 2 "ADR 0008" "serve refuses removed --force" \
-  "$REPO_DIR/serve.sh" qwen3.8-27b-fp8 --dry-run --force
+  "$REPO_DIR/serve.sh" "$ONE_NODE_QWEN_ID" --dry-run --force
 expect_failure 2 "Drop the flag" "up refuses removed --force" \
-  "$REPO_DIR/scripts/up.sh" qwen3.8-27b-fp8 --dry-run --force
+  "$REPO_DIR/scripts/up.sh" "$ONE_NODE_QWEN_ID" --dry-run --force
 expect_failure 2 "Drop the flag" "start-cluster refuses removed --force" \
-  "$REPO_DIR/cluster/start-cluster.sh" qwen3.8-27b-fp8 --dry-run --force
-expect_failure 2 "use --legacy-tested" "list-models refuses removed --validated" \
+  "$REPO_DIR/cluster/start-cluster.sh" "$ONE_NODE_QWEN_ID" --dry-run --force
+expect_failure 2 "released specs" "list-models refuses removed --validated" \
   "$REPO_DIR/scripts/list-models.sh" --validated
 expect_failure 2 "retired (ADR 0012)" "catalog list refuses removed --validated" \
   "$REPO_DIR/scripts/model-library.sh" catalog list --validated
 expect_failure 2 "use prepare" "model-library refuses removed activate" \
-  "$REPO_DIR/scripts/model-library.sh" activate qwen3.8-27b-fp8
+  "$REPO_DIR/scripts/model-library.sh" activate "$ONE_NODE_QWEN_ID"
 expect_failure 2 "Drop the flag" "python plan-prepare refuses --allow-unvalidated" \
   python3 "$REPO_DIR/scripts/model_library.py" plan-prepare --allow-unvalidated
 expect_failure 2 "retired (ADR 0012)" "python list refuses removed --validated" \

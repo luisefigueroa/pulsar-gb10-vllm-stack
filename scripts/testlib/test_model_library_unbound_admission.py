@@ -15,6 +15,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
 
 
@@ -25,7 +26,8 @@ class UnboundAdmissionPublicContracts(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         fixture.write_cli_fixture(self.root)
         self.model_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
-        self.profile = "nemotron-3-nano-30b-nvfp4"
+        ids = write_fixture_set(self.root / "spec-fixture")
+        self.profile = ids["one_node"]["spec_id"]
         self.hub = (
             self.root
             / "cache"
@@ -51,6 +53,7 @@ esac
                 "PATH": f"{self.root / 'bin'}:{self.env.get('PATH', '')}",
                 "CLUSTER_TOPOLOGY_FILE": str(self.root / "topology.json"),
                 "HF_CACHE": str(self.root / "cache"),
+                "PULSAR_RELEASES_ROOT": str(self.root / "spec-fixture" / "releases"),
                 "MODEL_LIBRARY_DIR": str(self.root / "library"),
                 "MODEL_LIBRARY_CATALOG": str(
                     self.root / "library" / "catalog.json"

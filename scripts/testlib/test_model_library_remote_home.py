@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import re
 import sys
 import tempfile
 import unittest
@@ -13,6 +15,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 
 
 class RemoteHomeActivationContracts(unittest.TestCase):
@@ -21,12 +24,15 @@ class RemoteHomeActivationContracts(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
         self.revision = "a" * 40
+        # A profile is a released spec id (ADR 0017 Stage 4): the diagnostic
+        # two-node fixture spec names Qwen/Qwen3-1.7B with NODES=2.
+        ids = write_fixture_set(self.root / "spec-fixture")
+        self.profile = ids["diagnostic_two_node"]["spec_id"]
+        assert ids["diagnostic_two_node"]["model_id"] == "Qwen/Qwen3-1.7B"
+        os.environ["PULSAR_RELEASES_ROOT"] = str(self.root / "spec-fixture" / "releases")
+        self.addCleanup(os.environ.pop, "PULSAR_RELEASES_ROOT", None)
         self.models_dir = self.root / "models"
         self.models_dir.mkdir()
-        (self.models_dir / "qwen3-1.7b-2node.conf").write_text(
-            'MODEL="Qwen/Qwen3-1.7B"\nSTATUS="tested"\nNODES=2\n',
-            encoding="utf-8",
-        )
         self.actual_hub = self.root / "rank-1-home"
         snapshot = self.actual_hub / "snapshots" / self.revision
         snapshot.mkdir(parents=True)
@@ -62,10 +68,10 @@ class RemoteHomeActivationContracts(unittest.TestCase):
                         f"Qwen/Qwen3-1.7B@{self.revision}"
                     ),
                     "validation": "receipt-occupancy",
-                    "profiles": ["qwen3-1.7b-2node"],
+                    "profiles": [self.profile],
                     "profile_validation": [
                         {
-                            "profile": "qwen3-1.7b-2node",
+                            "profile": self.profile,
                             "profile_status": "tested",
                             "identity_status": "receipt-occupancy",
                             "expected_model_seal_ref": None,
@@ -100,7 +106,7 @@ class RemoteHomeActivationContracts(unittest.TestCase):
     def plan(self, inventory: dict[str, object]) -> dict[str, object]:
         return model_library.plan_prepare(
             catalog_path=str(self.catalog_path),
-            profile="qwen3-1.7b-2node",
+            profile=self.profile,
             topology_id="topology-test",
             hot_root=str(self.root / "hot"),
             models_dir=str(self.models_dir),
@@ -159,8 +165,8 @@ class RemoteHomeActivationContracts(unittest.TestCase):
 
         with self.assertRaisesRegex(
             model_library.ModelLibraryError,
-            r"durable home rank 2 is outside qwen3-1[.]7b-2node serving ranks "
-            r"\(0 1\).*home relocate qwen3-1[.]7b-2node --node 0 --yes.*"
+            rf"durable home rank 2 is outside {re.escape(self.profile)} serving ranks "
+            rf"\(0 1\).*home relocate {re.escape(self.profile)} --node 0 --yes.*"
             r"catalog refresh",
         ):
             self.plan({"integrity_manifest": {}})

@@ -18,6 +18,8 @@ from scripts import model_library  # noqa: E402
 from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
 
 
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
+
 SPEC_ID = "c" * 64
 TOPOLOGY_ID = "d" * 64
 
@@ -28,14 +30,16 @@ class SpecPreparePlannerTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
         self.model_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
-        self.profile = "nemotron-3-nano-30b-nvfp4"
+        # A profile is a released spec id (ADR 0017 Stage 4): the fixture
+        # release set stands in for releases/; models_dir carries no conf.
+        ids = write_fixture_set(self.root / "spec-fixture")
+        self.profile = ids["one_node"]["spec_id"]
+        assert ids["one_node"]["model_id"] == self.model_id
+        os.environ["PULSAR_RELEASES_ROOT"] = str(self.root / "spec-fixture" / "releases")
+        self.addCleanup(os.environ.pop, "PULSAR_RELEASES_ROOT", None)
         self.hot = self.root / "hot"
         self.models_dir = self.root / "models"
         self.models_dir.mkdir()
-        (self.models_dir / f"{self.profile}.conf").write_text(
-            f'MODEL="{self.model_id}"\nSTATUS="untested"\nNODES=1\n',
-            encoding="utf-8",
-        )
         self.hub = self.root / "hub"
         fixture.write_snapshot_hub(self.hub)
         inventory = model_library.inspect_snapshot_blob_identities(

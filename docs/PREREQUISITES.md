@@ -12,8 +12,8 @@ when an exact profile defines an executable recipe and its concrete topology,
 capacity, identity, runtime, security, and lifecycle checks pass. Hostnames are
 not part of cluster qualification. Host NCCL is not required; images provide it.
 
-Here, `STATUS=tested*` is the current implementation's legacy evidence and
-recommendation label. It is advisory, not a serving gate, and is not the
+Here, a profile is a released spec id and its `review.status` is the
+display-only ADR 0017 review. It is advisory, not a serving gate, and is not the
 `Validated` Model Serving Release decision defined by
 [ADR 0004](./decisions/0004-model-serving-release-validation.md). The separate
 release-descriptor, frozen-contract, immutable run-record, evidence-bundle, and
@@ -157,25 +157,26 @@ For a new home, use the exact commit and rank printed by the plan:
 cp .env.example .env   # optional overrides only
 scripts/doctor.sh
 scripts/detect-fabric.sh --write-topology
+scripts/release.sh list          # released spec ids: a profile is a spec id
 scripts/list-models.sh --serving
 
-scripts/model-library.sh home add <profile> \
+scripts/model-library.sh home add <spec_id> \
   --revision <selector> --plan --json
-scripts/model-library.sh home add <profile> \
+scripts/model-library.sh home add <spec_id> \
   --revision <exact-commit-from-plan> \
   --node <selected-rank-from-plan> --yes --json
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare <profile> --yes
+scripts/model-library.sh prepare <spec_id> --yes
 
-scripts/up.sh <profile> --dry-run
-./pulsar start <profile>
-./pulsar status <profile>
-./pulsar stop <profile>
+scripts/up.sh <spec_id> --dry-run
+./pulsar start <spec_id>
+./pulsar status <spec_id>
+./pulsar stop <spec_id>
 ```
 
 When a compatible receipt-backed home already exists, do not download it
-again. Refresh the catalog, verify or prepare the exact profile, and start.
-`./serve.sh <profile> -d` remains the supported low-level one-rank launcher,
+again. Refresh the catalog, verify or prepare the exact spec, and start.
+`./serve.sh <spec_id> -d` remains the supported low-level one-rank launcher,
 but it consumes the same confirmed topology and prepared runtime view.
 
 Do not expose `:8000` outside the trusted lab network without authentication;

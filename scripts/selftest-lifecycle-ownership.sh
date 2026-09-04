@@ -60,6 +60,11 @@ assert_rc() {
 # Shim state
 # ---------------------------------------------------------------------------
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-lifecycle-own.XXXXXX")
+# Profiles are released specs: a fixture release set stands in for releases/.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+STATE="$STATE_DIR"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$STATE_DIR"' EXIT
 
 SHIM_DIR="$STATE_DIR/bin"
@@ -355,47 +360,47 @@ ID_VERIFY=$(hex64 verify-fail)
 echo "=== ownership proof helpers ==="
 
 good_meta=$(python3 -c 'import json; print(json.dumps({
-  "id":"'"$ID_A"'","name":"/vllm-qwen3.8-27b-fp8",
-  "labels":{"io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}
+  "id":"'"$ID_A"'","name":"/vllm-'"$ONE_NODE_QWEN_ID"'",
+  "labels":{"io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}
 }))')
-assert_true "proven managed conf+rank" container_ownership_is_proven "$good_meta" "qwen3.8-27b-fp8" "single"
+assert_true "proven managed conf+rank" container_ownership_is_proven "$good_meta" "$ONE_NODE_QWEN_ID" "single"
 assert_false "reject wrong conf" container_ownership_is_proven "$good_meta" "other" "single"
-assert_false "reject wrong rank" container_ownership_is_proven "$good_meta" "qwen3.8-27b-fp8" "0"
+assert_false "reject wrong rank" container_ownership_is_proven "$good_meta" "$ONE_NODE_QWEN_ID" "0"
 
 yes_meta=$(python3 -c 'import json; print(json.dumps({
   "id":"x","name":"/vllm-x",
-  "labels":{"io.pulsar.gb10.managed":"yes","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}
+  "labels":{"io.pulsar.gb10.managed":"yes","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}
 }))')
-assert_false "managed=yes is not accepted" container_ownership_is_proven "$yes_meta" "qwen3.8-27b-fp8" "single"
+assert_false "managed=yes is not accepted" container_ownership_is_proven "$yes_meta" "$ONE_NODE_QWEN_ID" "single"
 one_meta=$(python3 -c 'import json; print(json.dumps({
   "id":"x","name":"/vllm-x",
-  "labels":{"io.pulsar.gb10.managed":"1","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}
+  "labels":{"io.pulsar.gb10.managed":"1","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}
 }))')
-assert_false "managed=1 is not accepted" container_ownership_is_proven "$one_meta" "qwen3.8-27b-fp8" "single"
+assert_false "managed=1 is not accepted" container_ownership_is_proven "$one_meta" "$ONE_NODE_QWEN_ID" "single"
 
 legacy_meta=$(python3 -c 'import json; print(json.dumps({
-  "id":"'"$ID_LEGACY"'","name":"/vllm-qwen3.8-27b-fp8","labels":{}
+  "id":"'"$ID_LEGACY"'","name":"/vllm-'"$ONE_NODE_QWEN_ID"'","labels":{}
 }))')
-assert_false "legacy unlabeled not proven" container_ownership_is_proven "$legacy_meta" "qwen3.8-27b-fp8" "single"
-reason=$(container_ownership_refuse_reason "$legacy_meta" "qwen3.8-27b-fp8" "single")
+assert_false "legacy unlabeled not proven" container_ownership_is_proven "$legacy_meta" "$ONE_NODE_QWEN_ID" "single"
+reason=$(container_ownership_refuse_reason "$legacy_meta" "$ONE_NODE_QWEN_ID" "single")
 assert_true "legacy reason mentions unlabeled" bash -c "printf '%s' $(printf %q "$reason") | grep -qi unlabeled"
 
-assert_true "placement head single ok" placement_rank_allowed "qwen3.8-27b-fp8" "single" "head"
-assert_false "placement head rank0 for single-node conf refused" placement_rank_allowed "qwen3.8-27b-fp8" "0" "head"
-assert_true "placement head rank0 for 2-node ok" placement_rank_allowed "qwen3.8-27b-fp8-2node" "0" "head"
-assert_true "placement worker rank1 for 2-node ok" placement_rank_allowed "qwen3.8-27b-fp8-2node" "1" "worker"
-assert_false "placement worker rank0 refused" placement_rank_allowed "qwen3.8-27b-fp8-2node" "0" "worker"
-assert_true "placement worker single allowed; node-id proof gates removal" placement_rank_allowed "qwen3.8-27b-fp8" "single" "worker"
-assert_true "placement rank-2 single allowed; node-id proof gates removal" placement_rank_allowed "qwen3.8-27b-fp8" "single" "rank-2"
+assert_true "placement head single ok" placement_rank_allowed "$ONE_NODE_QWEN_ID" "single" "head"
+assert_false "placement head rank0 for single-node conf refused" placement_rank_allowed "$ONE_NODE_QWEN_ID" "0" "head"
+assert_true "placement head rank0 for 2-node ok" placement_rank_allowed "$TWO_NODE_ID" "0" "head"
+assert_true "placement worker rank1 for 2-node ok" placement_rank_allowed "$TWO_NODE_ID" "1" "worker"
+assert_false "placement worker rank0 refused" placement_rank_allowed "$TWO_NODE_ID" "0" "worker"
+assert_true "placement worker single allowed; node-id proof gates removal" placement_rank_allowed "$ONE_NODE_QWEN_ID" "single" "worker"
+assert_true "placement rank-2 single allowed; node-id proof gates removal" placement_rank_allowed "$ONE_NODE_QWEN_ID" "single" "rank-2"
 assert_eq "$(placement_index_for_role rank-2)" "2" \
   "rank-2 inventory key resolves to physical topology index 2"
 assert_false "unknown conf placement refused" placement_rank_allowed "no-such-conf" "single" "head"
 
 rank2_meta=$(python3 -c 'import json; print(json.dumps({
-  "id":"'"$ID_A"'","name":"/vllm-qwen3.8-27b-fp8",
+  "id":"'"$ID_A"'","name":"/vllm-'"$ONE_NODE_QWEN_ID"'",
   "labels":{
     "io.pulsar.gb10.managed":"true",
-    "io.pulsar.gb10.conf":"qwen3.8-27b-fp8",
+    "io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'",
     "io.pulsar.gb10.rank":"single",
     "io.pulsar.gb10.topology":"fixture-topology",
     "io.pulsar.gb10.node-id":"fixture-node-3"
@@ -412,15 +417,15 @@ assert_true "rank-2 single cleanup proves topology and physical node identity" \
   rank2_identity_is_proven
 
 echo "=== strict loaded-state proof ==="
-load_conf qwen3.8-27b-fp8
+load_conf "$ONE_NODE_QWEN_ID"
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_A")"
 assert_true "managed running single rank earns loaded exemption" \
-  profile_service_is_proven_running qwen3.8-27b-fp8
+  profile_service_is_proven_running "$ONE_NODE_QWEN_ID"
 warm_rc=0
-warm_json=$("$REPO_DIR/scripts/check-memory.sh" qwen3.8-27b-fp8 --json) || warm_rc=$?
+warm_json=$("$REPO_DIR/scripts/check-memory.sh" "$ONE_NODE_QWEN_ID" --json) || warm_rc=$?
 warm_mode=$(printf '%s' "$warm_json" | python3 -c \
   'import json,sys; print(json.load(sys.stdin)["mode"])')
 warm_loaded=$(printf '%s' "$warm_json" | python3 -c \
@@ -431,7 +436,7 @@ assert_eq "$warm_loaded" "True" \
   "check-memory reports the proven loaded-state exemption"
 
 cold_rc=0
-cold_json=$("$REPO_DIR/scripts/check-memory.sh" qwen3.8-27b-fp8 --cold-start --json) \
+cold_json=$("$REPO_DIR/scripts/check-memory.sh" "$ONE_NODE_QWEN_ID" --cold-start --json) \
   || cold_rc=$?
 cold_mode=$(printf '%s' "$cold_json" | python3 -c \
   'import json,sys; print(json.load(sys.stdin)["mode"])')
@@ -443,32 +448,32 @@ assert_eq "$cold_loaded" "False" \
   "--cold-start evaluates placement as a fresh launch"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{}}
 ]))' "$ID_LEGACY")"
 assert_false "legacy exact-name container cannot earn loaded exemption" \
-  profile_service_is_proven_running qwen3.8-27b-fp8
+  profile_service_is_proven_running "$ONE_NODE_QWEN_ID"
 
 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE"
 reload_cluster_topology
-load_conf qwen3.8-27b-fp8-2node
+load_conf "$TWO_NODE_ID"
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_H")"
 seed_state "$WORKER_STATE" '[]'
 assert_false "incomplete cluster cannot earn loaded exemption" \
-  profile_service_is_proven_running qwen3.8-27b-fp8-2node
+  profile_service_is_proven_running "$TWO_NODE_ID"
 
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"1"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_W")"
 assert_true "complete managed cluster earns loaded exemption" \
-  profile_service_is_proven_running qwen3.8-27b-fp8-2node
+  profile_service_is_proven_running "$TWO_NODE_ID"
 
 # Restore the common single-node profile and standalone topology for
 # subsequent cases.
-load_conf qwen3.8-27b-fp8
+load_conf "$ONE_NODE_QWEN_ID"
 CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
 reload_cluster_topology
 
@@ -488,14 +493,14 @@ assert_rc 1 "reject empty" parse_docker_run_container_id ""
 # ---------------------------------------------------------------------------
 echo "=== managed named stop ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_A")"
 : >"$STATE_DIR/rm.log"
 assert_rc 0 "remove managed single-node by name" \
-  remove_stack_owned_container_local "vllm-qwen3.8-27b-fp8" "qwen3.8-27b-fp8" "single"
+  remove_stack_owned_container_local "vllm-$ONE_NODE_QWEN_ID" "$ONE_NODE_QWEN_ID" "single"
 assert_false "managed container gone after named stop" \
-  container_ownership_inspect_local "vllm-qwen3.8-27b-fp8"
+  container_ownership_inspect_local "vllm-$ONE_NODE_QWEN_ID"
 grep -q "rm head $ID_A" "$STATE_DIR/rm.log"
 assert_eq "$?" "0" "rm log records id-based remove"
 
@@ -508,10 +513,10 @@ echo "=== managed --all ==="
 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE"
 reload_cluster_topology
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}},
-  {"id":sys.argv[2],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}},
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}},
+  {"id":sys.argv[2],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}},
   {"id":sys.argv[3],"name":"vllm-someone-else","labels":{}}
 ]))' "$ID_A" "$ID_B" "$ID_LEGACY")"
 : >"$STATE_DIR/rm.log"
@@ -531,9 +536,9 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-unknown","labels":{
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"not-a-real-conf","io.pulsar.gb10.rank":"single"}},
   {"id":sys.argv[2],"name":"vllm-bad-rank","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"0"}},
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"0"}},
   {"id":sys.argv[3],"name":"vllm-rank1-on-head","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"1"}}
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_UNKNOWN" "$ID_BAD_RANK" "$ID_RANK1_HEAD")"
 : >"$STATE_DIR/rm.log"
 assert_rc 2 "--all refuses bad ranks on head" remove_all_stack_managed_local
@@ -674,10 +679,10 @@ CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
 reload_cluster_topology
 
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}},
-  {"id":sys.argv[2],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}},
+  {"id":sys.argv[2],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_RANK0_WORKER" "$ID_SINGLE_WORKER")"
 : >"$STATE_DIR/rm.log"
 assert_rc 2 "--all refuses rank0/single on worker" \
@@ -693,14 +698,14 @@ assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "worker placement refu
 # ---------------------------------------------------------------------------
 echo "=== unowned exact-name refusal ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"other-conf","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_FOREIGN")"
 : >"$STATE_DIR/rm.log"
 assert_rc 2 "refuse wrong-conf exact name" \
-  remove_stack_owned_container_local "vllm-qwen3.8-27b-fp8" "qwen3.8-27b-fp8" "single"
+  remove_stack_owned_container_local "vllm-$ONE_NODE_QWEN_ID" "$ONE_NODE_QWEN_ID" "single"
 assert_true "unowned container still present" \
-  container_ownership_inspect_local "vllm-qwen3.8-27b-fp8"
+  container_ownership_inspect_local "vllm-$ONE_NODE_QWEN_ID"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "no rm on unowned refusal"
 
 # ---------------------------------------------------------------------------
@@ -708,10 +713,10 @@ assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "no rm on unowned refu
 # ---------------------------------------------------------------------------
 echo "=== legacy refusal ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{}}
 ]))' "$ID_LEGACY")"
 assert_rc 2 "refuse legacy unlabeled exact name" \
-  remove_stack_owned_container_local "vllm-qwen3.8-27b-fp8" "qwen3.8-27b-fp8" "single"
+  remove_stack_owned_container_local "vllm-$ONE_NODE_QWEN_ID" "$ONE_NODE_QWEN_ID" "single"
 assert_true "legacy still present" container_ownership_inspect_local "$ID_LEGACY"
 
 # ---------------------------------------------------------------------------
@@ -719,26 +724,26 @@ assert_true "legacy still present" container_ownership_inspect_local "$ID_LEGACY
 # ---------------------------------------------------------------------------
 echo "=== label conf/rank mismatch ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"1"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_RANK")"
 assert_rc 2 "refuse rank mismatch (want 0 have 1)" \
-  remove_stack_owned_container_local "vllm-cluster-qwen3.8-27b-fp8-2node" "qwen3.8-27b-fp8-2node" "0"
+  remove_stack_owned_container_local "vllm-cluster-$TWO_NODE_ID" "$TWO_NODE_ID" "0"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":"vllm-x","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8"}}
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'"}}
 ]))' "$ID_INCOMPLETE")"
 assert_rc 2 "refuse incomplete rank label" \
-  remove_stack_owned_container_local "vllm-x" "qwen3.8-27b-fp8" "single"
+  remove_stack_owned_container_local "vllm-x" "$ONE_NODE_QWEN_ID" "single"
 
 # ---------------------------------------------------------------------------
 # 6) Name-reuse / ID revalidation failure
 # ---------------------------------------------------------------------------
 echo "=== name-reuse ID revalidation failure ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_ORIG")"
 
 cat >"$SHIM_DIR/docker-mutate" <<'SHIM'
@@ -761,7 +766,7 @@ import json, os
 path = os.environ["FAKE_DOCKER_STATE"]
 json.dump([{
   "id": os.environ["ID_REUSE_NAME"],
-  "name": "vllm-qwen3.8-27b-fp8",
+  "name": "vllm-$ONE_NODE_QWEN_ID",
   "labels": {
     "io.pulsar.gb10.managed": "true",
     "io.pulsar.gb10.conf": "other-conf",
@@ -775,7 +780,7 @@ import json, os
 path = os.environ["FAKE_DOCKER_STATE"]
 json.dump([{
   "id": os.environ["ID_ORIG"],
-  "name": "vllm-qwen3.8-27b-fp8",
+  "name": "vllm-$ONE_NODE_QWEN_ID",
   "labels": {
     "io.pulsar.gb10.managed": "true",
     "io.pulsar.gb10.conf": "other-conf",
@@ -799,10 +804,10 @@ import json, os
 path = os.environ["FAKE_DOCKER_STATE"]
 json.dump([{
   "id": os.environ["ID_VERIFY"],
-  "name": "vllm-cluster-qwen3.8-27b-fp8-2node",
+  "name": "vllm-cluster-$TWO_NODE_ID",
   "labels": {
     "io.pulsar.gb10.managed": "true",
-    "io.pulsar.gb10.conf": "qwen3.8-27b-fp8-2node",
+    "io.pulsar.gb10.conf": "$TWO_NODE_ID",
     "io.pulsar.gb10.rank": "0",
   },
 }], open(path, "w", encoding="utf-8"))
@@ -821,21 +826,21 @@ export FAKE_MUTATE_COUNTER="$STATE_DIR/mutate.counter"
 export FAKE_MUTATE_MODE=reuse
 : >"$STATE_DIR/rm.log"
 assert_rc 0 "name-reuse: original id gone is non-destructive success" \
-  remove_stack_owned_container_local "vllm-qwen3.8-27b-fp8" "qwen3.8-27b-fp8" "single"
+  remove_stack_owned_container_local "vllm-$ONE_NODE_QWEN_ID" "$ONE_NODE_QWEN_ID" "single"
 assert_true "name-reuse: replacement container left intact" \
   container_ownership_inspect_local "$ID_REUSE_NAME"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" \
   "name-reuse: no docker rm against replacement"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_ORIG")"
 echo 0 >"$STATE_DIR/mutate.counter"
 export FAKE_MUTATE_MODE=relabel
 : >"$STATE_DIR/rm.log"
 assert_rc 2 "refuse when labels change on same id before remove" \
-  remove_stack_owned_container_local "vllm-qwen3.8-27b-fp8" "qwen3.8-27b-fp8" "single"
+  remove_stack_owned_container_local "vllm-$ONE_NODE_QWEN_ID" "$ONE_NODE_QWEN_ID" "single"
 assert_true "relabel race: container still present" \
   container_ownership_inspect_local "$ID_ORIG"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "relabel race: no rm"
@@ -848,11 +853,11 @@ unset FAKE_MUTATE_MODE
 # ---------------------------------------------------------------------------
 echo "=== safe stale managed removal ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_STALE")"
 assert_rc 0 "stale managed removable before relaunch" \
-  remove_stack_owned_container_local "vllm-qwen3.8-27b-fp8" "qwen3.8-27b-fp8" "single"
+  remove_stack_owned_container_local "vllm-$ONE_NODE_QWEN_ID" "$ONE_NODE_QWEN_ID" "single"
 assert_false "stale gone" container_ownership_inspect_local "$ID_STALE"
 
 # ---------------------------------------------------------------------------
@@ -860,15 +865,15 @@ assert_false "stale gone" container_ownership_inspect_local "$ID_STALE"
 # ---------------------------------------------------------------------------
 echo "=== two-node partial/ambiguous ownership ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_HEAD")"
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{}}
 ]))' "$ID_WORKER_LEG")"
 : >"$STATE_DIR/rm.log"
 assert_rc 2 "refuse ambiguous cluster pair (worker unowned)" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 assert_true "head still present after ambiguous refuse" \
   container_ownership_inspect_local "$ID_HEAD"
 assert_true "worker still present after ambiguous refuse" \
@@ -876,37 +881,37 @@ assert_true "worker still present after ambiguous refuse" \
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "no partial rm on ambiguous pair"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_HEAD_ONLY")"
 seed_state "$WORKER_STATE" '[]'
 assert_rc 0 "pair with only managed head present is removable" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 assert_false "head-only removed" container_ownership_inspect_local "$ID_HEAD_ONLY"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_H")"
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"1"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_W")"
 assert_rc 0 "managed pair both ranks removed" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 assert_false "pair head gone" container_ownership_inspect_local "$ID_H"
 assert_false "pair worker gone" container_ownership_inspect_remote "worker-host" "$ID_W"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{}}
 ]))' "$ID_HEAD_BAD")"
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"1"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_WORKER_OK")"
 : >"$STATE_DIR/rm.log"
 assert_rc 2 "refuse when head unowned even if worker managed" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 assert_true "worker preserved on head-unowned refuse" \
   container_ownership_inspect_remote "worker-host" "$ID_WORKER_OK"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "no partial rm when head unowned"
@@ -916,14 +921,14 @@ assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "no partial rm when he
 # ---------------------------------------------------------------------------
 echo "=== remote error vs absence ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_HEAD")"
 seed_state "$WORKER_STATE" '[]'
 : >"$STATE_DIR/rm.log"
 export FAKE_SSH_STATUS=down
 assert_rc 1 "SSH unreachable is operational error for pair" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 assert_true "SSH down: head not removed" container_ownership_inspect_local "$ID_HEAD"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "SSH down: no rm"
 export FAKE_SSH_STATUS=ok
@@ -931,15 +936,15 @@ export FAKE_SSH_STATUS=ok
 echo down >"$STATE_DIR/worker.docker_status"
 : >"$STATE_DIR/rm.log"
 assert_rc 1 "remote docker down is operational error for pair" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 assert_true "docker down: head not removed" container_ownership_inspect_local "$ID_HEAD"
 assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "docker down: no rm"
 echo ok >"$STATE_DIR/worker.docker_status"
 
 # --all must not remove head when worker unreachable
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_A")"
 export FAKE_SSH_STATUS=down
 : >"$STATE_DIR/rm.log"
@@ -964,7 +969,7 @@ echo ok >"$STATE_DIR/worker.docker_status"
 seed_state "$HEAD_STATE" '[]'
 seed_state "$WORKER_STATE" '[]'
 assert_rc 0 "pair both absent is success" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 assert_rc 3 "inspect remote absent returns 3" \
   container_ownership_inspect_remote "worker-host" "no-such-container"
 
@@ -976,12 +981,12 @@ export PULSAR_DOCKER="$SHIM_DIR/docker-mutate"
 export FAKE_MUTATE_MODE=verify_fail
 echo 0 >"$STATE_DIR/mutate.counter"
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_VERIFY")"
 seed_state "$WORKER_STATE" '[]'
 assert_rc 1 "verify failure after head rm is operational error" \
-  remove_stack_owned_cluster_pair "qwen3.8-27b-fp8-2node" "vllm-cluster-qwen3.8-27b-fp8-2node" "worker-host"
+  remove_stack_owned_cluster_pair "$TWO_NODE_ID" "vllm-cluster-$TWO_NODE_ID" "worker-host"
 export PULSAR_DOCKER="$SHIM_DIR/docker"
 unset FAKE_MUTATE_MODE
 
@@ -1011,8 +1016,8 @@ assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" \
 # ---------------------------------------------------------------------------
 echo "=== down.sh script paths ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_DOWN")"
 (
   export PULSAR_DOCKER="$SHIM_DIR/docker"
@@ -1026,6 +1031,9 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   # Isolate from repo .env and any real confirmed manifest: use an env -i
   # minimal path with an explicit standalone topology file.
   env -i \
+    PULSAR_RELEASES_ROOT="$PULSAR_RELEASES_ROOT" \
+    PULSAR_OVERLAY_PATH="$PULSAR_OVERLAY_PATH" \
+    VLLM_IMAGE_MAINLINE="$VLLM_IMAGE_MAINLINE" \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     REPO_DIR="$REPO_DIR" \
@@ -1038,18 +1046,21 @@ seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
     FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
     FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
     FAKE_SSH_STATUS=ok \
-    bash "$REPO_DIR/scripts/down.sh" qwen3.8-27b-fp8
+    bash "$REPO_DIR/scripts/down.sh" "$ONE_NODE_QWEN_ID"
 )
 assert_false "down.sh removed managed named" container_ownership_inspect_local "$ID_DOWN"
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}},
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}},
   {"id":sys.argv[2],"name":"vllm-foreign","labels":{}}
 ]))' "$ID_ALL1" "$ID_ALL_LEG")"
 seed_state "$WORKER_STATE" '[]'
 (
   env -i \
+    PULSAR_RELEASES_ROOT="$PULSAR_RELEASES_ROOT" \
+    PULSAR_OVERLAY_PATH="$PULSAR_OVERLAY_PATH" \
+    VLLM_IMAGE_MAINLINE="$VLLM_IMAGE_MAINLINE" \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
@@ -1071,11 +1082,14 @@ assert_true "down --all left legacy" container_ownership_inspect_local "$ID_ALL_
 # locally would strand live remote ranks nobody can probe.
 ID_ORPHAN=$(hex64 orphan-rank0)
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_ORPHAN")"
 if (
   env -i \
+    PULSAR_RELEASES_ROOT="$PULSAR_RELEASES_ROOT" \
+    PULSAR_OVERLAY_PATH="$PULSAR_OVERLAY_PATH" \
+    VLLM_IMAGE_MAINLINE="$VLLM_IMAGE_MAINLINE" \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
@@ -1100,10 +1114,13 @@ assert_true "unconfirmed cluster rank survives down --all" \
 seed_state "$HEAD_STATE" '[]'
 
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{}}
 ]))' "$ID_REFUSE")"
 if (
   env -i \
+    PULSAR_RELEASES_ROOT="$PULSAR_RELEASES_ROOT" \
+    PULSAR_OVERLAY_PATH="$PULSAR_OVERLAY_PATH" \
+    VLLM_IMAGE_MAINLINE="$VLLM_IMAGE_MAINLINE" \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
@@ -1115,7 +1132,7 @@ if (
     FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
     FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
     FAKE_SSH_STATUS=ok \
-    bash "$REPO_DIR/scripts/down.sh" qwen3.8-27b-fp8
+    bash "$REPO_DIR/scripts/down.sh" "$ONE_NODE_QWEN_ID"
 ) 2>/dev/null; then
   echo "FAIL down.sh should refuse legacy named stop" >&2
   fail=$((fail + 1))
@@ -1128,11 +1145,14 @@ assert_true "legacy survives refused down.sh" container_ownership_inspect_local 
 # down --all with a confirmed two-node manifest but SSH down must fail
 # without head rm
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_A")"
 if (
   env -i \
+    PULSAR_RELEASES_ROOT="$PULSAR_RELEASES_ROOT" \
+    PULSAR_OVERLAY_PATH="$PULSAR_OVERLAY_PATH" \
+    VLLM_IMAGE_MAINLINE="$VLLM_IMAGE_MAINLINE" \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
@@ -1199,8 +1219,8 @@ echo "=== mixed operational error + refusal sticky rc ==="
 ID_OP=$(hex64 op-err)
 ID_REF=$(hex64 refuse-sticky)
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}},
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}},
   {"id":sys.argv[2],"name":"vllm-unknown","labels":{
     "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"not-a-real-conf","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_OP" "$ID_REF")"
@@ -1232,8 +1252,8 @@ unset ID_OP_FAIL
 # ---------------------------------------------------------------------------
 echo "=== remote docker ps failure ==="
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-cluster-qwen3.8-27b-fp8-2node","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"1"}}
+  {"id":sys.argv[1],"name":"vllm-cluster-'"$TWO_NODE_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_W")"
 export FAKE_DOCKER_PS_FAIL=1
 assert_rc 1 "remote list fails when docker ps fails after info ok" \
@@ -1250,12 +1270,15 @@ assert_true "ps-fail: worker candidate left intact" \
 # ---------------------------------------------------------------------------
 echo "=== stop-cluster named profile gates ==="
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
-  {"id":sys.argv[1],"name":"vllm-qwen3.8-27b-fp8","labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8","io.pulsar.gb10.rank":"single"}}
+  {"id":sys.argv[1],"name":"vllm-'"$ONE_NODE_QWEN_ID"'","labels":{
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$ONE_NODE_QWEN_ID"'","io.pulsar.gb10.rank":"single"}}
 ]))' "$ID_A")"
 : >"$STATE_DIR/rm.log"
 if (
   env -i \
+    PULSAR_RELEASES_ROOT="$PULSAR_RELEASES_ROOT" \
+    PULSAR_OVERLAY_PATH="$PULSAR_OVERLAY_PATH" \
+    VLLM_IMAGE_MAINLINE="$VLLM_IMAGE_MAINLINE" \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
@@ -1280,6 +1303,9 @@ assert_eq "$(wc -l <"$STATE_DIR/rm.log" | tr -d ' ')" "0" "unknown conf: no rm"
 : >"$STATE_DIR/rm.log"
 if (
   env -i \
+    PULSAR_RELEASES_ROOT="$PULSAR_RELEASES_ROOT" \
+    PULSAR_OVERLAY_PATH="$PULSAR_OVERLAY_PATH" \
+    VLLM_IMAGE_MAINLINE="$VLLM_IMAGE_MAINLINE" \
     PATH="$SHIM_DIR:/usr/bin:/bin" \
     HOME="$HOME" \
     CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
@@ -1291,7 +1317,7 @@ if (
     FAKE_DOCKER_STATUS_FILE="$STATE_DIR/head.docker_status" \
     FAKE_WORKER_DOCKER_STATUS="$STATE_DIR/worker.docker_status" \
     FAKE_SSH_STATUS=ok \
-    bash "$REPO_DIR/cluster/stop-cluster.sh" qwen3.8-27b-fp8
+    bash "$REPO_DIR/cluster/stop-cluster.sh" "$ONE_NODE_QWEN_ID"
 ) 2>/dev/null; then
   echo "FAIL stop-cluster single-node conf should fail" >&2
   fail=$((fail + 1))
@@ -1307,17 +1333,17 @@ assert_true "single-node conf: head container left intact" \
 # 15) report_untracked_launch_container message + optional short id
 # ---------------------------------------------------------------------------
 echo "=== untracked launch report (read-only) ==="
-cname="vllm-cluster-qwen3.8-27b-fp8-2node"
+cname="vllm-cluster-$TWO_NODE_ID"
 seed_state "$HEAD_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":sys.argv[2],"labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"0"}}
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"0"}}
 ]))' "$ID_H" "$cname")"
 : >"$STATE_DIR/rm.log"
-msg=$(report_untracked_launch_container head "qwen3.8-27b-fp8-2node" 0 "$cname" 2>&1) || true
+msg=$(report_untracked_launch_container head "$TWO_NODE_ID" 0 "$cname" 2>&1) || true
 assert_true "untracked report mentions inventory.sh" \
   bash -c "printf '%s' $(printf %q "$msg") | grep -q 'scripts/inventory.sh'"
 assert_true "untracked report mentions down.sh <model>" \
-  bash -c "printf '%s' $(printf %q "$msg") | grep -q 'scripts/down.sh qwen3.8-27b-fp8-2node'"
+  bash -c "printf '%s' $(printf %q "$msg") | grep -q "scripts/down.sh $TWO_NODE_ID""
 assert_true "untracked report says left untouched" \
   bash -c "printf '%s' $(printf %q "$msg") | grep -qi 'left untouched'"
 assert_true "untracked report includes short id when proven" \
@@ -1329,9 +1355,9 @@ assert_true "untracked report left container intact" \
 # Worker path with proven labels
 seed_state "$WORKER_STATE" "$(python3 -c 'import json,sys; print(json.dumps([
   {"id":sys.argv[1],"name":sys.argv[2],"labels":{
-    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"qwen3.8-27b-fp8-2node","io.pulsar.gb10.rank":"1"}}
+    "io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"'"$TWO_NODE_ID"'","io.pulsar.gb10.rank":"1"}}
 ]))' "$ID_W" "$cname")"
-msg=$(report_untracked_launch_container worker "qwen3.8-27b-fp8-2node" 1 "$cname" "worker-host" 2>&1) || true
+msg=$(report_untracked_launch_container worker "$TWO_NODE_ID" 1 "$cname" "worker-host" 2>&1) || true
 assert_true "worker untracked report includes short id" \
   bash -c "printf '%s' $(printf %q "$msg") | grep -q 'id=${ID_W:0:12}'"
 assert_true "worker untracked container left intact" \

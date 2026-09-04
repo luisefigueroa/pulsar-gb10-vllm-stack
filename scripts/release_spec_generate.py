@@ -171,7 +171,7 @@ def conf_assignment_names(conf_path: pathlib.Path) -> set[str]:
 def expected_and_lossy_gaps(
     *,
     profile: str,
-    repo_root: pathlib.Path | None,
+    draft_path: pathlib.Path | None,
 ) -> list[dict[str, str]]:
     gaps: list[dict[str, str]] = []
     for section, reason in EXPECTED_EMPTY_SECTIONS:
@@ -195,8 +195,8 @@ def expected_and_lossy_gaps(
             )
         )
     assigned: set[str] = set()
-    if repo_root is not None:
-        assigned = conf_assignment_names(repo_root / "models" / f"{profile}.conf")
+    if draft_path is not None:
+        assigned = conf_assignment_names(draft_path)
     for field, reason in LOSSY_CAPACITY_FIELDS + LOSSY_TOPOLOGY_FIELDS:
         if field in assigned:
             gaps.append(
@@ -298,10 +298,17 @@ def build_spec_from_profile(
     spec_decode: bool,
     receipt_path: str | pathlib.Path | None,
     repo_root: str | pathlib.Path | None = None,
+    draft_path: str | pathlib.Path | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Return ``(spec, gap_report)``. Spec is None when generation is blocked."""
-    root = pathlib.Path(repo_root) if repo_root is not None else None
-    gaps = expected_and_lossy_gaps(profile=profile, repo_root=root)
+    """Return ``(spec, gap_report)``. Spec is None when generation is blocked.
+
+    ``draft_path`` is the conf-format draft the profile fields came from; its
+    assigned capacity fields are reported as lossy gaps. ``repo_root`` is kept
+    for callers that pass it and is not read here.
+    """
+    del repo_root
+    draft = pathlib.Path(draft_path) if draft_path is not None else None
+    gaps = expected_and_lossy_gaps(profile=profile, draft_path=draft)
     blocking: list[dict[str, str]] = []
 
     receipt_model, revision, files, receipt_blocking = _load_receipt_identity(
@@ -413,6 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--spec-decode", action="store_true")
     parser.add_argument("--out")
     parser.add_argument("--gap-report")
+    parser.add_argument("--draft", default="", help="conf-format draft the profile fields came from")
     return parser
 
 
@@ -478,6 +486,7 @@ def cmd_from_profile(args: argparse.Namespace) -> int:
         spec_decode=bool(args.spec_decode),
         receipt_path=args.receipt,
         repo_root=args.repo_root,
+        draft_path=args.draft or None,
     )
     if existing_out:
         report["generated"] = False

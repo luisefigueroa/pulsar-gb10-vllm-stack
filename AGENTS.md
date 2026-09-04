@@ -11,7 +11,7 @@ flowchart LR
   operator["Operator"] --> surfaces["Operator surfaces<br/>pulsar · wizard.sh · scripts/home.sh"]
   surfaces --> lifecycle["Lifecycle control<br/>scripts/up.sh · down.sh · status.sh"]
 
-  profiles["Model policy<br/>models/*.conf · reviewed release IDs"] --> lifecycle
+  profiles["Model policy<br/>releases/*.json specs · deployment overlay"] --> lifecycle
   topology["Topology and lifecycle scripts<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
   artifacts["Launch gates<br/>image · memory · weights · preflight"] --> lifecycle
 
@@ -40,8 +40,8 @@ used at prepare remain distinct data planes even when they involve the same mach
 
 - `scripts/selftest.sh` runs lifecycle-script tests and Python syntax checks without requiring Docker.
 - `scripts/doctor.sh` verifies GPU, Docker, port, cache, and optional worker readiness on GB10 hardware.
-- `scripts/list-models.sh --serving` lists every serving-purpose profile and the reviewed status the catalog shows (start does not use that status as permission). `--legacy-tested` filters the historical profile `STATUS=tested*` recommendation class; it does not mean ADR 0004 `Validated`. `--validated` is removed (ADR 0008) and fails without fallback; use `--legacy-tested`.
-- `scripts/up.sh nemotron-3-nano-30b-nvfp4 --dry-run` exercises launch checks without starting a server.
+- `scripts/list-models.sh --serving` lists every released spec (a profile is a spec id) with the display-only spec review the catalog shows (start does not use that review as permission); `scripts/release.sh list` is the same view without catalog projection.
+- `scripts/up.sh <spec_id> --dry-run` exercises launch checks without starting a server (`scripts/release.sh list` prints the released spec ids).
 - `validate/run-gates.sh <served-name> --tag <label>` runs determinism captures, throughput benchmarks, and optional baseline/needle gates against an already-running server.
 - `docker build -t vllm-gb10:v0.26.0 .` builds the optional metadata overlay; see `docs/BUILD.md` before changing image pins.
 
@@ -349,8 +349,9 @@ retired expected-identity format, catalog records, and working-copy records
 are different formats that happen to number independently.
 
 **Never say “validated” or “tested” without saying which ladder:**
-profile `STATUS=tested` (old recommendation class), an ADR 0004 decision, or
-launch `identity_status`. `FAMILY_RECOMMENDED` / `RECOMMENDED_SPEC` are wizard
+the spec's ADR 0017 `review.status` (display-only), an ADR 0004 decision, or
+launch `identity_status`. The conf profile `STATUS=tested` ladder is retired
+(Stage 4) and appears only in historical evidence. `FAMILY_RECOMMENDED` / `RECOMMENDED_SPEC` are wizard
 sort flags, not a third status.
 
 **Never shorten Model Serving Release to “the release”** next to staging
@@ -536,9 +537,13 @@ the approved plan.
   pinned GSM8K subset, 60-minute soak, performance snapshot). The six closed
   measurements, the filled measured spec, and the run record live under
   `results/baseline-v1/<spec_id>/`; `evidence[]` names each file's digest
-  and the lab commit that produced it. `validate/baseline-v1.sh` orchestrates
-  a run against an already-running server and refuses a container whose
-  launch contract or image differs from the spec. The ADR 0004 rules in this
+  and the lab commit that produced it. `validate/baseline-v1.sh <spec_id>
+  --spec FILE` orchestrates a run against an already-running server and
+  refuses a container whose launch contract or image differs from the spec.
+  Before promotion the measured file is the startable profile: export
+  `PULSAR_SPEC_FILE=<measured-spec>` and start its spec id with
+  `./pulsar start <spec_id>` (the runner exports it for its own children);
+  a conf name is not a profile (Stage 4). The ADR 0004 rules in this
   file about attempt composition, `observe-resources` summaries, capture
   gaps, and hash-binding attempted criteria govern ADR 0004 objects only;
   they are not requirements on a baseline-v1 run. `stable` is proposed only
@@ -625,8 +630,8 @@ the approved plan.
   the catalog display never changes recommendation order or serving permission.
   Absence of that profile field or of a reviewed decision is neutral and is
   not inferred as `Untested`; multiple contract lineages or unsuperseded heads
-  stay ambiguous. Current profile `STATUS=tested*` and
-  `list-models.sh --legacy-tested` remain separate old recommendation labels.
+  stay ambiguous. The conf profile `STATUS=tested*` label and
+  `list-models.sh --legacy-tested` are retired (ADR 0017 Stage 4).
   Lab expected-identity files and the archived combined identity format are
   not a live product (ADR 0012). `--validated` and `--reviewed-identity` are
   removed.
@@ -675,8 +680,9 @@ For catalog, download, prepare, launch, pin, purge, or model-validation work,
 read `docs/MODEL_LIBRARY_DESIGN.md` and the applicable record under
 `docs/decisions/` before changing behavior. Authority roles
 (2026-08-22): ADRs hold decisions; `MODEL_LIBRARY_DESIGN.md` holds target
-architecture; `OPERATIONS.md` holds operator procedures; `MODELS.md` plus
-`models/*.conf` hold the live catalog (drift-tested); `VALIDATION.md` and
+architecture; `OPERATIONS.md` holds operator procedures; `MODELS.md` (its support-matrix
+table generated from `releases/`, drift-tested) holds the live catalog;
+`VALIDATION.md` and
 `results/` hold evidence. Do not reintroduce a hand-maintained
 implementation-spec snapshot. Current code or a
 new result does not silently override an accepted architectural decision.
@@ -691,8 +697,8 @@ this work; the skill is procedural and does not outrank these sources.
 
 - In the **current repository data**, live serving identity is the receipt plus
   occupancy path plus hashed local views (ADR 0012). Lab expected-identity
-  files are not a live product. Profile `STATUS=tested` is the old
-  recommendation class; it is not an ADR 0004 decision. Under ADR 0004, the
+  files are not a live product. The retired profile `STATUS=tested` label was
+  an old recommendation class; it is not an ADR 0004 decision. Under ADR 0004, the
   implemented separate descriptor owns the Model Serving Release ID, the
   implemented Validation Contract freezes its criteria, and the implemented
   evidence layer validates immutable run, evidence-bundle, and decision

@@ -16,7 +16,7 @@ BASE_ENV=(
   "MOCK_HF_LOG=$STATE/hf.log"
 )
 
-if env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3.8-27b-fp8 --json \
+if env "${BASE_ENV[@]}" "$LIBRARY" home add --draft "$REPO_DIR/scripts/testdata/drafts/qwen3.8-27b-fp8.conf" --json \
     >"$STATE/json-no-revision.out" 2>"$STATE/json-no-revision.err"; then
   echo "home add without --revision unexpectedly succeeded" >&2
   exit 1
@@ -30,6 +30,6 @@ if env "${BASE_ENV[@]}" "$LIBRARY" home add qwen3-1.7b --revision main --json \
   echo "home add of retired qwen3-1.7b unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q -- 'no such config' "$STATE/missing-conf.err"
+grep -q -- 'no released spec named' "$STATE/missing-conf.err"
 echo "model-library acquisition CLI (ADR 0012): PASS"
 exit 0

@@ -62,10 +62,10 @@ runtime-access recipe mismatch remain visible without blocking launch.
 
 No current profile sets `MODEL_SERVING_RELEASE_ID`; the catalog shows
 `No release binding`.
-Profile `STATUS=tested*` remains a separate
-old evidence/recommendation label; it still determines recommendation
-order. Filter that class with `--legacy-tested`. `--validated` is removed
-(ADR 0008) and fails without fallback with that replacement. Neither status field grants
+A profile is a released spec (ADR 0017 Stage 4); its `review.status` is
+display-only and orders wizard choices (`stable`/`validated` first). The
+conf profile `STATUS` label and `--legacy-tested` are retired; `--validated`
+was removed (ADR 0008) and fails without fallback. No status field grants
 or denies serving. Archived lab expected-identity files are not automatically
 `Validated`. There is no separate launch-trust-mode to choose
 ([ADR 0009](./decisions/0009-no-launch-trust-mode-axis.md)): the labels
@@ -612,7 +612,7 @@ exits 2. They are not unknown-argument failures.
 |---|---|
 | `--force` on `up.sh`, `serve.sh`, `start-cluster.sh` | Drop the flag. Status labels never block serving. |
 | `--allow-unvalidated` | Drop the flag. Expected-seal is retired (ADR 0012). |
-| `list-models.sh --validated` | `--legacy-tested` (historical `STATUS=tested*`). Not ADR 0004 `Validated`. |
+| `list-models.sh --validated` / `--legacy-tested` | Drop the flag. Spec review is display-only (`scripts/release.sh list`). Not ADR 0004 `Validated`. |
 | `model-library.sh catalog list --validated` | Drop the flag. `--reviewed-identity` is retired (ADR 0012). Not ADR 0004 `Validated`. |
 | `model-library.sh activate` | `prepare` |
 | `model-library.sh cold stage-only` | Use receipt-backed `home add --revision`, `home relocate`, or `home restore`, then `prepare`. Existing stage-only hot state is cleanup-only. |
@@ -1168,23 +1168,23 @@ scripts/topology-ssh-trust.sh enroll
 scripts/topology-ssh-trust.sh check
 
 # 2) Prove the model-library RoCE map for the profile
-scripts/model-library.sh probe-ssh-roce qwen3.8-27b-fp8-2node
+scripts/model-library.sh probe-ssh-roce <spec_id>
 
 # 3) A/B: control SSH copy vs SSH-over-RoCE copy (purges hot between).
 #    Stay for the run; no sudo required for pure copy paths. Admission uses the
 #    same all-rank filesystem reserve as normal preparation.
 scripts/model-library.sh budget
-scripts/model-library.sh bench-ssh-roce qwen3.8-27b-fp8-2node --yes \
+scripts/model-library.sh bench-ssh-roce <spec_id> --yes \
   --tag "ssh-roce-$(date -u +%Y%m%dT%H%M%SZ)"
 
 # Parallel bulk copy for large, many-blob models (experimental). Repeat both
 # orders before comparing paths; 150 ms staggering avoids an sshd admission
 # burst at 16 streams.
 PULSAR_COPY_STREAM_STAGGER_MS=150 \
-  scripts/model-library.sh bench-ssh-roce qwen3.8-27b-fp8-2node --yes \
+  scripts/model-library.sh bench-ssh-roce <spec_id> --yes \
     --copy-streams 16 --order roce-first --tag parallel-roce-first
 PULSAR_COPY_STREAM_STAGGER_MS=150 \
-  scripts/model-library.sh bench-ssh-roce qwen3.8-27b-fp8-2node --yes \
+  scripts/model-library.sh bench-ssh-roce <spec_id> --yes \
     --copy-streams 16 --order control-first --tag parallel-control-first
 
 # Manual one-shot over RoCE TCP with the enrolled alias/key identity:

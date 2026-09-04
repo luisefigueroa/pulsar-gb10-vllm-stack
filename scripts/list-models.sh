@@ -50,7 +50,9 @@ for spec_file in "$releases_root"/*.json; do
     SCRIPT_NAME=list-models
     # shellcheck disable=SC1091
     . "$REPO_DIR/scripts/lib.sh"
-    if ! load_conf "$name" 2>"$tmp.err"; then
+    # Probe in a nested subshell: the loader's die would otherwise exit this
+    # one before the unloadable row is written.
+    if ! (load_conf "$name") 2>"$tmp.err"; then
       reason=$(tr -d '\r' <"$tmp.err" | tail -1 | sed 's/^\[[^]]*\] ERROR: //')
       rm -f "$tmp.err"
       python3 - "$name" "$spec_file" "$reason" <<'PY' >>"$tmp.unloadable"
@@ -66,6 +68,7 @@ PY
       exit 0
     fi
     rm -f "$tmp.err"
+    load_conf "$name"
     case "$SCOPE" in
       serving) [ "$PROFILE_PURPOSE" = serving ] || exit 0 ;;
       diagnostic) [ "$PROFILE_PURPOSE" = diagnostic ] || exit 0 ;;
@@ -203,21 +206,21 @@ if not rows and not unloadable:
     term.emit("no released specs under releases/ (scripts/release.sh list)")
 for r in rows:
     term.emit(r["id"])
-    term.field("Model", r["model_id"], indent=2, label_width=10)
+    term.field("Model", r["model_id"], indent=2, label_width=12)
     for value in human_spec_review_values(r["release_spec"]):
-        term.field("Spec review", value, indent=2, label_width=10)
-    term.field("Serves", r["served_name"], indent=2, label_width=10)
+        term.field("Spec review", value, indent=2, label_width=12)
+    term.field("Serves", r["served_name"], indent=2, label_width=12)
     term.field(
         "Recipe",
         f"{r['nodes']} node(s) · source={r['source']} · image={str(r['image_digest'] or '?')[7:19]} · spec={r['spec']}",
         indent=2,
-        label_width=10,
+        label_width=12,
     )
     term.blank()
 for u in unloadable:
     term.emit(u["id"])
-    term.field("Model", u["model_id"], indent=2, label_width=10)
-    term.field("Unloadable", u["reason"], indent=2, label_width=10)
+    term.field("Model", u["model_id"], indent=2, label_width=12)
+    term.field("Unloadable", u["reason"], indent=2, label_width=12)
     term.blank()
 term.emit("Columns:")
 term.field("ID", "spec id; the profile name for scripts/up.sh <ID>, scripts/down.sh, scripts/status.sh", indent=2, label_width=16)

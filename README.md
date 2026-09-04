@@ -27,7 +27,7 @@ flowchart LR
   operator["Operator"] --> surfaces["Operator surfaces<br/>pulsar · wizard.sh · scripts/home.sh"]
   surfaces --> lifecycle["Lifecycle control<br/>scripts/up.sh · down.sh · status.sh"]
 
-  profiles["Model policy<br/>models/*.conf · reviewed release IDs"] --> lifecycle
+  profiles["Model policy<br/>releases/*.json specs · deployment overlay"] --> lifecycle
   topology["Topology and lifecycle scripts<br/>scripts/lib.sh · detect-fabric.sh · doctor.sh"] --> lifecycle
   artifacts["Launch gates<br/>image · memory · weights · preflight"] --> lifecycle
 
@@ -108,23 +108,24 @@ scripts/doctor.sh
 # and a single machine is a valid one-node topology (ADR 0006).
 scripts/detect-fabric.sh --write-topology
 
-# List every serving profile with the reviewed status the catalog shows
-# (start does not use that status as permission) plus profile STATUS labels
+# A profile is a released spec id (ADR 0017): list them with the display-only
+# spec review the catalog shows (start does not use that review as permission)
+scripts/release.sh list
 scripts/list-models.sh --serving
 
-# First serving model: acquire one durable home, prepare exact runtime
-# views, then serve. Requires modern hf on the selected rank. Inspect a
-# read-only Hugging Face plan (recorded file list), then confirm the exact
-# commit and rank that plan reported.
-scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
+# First serving model: acquire one durable home for the spec's exact model,
+# prepare exact runtime views, then serve. Requires modern hf on the selected
+# rank. Inspect a read-only Hugging Face plan (recorded file list), then
+# confirm the exact commit and rank that plan reported.
+scripts/model-library.sh home add <spec_id> \
   --revision main --plan --json
-scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 \
+scripts/model-library.sh home add <spec_id> \
   --revision <exact-commit-from-plan> \
   --node <selected-rank-from-plan> --yes
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes
-./pulsar start nemotron-3-nano-30b-nvfp4            # → scripts/up.sh
-# equivalent: scripts/up.sh nemotron-3-nano-30b-nvfp4
+scripts/model-library.sh prepare <spec_id> --yes
+./pulsar start <spec_id>                           # → scripts/up.sh
+# equivalent: scripts/up.sh <spec_id>
 # The wizard (./pulsar wizard) guides topology confirmation, readiness, and
 # preparation. Hugging Face download with --revision remains a manual CLI
 # action (not wizard home add).
@@ -193,19 +194,19 @@ curl -fsS http://127.0.0.1:8000/v1/models
 curl -fsS http://127.0.0.1:8000/v1/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"nemotron-3-nano","prompt":"2+2=","max_tokens":4,"temperature":0}'
-# conf id ≠ API id: nemotron-3-nano-30b-nvfp4 → served name nemotron-3-nano
+# spec id ≠ API id: the served name comes from .pulsar-overlay.json
 ```
 
 ```bash
-./pulsar status nemotron-3-nano-30b-nvfp4
-./pulsar stop nemotron-3-nano-30b-nvfp4
+./pulsar status <spec_id>
+./pulsar stop <spec_id>
 # equivalent: scripts/status.sh / scripts/down.sh
 ./pulsar inventory                 # read-only service + memory inventory
 
 # Explicit one-node placement (copy node_id from inventory --json):
-./pulsar start nemotron-3-nano-30b-nvfp4 --node <node-id>
-./pulsar status nemotron-3-nano-30b-nvfp4 --node <node-id>
-./pulsar stop nemotron-3-nano-30b-nvfp4 --node <node-id>
+./pulsar start <spec_id> --node <node-id>
+./pulsar status <spec_id> --node <node-id>
+./pulsar stop <spec_id> --node <node-id>
 ```
 
 Every serving profile is an exact Hugging Face `model_id@commit`; the
@@ -231,37 +232,38 @@ scripts/detect-fabric.sh --write-topology
 # Optional runtime/path/auth overrides only; topology is not stored in .env.
 cp .env.example .env
 
-# Pull/stage the digest to every node used by the profile, then acquire one
-# durable home (Hugging Face plan, then exact commit) and prepare working
-# copies on every serving rank.
-scripts/sync-image.sh qwen3.8-27b-fp8-2node --pull --yes
+# Pull/stage the digest to every node used by a two-node spec, then acquire
+# one durable home (Hugging Face plan, then exact commit) and prepare working
+# copies on every serving rank. No two-node spec is released today; the
+# commands below apply once one is.
+scripts/sync-image.sh <spec_id> --pull --yes
 scripts/topology-ssh-trust.sh enroll && scripts/topology-ssh-trust.sh check
-scripts/model-library.sh home add qwen3.8-27b-fp8-2node \
+scripts/model-library.sh home add <spec_id> \
   --revision main --plan --json
-scripts/model-library.sh home add qwen3.8-27b-fp8-2node \
+scripts/model-library.sh home add <spec_id> \
   --revision <exact-commit-from-plan> --yes
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh prepare qwen3.8-27b-fp8-2node \
+scripts/model-library.sh prepare <spec_id> \
   --backend copy --transport ssh-roce --copy-streams 8 --yes
 
 scripts/doctor.sh
-scripts/up.sh qwen3.8-27b-fp8-2node
-# dry-run checks only: scripts/up.sh qwen3.8-27b-fp8-2node --dry-run
+scripts/up.sh <spec_id>
+# dry-run checks only: scripts/up.sh <spec_id> --dry-run
 
-./pulsar status qwen3.8-27b-fp8-2node
-./pulsar stop qwen3.8-27b-fp8-2node
+./pulsar status <spec_id>
+./pulsar stop <spec_id>
 ```
 
-The wizard offers every exact serving profile that fits confirmed capacity,
-shows its status and profile notes, and orders old evidence-backed choices
+The wizard offers every released spec that fits confirmed capacity, shows
+its display-only spec review, and orders reviewed `stable`/`validated` specs
 first. Validation status never blocks serving. There is no separate
 launch-trust-mode to choose
 ([ADR 0009](docs/decisions/0009-no-launch-trust-mode-axis.md)). No three-node profile is
 promoted today.
 
-`--legacy-tested` filters the historical profile `STATUS=tested*` recommendation class.
-`--validated` was removed (ADR 0008); it fails without fallback and names `--legacy-tested`.
-That filter is not a Model
+The legacy profile `STATUS` label and its `--legacy-tested` filter are gone
+with the conf profiles (ADR 0017 Stage 4); `--validated` was removed earlier
+(ADR 0008) and fails without fallback. Spec review is not a Model
 Serving Release status filter under
 [ADR 0004](docs/decisions/0004-model-serving-release-validation.md), and no
 existing profile is automatically relabeled `Validated`. A **Model Serving
@@ -364,8 +366,9 @@ objects trusted or promote a claim and is not exposed through `pulsar`.
 | `./wizard.sh` | Direct wizard entry (same as `./pulsar wizard`) |
 | `./serve.sh` / `cluster/*` | Low-level launchers (still supported) |
 
-All servers speak the OpenAI API on :8000. Per-model flags live in
-`models/<name>.conf`. Current ship matrix: top of
+All servers speak the OpenAI API on :8000. Per-model flags live in the
+released spec (`releases/<spec_id>.json`; `scripts/release.sh show <spec_id>`).
+Current ship matrix: [docs/MODELS.md](docs/MODELS.md); evidence ledger:
 [docs/VALIDATION.md](docs/VALIDATION.md).
 
 ## Images: what runs, and what was patched
@@ -400,9 +403,13 @@ See [docs/IMAGE-LICENSES.md](docs/IMAGE-LICENSES.md).
   `VLLM_MARLIN_USE_ATOMIC_ADD` is **not** a cluster-wide switch — Nano/Super
   confs set it; Laguna leaves it unset (see `docs/TUNING.md`).
 
-## Models tested
+## Models tested (retired conf profiles; history)
 
-| Config | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
+Released specs and their reviews are in [docs/MODELS.md](docs/MODELS.md). The
+rows below were measured under conf profiles that Stage 4 retired; they are
+history, not a serving claim for any spec.
+
+| Retired profile | c=1 tok/s (% of roofline) | Aggregate | gsm8k strict | Needle | Soak |
 |---|---|---|---|---|---|
 | laguna-s-2.1-nvfp4 (historical; profile removed by ADR 0006) | 19.5 (79%) | 66 @ c=4 | 0.820 | 3/3 @ 261K (ledger; no `results/` needle file) | 150 min, 1873 req, 0 err |
 | nemotron-3-super-120b-nvfp4 | 16.2 (85%) | 113 @ c=32 | 0.940 | — | 20 min clean |
@@ -444,7 +451,8 @@ no leaks, no thermal throttling anywhere).
 
 | Path | What |
 |---|---|
-| `models/*.conf` | exact legacy serving profiles; `STATUS` values are earned by runs and are not ADR 0004 release decisions |
+| `releases/*.json` | released ADR 0017 specs; a profile is a spec id; `review.status` is display-only and is not an ADR 0004 release decision |
+| `scripts/testdata/drafts/*.conf` | conf-format lab drafts used only by selftests and `release-spec.sh from-draft`; nothing starts a draft |
 | `models/model-serving-releases/` | tracked ADR 0004 descriptor / Validation Contract / run / evidence-bundle / decision registry; currently empty; read-only through `scripts/model-serving-release-registry.sh` |
 | `scripts/model-serving-release-capture.sh` | local ADR 0004 evidence-capture drafts; not in the trusted registry, starts nothing |
 | `scripts/model_identity.py` | live normalized-profile checksum format and snapshot file-list constants; lab expected-identity builders are retired |
@@ -452,7 +460,7 @@ no leaks, no thermal throttling anywhere).
 | `validate/` | capture/compare (IDENTICAL / FP-EQUIVALENT / DIVERGENT verdicts), needle, bench, post-boot `warmup.py`, soak |
 | `results/` | raw evidence for every number (`results/README.md` is the map) |
 | `bench/` | Step 0 microbenchmarks (membw, NCCL sweeps) |
-| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **MODEL_SERVING_RELEASE_CAPTURE** (ADR 0004 evidence-capture candidates), **decisions/** (accepted rationale, including ADR 0004's Model Serving Release policy), RECIPES, MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
+| `docs/` | **PREREQUISITES** (bootstrap gate), HARDWARE, MODELS, **MODEL_LIBRARY_DESIGN** (canonical storage/identity/qualification doctrine), **MODEL_RELEASE** (maintainer candidate workflow), **MODEL_SERVING_RELEASE_CAPTURE** (ADR 0004 evidence-capture candidates), **decisions/** (accepted rationale, including ADR 0004's Model Serving Release policy), MULTINODE, BUILD, TUNING, VALIDATION, REVALIDATE, OPERATIONS, TROUBLESHOOTING |
 | `LICENSE` / `SECURITY.md` | Apache-2.0; deployment security notes |
 
 Confirm site-local membership with `scripts/detect-fabric.sh --write-topology`.

@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-LIVE_PROFILE_ROW = re.compile(r"^\| `([a-z0-9][a-z0-9._-]*)`")
+LIVE_PROFILE_ROW = re.compile(r"^\| `([0-9a-f]{64})`")
+GENERATED_BEGIN = "<!-- BEGIN generated: scripts/release.sh list --markdown -->"
+GENERATED_END = "<!-- END generated -->"
 FORBIDDEN_CLAIMS = (
     "fall back to reflink",
     "current working tree contains ten profiles",
@@ -47,7 +50,6 @@ ACTIVE_CURRENT_STATE = (
     REPO_ROOT / "docs" / "MODELS.md",
     REPO_ROOT / "docs" / "PREREQUISITES.md",
     REPO_ROOT / "docs" / "MULTINODE.md",
-    REPO_ROOT / "docs" / "RECIPES.md",
     REPO_ROOT / "docs" / "MODEL_LIBRARY_DESIGN.md",
 )
 
@@ -81,19 +83,28 @@ def _active_markdown() -> list[pathlib.Path]:
     )
 
 
+def _models_md_generated_block() -> str:
+    text = (REPO_ROOT / "docs" / "MODELS.md").read_text(encoding="utf-8")
+    begin = text.index(GENERATED_BEGIN) + len(GENERATED_BEGIN)
+    end = text.index(GENERATED_END)
+    return text[begin:end].strip("\n") + "\n"
+
+
 def _live_models_md_ids() -> set[str]:
     ids: set[str] = set()
-    for line in (REPO_ROOT / "docs" / "MODELS.md").read_text(encoding="utf-8").splitlines():
-        if "profile removed" in line:
-            continue
+    for line in _models_md_generated_block().splitlines():
         match = LIVE_PROFILE_ROW.match(line)
         if match:
             ids.add(match.group(1))
     return ids
 
 
-def _conf_ids() -> set[str]:
-    return {path.stem for path in (REPO_ROOT / "models").glob("*.conf")}
+def _released_ids() -> set[str]:
+    return {
+        path.stem
+        for path in (REPO_ROOT / "releases").glob("*.json")
+        if re.fullmatch(r"[0-9a-f]{64}", path.stem)
+    }
 
 
 class CurrentStateDocsTests(unittest.TestCase):
@@ -107,9 +118,9 @@ class CurrentStateDocsTests(unittest.TestCase):
             "--revision <selector> --plan --json",
             "--revision <exact-commit-from-plan>",
             "scripts/model-library.sh catalog refresh",
-            "scripts/model-library.sh prepare <profile> --yes",
-            "scripts/up.sh <profile> --dry-run",
-            "./pulsar start <profile>",
+            "scripts/model-library.sh prepare <spec_id> --yes",
+            "scripts/up.sh <spec_id> --dry-run",
+            "./pulsar start <spec_id>",
         )
         positions = [single_node.index(step) for step in required_steps]
         self.assertEqual(positions, sorted(positions))
@@ -117,9 +128,26 @@ class CurrentStateDocsTests(unittest.TestCase):
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("modern `hf`", readme)
 
-    def test_models_md_live_rows_match_conf_files(self) -> None:
-        self.assertTrue(_conf_ids(), "expected models/*.conf")
-        self.assertEqual(_live_models_md_ids(), _conf_ids())
+    def test_models_md_live_rows_match_released_specs(self) -> None:
+        self.assertTrue(_released_ids(), "expected released specs under releases/")
+        self.assertEqual(_live_models_md_ids(), _released_ids())
+
+    def test_models_md_generated_block_is_current(self) -> None:
+        generated = subprocess.run(
+            [str(REPO_ROOT / "scripts" / "release.sh"), "list", "--markdown"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        ).stdout
+        self.assertEqual(
+            _models_md_generated_block(),
+            generated,
+            "docs/MODELS.md drifted: paste `scripts/release.sh list --markdown` between its markers",
+        )
+
+    def test_profile_confs_are_retired(self) -> None:
+        self.assertEqual(list((REPO_ROOT / "models").glob("*.conf")), [])
 
     def test_durable_home_materialize_fails_closed_without_reflink_fallback(self) -> None:
         source = (REPO_ROOT / "scripts" / "model-library-materialize.sh").read_text(
@@ -136,27 +164,12 @@ class CurrentStateDocsTests(unittest.TestCase):
         self.assertIn("Gate 14", revalidate)
         self.assertNotIn("physical gate below remains pending", revalidate)
 
-    def test_reset_recipe_shells_are_unbound_and_untested(self) -> None:
-        for profile_id in RESET_RECIPE_IDS:
-            with self.subTest(profile=profile_id):
-                text = (REPO_ROOT / "models" / f"{profile_id}.conf").read_text(
-                    encoding="utf-8"
-                )
-                self.assertRegex(text, r'(?m)^STATUS="untested"$')
-                self.assertNotRegex(text, r"(?m)^MODEL_SERVING_RELEASE_ID=")
-
-    def test_reviewed_registry_is_empty_and_profiles_are_unbound(self) -> None:
+    def test_reviewed_registry_is_empty(self) -> None:
         registry = REPO_ROOT / "models" / "model-serving-releases"
         self.assertFalse(
             list(registry.rglob("*.json")),
             "reset registry must contain no reviewed objects",
         )
-        for profile in (REPO_ROOT / "models").glob("*.conf"):
-            with self.subTest(profile=profile.name):
-                self.assertNotRegex(
-                    profile.read_text(encoding="utf-8"),
-                    r"(?m)^MODEL_SERVING_RELEASE_ID=",
-                )
 
     def test_retired_model_specific_evidence_is_not_retained(self) -> None:
         retired_archive = REPO_ROOT / "docs" / "archive" / "schema-1-expected-seal"

@@ -12,10 +12,16 @@ import textwrap
 import unittest
 
 
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+import sys
+sys.path.insert(0, str(REPO_ROOT))
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 DOWN = REPO_ROOT / "scripts" / "down.sh"
-PROFILE = "qwen3.8-27b-fp8"
-CONTAINER = f"vllm-{PROFILE}"
+# Profiles are released specs: the fixture set is written per test and
+# PROFILE/CONTAINER are bound to its one-node Qwen spec in setUp.
+PROFILE = ""
+CONTAINER = ""
 
 
 class DownHotPolicyTests(unittest.TestCase):
@@ -26,6 +32,15 @@ class DownHotPolicyTests(unittest.TestCase):
         self.bin.mkdir()
         self.state = self.root / "docker.json"
         self.library_log = self.root / "library.log"
+        global PROFILE, CONTAINER
+        ids = write_fixture_set(self.root / "spec-fixture")
+        PROFILE = ids["one_node_qwen"]["spec_id"]
+        CONTAINER = f"vllm-{PROFILE}"
+        self.fixture_env = {
+            "PULSAR_RELEASES_ROOT": str(self.root / "spec-fixture" / "releases"),
+            "PULSAR_OVERLAY_PATH": str(self.root / "spec-fixture" / "overlay.json"),
+            "VLLM_IMAGE_MAINLINE": ids["image"],
+        }
         self._write_shims()
 
     def tearDown(self) -> None:
@@ -113,6 +128,7 @@ class DownHotPolicyTests(unittest.TestCase):
         target: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
+        env.update(self.fixture_env)
         env.update({
             "PULSAR_DOCKER": str(self.bin / "docker"),
             "PULSAR_MODEL_LIBRARY_CMD": str(self.bin / "model-library"),

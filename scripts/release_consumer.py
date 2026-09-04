@@ -95,7 +95,7 @@ PARALLELISM_CANONICAL = {
 
 USAGE = (
     "usage: python3 scripts/release_consumer.py list|verify|show [spec_id] "
-    "[--repo-root R] [--releases-root D] [--json]\n"
+    "[--repo-root R] [--releases-root D] [--json] [--markdown]\n"
     "       python3 scripts/release_consumer.py export-profile <spec_id> "
     "[--overlay F] [--releases-root D] [--repo-root R] [--image-repo NAME]\n"
     "       python3 scripts/release_consumer.py project --repo-root R "
@@ -1543,6 +1543,8 @@ def list_releases(
             {
                 "spec_id": spec["spec_id"],
                 "model_id": spec["identity"]["model_id"],
+                "nodes": int(spec["identity"]["geometry"]["nodes"]),
+                "image_digest": spec["identity"]["image"]["digest"],
                 "state": spec["state"],
                 "review_status": status,
                 "reviewed_at": reviewed_at,
@@ -1682,6 +1684,25 @@ def overlay_for_spec(
     }
 
 
+def load_spec_file_for_id(spec_file: str | pathlib.Path, spec_id: str) -> dict[str, Any]:
+    """A spec document (measured or released) whose spec_id is ``spec_id``.
+
+    The lab starts a measured spec for its baseline run before promotion:
+    ``PULSAR_SPEC_FILE`` names the file and the profile is its spec id.
+    """
+    digest = _require_spec_id(spec_id)
+    path = pathlib.Path(spec_file)
+    if path.is_symlink() or not path.is_file():
+        fail(f"{path}: spec file must be a regular file")
+    try:
+        spec = load_spec(path)
+    except ReleaseSpecError as exc:
+        fail(f"{path}: {exc}")
+    if spec["spec_id"] != digest:
+        fail(f"{path}: spec_id {spec['spec_id']!r} is not the requested {digest!r}")
+    return spec
+
+
 def cmd_export_profile(
     repo_root: pathlib.Path,
     spec_id: str,
@@ -1690,8 +1711,12 @@ def cmd_export_profile(
     releases_root: str | pathlib.Path | None = None,
     image_repo: str | None = None,
     active_platform_id: str | None = None,
+    spec_file: str | pathlib.Path | None = None,
 ) -> int:
-    spec = load_release(repo_root, spec_id, releases_root=releases_root)
+    if spec_file:
+        spec = load_spec_file_for_id(spec_file, spec_id)
+    else:
+        spec = load_release(repo_root, spec_id, releases_root=releases_root)
     overlay_file = (
         pathlib.Path(overlay_path)
         if overlay_path not in (None, "")
@@ -1718,15 +1743,44 @@ def _review_text(status: str | None, reviewed_at: str | None) -> str:
     return status
 
 
+def markdown_release_table(rows: list[dict[str, Any]]) -> str:
+    """The generated support-matrix block for docs/MODELS.md.
+
+    One row per released spec: the spec id is the profile name operators pass
+    to ``./pulsar start``; review is display-only (ADR 0017).
+    """
+    lines = [
+        "| Spec id (profile) | Model | Nodes | Image digest | Review |",
+        "|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            "| `{spec_id}` | {model_id} | {nodes} | `{digest}` | {review} |".format(
+                spec_id=row["spec_id"],
+                model_id=row["model_id"],
+                nodes=row["nodes"],
+                digest=str(row["image_digest"]).rsplit(":", 1)[-1][:12],
+                review=_review_text(row["review_status"], row["reviewed_at"]),
+            )
+        )
+    if len(lines) == 2:
+        lines.append("| (no released specs) | | | | |")
+    return "\n".join(lines) + "\n"
+
+
 def cmd_list(
     repo_root: pathlib.Path,
     *,
     as_json: bool,
+    as_markdown: bool = False,
     releases_root: str | pathlib.Path | None = None,
 ) -> int:
     rows = list_releases(repo_root, releases_root=releases_root)
     if as_json:
         sys.stdout.buffer.write(pretty_json_bytes({"releases": rows}))
+        return 0
+    if as_markdown:
+        sys.stdout.write(markdown_release_table(rows))
         return 0
     term = TerminalWriter()
     for index, row in enumerate(rows):
@@ -1905,6 +1959,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory that is releases/; overrides PULSAR_RELEASES_ROOT",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help="list: print the generated docs/MODELS.md support-matrix table",
+    )
+    parser.add_argument(
+        "--spec-file",
+        default="",
+        help="export-profile: read this spec document (measured or released) instead of releases/",
+    )
     parser.add_argument("--library-dir", default="")
     parser.add_argument("--catalog", default="")
     parser.add_argument("--profile", default="")
@@ -1964,6 +2028,7 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(
                 repo_root,
                 as_json=args.json,
+                as_markdown=args.markdown,
                 releases_root=args.releases_root,
             )
         if not args.spec_id:
@@ -1973,6 +2038,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo_root,
                 args.spec_id,
                 overlay_path=args.overlay or None,
+                spec_file=args.spec_file or None,
                 releases_root=args.releases_root,
                 image_repo=args.image_repo or None,
                 active_platform_id=args.platform_id or None,

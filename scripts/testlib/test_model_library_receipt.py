@@ -22,6 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts import model_library  # noqa: E402
 from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_released_variant  # noqa: E402
 
 
 class SourceAttestedExecutionContracts(unittest.TestCase):
@@ -533,15 +534,20 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
                 snapshot_revision=fixture.COMMIT,
             )
 
+    def _released_profile(self, releases: pathlib.Path) -> str:
+        """A profile is a released spec id: write one for this model and
+        point the library at that releases root for the test."""
+        releases.mkdir(parents=True, exist_ok=True)
+        os.environ["PULSAR_RELEASES_ROOT"] = str(releases)
+        self.addCleanup(os.environ.pop, "PULSAR_RELEASES_ROOT", None)
+        return write_released_variant(releases, model_id=self.model_id, revision=fixture.COMMIT)
+
     def test_prepare_enforces_exact_receipt_revision(self) -> None:
         receipt = self._receipt()
         catalog_path = self.root / "catalog.json"
         models_dir = self.root / "models"
         models_dir.mkdir()
-        (models_dir / f"{self.profile}.conf").write_text(
-            f'MODEL="{self.model_id}"\nSTATUS="untested"\nNODES=1\n',
-            encoding="utf-8",
-        )
+        profile = self._released_profile(self.root / "releases")
         hub = self.root / "hub"
         home = {
             "rank": 0,
@@ -577,7 +583,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
                     "revision": fixture.COMMIT,
                     "identity_key": f"{self.model_id}@{fixture.COMMIT}",
                     "validation": "unvalidated",
-                    "profiles": [self.profile],
+                    "profiles": [profile],
                     "profile_validation": [],
                     "homes": [
                         {
@@ -609,7 +615,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "exact 40-hex commit"):
             model_library.plan_prepare(
                 catalog_path=str(catalog_path),
-                profile=self.profile,
+                profile=profile,
                 topology_id="d" * 64,
                 hot_root=str(self.root / "hot"),
                 models_dir=models_dir,
@@ -620,7 +626,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
             )
         plan = model_library.plan_prepare(
             catalog_path=str(catalog_path),
-            profile=self.profile,
+            profile=profile,
             topology_id="d" * 64,
             hot_root=str(self.root / "hot"),
             models_dir=models_dir,
@@ -657,10 +663,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         catalog_path = self.root / "catalog-unsealed.json"
         models_dir = self.root / "models-unsealed"
         models_dir.mkdir()
-        (models_dir / f"{self.profile}.conf").write_text(
-            f'MODEL="{self.model_id}"\nSTATUS="untested"\nNODES=1\n',
-            encoding="utf-8",
-        )
+        profile = self._released_profile(self.root / "releases-unsealed")
         hub = self.root / "hub-unsealed"
         fixture.write_snapshot_hub(hub)
         inventory = model_library.inspect_snapshot_blob_identities(
@@ -692,7 +695,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
                     "revision": fixture.COMMIT,
                     "identity_key": f"{self.model_id}@{fixture.COMMIT}",
                     "validation": "unvalidated",
-                    "profiles": [self.profile],
+                    "profiles": [profile],
                     "profile_validation": [],
                     "homes": [
                         {
@@ -727,7 +730,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         ):
             model_library.plan_prepare(
                 catalog_path=str(catalog_path),
-                profile=self.profile,
+                profile=profile,
                 topology_id="d" * 64,
                 hot_root=str(self.root / "hot-unsealed"),
                 models_dir=models_dir,
@@ -740,7 +743,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         ):
             model_library.plan_prepare(
                 catalog_path=str(catalog_path),
-                profile=self.profile,
+                profile=profile,
                 topology_id="d" * 64,
                 hot_root=str(self.root / "hot-unsealed"),
                 models_dir=models_dir,
@@ -754,7 +757,7 @@ class SourceAttestedExecutionContracts(unittest.TestCase):
         ):
             model_library.plan_prepare(
                 catalog_path=str(catalog_path),
-                profile=self.profile,
+                profile=profile,
                 topology_id="d" * 64,
                 hot_root=str(self.root / "hot-unsealed"),
                 models_dir=models_dir,

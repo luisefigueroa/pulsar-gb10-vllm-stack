@@ -149,10 +149,10 @@ write_released_nano(pathlib.Path(sys.argv[2]))
 PY
 echo "OK   restored released spec after corrupt-file check"
 
+# The same plan by profile name: a profile is the spec id (ADR 0017 Stage 4).
 conf_plan=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/library/catalog.json" \
-  --profile nemotron-3-nano-30b-nvfp4 \
-  --models-dir "$REPO_DIR/models" \
+  --profile "$spec_id" \
   --spec-manifest-json "$manifest_json" \
   --topology-id "$topology_id" \
   --hot-root "$STATE/hot-conf-plan" \
@@ -163,14 +163,13 @@ conf_plan=$(python3 "$PY" plan-prepare \
   --expected-integrity-manifest-json "$manifest_json")
 conf_action=$(printf '%s' "$conf_plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
 [ "$conf_action" = copy ] || { echo "FAIL conf plan with matching spec action=$conf_action" >&2; exit 1; }
-echo "OK   conf plan-prepare with matching spec manifest passes"
+echo "OK   plan-prepare by spec-id profile with matching spec manifest passes"
 
 expect_failure 1 "differs from receipt" \
-  "conf plan-prepare with mutated spec manifest fails" \
+  "plan-prepare by spec-id profile with mutated spec manifest fails" \
   python3 "$PY" plan-prepare \
     --catalog "$STATE/library/catalog.json" \
-    --profile nemotron-3-nano-30b-nvfp4 \
-    --models-dir "$REPO_DIR/models" \
+    --profile "$spec_id" \
     --spec-manifest-json "$mismatch_json" \
     --topology-id "$topology_id" \
     --hot-root "$STATE/hot-conf-bad" \
@@ -520,26 +519,6 @@ printf '%s\n' "$all_out" | grep -q "purged hot for $spec_id (2 view(s))" \
   || { echo "FAIL purge-hot did not report both views: $all_out" >&2; exit 1; }
 echo "OK   purge-hot enumerates every view under the entry, refuses whole or removes whole"
 
-# A conf's unstamped partial view on a remote rank is listed by the cleanup
-# lookup too: the synthetic stamp is not run through the conf validator.
-conf_partial_root="$STATE/hot-conf-partial"
-conf_partial_dir="$conf_partial_root/nemotron-3-nano-30b-nvfp4-${topology_id:0:12}/partialconf01"
-mkdir -p "$conf_partial_dir/hub"
-printf 'leftover\n' >"$conf_partial_dir/hub/leftover.bin"
-conf_partial_out=$(bash -c '
-  set -euo pipefail
-  . "$1/scripts/lib.sh"
-  HOT_ROOT="$2"; PY_TOOL="$1/scripts/model_library.py"; REPO_DIR="$1"
-  CONF_SOURCE=conf CLUSTER_TOPOLOGY_ID="$3"
-  ssh_node() { shift; bash -c "$1"; }
-  eval "$(sed -n "/^hot_views_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
-  eval "$(sed -n "/^hot_instance_for_profile_on_rank() {/,/^}/p" "$1/scripts/model-library.sh")"
-  if hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 1 >/dev/null 2>&1; then echo "strict-saw-partial"; fi
-  hot_instance_for_profile_on_rank nemotron-3-nano-30b-nvfp4 1 0 0 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[\"instance_dir\"], d[\"stamp\"][\"state\"])"
-' _ "$REPO_DIR" "$conf_partial_root" "$topology_id")
-[ "$conf_partial_out" = "$conf_partial_dir partial" ] \
-  || { echo "FAIL remote conf partial view lookup: $conf_partial_out" >&2; exit 1; }
-echo "OK   a conf's unstamped partial view on a remote rank is visible to cleanup, invisible to strict lookup"
 
 # A malformed stamp is an inspection failure for cleanup, never an absence:
 # the ready-only lookup still reports no view, the cleanup lookup fails, and

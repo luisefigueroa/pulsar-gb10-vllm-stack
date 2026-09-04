@@ -177,13 +177,13 @@ if [[ "$TARGET" =~ ^[0-9a-f]{64}$ ]] \
     && [ -f "${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}/${TARGET}.json" ]; then
   target_is_released_spec=1
 fi
-if [ ! -f "$REPO_DIR/models/${TARGET}.conf" ] && [ "$target_is_released_spec" != 1 ]; then
-  # Conf file is extra geometry. A retired profile (ADR 0006) still stops
+if [ "$target_is_released_spec" != 1 ]; then
+  # A name with no released spec (a retired profile, ADR 0006) still stops
   # through the same label predicate as --all. Hot hooks need a serving
   # profile and are unavailable here.
   [ -z "$HOT_AFTER" ] \
-    || die "--retain-weights/--pin-weights/--purge-hot need a current serving profile; retired confs stop plainly" 2
-  log "conf $TARGET has no models/${TARGET}.conf; stopping by proven container labels"
+    || die "--retain-weights/--pin-weights/--purge-hot need a released spec; a retired profile stops plainly" 2
+  log "no released spec named $TARGET; stopping by proven container labels"
   rc=0
   stop_named_service_by_labels "$TARGET" "$NODE_SELECTOR" || rc=$?
   case "$rc" in

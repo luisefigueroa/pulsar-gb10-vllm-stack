@@ -28,13 +28,19 @@ from scripts import (  # noqa: E402
     model_serving_release_plan,
 )
 from scripts.testlib import model_serving_release_fixture as fixture  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 
 
-PROFILE = "qwen3.8-27b-fp8"
-PROFILE_IMAGE = (
-    "vllm/vllm-openai@sha256:"
-    "ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52"
-)
+# Profiles are released specs: a fixture release set is written once for the
+# module; PROFILE is its one-node Qwen spec and PROFILE_IMAGE its pinned image.
+_FIXTURE_ROOT = pathlib.Path(tempfile.mkdtemp(prefix="pulsar-release-plan-fixture-"))
+_FIXTURE_IDS = write_fixture_set(_FIXTURE_ROOT)
+os.environ["PULSAR_RELEASES_ROOT"] = str(_FIXTURE_ROOT / "releases")
+os.environ["PULSAR_OVERLAY_PATH"] = str(_FIXTURE_ROOT / "overlay.json")
+os.environ["VLLM_IMAGE_MAINLINE"] = _FIXTURE_IDS["image"]
+PROFILE = _FIXTURE_IDS["one_node_qwen"]["spec_id"]
+TWO_NODE_PROFILE = _FIXTURE_IDS["two_node"]["spec_id"]
+PROFILE_IMAGE = _FIXTURE_IDS["image"]
 
 
 def write_json(path: pathlib.Path, value: object) -> None:
@@ -270,11 +276,8 @@ class ModelServingReleasePlanTests(unittest.TestCase):
             self.assertEqual(list(root.iterdir()), [])
 
     def test_public_cli_builds_source_neutral_two_node_primary(self) -> None:
-        catalog_profile = "qwen3.8-27b-fp8-2node"
-        catalog_image = (
-            "vllm/vllm-openai@sha256:"
-            "1c8e60a0841b333c700488cb029d3664807249da0c071e862191b00fe34b228c"
-        )
+        catalog_profile = TWO_NODE_PROFILE
+        catalog_image = PROFILE_IMAGE
         with tempfile.TemporaryDirectory() as raw:
             root = pathlib.Path(raw)
             manifest_path = root / "manifest.json"
@@ -491,7 +494,7 @@ class ModelServingReleasePlanTests(unittest.TestCase):
                 envelope = runtime_envelope()
                 if mutation == "image":
                     envelope["runtime_image_identity"]["image"]["digest"] = (
-                        "sha256:" + "c" * 64
+                        "sha256:" + "d" * 64
                     )
                 else:
                     geometry = envelope["supported_hardware_geometry"]

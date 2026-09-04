@@ -8,6 +8,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WIZARD_FIXTURE_TOOL="$REPO_DIR/scripts/testlib/wizard_replacement_fixture.py"
 export WIZARD_FIXTURE_TOOL
 STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-wizard-library-selftest.XXXXXX")
+# Profiles are released specs: a fixture release set stands in for releases/.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+STATE="$STATE"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$STATE"' EXIT
 mkdir -p "$STATE/bin" "$STATE/reports" "$STATE/logs"
 
@@ -279,14 +284,45 @@ for name, value in (
         handle.write("\n")
 PY
 
-CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf qwen3.8-27b-fp8-2node; loaded_launch_contract_id' _ "$REPO_DIR")
+# Profiles are spec ids: rename the fixture profiles to the released fixture
+# ids. The picker's review status is display-only; the legacy row stays
+# stable so the menu order is unchanged.
+python3 - "$STATE" "$TWO_NODE_ID" "$ONE_NODE_QWEN_ID" <<'PY'
+import json
+import pathlib
+import sys
+
+root, two, one = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+files = list((root / "reports").glob("*.json")) + [
+    root / name for name in ("inventory.json", "inventory.json.running", "memory.json")
+]
+for path in files:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        continue
+    if "qwen3.8-27b-fp8" not in text:
+        continue
+    path.write_text(
+        text.replace("qwen3.8-27b-fp8-2node", two).replace("qwen3.8-27b-fp8", one),
+        encoding="utf-8",
+    )
+profiles = root / "reports" / "profiles.json"
+document = json.loads(profiles.read_text(encoding="utf-8"))
+for model in document["models"]:
+    model["status"] = "stable" if model["id"] == "legacy-serving" else "-"
+profiles.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+PY
+
+CONTRACT_ID=$(bash -c '. "$1/scripts/lib.sh"; load_conf "$2"; loaded_launch_contract_id' _ "$REPO_DIR" "$TWO_NODE_ID")
 python3 "$WIZARD_FIXTURE_TOOL" seed-running \
   --inventory "$STATE/inventory.json.running" \
   --empty-inventory "$STATE/inventory.json" \
   --topology "$STATE/topology.json" \
   --health "$STATE/reports/healthy.json" \
   --active-health "$STATE/reports/healthy-active.json" \
-  --contract-id "$CONTRACT_ID"
+  --contract-id "$CONTRACT_ID" \
+  --profile "$TWO_NODE_ID"
 cp "$STATE/inventory.json.running" "$STATE/inventory.json.running-template"
 
 cat >"$STATE/bin/health" <<'SH'
@@ -453,14 +489,14 @@ run_wizard() {
 echo "=== ready library views launch without preparation ==="
 run_wizard healthy.json 0 0 $'2\ny\n'
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
-assert_contains "$STATE/logs/output.log" 'legacy=untested' \
-  "wizard exposes a non-recommended serving profile with its display-only status"
+assert_contains "$STATE/logs/output.log" "$TWO_NODE_ID .*release=No release binding" \
+  "wizard exposes a non-recommended spec with its display-only release status"
 assert_contains "$STATE/logs/output.log" 'spec=' \
   "wizard picker shows display-only spec review"
 assert_empty "$STATE/logs/prepare.log" "ready views need no preparation"
-assert_contains "$STATE/logs/weights.log" '^qwen3.8-27b-fp8-2node --json$' \
+assert_contains "$STATE/logs/weights.log" "^$TWO_NODE_ID --json$" \
   "weight preflight carries no mode flag"
-assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
+assert_contains "$STATE/logs/up.log" "^$TWO_NODE_ID --yes$" \
   "launch carries no mode flag"
 
 echo "=== two-rank preparation and launch ==="
@@ -473,11 +509,11 @@ assert_contains "$STATE/logs/output.log" 'durable home remains required' \
 assert_contains "$STATE/logs/output.log" '^durable home[[:space:]]+node 2' \
   "long catalog labels remain separated from their values"
 assert_contains "$STATE/logs/prepare.log" \
-  '^prepare qwen3.8-27b-fp8-2node --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
+  "^prepare $TWO_NODE_ID --backend copy --transport ssh-roce --copy-streams 8 --yes$" \
   "wizard delegates the accepted eight-stream RoCE preparation policy"
-assert_contains "$STATE/logs/weights.log" '^qwen3.8-27b-fp8-2node --json$' \
+assert_contains "$STATE/logs/weights.log" "^$TWO_NODE_ID --json$" \
   "weight preflight carries no mode flag after preparation"
-assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
+assert_contains "$STATE/logs/up.log" "^$TWO_NODE_ID --yes$" \
   "launch happens only after separate confirmation"
 
 echo "=== blocked catalog is leave-only and never launches ==="
@@ -502,9 +538,9 @@ assert_contains "$STATE/logs/output.log" \
   'without an exact restore contract|exact rollback is unavailable' \
   "same-source restart stops without a restore promise (ADR 0012)"
 assert_contains "$STATE/logs/down.log" \
-  '^qwen3.8-27b-fp8-2node$' \
+  "^$TWO_NODE_ID$" \
   "same-source restart stops the previous local-files service"
-assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
+assert_contains "$STATE/logs/up.log" "^$TWO_NODE_ID --yes$" \
   "restart launches through the library with no mode flag"
 
 echo "=== failed replacement does not restore a retired match contract ==="
@@ -531,10 +567,10 @@ assert_contains "$STATE/logs/output.log" \
 assert_empty "$STATE/logs/prepare.log" \
   "ready one-node durable-home view needs no materialization"
 assert_contains "$STATE/logs/weights.log" \
-  '^qwen3.8-27b-fp8 --node node-one-identity --json$' \
+  "^$ONE_NODE_QWEN_ID --node node-one-identity --json$" \
   "one-node weight preflight targets its durable home"
 assert_contains "$STATE/logs/up.log" \
-  '^qwen3.8-27b-fp8 --node node-one-identity --yes$' \
+  "^$ONE_NODE_QWEN_ID --node node-one-identity --yes$" \
   "one-node catalog launch targets its durable home"
 
 echo "=== unsealed one-node serving routes to its durable home ==="
@@ -545,10 +581,10 @@ assert_contains "$STATE/logs/output.log" \
   'selected the durable-home node for one-rank library serving: fixture-one' \
   "unsealed one-node placement moves to the catalog home rank"
 assert_contains "$STATE/logs/weights.log" \
-  '^qwen3.8-27b-fp8 --node node-one-identity --json$' \
+  "^$ONE_NODE_QWEN_ID --node node-one-identity --json$" \
   "unsealed readiness check targets the durable home"
 assert_contains "$STATE/logs/up.log" \
-  '^qwen3.8-27b-fp8 --node node-one-identity --yes$' \
+  "^$ONE_NODE_QWEN_ID --node node-one-identity --yes$" \
   "unsealed one-node launch targets the durable home"
 grep -qv '^resolve ' "$STATE/logs/prepare.log" \
   && { echo "FAIL ready unsealed views must not prepare or mutate" >&2; exit 1; } \
@@ -559,9 +595,9 @@ run_wizard unprepared.json 0 0 $'1\ny\ny\n' \
   "$STATE/inventory.json" "$STATE/reports/unsealed-two-profiles.json"
 [ "$LAST_RC" -eq 0 ] || { cat "$STATE/logs/output.log" >&2; exit 1; }
 assert_contains "$STATE/logs/prepare.log" \
-  '^prepare qwen3.8-27b-fp8-2node --backend copy --transport ssh-roce --copy-streams 8 --yes$' \
+  "^prepare $TWO_NODE_ID --backend copy --transport ssh-roce --copy-streams 8 --yes$" \
   "unsealed multi-rank preparation uses eight-stream ssh-roce"
-assert_contains "$STATE/logs/up.log" '^qwen3.8-27b-fp8-2node --yes$' \
+assert_contains "$STATE/logs/up.log" "^$TWO_NODE_ID --yes$" \
   "unsealed multi-rank launch carries no mode flag"
 
 echo "=== leftover main-era replicated transaction can be archived ==="

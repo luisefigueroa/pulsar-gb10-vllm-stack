@@ -15,12 +15,14 @@ usage() {
 Read released ADR 0017 specs under releases/
 
 Usage:
-  scripts/release.sh list [--json]
+  scripts/release.sh list [--json|--markdown]
   scripts/release.sh verify <spec_id>
   scripts/release.sh show <spec_id>
 
   • Verifies each file on read. Only state=released files named
     <spec_id>.json are accepted.
+  • --markdown prints the generated support-matrix table pasted into
+    docs/MODELS.md between its generated-block markers (drift-tested).
   • Does not start a server, write releases/, or change catalog status.
   • Routed as ./pulsar release …
 EOF

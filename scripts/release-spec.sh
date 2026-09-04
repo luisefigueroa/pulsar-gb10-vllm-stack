@@ -117,6 +117,7 @@ load_draft "$profile"
 args=(
   --repo-root "$REPO_DIR"
   --profile "$CONF_NAME"
+  --draft "$CONF_PATH"
   --receipt "$receipt"
   --stack-version "$stack_version"
   --platform-id "$PULSAR_PLATFORM_ID"

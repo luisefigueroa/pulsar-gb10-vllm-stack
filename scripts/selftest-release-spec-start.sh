@@ -177,25 +177,23 @@ run_up() {
     "$REPO_DIR/scripts/up.sh" "$name" --dry-run --node fixture-node-0 "$@"
 }
 
-conf_plan="$STATE/conf-plan.json"
 spec_plan="$STATE/spec-plan.json"
-run_up "$conf_plan" nemotron-3-nano-30b-nvfp4 >/dev/null
 run_up "$spec_plan" "$spec_id" >/dev/null
-python3 - "$REPO_DIR" "$conf_plan" "$spec_plan" "$STATE/releases/$spec_id.json" <<'PY'
+python3 - "$spec_plan" "$STATE/releases/$spec_id.json" <<'PY'
 import json
 import pathlib
 import sys
 
-sys.path.insert(0, sys.argv[1])
-from scripts.testlib.release_spec_start_fixture import compare_start_plans
+import re
 
-conf = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
-spec_plan = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))
-spec = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
-compare_start_plans(conf, spec_plan, spec)
-print("equal")
+plan = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+spec = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+assert plan["profile"] == spec["spec_id"], plan["profile"]
+assert plan["container_name"] == f"vllm-{spec['spec_id']}", plan["container_name"]
+assert plan["model_id"] == spec["identity"]["model_id"], plan["model_id"]
+assert re.fullmatch(r"[0-9a-f]{64}", plan["launch_contract_id"]), plan["launch_contract_id"]
 PY
-echo "OK   equality proof (comparable contract, overlay, library view, ranks)"
+echo "OK   spec dry-run plan is keyed by the spec id and carries its identity"
 
 banner=$(PULSAR_LAUNCH_PLAN_OUT="$STATE/banner-plan.json" \
   PULSAR_RELEASES_ROOT="$STATE/releases" \
@@ -219,11 +217,9 @@ expect_failure 2 "identity is fixed" "--spec-decode on a spec id is refused" \
       PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
       "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --spec-decode --node fixture-node-0
 
-PULSAR_LAUNCH_PLAN_OUT="$STATE/conf-again.json" \
-  PULSAR_RELEASES_ROOT="$STATE/releases" \
-  "$REPO_DIR/scripts/up.sh" nemotron-3-nano-30b-nvfp4 --dry-run --node fixture-node-0 \
-  >/dev/null
-echo "OK   conf dry-run unchanged"
+expect_failure 1 "no released spec named" "a conf name is not a profile" \
+  env PULSAR_RELEASES_ROOT="$STATE/releases" \
+      "$REPO_DIR/scripts/up.sh" nemotron-3-nano-30b-nvfp4 --dry-run --node fixture-node-0
 
 expect_failure 1 "detect-fabric.sh --write-topology" \
   "N>1 spec requires confirmed topology" \
@@ -339,15 +335,6 @@ if printf '%s\n' "$missing_view_out" | grep -q "profile that produced this spec"
 fi
 echo "OK   missing view for a spec advertises prepare <spec_id> --yes"
 
-COLLISION_HEX=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-printf 'MODEL=collision/model\n' >"$REPO_DIR/models/${COLLISION_HEX}.conf"
-: >"$STATE/releases/${COLLISION_HEX}.json"
-expect_failure 1 "both models/${COLLISION_HEX}.conf" \
-  "conf named like a spec id alongside a release file is refused" \
-  env PULSAR_RELEASES_ROOT="$STATE/releases" \
-      PULSAR_OVERLAY_PATH="$STATE/overlay.json" \
-      "$REPO_DIR/scripts/up.sh" "$COLLISION_HEX" --dry-run
-rm -f "$REPO_DIR/models/${COLLISION_HEX}.conf"
 
 python3 - "$REPO_DIR" "$STATE" "$topology_id" "$model_id" "$revision" "$spec_id" <<'PY'
 import json
@@ -409,7 +396,7 @@ print("ok")
 PY
 echo "OK   find-hot resolves a spec view by spec id; verify-hot binds the spec snapshot manifest"
 
-# Remote ranks verify by manifest id for a spec and by profile name for a conf.
+# Remote ranks verify a spec view by its snapshot manifest id.
 verify_args_out=$(
   PULSAR_RELEASES_ROOT="$STATE/releases" PULSAR_OVERLAY_PATH="$STATE/overlay.json" bash -c '
     set -euo pipefail
@@ -417,17 +404,12 @@ verify_args_out=$(
     load_conf "$2"
     set_library_verify_profile_args
     printf "%s\n" "${LIBRARY_VERIFY_PROFILE_ARGS[@]}"
-    load_conf nemotron-3-nano-30b-nvfp4
-    set_library_verify_profile_args
-    printf "%s\n" "${LIBRARY_VERIFY_PROFILE_ARGS[@]}"
   ' _ "$REPO_DIR" "$spec_id"
 )
 printf '%s\n' "$verify_args_out" | grep -q -- "--expected-manifest-id"
-printf '%s\n' "$verify_args_out" | grep -q -- "^--profile$"
 for remote_script in scripts/check-weights.sh cluster/start-cluster.sh; do
   # The verify-hot call on every remote rank must take the shared identity
-  # arguments (profile for a conf, manifest id for a spec), never a bare
-  # profile name.
+  # arguments (the spec snapshot manifest id), never a bare profile name.
   if ! awk '/verify-hot/ {block=1} block && /LIBRARY_VERIFY_PROFILE_ARGS/ {found=1} /--serve-time-witness/ {block=0} END {exit !found}' \
       "$REPO_DIR/$remote_script"; then
     echo "FAIL $remote_script: remote verify-hot does not use LIBRARY_VERIFY_PROFILE_ARGS" >&2

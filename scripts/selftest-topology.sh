@@ -4,6 +4,11 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-topology-test.XXXXXX")
+# Profiles are released specs: a fixture release set stands in for releases/.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+STATE="$tmpdir"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$tmpdir"' EXIT
 
 python3 - "$tmpdir" <<'PY'
@@ -219,7 +224,7 @@ fixture_topology_id=$(python3 -c \
   'import json,sys; print(json.load(open(sys.argv[1]))["topology_id"])' \
   "$tmpdir/topology.json")
 python3 "$REPO_DIR/scripts/testlib/library_hot_fixture.py" \
-  "$tmpdir/hot-info.json" --profile qwen3-1.7b-2node \
+  "$tmpdir/hot-info.json" --profile "$DIAG_TWO_NODE_ID" \
   --topology-id "$fixture_topology_id"
 verify_ssh_shim="$tmpdir/verify-ssh-shim"
 cat >"$verify_ssh_shim" <<'SH'
@@ -232,7 +237,7 @@ dry_output=$(CLUSTER_TOPOLOGY_FILE="$tmpdir/topology.json" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
   FAKE_HOT_INFO_FILE="$tmpdir/hot-info.json" \
   PULSAR_SSH="$verify_ssh_shim" \
-  "$REPO_DIR/cluster/start-cluster.sh" qwen3-1.7b-2node \
+  "$REPO_DIR/cluster/start-cluster.sh" "$DIAG_TWO_NODE_ID" \
     --dry-run --skip-preflight --skip-warmup)
 printf '%s\n' "$dry_output" | grep -q -- '--nnodes 2'
 printf '%s\n' "$dry_output" | grep -q -- 'NCCL_NET=IB'
@@ -277,7 +282,7 @@ CLUSTER_TOPOLOGY_FILE="$tmpdir/absent-topology.json" \
   HEAD_IP=192.0.2.1 WORKER_IP=192.0.2.2 \
   PULSAR_DOCKER="$docker_shim" PULSAR_SSH="$ssh_shim" \
   RUNTIME_LOG="$runtime_log" \
-  "$REPO_DIR/cluster/preflight.sh" qwen3-1.7b-2node \
+  "$REPO_DIR/cluster/preflight.sh" "$DIAG_TWO_NODE_ID" \
   >/dev/null 2>&1 || legacy_rc=$?
 [ "$legacy_rc" -ne 0 ] \
   || { echo "FAIL preflight accepted legacy env topology" >&2; exit 1; }
@@ -290,7 +295,7 @@ CLUSTER_TOPOLOGY_FILE="$tmpdir/absent-topology.json" \
   HEAD_IP=192.0.2.1 WORKER_IP=192.0.2.2 \
   PULSAR_DOCKER="$docker_shim" PULSAR_SSH="$ssh_shim" \
   RUNTIME_LOG="$runtime_log" \
-  "$REPO_DIR/cluster/start-cluster.sh" qwen3-1.7b-2node \
+  "$REPO_DIR/cluster/start-cluster.sh" "$DIAG_TWO_NODE_ID" \
   --dry-run --skip-preflight --skip-warmup >/dev/null 2>&1 || legacy_rc=$?
 [ "$legacy_rc" -ne 0 ] \
   || { echo "FAIL start-cluster accepted legacy env topology" >&2; exit 1; }

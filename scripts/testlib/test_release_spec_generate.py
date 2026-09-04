@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Contracts for ADR 0017 from-profile spec generation."""
+"""Contracts for ADR 0017 from-draft spec generation.
+
+Drafts are conf-format fixture files under scripts/testdata/drafts/; they are
+lab inputs, never profiles."""
 
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from scripts.testlib import release_spec_generate_fixture as receipt_fixture  # 
 
 CLI = ROOT / "scripts" / "release-spec.sh"
 FIXTURES = ROOT / "scripts" / "testdata" / "release-spec-from-profile"
+DRAFTS = ROOT / "scripts" / "testdata" / "drafts"
 RECEIPTS = FIXTURES / "receipts"
 EXPECTED_GAPS = FIXTURES / "expected-gaps"
 PINNED_DIGEST = "c" * 64
@@ -29,9 +33,13 @@ PLATFORM_ID = "dgx-spark-gb10"
 NANO = "nemotron-3-nano-30b-nvfp4"
 
 
+def draft_path(profile: str) -> pathlib.Path:
+    return DRAFTS / f"{profile}.conf"
+
+
 def _profile_pinned_image(profile: str) -> str:
-    """The image a profile pins in its conf; fixtures must build that identity."""
-    conf = (ROOT / "models" / f"{profile}.conf").read_text(encoding="utf-8")
+    """The image a draft pins; fixtures must build that identity."""
+    conf = draft_path(profile).read_text(encoding="utf-8")
     for line in conf.splitlines():
         if line.startswith("IMAGE=") and "@sha256:" in line:
             return line.split("=", 1)[1].strip().strip('"')
@@ -47,11 +55,11 @@ SUPER_JSON = (
 
 
 def profile_confs() -> list[str]:
-    return sorted(path.stem for path in (ROOT / "models").glob("*.conf"))
+    return sorted(path.stem for path in DRAFTS.glob("*.conf"))
 
 
 def model_id_for(profile: str) -> str:
-    for raw in (ROOT / "models" / f"{profile}.conf").read_text(encoding="utf-8").splitlines():
+    for raw in draft_path(profile).read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if line.startswith("MODEL="):
             return line.split("=", 1)[1].strip().strip("\"'")
@@ -105,8 +113,8 @@ def from_profile_args(
     out = tmp / out_name
     gap = tmp / gap_name
     args = [
-        "from-profile",
-        profile,
+        "from-draft",
+        str(draft_path(profile)),
         "--receipt",
         str(receipt_path),
         "--stack-version",
@@ -124,6 +132,7 @@ def from_profile_args(
 def nano_kwargs(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "profile": NANO,
+        "draft_path": draft_path(NANO),
         "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
         "image": NANO_IMAGE,
         "nodes": 1,

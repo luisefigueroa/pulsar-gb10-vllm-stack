@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -13,6 +14,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 
 
 class ActivateTransportContracts(unittest.TestCase):
@@ -131,16 +133,22 @@ class ActivateTransportContracts(unittest.TestCase):
 
 
 class LibraryReadinessClassification(unittest.TestCase):
-    NEMOTRON = "nemotron-3-nano-30b-nvfp4"
-    QWEN = "qwen3.8-27b-fp8"
-
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
         self.catalog_path = self.root / "catalog.json"
         self.topology_id = "a" * 64
-        self.models_dir = REPO_ROOT / "models"
+        # Profiles are released specs: a fixture release set stands in for the
+        # site's releases/, and models_dir (drafts) stays empty.
+        ids = write_fixture_set(self.root / "spec-fixture")
+        previous = os.environ.get("PULSAR_RELEASES_ROOT")
+        os.environ["PULSAR_RELEASES_ROOT"] = str(self.root / "spec-fixture" / "releases")
+        self.addCleanup(lambda: os.environ.update({"PULSAR_RELEASES_ROOT": previous}) if previous is not None else os.environ.pop("PULSAR_RELEASES_ROOT", None))
+        self.NEMOTRON = ids["one_node"]["spec_id"]
+        self.QWEN = ids["one_node_qwen"]["spec_id"]
+        self.models_dir = self.root / "drafts"
+        self.models_dir.mkdir()
 
     def _write(self, catalog: dict[str, object]) -> None:
         self.catalog_path.write_text(
@@ -194,11 +202,11 @@ class LibraryReadinessClassification(unittest.TestCase):
         )
         report = self._classify(self.NEMOTRON)
         self.assertEqual(report["reason"], "no-home")
-        self.assertIn("home add nemotron-3-nano-30b-nvfp4 --revision <selector> --plan", report["remediation"])
+        self.assertIn(f"home add {self.NEMOTRON} --revision <selector> --plan", report["remediation"])
         self.assertIn("--yes", report["remediation"])
         self.assertNotEqual(
             report["remediation"],
-            "scripts/model-library.sh home add nemotron-3-nano-30b-nvfp4 --yes",
+            f"scripts/model-library.sh home add {self.NEMOTRON} --yes",
         )
 
     def test_sealed_missing_home_names_home_add_yes(self) -> None:
@@ -212,20 +220,17 @@ class LibraryReadinessClassification(unittest.TestCase):
         report = self._classify(self.QWEN)
         self.assertEqual(report["reason"], "no-home")
         self.assertIn(
-            "home add qwen3.8-27b-fp8 --revision <selector> --plan",
+            f"home add {self.QWEN} --revision <selector> --plan",
             report["remediation"],
         )
         self.assertIn("--yes", report["remediation"])
         self.assertNotEqual(
             report["remediation"],
-            "scripts/model-library.sh home add qwen3.8-27b-fp8 --yes",
+            f"scripts/model-library.sh home add {self.QWEN} --yes",
         )
 
     def test_unreceipted_tree_names_cleanup_instead_of_refresh(self) -> None:
-        profile_info = model_library.parse_profile_conf_any(
-            self.models_dir / f"{self.NEMOTRON}.conf"
-        )
-        assert profile_info is not None
+        profile_info = model_library.load_hf_profile(self.models_dir, self.NEMOTRON)
         home = self._home(profile_info, rank=0)
         home["home_class"] = "unbound-complete"
         home["occupancy"] = False
@@ -247,10 +252,7 @@ class LibraryReadinessClassification(unittest.TestCase):
         self.assertNotIn("catalog refresh", report["remediation"])
 
     def test_duplicate_homes_name_cleanup_recommend(self) -> None:
-        profile_info = model_library.parse_profile_conf_any(
-            self.models_dir / f"{self.NEMOTRON}.conf"
-        )
-        assert profile_info is not None
+        profile_info = model_library.load_hf_profile(self.models_dir, self.NEMOTRON)
         self._write(
             model_library.build_catalog(
                 topology_id=self.topology_id,
@@ -270,10 +272,7 @@ class LibraryReadinessClassification(unittest.TestCase):
         self.assertNotIn("catalog refresh", report["remediation"])
 
     def test_stale_primary_names_refresh_then_select(self) -> None:
-        profile_info = model_library.parse_profile_conf_any(
-            self.models_dir / f"{self.NEMOTRON}.conf"
-        )
-        assert profile_info is not None
+        profile_info = model_library.load_hf_profile(self.models_dir, self.NEMOTRON)
         home = self._home(profile_info, rank=1)
         catalog = model_library.build_catalog(
             topology_id=self.topology_id,
@@ -291,13 +290,10 @@ class LibraryReadinessClassification(unittest.TestCase):
         report = self._classify(self.NEMOTRON)
         self.assertEqual(report["reason"], "catalog-stale")
         self.assertIn("catalog refresh", report["remediation"])
-        self.assertIn("catalog primary set nemotron-3-nano-30b-nvfp4 --node RANK", report["remediation"])
+        self.assertIn(f"catalog primary set {self.NEMOTRON} --node RANK", report["remediation"])
 
     def test_ready_home_without_views_names_prepare(self) -> None:
-        profile_info = model_library.parse_profile_conf_any(
-            self.models_dir / f"{self.NEMOTRON}.conf"
-        )
-        assert profile_info is not None
+        profile_info = model_library.load_hf_profile(self.models_dir, self.NEMOTRON)
         self._write(
             model_library.build_catalog(
                 topology_id=self.topology_id,
@@ -309,7 +305,7 @@ class LibraryReadinessClassification(unittest.TestCase):
         self.assertEqual(report["reason"], "views-missing")
         self.assertEqual(
             report["remediation"],
-            "scripts/model-library.sh prepare nemotron-3-nano-30b-nvfp4 --yes",
+            f"scripts/model-library.sh prepare {self.NEMOTRON} --yes",
         )
         home_ok = self._classify(self.NEMOTRON, selected_rank=0, selected_node_id="node-0")
         self.assertEqual(home_ok["reason"], "views-missing")

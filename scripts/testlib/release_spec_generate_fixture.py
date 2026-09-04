@@ -82,9 +82,9 @@ def receipt_bytes(receipt: dict[str, object]) -> bytes:
 
 
 def profile_model_ids() -> dict[str, str]:
-    """Map each distinct MODEL in models/*.conf to the first profile naming it."""
+    """Map each distinct MODEL in the fixture drafts to the first draft naming it."""
     mapping: dict[str, str] = {}
-    for conf in sorted((REPO_ROOT / "models").glob("*.conf")):
+    for conf in sorted((REPO_ROOT / "scripts" / "testdata" / "drafts").glob("*.conf")):
         for line in conf.read_text(encoding="utf-8").splitlines():
             if line.startswith("MODEL="):
                 model_id = line[len("MODEL="):].strip().strip('"')
