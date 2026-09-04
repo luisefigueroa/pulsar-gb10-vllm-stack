@@ -235,6 +235,21 @@ def canonical_identity(value: Any, *, path: str = "identity") -> dict[str, Any]:
     }
 
 
+def argv_from_identity(identity: dict[str, Any]) -> list[str]:
+    """Recipe argv the identity implies: engine_args, then the tp and pp tokens.
+
+    ``launch_contract.argv`` must equal this projection; the stack appends its
+    own launcher arguments at serve time and never writes them into a spec.
+    """
+    return [
+        *list(identity["engine_args"]),
+        "--tensor-parallel-size",
+        str(identity["geometry"]["tp"]),
+        "--pipeline-parallel-size",
+        str(identity["geometry"]["pp"]),
+    ]
+
+
 def identity_block(spec: Any) -> dict[str, Any]:
     """Return the canonical identity object from a spec or identity dict."""
     if not isinstance(spec, dict):

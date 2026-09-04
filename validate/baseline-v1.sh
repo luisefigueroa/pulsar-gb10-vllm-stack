@@ -285,6 +285,9 @@ run_gate validate-soak \
     --result-json "$OUT/validate-soak.json"
 
 witness_after=$(boot_witness) || witness_after="gone"
+if [ "${PULSAR_SELFTEST:-0}" != 1 ] && ! git -C "$REPO_DIR" diff --quiet "$LAB_COMMIT" -- . 2>/dev/null; then
+  die "tracked files changed during the run; documents under $OUT no longer describe commit $LAB_COMMIT"
+fi
 policy_digest=""
 proposed=""
 if [ "$witness_before" != "$witness_after" ]; then

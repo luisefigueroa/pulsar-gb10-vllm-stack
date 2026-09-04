@@ -67,7 +67,11 @@
       "--max-model-len",
       "131072",
       "--moe-backend",
-      "marlin"
+      "marlin",
+      "--tensor-parallel-size",
+      "1",
+      "--pipeline-parallel-size",
+      "1"
     ],
     "stack_version": "0.0.0-test"
   },

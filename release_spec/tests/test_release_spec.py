@@ -54,6 +54,16 @@ def _load_json(path: pathlib.Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _sync_argv(document: dict) -> dict:
+    """Recompute launch_contract.argv from the (canonical) identity."""
+    from release_spec.identity import argv_from_identity, canonical_identity
+
+    document["launch_contract"]["argv"] = argv_from_identity(
+        canonical_identity(document["identity"])
+    )
+    return document
+
+
 def _copy(document: dict) -> dict:
     return copy.deepcopy(document)
 
@@ -94,6 +104,16 @@ class ReleaseSpecTests(unittest.TestCase):
                         f"{path.name} imports non-stdlib module {name}",
                     )
 
+    def test_launch_contract_argv_must_match_identity(self) -> None:
+        document = _copy(self.measured)
+        document["launch_contract"]["argv"] = ["--max-model-len", "1"]
+        with self.assertRaisesRegex(ReleaseSpecError, "launch_contract.argv"):
+            verify_spec(document)
+        document = _copy(self.measured)
+        document["launch_contract"]["argv"] = document["launch_contract"]["argv"][:-2]
+        with self.assertRaisesRegex(ReleaseSpecError, "launch_contract.argv"):
+            verify_spec(document)
+
     def test_golden_spec_id_is_pinned(self) -> None:
         measured = verify_spec(self.measured)
         released = verify_spec(self.released)
@@ -114,7 +134,6 @@ class ReleaseSpecTests(unittest.TestCase):
 
         launch = _copy(self.measured)
         launch["launch_contract"]["stack_version"] = "1.2.3-test"
-        launch["launch_contract"]["argv"] = ["--max-model-len", "1"]
         mutations.append(launch)
 
         measurements = _copy(self.measured)
@@ -202,6 +221,7 @@ class ReleaseSpecTests(unittest.TestCase):
         two_node_spec = _copy(self.measured)
         two_node_spec["identity"] = two_node
         two_node_spec["spec_id"] = hashed(two_node)
+        _sync_argv(two_node_spec)
         self.assertEqual(verify_spec(two_node_spec)["spec_id"], hashed(two_node))
 
     def test_engine_arg_spellings_collapse(self) -> None:
@@ -235,6 +255,7 @@ class ReleaseSpecTests(unittest.TestCase):
         document = _copy(self.measured)
         document["identity"]["engine_args"] = canonical
         document["spec_id"] = spec_id_for(identity_block(document))
+        _sync_argv(document)
         self.assertEqual(
             verify_spec(document)["identity"]["engine_args"],
             canonical,
@@ -267,6 +288,7 @@ class ReleaseSpecTests(unittest.TestCase):
             allowed["identity"]["engine_args"]
         ) + ["--distributed-executor-backend", "mp"]
         allowed["spec_id"] = spec_id_for(allowed["identity"])
+        _sync_argv(allowed)
         verify_spec(allowed)
 
     def test_snapshot_files_sorted_unique_relative(self) -> None:
