@@ -3402,6 +3402,21 @@ def _ready_hot_children(
                 continue
             stamp_path = hot_stamp_path(child)
             if not stamp_path.is_file():
+                # A directory without a stamp is what a transfer leaves when
+                # it fails before the stamp is written and rollback cannot
+                # reach the rank. Launch never sees it; cleanup lists it as a
+                # partial view of this entry's name so purge can remove it.
+                if include_incomplete:
+                    candidates.append((
+                        "",
+                        child,
+                        {
+                            "state": "partial",
+                            "profile": parent.name.rsplit("-", 1)[0],
+                            "content_id": child.name,
+                            "pinned": False,
+                        },
+                    ))
                 continue
             try:
                 stamp = load_json(stamp_path)
@@ -8307,6 +8322,23 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
     )
     if path is None:
         raise HotInstanceNotFound(f"find-hot: no ready instance for profile {profile}")
+    if include_incomplete and not hot_stamp_path(path).is_file():
+        # A partial view has no stamp and no runtime paths; cleanup needs
+        # only its location and the content id its directory name carries.
+        print(json.dumps({
+            "instance_dir": str(path),
+            "hub_path": None,
+            "snapshot_path": None,
+            "runtime_model_relative": None,
+            "container_model_path": None,
+            "stamp": {
+                "state": "partial",
+                "profile": profile,
+                "content_id": path.name,
+                "pinned": False,
+            },
+        }, indent=2, sort_keys=True))
+        return 0
     stamp = load_hot_stamp(path)
     if getattr(args, "for_launch", False):
         require_launchable_hot_stamp(stamp)

@@ -258,6 +258,31 @@ class SpecPreparePlannerTests(unittest.TestCase):
             ),
             instance,
         )
+        # A directory without a stamp, left by a transfer that failed before
+        # the stamp was written: no view for launch, a partial view for
+        # cleanup, so purge can remove it.
+        partial = parent / ("f" * 12)
+        partial.mkdir()
+        (partial / "leftover.bin").write_bytes(b"x")
+        self.assertEqual(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID),
+            instance,
+        )
+        instance_stamp = model_library.load_hot_stamp(instance)
+        model_library.purge_hot_instance(instance, hot_root=self.hot)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        self.assertEqual(
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            ),
+            partial,
+        )
+        model_library.purge_hot_instance(partial, hot_root=self.hot)
+        self.assertFalse(partial.exists())
+        instance.mkdir(parents=True)
+        model_library.write_hot_stamp(instance, instance_stamp)
         # An entry that exists but cannot be listed is an inspection failure
         # for cleanup and no view for launch (not meaningful as root).
         if os.geteuid() != 0:

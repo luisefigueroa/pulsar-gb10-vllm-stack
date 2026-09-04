@@ -471,6 +471,24 @@ PULSAR_HOT_ROOT="$STATE/hot-rank1" \
 [ ! -e "$incomplete_view" ] || { echo "FAIL purge-hot left the incomplete view" >&2; exit 1; }
 echo "OK   purge-hot recovers a spec view an interrupted preparation left in state verifying"
 
+# A transfer that failed before its stamp was written leaves an unstamped
+# directory under the spec's entry: invisible to launch, a partial view to
+# cleanup, and removable by purge-hot.
+partial_dir="$STATE/hot-rank1/$spec_id-${topology_id:0:12}/partial000001"
+mkdir -p "$partial_dir/hub"
+printf 'leftover\n' >"$partial_dir/hub/leftover.bin"
+launch_rc=0; python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" >/dev/null 2>&1 || launch_rc=$?
+[ "$launch_rc" = 3 ] || { echo "FAIL launch discovery saw an unstamped partial view (rc=$launch_rc)" >&2; exit 1; }
+partial_state=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile "$spec_id" --include-incomplete \
+  --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stamp"]["state"], d["stamp"]["content_id"])')
+[ "$partial_state" = "partial partial000001" ] || { echo "FAIL cleanup discovery did not list the partial view: $partial_state" >&2; exit 1; }
+PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes >/dev/null
+[ ! -e "$partial_dir" ] || { echo "FAIL purge-hot left the unstamped partial view" >&2; exit 1; }
+echo "OK   purge-hot removes an unstamped partial view a failed transfer left behind"
+
 # A malformed stamp is an inspection failure for cleanup, never an absence:
 # the ready-only lookup still reports no view, the cleanup lookup fails, and
 # purge stops before deleting anything.
