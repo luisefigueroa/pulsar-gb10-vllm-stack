@@ -2647,6 +2647,20 @@ def hot_stamp_path(instance_dir: pathlib.Path) -> pathlib.Path:
     return instance_dir / ".pulsar" / "hot.json"
 
 
+def hot_metadata_dir_is_regular(instance_dir: pathlib.Path) -> bool | None:
+    """Whether the instance's ``.pulsar`` directory is a real directory.
+
+    Judged as the path itself, never through a link: a symlinked metadata
+    directory would let metadata outside the instance authorize a launch
+    or a deletion. Returns None when it does not exist.
+    """
+    try:
+        mode = os.lstat(instance_dir / ".pulsar").st_mode
+    except FileNotFoundError:
+        return None
+    return stat.S_ISDIR(mode)
+
+
 def hot_witness_path(instance_dir: pathlib.Path) -> pathlib.Path:
     return instance_dir / ".pulsar" / "witness.json"
 
@@ -3401,12 +3415,23 @@ def _ready_hot_children(
             if not child.is_dir():
                 continue
             stamp_path = hot_stamp_path(child)
-            # The stamp is judged as the path itself, never through a link:
-            # metadata outside the instance must not authorize a launch or a
-            # deletion. A missing stamp is a partial view for cleanup; a
-            # stamp path that exists but is not a regular file (a directory,
-            # any symlink) is an inspection failure for cleanup and no view
-            # for launch.
+            # The stamp and its metadata directory are judged as the paths
+            # themselves, never through a link: metadata outside the
+            # instance must not authorize a launch or a deletion. A missing
+            # stamp is a partial view for cleanup; a metadata directory or
+            # stamp path that exists but is not what it should be (a
+            # symlink, a directory in place of the file) is an inspection
+            # failure for cleanup and no view for launch.
+            try:
+                metadata_regular = hot_metadata_dir_is_regular(child)
+            except OSError as exc:
+                if include_incomplete:
+                    fail(f"cleanup: cannot inspect hot metadata of {child}: {exc}")
+                continue
+            if metadata_regular is False:
+                if include_incomplete:
+                    fail(f"cleanup: hot metadata directory of {child} is not a directory")
+                continue
             try:
                 stamp_mode = os.lstat(stamp_path).st_mode
             except FileNotFoundError:
@@ -4851,6 +4876,8 @@ def purge_hot_instance(
     if hot_root is not None:
         require_hot_instance_within_root(instance_dir, hot_root)
     stamp_path = hot_stamp_path(instance_dir)
+    if hot_metadata_dir_is_regular(instance_dir) is False:
+        fail(f"purge: hot metadata directory of {instance_dir} is not a directory; refusing")
     try:
         stamp_mode: int | None = os.lstat(stamp_path).st_mode
     except FileNotFoundError:
@@ -8374,6 +8401,8 @@ def _hot_view_record(
     for_launch: bool,
     include_incomplete: bool,
 ) -> dict[str, Any]:
+    if include_incomplete and hot_metadata_dir_is_regular(path) is False:
+        fail(f"cleanup: hot metadata directory of {path} is not a directory")
     if include_incomplete and not os.path.lexists(hot_stamp_path(path)):
         # A partial view has no stamp and no runtime paths; cleanup needs
         # only its location and the content id its directory name carries.

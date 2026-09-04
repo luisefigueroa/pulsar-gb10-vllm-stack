@@ -324,6 +324,27 @@ class SpecPreparePlannerTests(unittest.TestCase):
             model_library.purge_hot_instance(linked, hot_root=self.hot)
         self.assertTrue(linked.is_dir())
         shutil.rmtree(linked)
+        # The metadata directory itself as a symlink to a real directory
+        # holding a valid stamp: the middle component is judged too.
+        outside_meta = self.root / "outside-meta"
+        outside_meta.mkdir()
+        model_library.atomic_write_json(outside_meta / "hot.json", instance_stamp)
+        hijacked = parent / ("a" * 12)
+        hijacked.mkdir()
+        (hijacked / ".pulsar").symlink_to(outside_meta, target_is_directory=True)
+        self.assertNotIn(
+            hijacked,
+            model_library.find_hot_instances_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID),
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "metadata directory .* is not a directory"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "metadata directory .* is not a directory"):
+            model_library.purge_hot_instance(hijacked, hot_root=self.hot)
+        self.assertTrue(hijacked.is_dir())
+        self.assertTrue((outside_meta / "hot.json").is_file())
+        shutil.rmtree(hijacked)
         instance.mkdir(parents=True)
         model_library.write_hot_stamp(instance, instance_stamp)
         # The same for a conf profile, whose lookup verifies stamps against
