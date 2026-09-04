@@ -194,7 +194,9 @@ curl -fsS http://127.0.0.1:8000/v1/models
 curl -fsS http://127.0.0.1:8000/v1/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"nemotron-3-nano","prompt":"2+2=","max_tokens":4,"temperature":0}'
-# spec id ≠ API id: the served name comes from .pulsar-overlay.json
+# spec id ≠ API id: the served name comes from the optional, gitignored
+# .pulsar-overlay.json (port, served name, placement); without it the
+# defaults apply: port 8000, served name = model id.
 ```
 
 ```bash

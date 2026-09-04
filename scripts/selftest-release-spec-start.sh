@@ -202,9 +202,19 @@ banner=$(PULSAR_LAUNCH_PLAN_OUT="$STATE/banner-plan.json" \
 printf '%s\n' "$banner" | grep -q "source=spec $spec_id"
 echo "OK   spec start banner names source=spec"
 
-expect_failure 1 ".pulsar-overlay.json" "missing overlay names the overlay file" \
+# A fresh clone has no overlay: defaults apply (served name = model id) and
+# the banner says which overlay was used.
+defaults_banner=$(PULSAR_LAUNCH_PLAN_OUT="$STATE/defaults-plan.json" \
+  PULSAR_RELEASES_ROOT="$STATE/releases" \
+  PULSAR_OVERLAY_PATH="$STATE/missing.pulsar-overlay.json" \
+  "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --node fixture-node-0)
+printf '%s\n' "$defaults_banner" | grep -q "overlay=defaults (no $STATE/missing.pulsar-overlay.json)"
+printf '%s\n' "$defaults_banner" | grep -q "served=$model_id "
+echo "OK   missing overlay serves with defaults and names the absent file"
+printf 'not-json\n' >"$STATE/broken.pulsar-overlay.json"
+expect_failure 1 "broken.pulsar-overlay.json" "unreadable overlay names the overlay file" \
   env PULSAR_RELEASES_ROOT="$STATE/releases" \
-      PULSAR_OVERLAY_PATH="$STATE/missing.pulsar-overlay.json" \
+      PULSAR_OVERLAY_PATH="$STATE/broken.pulsar-overlay.json" \
       "$REPO_DIR/scripts/up.sh" "$spec_id" --dry-run --node fixture-node-0
 
 expect_failure 1 "recipe field" "recipe key in overlay fails" \

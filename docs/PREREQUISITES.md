@@ -174,6 +174,12 @@ scripts/up.sh <spec_id> --dry-run
 ./pulsar stop <spec_id>
 ```
 
+The deployment overlay `.pulsar-overlay.json` (gitignored, at the repository
+root) is optional: it sets the port, the served model name, the cache root,
+and a placement per spec. Without it every spec serves with the defaults
+(port 8000, served name = model id) and the start banner says
+`overlay=defaults`.
+
 When a compatible receipt-backed home already exists, do not download it
 again. Refresh the catalog, verify or prepare the exact spec, and start.
 `./serve.sh <spec_id> -d` remains the supported low-level one-rank launcher,

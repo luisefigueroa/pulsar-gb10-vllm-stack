@@ -183,9 +183,13 @@ run "model catalog scopes" bash -c '
   diagnostic=$("$REPO_DIR/scripts/list-models.sh" --diagnostic --json)
   echo "$diagnostic" | python3 -c "import json,sys; assert json.load(sys.stdin)[\"models\"]==[]"
   if "$REPO_DIR/scripts/list-models.sh" --legacy-tested >/dev/null 2>&1; then echo "--legacy-tested must be retired" >&2; exit 1; fi
-  # A missing overlay file (not the repo default, which may exist on a serving node).
+  # A missing overlay file (a fresh clone) serves with defaults: served name = model id.
   missing=$(PULSAR_OVERLAY_PATH="$STATE/missing-overlay.json" "$REPO_DIR/scripts/list-models.sh" --json)
-  echo "$missing" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"models\"]==[] and len(d[\"unloadable\"])==4 and all(\"overlay\" in u[\"reason\"] for u in d[\"unloadable\"]), d"
+  echo "$missing" | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d[\"models\"])==4 and d[\"unloadable\"]==[] and all(x[\"served_name\"]==x[\"model_id\"] for x in d[\"models\"]), d"
+  # An unreadable overlay never hides a spec: every row is listed as unloadable with the reason.
+  printf "not-json\n" >"$STATE/broken-overlay.json"
+  broken=$(PULSAR_OVERLAY_PATH="$STATE/broken-overlay.json" "$REPO_DIR/scripts/list-models.sh" --json)
+  echo "$broken" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"models\"]==[] and len(d[\"unloadable\"])==4 and all(\"overlay\" in u[\"reason\"] for u in d[\"unloadable\"]), d"
 '
 
 run "WEIGHTS_GIB disk formula" bash -c '

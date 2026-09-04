@@ -85,6 +85,7 @@ export QUIET=1
 echo "┌─ up  $NAME"
 if [ "${CONF_SOURCE:-conf}" = spec ]; then
   echo "│  source=spec $CONF_NAME"
+  echo "│  overlay=${OVERLAY_SOURCE:-?}"
 fi
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT"
 echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (display-only)"

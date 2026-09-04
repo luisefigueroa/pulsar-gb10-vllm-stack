@@ -1662,10 +1662,33 @@ def _overlay_entry(value: Any, *, path: str) -> dict[str, Any]:
     }
 
 
+def default_overlay() -> dict[str, Any]:
+    """The overlay a site has before it writes one: every default unset, so
+    the port is 8000, the served name is the model id, and placement is
+    resolved at start. A fresh clone serves a released spec with it."""
+    return {
+        "schema_version": OVERLAY_SCHEMA_VERSION,
+        "kind": OVERLAY_KIND,
+        "defaults": _overlay_entry(
+            {"port": 8000, "served_name": None, "cache_root": None, "placement": None},
+            path="overlay.defaults",
+        ),
+        "specs": {},
+    }
+
+
 def load_overlay(path: str | pathlib.Path) -> dict[str, Any]:
-    """Load a closed deployment overlay. Fail without fallback on any extra key."""
+    """Load a closed deployment overlay. Fail without fallback on any extra key.
+
+    An absent file is the default overlay; a symlink, directory, or unreadable
+    file is an error (never silently ignored).
+    """
     overlay_path = pathlib.Path(path)
-    if overlay_path.is_symlink() or not overlay_path.is_file():
+    if overlay_path.is_symlink():
+        fail(f"{overlay_path}: overlay must be a regular file, not a symlink")
+    if not overlay_path.exists():
+        return default_overlay()
+    if not overlay_path.is_file():
         fail(f"{overlay_path}: overlay must be a regular file")
     document = load_json(overlay_path)
     _reject_floats(document, path="overlay")
@@ -1761,6 +1784,9 @@ def cmd_export_profile(
     )
     variables = spec_profile_variables(
         spec, entry, repo, active_platform_id=active_platform_id or None
+    )
+    variables["OVERLAY_SOURCE"] = (
+        str(overlay_file) if overlay_file.is_file() else f"defaults (no {overlay_file})"
     )
     sys.stdout.write(format_shell_assignments(variables))
     return 0
