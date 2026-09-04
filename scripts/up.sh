@@ -61,6 +61,7 @@ load_conf "$NAME"
 if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$SPEC_MODE" != auto ]; then
   die "released spec $NAME: --spec-decode/--no-spec-decode are refused (the identity is fixed)" 2
 fi
+require_spec_platform_admission "$NAME"
 if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$NODES" -eq 1 ]; then
   if [ -n "$NODE_SELECTOR" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
       && [ "$NODE_SELECTOR" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then

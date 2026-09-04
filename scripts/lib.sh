@@ -274,7 +274,19 @@ _reset_loaded_profile_defaults() {
   CONF_SOURCE=conf
   SNAPSHOT_REVISION=""
   SPEC_MANIFEST_ID=""
+  SPEC_PLATFORM_ID=""
   OVERLAY_PLACEMENT_NODE_ID=""
+}
+
+# Launch admission for a released spec: refuse to start outside the spec's
+# frozen platform. Called by every launcher (up.sh, serve.sh,
+# cluster/start-cluster.sh) right after load_conf; never by status or stop,
+# which must still load a spec after the platform setting changed.
+require_spec_platform_admission() {
+  local name="${1:-${CONF_NAME:-}}" active="${PULSAR_PLATFORM_ID:-dgx-spark-gb10}"
+  [ "${CONF_SOURCE:-conf}" = spec ] || return 0
+  [ "${SPEC_PLATFORM_ID:-}" = "$active" ] \
+    || die "released spec $name targets platform '${SPEC_PLATFORM_ID:-?}'; this stack is '$active' (refusing to launch outside the spec's frozen geometry)" 2
 }
 
 # verify-hot identity arguments for the loaded profile. A conf binds the
@@ -731,6 +743,11 @@ print_release_spec_projection_args() {
   )
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     args+=(--releases-root "$PULSAR_RELEASES_ROOT")
+  fi
+  # A spec start knows its exact commit; pass it so a library holding several
+  # revisions of one model still resolves the right receipt.
+  if [ "${CONF_SOURCE:-conf}" = spec ] && [ -n "${SNAPSHOT_REVISION:-}" ]; then
+    args+=(--snapshot-revision "$SNAPSHOT_REVISION")
   fi
   append_loaded_profile_contract_args args
   append_vllm_extra_args extra_split

@@ -15,10 +15,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from release_spec import load_spec, pretty_json_bytes, verify_spec  # noqa: E402
+from release_spec import identity_block, load_spec, pretty_json_bytes, spec_id_for, verify_spec  # noqa: E402
 from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts import release_consumer as consumer  # noqa: E402
 from scripts import release_spec_generate as generate  # noqa: E402
+from scripts.testlib import release_spec_generate_fixture as receipt_fixture  # noqa: E402
 from scripts.testlib.test_release_spec_generate import (  # noqa: E402
     NANO,
     PINNED_IMAGE,
@@ -952,6 +953,95 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertIn("--tensor-parallel-size", n2_vars["ENGINE_ARGS"])
         self.assertEqual(n2_vars["TOPOLOGY_CLASS"], "roce-full-mesh")
         self.assertEqual(n2_vars["MIN_RAILS_PER_PAIR"], "2")
+
+    def test_spec_platform_is_exported_and_gated_only_by_admission(self) -> None:
+        spec = released_nano_spec()
+        overlay = consumer.overlay_for_spec(overlay_document(), spec)
+        # The shared loader exports the platform and never gates on it, so
+        # stop/status can load a spec after the platform setting changed.
+        variables = consumer.spec_profile_variables(spec, overlay, "vllm/vllm-openai")
+        self.assertEqual(variables["SPEC_PLATFORM_ID"], "dgx-spark-gb10")
+        consumer.spec_profile_variables(
+            spec, overlay, "vllm/vllm-openai", active_platform_id="dgx-spark-gb10"
+        )
+        with self.assertRaisesRegex(consumer.ReleaseConsumerError, "targets platform"):
+            consumer.spec_profile_variables(
+                spec, overlay, "vllm/vllm-openai", active_platform_id="dgx-spark-other"
+            )
+
+
+    def test_project_uses_the_exported_revision_over_the_catalog(self) -> None:
+        repo = self._repo()
+        library, catalog, receipt = write_fixture_library(
+            repo, model_id=nano_kwargs()["model_id"], profile=NANO
+        )
+        # A second revision of the same model occupies another home in the
+        # same library; a revision-less lookup is ambiguous and stays
+        # "missing" for display, but a spec start knows its commit.
+        other = receipt_fixture.build_fixture_receipt(
+            nano_kwargs()["model_id"], profile=NANO, snapshot_revision="b" * 40
+        )
+        source_attested.write_source_attested_receipt(library, other, operation="test")
+        other_home = repo / "other-home"
+        other_home.mkdir()
+        source_attested.write_source_attested_home_attachment(
+            library,
+            receipt=other,
+            node_id="node-0",
+            durable_home_path=str(other_home.resolve()),
+            directory_identity={"device": 1, "inode": 2, "ctime_ns": 2},
+        )
+        spec = released_nano_spec()
+        (repo / consumer.RELEASES_DIR / f"{spec['spec_id']}.json").write_bytes(
+            pretty_json_bytes(spec)
+        )
+        base = project_kwargs(library, catalog, repo_root=repo)
+        base["profile"] = spec["spec_id"]  # a spec start's CONF_NAME
+        ambiguous = consumer.project_profile(**base)
+        self.assertEqual(ambiguous["receipt"], "missing")
+        hinted = consumer.project_profile(
+            **base, snapshot_revision=receipt["snapshot_revision"]
+        )
+        self.assertEqual(hinted["receipt"], "found")
+        self.assertEqual(hinted["identities"][0]["review_status"], "stable")
+        cli = run_cli(
+            project_cli_args({**base, "snapshot_revision": receipt["snapshot_revision"]})
+            + ["--snapshot-revision", receipt["snapshot_revision"]]
+        )
+        self.assertEqual(cli.returncode, 0, msg=cli.stderr)
+        self.assertEqual(json.loads(cli.stdout)["receipt"], "found")
+        bad = consumer.project_profile(**base, snapshot_revision="not-a-commit")
+        self.assertEqual(bad["receipt"], "unreadable")
+
+    def test_export_profile_never_gates_without_an_explicit_platform(self) -> None:
+        # A spec frozen for another platform must load for stop/status when
+        # no platform is passed, and must be refused only by explicit
+        # launch admission. The parser must not smuggle in a GB10 default.
+        repo = self._repo()
+        spec = released_nano_spec()
+        other = json.loads(pretty_json_bytes(spec))
+        other["identity"]["geometry"]["platform_id"] = "test-other"
+        other["identity"] = identity_block(other["identity"])
+        other["spec_id"] = spec_id_for(other["identity"])
+        other_spec = verify_spec(other)
+        (repo / consumer.RELEASES_DIR / f"{other_spec['spec_id']}.json").write_bytes(
+            pretty_json_bytes(other_spec)
+        )
+        write_json(repo / consumer.OVERLAY_FILENAME, overlay_document())
+        base = ["export-profile", other_spec["spec_id"], "--overlay", str(repo / consumer.OVERLAY_FILENAME)]
+        loaded = run_cli(base, repo=repo)
+        self.assertEqual(loaded.returncode, 0, msg=loaded.stderr)
+        self.assertIn("SPEC_PLATFORM_ID='test-other'", loaded.stdout)
+        same = run_cli(base + ["--platform-id", "test-other"], repo=repo)
+        self.assertEqual(same.returncode, 0, msg=same.stderr)
+        gated = run_cli(base + ["--platform-id", "dgx-spark-gb10"], repo=repo)
+        self.assertEqual(gated.returncode, 2)
+        self.assertIn("targets platform", gated.stderr)
+        # project still defaults its platform to GB10 for identity hashing.
+        payload = consumer.project_profile(**project_kwargs(*write_fixture_library(
+            repo / "lib", model_id=nano_kwargs()["model_id"], profile=NANO
+        )[:2], repo_root=repo))
+        self.assertIn(payload["receipt"], {"found", "missing", "unreadable"})
 
     def test_export_profile_cli_and_missing_overlay(self) -> None:
         repo = self._repo()
