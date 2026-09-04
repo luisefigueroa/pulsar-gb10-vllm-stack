@@ -87,6 +87,12 @@ export PULSAR_RELEASES_ROOT="$STATE/releases"
 export PULSAR_OVERLAY_PATH="$STATE/overlay.json"
 export PULSAR_SELFTEST=1
 export VLLM_IMAGE_MAINLINE="vllm/vllm-openai@$image_digest"
+if PULSAR_SELFTEST=0 "$REPO_DIR/validate/baseline-v1.sh" "$spec_id" --spec "$STATE/measured.json" --out "$STATE/out-guard" \
+    --dataset "$STATE/gsm8k-fixture.parquet" --producer-dir "$STATE/producers" >"$STATE/run0.log" 2>&1; then
+  echo "FAIL --producer-dir was accepted outside a selftest" >&2; exit 1
+fi
+grep -q "selftest override" "$STATE/run0.log"
+echo "OK   --producer-dir is refused outside selftests"
 
 expected_contract=$(REPO_DIR="$REPO_DIR" bash -c '. "$REPO_DIR/scripts/lib.sh"; launch_contract_id_for_profile "$1"' _ "$spec_id")
 [ "${#expected_contract}" -eq 64 ] || { echo "FAIL fixture launch contract id: $expected_contract" >&2; exit 1; }
@@ -111,6 +117,14 @@ case "\${1:-}" in
     echo '["vllm/vllm-openai@$image_digest"]'
     ;;
   inspect)
+    if [ "\${2:-}" = --format ] && [ "\${3:-}" = '{{.Id}}@{{.State.StartedAt}}' ]; then
+      n=\$(( \$(cat "$STATE/witness-count" 2>/dev/null || echo 0) + 1 ))
+      echo "\$n" >"$STATE/witness-count"
+      started=2026-09-04T12:19:00.000000000Z
+      if [ -e "$STATE/restart-after-first" ] && [ "\$n" -gt 1 ]; then started=2026-09-04T13:40:00.000000000Z; fi
+      echo "fixturecontainerid@\$started"
+      exit 0
+    fi
     printf '{"running":true,"labels":{"io.pulsar.gb10.managed":"true","io.pulsar.gb10.conf":"%s","io.pulsar.gb10.launch-contract":"%s","io.pulsar.gb10.spec-decode":"%s"},"image":"sha256:fixtureimageid"}\n' \
       "\$(cat "$STATE/conf-label")" "\$(cat "$STATE/contract-label")" "\$(cat "$STATE/spec-decode-label")"
     ;;
@@ -120,12 +134,7 @@ SHIM
 cat >"$STATE/bin/curl" <<SHIM
 #!/usr/bin/env bash
 set -euo pipefail
-count_file="$STATE/curl-count"
-n=\$(( \$(cat "\$count_file" 2>/dev/null || echo 0) + 1 ))
-echo "\$n" >"\$count_file"
-created=1700000000
-if [ -e "$STATE/restart-after-first" ] && [ "\$n" -gt 1 ]; then created=1700009999; fi
-printf '{"object":"list","data":[{"id":"%s","object":"model","created":%s},{"id":"%s","object":"model","created":%s}]}\n' "$served" "\$created" "$conf_served" "\$created"
+printf '{"object":"list","data":[{"id":"%s","object":"model","created":1700000000},{"id":"%s","object":"model","created":1700000000}]}\n' "$served" "$conf_served"
 SHIM
 chmod +x "$STATE/bin/docker" "$STATE/bin/curl"
 printf '%s\n' "$expected_contract" >"$STATE/contract-label"
@@ -188,7 +197,7 @@ run_runner() {
   local out="$1"
   shift
   : >"$STATE/calls.log"
-  rm -f "$STATE/curl-count"
+  rm -f "$STATE/witness-count"
   "$REPO_DIR/validate/baseline-v1.sh" "$spec_id" --spec "$STATE/measured.json" \
     --out "$out" --dataset "$STATE/gsm8k-fixture.parquet" --policy "$STATE/policy.json" \
     --producer-dir "$STATE/producers" --lab-commit "$LAB_COMMIT" --tag fixture \
@@ -292,7 +301,7 @@ echo "OK   speculative-decode state must match the spec before any gate"
 printf '%s\n' "$conf_contract" >"$STATE/contract-label"
 printf '%s\n' "$conf_name" >"$STATE/conf-label"
 printf 'vllm-%s\n' "$conf_name" >"$STATE/container-name"
-: >"$STATE/calls.log"; rm -f "$STATE/curl-count"
+: >"$STATE/calls.log"; rm -f "$STATE/witness-count"
 out7="$STATE/out-conf"
 if ! MODEL_LIBRARY_DIR="$library_dir" MODEL_LIBRARY_CATALOG="$catalog_file" PULSAR_RELEASES_ROOT="$STATE/empty-releases" \
     "$REPO_DIR/validate/baseline-v1.sh" "$conf_name" --spec "$STATE/measured.json" --out "$out7" \

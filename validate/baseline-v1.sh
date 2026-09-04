@@ -12,7 +12,8 @@
 # server identity (container label equals the profile's launch contract,
 # image digest and speculative-decode state equal the spec's, the spec is
 # the identity the catalog computes for the profile) → boot witness → the
-# six closed measurements into --out → boot witness again →
+# six closed measurements into --out → boot witness (container id and
+# start time) again →
 # validate/baseline_v1.py → run.json. It never starts, stops, or restarts
 # a server, never invents a document, and stops at the first failed gate
 # while keeping every document already written. One-node profiles served
@@ -66,6 +67,9 @@ case "$SOAK_CONCURRENCY" in *[!0-9]*|"") die "--soak-concurrency must be a posit
 case "$TAG" in *[!A-Za-z0-9._-]*) die "invalid --tag: use only letters, numbers, dot, underscore, or hyphen" 2 ;; esac
 
 # --- producers present ---------------------------------------------------
+if [ "$PRODUCER_DIR" != "$REPO_DIR/validate" ] && [ "${PULSAR_SELFTEST:-0}" != 1 ]; then
+  die "--producer-dir is a selftest override; evidence names the lab commit, so producers must be the tracked ones" 2
+fi
 for producer in verify_snapshot_manifest.py serve_smoke.py gsm8k_eval.py soak.py; do
   [ -f "$PRODUCER_DIR/$producer" ] || die "missing producer $PRODUCER_DIR/$producer"
   "$PY" "$PRODUCER_DIR/$producer" --help >/dev/null 2>&1 \
@@ -207,14 +211,17 @@ log "container $cname serves $PROFILE as written; image matches spec $spec_id"
 
 api_auth_args=()
 api_auth_curl_args api_auth_args
+curl -fsS --max-time 10 "${api_auth_args[@]}" "$URL/v1/models" \
+  | "$PY" -c 'import json,sys; served=sys.argv[1]; data=json.load(sys.stdin).get("data") or []
+raise SystemExit(0 if any(m.get("id")==served for m in data) else 1)' "$SERVED_NAME" \
+  || die "served model $SERVED_NAME is not listed at $URL/v1/models"
+# The boot witness is the container id plus its start time: both survive
+# requests, and either changes when the server is restarted or re-created.
 boot_witness() {
-  curl -fsS --max-time 10 "${api_auth_args[@]}" "$URL/v1/models" \
-    | "$PY" -c 'import json,sys; served=sys.argv[1]; data=json.load(sys.stdin).get("data") or []
-rows=[m for m in data if m.get("id")==served]
-raise SystemExit(print(int(rows[0]["created"])) or 0) if rows else SystemExit(1)' "$SERVED_NAME"
+  "$PULSAR_DOCKER" inspect --format '{{.Id}}@{{.State.StartedAt}}' "$cname" 2>/dev/null
 }
-witness_before=$(boot_witness) || die "served model $SERVED_NAME is not listed at $URL/v1/models"
-log "boot witness $witness_before"
+witness_before=$(boot_witness) || die "cannot read the boot witness of $cname"
+log "boot witness ${witness_before:0:12}…@${witness_before#*@}"
 if [ "$CHECK_ONLY" = 1 ]; then
   log "check-only: server matches spec $spec_id; no gate was run and nothing was written"
   exit 0
@@ -277,7 +284,7 @@ run_gate validate-soak \
     --concurrency "$SOAK_CONCURRENCY" --out "$REPO_DIR/results/${label}-${TAG}-soak.json" \
     --result-json "$OUT/validate-soak.json"
 
-witness_after=$(boot_witness) || witness_after=0
+witness_after=$(boot_witness) || witness_after="gone"
 policy_digest=""
 proposed=""
 if [ "$witness_before" != "$witness_after" ]; then

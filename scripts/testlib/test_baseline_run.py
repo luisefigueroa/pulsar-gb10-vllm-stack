@@ -48,8 +48,8 @@ class BaselineRunTests(unittest.TestCase):
         argv = [
             "write", "--out", str(out), "--spec-id", HEX64, "--policy-digest", "b" * 64,
             "--lab-commit", "c" * 40, "--image-digest", "sha256:" + "d" * 64,
-            "--launch-contract-id", "e" * 64, "--witness-before", "1700000000",
-            "--witness-after", "1700000000",
+            "--launch-contract-id", "e" * 64, "--witness-before", "abc123@2026-09-04T12:19:00.123Z",
+            "--witness-after", "abc123@2026-09-04T12:19:00.123Z",
         ] + extra
         err = io.StringIO()
         with redirect_stdout(io.StringIO()), redirect_stderr(err):
@@ -74,7 +74,7 @@ class BaselineRunTests(unittest.TestCase):
         record = baseline_run.build_run_record(
             spec_id=HEX64, policy_digest="b" * 64, lab_commit="c" * 40,
             image_digest="sha256:" + "d" * 64, launch_contract_id="e" * 64,
-            witness_before=1, witness_after=2, gates=[], proposed_status=None,
+            witness_before="abc123@2026-09-04T12:19:00Z", witness_after="abc123@2026-09-04T13:00:00Z", gates=[], proposed_status=None,
         )
         self.assertFalse(record["boot_witness"]["same_boot"])
         self.assertIsNone(record["proposed_status"])
@@ -108,13 +108,19 @@ class BaselineRunTests(unittest.TestCase):
             baseline_run.build_run_record(
                 spec_id=HEX64, policy_digest="b" * 64, lab_commit="c" * 40,
                 image_digest="1c8e60a0", launch_contract_id="e" * 64,
-                witness_before=1, witness_after=1, gates=[], proposed_status=None,
+                witness_before="w@1", witness_after="w@1", gates=[], proposed_status=None,
             )
         with self.assertRaises(baseline_run.BaselineRunError):
             baseline_run.build_run_record(
                 spec_id=HEX64, policy_digest="b" * 64, lab_commit="not-a-commit",
                 image_digest="sha256:" + "d" * 64, launch_contract_id="e" * 64,
-                witness_before=1, witness_after=1, gates=[], proposed_status=None,
+                witness_before="w@1", witness_after="w@1", gates=[], proposed_status=None,
+            )
+        with self.assertRaises(baseline_run.BaselineRunError):
+            baseline_run.build_run_record(
+                spec_id=HEX64, policy_digest="b" * 64, lab_commit="c" * 40,
+                image_digest="sha256:" + "d" * 64, launch_contract_id="e" * 64,
+                witness_before="has space", witness_after="has space", gates=[], proposed_status=None,
             )
 
 

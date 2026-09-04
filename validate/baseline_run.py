@@ -4,15 +4,16 @@
   validate/baseline_run.py run-args --policy FILE
   validate/baseline_run.py write --out FILE --spec-id ID --policy-digest D
       --lab-commit C --image-digest sha256:... --launch-contract-id ID
-      --witness-before N --witness-after N --gate NAME:START:END:RC ...
+      --witness-before W --witness-after W --gate NAME:START:END:RC ...
       [--proposed-status stable|failed]
 
 ``run-args`` prints ``KEY=VALUE`` lines the runner passes to the producers,
 derived from the verified policy so no gate parameter is typed twice.
 ``write`` records what one run observed: which spec, which policy digest,
 which lab commit, the served image digest, the launch contract the
-container carried, the boot witness before and after the gates, and each
-gate's UTC window and exit code. It is run evidence beside the six
+container carried, the boot witness (the container id and start time)
+before and after the gates, and each gate's UTC window and exit code. It
+is run evidence beside the six
 measurements; the evaluator never reads it and it assigns no status.
 """
 
@@ -49,6 +50,7 @@ GATE_NAMES = (
 ISO_Z_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 SELECTION_RE = re.compile(r"^sha256-order-first-(\d+)$")
 IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+WITNESS_RE = re.compile(r"^[A-Za-z0-9:.@+_-]+$")
 PROPOSED_STATUSES = ("stable", "failed")
 
 
@@ -134,8 +136,8 @@ def build_run_record(
     lab_commit: str,
     image_digest: str,
     launch_contract_id: str,
-    witness_before: int,
-    witness_after: int,
+    witness_before: str,
+    witness_after: str,
     gates: list[dict[str, Any]],
     proposed_status: str | None,
 ) -> dict[str, Any]:
@@ -147,8 +149,8 @@ def build_run_record(
     if IMAGE_DIGEST_RE.fullmatch(image_digest) is None:
         fail("image_digest must be sha256:<64 hex>")
     for label, value in (("witness_before", witness_before), ("witness_after", witness_after)):
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            fail(f"{label} must be a non-negative integer")
+        if not isinstance(value, str) or not value or len(value) > 200 or WITNESS_RE.fullmatch(value) is None:
+            fail(f"{label} must be a short witness of container id and start time")
     names = [gate["name"] for gate in gates]
     if len(set(names)) != len(names):
         fail("a gate is recorded twice")
@@ -193,8 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--lab-commit", required=True)
     write.add_argument("--image-digest", required=True)
     write.add_argument("--launch-contract-id", required=True)
-    write.add_argument("--witness-before", type=int, required=True)
-    write.add_argument("--witness-after", type=int, required=True)
+    write.add_argument("--witness-before", required=True)
+    write.add_argument("--witness-after", required=True)
     write.add_argument("--gate", action="append", default=[], help="NAME:STARTED_AT:ENDED_AT:RC")
     write.add_argument("--proposed-status", default=None)
     return parser

@@ -217,8 +217,9 @@ runs, in order,
 concurrency levels), `validate/gsm8k_eval.py` with the policy's pinned
 arguments, and `validate/soak.py` for the policy's duration; it stops at
 the first failed gate and keeps every document
-already written. A boot witness (the served model's registration epoch) is
-read before and after; a restart during the run voids it. Finally it calls
+already written. A boot witness (the container id and its start time) is
+read before and after; a restart or re-creation during the run voids it.
+Finally it calls
 `validate/baseline_v1.py`, which fills `measurements[]` and `evidence[]`
 into `<out>/spec.json` and prints `proposed_status=stable|failed`, and
 writes `<out>/run.json` with the gate windows and the witness. The pinned
