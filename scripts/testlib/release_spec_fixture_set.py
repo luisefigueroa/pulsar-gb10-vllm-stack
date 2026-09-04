@@ -76,7 +76,12 @@ def _released_like(template: dict, spec: dict) -> dict:
 
 
 def write_released_variant(
-    releases: pathlib.Path, *, model_id: str, nodes: int = 1, revision: str = "d" * 40
+    releases: pathlib.Path,
+    *,
+    model_id: str,
+    nodes: int = 1,
+    revision: str = "d" * 40,
+    files: list[dict] | None = None,
 ) -> str:
     """Write one more released spec (a copy of the nano fixture under another
     model identity) and return its spec id. For selftests that need a profile
@@ -92,7 +97,7 @@ def write_released_variant(
     identity["snapshot_manifest"] = build_snapshot_manifest(
         model_id=model_id,
         snapshot_revision=revision,
-        files=identity["snapshot_manifest"]["files"],
+        files=identity["snapshot_manifest"]["files"] if files is None else files,
     )
     document["spec_id"] = spec_id_for(identity)
     spec = verify_spec(document)

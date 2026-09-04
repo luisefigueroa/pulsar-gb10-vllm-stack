@@ -702,8 +702,11 @@ validate_catalog_profile_contracts() {
     profile="${spec##*/}"
     profile="${profile%.json}"
     [[ "$profile" =~ ^[0-9a-f]{64}$ ]] || continue
-    # Every released spec must load as a profile (spec plus overlay).
-    load_conf "$profile"
+    # Every released spec must load as a profile (spec plus overlay). A
+    # subshell keeps one spec's overlay (cache root, port) from leaking into
+    # the next load or into the catalog scan that follows.
+    ( load_conf "$profile" ) \
+      || die "catalog: released spec $profile does not load as a profile"
   done
 }
 
@@ -1593,6 +1596,29 @@ cmd_home_add_source_attested() (
     <"$tmp/source.json")
   content_bytes=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["content_bytes"])' \
     <"$tmp/source.json")
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # A spec fixes its snapshot: the resolved commit and the upstream file
+    # inventory must match the spec manifest before anything is planned or
+    # downloaded, or the home could never serve this spec.
+    [ "$revision" = "${SNAPSHOT_REVISION:-}" ] \
+      || die "home add: --revision $selector resolved to commit $revision, but spec $profile fixes snapshot ${SNAPSHOT_REVISION:-?}; pass that exact commit"
+    SPEC_MANIFEST_JSON=$(library_spec_snapshot_manifest_json "$profile") \
+      python3 - "$tmp/source.json" <<'PY' || die "home add: the upstream inventory at $revision differs from the spec manifest of $profile"
+import json, os, sys
+source = json.load(open(sys.argv[1], encoding="utf-8"))
+manifest = json.loads(os.environ["SPEC_MANIFEST_JSON"])
+src = {(f["path"], int(f["size"])): f.get("sha256") for f in source["inventory"]}
+spec = {(f["path"], int(f["size"])): f["sha256"] for f in manifest["files"]}
+if set(src) != set(spec):
+    missing = sorted(set(spec) - set(src)); extra = sorted(set(src) - set(spec))
+    print(f"inventory differs: missing={missing[:5]} extra={extra[:5]}", file=sys.stderr)
+    raise SystemExit(1)
+bad = [k for k, digest in src.items() if digest and digest != spec[k]]
+if bad:
+    print(f"sha256 differs for {sorted(bad)[:5]}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  fi
 
   identity_json=$(python3 "$SOURCE_ATTESTED_PY" resolve-identity \
     --source "$tmp/source.json" \

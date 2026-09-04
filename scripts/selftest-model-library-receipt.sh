@@ -36,6 +36,65 @@ grep -q -- '--revision' "$STATE/no-revision.err"
 grep -q -- 'modern hf' "$STATE/no-revision.err"
 [ ! -s "$STATE/hf.log" ]
 
+# A spec fixes its snapshot. A selector that resolves to another commit is
+# refused before any plan or download, naming both commits; the same commit
+# with a different upstream inventory is refused by the manifest comparison.
+OTHER_COMMIT_ID=$(python3 - "$REPO_DIR" "$PULSAR_RELEASES_ROOT" "$ONE_NODE_MODEL" <<'PY'
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib.release_spec_fixture_set import write_released_variant
+
+print(write_released_variant(pathlib.Path(sys.argv[2]), model_id=sys.argv[3], revision="b" * 40))
+PY
+)
+if env "${BASE_ENV[@]}" "$LIBRARY" home add "$OTHER_COMMIT_ID" --revision main --plan --json \
+    >"$STATE/spec-other-commit.out" 2>"$STATE/spec-other-commit.err"; then
+  echo "home add <spec_id> accepted a selector resolving to a commit the spec does not fix" >&2
+  exit 1
+fi
+grep -q "fixes snapshot" "$STATE/spec-other-commit.err" \
+  || { echo "spec-commit refusal was unclear" >&2; cat "$STATE/spec-other-commit.err" >&2; exit 1; }
+# The fixture spec was generated from this very upstream inventory: it plans.
+env "${BASE_ENV[@]}" "$LIBRARY" home add "$ONE_NODE_ID" --revision main --plan --json \
+  >"$STATE/spec-match.out" 2>"$STATE/spec-match.err" \
+  || { echo "home add <spec_id> refused a spec whose manifest matches upstream" >&2; cat "$STATE/spec-match.err" >&2; exit 1; }
+# Same commit, one file size off in the spec manifest: refused by the comparison.
+OTHER_INVENTORY_ID=$(python3 - "$REPO_DIR" "$PULSAR_RELEASES_ROOT" "$ONE_NODE_ID" <<'PY'
+import json
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib.release_spec_fixture_set import write_released_variant
+
+releases = pathlib.Path(sys.argv[2])
+spec = json.loads((releases / f"{sys.argv[3]}.json").read_text(encoding="utf-8"))
+files = [dict(item) for item in spec["identity"]["snapshot_manifest"]["files"]]
+files[0]["size"] = int(files[0]["size"]) + 1
+print(write_released_variant(
+    releases,
+    model_id=spec["identity"]["model_id"],
+    revision=spec["identity"]["snapshot_revision"],
+    files=files,
+))
+PY
+)
+: >"$STATE/hf.log"
+if env "${BASE_ENV[@]}" "$LIBRARY" home add "$OTHER_INVENTORY_ID" --revision main --plan --json \
+    >"$STATE/spec-other-inventory.out" 2>"$STATE/spec-other-inventory.err"; then
+  echo "home add <spec_id> accepted an upstream inventory that differs from the spec manifest" >&2
+  exit 1
+fi
+grep -q "differs from the spec manifest" "$STATE/spec-other-inventory.err" \
+  || { echo "spec-inventory refusal was unclear" >&2; cat "$STATE/spec-other-inventory.err" >&2; exit 1; }
+# Metadata resolution for a plan is read-only; nothing else may reach the mock.
+if grep -v '^source-inventory ' "$STATE/hf.log" | grep -q .; then
+  echo "spec refusals must happen before any download" >&2; cat "$STATE/hf.log" >&2; exit 1
+fi
+: >"$STATE/hf.log"
+
 # The deprecated huggingface-cli command is never an acquisition candidate.
 # A managed modern-hf installation remains usable even when the legacy command
 # is present on PATH.

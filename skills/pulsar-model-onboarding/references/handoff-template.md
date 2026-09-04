@@ -1,77 +1,40 @@
-# Onboarding handoff template
+# Onboarding handoff
 
-Use this structure at the end of a workflow or after a hard stop. The
-handoff is not a validation decision and does not assign status.
+Fill every line. Write "none" rather than leaving a field empty. This
+handoff is not a review decision and assigns no status.
 
 ## Identity
 
-- Profile:
-- Public model ID:
-- Exact revision (if resolved):
-- Workflow ID:
-- Repository/profile base commit:
-- Release ID (draft, if planned):
-- Contract ID (draft, if planned):
-- Runtime-access contract attempted:
-- Weight source / transport (explicit choice):
+- Model: `<org/name>`
+- Exact revision: `<commit>`
+- Receipt id: `<digest>`
+- Spec id: `<64-hex>` (measured spec at `<repository-relative path>`)
+- Image digest: `<sha256>`
+- Geometry: `<nodes> node(s)`; platform `dgx-spark-gb10`
 
-## Completed evidence
+## Evidence
 
-List only artifacts that actually exist. Use repository-relative paths.
+- Run directory: `results/baseline-v1/<spec_id>/`
+- Gates passed, in policy order: `<list>`
+- Gate that stopped the run, if any: `<gate>` with its closed measurement
+- Proposed review status (evaluator): `stable` or `failed`
+- Interrupted measurements (kept as they were written; nothing invented):
+  `<list or none>`
 
-- Catalog/artifact:
-- Exact home: download receipt and offline verification, or an explicit gap
-  (unknown trees without a receipt fail without fallback)
-- Source digest / acquisition approval / receipt IDs:
-- Serving integration:
-- Strict same-boot compare measurement:
-- Absolute throughput/latency benchmark:
-- Per-attempt resource diagnostic summaries (complete/partial/unavailable):
-- Private raw resource trace: workflow-relative location only; not publication evidence
-- Draft attempt specs:
-- Draft capture candidates:
-- Assembled bundle candidate:
-- Extra review-file IDs (`review_evidence_artifact_ids`): empty
-  unless a review source was captured; empty after compare/bench is
-  expected
+## Promotion
 
-## Missing criteria
+- Promotion pull request: `<number>` or "not opened"
+- `docs/MODELS.md` block regenerated: yes/no
+- Privacy scan and full selftest on the head: yes/no
 
-Automated mapping covers strict same-boot, absolute throughput/latency, GSM8K
-accuracy, and soak stability. Name context, serving integration, physical
-geometry, and provenance/security as unevaluated/incomplete unless separately
-captured or reviewed.
+## Boundaries
 
-- Stability:
-- Accuracy:
-- Provenance/security: review-derived; not a compose output
-- Serving integration:
-- Physical geometry:
-- Context / soak:
-- Relative performance: N/A unless a valid reviewed comparable predecessor
-  was explicitly supplied
+No review status was assigned by this skill. Nothing was written under
+`releases/` except through the promotion command inside the pull request.
+No physical behavior is claimed beyond what the run directory records.
 
-## Failures and inconclusive results
+## Cleanup
 
-Preserve failed and partial work. Do not rewrite a failure as a pass.
-
-- Preparation/barrier failures (qualification unstarted):
-- Interrupted measurements (capture gap, no invented ADR run):
-- Inconclusive compare/benchmark documents:
-- Identity changes that prevented combining measurements:
-- Resource diagnostic gaps or monitor interruptions:
-
-## Candidate locations
-
-Repository-relative only. No absolute paths, hostnames, or topology IDs.
-
-## Authority
-
-No seal was issued. No validation decision was issued. No status was
-assigned. No profile was bound to a release. Nothing was published into
-the trusted registry. No path was promoted. No physical behavior is
-claimed. Deterministic skill or journal checks create no release decision
-and make no physical DGX claim. Staging that can become trusted is a separate
-maintainer workflow (`scripts/model-serving-release-issue.sh`), supervised
-by `pulsar-model-serving-release-issuance`. This skill does not run it. A
-staged local proposal is not trusted until repository review and merge.
+- Services stopped through the normal stop path: `<spec_id>` or none
+- Library resources removed (only those this workflow created): `<list>`
+- Resources left in place and why: `<list>`
