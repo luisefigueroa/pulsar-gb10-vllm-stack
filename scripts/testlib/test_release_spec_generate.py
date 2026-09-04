@@ -27,6 +27,18 @@ PINNED_IMAGE = f"vllm/vllm-openai@sha256:{PINNED_DIGEST}"
 STACK_VERSION = "0.0.0-test"
 PLATFORM_ID = "dgx-spark-gb10"
 NANO = "nemotron-3-nano-30b-nvfp4"
+
+
+def _profile_pinned_image(profile: str) -> str:
+    """The image a profile pins in its conf; fixtures must build that identity."""
+    conf = (ROOT / "models" / f"{profile}.conf").read_text(encoding="utf-8")
+    for line in conf.splitlines():
+        if line.startswith("IMAGE=") and "@sha256:" in line:
+            return line.split("=", 1)[1].strip().strip('"')
+    raise AssertionError(f"{profile} does not pin an image digest")
+
+
+NANO_IMAGE = _profile_pinned_image(NANO)
 SUPER = "nemotron-3-super-120b-nvfp4"
 TWO_NODE = "qwen3.8-27b-fp8-2node"
 SUPER_JSON = (
@@ -113,7 +125,7 @@ def nano_kwargs(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "profile": NANO,
         "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
-        "image": PINNED_IMAGE,
+        "image": NANO_IMAGE,
         "nodes": 1,
         "gpu_mem_util": "0.80",
         "engine_args": [
@@ -124,7 +136,7 @@ def nano_kwargs(**overrides: object) -> dict[str, object]:
             "--moe-backend",
             "marlin",
         ],
-        "container_env": ["VLLM_MARLIN_USE_ATOMIC_ADD=1"],
+        "container_env": [],
         "spec_decode_args": [],
         "platform_id": PLATFORM_ID,
         "stack_version": STACK_VERSION,
@@ -201,9 +213,10 @@ class ReleaseSpecGenerateTests(unittest.TestCase):
             ],
         )
         self.assertEqual(spec["launch_contract"]["stack_version"], STACK_VERSION)
+        # The nano profile pins its own image; the identity carries that digest,
+        # not the mainline the fixture environment injects.
         self.assertEqual(
-            spec["identity"]["image"]["digest"],
-            f"sha256:{PINNED_DIGEST}",
+            spec["identity"]["image"]["digest"], NANO_IMAGE.split("@", 1)[1]
         )
 
     def test_two_node_strips_tp_keeps_mp_and_roce_fabric(self) -> None:

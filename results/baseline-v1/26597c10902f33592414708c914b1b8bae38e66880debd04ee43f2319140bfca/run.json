@@ -1,0 +1,35 @@
+{
+  "boot_witness": {
+    "after": "8ae2c6794cac5e14c42cb1d91744b877408b6b71898a9acf5e42abb3cf6b25ea@2026-09-04T19:20:39.519204236Z",
+    "before": "8ae2c6794cac5e14c42cb1d91744b877408b6b71898a9acf5e42abb3cf6b25ea@2026-09-04T19:20:39.519204236Z",
+    "same_boot": true
+  },
+  "gates": [
+    {
+      "ended_at": "2026-09-04T19:25:02Z",
+      "name": "verify-snapshot-manifest",
+      "rc": 0,
+      "started_at": "2026-09-04T19:24:58Z"
+    },
+    {
+      "ended_at": "2026-09-04T19:25:10Z",
+      "name": "serve-smoke",
+      "rc": 0,
+      "started_at": "2026-09-04T19:25:02Z"
+    },
+    {
+      "ended_at": "2026-09-04T19:27:04Z",
+      "name": "run-gates",
+      "rc": 1,
+      "started_at": "2026-09-04T19:25:10Z"
+    }
+  ],
+  "image_digest": "sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52",
+  "kind": "pulsar-baseline-run",
+  "lab_commit": "c67b5f9517196fc9c30005c6932547fb619dc4f3",
+  "launch_contract_id": "50adeccac853602787786800529cd3260b0f22f5c5513ccd8fd49388a6eca3ff",
+  "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
+  "proposed_status": "failed",
+  "schema_version": 1,
+  "spec_id": "26597c10902f33592414708c914b1b8bae38e66880debd04ee43f2319140bfca"
+}

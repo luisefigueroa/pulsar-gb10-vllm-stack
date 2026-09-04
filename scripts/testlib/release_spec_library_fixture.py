@@ -45,7 +45,7 @@ def cmd_arrange(argv: list[str]) -> None:
         write_released_nano,
     )
     from scripts.testlib.test_release_consumer import receipt_for
-    from scripts.testlib.test_release_spec_generate import NANO, PINNED_IMAGE
+    from scripts.testlib.test_release_spec_generate import NANO, NANO_IMAGE, PINNED_IMAGE
     from scripts.testlib.topology_manifest_fixture import build as build_topology
     from scripts.topology_manifest import topology_digest, validate_manifest
 
@@ -165,7 +165,7 @@ def cmd_arrange(argv: list[str]) -> None:
                 "manifest": manifest,
                 "inventory": inventory,
                 "topology_id": topology["topology_id"],
-                "image": PINNED_IMAGE,
+                "image": NANO_IMAGE,
                 "identity_key": (
                     f"{spec['identity']['model_id']}@{receipt['snapshot_revision']}"
                 ),

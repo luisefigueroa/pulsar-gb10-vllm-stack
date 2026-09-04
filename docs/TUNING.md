@@ -53,8 +53,14 @@ already picks — but grep the log to confirm on every image bump):
   silently wrong on sm_121 — upstream-documented, not re-derived here).
 - `VLLM_MARLIN_USE_ATOMIC_ADD`: real vLLM env (passed via conf
   `CONTAINER_ENV`). **Model-conf owned, not a global default.**
-  - `nemotron-3-nano` / `nemotron-3-super`: set to `1` (matches the
-    validated confs that earned their STATUS rows).
+  - `nemotron-3-super`: set to `1` (matches the validated conf that earned
+    its STATUS row).
+  - `nemotron-3-nano`: dropped on 2026-09-04. The strict same-boot gate of
+    baseline-v1 failed with it set (29/30, one near-tie token flip) and
+    failed the same way without it (tokens identical, logprobs of one
+    prompt vary by 0.2 to 0.35 between passes on v0.26.0), so it is not
+    the cause; dropping it changed no throughput (64 decode tok/s at c=1,
+    296 aggregate at c=8). Left off for the simpler recipe.
   - `laguna-s-2.1-nvfp4`: profile removed by ADR 0006 (absolute-path
     catalog). Historical conf left this unset; do not cargo-cult it onto
     remaining NVFP4 models without a dedicated determinism A/B.
