@@ -31,7 +31,7 @@ INPUT_SPEC = FIXTURES / "input-spec.json"
 LAB_COMMIT = "d" * 40
 EVIDENCE_PREFIX = "results/example/"
 PINNED_POLICY_DIGEST = (
-    "0bc35c33af7d89ad048768e63947ddf8eec6a798907c4eee084f0c4e6e867416"
+    "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539"
 )
 GOLDEN_CASES = (
     "pass",

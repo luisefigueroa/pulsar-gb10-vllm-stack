@@ -95,6 +95,10 @@ run "model-serving experiment resource monitor" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_experiment_monitor.py"
 run "GSM8K closed measurement producer" \
   python3 "$REPO_DIR/scripts/testlib/test_gsm8k_eval.py"
+run "snapshot manifest closed measurement producer" \
+  python3 "$REPO_DIR/scripts/testlib/test_verify_snapshot_manifest.py"
+run "serving smoke closed measurement producer" \
+  python3 "$REPO_DIR/scripts/testlib/test_serve_smoke.py"
 run "Model Serving Release attempt composition" \
   python3 "$REPO_DIR/scripts/testlib/test_model_serving_release_attempt.py"
 run "Model Serving Release onboarding skill" \
