@@ -62,7 +62,7 @@ def write_identity_hot_view(
     content_id: str = "c" * 12,
     activated_at: str = "2026-09-02T00:00:00Z",
 ) -> pathlib.Path:
-    """Ready stamp under a conf-named directory for find-hot --identity.
+    """Ready stamp under a named directory (a conf name or a spec id).
 
     ``manifest`` is the sealed snapshot manifest the stamp claims; a spec
     start must only accept a view whose manifest id equals the spec's.

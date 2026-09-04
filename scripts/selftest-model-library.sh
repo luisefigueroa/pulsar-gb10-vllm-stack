@@ -572,7 +572,7 @@ assert_true "model-library.sh names cold stage-only retirement" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'cold stage-only is removed'"
 
 assert_true "prepare is the preferred CLI command" \
-  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'prepare <profile>'"
+  bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'prepare <profile|spec_id>'"
 assert_true "multi-rank prepare defaults to ssh-roce" \
   bash -c "'$REPO_DIR/scripts/model-library.sh' --help | grep -q 'multi-rank uses ssh-roce'"
 assert_true "prepare help does not call one-rank experimental" \

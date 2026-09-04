@@ -97,7 +97,7 @@ Usage:
   scripts/model-library.sh cold show <model_id|/abs/path> --cold-root PATH [--json]
   scripts/model-library.sh cold adopt <model_id|profile|/abs/path>
       [--cache-root PATH] [--cold-root PATH] [--yes]
-  scripts/model-library.sh prepare <profile>
+  scripts/model-library.sh prepare <profile|spec_id>
       [--transport ssh-control|ssh-roce]
       [--yes] [--interactive-sudo] [--time]
       [--copy-streams N] [--node RANK|NODE_ID]
@@ -106,9 +106,9 @@ Usage:
       [--output PATH] [--nodes N] [--rail-index N]
       [--order control-first|roce-first]
       [--copy-streams N]
-  scripts/model-library.sh pin <profile> [--node RANK|NODE_ID]
-  scripts/model-library.sh unpin <profile> [--node RANK|NODE_ID]
-  scripts/model-library.sh purge-hot <profile> [--node RANK|NODE_ID]
+  scripts/model-library.sh pin <profile|spec_id> [--node RANK|NODE_ID]
+  scripts/model-library.sh unpin <profile|spec_id> [--node RANK|NODE_ID]
+  scripts/model-library.sh purge-hot <profile|spec_id> [--node RANK|NODE_ID]
       [--yes] [--force-unpin]
   scripts/model-library.sh health [--json]
   scripts/model-library.sh budget [--json]
@@ -284,15 +284,32 @@ ensure_catalog() {
 
 inspect_catalog_home() {
   local profile="${1:?profile required}" resolved home_rank hub_path node_id
-  local expected_node command out model_id revision
-  local -a fields=()
-  resolved=$(
-    python3 "$PY_TOOL" resolve \
-      --catalog "$CATALOG_FILE" \
-      --profile "$profile" \
-      --models-dir "$REPO_DIR/models" \
-      --no-cold \
+  local expected_node command out model_id revision identity
+  local -a fields=() resolve_args
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ]; then
+      die "prepare: spec catalog lookup requires MODEL and SNAPSHOT_REVISION"
+    fi
+    identity="${MODEL}@${SNAPSHOT_REVISION}"
+    resolve_args=(
+      resolve
+      --catalog "$CATALOG_FILE"
+      --no-cold
       --json
+      "$identity"
+    )
+  else
+    resolve_args=(
+      resolve
+      --catalog "$CATALOG_FILE"
+      --profile "$profile"
+      --models-dir "$REPO_DIR/models"
+      --no-cold
+      --json
+    )
+  fi
+  resolved=$(
+    python3 "$PY_TOOL" "${resolve_args[@]}"
   ) || return 1
   mapfile -t fields < <(json_fields "$resolved" \
     home.rank home.hub_path home.node_id model_id revision)
@@ -404,13 +421,100 @@ library_plan_prepare() {
     'import json,sys; print(json.dumps(json.load(sys.stdin)["observed_manifest"]))')
   extra+=(--require-exact-revision "$revision")
   extra+=(--expected-integrity-manifest-json "$manifest_json")
+  extra+=(--catalog "$CATALOG_FILE")
+  extra+=(--profile "$profile")
+  extra+=(--home-inventory-json "$home_inventory")
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # A released spec resolves its catalog entry by identity and hands the
+    # planner its reviewed snapshot manifest, which must equal the receipt's. Its view
+    # is keyed by the spec id, one name one directory, like a conf's.
+    extra+=(--identity "${MODEL}@${SNAPSHOT_REVISION}")
+    extra+=(--spec-manifest-json "$(library_spec_snapshot_manifest_json "$profile")")
+  else
+    extra+=(--models-dir "$REPO_DIR/models")
+    library_conf_prepare_spec_manifest_json "$receipt_json" extra
+  fi
   python3 "$PY_TOOL" plan-prepare \
-    --catalog "$CATALOG_FILE" \
-    --profile "$profile" \
-    --models-dir "$REPO_DIR/models" \
-    --home-inventory-json "$home_inventory" \
     "${extra[@]}" \
     "$@"
+}
+
+library_spec_snapshot_manifest_json() {
+  local spec_id="${1:?spec_id required}"
+  local -a show_args=(
+    show "$spec_id"
+    --repo-root "$REPO_DIR"
+  )
+  if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
+    show_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
+  fi
+  python3 "$REPO_DIR/scripts/release_consumer.py" "${show_args[@]}" \
+    | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["identity"]["snapshot_manifest"]))' \
+    || die "prepare: cannot load the released spec manifest for $spec_id"
+}
+
+library_conf_prepare_spec_manifest_json() {
+  local receipt_json="${1:?}"
+  local -n extra_ref="${2:?}"
+  local matching spec_manifest
+  PULSAR_PREPARE_ENGINE_ARGS_JSON=$(
+    json_encode_strings ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"}
+  )
+  PULSAR_PREPARE_CONTAINER_ENV_JSON=$(
+    json_encode_strings ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"}
+  )
+  PULSAR_PREPARE_SPEC_DECODE_ARGS_JSON=$(
+    json_encode_strings ${SPEC_DECODE_ARGS[@]+"${SPEC_DECODE_ARGS[@]}"}
+  )
+  export PULSAR_PREPARE_ENGINE_ARGS_JSON
+  export PULSAR_PREPARE_CONTAINER_ENV_JSON
+  export PULSAR_PREPARE_SPEC_DECODE_ARGS_JSON
+  matching=$(
+    python3 - "$REPO_DIR" "${PULSAR_RELEASES_ROOT:-}" "$receipt_json" \
+      "$MODEL" "$IMAGE" "$NODES" "${GPU_MEM_UTIL:-}" \
+      "${RECOMMENDED_SPEC:-0}" <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.release_consumer import matching_release_for_profile
+
+releases_root = sys.argv[2] or None
+receipt = json.loads(sys.argv[3])
+engine_args = json.loads(os.environ.get("PULSAR_PREPARE_ENGINE_ARGS_JSON", "[]"))
+container_env = json.loads(os.environ.get("PULSAR_PREPARE_CONTAINER_ENV_JSON", "[]"))
+spec_decode_args = json.loads(os.environ.get("PULSAR_PREPARE_SPEC_DECODE_ARGS_JSON", "[]"))
+files = list((receipt.get("observed_manifest") or {}).get("files") or [])
+result = matching_release_for_profile(
+    repo_root=sys.argv[1],
+    releases_root=releases_root,
+    model_id=sys.argv[4],
+    image=sys.argv[5],
+    nodes=int(sys.argv[6]),
+    gpu_mem_util=sys.argv[7],
+    engine_args=engine_args,
+    container_env=container_env,
+    spec_decode_args=spec_decode_args,
+    platform_id="dgx-spark-gb10",
+    snapshot_revision=str(receipt.get("snapshot_revision") or ""),
+    files=files,
+    receipt_model_id=receipt.get("model_id") if isinstance(receipt.get("model_id"), str) else None,
+    recommended_spec=sys.argv[8] in ("1", "true", "TRUE"),
+)
+print(json.dumps(result))
+PY
+  ) || die "prepare: released spec at the recomputed spec_id is invalid"
+  spec_manifest=$(
+    printf '%s' "$matching" | python3 -c '
+import json, sys
+row = json.load(sys.stdin)
+if row.get("state") != "valid":
+    raise SystemExit(0)
+print(json.dumps(row["snapshot_manifest"]))
+'
+  ) || die "prepare: matching released spec is unreadable"
+  [ -z "$spec_manifest" ] || extra_ref+=(--spec-manifest-json "$spec_manifest")
 }
 
 hot_budget_policy_args() {
@@ -2712,6 +2816,8 @@ verify_copy_ssh_roce_route() {
     || die "rank $remote_rank: live route does not match confirmed RoCE rail"
 }
 
+
+
 load_copy_ssh_roce_map() {
   local home_rank="${1:?}" ranks_csv="${2:?}" rail_index="${3:-0}"
   local map r ip control_host netdev expected
@@ -2959,23 +3065,89 @@ write_stamp_on_rank() {
     <"$PY_TOOL" >/dev/null
 }
 
+
+
+
+# spec_view_verified_on_ranks <instance> <profile> <validation_json> <rank>...
+# Succeed only when the exact view at INSTANCE passes full verification on
+# every listed rank; any rank without it, with a damaged view, or
+# unreachable fails quietly.
+spec_view_verified_on_ranks() {
+  local instance="${1:?}" profile="${2:?}" expected_validation_json="${3:?}" rank
+  shift 3
+  for rank in "$@"; do
+    verify_hot_on_rank "$rank" "$instance" "$profile" \
+      "$CLUSTER_TOPOLOGY_ID" 0 "$expected_validation_json" 2>/dev/null || return 1
+  done
+  return 0
+}
+
+# spec_refuse_pinned_ranks_before_copy <profile> <rank>...
+# Die when any target rank still holds a pinned view named PROFILE (any
+# state), or when a rank cannot be inspected: re-materialization would
+# rewrite that rank's stamp and silently clear the pin.
+spec_refuse_pinned_ranks_before_copy() {
+  local profile="${1:?}" rows rc=0 line pinned_on=""
+  local -a row=()
+  shift
+  rows=$(hot_instances_for_profile_on_ranks "$profile" "$@" 2>/dev/null) || rc=$?
+  [ "$rc" -ne 255 ] || die "prepare: a target rank is unobservable; nothing was changed"
+  [ "$rc" -ne 2 ] || die "prepare: a target rank could not be inspected; nothing was changed"
+  [ -n "$rows" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    IFS=$'\t' read -r -a row <<<"$line"
+    [ "${row[3]:-false}" != true ] || pinned_on="${pinned_on:+$pinned_on, }rank ${row[0]}"
+  done <<<"$rows"
+  [ -z "$pinned_on" ] \
+    || die "prepare: $profile holds a pinned view on $pinned_on; a partial preparation is re-materialized on every rank only after purge-hot $profile --yes --force-unpin"
+}
+
+# require_no_view_users_on_ranks <instance> <content_id> <owner> <rank>...
+# Materializing replaces the destination in place (copy_hub_to_rank removes
+# it first). Refuse while any managed container on that rank, running or
+# stopped, references the view named OWNER.
+require_no_view_users_on_ranks() {
+  local instance="${1:?}" content_id="${2:?}" owner="${3:?}" rank sharers
+  shift 3
+  for rank in "$@"; do
+    sharers=$(hot_view_live_users "$rank" "$content_id" "$owner") \
+      || die "prepare: cannot verify on rank $rank that no managed container references $instance"
+    [ -z "$sharers" ] \
+      || die "prepare: refusing to re-materialize $instance on rank $rank: referenced by managed container(s), running or stopped: $sharers (stop and remove them first)"
+  done
+}
+
+# verify_hot_on_rank <rank> <instance> <profile> <topology_id> [allow_verifying]
+#   [expected_validation_json]
+# Returns the verifier's status on every rank, including rank 0, so a caller
+# testing it in a condition sees a failed verify as not ready.
 verify_hot_on_rank() {
   local rank="${1:?}" instance_dir="${2:?}" profile="${3:?}" topology_id="${4:?}"
   local allow_verifying="${5:-0}" expected_validation_json="${6:-}" command
+  # A conf binds the stamp profile name and its conf; a released spec binds
+  # the spec snapshot manifest id instead (a spec has no conf file).
   local -a verify_args=(
     verify-hot
     --instance-dir "$instance_dir"
-    --profile "$profile"
     --topology-id "$topology_id"
     --workers "${PULSAR_INTEGRITY_WORKERS:-8}"
     --refresh-witness
   )
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || die "verify: spec prepare requires SPEC_MANIFEST_ID"
+    verify_args+=(--expected-manifest-id "$SPEC_MANIFEST_ID")
+  else
+    verify_args+=(--profile "$profile")
+  fi
   [ "$allow_verifying" = 1 ] && verify_args+=(--allow-verifying)
   [ -n "$expected_validation_json" ] \
     && verify_args+=(--expected-validation-json "$expected_validation_json")
   if [ "$rank" = 0 ]; then
-    verify_args+=(--models-dir "$REPO_DIR/models")
-    python3 "$PY_TOOL" "${verify_args[@]}" >/dev/null
+    if [ "${CONF_SOURCE:-conf}" != spec ]; then
+      verify_args+=(--models-dir "$REPO_DIR/models")
+    fi
+    python3 "$PY_TOOL" "${verify_args[@]}" >/dev/null || return 1
     return 0
   fi
   command=$(shell_join_q python3 - "${verify_args[@]}")
@@ -3159,13 +3331,14 @@ cmd_prepare() {
     shift
   done
   [ -n "$profile" ] \
-    || die "usage: prepare <profile> [--transport ssh-control|ssh-roce]"
+    || die "usage: prepare <profile|spec_id> [--transport ssh-control|ssh-roce]"
   case "$backend" in
     copy) ;;
     *) die "prepare: --backend must be copy" ;;
   esac
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector")
   if [ -z "$transport" ]; then
     if [ "$ssh_mode_explicit" = 1 ]; then
       case "$COPY_SSH_MODE" in
@@ -3235,6 +3408,25 @@ cmd_prepare() {
   expected_validation_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["validation"], sort_keys=True, separators=(",", ":")))')
   mapfile -t target_ranks < <(printf '%s' "$plan" | python3 -c 'import json,sys; print("\n".join(str(x) for x in json.load(sys.stdin)["target_ranks"]))')
   target_ranks_csv=$(IFS=,; printf '%s' "${target_ranks[*]}")
+  local plan_content_id
+  plan_content_id=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.load(sys.stdin)["content_id"])')
+
+  # The plan sees the controller's stamp only. A released spec placed on a
+  # remote home, or re-run after a complete preparation, holds its view on
+  # the target ranks and not on the controller: verify the spec-named view
+  # on every target rank before copying, so a complete preparation is left
+  # untouched and keeps its pins. Anything short of every rank verified is
+  # re-materialized on every rank (all-or-nothing).
+  if [ "$action" = copy ] && [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if spec_view_verified_on_ranks "$instance" "$profile" "$expected_validation_json" "${target_ranks[@]}"; then
+      log "hot already ready on every target rank (verified); model not started"
+      return 0
+    fi
+    # Re-materializing rewrites every target rank's stamp. A pin is dropped
+    # only through the explicit purge-hot --force-unpin confirmation, never
+    # as a side effect of repairing another rank.
+    spec_refuse_pinned_ranks_before_copy "$profile" "${target_ranks[@]}"
+  fi
 
   budget_plan=$(build_hot_budget_plan_from_activation "$plan" prepare) \
     || die "prepare: all-rank hot admission failed"
@@ -3249,7 +3441,7 @@ cmd_prepare() {
     for rank in "${target_ranks[@]}"; do
       verify_hot_on_rank "$rank" "$instance" "$profile" \
         "$CLUSTER_TOPOLOGY_ID" 0 "$expected_validation_json" \
-        || die "rank $rank: hot verify failed"
+        || die "rank $rank: hot verify failed; preparation is all-or-nothing: re-materialize every rank with purge-hot $profile --yes --force-unpin, then prepare $profile --yes"
     done
     log "model files prepared (reused verified runtime views; model not started)"
     return 0
@@ -3287,6 +3479,13 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
     log "source rank=$home_rank → $hub_dest"
     log "re-run with --yes to execute"
     return 0
+  fi
+
+  # Materializing replaces the destination in place (copy_hub_to_rank
+  # removes it first): a released spec never does that beneath a managed
+  # container, running or stopped, that references the view on that rank.
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    require_no_view_users_on_ranks "$instance" "$plan_content_id" "$profile" "${target_ranks[@]}"
   fi
 
   local -a touched=() pids=()
@@ -3447,40 +3646,218 @@ print("1" if any(int(rank) != home for rank in d["target_ranks"]) else "0")
   printf '%s\n' "$plan" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["instance_dir"]); print(d["hub_dest"])'
 }
 
-hot_instance_for_profile_on_rank() {
-  local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}"
-  local command info stamp
-  local -a launch_args=()
-  [ "$require_launchable" = 0 ] || launch_args+=(--for-launch)
-  if [ "$rank" -eq 0 ]; then
-    python3 "$PY_TOOL" find-hot \
-      --profile "$profile" \
-      --topology-id "${CLUSTER_TOPOLOGY_ID}" \
-      --hot-root "$HOT_ROOT" \
-      --models-dir "$REPO_DIR/models" \
-      "${launch_args[@]}"
-    return
+# Running stack-managed containers on RANK that mount the view with
+# CONTENT_ID (one profile name per line), including the target's own
+# service: purge must never delete bytes under a running container, and the
+# stop hook path already stops the service before it purges. Returns 1 when
+# Docker on that rank cannot be queried; callers must not treat that as
+# "no users".
+# Managed containers that reference a hot view by its weight-config label,
+# running or stopped: a stopped container that was not removed can still be
+# started again and needs its mounted view, so purge counts it as a user.
+# The stack's own stop removes containers before purging, so the
+# stop-and-purge path never sees itself here.
+# hot_view_live_users <rank> <content_id> <owner>
+# One name, one directory: a container mounts the view named OWNER (its
+# conf label) with content CONTENT_ID (its weight-config label). Both labels
+# must match, since a conf and a released spec of the same model revision
+# share a content id but never a directory.
+hot_view_live_users() {
+  local rank="${1:?}" content_id="${2:?}" owner="${3:?}" out remote_cmd
+  local filter_managed filter_config filter_owner
+  filter_managed="label=${PULSAR_MANAGED_LABEL}=true"
+  filter_config="label=${PULSAR_WEIGHT_CONFIG_LABEL}=${content_id}"
+  filter_owner="label=${PULSAR_CONF_LABEL}=${owner}"
+  if [ "$rank" = 0 ]; then
+    out=$("$PULSAR_DOCKER" ps --all --filter "$filter_managed" --filter "$filter_config" \
+      --filter "$filter_owner" --format "{{.Label \"${PULSAR_CONF_LABEL}\"}}" 2>/dev/null) || return 1
+  else
+    printf -v remote_cmd 'docker ps --all --filter %q --filter %q --filter %q --format %q' \
+      "$filter_managed" "$filter_config" "$filter_owner" "{{.Label \"${PULSAR_CONF_LABEL}\"}}"
+    out=$(ssh_node "$rank" "$remote_cmd" </dev/null) || return 1
   fi
-  command=$(shell_join_q python3 - find-hot \
-    --profile "$profile" \
-    --topology-id "$CLUSTER_TOPOLOGY_ID" \
-    --hot-root "$HOT_ROOT" \
-    "${launch_args[@]}")
-  info=$(ssh_node "$rank" "$command" <"$PY_TOOL") || return 1
-  stamp=$(printf '%s' "$info" | python3 -c \
-    'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
+  printf '%s\n' "$out" | awk 'NF' | sort -u
+}
+
+# hot_instance_for_profile_on_rank <profile> <rank> [require_launchable] [strict]
+# The ready view named by PROFILE (a conf name or a released spec id) on
+# RANK, as the find-hot record. A conf binds the stamp to its conf file; a
+# released spec binds the view to its spec snapshot manifest id, and strict=1
+# (prepare, pin, unpin) verifies the content on that rank, the controller
+# included, since find-hot checks metadata only. strict=0 (purge) binds by
+# name and stamp alone so a damaged view stays removable.
+# Returns 1 when the rank holds no such view (find-hot exit 3), 2 when the
+# rank was reached but the view could not be inspected (a malformed stamp,
+# a tool failure), and 255 when the rank cannot be observed at all (SSH
+# failure), so cleanup can tell them apart: absence is already purged; the
+# other two are not. The purge lookup (strict=0) also finds a view an
+# interrupted preparation left in a non-ready state.
+hot_instance_for_profile_on_rank() {
+  local profile="${1:?}" rank="${2:?}" require_launchable="${3:-0}" strict="${4:-1}"
+  local command info stamp instance rc=0
+  local -a launch_args=() find_hot_args=() verify_args=()
+  [ "$require_launchable" = 0 ] || launch_args+=(--for-launch)
+  find_hot_args=(
+    find-hot
+    --profile "$profile"
+    --topology-id "${CLUSTER_TOPOLOGY_ID}"
+    --hot-root "$HOT_ROOT"
+  )
+  [ "$strict" = 1 ] || find_hot_args+=(--include-incomplete)
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || return 2
+  else
+    find_hot_args+=(--models-dir "$REPO_DIR/models")
+  fi
+  if [ "$rank" -eq 0 ]; then
+    info=$(python3 "$PY_TOOL" "${find_hot_args[@]}" "${launch_args[@]}") || rc=$?
+  else
+    command=$(shell_join_q python3 - "${find_hot_args[@]}" "${launch_args[@]}")
+    info=$(ssh_node "$rank" "$command" <"$PY_TOOL") || rc=$?
+    [ "$rc" -ne 255 ] || return 255
+  fi
+  [ "$rc" -ne 3 ] || return 1
+  [ "$rc" -eq 0 ] || return 2
+  instance=$(printf '%s' "$info" | python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["instance_dir"])') \
     || return 1
-  printf '%s' "$stamp" | python3 "$PY_TOOL" validate-hot-stamp \
-    --profile "$profile" --models-dir "$REPO_DIR/models" \
-    --stamp-file /dev/stdin >/dev/null || return 1
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if [ "$strict" = 1 ]; then
+      verify_args=(
+        verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID"
+        --topology-id "$CLUSTER_TOPOLOGY_ID" --instance-dir "$instance"
+      )
+      if [ "$rank" -eq 0 ]; then
+        python3 "$PY_TOOL" "${verify_args[@]}" >/dev/null || return 1
+      else
+        command=$(shell_join_q python3 - "${verify_args[@]}")
+        rc=0
+        ssh_node "$rank" "$command" <"$PY_TOOL" >/dev/null || rc=$?
+        [ "$rc" -ne 255 ] || return 255
+        [ "$rc" -eq 0 ] || return 1
+      fi
+    fi
+  elif [ "$rank" -ne 0 ]; then
+    stamp=$(printf '%s' "$info" | python3 -c \
+      'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"], sort_keys=True, separators=(",", ":")))') \
+      || return 1
+    printf '%s' "$stamp" | python3 "$PY_TOOL" validate-hot-stamp \
+      --profile "$profile" --models-dir "$REPO_DIR/models" \
+      --stamp-file /dev/stdin >/dev/null || return 1
+  fi
   printf '%s\n' "$info"
 }
 
+
+
+
+# hot_instances_for_profile_on_ranks <profile> <rank>...
+# Print one "rank<TAB>instance_dir<TAB>stamped_content_id<TAB>pinned" line
+# per target rank that holds the view named by PROFILE, bound by name and
+# stamp only (purge policy; a view left in a non-ready state by an
+# interrupted preparation counts). A rank without the view is reported as
+# already purged and skipped; the function fails with 1 only when no target
+# rank holds it. It returns 255 (unreachable) or 2 (reached but not
+# inspectable) without printing: such a rank may still run a container on
+# its copy, so nothing may be deleted anywhere until every rank has been
+# inspected.
+hot_instances_for_profile_on_ranks() {
+  local profile="${1:?}" rank info found=0 rc
+  local -a fields=()
+  local -a rows=()
+  shift
+  for rank in "$@"; do
+    rc=0
+    info=$(hot_instance_for_profile_on_rank "$profile" "$rank" 0 0) || rc=$?
+    case "$rc" in
+      0)
+        mapfile -t fields < <(json_fields "$info" instance_dir stamp.content_id stamp.pinned)
+        [ -n "${fields[0]:-}" ] || return 2
+        rows+=("$(printf '%s\t%s\t%s\t%s' "$rank" "${fields[0]}" "${fields[1]:-}" "${fields[2]:-false}")")
+        found=1
+        ;;
+      1) warn "$profile: rank $rank holds no view (already purged)" ;;
+      255)
+        warn "$profile: rank $rank is unobservable; aborting before any deletion"
+        return 255
+        ;;
+      *)
+        warn "$profile: rank $rank could not be inspected; aborting before any deletion"
+        return 2
+        ;;
+    esac
+  done
+  [ "$found" = 1 ] || return 1
+  printf '%s\n' "${rows[@]}"
+}
+
+# describe_purge_rows <row>...
+# One "rank N: path" per row, joined with "; ", for the confirmation text.
+describe_purge_rows() {
+  printf '%s\n' "$@" | awk -F'\t' 'NF {print "rank " $1 ": " $2}' | paste -sd ';' - | sed 's/;/; /g'
+}
+
+# hot_instances_for_profile_strict_on_ranks <profile> <require_launchable> <rank>...
+# Print one "rank<TAB>instance_dir" line per target rank after the strict
+# lookup (the view named by PROFILE, content-verified for a released spec)
+# succeeded on every rank. Fails without printing when any rank lacks it, so
+# a pin-state change never starts on a partial set; an unreachable rank
+# returns 255.
+hot_instances_for_profile_strict_on_ranks() {
+  local profile="${1:?}" require_launchable="${2:-0}" rank info instance rc
+  local -a rows=()
+  shift 2
+  for rank in "$@"; do
+    rc=0
+    info=$(hot_instance_for_profile_on_rank "$profile" "$rank" "$require_launchable" 1) || rc=$?
+    if [ "$rc" -eq 255 ]; then
+      warn "$profile: rank $rank is unreachable"
+      return 255
+    elif [ "$rc" -eq 2 ]; then
+      warn "$profile: rank $rank could not be inspected"
+      return 2
+    elif [ "$rc" -ne 0 ]; then
+      warn "$profile: rank $rank has no verified view"
+      return 1
+    fi
+    instance=$(printf '%s' "$info" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["instance_dir"])') || return 1
+    rows+=("$(printf '%s\t%s' "$rank" "$instance")")
+  done
+  printf '%s\n' "${rows[@]}"
+}
+
+# resolve_hot_profile_targets <profile> [node_selector] [policy]
+# policy "required" (default): a released spec needs its catalog home.
+# policy "cleanup": purge may proceed without a catalog home so a stranded
+# view can still be recovered; multi-rank targets come from the spec
+# geometry and a one-rank target needs an explicit or overlay placement.
+# A released spec never falls back to rank 0 under either policy.
 resolve_hot_profile_targets() {
-  local profile="${1:?}" node_selector="${2:-}" resolved home_rank rank
+  local profile="${1:?}" node_selector="${2:-}" policy="${3:-required}"
+  local resolved home_rank rank identity
   local -a ranks=()
   home_rank=""
-  if [ -f "$CATALOG_FILE" ]; then
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    if [ -z "${MODEL:-}" ] || [ -z "${SNAPSHOT_REVISION:-}" ]; then
+      die "$profile: spec hot lookup requires MODEL and SNAPSHOT_REVISION"
+    fi
+    identity="${MODEL}@${SNAPSHOT_REVISION}"
+    resolved=""
+    if [ -f "$CATALOG_FILE" ]; then
+      resolved=$(python3 "$PY_TOOL" resolve \
+        --catalog "$CATALOG_FILE" --no-cold --json "$identity") || resolved=""
+    fi
+    if [ -n "$resolved" ]; then
+      home_rank=$(printf '%s' "$resolved" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["home"]["rank"])') \
+        || die "$profile: catalog home rank is unreadable"
+    elif [ "$policy" = cleanup ]; then
+      warn "$profile: no catalog home for $identity; cleanup targets come from the spec geometry and the selected placement"
+    else
+      die "$profile: catalog home is required for a released spec; no rank-0 fallback"
+    fi
+  elif [ -f "$CATALOG_FILE" ]; then
     resolved=$(python3 "$PY_TOOL" resolve \
       --catalog "$CATALOG_FILE" --profile "$profile" \
       --models-dir "$REPO_DIR/models" --no-cold --json 2>/dev/null) || resolved=""
@@ -3496,16 +3873,26 @@ resolve_hot_profile_targets() {
     elif [ -n "$home_rank" ]; then
       rank="$home_rank"
       resolve_single_node_placement "$rank" || return 1
+    elif [ "${CONF_SOURCE:-conf}" = spec ]; then
+      warn "$profile: a released spec has no rank-0 fallback; pass --node or set the overlay placement"
+      return 1
     else
       # Historical hot state may have no warm catalog home. Retired cold
       # stage-only state is discoverable for cleanup but cannot launch.
       rank=0
       resolve_single_node_placement "$rank" || return 1
     fi
-    [ -z "$home_rank" ] || [ "$rank" = "$home_rank" ] || {
-      warn "$profile: one-node local-files lifecycle must target durable-home rank $home_rank"
-      return 1
-    }
+    if [ -n "$home_rank" ] && [ "$rank" != "$home_rank" ]; then
+      if [ "$policy" = cleanup ] && [ -n "$node_selector" ]; then
+        # After home relocate the previous placement may still hold a view
+        # the current home never uses. Explicit cleanup of that historical
+        # rank stays reachable; ownership and live-user checks still apply.
+        warn "$profile: cleaning previous placement rank $rank (current durable home is rank $home_rank)"
+      else
+        warn "$profile: one-node local-files lifecycle must target durable-home rank $home_rank"
+        return 1
+      fi
+    fi
     ranks=("$rank")
   else
     [ -z "$node_selector" ] || {
@@ -3534,24 +3921,31 @@ cmd_pin() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: pin <profile> [--node RANK|NODE_ID]"
+  [ -n "$profile" ] || die "usage: pin <profile|spec_id> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector")
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank budget_plan
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
     || die "pin: cannot resolve exact local-files placement"
-  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}" 1) \
-    || die "pin: retired cold stage-only state is cleanup-only and cannot be pinned"
-  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
+  # Every target rank is resolved and verified before any stamp changes, so
+  # a rank that lacks the view never leaves the others half-pinned.
+  local -a pin_rows=() row=()
+  local pin_list="" line
+  pin_list=$(hot_instances_for_profile_strict_on_ranks "$profile" 1 "${HOT_TARGET_RANKS[@]}") \
+    || die "pin: every serving rank needs a verified view; retired cold stage-only state is cleanup-only and cannot be pinned"
+  mapfile -t pin_rows < <(printf '%s\n' "$pin_list")
   budget_plan=$(build_zero_hot_budget_plan pin "$profile" "$HOT_TARGET_RANKS_CSV") \
     || die "pin: all-rank hot budget observation failed"
   render_hot_budget_plan_json "$budget_plan"
   hot_budget_plan_is_eligible "$budget_plan" \
     || die "pin: current hot state exceeds policy; nothing was pinned"
-  for rank in "${HOT_TARGET_RANKS[@]}"; do
+  for line in "${pin_rows[@]}"; do
+    IFS=$'\t' read -r -a row <<<"$line"
+    rank="${row[0]}" instance="${row[1]}"
     if [ "$rank" = 0 ]; then
       python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --pinned >/dev/null
     else
@@ -3577,18 +3971,24 @@ cmd_unpin() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: unpin <profile> [--node RANK|NODE_ID]"
+  [ -n "$profile" ] || die "usage: unpin <profile|spec_id> [--node RANK|NODE_ID]"
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector")
   load_cluster_topology >/dev/null || die "confirmed topology required"
   local info instance rank
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
   resolve_hot_profile_targets "$profile" "$node_selector" \
     || die "unpin: cannot resolve exact local-files placement"
-  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}")
-  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  for rank in "${HOT_TARGET_RANKS[@]}"; do
+  local -a pin_rows=() row=()
+  local pin_list="" line
+  pin_list=$(hot_instances_for_profile_strict_on_ranks "$profile" 0 "${HOT_TARGET_RANKS[@]}") \
+    || die "unpin: every serving rank needs a verified view"
+  mapfile -t pin_rows < <(printf '%s\n' "$pin_list")
+  for line in "${pin_rows[@]}"; do
+    IFS=$'\t' read -r -a row <<<"$line"
+    rank="${row[0]}" instance="${row[1]}"
     if [ "$rank" = 0 ]; then
       python3 "$PY_TOOL" set-pinned --instance-dir "$instance" --no-pinned >/dev/null
     else
@@ -3616,28 +4016,67 @@ cmd_purge_hot() {
     esac
     shift
   done
-  [ -n "$profile" ] || die "usage: purge-hot <profile> [--node RANK|NODE_ID] [--yes] [--force-unpin]"
+  [ -n "$profile" ] || die "usage: purge-hot <profile|spec_id> [--node RANK|NODE_ID] [--yes] [--force-unpin]"
   require_py
   load_conf "$profile"
+  node_selector=$(spec_overlay_node_selector "$node_selector" cleanup)
   load_cluster_topology >/dev/null || die "confirmed topology required"
-  local info instance rank command
+  local instance rank command content_id sharers line
   local -a HOT_TARGET_RANKS=()
   local HOT_TARGET_RANKS_CSV=""
-  resolve_hot_profile_targets "$profile" "$node_selector" \
+  resolve_hot_profile_targets "$profile" "$node_selector" cleanup \
     || die "purge-hot: cannot resolve exact local-files placement"
-  info=$(hot_instance_for_profile_on_rank "$profile" "${HOT_TARGET_RANKS[0]}") \
+  # Each target rank is inspected on its own: a rank that has already lost
+  # its view is already purged, and must not stop the recovery of the copies
+  # that survive on the other ranks.
+  local -a purge_rows=() row=()
+  local purge_list="" purge_rc=0
+  purge_list=$(hot_instances_for_profile_on_ranks "$profile" "${HOT_TARGET_RANKS[@]}") || purge_rc=$?
+  [ "$purge_rc" -ne 255 ] \
+    || die "purge-hot: a target rank is unobservable; nothing was deleted"
+  [ "$purge_rc" -ne 2 ] \
+    || die "purge-hot: a target rank could not be inspected; nothing was deleted"
+  [ -n "$purge_list" ] \
     || die "no hot instance for $profile on the selected serving placement"
-  instance=$(printf '%s' "$info" | python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_dir"])')
-  [ "$yes" = 1 ] || die "purge-hot will delete $instance — re-run with --yes"
-  for rank in "${HOT_TARGET_RANKS[@]}"; do
+  mapfile -t purge_rows < <(printf '%s\n' "$purge_list")
+  local stamped_content_id pinned_rows=""
+  for line in "${purge_rows[@]}"; do
+    IFS=$'\t' read -r -a row <<<"$line"
+    rank="${row[0]}" instance="${row[1]}" stamped_content_id="${row[2]:-}"
+    # Pins are honored before anything is deleted, so a pinned view among
+    # several never leaves the others half-purged.
+    if [ "${row[3]:-false}" = true ] && [ "$force_unpin" != 1 ]; then
+      pinned_rows="${pinned_rows:+$pinned_rows; }rank $rank: $instance"
+    fi
+    # The instance directory is named by its content id, which is also the
+    # weight-config label live containers carry. Query Docker by the name
+    # on disk and refuse a stamp that disagrees: a damaged stamp must not
+    # steer the live-user check away from the container that mounts it.
+    content_id=$(basename "$instance")
+    if [ -n "$stamped_content_id" ] && [ "$stamped_content_id" != "$content_id" ]; then
+      die "purge-hot: stamp content_id '$stamped_content_id' differs from the instance name '$content_id' on rank $rank; refusing"
+    fi
+    # A view can be shared: a released spec reuses a conf-named view of the
+    # same spec snapshot manifest. Never delete bytes another live service mounts.
+    sharers=$(hot_view_live_users "$rank" "$content_id" "$profile") \
+      || die "purge-hot: cannot verify on rank $rank that no running service uses $instance"
+    [ -z "$sharers" ] \
+      || die "purge-hot: refusing to delete $instance on rank $rank: still referenced by managed container(s), running or stopped: $sharers (stop and remove them first; ./pulsar stop <name> --purge-hot does both)"
+  done
+  [ -z "$pinned_rows" ] \
+    || die "purge-hot: pinned view(s) present ($pinned_rows); pass --force-unpin to remove them; nothing was deleted"
+  [ "$yes" = 1 ] || die "purge-hot will delete $(describe_purge_rows "${purge_rows[@]}") — re-run with --yes"
+  for line in "${purge_rows[@]}"; do
+    IFS=$'\t' read -r -a row <<<"$line"
+    rank="${row[0]}" instance="${row[1]}"
     if [ "$rank" = 0 ]; then
       if [ "$force_unpin" = 1 ]; then
-        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --force-unpin
+        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --hot-root "$HOT_ROOT" --force-unpin
       else
-        python3 "$PY_TOOL" purge-hot --instance-dir "$instance"
+        python3 "$PY_TOOL" purge-hot --instance-dir "$instance" --hot-root "$HOT_ROOT"
       fi
     else
-      command=$(shell_join_q python3 - purge-hot --instance-dir "$instance")
+      command=$(shell_join_q python3 - purge-hot --instance-dir "$instance" --hot-root "$HOT_ROOT")
       if [ "$force_unpin" = 1 ]; then
         command+=" --force-unpin"
         ssh_node "$rank" "$command" <"$PY_TOOL" \

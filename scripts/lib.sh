@@ -272,10 +272,51 @@ _reset_loaded_profile_defaults() {
   PROFILE_FAMILY="" VARIANT_LABEL="" FAMILY_RECOMMENDED=0 PROFILE_PURPOSE="serving"
   TOPOLOGY_CLASS="" MIN_RAILS_PER_PAIR=""
   CONF_SOURCE=conf
+  # shellcheck disable=SC2034  # consumed by model-library.sh and check-weights.sh
   SNAPSHOT_REVISION=""
   SPEC_MANIFEST_ID=""
   SPEC_PLATFORM_ID=""
   OVERLAY_PLACEMENT_NODE_ID=""
+}
+
+# Effective one-node placement selector for the loaded profile: for a released
+# spec, an explicit --node wins, an overlay placement.node_id applies when no
+# selector was given, and a conflict between the two fails. Prints the
+# selector; callers assign it. Confs pass through unchanged.
+# Print the topology rank a node selector names (node id, hostname, ssh
+# host, control IP, key, or rank), or fail. The shared resolver runs in a
+# subshell so the caller's placement variables are untouched.
+single_node_index_for_selector() {
+  local selector="${1:?}"
+  (
+    resolve_single_node_placement "$selector" >/dev/null 2>&1 || exit 1
+    printf '%s\n' "$SINGLE_NODE_INDEX"
+  )
+}
+
+# spec_overlay_node_selector <selector> [policy]
+# Fill an empty selector from the overlay placement. A selector that names a
+# different node than the overlay is a conflict for serving-side commands;
+# under policy "cleanup" it is an explicit historical placement (a previous
+# rank after home relocate) and is passed through unchanged.
+spec_overlay_node_selector() {
+  local selector="${1:-}" policy="${2:-serve}" selector_rank overlay_rank
+  if [ "${CONF_SOURCE:-conf}" = spec ] && [ "${NODES:-1}" -eq 1 ]; then
+    if [ "$policy" != cleanup ] && [ -n "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
+        && [ "$selector" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then
+      # A rank number, hostname, or node id may all name the overlay's
+      # node; compare the placement they resolve to, not the spelling.
+      if ! selector_rank=$(single_node_index_for_selector "$selector") \
+          || ! overlay_rank=$(single_node_index_for_selector "$OVERLAY_PLACEMENT_NODE_ID") \
+          || [ "$selector_rank" != "$overlay_rank" ]; then
+        die "--node '$selector' differs from overlay placement.node_id '$OVERLAY_PLACEMENT_NODE_ID'" 2
+      fi
+    fi
+    if [ -z "$selector" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ]; then
+      selector="$OVERLAY_PLACEMENT_NODE_ID"
+    fi
+  fi
+  printf '%s\n' "$selector"
 }
 
 # Launch admission for a released spec: refuse to start outside the spec's
@@ -1362,24 +1403,27 @@ PULSAR_MODEL_IDENTITY_STATUS_LABEL="io.pulsar.gb10.model-identity-status"
 PULSAR_LAUNCH_CONTRACT_LABEL="io.pulsar.gb10.launch-contract"
 PULSAR_SPEC_DECODE_LABEL="io.pulsar.gb10.spec-decode"
 
+
+
+
 # Print find-hot JSON for the selected rank. Return 0 on success, 255 when
 # that rank is SSH-unreachable, 2 when a found view fails verification, and
 # 1 when no ready instance is present. Requires load_conf plus confirmed
 # topology (or a resolved one-node topology id).
 library_hot_info_for_profile() {
   local profile="${1:?profile required}" topology_id info stamp_json instance
-  local expected_validation_json command rank rc identity
+  local expected_validation_json command rank rc
   local -a find_hot_args verify_hot_args
   topology_id="${CLUSTER_TOPOLOGY_ID:-${SINGLE_NODE_TOPOLOGY_ID:-}}"
   [ -n "$topology_id" ] || return 1
   [ -f "$PULSAR_MODEL_LIBRARY_PY" ] || return 1
 
   if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    [ -n "${MODEL:-}" ] && [ -n "${SNAPSHOT_REVISION:-}" ] \
-      && [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
-    identity="${MODEL}@${SNAPSHOT_REVISION}"
-    find_hot_args=(find-hot --identity "$identity" --manifest-id "$SPEC_MANIFEST_ID" \
-      --topology-id "$topology_id" --hot-root "$PULSAR_HOT_ROOT" --for-launch)
+    # A released spec's view is keyed by the spec id, like a conf's by its
+    # name; the spec snapshot manifest id binds the view's content at verify time.
+    [ -n "${SPEC_MANIFEST_ID:-}" ] || return 1
+    find_hot_args=(find-hot --profile "$profile" --topology-id "$topology_id" \
+      --hot-root "$PULSAR_HOT_ROOT" --for-launch)
     verify_hot_args=(verify-hot --expected-manifest-id "$SPEC_MANIFEST_ID" \
       --topology-id "$topology_id" --for-launch --serve-time-witness)
   else

@@ -62,15 +62,7 @@ if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$SPEC_MODE" != auto ]; then
   die "released spec $NAME: --spec-decode/--no-spec-decode are refused (the identity is fixed)" 2
 fi
 require_spec_platform_admission "$NAME"
-if [ "${CONF_SOURCE:-conf}" = spec ] && [ "$NODES" -eq 1 ]; then
-  if [ -n "$NODE_SELECTOR" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ] \
-      && [ "$NODE_SELECTOR" != "$OVERLAY_PLACEMENT_NODE_ID" ]; then
-    die "--node '$NODE_SELECTOR' differs from overlay placement.node_id" 2
-  fi
-  if [ -z "$NODE_SELECTOR" ] && [ -n "${OVERLAY_PLACEMENT_NODE_ID:-}" ]; then
-    NODE_SELECTOR="$OVERLAY_PLACEMENT_NODE_ID"
-  fi
-fi
+NODE_SELECTOR=$(spec_overlay_node_selector "$NODE_SELECTOR")
 acquire_model_library_hot_lock shared
 PLACEMENT_ARGS=()
 SERVICE_API_BASE="http://127.0.0.1:$PORT"

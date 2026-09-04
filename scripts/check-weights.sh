@@ -85,28 +85,36 @@ if [ "$hot_rc" -ne 0 ]; then
   if [ "$NODES" -eq 1 ]; then
     one_node_rank="$SINGLE_NODE_INDEX"
   fi
-  if [ "$NODES" -eq 1 ] && [ "$hot_rc" -eq 255 ]; then
+  # The lookup verifies every serving rank, so its codes carry the same
+  # meaning for a multi-rank placement; only the rank label differs.
+  where="a serving rank"
+  [ "$NODES" -ne 1 ] || where="rank $SINGLE_NODE_INDEX"
+  if [ "$hot_rc" -eq 255 ]; then
     emit_weights_gap \
       "rank-unreachable" \
       "./pulsar inventory" \
-      "rank $SINGLE_NODE_INDEX is unreachable; restore SSH to that confirmed node, then re-check. Do not restage while the rank is unobservable" \
-      "$SINGLE_NODE_INDEX"
+      "$where is unreachable; restore SSH to that confirmed node, then re-check. Do not restage while the rank is unobservable" \
+      "$one_node_rank"
     exit 1
   fi
-  if [ "$NODES" -eq 1 ] && [ "$hot_rc" -eq 2 ]; then
+  if [ "$hot_rc" -eq 2 ]; then
     emit_weights_gap \
       "identity-mismatch" \
       "scripts/model-library.sh health" \
-      "rank $SINGLE_NODE_INDEX runtime view failed verification; inspect health, then prepare $NAME --yes only if that view is missing or corrupt" \
-      "$SINGLE_NODE_INDEX"
+      "$where runtime view failed verification; inspect health, then prepare $NAME --yes only if that view is missing or corrupt" \
+      "$one_node_rank"
     exit 1
   fi
   classify_args=(
     --profile "$NAME"
     --catalog "$CATALOG_FILE"
     --topology-id "$CLUSTER_TOPOLOGY_ID"
-    --models-dir "$REPO_DIR/models"
   )
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    classify_args+=(--identity "${MODEL}@${SNAPSHOT_REVISION}")
+  else
+    classify_args+=(--models-dir "$REPO_DIR/models")
+  fi
   if [ "$NODES" -eq 1 ]; then
     classify_args+=(--selected-rank "$SINGLE_NODE_INDEX")
     if [ -n "${SINGLE_NODE_ID:-}" ]; then
@@ -119,11 +127,10 @@ if [ "$hot_rc" -ne 0 ]; then
   reason="${gap_fields[0]:-views-missing}"
   remediation="${gap_fields[1]:-scripts/model-library.sh prepare $NAME --yes}"
   detail="${gap_fields[2]:-model files are not prepared}"
-  if [ "${CONF_SOURCE:-conf}" = spec ]; then
-    # Preparation is profile-keyed today; a released spec cannot prepare
-    # its own view yet. Say so instead of advertising a command that fails.
-    remediation="scripts/model-library.sh prepare <profile that produced this spec> --yes"
-    detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION}); prepare by spec identity is not available yet, so prepare the source profile, then retry"
+  # Classification names the unmet prerequisite (catalog refresh, cleanup,
+  # placement); prepare <spec_id> is only the fallback when it names none.
+  if [ "${CONF_SOURCE:-conf}" = spec ] && [ -z "${gap_fields[2]:-}" ]; then
+    detail="no ready view for released spec $NAME (${MODEL}@${SNAPSHOT_REVISION})"
   fi
   emit_weights_gap "$reason" "$remediation" "$detail" "$one_node_rank"
   exit 1

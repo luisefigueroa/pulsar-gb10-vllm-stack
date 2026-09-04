@@ -245,6 +245,10 @@ plane, eight streams, and no fallback. Confirmation delegates to:
 scripts/model-library.sh prepare <profile> --yes
 ```
 
+A released spec id is accepted in place of the profile name by `prepare`,
+`pin`, `unpin`, and `purge-hot`; see `releases/README.md` for what those
+commands verify and remove for a spec.
+
 Multi-rank profiles default to SSH over the confirmed RoCE plane with eight
 streams. A one-node profile targets its durable-home rank and uses
 `ssh-control` with one stream (no bulk transfer). Management-network copy on a

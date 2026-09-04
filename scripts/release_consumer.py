@@ -966,6 +966,63 @@ def load_release(
     return _load_released_file(path)
 
 
+def matching_release_for_profile(
+    *,
+    repo_root: str | pathlib.Path,
+    releases_root: str | pathlib.Path | None,
+    model_id: str,
+    image: str,
+    nodes: int,
+    gpu_mem_util: str,
+    engine_args: list[str],
+    container_env: list[str],
+    spec_decode_args: list[str],
+    platform_id: str,
+    snapshot_revision: str,
+    files: list[dict[str, Any]],
+    receipt_model_id: str | None,
+    recommended_spec: bool = False,
+) -> dict[str, Any]:
+    """Load the released spec whose id recomputes from this conf plus receipt.
+
+    Absent identity or missing file: ``state=absent`` (no new prepare check).
+    An invalid file at that id fails without fallback. Never scans by
+    ``model_id@revision``. Never uses ``project_profile``.
+    """
+    spec_decode = bool(recommended_spec) and bool(spec_decode_args)
+    identity, _gaps = build_profile_identity(
+        model_id=model_id,
+        image=image,
+        nodes=int(nodes),
+        gpu_mem_util=gpu_mem_util,
+        engine_args=list(engine_args),
+        container_env=list(container_env),
+        spec_decode_args=list(spec_decode_args),
+        spec_decode=spec_decode,
+        platform_id=platform_id or "dgx-spark-gb10",
+        snapshot_revision=snapshot_revision,
+        files=list(files),
+        receipt_model_id=receipt_model_id,
+    )
+    if identity is None:
+        return {"state": "absent", "spec_id": None, "snapshot_manifest": None}
+    spec_id = spec_id_for(identity)
+    root = _releases_root(repo_root, releases_root)
+    spec, state = try_load_release(root, spec_id)
+    if state == "invalid":
+        fail(f"{root / f'{spec_id}.json'}: released spec file is invalid")
+    if spec is None:
+        return {"state": "absent", "spec_id": spec_id, "snapshot_manifest": None}
+    manifest = spec["identity"]["snapshot_manifest"]
+    if not isinstance(manifest, dict):
+        fail(f"{spec_id}: spec identity.snapshot_manifest is missing")
+    return {
+        "state": "valid",
+        "spec_id": spec_id,
+        "snapshot_manifest": manifest,
+    }
+
+
 def try_load_release(
     releases_root: str | pathlib.Path,
     spec_id: str,

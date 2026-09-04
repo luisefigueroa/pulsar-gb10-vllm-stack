@@ -116,6 +116,12 @@ COLD_HUB_REL_PATHS = (
 )
 
 
+class HotInstanceNotFound(ValueError):
+    """find-hot found no ready instance for the name: exit status 3, so a
+    caller can tell absence (already purged, not prepared) from a failure
+    to inspect the rank (a malformed stamp, a tool error), which exits 1."""
+
+
 class ModelLibraryError(ValueError):
     """Operator-facing library error."""
 
@@ -2681,9 +2687,10 @@ def classify_library_readiness(
     profile: str,
     catalog_path: str | pathlib.Path | None,
     topology_id: str,
-    models_dir: str | pathlib.Path,
+    models_dir: str | pathlib.Path | None,
     selected_rank: int | None = None,
     selected_node_id: str | None = None,
+    identity_key: str | None = None,
 ) -> dict[str, Any]:
     """Classify why library views are not ready, without restaging."""
     refresh = "scripts/model-library.sh catalog refresh"
@@ -2718,13 +2725,37 @@ def classify_library_readiness(
             "remediation": refresh,
             "detail": "catalog topology does not match the confirmed topology",
         }
-    try:
-        resolved = resolve_entry(
-            catalog,
-            profile=profile,
-            cold_root=None,
-            models_dir=models_dir,
+    identity_key = str(identity_key or "").strip() or None
+    if identity_key and "@" in identity_key:
+        # A released spec names its exact commit: acquisition must fetch
+        # that commit, never a selector that may resolve elsewhere. A
+        # selected placement travels with it, otherwise home add may pick
+        # another eligible rank that the overlay then rejects.
+        exact_revision = identity_key.split("@", 1)[1]
+        placement = ""
+        selected = (selected_node_id or "").strip() or (
+            str(selected_rank) if selected_rank is not None else ""
         )
+        if selected:
+            placement = f" --node {selected}"
+        unsealed_add = (
+            f"scripts/model-library.sh home add {profile} --revision {exact_revision}{placement} --plan && "
+            f"scripts/model-library.sh home add {profile} --revision {exact_revision}{placement} --yes"
+        )
+    try:
+        if identity_key:
+            resolved = resolve_entry(
+                catalog,
+                identity_key=identity_key,
+                cold_root=None,
+            )
+        else:
+            resolved = resolve_entry(
+                catalog,
+                profile=profile,
+                cold_root=None,
+                models_dir=models_dir,
+            )
     except ModelLibraryError as exc:
         text = str(exc)
         if "not found in warm catalog" in text or "no complete warm home" in text:
@@ -2792,6 +2823,30 @@ def classify_library_readiness(
         target = home_node_id or (
             str(home_rank) if home_rank is not None else "HOME"
         )
+        if identity_key:
+            # A released spec's one-rank placement comes from the overlay,
+            # so re-checking on the home rank leads nowhere: the next start
+            # enforces the overlay again. Either occupancy moves to the
+            # selected rank or the overlay names the home.
+            selected = selected_node or (
+                str(selected_rank) if selected_rank is not None else "SELECTED"
+            )
+            # home relocate resolves a bare profile to its model id, which is
+            # ambiguous when several complete revisions exist; the exact
+            # model@commit query with --profile names this spec's occupancy.
+            return {
+                "reason": "wrong-placement",
+                "remediation": (
+                    f"scripts/model-library.sh home relocate {identity_key} --profile {profile} "
+                    f"--node {selected} --yes && scripts/model-library.sh catalog refresh"
+                    f"  # or set .pulsar-overlay.json placement.node_id to {target}"
+                ),
+                "detail": (
+                    f"the overlay places this spec on {selected} but its durable home is "
+                    f"{target} (rank {home_rank}); relocate occupancy to {selected} and refresh "
+                    f"the catalog, or point the overlay at {target}"
+                ),
+            }
         return {
             "reason": "wrong-placement",
             "remediation": f"scripts/check-weights.sh {profile} --node {target}",
@@ -2810,13 +2865,18 @@ def classify_library_readiness(
 
 
 def cmd_classify_library_readiness(args: argparse.Namespace) -> int:
+    identity_key = str(getattr(args, "identity_key", "") or "") or None
+    models_dir = str(args.models_dir or "") or None
+    if not identity_key and not models_dir:
+        fail("classify-library-readiness: require --models-dir or --identity")
     report = classify_library_readiness(
         profile=args.profile,
         catalog_path=args.catalog,
         topology_id=args.topology_id,
-        models_dir=args.models_dir,
+        models_dir=models_dir,
         selected_rank=args.selected_rank,
         selected_node_id=args.selected_node_id or None,
+        identity_key=identity_key,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
@@ -3301,10 +3361,43 @@ def load_hot_stamp(instance_dir: str | pathlib.Path) -> dict[str, Any]:
     return data
 
 
-def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
+def _ready_hot_children(
+    parent: pathlib.Path, *, include_incomplete: bool = False
+) -> list[tuple[str, pathlib.Path, dict[str, Any]]]:
+    """Stamped children of a <name>-<topology> entry, ready or pinned.
+
+    ``include_incomplete`` also lists a child whose stamp is in another
+    state (an interrupted preparation leaves ``verifying``). Ownership is
+    still bound by the stamp's schema, scheme, and identity, so cleanup can
+    reach such a view while launch discovery stays ready-only. In that
+    cleanup mode a child whose stamp cannot be read is an inspection
+    failure, never an absence: cleanup must stop rather than delete the
+    healthy ranks around a view it could not account for.
+    """
     candidates: list[tuple[str, pathlib.Path, dict[str, Any]]] = []
     try:
-        for child in parent.iterdir():
+        children = list(parent.iterdir())
+    except OSError as exc:
+        # An entry that exists but cannot be listed (permissions, I/O) is
+        # not inspectable. Cleanup must say so rather than read it as
+        # absence and delete the healthy ranks around it.
+        if include_incomplete:
+            fail(f"cleanup: cannot list hot entry {parent}: {exc}")
+        return []
+    try:
+        for child in children:
+            if include_incomplete:
+                try:
+                    os.lstat(child)
+                except OSError as exc:
+                    fail(f"cleanup: cannot inspect hot instance {child}: {exc}")
+            # Never follow a symlinked instance: a later purge would delete
+            # whatever it points at. Cleanup must not read it as absence
+            # either, or it would delete the healthy ranks around it.
+            if child.is_symlink():
+                if include_incomplete:
+                    fail(f"cleanup: refusing a symlinked hot instance at {child}")
+                continue
             if not child.is_dir():
                 continue
             stamp_path = hot_stamp_path(child)
@@ -3312,19 +3405,30 @@ def _ready_hot_children(parent: pathlib.Path) -> list[tuple[str, pathlib.Path, d
                 continue
             try:
                 stamp = load_json(stamp_path)
-            except ModelLibraryError:
+            except ModelLibraryError as exc:
+                if include_incomplete:
+                    fail(f"cleanup: unreadable hot stamp at {stamp_path}: {exc}")
                 continue
             if not isinstance(stamp, dict):
+                if include_incomplete:
+                    fail(f"cleanup: malformed hot stamp at {stamp_path}")
                 continue
             if stamp.get("schema_version") != HOT_SCHEMA_VERSION:
+                if include_incomplete:
+                    fail(
+                        f"cleanup: unsupported hot stamp schema "
+                        f"{stamp.get('schema_version')!r} at {stamp_path}"
+                    )
                 continue
             integrity = stamp.get("integrity")
             if not isinstance(integrity, dict) or (
                 integrity.get("scheme") != SNAPSHOT_INTEGRITY_SCHEME
             ):
+                if include_incomplete:
+                    fail(f"cleanup: unsupported integrity scheme at {stamp_path}")
                 continue
             if stamp.get("state") not in {"ready", "pinned"} and not stamp.get("pinned"):
-                if stamp.get("state") != "ready":
+                if stamp.get("state") != "ready" and not include_incomplete:
                     continue
             activated = str(stamp.get("activated_at") or "")
             candidates.append((activated, child, stamp))
@@ -3340,13 +3444,44 @@ def find_hot_instance_for_profile(
     topology_id: str,
     *,
     profile_data: dict[str, Any] | None = None,
+    include_incomplete: bool = False,
 ) -> pathlib.Path | None:
     """Return the newest ready instance matching the live expected identity."""
     topo12 = (topology_id or "notopology")[:12]
     parent = pathlib.Path(hot_root) / f"{profile}-{topo12}"
+    if include_incomplete:
+        # Cleanup tells absence from an entry it cannot account for: only a
+        # missing entry is absence; a stat failure is an inspection failure.
+        try:
+            os.lstat(parent)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            fail(f"cleanup: cannot inspect hot entry {parent}: {exc}")
+    if parent.is_symlink():
+        # A symlinked <name>-<topology> entry may point outside the hot
+        # root. Launch discovery treats it as no view; cleanup must stop,
+        # since deleting through it or reading it as absence are both
+        # unsafe.
+        if include_incomplete:
+            fail(f"cleanup: refusing a symlinked hot entry at {parent}")
+        return None
     if not parent.is_dir():
         return None
-    for _activated, candidate, _stamp in _ready_hot_children(parent):
+    for _activated, candidate, stamp in _ready_hot_children(
+        parent, include_incomplete=include_incomplete
+    ):
+        # One name, one directory: the stamp under this name must name this
+        # owner. A stamp naming another owner is not a view of this name;
+        # cleanup must not purge it under this owner's container check.
+        owner = stamp.get("profile")
+        if owner != profile:
+            if include_incomplete:
+                fail(
+                    f"cleanup: stamp at {candidate} names owner {owner!r}, "
+                    f"not {profile!r}"
+                )
+            continue
         if profile_data is not None:
             try:
                 verify_hot_stamp_against_profile(
@@ -3357,59 +3492,6 @@ def find_hot_instance_for_profile(
                 continue
         return candidate
     return None
-
-
-def find_hot_instance_for_identity(
-    hot_root: str | pathlib.Path,
-    identity_key: str,
-    topology_id: str,
-    *,
-    manifest_id: str | None = None,
-) -> pathlib.Path | None:
-    """Return the newest ready instance whose stamp matches model_id@revision.
-
-    When ``manifest_id`` is given, the instance's sealed integrity manifest
-    must carry that id, so a released spec only launches the exact reviewed
-    file list (two specs can share a model and revision but not a manifest).
-    Directory names may still use the conf that prepared the view. Spec
-    presence is never occupancy.
-    """
-    if not isinstance(identity_key, str) or "@" not in identity_key:
-        fail("find-hot: --identity must be model_id@revision")
-    topo12 = (topology_id or "notopology")[:12]
-    root = pathlib.Path(hot_root)
-    if not root.is_dir():
-        return None
-    suffix = f"-{topo12}"
-    matches: list[tuple[str, pathlib.Path]] = []
-    try:
-        parents = list(root.iterdir())
-    except OSError:
-        return None
-    for parent in parents:
-        if not parent.is_dir() or not parent.name.endswith(suffix):
-            continue
-        for activated, candidate, stamp in _ready_hot_children(parent):
-            stamp_identity = stamp.get("identity_key")
-            if not stamp_identity:
-                stamp_identity = f"{stamp.get('model_id')}@{stamp.get('revision')}"
-            if stamp_identity != identity_key:
-                continue
-            if manifest_id is not None:
-                integrity = stamp.get("integrity")
-                stamped = (
-                    integrity.get("manifest", {}).get("manifest_id")
-                    if isinstance(integrity, dict)
-                    and isinstance(integrity.get("manifest"), dict)
-                    else None
-                )
-                if stamped != manifest_id:
-                    continue
-            matches.append((activated, candidate))
-    if not matches:
-        return None
-    matches.sort(key=lambda item: item[0], reverse=True)
-    return matches[0][1]
 
 
 def dir_size_bytes(path: pathlib.Path) -> int:
@@ -4140,13 +4222,57 @@ def selected_rail_between(
     return rail[home_side], rail[client_side], rail["network"]
 
 
+def compare_spec_receipt_and_home_manifests(
+    spec_manifest: dict[str, Any],
+    receipt_manifest: dict[str, Any],
+    home_manifest: dict[str, Any],
+) -> None:
+    """Fail without fallback when a spec, receipt, and home rehash disagree.
+
+    Names both manifest ids and the first differing path (ADR 0017 decision 6).
+    Spec presence is never occupancy.
+    """
+    spec = validate_snapshot_manifest(spec_manifest)
+    receipt = validate_snapshot_manifest(receipt_manifest)
+    home = validate_snapshot_manifest(home_manifest)
+
+    def first_differing_path(
+        left: dict[str, Any], right: dict[str, Any]
+    ) -> str:
+        left_files = {item["path"]: item for item in left.get("files") or []}
+        right_files = {item["path"]: item for item in right.get("files") or []}
+        for path in sorted(set(left_files) | set(right_files)):
+            if left_files.get(path) != right_files.get(path):
+                return path
+        return "(manifest_id)"
+
+    if spec.get("manifest_id") != receipt.get("manifest_id") or spec.get(
+        "files"
+    ) != receipt.get("files"):
+        fail(
+            "prepare: spec manifest "
+            f"{spec.get('manifest_id')} differs from receipt "
+            f"{receipt.get('manifest_id')}; first differing path: "
+            f"{first_differing_path(spec, receipt)}"
+        )
+    if spec.get("manifest_id") != home.get("manifest_id") or spec.get(
+        "files"
+    ) != home.get("files"):
+        fail(
+            "prepare: spec manifest "
+            f"{spec.get('manifest_id')} differs from home rehash "
+            f"{home.get('manifest_id')}; first differing path: "
+            f"{first_differing_path(spec, home)}"
+        )
+
+
 def plan_prepare(
     *,
     catalog_path: str,
-    profile: str,
+    profile: str | None = None,
     topology_id: str,
     hot_root: str,
-    models_dir: str | pathlib.Path,
+    models_dir: str | pathlib.Path | None = None,
     backend: str | None = None,
     transport: str | None = None,
     allow_unvalidated: bool = False,
@@ -4156,12 +4282,22 @@ def plan_prepare(
     home_inventory: dict[str, Any] | None = None,
     require_exact_revision: str | None = None,
     expected_integrity_manifest: dict[str, Any] | None = None,
+    identity_key: str | None = None,
+    spec_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a model-preparation plan JSON for bash to execute (copy + stamp).
+
+    A released spec plans by ``identity_key`` (its catalog entry) and
+    ``spec_manifest`` (the reviewed file list, required to equal the
+    receipt's); its view is keyed by the spec id like a conf's view is keyed
+    by its name.
 
     Occupancy lookup lives in the Bash wrapper. This planner still requires
     the download-receipt commit and file list; unknown trees without a receipt
     fail without fallback and must not use a self-observed manifest as identity.
+    Catalog binding is exactly one of ``profile`` + ``models_dir`` or
+    ``identity_key`` + ``spec_manifest``. Identity prepare still needs
+    ``profile`` as the spec_id used to name a newly created view.
     """
     backend, transport = resolve_activate_transport(
         backend, transport, nodes=nodes
@@ -4173,15 +4309,45 @@ def plan_prepare(
             f"(catalog={catalog['topology_id'][:12]}… live={topology_id[:12]}…); "
             "run catalog refresh"
         )
-    # Preparation is receipt/occupancy warm-catalog only. Legacy cold fill
-    # paths do not create serving identity, and cold stage-only is retired.
-    profile_data = load_hf_profile(models_dir, profile)
-    resolved = resolve_entry(
-        catalog,
-        profile=profile,
-        cold_root=None,
-        models_dir=models_dir,
-    )
+    identity_key = str(identity_key or "").strip() or None
+    profile = str(profile or "").strip() or None
+    if bool(identity_key) == bool(models_dir):
+        fail(
+            "prepare: require exactly one of --profile --models-dir or "
+            "--identity --spec-manifest-json"
+        )
+    if identity_key:
+        if not profile:
+            fail("prepare: identity prepare requires --profile <spec_id> to name a new view")
+        if spec_manifest is None:
+            fail("prepare: --identity requires --spec-manifest-json")
+        if "@" not in identity_key:
+            fail("prepare: --identity must be model_id@revision")
+        # Preparation is receipt/occupancy warm-catalog only. Spec presence
+        # is never occupancy (ADR 0017 decision 9.5).
+        resolved = resolve_entry(
+            catalog,
+            identity_key=identity_key,
+            cold_root=None,
+        )
+        if resolved.get("identity_key") != identity_key:
+            fail("prepare: catalog identity differs from --identity")
+        profile_data = {
+            "profile": profile,
+            "model_id": resolved["model_id"],
+        }
+    else:
+        if not profile:
+            fail("prepare: --profile is required")
+        # Preparation is receipt/occupancy warm-catalog only. Legacy cold fill
+        # paths do not create serving identity, and cold stage-only is retired.
+        profile_data = load_hf_profile(models_dir, profile)
+        resolved = resolve_entry(
+            catalog,
+            profile=profile,
+            cold_root=None,
+            models_dir=models_dir,
+        )
     if resolved.get("tier") == "cold":
         fail(
             "prepare: a cold tree is not receipt/occupancy serving identity; "
@@ -4256,12 +4422,69 @@ def plan_prepare(
         fail("prepare: receipt-backed home rehash differs from the receipt")
     if integrity_manifest.get("files") != expected.get("files"):
         fail("prepare: receipt-backed home file set differs from the receipt")
+    if spec_manifest is not None:
+        compare_spec_receipt_and_home_manifests(
+            spec_manifest,
+            expected,
+            integrity_manifest,
+        )
     validation = require_activation_identity(
         profile_data,
         integrity_manifest,
         allow_unvalidated=allow_unvalidated,
     )
     cid = hot_content_id(resolved["identity_key"], digest, validation)
+
+    def _ready_skip_plan(
+        *,
+        instance_dir: pathlib.Path,
+        stamp: dict[str, Any],
+        reason: str,
+        storage_instance: pathlib.Path,
+    ) -> dict[str, Any]:
+        storage = build_hot_storage_requirements(
+            target_ranks=target_ranks,
+            bytes_logical=bytes_logical,
+            instance_dir=storage_instance,
+            home_rank=home_rank,
+        )
+        return {
+            "action": "skip",
+            "reason": reason,
+            "profile": profile,
+            "model_id": resolved["model_id"],
+            "identity_key": resolved["identity_key"],
+            "revision": resolved.get("revision"),
+            "home": home,
+            "hot_root": hot_root,
+            "instance_dir": str(instance_dir),
+            "hub_dest": str(hot_hub_path(instance_dir, resolved["model_id"])),
+            "content_id": cid,
+            "content_digest": digest,
+            "integrity_manifest": integrity_manifest,
+            "validation": validation,
+            "bytes_logical": bytes_logical,
+            "backend": backend,
+            "transport": transport,
+            "topology_id": topology_id,
+            "target_ranks": target_ranks,
+            "hot_storage_requirements": storage,
+            "stamp": stamp,
+            "transfer": None,
+        }
+
+    def _stamp_matches_plan(stamp: dict[str, Any]) -> bool:
+        return (
+            stamp.get("content_digest") == digest
+            and stamp.get("identity_key") == resolved["identity_key"]
+            and stamp.get("validation") == validation
+            and stamp.get("state") in {"ready", "pinned"}
+        )
+
+    # A released spec's view is keyed by its spec id exactly as a conf's view
+    # is keyed by its name: one name, one directory. The spec's reviewed
+    # manifest was already required to equal the receipt's, so the view
+    # prepared under the spec id carries the reviewed file list.
     instance = hot_instance_dir(hot_root, profile, topology_id, cid)
     hot_storage_requirements = build_hot_storage_requirements(
         target_ranks=target_ranks,
@@ -4270,38 +4493,22 @@ def plan_prepare(
         home_rank=home_rank,
     )
     existing = None
-    if hot_stamp_path(instance).is_file():
+    # A controller-local stamp proves the controller's view only. For a
+    # released spec whose placement excludes the controller (a one-node
+    # service on a remote home), that stamp is a stale leftover of an
+    # earlier placement and must not turn the plan into a skip: the wrapper
+    # verifies the spec-named view on the target rank before copying, and
+    # the stale view stays reachable for cleanup by naming the controller
+    # with purge-hot --node. A conf keeps its existing plan semantics.
+    if (not identity_key or 0 in target_ranks) and hot_stamp_path(instance).is_file():
         existing = load_hot_stamp(instance)
-        if (
-            existing.get("content_digest") == digest
-            and existing.get("identity_key") == resolved["identity_key"]
-            and existing.get("validation") == validation
-            and existing.get("state") in {"ready", "pinned"}
-        ):
-            return {
-                "action": "skip",
-                "reason": "hot already ready with matching digest",
-                "profile": profile,
-                "model_id": resolved["model_id"],
-                "identity_key": resolved["identity_key"],
-                "revision": resolved.get("revision"),
-                "home": home,
-                "hot_root": hot_root,
-                "instance_dir": str(instance),
-                "hub_dest": str(hot_hub_path(instance, resolved["model_id"])),
-                "content_id": cid,
-                "content_digest": digest,
-                "integrity_manifest": integrity_manifest,
-                "validation": validation,
-                "bytes_logical": bytes_logical,
-                "backend": backend,
-                "transport": transport,
-                "topology_id": topology_id,
-                "target_ranks": target_ranks,
-                "hot_storage_requirements": hot_storage_requirements,
-                "stamp": existing,
-                "transfer": None,
-            }
+        if _stamp_matches_plan(existing):
+            return _ready_skip_plan(
+                instance_dir=instance,
+                stamp=existing,
+                reason="hot already ready with matching digest",
+                storage_instance=instance,
+            )
 
     stamp = build_hot_stamp(
         profile=profile,
@@ -4532,20 +4739,64 @@ def set_hot_pinned(instance_dir: str | pathlib.Path, pinned: bool) -> dict[str, 
     return stamp
 
 
+def require_hot_instance_within_root(
+    instance_dir: str | pathlib.Path,
+    hot_root: str | pathlib.Path,
+) -> pathlib.Path:
+    """Canonical containment at the destructive boundary.
+
+    The instance must canonically resolve to ``<real hot root>/<name>-<topo>/
+    <content_id>`` with no symlink at either level the library creates. A
+    hot root that is itself a symlink is the operator's configured root and
+    is allowed; anything that escapes its real target is not.
+    """
+    instance = pathlib.Path(instance_dir)
+    root_real = pathlib.Path(os.path.realpath(hot_root))
+    instance_real = pathlib.Path(os.path.realpath(instance))
+    try:
+        relative = instance_real.relative_to(root_real)
+    except ValueError:
+        fail(f"purge: {instance} is not inside the hot root {hot_root}")
+    if len(relative.parts) != 2:
+        fail(f"purge: {instance} is not a <name>-<topology>/<content_id> instance")
+    if instance.is_symlink() or instance.parent.is_symlink():
+        fail(f"purge: refusing to delete through a symlink: {instance}")
+    if (root_real / relative.parts[0]).is_symlink():
+        fail(f"purge: refusing to delete through a symlink: {instance}")
+    return instance
+
+
 def purge_hot_instance(
     instance_dir: str | pathlib.Path,
     *,
     force_unpin: bool = False,
+    hot_root: str | pathlib.Path | None = None,
 ) -> None:
     instance_dir = pathlib.Path(instance_dir)
     if not instance_dir.is_dir():
         fail(f"purge: not a directory: {instance_dir}")
+    # The library creates two levels under the hot root: <name>-<topology>
+    # and the content-id instance. Refuse to delete through a symlink at
+    # either level; rmtree would otherwise remove an external tree.
+    if instance_dir.is_symlink() or instance_dir.parent.is_symlink():
+        fail(f"purge: refusing to delete through a symlink: {instance_dir}")
+    if hot_root is not None:
+        require_hot_instance_within_root(instance_dir, hot_root)
     stamp_path = hot_stamp_path(instance_dir)
     if stamp_path.is_file():
         stamp = load_json(stamp_path)
-        if isinstance(stamp, dict) and stamp.get("pinned") and not force_unpin:
-            fail("purge: instance is pinned; pass --force-unpin to remove")
-    # Safety: only delete under hot root pattern
+        if isinstance(stamp, dict):
+            # The instance directory is named by its content id; a stamp
+            # that disagrees is damaged and must not be trusted for any
+            # decision about this tree, least of all deleting it.
+            stamped = str(stamp.get("content_id") or "")
+            if stamped and stamped != instance_dir.name:
+                fail(
+                    f"purge: stamp content_id {stamped!r} differs from the "
+                    f"instance name {instance_dir.name!r}; refusing"
+                )
+            if stamp.get("pinned") and not force_unpin:
+                fail("purge: instance is pinned; pass --force-unpin to remove")
     shutil.rmtree(instance_dir)
 
 
@@ -7920,12 +8171,22 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
             fail(f"expected-integrity-manifest-json: {exc}")
         if not isinstance(expected_manifest, dict):
             fail("expected-integrity-manifest-json must be an object")
+    spec_manifest = None
+    if getattr(args, "spec_manifest_json", ""):
+        try:
+            spec_manifest = json.loads(args.spec_manifest_json)
+        except json.JSONDecodeError as exc:
+            fail(f"spec-manifest-json: {exc}")
+        if not isinstance(spec_manifest, dict):
+            fail("spec-manifest-json must be an object")
+    identity_key = str(getattr(args, "identity_key", "") or "") or None
+    models_dir = str(args.models_dir or "") or None
     plan = plan_prepare(
         catalog_path=args.catalog,
-        profile=args.profile,
+        profile=args.profile or None,
         topology_id=args.topology_id,
         hot_root=args.hot_root or default_hot_root(),
-        models_dir=args.models_dir,
+        models_dir=models_dir,
         backend=args.backend or None,
         transport=args.transport or None,
         nodes=args.nodes,
@@ -7934,6 +8195,8 @@ def cmd_plan_prepare(args: argparse.Namespace) -> int:
         home_inventory=home_inventory,
         require_exact_revision=getattr(args, "require_exact_revision", None) or None,
         expected_integrity_manifest=expected_manifest,
+        identity_key=identity_key,
+        spec_manifest=spec_manifest,
     )
     print(json.dumps(plan, indent=2, sort_keys=True))
     return 0
@@ -8026,39 +8289,24 @@ def cmd_verify_hot(args: argparse.Namespace) -> int:
 
 
 def cmd_find_hot(args: argparse.Namespace) -> int:
-    identity_key = str(getattr(args, "identity_key", "") or "")
     profile = str(args.profile or "")
-    if bool(identity_key) == bool(profile):
-        fail("find-hot: require exactly one of --profile or --identity")
-    if identity_key and args.models_dir:
-        fail("find-hot: --models-dir is not valid with --identity")
-    manifest_id = str(getattr(args, "manifest_id", "") or "") or None
-    if manifest_id and not identity_key:
-        fail("find-hot: --manifest-id requires --identity")
+    if not profile:
+        fail("find-hot: --profile is required")
+    include_incomplete = bool(getattr(args, "include_incomplete", False))
+    if include_incomplete and getattr(args, "for_launch", False):
+        fail("find-hot: --include-incomplete is cleanup-only and excludes --for-launch")
     profile_data = (
-        load_model_profile(args.models_dir, profile)
-        if args.models_dir and profile
-        else None
+        load_model_profile(args.models_dir, profile) if args.models_dir else None
     )
-    if identity_key:
-        path = find_hot_instance_for_identity(
-            args.hot_root or default_hot_root(),
-            identity_key,
-            args.topology_id,
-            manifest_id=manifest_id,
-        )
-        if path is None:
-            wanted = f" with manifest {manifest_id}" if manifest_id else ""
-            fail(f"find-hot: no ready instance for identity {identity_key}{wanted}")
-    else:
-        path = find_hot_instance_for_profile(
-            args.hot_root or default_hot_root(),
-            profile,
-            args.topology_id,
-            profile_data=profile_data,
-        )
-        if path is None:
-            fail(f"find-hot: no ready instance for profile {profile}")
+    path = find_hot_instance_for_profile(
+        args.hot_root or default_hot_root(),
+        profile,
+        args.topology_id,
+        profile_data=profile_data,
+        include_incomplete=include_incomplete,
+    )
+    if path is None:
+        raise HotInstanceNotFound(f"find-hot: no ready instance for profile {profile}")
     stamp = load_hot_stamp(path)
     if getattr(args, "for_launch", False):
         require_launchable_hot_stamp(stamp)
@@ -8107,7 +8355,11 @@ def cmd_set_pinned(args: argparse.Namespace) -> int:
 
 
 def cmd_purge_hot(args: argparse.Namespace) -> int:
-    purge_hot_instance(args.instance_dir, force_unpin=args.force_unpin)
+    purge_hot_instance(
+        args.instance_dir,
+        force_unpin=args.force_unpin,
+        hot_root=(args.hot_root or None),
+    )
     if args.json:
         print(json.dumps({"purged": args.instance_dir}, indent=2, sort_keys=True))
     else:
@@ -8901,10 +9153,21 @@ def build_parser() -> argparse.ArgumentParser:
         "plan-prepare", help="Plan copy preparation into hot staging"
     )
     plan.add_argument("--catalog", required=True)
-    plan.add_argument("--profile", required=True)
+    plan.add_argument("--profile", default="")
+    plan.add_argument(
+        "--identity",
+        dest="identity_key",
+        default="",
+        help="model_id@revision when preparing a released spec",
+    )
+    plan.add_argument(
+        "--spec-manifest-json",
+        default="",
+        help=argparse.SUPPRESS,
+    )
     plan.add_argument("--topology-id", required=True)
     plan.add_argument("--hot-root", default="")
-    plan.add_argument("--models-dir", required=True)
+    plan.add_argument("--models-dir", default="")
     plan.add_argument("--backend", default="", choices=("copy",))
     plan.add_argument(
         "--transport",
@@ -8955,7 +9218,13 @@ def build_parser() -> argparse.ArgumentParser:
     classify.add_argument("--profile", required=True)
     classify.add_argument("--catalog", default="")
     classify.add_argument("--topology-id", default="")
-    classify.add_argument("--models-dir", required=True)
+    classify.add_argument("--models-dir", default="")
+    classify.add_argument(
+        "--identity",
+        dest="identity_key",
+        default="",
+        help="model_id@revision when classifying a released spec",
+    )
     classify.add_argument("--selected-rank", type=int, default=None)
     classify.add_argument("--selected-node-id", default="")
     classify.set_defaults(func=cmd_classify_library_readiness)
@@ -8997,19 +9266,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vh.set_defaults(func=cmd_verify_hot)
 
-    fh = sub.add_parser("find-hot", help="Find ready hot instance for profile")
-    fh.add_argument("--profile", default="")
-    fh.add_argument(
-        "--identity",
-        dest="identity_key",
-        default="",
-        help="model_id@revision when the view was prepared under a conf name",
+    fh = sub.add_parser(
+        "find-hot",
+        help="Find the ready hot instance for a profile name or a released spec id",
     )
+    fh.add_argument("--profile", default="", help="conf profile name or 64-hex spec id")
     fh.add_argument(
-        "--manifest-id",
-        dest="manifest_id",
-        default="",
-        help="with --identity: require the sealed integrity manifest id",
+        "--include-incomplete",
+        dest="include_incomplete",
+        action="store_true",
+        help="cleanup only: also find a view whose stamp is not ready (never with --for-launch)",
     )
     fh.add_argument("--topology-id", required=True)
     fh.add_argument("--hot-root", default="")
@@ -9035,6 +9301,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     ph = sub.add_parser("purge-hot", help="Delete a hot instance directory")
     ph.add_argument("--instance-dir", required=True)
+    ph.add_argument(
+        "--hot-root",
+        default="",
+        help="require the instance to resolve canonically inside this hot root",
+    )
     ph.add_argument("--force-unpin", action="store_true")
     ph.add_argument("--json", action="store_true")
     ph.set_defaults(func=cmd_purge_hot)
@@ -9167,6 +9438,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(effective_argv)
     try:
         return int(args.func(args))
+    except HotInstanceNotFound as exc:
+        print(f"model-library: ERROR: {exc}", file=sys.stderr)
+        return 3
     except ModelLibraryError as exc:
         print(f"model-library: ERROR: {exc}", file=sys.stderr)
         return 1
