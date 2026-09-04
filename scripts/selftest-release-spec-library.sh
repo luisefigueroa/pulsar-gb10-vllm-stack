@@ -484,10 +484,31 @@ partial_state=$(python3 "$REPO_DIR/scripts/model_library.py" find-hot --profile 
   --topology-id "$topology_id" --hot-root "$STATE/hot-rank1" \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stamp"]["state"], d["stamp"]["content_id"])')
 [ "$partial_state" = "partial partial000001" ] || { echo "FAIL cleanup discovery did not list the partial view: $partial_state" >&2; exit 1; }
+# No retention metadata means the view cannot prove it was unpinned: the
+# ordinary purge refuses, the force-unpin path removes it.
+expect_failure 1 "unstamped view(s) present" \
+  "purge-hot without --force-unpin refuses an unstamped partial view" \
+  env PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+    "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes
+[ -d "$partial_dir" ] || { echo "FAIL the refused purge deleted the partial view" >&2; exit 1; }
 PULSAR_HOT_ROOT="$STATE/hot-rank1" \
-  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes >/dev/null
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin >/dev/null
 [ ! -e "$partial_dir" ] || { echo "FAIL purge-hot left the unstamped partial view" >&2; exit 1; }
-echo "OK   purge-hot removes an unstamped partial view a failed transfer left behind"
+echo "OK   purge-hot removes an unstamped partial view a failed transfer left behind (force-unpin path)"
+
+# A retained stamped view and a failed transfer's residue under one entry:
+# purge repeats discovery until the entry is empty, so both go.
+stamped_view=$(python3 "$REPO_DIR/scripts/testlib/release_spec_library_fixture.py" rank1-view "$REPO_DIR" "$STATE" "$topology_id" "$spec_id" "$model_id" "$revision" "$manifest_json")
+partial_dir="$STATE/hot-rank1/$spec_id-${topology_id:0:12}/partial000002"
+mkdir -p "$partial_dir/hub"
+printf 'leftover\n' >"$partial_dir/hub/leftover.bin"
+passes_out=$(PULSAR_HOT_ROOT="$STATE/hot-rank1" \
+  "$REPO_DIR/scripts/model-library.sh" purge-hot "$spec_id" --node fixture-node-0 --yes --force-unpin 2>&1)
+[ ! -e "$stamped_view" ] && [ ! -e "$partial_dir" ] \
+  || { echo "FAIL purge-hot left a view under the entry: $passes_out" >&2; exit 1; }
+printf '%s\n' "$passes_out" | grep -q "2 view(s) over 2 pass(es)" \
+  || { echo "FAIL purge-hot did not report two passes: $passes_out" >&2; exit 1; }
+echo "OK   purge-hot repeats discovery until the entry is empty"
 
 # A conf's unstamped partial view on a remote rank is listed by the cleanup
 # lookup too: the synthetic stamp is not run through the conf validator.

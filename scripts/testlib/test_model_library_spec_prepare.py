@@ -279,8 +279,30 @@ class SpecPreparePlannerTests(unittest.TestCase):
             ),
             partial,
         )
+        # With no retention metadata the partial view cannot prove it was
+        # unpinned: its record demands the force-unpin path.
+        record = model_library.find_hot_instance_for_profile(
+            self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+        )
+        self.assertEqual(record, partial)
         model_library.purge_hot_instance(partial, hot_root=self.hot)
         self.assertFalse(partial.exists())
+        # A stamp path that exists but is not a regular file is an
+        # inspection failure for cleanup and a refusal at the purge boundary.
+        odd = parent / ("d" * 12)
+        (odd / ".pulsar" / "hot.json").mkdir(parents=True)
+        self.assertIsNone(
+            model_library.find_hot_instance_for_profile(self.hot, SPEC_ID, TOPOLOGY_ID)
+        )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.find_hot_instance_for_profile(
+                self.hot, SPEC_ID, TOPOLOGY_ID, include_incomplete=True
+            )
+        with self.assertRaisesRegex(model_library.ModelLibraryError, "not a regular file"):
+            model_library.purge_hot_instance(odd, hot_root=self.hot)
+        self.assertTrue(odd.is_dir())
+        import shutil
+        shutil.rmtree(odd)
         instance.mkdir(parents=True)
         model_library.write_hot_stamp(instance, instance_stamp)
         # The same for a conf profile, whose lookup verifies stamps against

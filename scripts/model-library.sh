@@ -4034,17 +4034,26 @@ cmd_purge_hot() {
   # Each target rank is inspected on its own: a rank that has already lost
   # its view is already purged, and must not stop the recovery of the copies
   # that survive on the other ranks.
+  # One lookup sees one view per rank, and a name's entry may hold more
+  # than one (a retained stamped view beside the residue of a failed
+  # transfer). Discovery repeats until the entry is empty on every target
+  # rank, and every pass runs the same checks before it deletes anything.
   local -a purge_rows=() row=()
-  local purge_list="" purge_rc=0
+  local purge_list="" purge_rc=0 pass=0 removed=0 stamped_content_id pinned_rows
+  while :; do
+  purge_list=""; purge_rc=0
   purge_list=$(hot_instances_for_profile_on_ranks "$profile" "${HOT_TARGET_RANKS[@]}") || purge_rc=$?
   [ "$purge_rc" -ne 255 ] \
-    || die "purge-hot: a target rank is unobservable; nothing was deleted"
+    || die "purge-hot: a target rank is unobservable; nothing more was deleted"
   [ "$purge_rc" -ne 2 ] \
-    || die "purge-hot: a target rank could not be inspected; nothing was deleted"
-  [ -n "$purge_list" ] \
-    || die "no hot instance for $profile on the selected serving placement"
+    || die "purge-hot: a target rank could not be inspected; nothing more was deleted"
+  if [ -z "$purge_list" ]; then
+    [ "$pass" -gt 0 ] || die "no hot instance for $profile on the selected serving placement"
+    break
+  fi
+  [ "$pass" -lt 16 ] || die "purge-hot: $profile still holds views after $pass passes; inspect the hot root"
   mapfile -t purge_rows < <(printf '%s\n' "$purge_list")
-  local stamped_content_id pinned_rows=""
+  pinned_rows=""
   for line in "${purge_rows[@]}"; do
     IFS=$'\t' read -r -a row <<<"$line"
     rank="${row[0]}" instance="${row[1]}" stamped_content_id="${row[2]:-}"
@@ -4069,7 +4078,7 @@ cmd_purge_hot() {
       || die "purge-hot: refusing to delete $instance on rank $rank: still referenced by managed container(s), running or stopped: $sharers (stop and remove them first; ./pulsar stop <name> --purge-hot does both)"
   done
   [ -z "$pinned_rows" ] \
-    || die "purge-hot: pinned view(s) present ($pinned_rows); pass --force-unpin to remove them; nothing was deleted"
+    || die "purge-hot: pinned or unstamped view(s) present ($pinned_rows); pass --force-unpin to remove them; nothing more was deleted"
   [ "$yes" = 1 ] || die "purge-hot will delete $(describe_purge_rows "${purge_rows[@]}") — re-run with --yes"
   for line in "${purge_rows[@]}"; do
     IFS=$'\t' read -r -a row <<<"$line"
@@ -4091,8 +4100,11 @@ cmd_purge_hot() {
           <"$PY_TOOL" || die "rank $rank: purge failed (pinned? use --force-unpin)"
       fi
     fi
+    removed=$((removed + 1))
   done
-  log "purged hot for $profile"
+  pass=$((pass + 1))
+  done
+  log "purged hot for $profile ($removed view(s) over $pass pass(es))"
 }
 
 cmd_budget() {

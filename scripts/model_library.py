@@ -3406,7 +3406,20 @@ def _ready_hot_children(
                 # it fails before the stamp is written and rollback cannot
                 # reach the rank. Launch never sees it; cleanup lists it as a
                 # partial view of this entry's name so purge can remove it.
+                # Cleanup tells a missing stamp from a stamp path that exists
+                # but is not a regular file (a directory, a broken symlink),
+                # which is an inspection failure like any malformed stamp.
+                # With no retention metadata the view cannot prove it was
+                # unpinned, so it demands the force-unpin path.
                 if include_incomplete:
+                    try:
+                        os.lstat(stamp_path)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as exc:
+                        fail(f"cleanup: cannot inspect hot stamp {stamp_path}: {exc}")
+                    else:
+                        fail(f"cleanup: hot stamp at {stamp_path} is not a regular file")
                     candidates.append((
                         "",
                         child,
@@ -3414,7 +3427,8 @@ def _ready_hot_children(
                             "state": "partial",
                             "profile": parent.name.rsplit("-", 1)[0],
                             "content_id": child.name,
-                            "pinned": False,
+                            "pinned": True,
+                            "pin_state": "unknown (no stamp)",
                         },
                     ))
                 continue
@@ -4803,6 +4817,14 @@ def purge_hot_instance(
     if hot_root is not None:
         require_hot_instance_within_root(instance_dir, hot_root)
     stamp_path = hot_stamp_path(instance_dir)
+    try:
+        stamp_present = os.lstat(stamp_path) is not None
+    except FileNotFoundError:
+        stamp_present = False
+    except OSError as exc:
+        fail(f"purge: cannot inspect hot stamp {stamp_path}: {exc}")
+    if stamp_present and not stamp_path.is_file():
+        fail(f"purge: hot stamp at {stamp_path} is not a regular file; refusing")
     if stamp_path.is_file():
         stamp = load_json(stamp_path)
         if isinstance(stamp, dict):
@@ -8340,7 +8362,8 @@ def cmd_find_hot(args: argparse.Namespace) -> int:
                 "state": "partial",
                 "profile": profile,
                 "content_id": path.name,
-                "pinned": False,
+                "pinned": True,
+                "pin_state": "unknown (no stamp)",
             },
         }, indent=2, sort_keys=True))
         return 0
