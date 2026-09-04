@@ -94,7 +94,11 @@ else
   fail=$((fail + 1))
 fi
 
-catalog_json=$("$REPO_DIR/scripts/list-models.sh" --serving --json)
+# The repository releases/ holds promoted specs; the no-release projection
+# contract is checked against an explicitly empty releases root.
+mkdir -p "$STATE/empty-releases"
+catalog_json=$(PULSAR_RELEASES_ROOT="$STATE/empty-releases" \
+  "$REPO_DIR/scripts/list-models.sh" --serving --json)
 if CATALOG_JSON="$catalog_json" python3 - <<'PY'
 import json
 import os

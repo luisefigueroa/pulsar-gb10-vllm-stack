@@ -35,8 +35,18 @@ expect_empty() {
   echo "OK   $label"
 }
 
+# The repository releases/ holds promoted specs; the empty-list contract is
+# checked against an explicitly empty releases root.
+EMPTY_RELEASES=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-release-empty.XXXXXX")
+trap 'rm -rf "$EMPTY_RELEASES"' EXIT
 expect_empty "pulsar release list on empty releases/" \
-  "$REPO_DIR/pulsar" release list
+  env PULSAR_RELEASES_ROOT="$EMPTY_RELEASES" "$REPO_DIR/pulsar" release list
+
+if ! "$REPO_DIR/pulsar" release list >/dev/null; then
+  echo "FAIL pulsar release list rejects a file under the repository releases/" >&2
+  exit 1
+fi
+echo "OK   pulsar release list verifies every file under the repository releases/"
 
 expect_failure 2 "error:" "verify unknown spec_id exits 2" \
   "$REPO_DIR/pulsar" release verify aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
