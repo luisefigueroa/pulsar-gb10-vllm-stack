@@ -1,0 +1,329 @@
+{
+  "baselines": [],
+  "evidence": [
+    {
+      "id": "benchmark-serving",
+      "lab_commit": "c67b5f9517196fc9c30005c6932547fb619dc4f3",
+      "path": "results/baseline-v1/26597c10902f33592414708c914b1b8bae38e66880debd04ee43f2319140bfca/benchmark-serving.json",
+      "sha256": "215257624a2b714ebdbc5fbd54e86ceca59f0eb9cb6168def821971d459dddd2"
+    },
+    {
+      "id": "compare-captures",
+      "lab_commit": "c67b5f9517196fc9c30005c6932547fb619dc4f3",
+      "path": "results/baseline-v1/26597c10902f33592414708c914b1b8bae38e66880debd04ee43f2319140bfca/compare-captures.json",
+      "sha256": "e908c7111ea10547785614cd2f033c4c229ea200d401d5aa51e4e2b13f7792ac"
+    },
+    {
+      "id": "serve-smoke",
+      "lab_commit": "c67b5f9517196fc9c30005c6932547fb619dc4f3",
+      "path": "results/baseline-v1/26597c10902f33592414708c914b1b8bae38e66880debd04ee43f2319140bfca/serve-smoke.json",
+      "sha256": "f2cd6734c413bc9646ffa09e1d4ad70a012881b99d8d1db61ad8f220851f58b9"
+    },
+    {
+      "id": "verify-snapshot-manifest",
+      "lab_commit": "c67b5f9517196fc9c30005c6932547fb619dc4f3",
+      "path": "results/baseline-v1/26597c10902f33592414708c914b1b8bae38e66880debd04ee43f2319140bfca/verify-snapshot-manifest.json",
+      "sha256": "9947770f7faa393c51092144a77463aa4340d17fca79966641923cac233bdde1"
+    }
+  ],
+  "identity": {
+    "container_env": [],
+    "engine_args": [
+      "--max-model-len",
+      "131072",
+      "--max-num-seqs",
+      "16",
+      "--moe-backend",
+      "marlin",
+      "--gpu-memory-utilization",
+      "0.80"
+    ],
+    "geometry": {
+      "fabric": "local",
+      "nodes": 1,
+      "platform_id": "dgx-spark-gb10",
+      "pp": 1,
+      "tp": 1
+    },
+    "image": {
+      "digest": "sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52"
+    },
+    "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
+    "snapshot_manifest": {
+      "file_count": 18,
+      "files": [
+        {
+          "path": ".gitattributes",
+          "sha256": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930",
+          "size": 1570
+        },
+        {
+          "path": "README.md",
+          "sha256": "af815293f17382e0c64117849b314605375ca4a476557ded95c6e942650202fb",
+          "size": 73512
+        },
+        {
+          "path": "chat_template.jinja",
+          "sha256": "ab7813c3abdd9cb655905a410728b26c7884eca45ddfab8d9f931553485a7862",
+          "size": 10504
+        },
+        {
+          "path": "config.json",
+          "sha256": "f4fcbaaaed3ee215f86205a7600636cd930bde069f2b603d7ff908c046a0cd96",
+          "size": 1817
+        },
+        {
+          "path": "configuration_nemotron_h.py",
+          "sha256": "09a3179517667d302068c2f8c96c9f059297418a829bf3cb96273040563b955c",
+          "size": 12893
+        },
+        {
+          "path": "generation_config.json",
+          "sha256": "7a8f2d91a749d7a09b755daceacab14da9d66ebfdaea7e8583e48c0be01ee73d",
+          "size": 197
+        },
+        {
+          "path": "hf_quant_config.json",
+          "sha256": "37ff9e85d04311916a38ff7bc28cae1972dfdc54d39da8439d3f85204b9e8fbf",
+          "size": 3050
+        },
+        {
+          "path": "model-00001-of-00005.safetensors",
+          "sha256": "2fdac76b3e4906ce0fb0dd33ab51f011372a5473e0d6c5bb479b6f10d3f29fdb",
+          "size": 3998838864
+        },
+        {
+          "path": "model-00002-of-00005.safetensors",
+          "sha256": "559806ee0cb6edcfc01805e24bac9182cb2611bad3993e0da05487d7a79b4f38",
+          "size": 4000414120
+        },
+        {
+          "path": "model-00003-of-00005.safetensors",
+          "sha256": "d820849788701123d041501fb8ac88e4ade24a28a63cd663118797cfae910be2",
+          "size": 3999641680
+        },
+        {
+          "path": "model-00004-of-00005.safetensors",
+          "sha256": "f5ccb7cfa7870ab2d099134c3f771ad4a158e0421b3bf7b2a0da53311a09cb14",
+          "size": 4000413336
+        },
+        {
+          "path": "model-00005-of-00005.safetensors",
+          "sha256": "c9dd9142839367ad274019a7683bc84993217c8a63e70dd8e18656de0c4050eb",
+          "size": 3343488520
+        },
+        {
+          "path": "model.safetensors.index.json",
+          "sha256": "e076394997f518b64a2b81b9648a58063faa611c95a1d5fb5495e77194e5dfb7",
+          "size": 2497886
+        },
+        {
+          "path": "modeling_nemotron_h.py",
+          "sha256": "4d353ce6e8f495d043f2d8c5acd13496a84ba2b2d45da8279797a55f680309d9",
+          "size": 83779
+        },
+        {
+          "path": "nano_v3_reasoning_parser.py",
+          "sha256": "aafb12208054504f619cbdd01837e1532a482ad937ed987bfe9a13fb812ae2b7",
+          "size": 798
+        },
+        {
+          "path": "special_tokens_map.json",
+          "sha256": "e3a4f63da745f02317a45e00e6476c17fc66ac41faf14bb1b0be1f3211b0ca53",
+          "size": 420
+        },
+        {
+          "path": "tokenizer.json",
+          "sha256": "c6021eb6847e682f89aa52d5eb6e8c7d902a23acfc8137e25211cf84828f1592",
+          "size": 17077485
+        },
+        {
+          "path": "tokenizer_config.json",
+          "sha256": "3d568e506d0905285ae90a3fdd1482be7b6d0bf0b8ca9514d75dad4257b0827a",
+          "size": 188049
+        }
+      ],
+      "kind": "model-library-snapshot-manifest",
+      "manifest_id": "b57918cad2dc858d388fd73d7e54771fe5147dea05daa6171f3353069ba65c59",
+      "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
+      "schema_version": 1,
+      "snapshot_revision": "ce1b118ae66ec705d02c241525192832eb045fd3",
+      "total_bytes": 19362748480
+    },
+    "snapshot_revision": "ce1b118ae66ec705d02c241525192832eb045fd3"
+  },
+  "kind": "pulsar-release-spec",
+  "launch_contract": {
+    "argv": [
+      "--max-model-len",
+      "131072",
+      "--max-num-seqs",
+      "16",
+      "--moe-backend",
+      "marlin",
+      "--gpu-memory-utilization",
+      "0.80",
+      "--tensor-parallel-size",
+      "1",
+      "--pipeline-parallel-size",
+      "1"
+    ],
+    "stack_version": "main-0805428"
+  },
+  "measurements": [
+    {
+      "criterion_id": "gsm8k-subset",
+      "evidence_ids": [],
+      "outcome": "incomplete",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
+      "suite": "baseline-v1",
+      "thresholds": [
+        {
+          "metric": "accuracy",
+          "operator": ">=",
+          "unit": "ratio",
+          "value": "0.5"
+        },
+        {
+          "metric": "measured_sample_count",
+          "operator": ">=",
+          "unit": "count",
+          "value": "100"
+        },
+        {
+          "metric": "dataset_id",
+          "operator": "==",
+          "unit": "id",
+          "value": "openai/gsm8k"
+        },
+        {
+          "metric": "dataset_revision",
+          "operator": "==",
+          "unit": "commit",
+          "value": "740312add88f781978c0658806c59bc2815b9866"
+        },
+        {
+          "metric": "dataset_file_sha256",
+          "operator": "==",
+          "unit": "digest",
+          "value": "ee7b8da9e381df27b9e3f7758a159ab2bdaa4dbaa910546cbbc47e0cb44e4f59"
+        }
+      ]
+    },
+    {
+      "criterion_id": "identity-snapshot-manifest",
+      "evidence_ids": [
+        "verify-snapshot-manifest"
+      ],
+      "outcome": "pass",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
+      "suite": "baseline-v1",
+      "thresholds": [
+        {
+          "metric": "unmatched_file_count",
+          "operator": "==",
+          "unit": "count",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "criterion_id": "perf-snapshot",
+      "evidence_ids": [
+        "benchmark-serving"
+      ],
+      "outcome": "pass",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
+      "suite": "baseline-v1",
+      "thresholds": [
+        {
+          "metric": "required_levels_complete",
+          "operator": "==",
+          "unit": "boolean",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "criterion_id": "serving-integration-smoke",
+      "evidence_ids": [
+        "serve-smoke"
+      ],
+      "outcome": "pass",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
+      "suite": "baseline-v1",
+      "thresholds": [
+        {
+          "metric": "health_complete",
+          "operator": "==",
+          "unit": "boolean",
+          "value": "1"
+        },
+        {
+          "metric": "warmup_complete",
+          "operator": "==",
+          "unit": "boolean",
+          "value": "1"
+        },
+        {
+          "metric": "completion_smoke_complete",
+          "operator": "==",
+          "unit": "boolean",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "criterion_id": "soak-60",
+      "evidence_ids": [],
+      "outcome": "incomplete",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
+      "suite": "baseline-v1",
+      "thresholds": [
+        {
+          "metric": "duration_seconds",
+          "operator": ">=",
+          "unit": "seconds",
+          "value": "3600"
+        },
+        {
+          "metric": "request_error_count",
+          "operator": "==",
+          "unit": "count",
+          "value": "0"
+        },
+        {
+          "metric": "completed_requests",
+          "operator": ">",
+          "unit": "count",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "criterion_id": "strict-same-boot-captures",
+      "evidence_ids": [
+        "compare-captures"
+      ],
+      "outcome": "fail",
+      "policy_digest": "0b79190daf6e03b81c4b847adf0895b6102daec575ac8d6b0fac712381085539",
+      "suite": "baseline-v1",
+      "thresholds": [
+        {
+          "metric": "exact_match_rate",
+          "operator": "==",
+          "unit": "ratio",
+          "value": "1"
+        }
+      ]
+    }
+  ],
+  "review": {
+    "reviewed_at": "2026-09-04T20:06:30Z",
+    "reviewer": "luisefigueroa",
+    "status": "failed"
+  },
+  "schema_version": 1,
+  "spec_id": "26597c10902f33592414708c914b1b8bae38e66880debd04ee43f2319140bfca",
+  "state": "released"
+}
