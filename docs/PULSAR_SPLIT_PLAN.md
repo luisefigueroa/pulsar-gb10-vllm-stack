@@ -8,7 +8,7 @@ plan: a new session starts from **Resume from here** below, then reads the
 phase it lands in.
 
 Revision history: written 2026-09-02; revised 2026-09-04 after the first
-stable spec; state block updated 2026-09-04 during WP3.4.
+stable spec; state block updated 2026-09-05 after the WP3.4 close.
 
 ## Resume from here (state as of 2026-09-04)
 
@@ -17,16 +17,16 @@ stable spec; state block updated 2026-09-04 during WP3.4.
   served by id), Phase 2 as reduced (#139 runner and promote command, #140
   nano recorded `failed`). Released specs: Nemotron 3.5 Lightning
   `de2e93ce…` review `stable`; Nemotron 3 Nano `26597c10…` review `failed`.
-- **In review:** WP3.4 retire confs, branch `phase3-retire-confs`, pull
-  request #141. Batches 1–3 are on the branch (core, tests, docs). Bot review
-  rounds one and two are fixed. What the unit decided is listed under WP3.4.
-- **Next physical step (needs Luis on the Spark):** WP3.4 batch 4, the
-  physical close: stop the container that was started from the retired nano
-  conf (it is now unreachable by name), serve a released spec by id, run
-  `validate/baseline-v1.sh <spec_id> --check-only`. Luis chooses Lightning
-  or nano.
-- **Then:** WP3.1 acquire by spec, WP3.2 prepare and readiness, WP3.3 remove
-  the cut list, WP3.5 two-node physical session, Phase 4 split.
+- **WP3.4 retire confs is complete** (#141 merged 2026-09-05 after four
+  bot rounds; physical close done the same day on one Spark: the container
+  started from the retired nano conf was stopped through the label-proven
+  path, Lightning `de2e93ce…` was started by spec id with a defaults-only
+  overlay, and `validate/baseline-v1.sh --check-only` proved the running
+  server matches the spec). Lightning is left serving. What the unit
+  decided is listed under WP3.4.
+- **Next:** WP3.1 acquire by spec, WP3.2 prepare and readiness (carry the
+  deferred per-spec overlay `cache_root` scan on catalog refresh), WP3.3
+  remove the cut list, WP3.5 two-node physical session, Phase 4 split.
 - **Standing rules:** no site identifiers or secrets in tracked files, PR
   bodies, or briefs (`scripts/check_publishable_privacy.py` gates every
   commit); nothing under `releases/` changes except through a reviewed
@@ -208,7 +208,8 @@ Order revised 2026-09-04: WP3.4 runs before WP3.1.
     launch-contract drift.
   - A missing `.pulsar-overlay.json` is the default overlay (port 8000,
     served name = model id); an unreadable one is refused.
-  - Batch 4 (physical close) is still open; see the state block.
+  - Physical close done 2026-09-05: conf-named nano container stopped by
+    label proof, Lightning served by spec id, `--check-only` passed.
 - **WP3.1 Acquire by spec** (deterministic): `pulsar model acquire
   <spec_id> [--node R] --yes`: download the exact commit into the durable
   home on the chosen rank, hash, compare to the manifest, write the stamp.
