@@ -672,7 +672,6 @@ print("\n".join(human_spec_review_values(payload)))
     "Model" "$NAME"
     "Serves" "$SERVED_NAME on :$PORT"
     "Release status" "$MODEL_SERVING_RELEASE_STATUS_LABEL · display-only"
-    "Legacy label" "$STATUS · display-only"
   )
   for spec_value in "${spec_review_values[@]}"; do
     fields+=("Spec review" "$spec_value · display-only")
@@ -768,14 +767,14 @@ render_target_summary() {
   INV_JSON="$inv" MEM_JSON="$mem_json" PLACEMENT_KEY="$PLACEMENT_NODE_KEY" \
   PLACEMENT_HOST="$PLACEMENT_HOSTNAME" PLACEMENT_ID="$PLACEMENT_NODE_ID" \
   PLACEMENT_REMOTE="$PLACEMENT_REMOTE" \
-  python3 - "$NAME" "$SERVED_NAME" "$NODES" "$PORT" "$STATUS" "$mrc" <<'PY'
+  python3 - "$NAME" "$SERVED_NAME" "$NODES" "$PORT" "$mrc" <<'PY'
 import json
 import os
 import sys
 
 from scripts.terminal_format import TerminalWriter
 
-name, served, nodes, port, status, mrc = sys.argv[1:7]
+name, served, nodes, port, mrc = sys.argv[1:6]
 inv = json.loads(os.environ.get("INV_JSON") or "{}")
 mem_raw = (os.environ.get("MEM_JSON") or "").strip()
 mem = json.loads(mem_raw) if mem_raw else {}
@@ -803,7 +802,7 @@ def node_display(rank):
 
 term = TerminalWriter()
 term.emit("TARGET")
-term.field("Model", f"{name} · {status}")
+term.field("Model", name)
 term.field("Serves", f"{served} on :{port}")
 term.field("Topology", f"{nodes} {'node' if nodes == '1' else 'nodes'}")
 if int(nodes) == 1:
@@ -2153,7 +2152,11 @@ models = [
     if int(model.get('nodes') or 1) <= capacity
 ]
 def recommended(model):
-    return str(model.get('status') or '').startswith('tested')
+    # Display-only ADR 0017 review of the released spec; never a launch gate.
+    return str(model.get('status') or '') in ('stable', 'validated')
+
+def served_name(model):
+    return str(model.get('served_name') or model['id'])
 
 def release_status(model):
     release = model.get('model_serving_release') or {}
@@ -2161,7 +2164,8 @@ def release_status(model):
 
 models.sort(key=lambda model: (
     not recommended(model),
-    str(model.get('id') or '').casefold(),
+    served_name(model).casefold(),
+    str(model.get('id') or ''),
 ))
 
 family_models = {}
@@ -2173,7 +2177,7 @@ for model in models:
     family = model.get('family') or model.get('served_name') or model['id']
     family_min[family] = min(family_min.get(family, 10**9), int(model['nodes']))
 
-name_width = max((len(str(model['id'])) for model in models), default=0)
+served_width = max((len(served_name(model)) for model in models), default=0)
 for model in models:
     family = model.get('family') or model.get('served_name') or model['id']
     nodes = int(model['nodes'])
@@ -2186,14 +2190,14 @@ for model in models:
     if model.get('first_run_candidate'):
         marks.append('first run')
     marks.append('release={}'.format(release_status(model)))
-    marks.append('legacy={}'.format(model.get('status') or '?'))
     payload = model.get('release_spec') or {}
     if not isinstance(payload, dict):
         payload = {}
     marks.extend(picker_spec_marks(payload))
     suffix = (' · ' + ' · '.join(marks)) if marks else ''
     node_word = 'node' if nodes == 1 else 'nodes'
-    print(f\"{model['id']:<{name_width}}  {nodes} {node_word}{suffix}\")
+    # The spec id leads: it is the profile name for ./pulsar start <id>.
+    print(f\"{model['id']}  {served_name(model):<{served_width}}  {nodes} {node_word}{suffix}\")
 "
   )
   if [ "${#choices[@]}" -eq 0 ]; then

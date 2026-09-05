@@ -44,7 +44,6 @@ acquire_model_library_hot_lock shared
 resolve_spec_decode "$SPEC_MODE"
 LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
 SPEC_DECODE_STATE=$([ "$SPEC_DECODE_ENABLED" = 1 ] && printf on || printf off)
-warn_profile_status
 if [ "$NODES" -le 1 ]; then
   echo "$MODEL_NAME is a single-node profile; use ./serve.sh" >&2
   exit 1

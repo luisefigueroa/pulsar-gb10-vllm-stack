@@ -6,6 +6,12 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-download-receipt-cli.XXXXXX")
 trap 'rm -rf "$STATE"' EXIT
 python3 "$REPO_DIR/scripts/testlib/model_library_receipt_fixture.py" "$STATE"
+# Profiles are released specs: a first acquisition names a conf-format draft
+# (home add --draft); prepare and relocate name the released fixture spec id.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+spec_fixture_env >/dev/null
+NANO_DRAFT="$REPO_DIR/scripts/testdata/drafts/nemotron-3-nano-30b-nvfp4.conf"
 
 LIBRARY="$REPO_DIR/scripts/model-library.sh"
 BASE_ENV=(
@@ -20,7 +26,7 @@ BASE_ENV=(
   "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
 )
 
-if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+if env "${BASE_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
     --json --yes \
     >"$STATE/no-revision.out" 2>"$STATE/no-revision.err"; then
   echo "unsealed home add unexpectedly succeeded without --revision" >&2
@@ -29,6 +35,65 @@ fi
 grep -q -- '--revision' "$STATE/no-revision.err"
 grep -q -- 'modern hf' "$STATE/no-revision.err"
 [ ! -s "$STATE/hf.log" ]
+
+# A spec fixes its snapshot. A selector that resolves to another commit is
+# refused before any plan or download, naming both commits; the same commit
+# with a different upstream inventory is refused by the manifest comparison.
+OTHER_COMMIT_ID=$(python3 - "$REPO_DIR" "$PULSAR_RELEASES_ROOT" "$ONE_NODE_MODEL" <<'PY'
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib.release_spec_fixture_set import write_released_variant
+
+print(write_released_variant(pathlib.Path(sys.argv[2]), model_id=sys.argv[3], revision="b" * 40))
+PY
+)
+if env "${BASE_ENV[@]}" "$LIBRARY" home add "$OTHER_COMMIT_ID" --revision main --plan --json \
+    >"$STATE/spec-other-commit.out" 2>"$STATE/spec-other-commit.err"; then
+  echo "home add <spec_id> accepted a selector resolving to a commit the spec does not fix" >&2
+  exit 1
+fi
+grep -q "fixes snapshot" "$STATE/spec-other-commit.err" \
+  || { echo "spec-commit refusal was unclear" >&2; cat "$STATE/spec-other-commit.err" >&2; exit 1; }
+# The fixture spec was generated from this very upstream inventory: it plans.
+env "${BASE_ENV[@]}" "$LIBRARY" home add "$ONE_NODE_ID" --revision main --plan --json \
+  >"$STATE/spec-match.out" 2>"$STATE/spec-match.err" \
+  || { echo "home add <spec_id> refused a spec whose manifest matches upstream" >&2; cat "$STATE/spec-match.err" >&2; exit 1; }
+# Same commit, one file size off in the spec manifest: refused by the comparison.
+OTHER_INVENTORY_ID=$(python3 - "$REPO_DIR" "$PULSAR_RELEASES_ROOT" "$ONE_NODE_ID" <<'PY'
+import json
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib.release_spec_fixture_set import write_released_variant
+
+releases = pathlib.Path(sys.argv[2])
+spec = json.loads((releases / f"{sys.argv[3]}.json").read_text(encoding="utf-8"))
+files = [dict(item) for item in spec["identity"]["snapshot_manifest"]["files"]]
+files[0]["size"] = int(files[0]["size"]) + 1
+print(write_released_variant(
+    releases,
+    model_id=spec["identity"]["model_id"],
+    revision=spec["identity"]["snapshot_revision"],
+    files=files,
+))
+PY
+)
+: >"$STATE/hf.log"
+if env "${BASE_ENV[@]}" "$LIBRARY" home add "$OTHER_INVENTORY_ID" --revision main --plan --json \
+    >"$STATE/spec-other-inventory.out" 2>"$STATE/spec-other-inventory.err"; then
+  echo "home add <spec_id> accepted an upstream inventory that differs from the spec manifest" >&2
+  exit 1
+fi
+grep -q "differs from the spec manifest" "$STATE/spec-other-inventory.err" \
+  || { echo "spec-inventory refusal was unclear" >&2; cat "$STATE/spec-other-inventory.err" >&2; exit 1; }
+# Metadata resolution for a plan is read-only; nothing else may reach the mock.
+if grep -v '^source-inventory ' "$STATE/hf.log" | grep -q .; then
+  echo "spec refusals must happen before any download" >&2; cat "$STATE/hf.log" >&2; exit 1
+fi
+: >"$STATE/hf.log"
 
 # The deprecated huggingface-cli command is never an acquisition candidate.
 # A managed modern-hf installation remains usable even when the legacy command
@@ -58,7 +123,7 @@ LEGACY_ENV=(
   "PULSAR_COLD_ARCHIVE_AUTOSTART=0"
 )
 if env "${LEGACY_ENV[@]}" "$LIBRARY" home add \
-    nemotron-3-nano-30b-nvfp4 --revision main --plan --json \
+    --draft "$NANO_DRAFT" --revision main --plan --json \
     >"$LEGACY_STATE/legacy-only.out" 2>"$LEGACY_STATE/legacy-only.err"; then
   echo "home add accepted deprecated huggingface-cli" >&2
   exit 1
@@ -68,7 +133,7 @@ grep -q 'no eligible serving rank has modern hf' "$LEGACY_STATE/legacy-only.err"
 
 mkdir -p "$LEGACY_USER_ROOT/.hf-cli/venv/bin"
 mv "$LEGACY_STATE/managed-hf" "$LEGACY_USER_ROOT/.hf-cli/venv/bin/hf"
-env "${LEGACY_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+env "${LEGACY_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
   --revision main --plan --json >"$LEGACY_STATE/managed-modern-plan.json"
 python3 - "$LEGACY_STATE/managed-modern-plan.json" <<'PY'
 import json
@@ -129,7 +194,7 @@ no_attachment_probe=$(env \
   ' _ "$LIBRARY" "$STATE/no-attachment-work")
 [ "$no_attachment_probe" = null ]
 
-if ! env "${REMOTE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+if ! env "${REMOTE_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
     --revision main --node 1 --plan --json \
     >"$STATE/remote/plan.json" 2>"$STATE/remote/plan.err"; then
   echo "remote selected-rank source plan failed" >&2
@@ -181,7 +246,7 @@ AUTO_ENV=(
   "PULSAR_SSH=$STATE/auto-meta/bin/ssh"
   "PULSAR_HF_SOURCE_INVENTORY_PY=$STATE/auto-meta/bin/hf-source-inventory.py"
 )
-if ! env "${AUTO_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+if ! env "${AUTO_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
     --revision main --plan --json \
     >"$STATE/auto-meta/plan.json" 2>"$STATE/auto-meta/plan.err"; then
   echo "automatic metadata-eligibility plan failed" >&2
@@ -202,7 +267,7 @@ if grep -q 'download nvidia/' "$STATE/auto-meta/hf.log"; then
   exit 1
 fi
 
-env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+env "${BASE_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
   --revision main --plan --json \
   >"$STATE/plan.json" 2>"$STATE/plan.err"
 python3 - "$STATE/plan.json" "$STATE/plan.err" <<'PY'
@@ -231,7 +296,7 @@ fi
 
 : >"$STATE/hf.log"
 if printf 'n\n' | COLUMNS=52 env "${BASE_ENV[@]}" "$LIBRARY" \
-    home add nemotron-3-nano-30b-nvfp4 --revision main \
+    home add --draft "$NANO_DRAFT" --revision main \
     >"$STATE/declined.out" 2>"$STATE/declined.err"; then
   echo "declined download-receipt home add unexpectedly succeeded" >&2
   exit 1
@@ -249,7 +314,7 @@ if grep -q 'download nvidia/' "$STATE/hf.log"; then
 fi
 
 : >"$STATE/hf.log"
-env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+env "${BASE_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
   --revision main --yes --json \
   >"$STATE/result.json" 2>"$STATE/result.err"
 python3 - "$STATE/result.json" <<'PY'
@@ -292,7 +357,7 @@ env "${BASE_ENV[@]}" \
   PULSAR_HOT_ROOT="$STATE/hot" \
   PULSAR_HOT_RESERVE_BYTES=0 \
   PULSAR_HOT_BUDGET_BYTES=1000000 \
-  "$LIBRARY" prepare nemotron-3-nano-30b-nvfp4 \
+  "$LIBRARY" prepare "$ONE_NODE_ID" \
   --transport ssh-control --yes >/dev/null
 # Prepare fails without occupancy even when a download receipt exists.
 occ_backup="$STATE/occ-backup"
@@ -303,7 +368,7 @@ env "${BASE_ENV[@]}" \
   PULSAR_HOT_ROOT="$STATE/hot" \
   PULSAR_HOT_RESERVE_BYTES=0 \
   PULSAR_HOT_BUDGET_BYTES=1000000 \
-  "$LIBRARY" prepare nemotron-3-nano-30b-nvfp4 \
+  "$LIBRARY" prepare "$ONE_NODE_ID" \
   --transport ssh-control --yes >/dev/null 2>"$STATE/prepare-no-occ.err"
 prep_no_occ_rc=$?
 set -e
@@ -373,7 +438,7 @@ grep -q 'Do not Hub re-download' "$STATE/unbound.err"
 [ "$(find "$STATE/library/download-receipts" -name '*.json' | wc -l)" -eq 1 ]
 [ "$(find "$STATE/library/home-occupancy" -name '*.json' | wc -l)" -eq 0 ]
 env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
-env "${BASE_ENV[@]}" "$LIBRARY" home relocate nemotron-3-nano-30b-nvfp4 \
+env "${BASE_ENV[@]}" "$LIBRARY" home relocate "$ONE_NODE_ID" \
   --node 0 --yes --json >"$STATE/relocate.json"
 python3 - "$STATE/relocate.json" <<'PY'
 import json, sys
@@ -396,7 +461,7 @@ PY
 rm -rf "$STATE/cache/hub/models--nvidia--NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
 env "${BASE_ENV[@]}" "$LIBRARY" catalog refresh --local-only >/dev/null
 : >"$STATE/hf.log"
-env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+env "${BASE_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
   --revision main --yes --json \
   >"$STATE/readd.json" 2>"$STATE/readd.err"
 python3 - "$STATE/readd.json" <<'PY'
@@ -418,7 +483,7 @@ result = json.load(open(sys.argv[1], encoding="utf-8"))
 assert result["state"] == "verified"
 PY
 
-if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+if env "${BASE_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
     --revision main --yes \
     >"$STATE/occupied.out" 2>"$STATE/occupied.err"; then
   echo "download-receipt home add overwrote an existing home" >&2
@@ -427,7 +492,7 @@ fi
 grep -q 'already exists' "$STATE/occupied.err"
 
 # Sealed exact-commit home add is retired (ADR 0012).
-if env "${BASE_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 --yes --json \
+if env "${BASE_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" --yes --json \
     >"$STATE/sealed.json" 2>"$STATE/sealed.err"; then
   echo "home add without --revision unexpectedly succeeded" >&2
   exit 1
@@ -572,7 +637,7 @@ AUTOSTART_ENV=(
   "PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS=3"
 )
 add_start=$(date +%s)
-env "${AUTOSTART_ENV[@]}" "$LIBRARY" home add nemotron-3-nano-30b-nvfp4 \
+env "${AUTOSTART_ENV[@]}" "$LIBRARY" home add --draft "$NANO_DRAFT" \
   --revision main --yes --json \
   >"$STATE/autostart/add.json" 2>"$STATE/autostart/add.err"
 add_elapsed=$(( $(date +%s) - add_start ))
@@ -600,7 +665,7 @@ if [ "$ok" != 1 ]; then
 fi
 test -f "$STATE/autostart/cold/pulsar-control/download-receipts/${autostart_receipt}.json"
 
-"$LIBRARY" --help | grep -q 'home add <profile>'
+"$LIBRARY" --help | grep -q 'home add <spec_id>|--draft'
 "$LIBRARY" --help | grep -q -- '--revision SELECTOR \[--node RANK|NODE_ID\]'
 "$LIBRARY" --help | grep -q 'target-local modern hf'
 ! "$LIBRARY" --help | grep -q 'huggingface-cli'

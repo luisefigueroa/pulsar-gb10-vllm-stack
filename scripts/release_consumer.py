@@ -95,7 +95,7 @@ PARALLELISM_CANONICAL = {
 
 USAGE = (
     "usage: python3 scripts/release_consumer.py list|verify|show [spec_id] "
-    "[--repo-root R] [--releases-root D] [--json]\n"
+    "[--repo-root R] [--releases-root D] [--json] [--markdown]\n"
     "       python3 scripts/release_consumer.py export-profile <spec_id> "
     "[--overlay F] [--releases-root D] [--repo-root R] [--image-repo NAME]\n"
     "       python3 scripts/release_consumer.py project --repo-root R "
@@ -105,6 +105,7 @@ USAGE = (
 )
 DEFAULT_IMAGE_REPO = "vllm/vllm-openai"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+SPEC_ID_RE = re.compile(r"[0-9a-f]{64}")
 EMPTY_PROJECTION = {"receipt": "missing", "identities": []}
 UNREADABLE_PROJECTION = {"receipt": "unreadable", "identities": []}
 
@@ -1096,7 +1097,9 @@ def identity_review_cell(
     receipt: str,
 ) -> str:
     """Human cell for one identity (D5)."""
-    if receipt in ("missing", "unreadable") or not identity:
+    if not identity:
+        return "-"
+    if receipt in ("missing", "unreadable") and not identity.get("released"):
         return "-"
     if identity.get("release_file") == "invalid":
         return "invalid release file (verification failed)"
@@ -1420,44 +1423,58 @@ def _project_profile(
     context: ProjectionContext | None = None,
     snapshot_revision: str | None = None,
 ) -> dict[str, Any]:
-    if library_dir in (None, ""):
-        return _empty_projection("missing")
-    library = pathlib.Path(library_dir)
-    hint = (snapshot_revision or "").strip()
-    if hint:
-        if COMMIT_RE.fullmatch(hint) is None:
-            return _empty_projection("unreadable")
-        revision: str | None = hint
-    else:
-        catalog = catalog_path
-        if catalog in (None, ""):
-            catalog = library / "catalog.json"
-        revision, catalog_error = _catalog_snapshot_revision(
-            catalog, profile=profile, context=context
-        )
-        if catalog_error == "unreadable":
-            return _empty_projection("unreadable")
-    receipt, receipt_status = _load_occupancy_receipt(
-        library, model_id=model_id, snapshot_revision=revision, context=context
-    )
-    if receipt_status != "found" or receipt is None:
-        return _empty_projection(receipt_status)
-
-    files = list((receipt.get("observed_manifest") or {}).get("files") or [])
-    snapshot_revision = receipt.get("snapshot_revision")
-    if not isinstance(snapshot_revision, str):
-        return _empty_projection("unreadable")
-    receipt_model_id = receipt.get("model_id")
-    if not isinstance(receipt_model_id, str):
-        receipt_model_id = None
-
-    variants = [False]
-    if spec_decode_args:
-        variants.append(True)
     root = _releases_root(
         repo_root if repo_root not in (None, "") else _REPO_ROOT,
         releases_root,
     )
+    receipt_label = "missing"
+    receipt: dict[str, Any] | None = None
+    if library_dir not in (None, ""):
+        library = pathlib.Path(library_dir)
+        hint = (snapshot_revision or "").strip()
+        if hint:
+            if COMMIT_RE.fullmatch(hint) is None:
+                return _empty_projection("unreadable")
+            revision: str | None = hint
+        else:
+            catalog = catalog_path
+            if catalog in (None, ""):
+                catalog = library / "catalog.json"
+            revision, catalog_error = _catalog_snapshot_revision(
+                catalog, profile=profile, context=context
+            )
+            if catalog_error == "unreadable":
+                return _empty_projection("unreadable")
+        receipt, receipt_label = _load_occupancy_receipt(
+            library, model_id=model_id, snapshot_revision=revision, context=context
+        )
+        if receipt_label != "found":
+            receipt = None
+
+    if receipt is not None:
+        files = list((receipt.get("observed_manifest") or {}).get("files") or [])
+        snapshot_revision = receipt.get("snapshot_revision")
+        if not isinstance(snapshot_revision, str):
+            return _empty_projection("unreadable")
+        receipt_model_id = receipt.get("model_id")
+        if not isinstance(receipt_model_id, str):
+            receipt_model_id = None
+    else:
+        # No receipt on this node yet. A profile that is itself a released
+        # spec still projects that spec's review (display-only): its own
+        # snapshot manifest stands in for the receipt, and the launch
+        # contract comparison below still hides the review on drift.
+        own = _released_spec_named_by_profile(root, profile, context)
+        if own is None:
+            return _empty_projection(receipt_label)
+        manifest = own["identity"]["snapshot_manifest"]
+        files = list(manifest.get("files") or [])
+        snapshot_revision = str(own["identity"]["snapshot_revision"])
+        receipt_model_id = str(own["identity"]["model_id"])
+
+    variants = [False]
+    if spec_decode_args:
+        variants.append(True)
     identities: list[dict[str, Any]] = []
     for spec_decode in variants:
         default = spec_decode if recommended_spec else not spec_decode
@@ -1521,7 +1538,22 @@ def _project_profile(
                 "reviewed_at": reviewed_at if equal else None,
             }
         )
-    return {"receipt": "found", "identities": identities}
+    return {"receipt": receipt_label, "identities": identities}
+
+
+def _released_spec_named_by_profile(
+    root: pathlib.Path,
+    profile: str,
+    context: ProjectionContext | None,
+) -> dict[str, Any] | None:
+    """The released spec whose id is ``profile`` (a profile is a spec id)."""
+    if not SPEC_ID_RE.fullmatch(profile or ""):
+        return None
+    if context is not None:
+        spec, _release_file = context.release(root, profile)
+    else:
+        spec, _release_file = try_load_release(root, profile)
+    return spec
 
 
 def list_releases(
@@ -1543,6 +1575,8 @@ def list_releases(
             {
                 "spec_id": spec["spec_id"],
                 "model_id": spec["identity"]["model_id"],
+                "nodes": int(spec["identity"]["geometry"]["nodes"]),
+                "image_digest": spec["identity"]["image"]["digest"],
                 "state": spec["state"],
                 "review_status": status,
                 "reviewed_at": reviewed_at,
@@ -1628,10 +1662,33 @@ def _overlay_entry(value: Any, *, path: str) -> dict[str, Any]:
     }
 
 
+def default_overlay() -> dict[str, Any]:
+    """The overlay a site has before it writes one: every default unset, so
+    the port is 8000, the served name is the model id, and placement is
+    resolved at start. A fresh clone serves a released spec with it."""
+    return {
+        "schema_version": OVERLAY_SCHEMA_VERSION,
+        "kind": OVERLAY_KIND,
+        "defaults": _overlay_entry(
+            {"port": 8000, "served_name": None, "cache_root": None, "placement": None},
+            path="overlay.defaults",
+        ),
+        "specs": {},
+    }
+
+
 def load_overlay(path: str | pathlib.Path) -> dict[str, Any]:
-    """Load a closed deployment overlay. Fail without fallback on any extra key."""
+    """Load a closed deployment overlay. Fail without fallback on any extra key.
+
+    An absent file is the default overlay; a symlink, directory, or unreadable
+    file is an error (never silently ignored).
+    """
     overlay_path = pathlib.Path(path)
-    if overlay_path.is_symlink() or not overlay_path.is_file():
+    if overlay_path.is_symlink():
+        fail(f"{overlay_path}: overlay must be a regular file, not a symlink")
+    if not overlay_path.exists():
+        return default_overlay()
+    if not overlay_path.is_file():
         fail(f"{overlay_path}: overlay must be a regular file")
     document = load_json(overlay_path)
     _reject_floats(document, path="overlay")
@@ -1682,6 +1739,25 @@ def overlay_for_spec(
     }
 
 
+def load_spec_file_for_id(spec_file: str | pathlib.Path, spec_id: str) -> dict[str, Any]:
+    """A spec document (measured or released) whose spec_id is ``spec_id``.
+
+    The lab starts a measured spec for its baseline run before promotion:
+    ``PULSAR_SPEC_FILE`` names the file and the profile is its spec id.
+    """
+    digest = _require_spec_id(spec_id)
+    path = pathlib.Path(spec_file)
+    if path.is_symlink() or not path.is_file():
+        fail(f"{path}: spec file must be a regular file")
+    try:
+        spec = load_spec(path)
+    except ReleaseSpecError as exc:
+        fail(f"{path}: {exc}")
+    if spec["spec_id"] != digest:
+        fail(f"{path}: spec_id {spec['spec_id']!r} is not the requested {digest!r}")
+    return spec
+
+
 def cmd_export_profile(
     repo_root: pathlib.Path,
     spec_id: str,
@@ -1690,8 +1766,12 @@ def cmd_export_profile(
     releases_root: str | pathlib.Path | None = None,
     image_repo: str | None = None,
     active_platform_id: str | None = None,
+    spec_file: str | pathlib.Path | None = None,
 ) -> int:
-    spec = load_release(repo_root, spec_id, releases_root=releases_root)
+    if spec_file:
+        spec = load_spec_file_for_id(spec_file, spec_id)
+    else:
+        spec = load_release(repo_root, spec_id, releases_root=releases_root)
     overlay_file = (
         pathlib.Path(overlay_path)
         if overlay_path not in (None, "")
@@ -1704,6 +1784,9 @@ def cmd_export_profile(
     )
     variables = spec_profile_variables(
         spec, entry, repo, active_platform_id=active_platform_id or None
+    )
+    variables["OVERLAY_SOURCE"] = (
+        str(overlay_file) if overlay_file.is_file() else f"defaults (no {overlay_file})"
     )
     sys.stdout.write(format_shell_assignments(variables))
     return 0
@@ -1718,15 +1801,44 @@ def _review_text(status: str | None, reviewed_at: str | None) -> str:
     return status
 
 
+def markdown_release_table(rows: list[dict[str, Any]]) -> str:
+    """The generated support-matrix block for docs/MODELS.md.
+
+    One row per released spec: the spec id is the profile name operators pass
+    to ``./pulsar start``; review is display-only (ADR 0017).
+    """
+    lines = [
+        "| Spec id (profile) | Model | Nodes | Image digest | Review |",
+        "|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            "| `{spec_id}` | {model_id} | {nodes} | `{digest}` | {review} |".format(
+                spec_id=row["spec_id"],
+                model_id=row["model_id"],
+                nodes=row["nodes"],
+                digest=str(row["image_digest"]).rsplit(":", 1)[-1][:12],
+                review=_review_text(row["review_status"], row["reviewed_at"]),
+            )
+        )
+    if len(lines) == 2:
+        lines.append("| (no released specs) | | | | |")
+    return "\n".join(lines) + "\n"
+
+
 def cmd_list(
     repo_root: pathlib.Path,
     *,
     as_json: bool,
+    as_markdown: bool = False,
     releases_root: str | pathlib.Path | None = None,
 ) -> int:
     rows = list_releases(repo_root, releases_root=releases_root)
     if as_json:
         sys.stdout.buffer.write(pretty_json_bytes({"releases": rows}))
+        return 0
+    if as_markdown:
+        sys.stdout.write(markdown_release_table(rows))
         return 0
     term = TerminalWriter()
     for index, row in enumerate(rows):
@@ -1772,8 +1884,12 @@ def cmd_show(
     *,
     as_json: bool,
     releases_root: str | pathlib.Path | None = None,
+    spec_file: str | pathlib.Path | None = None,
 ) -> int:
-    spec = load_release(repo_root, spec_id, releases_root=releases_root)
+    if spec_file:
+        spec = load_spec_file_for_id(spec_file, spec_id)
+    else:
+        spec = load_release(repo_root, spec_id, releases_root=releases_root)
     sys.stdout.buffer.write(pretty_json_bytes(spec))
     return 0
 
@@ -1905,6 +2021,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory that is releases/; overrides PULSAR_RELEASES_ROOT",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help="list: print the generated docs/MODELS.md support-matrix table",
+    )
+    parser.add_argument(
+        "--spec-file",
+        default="",
+        help="export-profile/show: read this spec document (measured or released) instead of releases/",
+    )
     parser.add_argument("--library-dir", default="")
     parser.add_argument("--catalog", default="")
     parser.add_argument("--profile", default="")
@@ -1964,6 +2090,7 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(
                 repo_root,
                 as_json=args.json,
+                as_markdown=args.markdown,
                 releases_root=args.releases_root,
             )
         if not args.spec_id:
@@ -1973,6 +2100,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo_root,
                 args.spec_id,
                 overlay_path=args.overlay or None,
+                spec_file=args.spec_file or None,
                 releases_root=args.releases_root,
                 image_repo=args.image_repo or None,
                 active_platform_id=args.platform_id or None,
@@ -1989,6 +2117,7 @@ def main(argv: list[str] | None = None) -> int:
             args.spec_id,
             as_json=args.json,
             releases_root=args.releases_root,
+            spec_file=args.spec_file or None,
         )
     except (ReleaseConsumerError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -29,7 +29,7 @@ run "release spec schema (ADR 0017 Stage 1)" \
   python3 -m unittest discover -s "$REPO_DIR/release_spec/tests" -p 'test_*.py'
 run "baseline-v1 policy and evaluator" \
   python3 "$REPO_DIR/scripts/testlib/test_baseline_v1.py"
-run "release spec from-profile generator (ADR 0017 WP1.3)" \
+run "release spec from-draft generator (ADR 0017 WP1.3, Stage 4 drafts)" \
   python3 "$REPO_DIR/scripts/testlib/test_release_spec_generate.py"
 run "release spec stack consumer (ADR 0017 WP1.4a)" \
   python3 "$REPO_DIR/scripts/testlib/test_release_consumer.py"
@@ -171,24 +171,45 @@ run "workflow menu + quick-status" "$REPO_DIR/scripts/selftest-home.sh"
 
 run "model catalog scopes" bash -c '
   set -e
-  all=$("'"$REPO_DIR"'/scripts/list-models.sh" --json)
-  echo "$all" | python3 -c "import json,sys; m={x[\"id\"]:x for x in json.load(sys.stdin)[\"models\"]}; assert \"qwen3-1.7b\" not in m; assert \"deepseek-v4-flash\" not in m; assert m[\"qwen3-1.7b-2node\"][\"purpose\"]==\"diagnostic\"; assert m[\"qwen3-1.7b-2node\"][\"status\"]==\"untested\""
-
-  serving=$("'"$REPO_DIR"'/scripts/list-models.sh" --serving --json)
-  echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x and \"release_spec\" in x for x in m); assert not any(x[\"id\"]==\"qwen3-1.7b\" for x in m); assert \"deepseek-v4-flash\" not in {x[\"id\"] for x in m}; assert any(x[\"status\"]==\"do-not-use\" for x in m); assert not any(x.get(\"spec_default_enabled\") for x in m); assert all(x[\"reviewed_identity\"] is False for x in m); assert all((x[\"reviewed_model_id\"] is not None)==x[\"reviewed_identity\"] for x in m)"
-
-  diagnostic=$("'"$REPO_DIR"'/scripts/list-models.sh" --diagnostic --json)
-  echo "$diagnostic" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert {x[\"id\"] for x in m}=={\"qwen3-1.7b-2node\"}"
+  STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-catalog-scopes.XXXXXX")
+  trap "rm -rf \"$STATE\"" EXIT
+  REPO_DIR="'"$REPO_DIR"'"
+  . "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+  spec_fixture_env >/dev/null
+  all=$("$REPO_DIR/scripts/list-models.sh" --json)
+  echo "$all" | ONE="$ONE_NODE_ID" TWO="$TWO_NODE_ID" python3 -c "import json,os,sys; d=json.load(sys.stdin); m={x[\"id\"]:x for x in d[\"models\"]}; assert os.environ[\"ONE\"] in m and os.environ[\"TWO\"] in m; assert m[os.environ[\"TWO\"]][\"nodes\"]==2; assert all(x[\"status\"]==\"stable\" for x in d[\"models\"]), d[\"models\"]; assert d[\"unloadable\"]==[]; assert all(x[\"served_name\"]==\"fixture-served\" for x in d[\"models\"])"
+  serving=$("$REPO_DIR/scripts/list-models.sh" --serving --json)
+  echo "$serving" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"models\"]; assert m; assert all(x[\"purpose\"]==\"serving\" for x in m); assert all(\"weights_gib\" in x and \"reviewed_identity\" in x and \"release_spec\" in x and \"image_digest\" in x for x in m); assert not any(x.get(\"spec_default_enabled\") for x in m); assert all(x[\"reviewed_identity\"] is False for x in m)"
+  diagnostic=$("$REPO_DIR/scripts/list-models.sh" --diagnostic --json)
+  echo "$diagnostic" | python3 -c "import json,sys; assert json.load(sys.stdin)[\"models\"]==[]"
+  if "$REPO_DIR/scripts/list-models.sh" --legacy-tested >/dev/null 2>&1; then echo "--legacy-tested must be retired" >&2; exit 1; fi
+  # A missing overlay file (a fresh clone) serves with defaults: served name = model id.
+  missing=$(PULSAR_OVERLAY_PATH="$STATE/missing-overlay.json" "$REPO_DIR/scripts/list-models.sh" --json)
+  echo "$missing" | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d[\"models\"])==4 and d[\"unloadable\"]==[] and all(x[\"served_name\"]==x[\"model_id\"] for x in d[\"models\"]), d"
+  # An unreadable overlay never hides a spec: every row is listed as unloadable with the reason.
+  printf "not-json\n" >"$STATE/broken-overlay.json"
+  broken=$(PULSAR_OVERLAY_PATH="$STATE/broken-overlay.json" "$REPO_DIR/scripts/list-models.sh" --json)
+  echo "$broken" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"models\"]==[] and len(d[\"unloadable\"])==4 and all(\"overlay\" in u[\"reason\"] for u in d[\"unloadable\"]), d"
+  # A spec frozen for another platform is listed as unloadable, never offered to the picker.
+  foreign=$(PULSAR_PLATFORM=test-other PULSAR_PLATFORM_FILE="$REPO_DIR/scripts/testdata/platforms/test-other.json" "$REPO_DIR/scripts/list-models.sh" --serving --json)
+  echo "$foreign" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"models\"]==[] and len(d[\"unloadable\"])==4 and all(\"targets platform\" in u[\"reason\"] for u in d[\"unloadable\"]), d"
 '
 
 run "WEIGHTS_GIB disk formula" bash -c '
+  set -e
+  STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-weights-formula.XXXXXX")
+  trap "rm -rf \"$STATE\"" EXIT
+  REPO_DIR="'"$REPO_DIR"'"
+  . "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+  spec_fixture_env >/dev/null
   # shellcheck disable=SC1091
-  . "'"$REPO_DIR"'/scripts/lib.sh"
-  load_conf nemotron-3-super-120b-nvfp4
+  . "$REPO_DIR/scripts/lib.sh"
+  load_conf "$ONE_NODE_ID"
   w=$(estimate_weights_gib)
   need=$(awk -v w="$w" -v h=10 "BEGIN{printf \"%.0f\", w*1.1+h+0.999}")
-  awk -v n="$need" "BEGIN{exit !(n+0 > 80)}"
-  echo "nemotron-super weights=$w need~$need"
+  # A spec view carries its manifest bytes; the formula must exceed them plus headroom.
+  awk -v n="$need" -v w="$w" "BEGIN{exit !(n+0 > w+0 && n+0 >= 11)}"
+  echo "one-node fixture weights=$w need~$need"
 '
 
 run "soak exit policy (syntax + help)" bash -c '
@@ -218,10 +239,9 @@ run "API base covers one- and multi-node launches" bash -c '
 run "wizard uses serving-only model catalog" bash -c '
   grep -qE "list-models\.sh\" --serving --json|WIZARD_LIST_MODELS_JSON|cmd_list_models_json" "'"$REPO_DIR"'/wizard.sh"
 '
-run "recipes do not launch removed absolute-path profiles" bash -c '
-  ! grep -E "pulsar start (laguna|inkling)" "'"$REPO_DIR"'/docs/RECIPES.md"
-  grep -Fq "./pulsar start nemotron-3-nano-30b-nvfp4" "'"$REPO_DIR"'/docs/RECIPES.md"
-  grep -Fq "Removed absolute-path profiles (not runnable)" "'"$REPO_DIR"'/docs/RECIPES.md"
+run "retired recipe page is gone; MODELS.md is generated from releases/" bash -c '
+  ! test -e "'"$REPO_DIR"'/docs/RECIPES.md"
+  grep -Fq "BEGIN generated: scripts/release.sh list --markdown" "'"$REPO_DIR"'/docs/MODELS.md"
 '
 run "guided CLI uses plain node language" bash -c '
   grep -Fq "doctor_ready_line \"no blocking issues found\"" "'"$REPO_DIR"'/scripts/doctor.sh"

@@ -79,9 +79,10 @@ Apply [ADR 0002](../../docs/decisions/0002-subsystem-qualification-boundaries.md
 a failure does not erase valid evidence from another scope
 without a demonstrated causal connection, but it blocks every combined claim
 that requires the failure to pass. Never treat health or completion smoke as
-model qualification. Do not carry `STATUS=tested` or an archived combined
-identity file onto changed model, image, runtime, or geometry inputs merely because generic
-catalog evidence remains reusable.
+model qualification. Do not carry a spec's `review.status`, the retired
+`STATUS=tested` label, or an archived combined identity file onto changed
+model, image, runtime, or geometry inputs merely because generic catalog
+evidence remains reusable.
 
 For a reviewed decision, include every applicable observation automatically.
 An exclusion must be explicit and evidence-backed. Apply ADR 0004's conflict

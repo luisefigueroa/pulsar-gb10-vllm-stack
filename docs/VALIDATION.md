@@ -25,8 +25,10 @@ authorities substitutes for another.
   model-specific evidence is not retained, and all three require new
   onboarding before any qualification or promotion claim.
 
-The older profile `STATUS=tested*` class remains a recommendation input. It is
-not the ADR 0004 decision `Validated` and does not authorize serving.
+The conf profile `STATUS=tested*` class is retired with the conf profiles
+(ADR 0017 Stage 4); the labels in the table below are history. A released
+spec's `review.status` is display-only; it is not the ADR 0004 decision
+`Validated` and does not authorize serving.
 
 The current launch-plan implementation no longer carries `MODELS_NFS` or
 bind-mounts `/mnt/Models`; deterministic tests verify that only the exact local
@@ -53,7 +55,7 @@ criterion.
 This is an evidence summary, not a serving allowlist. The wizard shows every
 serving profile that fits the confirmed topology with its actual caveats.
 
-| Profile | Profile label | Retained evidence summary |
+| Retired profile | Legacy label at retirement | Retained evidence summary |
 |---|---|---|
 | `nemotron-3-nano-30b-nvfp4` | `STATUS=tested` (legacy, display-only) | ADR 0017 baseline-v1 **failed** 2026-09-04 (spec `26597c10…`, image `ffb2d59b…`, no atomic adds; the earlier attempt `c1e07d51…` with atomic adds failed the same gate): identity, smoke, and bench passed (63.6 decode tok/s at c=1, 296 aggregate at c=8); strict same-boot captures not met (tokens identical 30/30, logprobs of one prompt vary 0.2 to 0.35 between passes; five diagnostic passes confirm intermittent kernel-level variance on v0.26.0); GSM8K and soak not attempted. The older `STATUS=tested` evidence (61.9 tok/s, gsm8k 0.830, "same-boot exact captures", 15-minute soak) predates the policy and its same-boot claim is superseded; Gate 14 separately covers a bounded catalog/artifact lifecycle |
 | `nemotron-3-super-120b-nvfp4` | `STATUS=tested` | 16.2 output tok/s at c=1, 113 aggregate at c=32, gsm8k 0.940, 20-minute clean soak; MTP remains opt-in |

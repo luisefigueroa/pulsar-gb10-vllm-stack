@@ -16,6 +16,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
 from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 
 
 class RelocationGeometryContracts(unittest.TestCase):
@@ -25,10 +26,15 @@ class RelocationGeometryContracts(unittest.TestCase):
         self.root = pathlib.Path(self.temporary.name)
         fixture.write_topology(self.root / "topology.json", ranks=3)
         (self.root / "cache").mkdir()
+        ids = write_fixture_set(self.root / "spec-fixture")
+        self.ONE = ids["one_node"]["spec_id"]
+        self.TWO = ids["two_node"]["spec_id"]
+        self.QWEN = ids["one_node_qwen"]["spec_id"]
         self.env = os.environ.copy()
         self.env.update(
             {
                 "CLUSTER_TOPOLOGY_FILE": str(self.root / "topology.json"),
+                "PULSAR_RELEASES_ROOT": str(self.root / "spec-fixture" / "releases"),
                 "HF_CACHE": str(self.root / "cache"),
                 "MODEL_LIBRARY_DIR": str(self.root / "library"),
                 "MODEL_LIBRARY_CATALOG": str(self.root / "library" / "catalog.json"),
@@ -50,13 +56,13 @@ class RelocationGeometryContracts(unittest.TestCase):
         result = self._run(
             "home",
             "relocate",
-            "qwen3.8-27b-fp8-2node",
+            f"{self.TWO}",
             "--node",
             "2",
             "--yes",
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("outside qwen3.8-27b-fp8-2node serving ranks", result.stderr)
+        self.assertIn(f"outside {self.TWO} serving ranks", result.stderr)
         self.assertIn("0 1", result.stderr)
         self.assertFalse((self.root / "library" / "catalog.json").exists())
 
@@ -79,7 +85,7 @@ class RelocationGeometryContracts(unittest.TestCase):
             "relocate",
             "Qwen/Qwen3.8-27B-FP8@" + fixture.COMMIT,
             "--profile",
-            "nemotron-3-nano-30b-nvfp4",
+            f"{self.ONE}",
             "--node",
             "0",
             "--yes",
@@ -92,7 +98,7 @@ class RelocationGeometryContracts(unittest.TestCase):
         result = self._run(
             "home",
             "relocate",
-            "qwen3.8-27b-fp8",
+            self.QWEN,
             "--node",
             "2",
             "--yes",
@@ -122,7 +128,7 @@ class RelocationGeometryContracts(unittest.TestCase):
                     "model_id": "Qwen/Qwen3.8-27B-FP8",
                     "identity_key": identity,
                     "revision": fixture.COMMIT,
-                    "profiles": ["qwen3.8-27b-fp8", "qwen3.8-27b-fp8-2node"],
+                    "profiles": [self.QWEN, f"{self.TWO}"],
                     "duplicate": False,
                     "homes": [
                         {
@@ -151,7 +157,7 @@ class RelocationGeometryContracts(unittest.TestCase):
                     "model_id": "Qwen/Qwen3.8-27B-FP8",
                     "identity_key": identity,
                     "revision": fixture.COMMIT,
-                    "profiles": ["qwen3.8-27b-fp8-2node"],
+                    "profiles": [f"{self.TWO}"],
                     "duplicate": False,
                     "homes": [
                         {

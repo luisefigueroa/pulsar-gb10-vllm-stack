@@ -96,7 +96,7 @@ def cmd_arrange(argv: list[str]) -> None:
                     f"{spec['identity']['model_id']}@{receipt['snapshot_revision']}"
                 ),
                 "validation": "unvalidated",
-                "profiles": [NANO],
+                "profiles": [spec["spec_id"]],
                 "profile_validation": [],
                 "homes": [
                     {

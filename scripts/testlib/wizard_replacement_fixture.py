@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 
-PROFILE = "qwen3.8-27b-fp8-2node"
 REVISION = "7" * 40
 SEAL_ID = "a" * 64
 BUNDLE_ID = "b" * 64
@@ -64,7 +63,7 @@ def seed_running(args: argparse.Namespace) -> int:
         index = int(rank["rank"])
         rank["labels"] = {
             "io.pulsar.gb10.managed": "true",
-            "io.pulsar.gb10.conf": PROFILE,
+            "io.pulsar.gb10.conf": args.profile,
             "io.pulsar.gb10.rank": str(index),
             "io.pulsar.gb10.topology": topology_id,
             "io.pulsar.gb10.node-id": nodes_by_rank[index],
@@ -109,6 +108,7 @@ def parser() -> argparse.ArgumentParser:
     seed.add_argument("--health", required=True)
     seed.add_argument("--active-health", required=True)
     seed.add_argument("--contract-id", required=True)
+    seed.add_argument("--profile", required=True, help="spec id the service was launched as")
     seed.set_defaults(func=seed_running)
     mutate = commands.add_parser("mutate-health")
     mutate.add_argument("--path", required=True)

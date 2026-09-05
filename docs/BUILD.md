@@ -14,8 +14,9 @@ prior image qualification.
 
 - The optional repository `Dockerfile` overlays
   `vllm/vllm-openai:v0.26.0` at the digest declared by `VLLM_BASE`.
-- Profiles that set `IMAGE` use that exact digest instead of the overlay
-  default. Inspect `models/<profile>.conf` before staging.
+- A released spec pins its own image digest (`identity.image.digest`), which
+  the launcher uses instead of the overlay default. Inspect it with
+  `scripts/release.sh show <spec_id>` before staging.
 - Tags are mutable and are not qualification identity. Record the manifest
   digest used on every rank.
 

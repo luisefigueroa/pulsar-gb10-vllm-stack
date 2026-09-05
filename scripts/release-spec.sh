@@ -12,19 +12,20 @@ PY_TOOL="${PULSAR_RELEASE_SPEC_GENERATE_PY:-$REPO_DIR/scripts/release_spec_gener
 
 usage() {
   cat <<'EOF'
-Emit a measured ADR 0017 release spec from a current profile
+Emit a measured ADR 0017 release spec from a lab draft
 
 Usage:
-  scripts/release-spec.sh from-profile <profile> --receipt FILE
+  scripts/release-spec.sh from-draft <draft.conf> --receipt FILE
       --stack-version STRING
       [--spec-decode] [--out FILE] [--gap-report FILE]
   scripts/release-spec.sh promote <measured-spec> --reviewer NAME
       --out releases/<spec_id>.json [--reviewed-at ISO-8601-Z]
       [--status stable|failed|withdrawn|validated]
 
-  • from-profile reads models/<profile>.conf, an explicit download receipt,
-    the pinned image digest, and the current platform; writes a measured
-    spec (empty measurements) and a closed gap report.
+  • from-draft reads a conf-format draft from an explicit path (a lab
+    input, never a startable profile), an explicit download receipt, the
+    pinned image digest, and the current platform; writes a measured spec
+    (empty measurements) and a closed gap report named after the draft.
   • promote copies an evaluated measured spec with state=released and a
     review block; the status defaults to stable when every baseline-v1
     outcome passed and failed otherwise. Committing the file under
@@ -45,7 +46,8 @@ command="$1"
 shift
 PROMOTE_PY="${PULSAR_RELEASE_SPEC_PROMOTE_PY:-$REPO_DIR/scripts/release_spec_promote.py}"
 case "$command" in
-  from-profile) ;;
+  from-draft) ;;
+  from-profile) die "from-profile is retired: profiles are released specs; pass a draft file with from-draft" 2 ;;
   promote)
     [ -f "$PROMOTE_PY" ] || die "missing $PROMOTE_PY"
     exec python3 "$PROMOTE_PY" "$@"
@@ -104,17 +106,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "$profile" ] || die "usage: release-spec.sh from-profile <profile> --receipt FILE --stack-version STRING" 2
-[ -n "$receipt" ] || die "usage: release-spec.sh from-profile <profile> --receipt FILE --stack-version STRING" 2
-[ -n "$stack_version" ] || die "usage: release-spec.sh from-profile <profile> --receipt FILE --stack-version STRING" 2
+[ -n "$profile" ] || die "usage: release-spec.sh from-draft <draft.conf> --receipt FILE --stack-version STRING" 2
+[ -n "$receipt" ] || die "usage: release-spec.sh from-draft <draft.conf> --receipt FILE --stack-version STRING" 2
+[ -n "$stack_version" ] || die "usage: release-spec.sh from-draft <draft.conf> --receipt FILE --stack-version STRING" 2
 [ -f "$PY_TOOL" ] || die "missing $PY_TOOL"
 [ -n "${PULSAR_PLATFORM_ID:-}" ] || die "platform id is unavailable"
 
-load_conf "$profile"
+load_draft "$profile"
 
 args=(
   --repo-root "$REPO_DIR"
   --profile "$CONF_NAME"
+  --draft "$CONF_PATH"
   --receipt "$receipt"
   --stack-version "$stack_version"
   --platform-id "$PULSAR_PLATFORM_ID"

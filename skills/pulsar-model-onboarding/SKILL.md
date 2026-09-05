@@ -1,391 +1,238 @@
 ---
 name: pulsar-model-onboarding
-description: Supervise onboarding of a brand-new Pulsar model through a separately reviewed draft profile, exact artifact acquisition assessment or safe reuse, explicit qualifying distribution, verification, Model Serving Release planning, launch, currently supported physical measurements, draft evidence capture, handoff, and ownership-safe cleanup. Use for new-model onboarding, qualification planning, Model Serving Release evidence collection, resuming an interrupted onboarding, or when the user runs /pulsar-model-onboarding.
+description: Supervise onboarding of a brand-new Pulsar model under ADR 0017 Stage 4: a lab draft, exact artifact acquisition or safe reuse, a measured release spec, preparation, launch of the measured spec by id, the baseline-v1 run, and the promotion pull request. Use for new-model onboarding, resuming an interrupted onboarding, or when the user runs /pulsar-model-onboarding.
 ---
 
 # Pulsar Model Onboarding
 
-Orchestrate a brand-new model by composing existing Pulsar
-CLIs. Collaborate at material decisions. This skill has no authority: never issue a seal or validation decision, assign a status, bind a profile to a
-release, publish into the trusted registry, promote a path, or claim physical behavior.
+Orchestrate a brand-new model by composing existing Pulsar CLIs.
+Collaborate at material decisions. This skill has no authority: never set a
+spec's `review.status`, write under `releases/`, promote a path, or claim
+physical behavior. A spec becomes released only through a reviewed
+promotion pull request that a maintainer merges.
 
-Read `AGENTS.md`, `docs/MODEL_LIBRARY_DESIGN.md`, and ADRs 0001–0004 before
-acting. ADR 0004 section 7 and staged item 4 govern this skill. Reuse
-`scripts/model-serving-release-plan.sh`,
-`scripts/model-serving-release-attempt.sh`,
-`scripts/model-serving-release-capture.sh`, `scripts/model-library.sh`,
-`scripts/model-serving-experiment-monitor.sh`, `scripts/up.sh`, the normal stop path, and
-`validate/{greedy_capture.py,compare_captures.py,bench_serve.py}`. Do not
-duplicate their schemas or bypass the model-library acquisition service.
+Read `AGENTS.md` (its ADR 0017 section), `docs/PULSAR_SPLIT_PLAN.md`,
+`docs/MODEL_LIBRARY_DESIGN.md`, `docs/REVALIDATE.md`, and
+[ADR 0017](../../docs/decisions/0017-release-spec-is-the-release-contract.md)
+before acting. Reuse `scripts/model-library.sh`, `scripts/release-spec.sh`,
+`scripts/release.sh`, `scripts/up.sh`, the normal stop path, and
+`validate/baseline-v1.sh`. Do not duplicate their schemas or bypass the
+model-library acquisition service.
 
 Detailed phase checklists live in
 [references/workflow-phases.md](references/workflow-phases.md). The handoff
 template is [references/handoff-template.md](references/handoff-template.md).
 
+## What a profile is now
+
+A profile is a released spec id under `releases/`. `models/*.conf` no
+longer exists. A conf-format file survives only as a **lab draft** that two
+commands read: `scripts/model-library.sh home add --draft <draft.conf>` (the
+first acquisition of a new identity) and `scripts/release-spec.sh from-draft
+<draft.conf>` (the measured spec). Nothing in the stack starts a draft.
+Before promotion the measured spec file is the startable profile:
+`PULSAR_SPEC_FILE=<measured-spec> ./pulsar start <spec_id>`. The served
+name and port come from the gitignored deployment overlay
+(`.pulsar-overlay.json`), never from the spec.
+
 ## Hard stops
 
-- Status is advisory and never blocks serving. Concrete identity, recipe,
-  compatibility, topology, capacity, security, ownership, and lifecycle
-  failures still fail without fallback.
+- Review status is display-only and never blocks serving. Concrete
+  identity, recipe, compatibility, topology, capacity, security, ownership,
+  and lifecycle failures still fail without fallback.
 - Do not silently select another node, transport, storage policy, copy,
-  runtime source, geometry, or validation criterion.
-- Do not offer live NFS/RDMA serving (`live-remote-readonly`) as a
-  qualifying runtime-access path (ADR 0005). A crashed rank cannot
-  cold-start without the owner export.
-- Do not mutate `refs/main` to manufacture identity.
-- Do not use `validate/run-gates.sh` as the ADR attempt wrapper.
-- Do not invent a missing validator measurement or share one enclosing
-  timestamp across distinct measurement attempts.
-- Do not represent a receipt/occupancy (`identity_status=receipt-occupancy`) launch as an exact ADR 0004 qualification attempt.
-- Distribution transport is run provenance, not release identity. A failure
-  before exact all-rank verification leaves qualification unstarted.
-- The journal is orchestration recovery state, not a sixth ADR object and
-  not evidence.
-- Resource monitoring is experiment-only. Never add it to `pulsar`, the
-  wizard, launchers, status/inventory, catalog projection, or ordinary serving
-  after issuance.
-- A resource diagnostic is run evidence only. Never use it to satisfy a
-  criterion, change attempt completion or status, or populate
-  `review_evidence_artifact_ids`. Preserve an incomplete diagnostic; if no
-  closed summary exists, record a capture gap.
-- On refusal, launch failure, interruption, or another hard stop after monitor
-  start, stop only the owned monitor processes and retain their private raw
-  samples. Never leave the experiment monitor running in the background.
+  runtime source, geometry, image, or gate.
+- Do not offer live NFS/RDMA serving as a runtime-access path (ADR 0005).
+- Do not mutate `refs/main` to manufacture identity. Pass the exact commit
+  the plan printed, never a mutable selector, to the acquisition.
+- Do not edit a measured spec by hand, and never write under `releases/`
+  except through the promotion command and its reviewed pull request.
+- Do not invent a missing measurement. A failed gate is evidence: keep the
+  run directory and record `failed`.
+- Keep the draft outside tracked paths that the stack reads. Drafts under
+  `scripts/testdata/drafts/` are selftest fixtures, not onboarding input.
 
 ## Collaboration
 
-Ask or confirm before acting at every material decision. Require **separate
-confirmations** immediately before:
+Ask or confirm before acting at every material decision. Require
+**separate confirmations** immediately before:
 
 1. **large acquisition**
-2. **launch** or replacement
+2. **launch** or replacement of a running service
 3. **destructive cleanup**
 
-Distribution/source choice must also be explicit and visible. Record each
+Distribution/source choice must be explicit and visible. Record each
 confirmed choice in the journal after the journal exists. If the user
 refuses, stop and record `refused`.
 
 ## Workflow
 
-### 1. Draft profile PR, then stop
+### 1. Draft, then stop
 
-Start from a clean synced `main` and create a feature branch. First create
-**only** a draft profile recipe:
+Start from a clean synced `main` and create a feature branch. Write a
+conf-format draft in a gitignored lab location (for example
+`experiments/drafts/<name>.conf`) with `MODEL`, a digest-pinned
+`IMAGE=...@sha256:...`, `NODES`, `GPU_MEM_UTIL`, `ENGINE_ARGS`, and
+`CONTAINER_ENV`. No status, recommendation, or release field exists any
+more. Review the draft with the user and **stop** until they confirm it;
+nothing in the repository changes yet.
 
-- `STATUS="untested"`
-- `FIRST_RUN_CANDIDATE=0`
-- digest-pinned `IMAGE=...@sha256:...`
-- no `EXPECTED_MODEL_SEAL`
-- no `MODEL_SERVING_RELEASE_ID`
-- no recommendation or default promotion (`FAMILY_RECOMMENDED=0`,
-  `RECOMMENDED_SPEC=0`)
-- explicit unbound caveats in `NOTES` (no reviewed identity, no release
-  field, display-only status only, not a recommendation)
+### 2. Journal and resume identity
 
-Publish that profile as its own ready-for-review PR and **stop**.
-Do not begin the onboarding journal until the user reports that PR merged.
-Then this agent syncs local main and creates a new feature branch.
-
-### 2. After merge: journal and resume identity
-
-Sync local `main` to the merged commit. Create a new feature branch. Only
-then initialize the journal with
+Initialize the journal with
 [scripts/onboarding_journal.py](scripts/onboarding_journal.py):
 
 ```text
 python3 skills/pulsar-model-onboarding/scripts/onboarding_journal.py initialize \
-  --workflow-id <safe-id> --profile <profile> \
+  --workflow-id <safe-id> --profile <draft-name> \
   --public-model-id <org/name> \
-  --repository-base-commit <merged-main-sha> \
-  --profile-base-commit <merged-main-sha>
+  --repository-base-commit <main-sha> \
+  --profile-base-commit <main-sha>
 ```
 
 Default state is gitignored
-`experiments/model-onboarding/workflows/<workflow-id>/`. This namespace is
-separate from the planner's `<profile>/<release-id>/` default.
-Bind later exact revision, source digest, acquisition approval, receipt,
-release ID, and contract ID as journal `ids` when they exist. On resume,
-`verify` the journal against the base identity and each ID already known, for
-example `--id exact_revision=<commit> --id receipt_id=<digest> --id
-release_id=<id> --id contract_id=<id>`, before appending. Stop on identity
-mismatch, an attempted ID rebind, tamper, truncation, or a broken hash/sequence
-chain.
+`experiments/model-onboarding/workflows/<workflow-id>/`. Bind the exact
+revision, the receipt id, and later the spec id as journal `ids` when they
+exist (`--id exact_revision=<commit>`, `--id receipt_id=<digest>`,
+`--id spec_id=<id>`). On resume, `verify` the journal against the base
+identity and every known id before appending. Stop on identity mismatch,
+an attempted id rebind, tamper, truncation, or a broken hash/sequence chain.
 
-### 3. Agree the complete criteria input
+### 3. Exact-home assessment and safe reuse
 
-Ask for or confirm release-specific criteria **before testing**. Freeze the
-criteria input before any measurement, but do not claim that a Validation
-Contract exists yet: the planner also needs the exact artifact manifest and
-selected runtime-access contract. Automated mapping covers **strict
-same-boot**, **absolute throughput**, **absolute latency**, **GSM8K accuracy**,
-and **soak stability**. Context, serving integration, physical geometry, and
-provenance/security remain unevaluated/incomplete until separately captured or
-reviewed. Relative performance is **N/A** unless a valid reviewed comparable
-predecessor is explicitly supplied.
-
-### 4. Exact-home assessment and safe reuse
-
-Refresh the catalog and observe every confirmed serving rank first. If one exact home
-already exists, follow the reuse rules below. If the repository path is absent
-on every rank, resolve the upstream selector through a read-only
-Hugging Face plan (recorded file list):
+Refresh the catalog and observe every confirmed serving rank first. If an
+exact receipted home already exists for `model_id@commit`, reuse it: run
+`scripts/model-library.sh home verify <model_id@revision> --json` (offline
+full rehash against the immutable receipt) and skip acquisition. If the
+repository is absent on every rank, resolve the upstream selector through a
+read-only plan (recorded file list, no download):
 
 ```text
-scripts/model-library.sh home add <profile> --revision <selector> --plan --json
+scripts/model-library.sh home add --draft <draft.conf> \
+  --revision <selector> --plan --json
 ```
 
-The plan asks in-geometry candidate ranks with modern `hf` to resolve the
-selector and complete upstream Git/LFS inventory. A rank that cannot resolve
-the source is ineligible, and every successful rank must report the same
-source. The plan observes every confirmed rank and selects one eligible
-durable-home rank that already resolved that source. It does not download
-model bytes.
-Review its exact commit, file and byte counts, selected rank, serving ranks,
-identity class, and explicit no-promotion boundary.
+Review its exact commit, file and byte counts, selected rank, and serving
+ranks. Refuse a partial tree, another revision, a duplicate home, or an
+out-of-geometry home. An older tree without a receipt fails without
+fallback.
 
-The plan refuses to create a duplicate if a repository appears
-between assessment and planning. Reuse a home created by this service only after
-`home verify` completes an offline full SHA-256 rehash against the immutable
-site-local receipt while occupancy names that live directory. Occupancy may
-move with `scripts/model-library.sh home relocate <profile> --node RANK --yes`
-after that same live rehash; do not Hub re-download. An older tree without a
-receipt still fails without fallback (ADR 0012: expected-manifest fallback is retired).
-Refuse a
-missing required receipt, failed verification, a partial
-tree, another revision, a duplicate occupancy home, or an out-of-geometry home.
-An unbound-complete tree with a compatible receipt is relocate, not re-add.
-Neither the catalog's shallow `complete` label nor a self-observed manifest is
-independent completeness evidence for an older home.
+### 4. Acquire
 
-If the exact home is absent, ask for the separate **large acquisition**
-confirmation against the exact commit shown by the plan. After confirmation,
-pass that commit—not the mutable selector—to the supported service:
+Ask for the separate **large acquisition** confirmation against the exact
+commit the plan showed, then pass that commit to the service:
 
 ```text
-scripts/model-library.sh home add <profile> \
+scripts/model-library.sh home add --draft <draft.conf> \
   --revision <exact-commit-from-plan> \
   --node <selected-rank-from-plan> --yes --json
 ```
 
-The service rechecks the source and topology on that reviewed rank, downloads
-there using that rank's local Hugging Face authentication, confines model and Xet
-cache bytes to private same-filesystem staging, verifies the complete upstream
-inventory, runs Hugging Face missing/extra verification, hashes every file,
-rechecks all-rank absence, writes the immutable site-local receipt, publishes
-the home atomically, and attaches occupancy to the exact published directory.
-Do not wait for a cold NFS archive; that is durability, not a serving gate.
-Record archive pending in the journal when a receipt exists. Prepare and
-launch do not require archive-complete.
-It does not refresh the catalog, prepare a
-runtime view, launch, issue a seal or decision, assign status, or promote a
-path. Record the result's exact revision, `source_digest`, `approval_id`, and
-`receipt_id` in the journal. Do not run a Hugging Face download directly into
-the durable cache or silently select another node, transport, storage policy,
-or copy.
+The service downloads on that rank with its local Hugging Face
+authentication, verifies the complete upstream inventory, hashes every file,
+writes the immutable receipt, and publishes the home atomically. It does not
+refresh the catalog, prepare a runtime view, launch, or promote anything.
+Record the exact revision and `receipt_id` in the journal.
 
-### 5. Catalog, resolve, manifest
+### 5. Measured spec
 
-Explicitly refresh the catalog, re-resolve the exact `model_id@revision`,
-run the receipt-backed offline verification for a receipted home, and
-refuse another revision, ambiguity, a partial tree, or a durable duplicate:
+Generate the measured spec from the draft, the receipt, and the stack
+version, and keep it in the lab evidence location:
+
+```text
+scripts/release-spec.sh from-draft <draft.conf> \
+  --receipt <receipt.json> --stack-version <main-sha> \
+  --out <measured-spec.json> --gap-report <gaps.json>
+python3 -m release_spec id <measured-spec.json>   # the spec id
+```
+
+A blocking gap (unpinned image, missing receipt) stops here. Record the
+spec id in the journal. From this point the spec id is the profile name.
+
+### 6. Catalog, prepare, verify every rank
 
 ```text
 scripts/model-library.sh catalog refresh
-scripts/model-library.sh catalog show <model_id@revision>
-scripts/model-library.sh home verify <model_id@revision> --json
+PULSAR_SPEC_FILE=<measured-spec.json> \
+  scripts/model-library.sh prepare <spec_id> --yes
+PULSAR_SPEC_FILE=<measured-spec.json> \
+  scripts/check-weights.sh <spec_id>
 ```
 
-The download receipt and `home verify` full-hash are the live identity
-for the planner's artifact manifest. `scripts/model-release.sh` is retired
-(ADR 0012). Do not assemble expected-seal or schema-1 bundle candidates.
+Preparation full-verifies each rank view against the spec manifest. A
+failure here is failed preparation: measurement did not start.
 
-### 6. Select qualifying runtime access
+### 7. Launch the measured spec
 
-For ADR qualification of a brand-new model, confirm
-local files on every rank (`local-files`) as `local-verified-readonly` after the exact rank-local
-verified views exist.
-
-Do not offer live NFS/RDMA (`live-remote-readonly`) as a serving or
-onboarding alternative (ADR 0005). A crashed rank cannot cold-start without
-the owner's export, NFS/RDMA stack, and exact route. Library serving
-already presents local files on every rank.
-
-Name the chosen distribution/source and transport. There is no silent fallback
-and no automatic fallback.
-
-A live profile serves with `identity_status=receipt-occupancy` after
-full verification. Do not treat mutable `refs/main` as identity. That honest
-label is not an exact ADR 0004 qualification attempt on its own.
-
-### 7. Build and verify the release plan
-
-After the complete manifest exists and the runtime-access choice is explicit,
-build the draft Model Serving Release and frozen Validation Contract from the agreed
-criteria and runtime envelope:
+Require the separate **launch** confirmation, then start by spec id with
+the measured file as the profile:
 
 ```text
-scripts/model-serving-release-plan.sh build <profile> \
-  --artifact-manifest <snapshot-manifest.json> \
-  --runtime-envelope <runtime-envelope.json> \
-  --criteria <criteria.json> \
-  --model-access-contract local-verified-readonly
-scripts/model-serving-release-plan.sh verify <profile> \
-  --candidate-dir <release-plan-dir> \
-  --model-access-contract local-verified-readonly
+PULSAR_SPEC_FILE=<measured-spec.json> scripts/up.sh <spec_id> --dry-run
+PULSAR_SPEC_FILE=<measured-spec.json> ./pulsar start <spec_id>
+validate/baseline-v1.sh <spec_id> --spec <measured-spec.json> --check-only
 ```
 
-The structural runtime envelope and geometry do not prove physical behavior.
-Do not continue if verification differs from the exact artifact, profile,
-runtime/image identity, geometry, or selected access contract.
+`--check-only` proves in seconds that the running container carries the
+spec's launch contract and image. If it refuses, stop; do not measure a
+server that is not the spec's.
 
-### 8. Prepare, verify every rank, then launch
+### 8. Baseline-v1 run
 
-Invoke the owning library preparation subsystem for the selected path.
-Do not duplicate its transfer, retention, or cleanup logic.
-
-Verify the exact all-rank runtime-access barrier before qualification. A
-failure here is failed preparation: qualification did not start. Then
-start the experiment resource monitor in the workflow's private directory.
-Use the same selected `--node` for a one-rank remote placement. The monitor
-samples each exact rank once per second and does not start the model:
+Run the six gates in one boot against the running server (about two hours,
+mostly the soak). Every producer must answer `--help` first; the runner
+checks that itself:
 
 ```text
-scripts/model-serving-experiment-monitor.sh start <profile> \
-  --state-dir experiments/model-onboarding/workflows/<workflow-id>/resources \
-  [--node <selected-rank>]
+validate/baseline-v1.sh <spec_id> --spec <measured-spec.json> \
+  --out results/baseline-v1/<spec_id> --dataset <exact-dataset-file>
 ```
 
-Then require a separate **launch** confirmation and invoke the normal launcher
-(the model library is the only weight mechanism — ADR 0006):
+The runner stops at the first failed gate and keeps every document. The
+evaluator proposes `stable` or `failed`; the run directory holds the six
+measurements, the filled spec, and `run.json`. Do not rerun a failed gate
+to chase a pass; record the outcome. Changing the recipe means a new draft,
+a new spec id, and a new run.
+
+### 9. Promotion pull request
+
+After the final owned stop (`./pulsar stop <spec_id>`), build the released
+document and open one reviewed pull request per spec:
 
 ```text
-scripts/up.sh <profile>
+scripts/release-spec.sh promote <filled-spec.json> --reviewer <name> \
+  --out releases/<spec_id>.json
 ```
 
-If confirmation is refused or launch fails, retain any launch-window resource
-diagnostic in the journal/handoff, stop the monitor, and do not invent an ADR
-run record.
+The promote command refuses `stable` unless the exact six criteria passed
+under one policy digest; a failed run promotes as `failed`. The pull
+request carries `releases/<spec_id>.json`, `results/baseline-v1/<spec_id>/`,
+and the regenerated `docs/MODELS.md` block
+(`scripts/release.sh list --markdown`). The tracked tree must pass
+`scripts/check_publishable_privacy.py` and the full `scripts/selftest.sh`.
+The maintainer who merges is the reviewer named in the `review` block.
 
-### 9. Same-boot identities
-
-Derive privacy-safe `launch_id` and `server_boot_id` from immutable observed
-runtime/container facts and the launch contract. Never use the workflow-journal
-ID. Use domain-separated canonical hashes: bind `launch_id` to the public launch
-contract plus every serving-rank container ID and creation timestamp in rank
-order; bind `server_boot_id` to that launch ID plus every rank's observed
-container start timestamp. Persist only the hashes.
-Reobserve them before correctness, after correctness, and after benchmarking.
-Never combine measurements when either identity changes.
-
-### 10. Sequential measurements
-
-Do not use `validate/run-gates.sh` as the ADR attempt wrapper. Invoke the
-existing programs sequentially:
-
-1. Persist the frozen invocation plan before measuring:
-   `scripts/model-serving-release-attempt.sh plan-invocation --release-plan
-   <dir> --output <invocation-plan.json>`. Confirm that the non-empty prompt
-   set has the plan's exact compare sample size.
-2. Reobserve `launch_id` / `server_boot_id`, then record compare
-   `started_at` before the first request-generating capture.
-3. `python3 validate/greedy_capture.py --model <served-name> --out <runA>`
-4. `python3 validate/greedy_capture.py --model <served-name> --out <runB>`
-5. Reobserve identities.
-6. Run
-   `python3 validate/compare_captures.py <runA> <runB> --require-identical
-   --result-json <results/.../compare.json>`, then record compare `ended_at`.
-7. Reobserve identities.
-8. Load benchmark arguments without `eval`, for example with Bash `mapfile`,
-   from `scripts/model-serving-release-attempt.sh bench-argv --invocation-plan
-   <invocation-plan.json>`.
-9. Record benchmark wall-clock UTC `started_at`, then run
-   `python3 validate/bench_serve.py --model <served-name>
-   "${bench_args[@]}" --result-json <results/.../bench.json>`, then record
-   benchmark `ended_at`.
-10. Reobserve identities, record the accuracy attempt start, and run the
-    frozen GSM8K dataset revision, file SHA-256, and sample through
-    `python3 validate/gsm8k_eval.py ... --result-json
-    <results/.../accuracy.json>`. Record the accuracy attempt end.
-11. Reobserve identities, record the soak attempt start, and run the frozen
-    duration and concurrency through `python3 validate/soak.py ...
-    --result-json <results/.../soak.json>`. Record the soak attempt end.
-12. Reobserve identities.
-
-Use separate wall-clock UTC start/end timestamps for compare, benchmark,
-accuracy, and soak. Never share one enclosing timestamp. Stop after an
-interruption. A nonzero validator exit with a complete closed measurement is
-failed evidence and must be preserved, not rewritten or discarded.
-Never fabricate a missing validator measurement. Closed measurement documents
-used by the attempt composer must live at privacy-reviewed repository-relative
-`results/` paths.
-
-After the measurements, summarize each matching attempt window before
-composition:
-
-```text
-scripts/model-serving-experiment-monitor.sh summarize \
-  --state-dir experiments/model-onboarding/workflows/<workflow-id>/resources \
-  --started-at <attempt-start-utc> --ended-at <attempt-end-utc> \
-  --qualification-scope model-qualification \
-  --result-json results/<tag>/<operation>-resources.json
-```
-
-Each summary must use the exact attempt timestamps. Add it to the attempt
-context's `resource_diagnostic_sources` for that operation. Complete, partial,
-and unavailable summaries are status-neutral; absence of a closed summary is a
-capture gap.
-
-After the final owned model stop, stop the monitor. This stops only the monitor
-processes and retains private raw samples:
-
-```text
-scripts/model-serving-experiment-monitor.sh stop \
-  --state-dir experiments/model-onboarding/workflows/<workflow-id>/resources
-```
-
-### 11. Attempt, capture, verify
-
-If a signal prevents the validator from writing its closed measurement,
-retain the journal event and report the current capture gap rather than
-inventing an ADR run.
-
-Otherwise compose compare and benchmark through
-`scripts/model-serving-release-attempt.sh compose`, then compose accuracy and
-soak separately through `compose-extra`. Capture every emitted attempt spec
-immediately through `scripts/model-serving-release-capture.sh capture-run`,
-assemble compatible runs, and verify the draft candidate. Capture immediately
-after each compose. Do not persist a planner path or planner candidate ID.
-Each generated attempt spec must contain exactly one
-`run_diagnostic_source_keys` entry for its resource summary. That source is
-same-scope run evidence, not criterion or review evidence.
-
-### 12. Handoff
+### 10. Handoff
 
 Follow [references/handoff-template.md](references/handoff-template.md).
-List completed evidence, missing criteria, failures/inconclusive results,
-resource diagnostic summaries or gaps, candidate locations, and that no
-reviewed status or authority was produced.
-Do not run `scripts/model-serving-release-issue.sh`; that maintainer
-workflow is a later, separate merge. Use
-`skills/pulsar-model-serving-release-issuance/` after this handoff.
-Composition and capture of measurement attempts leave
-`review_evidence_artifact_ids` empty; that is expected. This skill does
-not produce extra review files for provenance.
+List the spec id, the receipt id, the evidence directory, the proposed
+review status with the gate that decided it, the promotion pull request,
+and that no review status was assigned by this skill.
 
-### 13. Ownership-safe cleanup
+### 11. Ownership-safe cleanup
 
 Require a separate **destructive cleanup** confirmation. Use the normal
-stop path (`scripts/down.sh` / `./pulsar` stop). Then use the owning
-library cleanup only for resources this workflow created. Refuse
-when a managed service still uses the resource. Do not `docker rm`
+stop path (`./pulsar stop <spec_id>`). Then use the owning library cleanup
+(`purge-hot`, `home remove`) only for resources this workflow created.
+Refuse when a managed service still uses the resource. Do not `docker rm`
 unrelated workloads.
 
 ## Resume
 
 On resume, `verify` then `show` the journal. Continue from the last
-completed phase. Do not skip the profile-PR merge gate if the journal does
-not exist. Do not restart acquisition, launch, or cleanup without a fresh
-confirmation.
+completed phase. Do not restart acquisition, launch, or cleanup without a
+fresh confirmation. A measured spec whose run directory exists resumes at
+step 9; one without a run resumes at step 6.
 
 ## Journal helper
 
@@ -394,7 +241,7 @@ python3 skills/pulsar-model-onboarding/scripts/onboarding_journal.py \
   initialize|append|verify|show [options]
 ```
 
-Keep only phases, outcomes, explicit choices, IDs/digests, and safe
-repository-relative candidate/evidence references. Reject credentials, raw
+Keep only phases, outcomes, explicit choices, ids/digests, and safe
+repository-relative evidence references. Reject credentials, raw
 environment values, hostnames/addresses, topology/node identifiers,
-absolute paths, and embedded release/contract/run/bundle/decision objects.
+absolute paths, and embedded spec or receipt documents.

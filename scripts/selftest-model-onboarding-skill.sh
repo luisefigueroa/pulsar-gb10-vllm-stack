@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Contracts for the pulsar-model-onboarding skill package.
+# Contracts for the pulsar-model-onboarding skill package (ADR 0017 Stage 4).
 # shellcheck disable=SC2016
 set -euo pipefail
 
@@ -29,162 +29,155 @@ skill_lines=$(wc -l <"$skill")
 [ "$skill_lines" -lt 500 ] \
   || fail "SKILL.md must stay under 500 lines (has $skill_lines)"
 
+# --- package identity -------------------------------------------------------
 grep -Fq 'name: pulsar-model-onboarding' "$skill" \
   || fail "skill frontmatter must name pulsar-model-onboarding"
 grep -Eq 'new-model onboarding|onboard a brand-new' "$skill" \
   || fail "description must trigger on new-model onboarding"
-grep -Fq 'qualification planning' "$skill" \
-  || fail "description must trigger on qualification planning"
-grep -Fq 'Model Serving Release evidence' "$skill" \
-  || fail "description must trigger on Model Serving Release evidence"
 grep -Fq 'interrupted onboarding' "$skill" \
   || fail "description must trigger on resume of interrupted onboarding"
+grep -Fq 'ADR 0017 Stage 4' "$skill" \
+  || fail "description must name the Stage 4 contract"
 grep -Fq 'display_name: "Pulsar Model Onboarding"' "$agent_yaml" \
   || fail "agents/openai.yaml must keep the generated display name"
+grep -Fq 'measured release spec' "$agent_yaml" \
+  || fail "agent prompt must describe the measured-spec flow"
+grep -Fq 'promotion pull request' "$agent_yaml" \
+  || fail "agent prompt must end in the promotion pull request"
 
-grep -Fq 'STATUS="untested"' "$skill" \
-  || fail "skill must require STATUS=\"untested\""
-grep -Fq 'FIRST_RUN_CANDIDATE=0' "$skill" \
-  || fail "skill must require FIRST_RUN_CANDIDATE=0"
-grep -Fq 'no `EXPECTED_MODEL_SEAL`' "$skill" \
-  || fail "skill must forbid EXPECTED_MODEL_SEAL on the draft profile"
-grep -Fq 'no `MODEL_SERVING_RELEASE_ID`' "$skill" \
-  || fail "skill must forbid MODEL_SERVING_RELEASE_ID on the draft profile"
-grep -Fq 'ready-for-review PR' "$skill" \
-  || fail "skill must publish the draft profile as its own ready-for-review PR"
-grep -Fq 'Do not begin the onboarding journal until' "$skill" \
-  || fail "skill must stop before the journal exists"
-grep -Fq 'user reports that PR merged' "$skill" \
-  || fail "skill must wait for the user to report the profile PR merged"
-grep -Fq 'syncs local main' "$skill" \
-  || fail "skill must sync local main after the profile PR merges"
-grep -Fq 'new feature branch' "$skill" \
-  || fail "skill must create a new feature branch after merge"
+# --- a profile is a spec id; drafts are lab input only ---------------------
+grep -Fq 'A profile is a released spec id' "$skill" \
+  || fail "skill must define a profile as a released spec id"
+grep -Fq '`models/*.conf` no' "$skill" \
+  || fail "skill must state that conf profiles no longer exist"
+grep -Fq 'home add --draft <draft.conf>' "$skill" \
+  || fail "skill must acquire through home add --draft"
+grep -Fq 'from-draft' "$skill" \
+  || fail "skill must generate the measured spec with from-draft"
+grep -Fq 'Nothing in the stack starts a draft' "$skill" \
+  || fail "skill must state that no stack command starts a draft"
+grep -Fq 'PULSAR_SPEC_FILE=<measured-spec' "$skill" \
+  || fail "skill must start the measured spec through PULSAR_SPEC_FILE"
+grep -Fq '.pulsar-overlay.json' "$skill" \
+  || fail "skill must name the deployment overlay as the served-name source"
+grep -Fq 'scripts/testdata/drafts/' "$skill" \
+  || fail "skill must keep selftest drafts out of onboarding"
+! grep -Fq 'STATUS="untested"' "$skill" \
+  || fail "skill must not require the retired STATUS label"
+! grep -Fq 'MODEL_SERVING_RELEASE_ID' "$skill" \
+  || fail "skill must not reference the retired release id field"
+! grep -Eq 'model-serving-release-(plan|attempt|capture|issue)' "$skill" \
+  || fail "skill must not invoke the ADR 0004 tooling"
+! grep -Fq 'model-serving-experiment-monitor' "$skill" \
+  || fail "skill must not start the experiment monitor"
 
-grep -Fq 'as an exact ADR 0004 qualification attempt' "$skill" \
-  || fail "skill must refuse unsealed qualification claims"
-grep -Fq 'ADR 0004 qualification attempt' "$skill" \
-  || fail "skill must name the refused qualification claim"
-grep -Fq 'refs/main' "$skill" \
-  || fail "skill must name the mutable refs/main unsealed path"
-grep -Fq 'receipt-occupancy' "$skill" \
-  || fail "skill must name the honest receipt-occupancy identity label"
-
-grep -Fq 'no silent fallback' "$skill" \
+# --- hard stops ---------------------------------------------------------------
+grep -Fq 'never set a' "$skill" && grep -Fq 'review.status' "$skill" \
+  || fail "skill must not set a review status"
+grep -Fq 'write under `releases/`' "$skill" \
+  || fail "skill must not write under releases/"
+grep -Fq 'Review status is display-only and never blocks serving' "$skill" \
+  || fail "skill must keep review status display-only"
+grep -Fq 'fail without fallback' "$skill" \
+  || fail "skill must keep concrete operational failures fail without fallback"
+grep -Fq 'Do not silently select another node' "$skill" \
   || fail "skill must forbid silent fallback"
-grep -Fq 'no automatic fallback' "$skill" \
-  || fail "skill must forbid automatic fallback"
-grep -Fq 'local-files' "$skill" \
-  || fail "skill must name local-files as the stored local-file path"
-grep -Fq 'local-verified-readonly' "$skill" \
-  || fail "skill must bind local files to local-verified-readonly"
-grep -Fq 'Do not offer live NFS/RDMA' "$skill" \
-  || fail "skill must refuse live NFS/RDMA as a qualifying path"
-grep -Fq 'Do not offer live NFS/RDMA' "$phases" \
-  || fail "phase checklist must refuse live NFS/RDMA as a qualifying path"
-grep -Fq -- '--model-access-contract local-verified-readonly' "$skill" \
-  || fail "skill must bind the planner to local-verified-readonly"
-if grep -Fq -- 'local-verified-readonly|live-remote-readonly' "$skill" "$phases"
-then
-  fail "onboarding must not offer live-remote-readonly as a contract choice"
-fi
-if grep -Fq -- '--weight-source' "$skill" "$phases"
-then
-  fail "onboarding must not use the removed weight-mode axis (ADR 0006)"
-fi
-grep -Fq 'scripts/model-library.sh home add <profile> --revision <selector> --plan --json' "$skill" \
+grep -Fq 'Do not offer live NFS/RDMA serving' "$skill" \
+  || fail "skill must refuse live NFS/RDMA as a runtime-access path"
+grep -Fq 'Do not mutate `refs/main`' "$skill" \
+  || fail "skill must name the mutable refs/main path"
+grep -Fq 'never a mutable selector' "$skill" \
+  || fail "skill must acquire the exact planned commit, never a selector"
+grep -Fq 'Do not edit a measured spec by hand' "$skill" \
+  || fail "skill must forbid hand-edited specs"
+grep -Fq 'A failed gate is evidence' "$skill" \
+  || fail "skill must keep a failed gate as evidence"
+grep -Fq 'Do not rerun a failed gate' "$skill" \
+  || fail "skill must not chase a pass"
+grep -Fq 'Changing the recipe means a new draft' "$skill" && grep -Fq 'a new spec id, and a new run' "$skill" \
+  || fail "skill must make a recipe change a new identity"
+
+# --- confirmations --------------------------------------------------------------
+grep -Fq '**large acquisition**' "$skill" \
+  || fail "skill must require a separate large-acquisition confirmation"
+grep -Fq '**launch**' "$skill" \
+  || fail "skill must require a separate launch confirmation"
+grep -Fq '**destructive cleanup**' "$skill" \
+  || fail "skill must require a separate destructive-cleanup confirmation"
+grep -Fq 'Distribution/source choice must be explicit' "$skill" \
+  || fail "skill must make distribution/source choice explicit"
+
+# --- workflow order ---------------------------------------------------------------
+grep -Fq '### 1. Draft, then stop' "$skill" \
+  || fail "skill must stop after the draft"
+grep -Fq -- '--revision <selector> --plan --json' "$skill" \
   || fail "skill must compose the read-only Hugging Face acquisition plan"
-grep -Fq 'observe every confirmed serving rank' "$skill" \
-  || fail "skill must check for durable homes before acquisition"
-grep -Fq "catalog's shallow \`complete\` label" "$skill" \
-  || fail "skill must not equate the shallow catalog label with completeness"
-grep -Fq 'independent' "$skill" \
-  || fail "skill must require independent completeness evidence before reuse"
-grep -Fq 'expected-manifest fallback is retired' "$skill" \
-  || fail "skill must fail closed without a receipt (ADR 0012)"
 grep -Fq -- '--revision <exact-commit-from-plan>' "$skill" \
   || fail "skill must acquire the exact planned commit after confirmation"
 grep -Fq -- '--node <selected-rank-from-plan>' "$skill" \
   || fail "skill must bind execution to the reviewed rank"
-grep -Fq -- '--node <selected-rank-from-plan>' "$phases" \
-  || fail "phase checklist must bind execution to the reviewed rank"
 grep -Fq 'home verify <model_id@revision> --json' "$skill" \
-  || fail "skill must require receipt-backed offline verification"
-grep -Fq '`source_digest`, `approval_id`, and' "$skill" \
-  || fail "skill must journal the acquisition source and approval identities"
-grep -Fq '`receipt_id` in the journal' "$skill" \
+  || fail "skill must reuse an exact home only after receipt-backed verification"
+grep -Fq 'An older tree without a receipt fails without' "$skill" \
+  || fail "skill must fail closed without a receipt"
+grep -Fq 'python3 -m release_spec id <measured-spec.json>' "$skill" \
+  || fail "skill must derive the spec id from the measured spec"
+grep -Fq 'scripts/model-library.sh prepare <spec_id> --yes' "$skill" \
+  || fail "skill must prepare by spec id"
+grep -Fq 'scripts/check-weights.sh <spec_id>' "$skill" \
+  || fail "skill must verify every rank before launch"
+grep -Fq './pulsar start <spec_id>' "$skill" \
+  || fail "skill must start by spec id"
+grep -Fq -- '--check-only' "$skill" \
+  || fail "skill must prove the server is the spec before measuring"
+grep -Fq 'validate/baseline-v1.sh <spec_id> --spec <measured-spec.json>' "$skill" \
+  || fail "skill must run baseline-v1 by spec id"
+grep -Fq 'results/baseline-v1/<spec_id>' "$skill" \
+  || fail "skill must write evidence under results/baseline-v1/<spec_id>"
+grep -Fq 'scripts/release-spec.sh promote' "$skill" \
+  || fail "skill must promote through the promote command"
+grep -Fq 'one reviewed pull request per spec' "$skill" \
+  || fail "skill must open one promotion pull request per spec"
+grep -Fq 'scripts/release.sh list --markdown' "$skill" \
+  || fail "skill must regenerate the MODELS.md block"
+grep -Fq 'scripts/check_publishable_privacy.py' "$skill" \
+  || fail "skill must require the privacy scan before the pull request"
+grep -Fq './pulsar stop <spec_id>' "$skill" \
+  || fail "skill must use the normal stop path"
+grep -Fq 'Refuse when a managed service still uses the resource' "$skill" \
+  || fail "skill must refuse cleanup while a managed service still uses the resource"
+
+# --- journal ------------------------------------------------------------------------
+grep -Fq 'experiments/model-onboarding/workflows/<workflow-id>/' "$skill" \
+  || fail "skill must isolate journal state below the workflows namespace"
+grep -Fq -- '--id spec_id=<id>' "$skill" \
+  || fail "skill must journal the spec id"
+grep -Fq -- '--id receipt_id=<digest>' "$skill" \
   || fail "skill must journal the immutable receipt identity"
-grep -Fq 'Do not run a' "$skill" \
-  || fail "skill must forbid direct durable-cache acquisition"
-grep -Fq 'Hugging Face download directly into' "$skill" \
-  || fail "skill must name the unsafe direct-download path"
-grep -Fq 'self-observed manifest is' "$skill" \
-  || fail "skill must not use catalog/observed state as completeness authority"
-grep -Fq 'using that rank' "$skill" \
-  || fail "skill must keep source authentication on the selected rank"
-grep -Fq 'local Hugging Face authentication' "$skill" \
-  || fail "skill must keep source authentication on the selected rank"
-grep -Fq 'private same-filesystem staging' "$skill" \
-  || fail "skill must describe isolated acquisition staging"
-grep -Fq 'does not refresh the catalog' "$skill" \
-  || fail "skill must keep acquisition separate from catalog refresh"
-grep -Fq 'scripts/model-serving-release-plan.sh build' "$skill" \
-  || fail "skill must build the release plan after exact inputs exist"
-grep -Fq 'scripts/model-serving-release-plan.sh verify' "$skill" \
-  || fail "skill must verify the release plan before testing"
-grep -Fq 'do not claim that a Validation' "$skill" \
-  || fail "skill must not freeze a contract before planner inputs exist"
+grep -Fq 'Reject credentials, raw' "$skill" \
+  || fail "skill must keep site identifiers out of the journal"
 
-grep -Fq 'large acquisition' "$skill" \
-  || fail "skill must require a separate large-acquisition confirmation"
-grep -Fq '**launch**' "$skill" \
-  || fail "skill must require a separate launch confirmation"
-grep -Fq 'destructive cleanup' "$skill" \
-  || fail "skill must require a separate destructive-cleanup confirmation"
-grep -Fq 'Distribution/source choice' "$skill" \
-  || fail "skill must make distribution/source choice explicit"
+# --- references -----------------------------------------------------------------
+grep -Fq 'home add --draft <draft.conf> --revision <selector> --plan --json' "$phases" \
+  || fail "phase checklist must plan through home add --draft"
+grep -Fq 'PULSAR_SPEC_FILE=<measured-spec.json>' "$phases" \
+  || fail "phase checklist must start the measured spec by id"
+grep -Fq 'validate/baseline-v1.sh <spec_id>' "$phases" \
+  || fail "phase checklist must run baseline-v1 by spec id"
+grep -Fq 'scripts/release-spec.sh promote' "$phases" \
+  || fail "phase checklist must end in promotion"
+! grep -Eq 'models/<profile>\.conf|STATUS="untested"|capture-run' "$phases" \
+  || fail "phase checklist must not carry conf-era steps"
+grep -Fq 'assigns no status' "$handoff" \
+  || fail "handoff template must deny reviewed authority"
+grep -Fq 'Spec id:' "$handoff" && grep -Fq 'Receipt id:' "$handoff" \
+  || fail "handoff must list the spec and receipt ids"
+grep -Fq 'results/baseline-v1/<spec_id>/' "$handoff" \
+  || fail "handoff must name the evidence directory"
+grep -Fq 'Promotion pull request:' "$handoff" \
+  || fail "handoff must name the promotion pull request"
 
-grep -Fq 'Do not use `validate/run-gates.sh` as the ADR attempt wrapper' "$skill" \
-  || fail "skill must not wrap ADR attempts in run-gates.sh"
-grep -Fq 'greedy_capture.py' "$skill" \
-  || fail "skill must invoke greedy captures sequentially"
-grep -Fq 'compare_captures.py' "$skill" \
-  || fail "skill must invoke compare_captures.py"
-grep -Fq 'bench_serve.py' "$skill" \
-  || fail "skill must invoke bench_serve.py"
-grep -Fq -- '--result-json' "$skill" \
-  || fail "skill must persist closed --result-json measurements"
-grep -Fq -- '--require-identical' "$skill" \
-  || fail "strict same-boot comparison must reject FP-equivalent output"
-grep -Fq 'without `eval`' "$skill" \
-  || fail "skill must load frozen benchmark argv without shell evaluation"
-grep -Fq 'failed evidence and must be preserved' "$skill" \
-  || fail "skill must preserve complete conclusive failures"
-grep -Fq 'repository-relative' "$skill" \
-  || fail "skill must keep composer measurements on publishable result paths"
-grep -Fq 'wall-clock UTC' "$skill" \
-  || fail "skill must record per-operation wall-clock UTC timestamps"
-grep -Fq 'Never share one enclosing timestamp' "$skill" \
-  || fail "skill must not share one enclosing timestamp"
-grep -Fq 'Never fabricate a missing validator measurement' "$skill" \
-  || fail "skill must not invent missing validator output"
-grep -Fq 'scripts/model-serving-experiment-monitor.sh start' "$skill" \
-  || fail "skill must start experiment-only resource monitoring before launch"
-grep -Fq 'scripts/model-serving-experiment-monitor.sh summarize' "$skill" \
-  || fail "skill must produce a per-attempt resource summary"
-grep -Fq 'scripts/model-serving-experiment-monitor.sh stop' "$skill" \
-  || fail "skill must stop resource monitoring after owned cleanup"
-grep -Fq 'resource_diagnostic_sources' "$skill" \
-  || fail "skill must bind resource summaries through the attempt context"
-grep -Fq 'run_diagnostic_source_keys' "$skill" \
-  || fail "skill must keep resource summaries as run diagnostics"
-grep -Fq 'ordinary serving' "$skill" \
-  || fail "skill must exclude monitoring from ordinary catalog serving"
-grep -Fq 'resource diagnostic summaries' "$handoff" \
-  || fail "handoff must list resource diagnostics and gaps"
-grep -Fq 'experiment-only resource monitoring' "$agent_yaml" \
-  || fail "agent prompt must include onboarding resource monitoring"
-
+# Experiment monitoring never reaches catalog serving entrypoints.
 for entrypoint in pulsar wizard.sh scripts/up.sh serve.sh cluster/start-cluster.sh \
   scripts/status.sh scripts/inventory.sh; do
   if grep -Fq 'model-serving-experiment-monitor' "$REPO_DIR/$entrypoint"; then
@@ -192,63 +185,6 @@ for entrypoint in pulsar wizard.sh scripts/up.sh serve.sh cluster/start-cluster.
   fi
 done
 
-grep -Fq 'Never use the workflow-journal' "$skill" \
-  || fail "skill must name the workflow-journal ID as forbidden identity input"
-grep -Fq 'before correctness' "$skill" \
-  || fail "skill must reobserve identities before correctness"
-grep -Fq 'after correctness' "$skill" \
-  || fail "skill must reobserve identities after correctness"
-grep -Fq 'after benchmarking' "$skill" \
-  || fail "skill must reobserve identities after benchmarking"
-grep -Fq 'Never combine measurements when either identity changes' "$skill" \
-  || fail "skill must refuse to combine measurements across identity changes"
-grep -Fq 'domain-separated canonical hashes' "$skill" \
-  || fail "skill must derive distinct launch and boot identities"
+python3 -m py_compile "$journal" || fail "journal helper must compile"
 
-grep -Fq 'never issue a seal' "$skill" \
-  || fail "skill must not issue a seal"
-grep -Fq 'validation decision' "$skill" \
-  || fail "skill must not issue a validation decision"
-grep -Fq 'assign a status' "$skill" \
-  || fail "skill must not assign a status"
-grep -Fq 'bind a profile to a' "$skill" \
-  || fail "skill must not bind a profile to a release"
-grep -Fq 'trusted registry' "$skill" \
-  || fail "skill must not publish into the trusted registry"
-grep -Fq 'promote a path' "$skill" \
-  || fail "skill must not promote a path"
-grep -Fq 'claim physical behavior' "$skill" \
-  || fail "skill must not claim physical behavior"
-grep -Fq 'Status is advisory' "$skill" \
-  || fail "skill must keep status advisory"
-grep -Fq 'never blocks serving' "$skill" \
-  || fail "skill must not treat status as a serving gate"
-grep -Fq 'fail without fallback' "$skill" \
-  || fail "skill must keep concrete operational failures fail without fallback"
-
-grep -Fq 'ownership-safe' "$skill" \
-  || fail "skill must require ownership-safe cleanup"
-grep -Fq 'scripts/down.sh' "$skill" \
-  || fail "skill must use the normal stop path"
-grep -Fq 'Refuse' "$skill" \
-  || fail "skill must refuse cleanup while a managed service still uses the resource"
-
-grep -Fq 'not a sixth ADR object' "$skill" \
-  || fail "skill must not treat the journal as an ADR object"
-grep -Fq 'experiments/model-onboarding/workflows/' "$skill" \
-  || fail "skill must isolate journal state below the workflows namespace"
-
-grep -Fq 'STATUS="untested"' "$phases" \
-  || fail "phase checklist must repeat the draft-profile STATUS contract"
-grep -Fq 'Do not use `validate/run-gates.sh` as the ADR attempt wrapper' "$phases" \
-  || fail "phase checklist must keep sequential measurement rules"
-grep -Fq 'No seal was issued' "$handoff" \
-  || fail "handoff template must deny reviewed authority"
-grep -Fq 'review_evidence_artifact_ids' "$skill" \
-  || fail "skill must name empty leftover review IDs after capture"
-grep -Fq 'pulsar-model-serving-release-issuance' "$skill" \
-  || fail "skill must hand off issuance to pulsar-model-serving-release-issuance"
-grep -Fq 'empty after compare/bench is' "$handoff" \
-  || fail "handoff must treat empty leftover review IDs as expected"
-
-echo "OK   pulsar-model-onboarding skill package contracts"
+echo "model onboarding skill selftest: PASS"

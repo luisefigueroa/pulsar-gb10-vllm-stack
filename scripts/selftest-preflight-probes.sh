@@ -4,6 +4,11 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-preflight-probes.XXXXXX")
+# Profiles are released specs: a fixture release set stands in for releases/.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+STATE="$STATE_DIR"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$STATE_DIR"' EXIT
 export CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json"
 
@@ -82,7 +87,7 @@ set +e
 image_out=$(DOCKER_MODE=ok PULSAR_DOCKER="$STATE_DIR/docker" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
   HEAD_IP=head.test WORKER_IP=worker.test \
-  "$REPO_DIR/scripts/check-image.sh" qwen3.8-27b-fp8-2node --json)
+  "$REPO_DIR/scripts/check-image.sh" "$TWO_NODE_ID" --json)
 image_rc=$?
 set -e
 [ "$image_rc" -ne 0 ]
@@ -116,7 +121,7 @@ echo "OK   inventory fails closed when Docker enumeration fails"
 # Image checks distinguish operational failure from a missing image.
 set +e
 image_out=$(DOCKER_MODE=down PULSAR_DOCKER="$STATE_DIR/docker" \
-  "$REPO_DIR/scripts/check-image.sh" qwen3.8-27b-fp8 --json)
+  "$REPO_DIR/scripts/check-image.sh" "$ONE_NODE_QWEN_ID" --json)
 image_rc=$?
 set -e
 [ "$image_rc" -ne 0 ]
@@ -128,7 +133,7 @@ set +e
 image_out=$(DOCKER_MODE=ok PULSAR_DOCKER="$STATE_DIR/docker" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" SSH_MODE=down \
   CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
-  "$REPO_DIR/scripts/check-image.sh" qwen3.8-27b-fp8-2node --json)
+  "$REPO_DIR/scripts/check-image.sh" "$TWO_NODE_ID" --json)
 image_rc=$?
 set -e
 [ "$image_rc" -ne 0 ]
@@ -138,14 +143,14 @@ assert_json_state "$image_out" rank-unreachable \
 # The weight-mode axis is removed (ADR 0006): any use fails closed with an
 # actionable retirement message before other work.
 set +e
-flag_out=$("$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8 \
+flag_out=$("$REPO_DIR/scripts/check-weights.sh" "$ONE_NODE_QWEN_ID" \
   --weight-source library-hot 2>&1)
 flag_rc=$?
 set -e
 [ "$flag_rc" -eq 2 ]
 printf '%s' "$flag_out" | grep -q 'ADR 0006'
 set +e
-flag_out=$("$REPO_DIR/scripts/up.sh" qwen3.8-27b-fp8 --dry-run \
+flag_out=$("$REPO_DIR/scripts/up.sh" "$ONE_NODE_QWEN_ID" --dry-run \
   --weight-source replicated 2>&1)
 flag_rc=$?
 set -e
@@ -159,7 +164,7 @@ echo "OK   removed weight-mode flags fail closed with remediation"
 set +e
 weights_out=$(CLUSTER_TOPOLOGY_FILE="$STATE_DIR/no-topology.json" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8 --json 2>&1)
+  "$REPO_DIR/scripts/check-weights.sh" "$ONE_NODE_QWEN_ID" --json 2>&1)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
@@ -171,7 +176,7 @@ echo "OK   weights check requires a confirmed topology manifest"
 set +e
 weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_HOT_ROOT="$STATE_DIR/empty-hot" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8-2node --json)
+  "$REPO_DIR/scripts/check-weights.sh" "$TWO_NODE_ID" --json)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
@@ -183,14 +188,14 @@ fixture_topology_id=$(python3 -c \
   'import json,sys; print(json.load(open(sys.argv[1]))["topology_id"])' \
   "$TOPOLOGY_FIXTURE")
 python3 "$REPO_DIR/scripts/testlib/library_hot_fixture.py" \
-  "$STATE_DIR/hot-info.json" --profile qwen3.8-27b-fp8-2node \
+  "$STATE_DIR/hot-info.json" --profile "$TWO_NODE_ID" \
   --topology-id "$fixture_topology_id"
 : >"$STATE_DIR/ssh.log"
 weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
   FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8-2node --json)
+  "$REPO_DIR/scripts/check-weights.sh" "$TWO_NODE_ID" --json)
 assert_json_state "$weights_out" ok "ready library views report ok"
 grep -q 'verify-hot' "$STATE_DIR/ssh.log" \
   || { echo "FAIL readiness must verify every remote rank" >&2; exit 1; }
@@ -203,7 +208,7 @@ import os
 data = json.loads(os.environ["WEIGHTS_JSON"])
 assert data["source"] == "local-files", data
 assert data["identity_status"] == "receipt-occupancy", data
-assert data["model"] == "qwen3.8-27b-fp8-2node", data
+assert data["model"] == os.environ["TWO_NODE_ID"], data
 assert data["nodes"] == 2, data
 PY2
 # A remote rank whose view cannot be verified is missing, not healthy.
@@ -212,7 +217,7 @@ weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
   FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" SSH_MODE=down \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8-2node --json)
+  "$REPO_DIR/scripts/check-weights.sh" "$TWO_NODE_ID" --json)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]
@@ -230,7 +235,7 @@ weights_human=$(QUIET=1 CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
   FAKE_HOT_INFO_FILE="$STATE_DIR/hot-info.json" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8-2node)
+  "$REPO_DIR/scripts/check-weights.sh" "$TWO_NODE_ID")
 printf '%s\n' "$weights_human" | grep -q 'identity=receipt/occupancy'
 echo "OK   human and JSON weight projections agree"
 
@@ -239,7 +244,7 @@ echo "OK   human and JSON weight projections agree"
 set +e
 weights_out=$(CLUSTER_TOPOLOGY_FILE="$TOPOLOGY_FIXTURE" \
   PULSAR_SSH="$STATE_DIR/ssh" SSH_LOG="$STATE_DIR/ssh.log" SSH_MODE=down \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3.8-27b-fp8 --node fixture-node-1 --json)
+  "$REPO_DIR/scripts/check-weights.sh" "$ONE_NODE_QWEN_ID" --node fixture-node-1 --json)
 weights_rc=$?
 set -e
 [ "$weights_rc" -ne 0 ]

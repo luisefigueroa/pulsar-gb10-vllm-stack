@@ -85,10 +85,10 @@ export QUIET=1
 echo "┌─ up  $NAME"
 if [ "${CONF_SOURCE:-conf}" = spec ]; then
   echo "│  source=spec $CONF_NAME"
+  echo "│  overlay=${OVERLAY_SOURCE:-?}"
 fi
 echo "│  nodes=$NODES  served=$SERVED_NAME  port=$PORT"
 echo "│  release-status=$MODEL_SERVING_RELEASE_STATUS_LABEL (display-only)"
-echo "│  legacy-status=$STATUS (display-only)"
 echo "│  weights=model library (hot staging)"
 if [ "$NODES" -eq 1 ]; then
   echo "│  placement=$(single_node_display)  node-id=${SINGLE_NODE_ID:-standalone}"
@@ -103,9 +103,7 @@ echo "│  spec-review=$SPEC_REVIEW_CELL (display-only)"
 echo "├─ checks"
 
 echo "INFO  release   $MODEL_SERVING_RELEASE_STATUS_LABEL (display-only)"
-echo "INFO  legacy    $STATUS (display-only)"
 echo "INFO  spec-review $SPEC_REVIEW_CELL (display-only)"
-warn_profile_status
 echo "PASS  conf      exact profile contract parsed"
 
 if [ "$NODES" -gt 1 ]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run baseline-v1 against an ALREADY-RUNNING server and evaluate the spec.
 #
-#   validate/baseline-v1.sh <profile|spec_id> --spec FILE --out DIR --dataset FILE
+#   validate/baseline-v1.sh <spec_id> --spec FILE --out DIR --dataset FILE
 #       [--node NODE_ID] [--tag LABEL] [--soak-concurrency N] [--lab-commit SHA]
 #       [--policy FILE] [--producer-dir DIR] [--skip-weights-check] [--check-only]
 #
@@ -120,6 +120,12 @@ log "dataset matches the policy pin"
 # --- spec, profile, placement ------------------------------------------------
 spec_id=$("$PY" -m release_spec id "$SPEC" 2>/dev/null) || die "spec does not verify: $SPEC"
 spec_image_digest=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["identity"]["image"]["digest"])' "$SPEC")
+# The measured spec file is the startable profile before promotion (lab path):
+# every child (up/down/status/check-weights) loads the same file by spec id.
+[[ "$PROFILE" =~ ^[0-9a-f]{64}$ ]] \
+  || die "profile must be a spec id (ADR 0017 Stage 4): pass the spec id printed by release_spec id --spec FILE"
+[ "$PROFILE" = "$spec_id" ] || die "profile is spec $PROFILE but --spec is $spec_id"
+export PULSAR_SPEC_FILE="$SPEC"
 load_conf "$PROFILE"
 NODE_SELECTOR=$(spec_overlay_node_selector "$NODE_SELECTOR")
 if [ "$NODES" -eq 1 ]; then
@@ -131,40 +137,8 @@ if [ "$NODES" -eq 1 ]; then
 else
   die "multi-node baseline runs are not supported by this runner yet: every serving rank's container must be verified, which lands with the two-node milestone" 2
 fi
-case "$PROFILE" in
-  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
-    [ "$PROFILE" = "$spec_id" ] || die "profile is spec $PROFILE but --spec is $spec_id"
-    label="spec-${spec_id:0:12}"
-    expected_spec_decode=off
-    ;;
-  *)
-    catalog=$("$REPO_DIR/scripts/list-models.sh" --serving --json 2>/dev/null) \
-      || die "cannot read the catalog projection for $PROFILE"
-    identity_line=$(CATALOG_JSON="$catalog" "$PY" - "$CONF_NAME" "$spec_id" <<'PY'
-import json, os, sys
-conf, spec_id = sys.argv[1:]
-for model in json.loads(os.environ["CATALOG_JSON"])["models"]:
-    if model["id"] != conf:
-        continue
-    for identity in model["release_spec"]["identities"]:
-        if identity["spec_id"] != spec_id:
-            continue
-        if identity["released"] and identity["comparison"] != "equal":
-            print(f"released-differs {identity['comparison']}")
-            raise SystemExit(0)
-        print("ok " + ("on" if identity["spec_decode"] else "off"))
-        raise SystemExit(0)
-print("absent")
-PY
-    ) || die "cannot inspect the catalog projection for $PROFILE"
-    case "$identity_line" in
-      "ok "*) expected_spec_decode="${identity_line#ok }" ;;
-      released-differs*) die "released spec $spec_id and profile $PROFILE compute different launch contracts (${identity_line#released-differs })" ;;
-      *) die "spec $spec_id is not an identity the catalog computes for $PROFILE; regenerate it with scripts/release-spec.sh from-profile" ;;
-    esac
-    label="$CONF_NAME"
-    ;;
-esac
+label="spec-${spec_id:0:12}"
+expected_spec_decode=off
 if [ "$SKIP_W" = 0 ]; then
   "$REPO_DIR/scripts/check-weights.sh" "$PROFILE" ${NODE_SELECTOR:+--node "$NODE_SELECTOR"} >/dev/null \
     || die "model files are not ready on every rank — run scripts/check-weights.sh $PROFILE"

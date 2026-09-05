@@ -202,7 +202,13 @@ scripts.
   **Amends**.
 - **Stage 4.** Retire the five-object registry, `MODEL_SERVING_RELEASE_ID`,
   the profile `STATUS` ladder, and issuance staging as the trust path.
-  One reviewed PR per spec.
+  One reviewed PR per spec. Landed 2026-09-04 for profiles: `models/*.conf`
+  is deleted, a profile is a spec id under `releases/`, the served name and
+  port come from the deployment overlay, `MODELS.md` is generated from
+  `releases/` (drift-tested), and a conf-format file survives only as a lab
+  draft consumed by `release-spec.sh from-draft` and `home add --draft`.
+  The empty ADR 0004 registry directory and its read-only tooling remain
+  for a later package.
 
 ## Rejected alternatives
 

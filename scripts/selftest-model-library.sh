@@ -5,6 +5,11 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$REPO_DIR/scripts/model_library.py"
 STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-model-library.XXXXXX")
+# Profiles are released specs: a fixture release set stands in for releases/.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+STATE="$STATE"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$STATE"' EXIT
 
 pass=0
@@ -57,22 +62,9 @@ make_complete_hub "$NODE1" "Qwen/Qwen3-1.7B"
 make_complete_hub "$NODE0" "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4" rev2
 make_partial_hub "$NODE1" "SomeOrg/Unfinished"
 
-# Minimal confs for labeling
-cat >"$STATE/models/qwen3-1.7b-2node.conf" <<'EOF'
-MODEL="Qwen/Qwen3-1.7B"
-STATUS="tested"
-NODES=2
-EOF
-cat >"$STATE/models/unvalidated-demo.conf" <<'EOF'
-MODEL="SomeOrg/Unfinished"
-STATUS="experimental"
-NODES=1
-EOF
-cat >"$STATE/models/nfs-demo.conf" <<'EOF'
-MODEL="/mnt/Models/Official Models/demo"
-STATUS="tested"
-NODES=1
-EOF
+# Profiles are released specs (the fixture set under PULSAR_RELEASES_ROOT):
+# the diagnostic two-node spec names Qwen/Qwen3-1.7B, the one-node spec names
+# the Nemotron nano hub. models/ carries no conf.
 
 # scan-hub
 scan0=$(python3 "$PY" scan-hub --cache-root "$NODE0" --rank 0 --node-id node-a --hostname host-a)
@@ -110,9 +102,11 @@ q = models["Qwen/Qwen3-1.7B"]
 assert q["validation"] == "unbound-complete", q
 assert q["duplicate"] is False
 assert q["has_primary"] is False
-assert "qwen3-1.7b-2node" in q["profiles"]
+assert os.environ["DIAG_TWO_NODE_ID"] in q["profiles"]
 nano = models["nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"]
-assert nano["validation"] == "unvalidated"
+# A released spec names this model too; its receipt-less hub is unbound.
+assert nano["validation"] == "unbound-complete", nano
+assert os.environ["ONE_NODE_ID"] in nano["profiles"]
 assert nano["duplicate"] is False
 assert nano["has_primary"] is False
 assert "/mnt/Models" not in json.dumps(cat)
@@ -125,7 +119,7 @@ fi
 
 # resolve without primary must fail
 set +e
-python3 "$PY" resolve --catalog "$STATE/catalog.json" --json qwen3-1.7b-2node >"$STATE/resolve.err" 2>&1
+python3 "$PY" resolve --catalog "$STATE/catalog.json" --json "$DIAG_TWO_NODE_ID" >"$STATE/resolve.err" 2>&1
 rc=$?
 set -e
 assert_eq "resolve duplicate without primary fails" "$rc" "1"
@@ -151,7 +145,7 @@ python3 "$PY" build \
   --primary "Qwen/Qwen3-1.7B=node-b" \
   --output "$STATE/catalog2.json" >/dev/null 2>&1
 
-python3 "$PY" resolve --catalog "$STATE/catalog2.json" --json qwen3-1.7b-2node >"$STATE/resolve.ok"
+python3 "$PY" resolve --catalog "$STATE/catalog2.json" --json "$DIAG_TWO_NODE_ID" >"$STATE/resolve.ok"
 home_node=$(python3 -c 'import json; print(json.load(open("'"$STATE/resolve.ok"'"))["home"]["node_id"])')
 assert_eq "resolve uses primary node-b" "$home_node" "node-b"
 
@@ -174,7 +168,7 @@ reviewed_list_out=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
   "$REPO_DIR/scripts/model-library.sh" catalog list --reviewed-identity --json 2>&1)
 reviewed_list_rc=$?
 bundle_out=$("$REPO_DIR/scripts/model-library.sh" \
-  validation-bundle verify qwen3-1.7b-2node --json 2>&1)
+  validation-bundle verify "$DIAG_TWO_NODE_ID" --json 2>&1)
 bundle_rc=$?
 validated_alias_out=$(MODEL_LIBRARY_CATALOG="$STATE/catalog.json" \
   "$REPO_DIR/scripts/model-library.sh" catalog list --validated --json 2>&1)
@@ -201,7 +195,7 @@ export PULSAR_HOT_RESERVE_BYTES=0
 set +e
 python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
@@ -226,7 +220,7 @@ QWEN_MANIFEST=$(printf '%s' "$qwen_inventory" | python3 -c \
 
 plan=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
@@ -247,12 +241,12 @@ mkdir -p "$hub_dst"
 rsync -a "$hub_src"/ "$hub_dst"/
 stamp_json=$(printf '%s' "$plan" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["stamp"]))')
 python3 "$PY" write-hot-stamp --instance-dir "$instance" --stamp-json "$stamp_json" >/dev/null
-python3 "$PY" verify-hot --instance-dir "$instance" --profile qwen3-1.7b-2node --topology-id topo-test-001 --models-dir "$STATE/models" >/dev/null \
+python3 "$PY" verify-hot --instance-dir "$instance" --profile "$DIAG_TWO_NODE_ID" --topology-id topo-test-001 --models-dir "$STATE/models" >/dev/null \
   && ok "verify-hot after local copy" || not_ok "verify-hot after local copy"
 
 plan2=$(python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
@@ -364,7 +358,7 @@ python3 "$PY" build \
 set +e
 python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog-fabric.json" \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id "$TOPO_ID" \
   --topology-file "$STATE/topology.json" \
   --hot-root "$HOT" \
@@ -374,7 +368,7 @@ python3 "$PY" plan-prepare \
 fab_rc=$?
 python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog-fabric.json" \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id "$TOPO_ID" \
   --topology-file "$STATE/topology.json" \
   --hot-root "$HOT" \
@@ -384,7 +378,7 @@ python3 "$PY" plan-prepare \
 nfs_rc=$?
 python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog2.json" \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id topo-test-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
@@ -407,7 +401,7 @@ assert_true "cluster launch uses serve-time witness with full-verify fallback" \
 assert_true "preparation full-verifies and refreshes rank-local witnesses" \
   grep -q -- --refresh-witness "$REPO_DIR/scripts/model-library.sh"
 out=$(set +e; CLUSTER_TOPOLOGY_FILE="$STATE/no-topology.json" \
-  "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b-2node 2>&1; true)
+  "$REPO_DIR/scripts/check-weights.sh" "$DIAG_TWO_NODE_ID" 2>&1; true)
 assert_true "check-weights fails closed without confirmed topology" \
   bash -c "printf '%s\n' $(printf '%q' "$out") | grep -q 'confirmed topology manifest'"
 out=$(set +e; "$REPO_DIR/scripts/check-weights.sh" qwen3-1.7b --weight-source library-hot 2>&1; true)
@@ -435,17 +429,17 @@ printf 'revcold1\n' >"$HUB_COLD/refs/main"
 printf '{"architectures":["X"]}\n' >"$HUB_COLD/snapshots/revcold1/config.json"
 printf 'weights\n' >"$HUB_COLD/snapshots/revcold1/model.safetensors"
 
-# profile that only exists on cold (HF id matching Official Models org/name)
-cat >"$STATE/models/demo-cold-only.conf" <<'EOF'
-MODEL="DemoOrg/Demo-Model-Complete"
-STATUS="tested"
-NODES=1
-EOF
-cat >"$STATE/models/demo-cold-abs.conf" <<'EOF'
-MODEL="/mnt/Models/Official Models/DemoOrg/Demo-Model-Complete"
-STATUS="tested"
-NODES=1
-EOF
+# A released spec whose model exists only on cold storage.
+COLD_DEMO_ID=$(python3 - "$REPO_DIR" "$PULSAR_RELEASES_ROOT" <<'PY'
+import pathlib
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from scripts.testlib.release_spec_fixture_set import write_released_variant
+
+print(write_released_variant(pathlib.Path(sys.argv[2]), model_id="DemoOrg/Demo-Model-Complete"))
+PY
+)
 
 # empty warm homes catalog for cold-only resolve
 python3 "$PY" build \
@@ -476,7 +470,7 @@ resolve_cold=$(python3 "$PY" resolve \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
   --cold-root "$COLD" \
-  --json demo-cold-only)
+  --json "$COLD_DEMO_ID")
 tier=$(printf '%s' "$resolve_cold" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
 assert_eq "resolve warm miss falls through to cold" "$tier" "cold"
 src=$(printf '%s' "$resolve_cold" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_path"])')
@@ -487,7 +481,7 @@ resolve_warm=$(python3 "$PY" resolve \
   --catalog "$STATE/catalog2.json" \
   --models-dir "$STATE/models" \
   --cold-root "$COLD" \
-  --json qwen3-1.7b-2node)
+  --json "$DIAG_TWO_NODE_ID")
 tier_w=$(printf '%s' "$resolve_warm" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
 assert_eq "resolve prefers warm when present" "$tier_w" "warm"
 
@@ -497,7 +491,7 @@ python3 "$PY" resolve \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
   --no-cold \
-  --json demo-cold-only >"$STATE/resolve-nocold.err" 2>&1
+  --json "$COLD_DEMO_ID" >"$STATE/resolve-nocold.err" 2>&1
 nc_rc=$?
 set -e
 assert_eq "resolve --no-cold fails without warm home" "$nc_rc" "1"
@@ -508,7 +502,7 @@ python3 "$PY" resolve \
   --catalog "$STATE/catalog-cold.json" \
   --models-dir "$STATE/models" \
   --cold-root "$STATE/missing-cold-root" \
-  --json demo-cold-only >"$STATE/resolve-badcold.err" 2>&1
+  --json "$COLD_DEMO_ID" >"$STATE/resolve-badcold.err" 2>&1
 bc_rc=$?
 set -e
 assert_eq "resolve fails when cold needed but unavailable" "$bc_rc" "1"
@@ -552,7 +546,7 @@ assert_eq "adopt hub dest complete" \
 set +e
 python3 "$PY" plan-prepare \
   --catalog "$STATE/catalog-cold.json" \
-  --profile demo-cold-only \
+  --profile "$COLD_DEMO_ID" \
   --topology-id topo-cold-001 \
   --hot-root "$HOT" \
   --models-dir "$STATE/models" \
@@ -612,7 +606,7 @@ assert_true "validated 16-stream settings reach help" \
     "$REPO_DIR/scripts/model-library.sh" help
 
 python3 "$PY" compare-ssh-roce-bench \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id topo-test-001 \
   --model-id Qwen/Qwen3-1.7B \
   --bytes-logical 1000 \
@@ -632,7 +626,7 @@ order=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-win.jso
 assert_eq "ssh-roce report records default run order" "$order" "control-first"
 
 python3 "$PY" compare-ssh-roce-bench \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id topo-test-001 \
   --model-id Qwen/Qwen3-1.7B \
   --bytes-logical 1000 \
@@ -647,7 +641,7 @@ order=$(python3 -c 'import json; print(json.load(open("'"$STATE/ssh-roce-reverse
 assert_eq "ssh-roce report records reversed run order" "$order" "roce-first"
 
 python3 "$PY" compare-ssh-roce-bench \
-  --profile qwen3-1.7b-2node \
+  --profile "$DIAG_TWO_NODE_ID" \
   --topology-id topo-test-001 \
   --model-id Qwen/Qwen3-1.7B \
   --bytes-logical 1000 \

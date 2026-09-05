@@ -20,12 +20,13 @@ cd "$REPO_DIR"
 . "$REPO_DIR/scripts/lib.sh"
 
 if [ "${1:-}" = "--list" ]; then
-  for f in models/*.conf; do
-    name=$(basename "$f" .conf)
-    # shellcheck disable=SC1090
+  for f in "${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"/*.json; do
+    [ -e "$f" ] || continue
+    name=$(basename "$f" .json)
+    [[ "$name" =~ ^[0-9a-f]{64}$ ]] || continue
     (
       load_conf "$name"
-      printf "%-28s nodes=%s status=%-14s %s\n" "$name" "$NODES" "$STATUS" "$MODEL"
+      printf "%s nodes=%s %s\n" "$name" "$NODES" "$MODEL"
     )
   done
   exit 0
@@ -76,7 +77,6 @@ resolve_spec_decode "$SPEC_MODE"
 LAUNCH_CONTRACT_ID=$(loaded_launch_contract_id)
 SPEC_DECODE_STATE=$([ "$SPEC_DECODE_ENABLED" = 1 ] && printf on || printf off)
 
-warn_profile_status
 
 if [ "$NODES" != "1" ]; then
   echo "$MODEL_NAME is a ${NODES}-node config. Use: cluster/start-cluster.sh $MODEL_NAME" >&2

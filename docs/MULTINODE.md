@@ -7,14 +7,14 @@ one- or two-node limit, defines available capacity. That is deliberately
 separate from the serving claim: a discovered node is capacity, not a
 validated model geometry.
 
-The validation ledger currently promotes only the exact one- and two-node
-profiles marked `STATUS=tested*` in `models/`. There is no promoted three-node
-profile. Finding three nodes therefore does not make the wizard invent TP=3,
-PP=3, or any other unmeasured launch.
+A profile is a released spec whose geometry (node count, tensor-parallel
+size) is fixed by its identity (ADR 0017). No two- or three-node spec is
+released today (`scripts/release.sh list`). Finding three nodes therefore does
+not make the wizard invent TP=3, PP=3, or any other unmeasured launch.
 
-Legacy `STATUS=tested*` identifies the current recommendation class; use
-`scripts/list-models.sh --legacy-tested` to filter it. `--validated` is removed
-(ADR 0008) and fails closed with that replacement; it never implemented the
+Spec `review.status` is display-only. The conf profile `STATUS=tested*` label
+and `scripts/list-models.sh --legacy-tested` are retired (Stage 4); `--validated`
+is removed (ADR 0008) and fails closed; it never implemented the
 `Validated` Model Serving Release status accepted in
 [ADR 0004](./decisions/0004-model-serving-release-validation.md).
 Status is advisory and never grants or denies serving.
@@ -180,9 +180,9 @@ the container on this node.
 ## What is actually validated today
 
 Two-rank launcher and NCCL measurements do not qualify a model recipe. The
-retained `qwen3.8-27b-fp8-2node` and `qwen3-1.7b-2node` files are untested
-recipe shells. Cross-node behavior remains decided per exact profile; GDN
-hybrids are not approved cross-node.
+former two-node conf recipes were retired with every conf profile (Stage 4)
+and no two-node spec is released. Cross-node behavior remains decided per
+exact spec; GDN hybrids are not approved cross-node.
 
 These two-node findings must not be extrapolated to three or more nodes. More
 rank pairs change collective behavior, failure surface, memory layout, and

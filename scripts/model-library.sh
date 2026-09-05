@@ -76,7 +76,7 @@ Usage:
   scripts/model-library.sh resolve <profile|model_id|/abs/path>
       [--json] [--cold-root PATH]
   scripts/model-library.sh cleanup-recommend [--json]
-  scripts/model-library.sh home add <profile>
+  scripts/model-library.sh home add <spec_id>|--draft <draft.conf>
       --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]
   scripts/model-library.sh home verify <profile|model_id|model_id@revision>
       [--json]
@@ -448,9 +448,13 @@ library_spec_snapshot_manifest_json() {
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     show_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
   fi
+  # Lab path: the measured spec file is the profile before promotion.
+  if [ -n "${PULSAR_SPEC_FILE:-}" ]; then
+    show_args+=(--spec-file "$PULSAR_SPEC_FILE")
+  fi
   python3 "$REPO_DIR/scripts/release_consumer.py" "${show_args[@]}" \
     | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["identity"]["snapshot_manifest"]))' \
-    || die "prepare: cannot load the released spec manifest for $spec_id"
+    || die "prepare: cannot load the spec manifest for $spec_id"
 }
 
 library_conf_prepare_spec_manifest_json() {
@@ -692,15 +696,17 @@ scan_rank_homes() {
 }
 
 validate_catalog_profile_contracts() {
-  local conf profile
-  for conf in "$REPO_DIR"/models/*.conf; do
-    [ -e "$conf" ] || continue
-    profile="${conf##*/}"
-    profile="${profile%.conf}"
-    # A serving profile is loaded here from its sourced Bash values. The
-    # Python catalog parser deliberately handles only the small declarative
-    # subset and cannot reconstruct arrays, defaults, or resolved image state.
-    load_conf "$profile"
+  local spec profile releases_root="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"
+  for spec in "$releases_root"/*.json; do
+    [ -e "$spec" ] || continue
+    profile="${spec##*/}"
+    profile="${profile%.json}"
+    [[ "$profile" =~ ^[0-9a-f]{64}$ ]] || continue
+    # Every released spec must load as a profile (spec plus overlay). A
+    # subshell keeps one spec's overlay (cache root, port) from leaking into
+    # the next load or into the catalog scan that follows.
+    ( load_conf "$profile" ) \
+      || die "catalog: released spec $profile does not load as a profile"
   done
 }
 
@@ -1497,7 +1503,11 @@ cmd_home_add_source_attested() (
   require_py
   load_cluster_topology >/dev/null \
     || die "home add: confirmed topology required"
-  load_conf "$profile"
+  if [ -n "${PULSAR_DRAFT_FILE:-}" ]; then
+    load_draft "$PULSAR_DRAFT_FILE"
+  else
+    load_conf "$profile"
+  fi
   [ "$(model_source_kind)" = hf ] \
     || die "home add: $profile is not a Hugging Face model profile"
   model_id="$MODEL"
@@ -1586,6 +1596,29 @@ cmd_home_add_source_attested() (
     <"$tmp/source.json")
   content_bytes=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["content_bytes"])' \
     <"$tmp/source.json")
+  if [ "${CONF_SOURCE:-conf}" = spec ]; then
+    # A spec fixes its snapshot: the resolved commit and the upstream file
+    # inventory must match the spec manifest before anything is planned or
+    # downloaded, or the home could never serve this spec.
+    [ "$revision" = "${SNAPSHOT_REVISION:-}" ] \
+      || die "home add: --revision $selector resolved to commit $revision, but spec $profile fixes snapshot ${SNAPSHOT_REVISION:-?}; pass that exact commit"
+    SPEC_MANIFEST_JSON=$(library_spec_snapshot_manifest_json "$profile") \
+      python3 - "$tmp/source.json" <<'PY' || die "home add: the upstream inventory at $revision differs from the spec manifest of $profile"
+import json, os, sys
+source = json.load(open(sys.argv[1], encoding="utf-8"))
+manifest = json.loads(os.environ["SPEC_MANIFEST_JSON"])
+src = {(f["path"], int(f["size"])): f.get("sha256") for f in source["inventory"]}
+spec = {(f["path"], int(f["size"])): f["sha256"] for f in manifest["files"]}
+if set(src) != set(spec):
+    missing = sorted(set(spec) - set(src)); extra = sorted(set(src) - set(spec))
+    print(f"inventory differs: missing={missing[:5]} extra={extra[:5]}", file=sys.stderr)
+    raise SystemExit(1)
+bad = [k for k, digest in src.items() if digest and digest != spec[k]]
+if bad:
+    print(f"sha256 differs for {sorted(bad)[:5]}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  fi
 
   identity_json=$(python3 "$SOURCE_ATTESTED_PY" resolve-identity \
     --source "$tmp/source.json" \
@@ -1781,7 +1814,7 @@ sa.compare_observed_manifest_to_expected(
 
 cmd_home_add() (
   set -euo pipefail
-  local profile="" node_selector="" yes=0 json=0 plan_only=0 revision_selector=""
+  local profile="" draft="" node_selector="" yes=0 json=0 plan_only=0 revision_selector=""
   local tmp identity_plan_b64 content_bytes revision model_id
   local plan plan_b64
   local target_rank target_node target_hf staging_json staging_root result_file
@@ -1793,6 +1826,11 @@ cmd_home_add() (
         shift
         [ $# -gt 0 ] || die "--node needs a rank or node ID"
         node_selector="$1"
+        ;;
+      --draft)
+        shift
+        [ $# -gt 0 ] || die "--draft needs a conf-format draft file"
+        draft="$1"
         ;;
       --revision)
         shift
@@ -1807,9 +1845,17 @@ cmd_home_add() (
     esac
     shift
   done
-  [ -n "$profile" ] \
-    || die "usage: home add <profile> --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
-  load_conf "$profile"
+  if [ -n "$draft" ]; then
+    [ -z "$profile" ] || die "home add: pass either a spec id or --draft FILE, not both"
+    load_draft "$draft"
+    profile="$CONF_NAME"
+    # Nested loads of this acquisition re-read the same draft, never a profile.
+    export PULSAR_DRAFT_FILE="$draft"
+  else
+    [ -n "$profile" ] \
+      || die "usage: home add <spec_id>|--draft FILE --revision SELECTOR [--node RANK|NODE_ID] [--plan] [--yes] [--json]"
+    load_conf "$profile"
+  fi
   [ -n "$revision_selector" ] \
     || die "home add: pass --revision SELECTOR; acquisition requires modern hf and one exact Hugging Face revision (ADR 0012)"
   cmd_home_add_source_attested \

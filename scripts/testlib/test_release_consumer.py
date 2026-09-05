@@ -1077,6 +1077,8 @@ class ReleaseConsumerTests(unittest.TestCase):
         self.assertIn("SERVED_NAME='nemotron-3-nano'", result.stdout)
         self.assertIn("SPEC_DECODE_ARGS=()", result.stdout)
 
+        # A fresh clone has no overlay: the defaults apply and the profile
+        # says so; an unreadable overlay is still refused.
         missing = run_cli(
             [
                 "export-profile",
@@ -1086,8 +1088,21 @@ class ReleaseConsumerTests(unittest.TestCase):
             ],
             repo=repo,
         )
-        self.assertEqual(missing.returncode, 2)
-        self.assertIn("absent.pulsar-overlay.json", missing.stderr)
+        self.assertEqual(missing.returncode, 0, msg=missing.stderr)
+        self.assertIn(f"SERVED_NAME='{spec['identity']['model_id']}'", missing.stdout)
+        self.assertIn("OVERLAY_SOURCE='defaults (no ", missing.stdout)
+        (repo / "broken.pulsar-overlay.json").write_text("not-json\n", encoding="utf-8")
+        broken = run_cli(
+            [
+                "export-profile",
+                spec["spec_id"],
+                "--overlay",
+                str(repo / "broken.pulsar-overlay.json"),
+            ],
+            repo=repo,
+        )
+        self.assertEqual(broken.returncode, 2)
+        self.assertIn("broken.pulsar-overlay.json", broken.stderr)
 
         unknown = "a" * 64
         absent_spec = run_cli(["export-profile", unknown], repo=repo)

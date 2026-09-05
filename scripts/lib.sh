@@ -377,15 +377,11 @@ _finalize_loaded_profile() {
 # Load a released spec plus the site overlay into caller shell (no conf).
 load_spec_profile() {
   local spec_id="${1:?load_spec_profile: spec_id required}"
-  local conf="$REPO_DIR/models/${spec_id}.conf"
   local releases_root="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}"
   local overlay="${PULSAR_OVERLAY_PATH:-$REPO_DIR/.pulsar-overlay.json}"
   local image_repo="${VLLM_IMAGE_MAINLINE:-vllm/vllm-openai}"
   local output err
   local -a export_args
-  if [ -f "$conf" ] && [ -e "$releases_root/${spec_id}.json" ]; then
-    die "$spec_id: both models/${spec_id}.conf and $releases_root/${spec_id}.json exist; refuse without fallback"
-  fi
   # Keep a registry port: drop @digest, then only a :tag after the last slash.
   image_repo="${image_repo%%@*}"
   case "${image_repo##*/}" in
@@ -401,6 +397,11 @@ load_spec_profile() {
   if [ -n "${PULSAR_RELEASES_ROOT:-}" ]; then
     export_args+=(--releases-root "$PULSAR_RELEASES_ROOT")
   fi
+  # Lab path: a measured spec file (validate/baseline-v1.sh --spec) is the
+  # profile before promotion; the file's spec_id must equal the profile.
+  if [ -n "${PULSAR_SPEC_FILE:-}" ]; then
+    export_args+=(--spec-file "$PULSAR_SPEC_FILE")
+  fi
   err=$(mktemp "${TMPDIR:-/tmp}/pulsar-export-profile.XXXXXX")
   if ! output=$(python3 "$REPO_DIR/scripts/release_consumer.py" \
       "${export_args[@]}" 2>"$err"); then
@@ -412,11 +413,14 @@ load_spec_profile() {
   # shellcheck disable=SC1090
   eval "$output"
   CONF_SOURCE=spec
-  CONF_PATH="$releases_root/${spec_id}.json"
+  CONF_PATH="${PULSAR_SPEC_FILE:-$releases_root/${spec_id}.json}"
   _finalize_loaded_profile "$spec_id"
 }
 
-# Load models/<name>.conf, or a released spec when name is a 64-hex spec_id.
+# A profile is a released spec: load one by its 64-hex spec_id (ADR 0017
+# Stage 4). models/*.conf no longer exist; a conf-format file survives only
+# as a lab draft loaded by load_draft for the first acquisition and the
+# spec generator, and is never a startable profile.
 load_conf() {
   local name="${1:?load_conf: model name required}"
   case "$name" in
@@ -429,14 +433,26 @@ load_conf() {
     load_spec_profile "$name"
     return
   fi
-  local conf="$REPO_DIR/models/${name}.conf"
-  [ -f "$conf" ] || die "no such config: $conf (try scripts/list-models.sh)"
+  die "no released spec named '$name': profiles are spec ids under releases/ (scripts/release.sh list); a conf-format draft is only an input to scripts/release-spec.sh from-draft and home add --draft"
+}
 
+# Load a conf-format draft from an explicit path (lab input, not a profile).
+load_draft() {
+  local path="${1:?load_draft: draft file required}" name
+  [ -f "$path" ] && [ ! -L "$path" ] || die "draft is not a regular file: $path"
+  name="${path##*/}"
+  name="${name%.conf}"
+  case "$name" in
+    *[!A-Za-z0-9._-]*|"") die "invalid draft name '$name' (use letters, numbers, dot, underscore, or hyphen)" ;;
+  esac
+  if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
+    die "draft file name must not be a spec id: $path"
+  fi
+  _reset_loaded_profile_defaults
   # shellcheck disable=SC1090
-  . "$conf"
-
-  CONF_SOURCE=conf
-  CONF_PATH="$conf"
+  . "$path"
+  CONF_SOURCE=draft
+  CONF_PATH="$path"
   _finalize_loaded_profile "$name"
 }
 
@@ -660,12 +676,6 @@ status_is_launchable() {
 
 status_requires_force() {
   return 1
-}
-
-warn_profile_status() {
-  if ! status_is_tested; then
-    warn "profile status=${STATUS:-?} is advisory; ${NOTES:-review its evidence and caveats before serving}"
-  fi
 }
 
 # Load the advisory ADR 0004 status for the reviewed release explicitly bound
@@ -1152,7 +1162,7 @@ refuse_removed_weight_mode_flag() {
 # get a generic "unknown arg".
 REMOVED_FORCE_MESSAGE='--force was removed (ADR 0008): status labels never block serving. Drop the flag.'
 REMOVED_ALLOW_UNVALIDATED_MESSAGE='--allow-unvalidated was removed (ADR 0008): drop the flag. Lab expected-identity files are not a live product (ADR 0012).'
-REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): use --legacy-tested (historical STATUS=tested*). It does not mean ADR 0004 Validated.'
+REMOVED_LIST_VALIDATED_MESSAGE='--validated was removed (ADR 0008): profiles are released specs whose review.status is display-only (scripts/release.sh list). It does not mean ADR 0004 Validated.'
 REMOVED_CATALOG_VALIDATED_MESSAGE='--validated was removed (ADR 0008): drop the flag. --reviewed-identity is retired (ADR 0012). It does not mean ADR 0004 Validated.'
 REMOVED_ACTIVATE_MESSAGE='activate was removed (ADR 0008): use prepare.'
 REMOVED_COLD_STAGE_ONLY_MESSAGE='cold stage-only was removed (ADR 0012): a self-observed cold tree cannot create receipt/occupancy serving identity. Use home add --revision for a new exact Hugging Face home; use home relocate with an existing immutable receipt, or home restore with that receipt and its protected cold recovery set.'
@@ -1828,24 +1838,29 @@ expected_rank_for_nodes() {
   fi
 }
 
-# NODES from models/<conf>.conf without sourcing the full profile (default 1).
+# Node count of a profile, read from the released spec's geometry without
+# loading it (a profile is a spec id, ADR 0017 Stage 4). Fails for anything
+# else, including a conf name.
 profile_nodes_for_conf() {
   local conf="${1:?}"
-  local path="$REPO_DIR/models/${conf}.conf"
+  [[ "$conf" =~ ^[0-9a-f]{64}$ ]] || return 1
+  local path="${PULSAR_RELEASES_ROOT:-$REPO_DIR/releases}/${conf}.json"
   [ -f "$path" ] || return 1
   local nodes
-  nodes=$(awk -F= '
-    /^[[:space:]]*NODES=/ {
-      v=$0
-      sub(/^[^=]*=/, "", v)
-      gsub(/[[:space:]"'\'']/, "", v)
-      print v
-      found=1
-      exit
-    }
-    END { if (!found) print "1" }
-  ' "$path")
-  [ -n "$nodes" ] || nodes=1
+  nodes=$(python3 - "$path" <<'PY'
+import json
+import sys
+
+try:
+    document = json.load(open(sys.argv[1], encoding="utf-8"))
+    nodes = int(document["identity"]["geometry"]["nodes"])
+except (OSError, ValueError, KeyError, TypeError):
+    raise SystemExit(1)
+if nodes < 1:
+    raise SystemExit(1)
+print(nodes)
+PY
+  ) || return 1
   printf '%s' "$nodes"
 }
 
@@ -2066,10 +2081,10 @@ container_all_candidate_is_safe() {
   [ -n "$conf" ] || return 1
   [ -n "$rank" ] || return 1
   local nodes
-  if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
-    # Retired profile (e.g. removed by ADR 0006): the conf file is gone, but
-    # ownership is still proven by labels, so the container must remain
-    # stoppable. Geometry comes from the container's own labels.
+  if ! profile_nodes_for_conf "$conf" >/dev/null 2>&1; then
+    # Retired profile (no released spec under releases/, or a conf name from
+    # before ADR 0017 Stage 4): ownership is still proven by labels, so the
+    # container must remain stoppable. Geometry comes from its own labels.
     if [ "$rank" = single ]; then
       placement_index_for_role "$placement" >/dev/null || return 1
       container_single_node_identity_is_proven "$metadata" "$placement"
@@ -2139,7 +2154,7 @@ container_all_refuse_reason() {
     echo "managed label set but conf/rank incomplete (conf='${conf}' rank='${rank}')"
     return
   fi
-  if [ ! -f "$REPO_DIR/models/${conf}.conf" ]; then
+  if ! profile_nodes_for_conf "$conf" >/dev/null 2>&1; then
     if [ "$rank" = single ]; then
       container_single_node_identity_refuse_reason "$metadata" "$placement"
       return

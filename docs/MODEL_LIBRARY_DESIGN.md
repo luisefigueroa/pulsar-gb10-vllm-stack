@@ -3,7 +3,7 @@
 > **Authority: canonical model-library architecture.**
 >
 > Current procedures are in [OPERATIONS.md](./OPERATIONS.md). The live catalog
-> is in [MODELS.md](./MODELS.md) and `models/*.conf`. Evidence is in
+> is in [MODELS.md](./MODELS.md), generated from `releases/*.json`. Evidence is in
 > [VALIDATION.md](./VALIDATION.md) and `results/`.
 
 The model library is the only weight-distribution mechanism

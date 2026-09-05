@@ -30,6 +30,11 @@ printf '%s' "$rendered" | grep -q redacted
 # Launch resolution requires confirmed topology + ready library views
 # (ADR 0006); serve them from deterministic fixtures.
 auth_state=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-api-auth.XXXXXX")
+# Profiles are released specs: a fixture release set stands in for releases/.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+STATE="$auth_state"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$auth_state"' EXIT
 python3 "$REPO_DIR/scripts/testlib/topology_manifest_fixture.py" \
   "$auth_state/topology.json"
@@ -37,13 +42,13 @@ auth_topology_id=$(python3 -c \
   'import json,sys; print(json.load(open(sys.argv[1]))["topology_id"])' \
   "$auth_state/topology.json")
 python3 "$REPO_DIR/scripts/testlib/library_hot_fixture.py" \
-  "$auth_state/hot-info.json" --profile qwen3.6-27b-fp8 \
-  --model-id Qwen/Qwen3.6-27B-FP8 --topology-id "$auth_topology_id"
+  "$auth_state/hot-info.json" --profile "$ONE_NODE_QWEN_ID" \
+  --model-id "$ONE_NODE_QWEN_MODEL" --topology-id "$auth_topology_id"
 serve_out=$(HF_TOKEN="$SECRET" VLLM_API_KEY="$SECRET" \
   CLUSTER_TOPOLOGY_FILE="$auth_state/topology.json" \
   PULSAR_MODEL_LIBRARY_PY="$REPO_DIR/scripts/testlib/fake_model_library.py" \
   FAKE_HOT_INFO_FILE="$auth_state/hot-info.json" \
-  "$REPO_DIR/serve.sh" qwen3.6-27b-fp8 --dry-run)
+  "$REPO_DIR/serve.sh" "$ONE_NODE_QWEN_ID" --dry-run)
 case "$serve_out" in
   *"$SECRET"*)
     echo "serve dry-run disclosed a credential" >&2

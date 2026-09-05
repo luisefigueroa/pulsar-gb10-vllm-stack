@@ -18,6 +18,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 from scripts.topology_manifest import topology_digest  # noqa: E402
 
 
@@ -237,6 +238,10 @@ esac
         docker.chmod(0o700)
         state_dir = self.root / "library-state"
         state_dir.mkdir()
+        # Profiles are released specs: the fixture set names this test's model
+        # (the diagnostic two-node Qwen), so its entry survives a home removal.
+        write_fixture_set(self.root / "spec-fixture")
+        empty_releases = self.root / "spec-fixture" / "releases"
         environment = os.environ.copy()
         environment.update(
             {
@@ -244,6 +249,7 @@ esac
                 "HF_CACHE": str(self.cache_root),
                 "MODEL_LIBRARY_CATALOG": str(self.catalog_path),
                 "MODEL_LIBRARY_DIR": str(state_dir),
+                "PULSAR_RELEASES_ROOT": str(empty_releases),
                 "PULSAR_DOCKER": str(docker),
                 "PULSAR_HOT_ROOT": str(self.root / "cli-hot"),
                 "PULSAR_MODEL_LIBRARY_LOCK_TIMEOUT_SECONDS": "0",

@@ -16,6 +16,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import model_library  # noqa: E402
+from scripts.testlib.release_spec_fixture_set import write_fixture_set  # noqa: E402
 from scripts import model_library_receipt as source_attested  # noqa: E402
 from scripts.testlib import model_library_receipt_fixture as fixture  # noqa: E402
 
@@ -28,7 +29,11 @@ class CatalogTransactionContracts(unittest.TestCase):
         self.library_dir = self.root / "library"
         self.cache_root = self.root / "cache"
         self.model_id = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
-        self.profile = "nemotron-3-nano-30b-nvfp4"
+        ids = write_fixture_set(self.root / "spec-fixture")
+        previous = os.environ.get("PULSAR_RELEASES_ROOT")
+        os.environ["PULSAR_RELEASES_ROOT"] = str(self.root / "spec-fixture" / "releases")
+        self.addCleanup(lambda: os.environ.update({"PULSAR_RELEASES_ROOT": previous}) if previous is not None else os.environ.pop("PULSAR_RELEASES_ROOT", None))
+        self.profile = ids["one_node"]["spec_id"]
         self.node_id = "node-0"
         self.hub = (
             self.cache_root

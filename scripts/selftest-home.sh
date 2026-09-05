@@ -67,6 +67,10 @@ assert_file_not_contains() {
 }
 
 STATE=$(mktemp -d "${TMPDIR:-/tmp}/pulsar-home-selftest.XXXXXX")
+# Profiles are released specs: a fixture release set stands in for releases/.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/testlib/spec_fixture_env.sh"
+spec_fixture_env >/dev/null
 trap 'rm -rf "$STATE"' EXIT
 SHIM="$STATE/bin"
 mkdir -p "$SHIM" "$STATE/logs" "$STATE/inv" "$STATE/api"
@@ -769,27 +773,28 @@ assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node" \
 assert_file_not_contains "$STATE/logs/home.combined" "no eligible" \
   "idle rank 2 preserves exact-service eligibility"
 
-# local-files stop discloses restage cost from the profile WEIGHTS_GIB
+# local-files stop discloses restage cost from the spec's weight estimate
+# (the fixture spec estimates 1 GiB)
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node "$TWO_NODE_ID" True local-files)" ok
 run_home $'3\n1\n1\ny\n8\n'
-assert_file_contains "$STATE/logs/home.combined" "free ~29 GiB now" \
+assert_file_contains "$STATE/logs/home.combined" "free ~1 GiB now" \
   "stop discloses restage bytes for local-files"
 assert_file_contains "$STATE/logs/home.combined" "Keep prepared views" \
   "stop offers retain as the first prepared-view choice"
-assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node --retain-weights" \
+assert_file_contains "$STATE/logs/down.log" "$TWO_NODE_ID --retain-weights" \
   "home retain choice passes --retain-weights"
 assert_file_not_contains "$STATE/logs/down.log" "estimated_footprint" \
   "stop disclosure does not pass GPU footprint as disk"
 
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node "$TWO_NODE_ID" True local-files)" ok
 run_home $'3\n1\n2\ny\n8\n'
-assert_file_contains "$STATE/logs/down.log" "qwen3.8-27b-fp8-2node --purge-hot" \
+assert_file_contains "$STATE/logs/down.log" "$TWO_NODE_ID --purge-hot" \
   "home free choice passes --purge-hot"
 
 reset_logs
-seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node qwen3.8-27b-fp8-2node True local-files)" ok
+seed_inv "$STATE/inv_current" 50 "$(svc_complete_2node "$TWO_NODE_ID" True local-files)" ok
 run_home $'3\n1\n1\nn\n8\n'
 assert_false "local-files decline: no down" bash -c "test -s '$STATE/logs/down.log'"
 assert_file_contains "$STATE/logs/home.combined" "declined|no containers changed" \
