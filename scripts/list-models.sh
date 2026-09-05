@@ -51,8 +51,10 @@ for spec_file in "$releases_root"/*.json; do
     # shellcheck disable=SC1091
     . "$REPO_DIR/scripts/lib.sh"
     # Probe in a nested subshell: the loader's die would otherwise exit this
-    # one before the unloadable row is written.
-    if ! (load_conf "$name") 2>"$tmp.err"; then
+    # one before the unloadable row is written. A spec frozen for another
+    # platform loads (status and stop stay usable after a platform change)
+    # but is not startable here, so the picker must not offer it.
+    if ! (load_conf "$name" && require_spec_platform_admission "$name") 2>"$tmp.err"; then
       reason=$(tr -d '\r' <"$tmp.err" | tail -1 | sed 's/^\[[^]]*\] ERROR: //')
       rm -f "$tmp.err"
       python3 - "$name" "$spec_file" "$reason" <<'PY' >>"$tmp.unloadable"

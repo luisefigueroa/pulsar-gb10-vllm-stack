@@ -190,6 +190,9 @@ run "model catalog scopes" bash -c '
   printf "not-json\n" >"$STATE/broken-overlay.json"
   broken=$(PULSAR_OVERLAY_PATH="$STATE/broken-overlay.json" "$REPO_DIR/scripts/list-models.sh" --json)
   echo "$broken" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"models\"]==[] and len(d[\"unloadable\"])==4 and all(\"overlay\" in u[\"reason\"] for u in d[\"unloadable\"]), d"
+  # A spec frozen for another platform is listed as unloadable, never offered to the picker.
+  foreign=$(PULSAR_PLATFORM=test-other PULSAR_PLATFORM_FILE="$REPO_DIR/scripts/testdata/platforms/test-other.json" "$REPO_DIR/scripts/list-models.sh" --serving --json)
+  echo "$foreign" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"models\"]==[] and len(d[\"unloadable\"])==4 and all(\"targets platform\" in u[\"reason\"] for u in d[\"unloadable\"]), d"
 '
 
 run "WEIGHTS_GIB disk formula" bash -c '
